@@ -1,0 +1,58 @@
+{
+  "profiles": {
+    "WSL": {
+      "commandName": "WSL2",
+      "distributionName": ""
+    },
+    "grace branch get-references": {
+      "commandName": "Project",
+      "commandLineArgs": "branch get-references",
+      "workingDirectory": "C:\\Source\\github\\github"
+    },
+    "grace diff commit": {
+      "commandName": "Project",
+      "commandLineArgs": "diff commit",
+      "workingDirectory": "C:\\Source\\grace\\src"
+    },
+    "grace diff checkpoint": {
+      "commandName": "Project",
+      "commandLineArgs": "diff checkpoint",
+      "workingDirectory": "C:\\Source\\PlayWithFlexbox"
+    },
+    "grace switch -b scottarbeit": {
+      "commandName": "Project",
+      "commandLineArgs": "switch -b scottarbeit",
+      "workingDirectory": "C:\\Source\\grace\\src"
+    },
+    "grace status - PlayWithFlexbox": {
+      "commandName": "Project",
+      "commandLineArgs": "status",
+      "workingDirectory": "C:\\Source\\PlayWithFlexbox"
+    },
+    "grace merge - PlayWithFlexbox": {
+      "commandName": "Project",
+      "commandLineArgs": "merge -m \"Merge from Debug\"",
+      "workingDirectory": "C:\\Source\\PlayWithFlexbox"
+    },
+    "grace diff merge": {
+      "commandName": "Project",
+      "commandLineArgs": "diff merge",
+      "workingDirectory": "C:\\Source\\PlayWithFlexbox"
+    },
+    "grace owner create": {
+      "commandName": "Project",
+      "commandLineArgs": "owner create --ownerName GraceDemo",
+      "workingDirectory": "C:\\Source\\gracedemo"
+    },
+    "grace watch - Chris": {
+      "commandName": "Project",
+      "commandLineArgs": "watch",
+      "workingDirectory": "C:\\Source\\GraceDemo\\Chris"
+    },
+    "grace refs -b main": {
+      "commandName": "Project",
+      "commandLineArgs": "refs -b main --output Verbose",
+      "workingDirectory": "C:\\Source\\GraceDemo\\Chris"
+    }
+  }
+}

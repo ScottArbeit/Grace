@@ -1,0 +1,361 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "outputs": {
+    "azureCosmosDBPrimaryConnectionString": {
+      "type": "string",
+      "value": "[listConnectionStrings(resourceId('Microsoft.DocumentDb/databaseAccounts', 'gracevcs-development'), providers('Microsoft.DocumentDb','databaseAccounts').apiVersions[0]).connectionStrings[0].connectionString]"
+    },
+    "azureCosmosDBPrimaryKey": {
+      "type": "string",
+      "value": "[listKeys(resourceId('Microsoft.DocumentDb/databaseAccounts', 'gracevcs-development'), providers('Microsoft.DocumentDb','databaseAccounts').apiVersions[0]).primaryMasterKey]"
+    },
+    "azureCosmosDBPrimaryReadOnlyKey": {
+      "type": "string",
+      "value": "[listKeys(resourceId('Microsoft.DocumentDb/databaseAccounts', 'gracevcs-development'), providers('Microsoft.DocumentDb','databaseAccounts').apiVersions[0]).primaryreadonlyMasterKey]"
+    },
+    "azureServiceBusNamespaceDefaultConnectionString": {
+      "type": "string",
+      "value": "[listkeys(resourceId('Microsoft.ServiceBus/namespaces/authorizationRules', 'gracevcs-development', 'RootManageSharedAccessKey'), '2017-04-01').primaryConnectionString]"
+    },
+    "azureStoragePrimaryConnectionString": {
+      "type": "string",
+      "value": "[concat('DefaultEndpointsProtocol=https;AccountName=gracevcsdevelopment;AccountKey=', listKeys(resourceId('Microsoft.Storage/storageAccounts', 'gracevcsdevelopment'), '2017-10-01').keys[0].value)]"
+    },
+    "gracevcsdevwestus200PrimaryConnectionString": {
+      "type": "string",
+      "value": "[concat('DefaultEndpointsProtocol=https;AccountName=gracevcsdevwestus200;AccountKey=', listKeys(resourceId('Microsoft.Storage/storageAccounts', 'gracevcsdevwestus200'), '2017-10-01').keys[0].value)]"
+    },
+    "gracevcsdevwestus201PrimaryConnectionString": {
+      "type": "string",
+      "value": "[concat('DefaultEndpointsProtocol=https;AccountName=gracevcsdevwestus201;AccountKey=', listKeys(resourceId('Microsoft.Storage/storageAccounts', 'gracevcsdevwestus201'), '2017-10-01').keys[0].value)]"
+    },
+    "gracevcsdevwestus202PrimaryConnectionString": {
+      "type": "string",
+      "value": "[concat('DefaultEndpointsProtocol=https;AccountName=gracevcsdevwestus202;AccountKey=', listKeys(resourceId('Microsoft.Storage/storageAccounts', 'gracevcsdevwestus202'), '2017-10-01').keys[0].value)]"
+    },
+    "gracevcsdevwestus203PrimaryConnectionString": {
+      "type": "string",
+      "value": "[concat('DefaultEndpointsProtocol=https;AccountName=gracevcsdevwestus203;AccountKey=', listKeys(resourceId('Microsoft.Storage/storageAccounts', 'gracevcsdevwestus203'), '2017-10-01').keys[0].value)]"
+    },
+    "gracevcsdevwestus204PrimaryConnectionString": {
+      "type": "string",
+      "value": "[concat('DefaultEndpointsProtocol=https;AccountName=gracevcsdevwestus204;AccountKey=', listKeys(resourceId('Microsoft.Storage/storageAccounts', 'gracevcsdevwestus204'), '2017-10-01').keys[0].value)]"
+    },
+    "gracevcsdevwestus205PrimaryConnectionString": {
+      "type": "string",
+      "value": "[concat('DefaultEndpointsProtocol=https;AccountName=gracevcsdevwestus205;AccountKey=', listKeys(resourceId('Microsoft.Storage/storageAccounts', 'gracevcsdevwestus205'), '2017-10-01').keys[0].value)]"
+    },
+    "gracevcsdevwestus206PrimaryConnectionString": {
+      "type": "string",
+      "value": "[concat('DefaultEndpointsProtocol=https;AccountName=gracevcsdevwestus206;AccountKey=', listKeys(resourceId('Microsoft.Storage/storageAccounts', 'gracevcsdevwestus206'), '2017-10-01').keys[0].value)]"
+    },
+    "gracevcsdevwestus207PrimaryConnectionString": {
+      "type": "string",
+      "value": "[concat('DefaultEndpointsProtocol=https;AccountName=gracevcsdevwestus207;AccountKey=', listKeys(resourceId('Microsoft.Storage/storageAccounts', 'gracevcsdevwestus207'), '2017-10-01').keys[0].value)]"
+    },
+    "gracevcsdevwestus208PrimaryConnectionString": {
+      "type": "string",
+      "value": "[concat('DefaultEndpointsProtocol=https;AccountName=gracevcsdevwestus208;AccountKey=', listKeys(resourceId('Microsoft.Storage/storageAccounts', 'gracevcsdevwestus208'), '2017-10-01').keys[0].value)]"
+    },
+    "gracevcsdevwestus209PrimaryConnectionString": {
+      "type": "string",
+      "value": "[concat('DefaultEndpointsProtocol=https;AccountName=gracevcsdevwestus209;AccountKey=', listKeys(resourceId('Microsoft.Storage/storageAccounts', 'gracevcsdevwestus209'), '2017-10-01').keys[0].value)]"
+    }
+  },
+  "parameters": {},
+  "resources": [
+    {
+      "apiVersion": "2018-11-30",
+      "dependsOn": [],
+      "location": "westus2",
+      "name": "gracevcsDevelopmentUser",
+      "tags": {
+        "Application": "Grace",
+        "Organization": "GitHub",
+        "OwnerAlias": "scarbeit",
+        "environment": "development"
+      },
+      "type": "Microsoft.ManagedIdentity/userAssignedIdentities"
+    },
+    {
+      "apiVersion": "2020-03-01",
+      "kind": "GlobalDocumentDB",
+      "location": "westus2",
+      "name": "gracevcs-development",
+      "properties": {
+        "consistencyPolicy": {
+          "defaultConsistencyLevel": "Session"
+        },
+        "databaseAccountOfferType": "Standard",
+        "enableFreeTier": false,
+        "publicNetworkAccess": "Enabled"
+      },
+      "tags": {
+        "Application": "Grace",
+        "Organization": "GitHub",
+        "OwnerAlias": "scarbeit",
+        "environment": "development"
+      },
+      "type": "Microsoft.DocumentDb/databaseAccounts"
+    },
+    {
+      "apiVersion": "2020-03-01",
+      "dependsOn": [
+        "[resourceId('Microsoft.DocumentDb/databaseAccounts', 'gracevcs-development')]"
+      ],
+      "name": "gracevcs-development/gracevcs-development-db",
+      "properties": {
+        "options": {
+          "throughput": "400"
+        },
+        "resource": {
+          "id": "gracevcs-development-db"
+        }
+      },
+      "type": "Microsoft.DocumentDb/databaseAccounts/sqlDatabases"
+    },
+    {
+      "apiVersion": "2020-03-01",
+      "dependsOn": [
+        "[resourceId('Microsoft.DocumentDb/databaseAccounts/sqlDatabases', 'gracevcs-development', 'gracevcs-development-db')]"
+      ],
+      "name": "gracevcs-development/gracevcs-development-db/grace-development",
+      "properties": {
+        "resource": {
+          "id": "grace-development",
+          "indexingPolicy": {
+            "excludedPaths": [],
+            "includedPaths": [],
+            "indexingMode": "consistent"
+          },
+          "partitionKey": {
+            "kind": "Hash",
+            "paths": [
+              "/partitionKey"
+            ]
+          },
+          "uniqueKeyPolicy": {
+            "uniqueKeys": []
+          }
+        }
+      },
+      "type": "Microsoft.DocumentDb/databaseAccounts/sqlDatabases/containers"
+    },
+    {
+      "apiVersion": "2017-04-01",
+      "dependsOn": [],
+      "location": "westus2",
+      "name": "gracevcs-development",
+      "sku": {
+        "name": "Standard",
+        "tier": "Standard"
+      },
+      "tags": {
+        "Application": "Grace",
+        "Organization": "GitHub",
+        "OwnerAlias": "scarbeit",
+        "environment": "development"
+      },
+      "type": "Microsoft.ServiceBus/namespaces"
+    },
+    {
+      "apiVersion": "2019-06-01",
+      "dependsOn": [],
+      "kind": "StorageV2",
+      "location": "westus2",
+      "name": "gracevcsdevelopment",
+      "properties": {},
+      "sku": {
+        "name": "Standard_LRS"
+      },
+      "tags": {
+        "Application": "Grace",
+        "Organization": "GitHub",
+        "OwnerAlias": "scarbeit",
+        "environment": "development"
+      },
+      "type": "Microsoft.Storage/storageAccounts"
+    },
+    {
+      "apiVersion": "2019-06-01",
+      "dependsOn": [],
+      "kind": "StorageV2",
+      "location": "westus2",
+      "name": "gracevcsdevwestus200",
+      "properties": {},
+      "sku": {
+        "name": "Standard_LRS"
+      },
+      "tags": {
+        "Application": "Grace",
+        "Organization": "GitHub",
+        "OwnerAlias": "scarbeit",
+        "environment": "development"
+      },
+      "type": "Microsoft.Storage/storageAccounts"
+    },
+    {
+      "apiVersion": "2019-06-01",
+      "dependsOn": [],
+      "kind": "StorageV2",
+      "location": "westus2",
+      "name": "gracevcsdevwestus201",
+      "properties": {},
+      "sku": {
+        "name": "Standard_LRS"
+      },
+      "tags": {
+        "Application": "Grace",
+        "Organization": "GitHub",
+        "OwnerAlias": "scarbeit",
+        "environment": "development"
+      },
+      "type": "Microsoft.Storage/storageAccounts"
+    },
+    {
+      "apiVersion": "2019-06-01",
+      "dependsOn": [],
+      "kind": "StorageV2",
+      "location": "westus2",
+      "name": "gracevcsdevwestus202",
+      "properties": {},
+      "sku": {
+        "name": "Standard_LRS"
+      },
+      "tags": {
+        "Application": "Grace",
+        "Organization": "GitHub",
+        "OwnerAlias": "scarbeit",
+        "environment": "development"
+      },
+      "type": "Microsoft.Storage/storageAccounts"
+    },
+    {
+      "apiVersion": "2019-06-01",
+      "dependsOn": [],
+      "kind": "StorageV2",
+      "location": "westus2",
+      "name": "gracevcsdevwestus203",
+      "properties": {},
+      "sku": {
+        "name": "Standard_LRS"
+      },
+      "tags": {
+        "Application": "Grace",
+        "Organization": "GitHub",
+        "OwnerAlias": "scarbeit",
+        "environment": "development"
+      },
+      "type": "Microsoft.Storage/storageAccounts"
+    },
+    {
+      "apiVersion": "2019-06-01",
+      "dependsOn": [],
+      "kind": "StorageV2",
+      "location": "westus2",
+      "name": "gracevcsdevwestus204",
+      "properties": {},
+      "sku": {
+        "name": "Standard_LRS"
+      },
+      "tags": {
+        "Application": "Grace",
+        "Organization": "GitHub",
+        "OwnerAlias": "scarbeit",
+        "environment": "development"
+      },
+      "type": "Microsoft.Storage/storageAccounts"
+    },
+    {
+      "apiVersion": "2019-06-01",
+      "dependsOn": [],
+      "kind": "StorageV2",
+      "location": "westus2",
+      "name": "gracevcsdevwestus205",
+      "properties": {},
+      "sku": {
+        "name": "Standard_LRS"
+      },
+      "tags": {
+        "Application": "Grace",
+        "Organization": "GitHub",
+        "OwnerAlias": "scarbeit",
+        "environment": "development"
+      },
+      "type": "Microsoft.Storage/storageAccounts"
+    },
+    {
+      "apiVersion": "2019-06-01",
+      "dependsOn": [],
+      "kind": "StorageV2",
+      "location": "westus2",
+      "name": "gracevcsdevwestus206",
+      "properties": {},
+      "sku": {
+        "name": "Standard_LRS"
+      },
+      "tags": {
+        "Application": "Grace",
+        "Organization": "GitHub",
+        "OwnerAlias": "scarbeit",
+        "environment": "development"
+      },
+      "type": "Microsoft.Storage/storageAccounts"
+    },
+    {
+      "apiVersion": "2019-06-01",
+      "dependsOn": [],
+      "kind": "StorageV2",
+      "location": "westus2",
+      "name": "gracevcsdevwestus207",
+      "properties": {},
+      "sku": {
+        "name": "Standard_LRS"
+      },
+      "tags": {
+        "Application": "Grace",
+        "Organization": "GitHub",
+        "OwnerAlias": "scarbeit",
+        "environment": "development"
+      },
+      "type": "Microsoft.Storage/storageAccounts"
+    },
+    {
+      "apiVersion": "2019-06-01",
+      "dependsOn": [],
+      "kind": "StorageV2",
+      "location": "westus2",
+      "name": "gracevcsdevwestus208",
+      "properties": {},
+      "sku": {
+        "name": "Standard_LRS"
+      },
+      "tags": {
+        "Application": "Grace",
+        "Organization": "GitHub",
+        "OwnerAlias": "scarbeit",
+        "environment": "development"
+      },
+      "type": "Microsoft.Storage/storageAccounts"
+    },
+    {
+      "apiVersion": "2019-06-01",
+      "dependsOn": [],
+      "kind": "StorageV2",
+      "location": "westus2",
+      "name": "gracevcsdevwestus209",
+      "properties": {},
+      "sku": {
+        "name": "Standard_LRS"
+      },
+      "tags": {
+        "Application": "Grace",
+        "Organization": "GitHub",
+        "OwnerAlias": "scarbeit",
+        "environment": "development"
+      },
+      "type": "Microsoft.Storage/storageAccounts"
+    }
+  ]
+}

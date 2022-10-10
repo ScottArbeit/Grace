@@ -1,0 +1,8 @@
+https://wolfoliver.medium.com/positioning-a-product-b4d536d67733
+
+For developers
+Who use source control
+Grace is a VCS
+That makes labeling and checking in code easier
+Unlike Git
+Grace disappears into the background and puts you in control when you need it.

@@ -1,0 +1,57 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+	<PropertyGroup>
+		<TargetFramework>net6.0</TargetFramework>
+		<GenerateDocumentationFile>true</GenerateDocumentationFile>
+		<WarningsAsErrors>FS0025</WarningsAsErrors>
+		<NoWarn>1057</NoWarn>
+		<Platforms>AnyCPU;x64</Platforms>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<Compile Include="Constants.Actor.fs" />
+		<Compile Include="Storage.Actor.fs" />
+		<Compile Include="Commands.Actor.fs" />
+		<Compile Include="Events.Actor.fs" />
+		<Compile Include="Interfaces.Actor.fs" />
+		<Compile Include="Services.Actor.fs" />
+		<Compile Include="User.Actor.fs" />
+		<Compile Include="Owner.Actor.fs" />
+		<Compile Include="OwnerName.Actor.fs" />
+		<Compile Include="Organization.Actor.fs" />
+		<Compile Include="OrganizationName.Actor.fs" />
+		<Compile Include="NamedSection.Actor.fs" />
+		<Compile Include="Directory.Actor.fs" />
+		<Compile Include="Reference.Actor.fs" />
+		<Compile Include="Branch.Actor.fs" />
+		<Compile Include="BranchName.Actor.fs" />
+		<Compile Include="Repository.Actor.fs" />
+		<Compile Include="RepositoryName.Actor.fs" />
+		<Compile Include="RepositoryPermission.Actor.fs" />
+		<Compile Include="ContainerName.Actor.fs" />
+		<Compile Include="Diff.Actor.fs" />
+		<Compile Include="FileAppearance.Actor.fs" />
+		<Compile Include="DirectoryAppearance.Actor.fs" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<PackageReference Include="Azure.Storage.Blobs" Version="12.13.0" />
+		<PackageReference Include="Azure.Storage.Blobs.Batch" Version="12.10.0" />
+		<PackageReference Include="Azure.Storage.Common" Version="12.12.0" />
+		<PackageReference Include="Dapr.Actors" Version="1.8.0" />
+		<PackageReference Include="Dapr.Client" Version="1.8.0" />
+		<PackageReference Include="FSharpPlus" Version="1.2.4" />
+		<PackageReference Include="Nito.AsyncEx" Version="5.1.2" />
+		<PackageReference Include="NodaTime" Version="3.1.0" />
+		<PackageReference Include="NodaTime.Serialization.SystemTextJson" Version="1.0.0" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<ProjectReference Include="..\Grace.Shared\Grace.Shared.fsproj" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<PackageReference Update="FSharp.Core" Version="6.0.5" />
+	</ItemGroup>
+
+</Project>

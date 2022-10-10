@@ -1,0 +1,22 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+	<PropertyGroup>
+		<OutputType>Exe</OutputType>
+		<TargetFramework>net6.0</TargetFramework>
+		<NoWarn>1057</NoWarn>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<Compile Include="Program.Load.fs" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<ProjectReference Include="..\Grace.SDK\Grace.SDK.fsproj" />
+		<ProjectReference Include="..\Grace.Shared\Grace.Shared.fsproj" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<PackageReference Update="FSharp.Core" Version="6.0.5" />
+	</ItemGroup>
+
+</Project>

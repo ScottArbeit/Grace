@@ -1,0 +1,36 @@
+{
+  "ownerId": "TheIntegralSoftwareCompany",
+  "organizationId": "Root",
+  "repositoryId": "16731050-96C1-4051-BF70-392B1156E0B4",
+  "repositoryName": "",
+  "defaultBranchName": "",
+  "graceIgnoreEntries": [
+    ""
+  ],
+  "themes": [
+    {
+      "name": "Default",
+      "displayColorOptions": {
+        "added": "#00AF5F",
+        "changed": "#800080",
+        "deleted": "#8B0000",
+        "error": "#FF0000",
+        "highlighted": "#FFFFFF",
+        "important": "#FFFF00"
+      }
+    }
+  ],
+  "lineEndings": "PlatformDependent",
+  "prefetch": [
+    ""
+  ],
+  "isPopulated": false,
+  "properties": {},
+  "rootDirectory": "C:\\Source\\Grace\\src\\Grace.Server",
+  "objectDirectory": "C:\\Source\\Grace\\src\\Grace.Server",
+  "storageProvider": "",
+  "objectStorageProvider": "nul",
+  "serverUri": "http://127.0.0.1:3500",
+  "programVersion": "0.1",
+  "configurationVersion": ""
+}

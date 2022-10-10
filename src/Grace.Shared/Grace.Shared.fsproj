@@ -1,0 +1,65 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+	<PropertyGroup>
+		<TargetFramework>net6.0</TargetFramework>
+		<Version>0.1</Version>
+		<Description>The shared core module for Grace.</Description>
+		<LangVersion>preview</LangVersion>
+		<GenerateDocumentationFile>true</GenerateDocumentationFile>
+		<NoWarn>67;1057</NoWarn>
+		<WarningsAsErrors>FS0025</WarningsAsErrors>
+		<Platforms>AnyCPU;x64</Platforms>
+	</PropertyGroup>
+	<ItemGroup>
+		<Compile Include="Resources\Text\Languages.Resources.fs" />
+		<Compile Include="Resources\Text\en-US.fs" />
+		<Compile Include="Combinators.fs" />
+		<Compile Include="Constants.Shared.fs" />
+		<Compile Include="Utilities.Shared.fs" />
+		<Compile Include="Types.Shared.fs" />
+		<Compile Include="Dto\Dto.Shared.fs" />
+		<Compile Include="Converters\BranchDtoConverter.Shared.fs" />
+		<Compile Include="Services.Shared.fs" />
+		<Compile Include="Diff.Shared.fs" />
+		<Compile Include="Client\Theme.Shared.fs" />
+		<Compile Include="Client\Configuration.Shared.fs" />
+		<Compile Include="Parameters\Common.Parameters.fs" />
+		<Compile Include="Parameters\Owner.Parameters.fs" />
+		<Compile Include="Parameters\Organization.Parameters.fs" />
+		<Compile Include="Parameters\Repository.Parameters.fs" />
+		<Compile Include="Parameters\Branch.Parameters.fs" />
+		<Compile Include="Parameters\Reference.Parameters.fs" />
+		<Compile Include="Parameters\Directory.Parameters.fs" />
+		<Compile Include="Parameters\Diff.Parameters.fs" />
+		<Compile Include="Validation\Errors.Validation.fs" />
+		<Compile Include="Validation\Common.Validation.fs" />
+		<Compile Include="Validation\Utilities.Validation.fs" />
+		<Compile Include="Validation\Connect.Validation.fs" />
+		<Compile Include="Validation\Repository.Validation.fs" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<content Include="Monikers.imagemanifest">
+			<IncludeInVSIX>true</IncludeInVSIX>
+		</content>
+	</ItemGroup>
+
+	<ItemGroup>
+		<PackageReference Include="DiffPlex" Version="1.7.1" />
+		<PackageReference Include="FSharp.SystemTextJson" Version="0.19.13" />
+		<PackageReference Include="FSharpPlus" Version="1.2.4" />
+		<PackageReference Include="MimeTypeMapOfficial" Version="1.0.17" />
+		<PackageReference Include="MimeTypes" Version="2.4.0">
+			<PrivateAssets>all</PrivateAssets>
+			<IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+		</PackageReference>
+		<PackageReference Include="NodaTime" Version="3.1.0" />
+		<PackageReference Include="NodaTime.Serialization.SystemTextJson" Version="1.0.0" />
+		<PackageReference Include="Polly" Version="7.2.3" />
+		<PackageReference Include="Polly.Contrib.WaitAndRetry" Version="1.1.1" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<PackageReference Update="FSharp.Core" Version="6.0.5" />
+	</ItemGroup>
+
+</Project>

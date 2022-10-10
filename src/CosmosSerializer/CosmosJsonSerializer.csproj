@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+	<PropertyGroup>
+		<TargetFramework>net6.0</TargetFramework>
+		<ImplicitUsings>enable</ImplicitUsings>
+		<Nullable>enable</Nullable>
+		<NoWarn>1057</NoWarn>
+	</PropertyGroup>
+	<ItemGroup>
+		<PackageReference Include="Azure.Core" Version="1.25.0" />
+		<PackageReference Include="Microsoft.Azure.Cosmos" Version="3.29.0" />
+	</ItemGroup>
+
+</Project>

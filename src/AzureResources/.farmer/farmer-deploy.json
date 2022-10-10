@@ -1,0 +1,546 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "outputs": {},
+  "parameters": {},
+  "resources": [
+    {
+      "apiVersion": "2018-02-14",
+      "dependsOn": [],
+      "location": "westus2",
+      "name": "gracevcs-development",
+      "properties": {
+        "accessPolicies": [
+          {
+            "objectId": "eb5d561c-4eca-4cfa-96b9-6af83c77c7d7",
+            "permissions": {
+              "certificates": [
+                "backup",
+                "create",
+                "delete",
+                "deleteissuers",
+                "get",
+                "getissuers",
+                "import",
+                "list",
+                "listissuers",
+                "managecontacts",
+                "manageissuers",
+                "purge",
+                "recover",
+                "restore",
+                "setissuers",
+                "update"
+              ],
+              "keys": [
+                "backup",
+                "create",
+                "decrypt",
+                "delete",
+                "encrypt",
+                "get",
+                "import",
+                "list",
+                "purge",
+                "recover",
+                "restore",
+                "sign",
+                "unwrapkey",
+                "update",
+                "verify",
+                "wrapkey"
+              ],
+              "secrets": [
+                "backup",
+                "delete",
+                "get",
+                "list",
+                "purge",
+                "recover",
+                "restore",
+                "set"
+              ],
+              "storage": []
+            },
+            "tenantId": "[subscription().tenantid]"
+          }
+        ],
+        "enableSoftDelete": true,
+        "enabledForTemplateDeployment": true,
+        "networkAcls": {
+          "ipRules": [],
+          "virtualNetworkRules": []
+        },
+        "sku": {
+          "family": "A",
+          "name": "standard"
+        },
+        "tenantId": "[subscription().tenantid]"
+      },
+      "tags": {},
+      "type": "Microsoft.KeyVault/vaults"
+    },
+    {
+      "apiVersion": "2018-02-14",
+      "dependsOn": [
+        "[resourceId('Microsoft.KeyVault/vaults', 'gracevcs-development')]"
+      ],
+      "location": "westus2",
+      "name": "gracevcs-development/gracevcsdevwestus209AccountKey",
+      "properties": {
+        "attributes": {
+          "enabled": true,
+          "nbf": 1616718779
+        },
+        "value": "['L+rsHFxn+3whN1/4L/b1c0Tz+HEq4tisuv8p5BiLBceDlyu3FKTGLWAqrQl9cLv5xNDCuxkmxupxnoGieeKdsw==']"
+      },
+      "tags": {
+        "Application": "Grace",
+        "Organization": "GitHub",
+        "OwnerAlias": "scarbeit",
+        "environment": "development"
+      },
+      "type": "Microsoft.KeyVault/vaults/secrets"
+    },
+    {
+      "apiVersion": "2018-02-14",
+      "dependsOn": [
+        "[resourceId('Microsoft.KeyVault/vaults', 'gracevcs-development')]"
+      ],
+      "location": "westus2",
+      "name": "gracevcs-development/gracevcsdevwestus208AccountKey",
+      "properties": {
+        "attributes": {
+          "enabled": true,
+          "nbf": 1616718779
+        },
+        "value": "['7OiHmp7AFj6aI7ipDXYdtYrqHG/b4dnD+qPBjbJHlTeMEO5BYxmx7+QX/W8JD+MqnavXhgbBQ6e2CQkkiXOlmA==']"
+      },
+      "tags": {
+        "Application": "Grace",
+        "Organization": "GitHub",
+        "OwnerAlias": "scarbeit",
+        "environment": "development"
+      },
+      "type": "Microsoft.KeyVault/vaults/secrets"
+    },
+    {
+      "apiVersion": "2018-02-14",
+      "dependsOn": [
+        "[resourceId('Microsoft.KeyVault/vaults', 'gracevcs-development')]"
+      ],
+      "location": "westus2",
+      "name": "gracevcs-development/gracevcsdevwestus207AccountKey",
+      "properties": {
+        "attributes": {
+          "enabled": true,
+          "nbf": 1616718779
+        },
+        "value": "['qI9Zp9M2wYNd2A7UlTp6a8dCMPUwKYL7EPNrcEfEjxzYexv6AwkTr7SLs574JPGlTPfiSuAf/rOEXrEohVTsEQ==']"
+      },
+      "tags": {
+        "Application": "Grace",
+        "Organization": "GitHub",
+        "OwnerAlias": "scarbeit",
+        "environment": "development"
+      },
+      "type": "Microsoft.KeyVault/vaults/secrets"
+    },
+    {
+      "apiVersion": "2018-02-14",
+      "dependsOn": [
+        "[resourceId('Microsoft.KeyVault/vaults', 'gracevcs-development')]"
+      ],
+      "location": "westus2",
+      "name": "gracevcs-development/gracevcsdevwestus206AccountKey",
+      "properties": {
+        "attributes": {
+          "enabled": true,
+          "nbf": 1616718779
+        },
+        "value": "['KfhQMv2UKJXCEh984iXxK4cu6vzsG+Yq6E6UyS6J9n9iZsSFZM4EhqEaYl8Nxxjd+uUfXUKXMZwP15oNvRES0w==']"
+      },
+      "tags": {
+        "Application": "Grace",
+        "Organization": "GitHub",
+        "OwnerAlias": "scarbeit",
+        "environment": "development"
+      },
+      "type": "Microsoft.KeyVault/vaults/secrets"
+    },
+    {
+      "apiVersion": "2018-02-14",
+      "dependsOn": [
+        "[resourceId('Microsoft.KeyVault/vaults', 'gracevcs-development')]"
+      ],
+      "location": "westus2",
+      "name": "gracevcs-development/gracevcsdevwestus205AccountKey",
+      "properties": {
+        "attributes": {
+          "enabled": true,
+          "nbf": 1616718779
+        },
+        "value": "['JoahwGd16BwtNKbpTrR7PEjdta2nXHrpJIgufAbpSoi+HBNrYCHmcBYnd2qtSkEtiAb2YbGO3R+9d69j0ZKmww==']"
+      },
+      "tags": {
+        "Application": "Grace",
+        "Organization": "GitHub",
+        "OwnerAlias": "scarbeit",
+        "environment": "development"
+      },
+      "type": "Microsoft.KeyVault/vaults/secrets"
+    },
+    {
+      "apiVersion": "2018-02-14",
+      "dependsOn": [
+        "[resourceId('Microsoft.KeyVault/vaults', 'gracevcs-development')]"
+      ],
+      "location": "westus2",
+      "name": "gracevcs-development/gracevcsdevwestus204AccountKey",
+      "properties": {
+        "attributes": {
+          "enabled": true,
+          "nbf": 1616718779
+        },
+        "value": "['kaoXrBXwCmvIRo4oSUcmaSFEqUfgBvLFnSUql3GDrWMt8Fx75prbykR89rCsb61Cii0uoNexznlwZNKYlyJRIQ==']"
+      },
+      "tags": {
+        "Application": "Grace",
+        "Organization": "GitHub",
+        "OwnerAlias": "scarbeit",
+        "environment": "development"
+      },
+      "type": "Microsoft.KeyVault/vaults/secrets"
+    },
+    {
+      "apiVersion": "2018-02-14",
+      "dependsOn": [
+        "[resourceId('Microsoft.KeyVault/vaults', 'gracevcs-development')]"
+      ],
+      "location": "westus2",
+      "name": "gracevcs-development/gracevcsdevwestus203AccountKey",
+      "properties": {
+        "attributes": {
+          "enabled": true,
+          "nbf": 1616718779
+        },
+        "value": "['kpUB2fRhnidX46ntPWXtN4hdPRuRlD3xvg6fNe448OzNuHVGqsABubKjxnQHHOzJ3N3rdWGWTujjbdP3MA6Wtw==']"
+      },
+      "tags": {
+        "Application": "Grace",
+        "Organization": "GitHub",
+        "OwnerAlias": "scarbeit",
+        "environment": "development"
+      },
+      "type": "Microsoft.KeyVault/vaults/secrets"
+    },
+    {
+      "apiVersion": "2018-02-14",
+      "dependsOn": [
+        "[resourceId('Microsoft.KeyVault/vaults', 'gracevcs-development')]"
+      ],
+      "location": "westus2",
+      "name": "gracevcs-development/gracevcsdevwestus202AccountKey",
+      "properties": {
+        "attributes": {
+          "enabled": true,
+          "nbf": 1616718779
+        },
+        "value": "['gKb0F1P1nneZ/9WGMnFZsF522TGe8fJPnJV8/kRpURNwTgxNho0YCvNOVi0snWvXorBpa7ZvWUd1tk4FHiKA2g==']"
+      },
+      "tags": {
+        "Application": "Grace",
+        "Organization": "GitHub",
+        "OwnerAlias": "scarbeit",
+        "environment": "development"
+      },
+      "type": "Microsoft.KeyVault/vaults/secrets"
+    },
+    {
+      "apiVersion": "2018-02-14",
+      "dependsOn": [
+        "[resourceId('Microsoft.KeyVault/vaults', 'gracevcs-development')]"
+      ],
+      "location": "westus2",
+      "name": "gracevcs-development/gracevcsdevwestus201AccountKey",
+      "properties": {
+        "attributes": {
+          "enabled": true,
+          "nbf": 1616718779
+        },
+        "value": "['iB/H4YwTjj+lUoAOGl2bfOPPYPzLweY0KskHYM0vctS12ReRHYFgFDzySh8R+ddfTkdeVmkP75qcq4fsA83/Kg==']"
+      },
+      "tags": {
+        "Application": "Grace",
+        "Organization": "GitHub",
+        "OwnerAlias": "scarbeit",
+        "environment": "development"
+      },
+      "type": "Microsoft.KeyVault/vaults/secrets"
+    },
+    {
+      "apiVersion": "2018-02-14",
+      "dependsOn": [
+        "[resourceId('Microsoft.KeyVault/vaults', 'gracevcs-development')]"
+      ],
+      "location": "westus2",
+      "name": "gracevcs-development/gracevcsdevwestus200AccountKey",
+      "properties": {
+        "attributes": {
+          "enabled": true,
+          "nbf": 1616718779
+        },
+        "value": "['kVr8gYjoJBJZWRNHFnRjK+ZyxDbjoYDJips2jfjf4KDpMHfU4vBF1VdvJRHqupliy+2pg0OF1bHTQXq6+cFE7g==']"
+      },
+      "tags": {
+        "Application": "Grace",
+        "Organization": "GitHub",
+        "OwnerAlias": "scarbeit",
+        "environment": "development"
+      },
+      "type": "Microsoft.KeyVault/vaults/secrets"
+    },
+    {
+      "apiVersion": "2018-02-14",
+      "dependsOn": [
+        "[resourceId('Microsoft.KeyVault/vaults', 'gracevcs-development')]"
+      ],
+      "location": "westus2",
+      "name": "gracevcs-development/gracevcsdevwestus209ConnectionString",
+      "properties": {
+        "attributes": {
+          "enabled": true,
+          "nbf": 1616718779
+        },
+        "value": "['DefaultEndpointsProtocol=https;AccountName=gracevcsdevwestus209;AccountKey=L+rsHFxn+3whN1/4L/b1c0Tz+HEq4tisuv8p5BiLBceDlyu3FKTGLWAqrQl9cLv5xNDCuxkmxupxnoGieeKdsw==']"
+      },
+      "tags": {
+        "Application": "Grace",
+        "Organization": "GitHub",
+        "OwnerAlias": "scarbeit",
+        "environment": "development"
+      },
+      "type": "Microsoft.KeyVault/vaults/secrets"
+    },
+    {
+      "apiVersion": "2018-02-14",
+      "dependsOn": [
+        "[resourceId('Microsoft.KeyVault/vaults', 'gracevcs-development')]"
+      ],
+      "location": "westus2",
+      "name": "gracevcs-development/gracevcsdevwestus208ConnectionString",
+      "properties": {
+        "attributes": {
+          "enabled": true,
+          "nbf": 1616718779
+        },
+        "value": "['DefaultEndpointsProtocol=https;AccountName=gracevcsdevwestus208;AccountKey=7OiHmp7AFj6aI7ipDXYdtYrqHG/b4dnD+qPBjbJHlTeMEO5BYxmx7+QX/W8JD+MqnavXhgbBQ6e2CQkkiXOlmA==']"
+      },
+      "tags": {
+        "Application": "Grace",
+        "Organization": "GitHub",
+        "OwnerAlias": "scarbeit",
+        "environment": "development"
+      },
+      "type": "Microsoft.KeyVault/vaults/secrets"
+    },
+    {
+      "apiVersion": "2018-02-14",
+      "dependsOn": [
+        "[resourceId('Microsoft.KeyVault/vaults', 'gracevcs-development')]"
+      ],
+      "location": "westus2",
+      "name": "gracevcs-development/gracevcsdevwestus207ConnectionString",
+      "properties": {
+        "attributes": {
+          "enabled": true,
+          "nbf": 1616718779
+        },
+        "value": "['DefaultEndpointsProtocol=https;AccountName=gracevcsdevwestus207;AccountKey=qI9Zp9M2wYNd2A7UlTp6a8dCMPUwKYL7EPNrcEfEjxzYexv6AwkTr7SLs574JPGlTPfiSuAf/rOEXrEohVTsEQ==']"
+      },
+      "tags": {
+        "Application": "Grace",
+        "Organization": "GitHub",
+        "OwnerAlias": "scarbeit",
+        "environment": "development"
+      },
+      "type": "Microsoft.KeyVault/vaults/secrets"
+    },
+    {
+      "apiVersion": "2018-02-14",
+      "dependsOn": [
+        "[resourceId('Microsoft.KeyVault/vaults', 'gracevcs-development')]"
+      ],
+      "location": "westus2",
+      "name": "gracevcs-development/gracevcsdevwestus206ConnectionString",
+      "properties": {
+        "attributes": {
+          "enabled": true,
+          "nbf": 1616718779
+        },
+        "value": "['DefaultEndpointsProtocol=https;AccountName=gracevcsdevwestus206;AccountKey=KfhQMv2UKJXCEh984iXxK4cu6vzsG+Yq6E6UyS6J9n9iZsSFZM4EhqEaYl8Nxxjd+uUfXUKXMZwP15oNvRES0w==']"
+      },
+      "tags": {
+        "Application": "Grace",
+        "Organization": "GitHub",
+        "OwnerAlias": "scarbeit",
+        "environment": "development"
+      },
+      "type": "Microsoft.KeyVault/vaults/secrets"
+    },
+    {
+      "apiVersion": "2018-02-14",
+      "dependsOn": [
+        "[resourceId('Microsoft.KeyVault/vaults', 'gracevcs-development')]"
+      ],
+      "location": "westus2",
+      "name": "gracevcs-development/gracevcsdevwestus205ConnectionString",
+      "properties": {
+        "attributes": {
+          "enabled": true,
+          "nbf": 1616718779
+        },
+        "value": "['DefaultEndpointsProtocol=https;AccountName=gracevcsdevwestus205;AccountKey=JoahwGd16BwtNKbpTrR7PEjdta2nXHrpJIgufAbpSoi+HBNrYCHmcBYnd2qtSkEtiAb2YbGO3R+9d69j0ZKmww==']"
+      },
+      "tags": {
+        "Application": "Grace",
+        "Organization": "GitHub",
+        "OwnerAlias": "scarbeit",
+        "environment": "development"
+      },
+      "type": "Microsoft.KeyVault/vaults/secrets"
+    },
+    {
+      "apiVersion": "2018-02-14",
+      "dependsOn": [
+        "[resourceId('Microsoft.KeyVault/vaults', 'gracevcs-development')]"
+      ],
+      "location": "westus2",
+      "name": "gracevcs-development/gracevcsdevwestus204ConnectionString",
+      "properties": {
+        "attributes": {
+          "enabled": true,
+          "nbf": 1616718779
+        },
+        "value": "['DefaultEndpointsProtocol=https;AccountName=gracevcsdevwestus204;AccountKey=kaoXrBXwCmvIRo4oSUcmaSFEqUfgBvLFnSUql3GDrWMt8Fx75prbykR89rCsb61Cii0uoNexznlwZNKYlyJRIQ==']"
+      },
+      "tags": {
+        "Application": "Grace",
+        "Organization": "GitHub",
+        "OwnerAlias": "scarbeit",
+        "environment": "development"
+      },
+      "type": "Microsoft.KeyVault/vaults/secrets"
+    },
+    {
+      "apiVersion": "2018-02-14",
+      "dependsOn": [
+        "[resourceId('Microsoft.KeyVault/vaults', 'gracevcs-development')]"
+      ],
+      "location": "westus2",
+      "name": "gracevcs-development/gracevcsdevwestus203ConnectionString",
+      "properties": {
+        "attributes": {
+          "enabled": true,
+          "nbf": 1616718779
+        },
+        "value": "['DefaultEndpointsProtocol=https;AccountName=gracevcsdevwestus203;AccountKey=kpUB2fRhnidX46ntPWXtN4hdPRuRlD3xvg6fNe448OzNuHVGqsABubKjxnQHHOzJ3N3rdWGWTujjbdP3MA6Wtw==']"
+      },
+      "tags": {
+        "Application": "Grace",
+        "Organization": "GitHub",
+        "OwnerAlias": "scarbeit",
+        "environment": "development"
+      },
+      "type": "Microsoft.KeyVault/vaults/secrets"
+    },
+    {
+      "apiVersion": "2018-02-14",
+      "dependsOn": [
+        "[resourceId('Microsoft.KeyVault/vaults', 'gracevcs-development')]"
+      ],
+      "location": "westus2",
+      "name": "gracevcs-development/gracevcsdevwestus202ConnectionString",
+      "properties": {
+        "attributes": {
+          "enabled": true,
+          "nbf": 1616718779
+        },
+        "value": "['DefaultEndpointsProtocol=https;AccountName=gracevcsdevwestus202;AccountKey=gKb0F1P1nneZ/9WGMnFZsF522TGe8fJPnJV8/kRpURNwTgxNho0YCvNOVi0snWvXorBpa7ZvWUd1tk4FHiKA2g==']"
+      },
+      "tags": {
+        "Application": "Grace",
+        "Organization": "GitHub",
+        "OwnerAlias": "scarbeit",
+        "environment": "development"
+      },
+      "type": "Microsoft.KeyVault/vaults/secrets"
+    },
+    {
+      "apiVersion": "2018-02-14",
+      "dependsOn": [
+        "[resourceId('Microsoft.KeyVault/vaults', 'gracevcs-development')]"
+      ],
+      "location": "westus2",
+      "name": "gracevcs-development/gracevcsdevwestus201ConnectionString",
+      "properties": {
+        "attributes": {
+          "enabled": true,
+          "nbf": 1616718779
+        },
+        "value": "['DefaultEndpointsProtocol=https;AccountName=gracevcsdevwestus201;AccountKey=iB/H4YwTjj+lUoAOGl2bfOPPYPzLweY0KskHYM0vctS12ReRHYFgFDzySh8R+ddfTkdeVmkP75qcq4fsA83/Kg==']"
+      },
+      "tags": {
+        "Application": "Grace",
+        "Organization": "GitHub",
+        "OwnerAlias": "scarbeit",
+        "environment": "development"
+      },
+      "type": "Microsoft.KeyVault/vaults/secrets"
+    },
+    {
+      "apiVersion": "2018-02-14",
+      "dependsOn": [
+        "[resourceId('Microsoft.KeyVault/vaults', 'gracevcs-development')]"
+      ],
+      "location": "westus2",
+      "name": "gracevcs-development/gracevcsdevwestus200ConnectionString",
+      "properties": {
+        "attributes": {
+          "enabled": true,
+          "nbf": 1616718779
+        },
+        "value": "['DefaultEndpointsProtocol=https;AccountName=gracevcsdevwestus200;AccountKey=kVr8gYjoJBJZWRNHFnRjK+ZyxDbjoYDJips2jfjf4KDpMHfU4vBF1VdvJRHqupliy+2pg0OF1bHTQXq6+cFE7g==']"
+      },
+      "tags": {
+        "Application": "Grace",
+        "Organization": "GitHub",
+        "OwnerAlias": "scarbeit",
+        "environment": "development"
+      },
+      "type": "Microsoft.KeyVault/vaults/secrets"
+    },
+    {
+      "apiVersion": "2018-02-14",
+      "dependsOn": [
+        "[resourceId('Microsoft.KeyVault/vaults', 'gracevcs-development')]"
+      ],
+      "location": "westus2",
+      "name": "gracevcs-development/AzureStorageConnectionString",
+      "properties": {
+        "attributes": {
+          "enabled": true,
+          "nbf": 1616718779
+        },
+        "value": "['DefaultEndpointsProtocol=https;AccountName=gracevcsdevelopment;AccountKey=82KelvF0bTCU59DSrKald4NAmJ71lIm6DkY2nGKPhwn2Kz+g33O2OfgMmQKFC25lAidBe0/5H3OQDVASRXRTiw==']"
+      },
+      "tags": {
+        "Application": "Grace",
+        "Organization": "GitHub",
+        "OwnerAlias": "scarbeit",
+        "environment": "development"
+      },
+      "type": "Microsoft.KeyVault/vaults/secrets"
+    }
+  ]
+}

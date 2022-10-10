@@ -1,0 +1,29 @@
+# Just list the patterns you want to ignore.
+
+# Patterns for files do not have a path separator (i.e. no "/"), and use normal ? and * wildcards.
+# Examples:
+# *.exe
+# *.obj
+
+# Patterns containing a path separator ('/') allow for ignoring directories that contain the specified string.
+# Examples:
+# */bin/*
+# */obj/*
+
+*.exe
+*.dll
+*.obj
+*.tmp
+*.TMP
+*.temp
+*.pdb
+*.cache
+*.CopyComplete
+*.???~
+
+/.grace/objects/*
+/.grace/directoryVersions/*
+*/bin/*
+*/obj/*
+*/.git/*
+*/.vs/*

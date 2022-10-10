@@ -1,0 +1,46 @@
+{
+  "OwnerId": "ce93e5ee-d8e1-414f-98b8-39ba1b04a54b",
+  "OwnerName": "Scott",
+  "OrganizationId": "b4ba1b0d-8036-40e8-a4c0-12a85f5ba3f3",
+  "OrganizationName": "Default",
+  "RepositoryId": "dc9695ed-7c91-4913-afea-e8f38a96ac90",
+  "RepositoryName": "GraceDev03",
+  "BranchId": "d7a65d20-c33b-420f-a46f-7b03e13279f0",
+  "BranchName": "scottarbeit",
+  "DefaultBranchName": "main",
+  "Themes": [
+    {
+      "Name": "Default",
+      "DisplayColorOptions": {
+        "added": "#00AF5F",
+        "changed": "#2F84FF",
+        "deemphasized": "#777777",
+        "deleted": "#8B0000",
+        "error": "#FF0000",
+        "highlighted": "#FFFFFF",
+        "important": "#e5c07b",
+        "verbose": "#FF78EF"
+      }
+    }
+  ],
+  "LineEndings": "PlatformDependent",
+  "Prefetch": [
+    ""
+  ],
+  "RootDirectory": "C:\\Source\\Grace\\src",
+  "StandardizedRootDirectory": "C:/Source/Grace/src/Grace.CLI",
+  "GraceDirectory": "C:\\Source\\Grace\\src\\.grace",
+  "ObjectDirectory": "C:\\Source\\Grace\\src\\.grace\\objects",
+  "GraceStatusFile": "C:\\Source\\Grace\\src\\.grace\\gracestatus.json.gz",
+  "GraceObjectCacheFile": "C:\\Source\\Grace\\src\\.grace\\objects\\graceObjectCache.json.gz",
+  "DirectoryVersionCache": "C:\\Source\\Grace\\src\\.grace\\directoryVersions",
+  "ConfigurationDirectory": "C:\\Source\\Grace\\src\\.grace",
+  "ObjectStorageProvider": "azureBlobStorage",
+  "ServerUri": "http://127.0.0.1:5000",
+  "ProgramVersion": "0.1",
+  "ConfigurationVersion": "",
+  "ActivitySource": {
+    "Name": "Grace",
+    "Version": "0.1"
+  }
+}

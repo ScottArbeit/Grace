@@ -1,0 +1,143 @@
+networks:
+  grace:
+    name: grace
+    enable_ipv6: false
+    attachable: false
+
+services:
+  grace.server:
+    image: grace.server
+    container_name: Grace.Server
+    networks: 
+      - grace
+    #extra_hosts:
+    #  - "localhost:192.168.1.201"
+    build:
+      context: .
+      dockerfile: Grace.Server/Dockerfile
+    environment:
+      ASPNETCORE_Kestrel__Certificates__Default__Path: "/https/aspnetapp.pfx"
+      ASPNETCORE_Kestrel__Certificates__Default__Password: "CrypticPassword8=5"
+      DAPR_SERVER_URI: "http://localhost"
+      DAPR_HTTP_PORT: "3500"
+      DAPR_GRPC_PORT: "50001"
+      AZURE_MONITOR_CONNECTION_STRING: "InstrumentationKey=e0955eb4-1817-4a94-bf6e-d48f6ae54a8c;IngestionEndpoint=https://westus2-2.in.applicationinsights.azure.com/"
+    volumes:
+     - "C:\\Users\\Scott\\.aspnet\\https:/https/"
+    ports:
+      - "5000:5000"
+      - "5001:5001"
+    depends_on:
+      - dapr-placement
+
+  daprd:
+    image: daprio/daprd:1.5.1
+    container_name: daprd
+    networks:
+      - grace
+    command: ["./daprd",
+     "--app-id", "grace",
+     "--app-port", "5000",
+     "--dapr-http-port", "3500",
+     "--dapr-grpc-port", "50001",
+     "--placement-host-address", "dapr-placement:6050",
+     "--components-path", "./components",
+     "--config", "./dapr-config/open-telemetry-collector-appinsights.yaml",
+     "--log-as-json"]
+    ports:
+      - "3500:3500"
+      - "50001:50001"
+    volumes:
+      - "./dapr-config/:/dapr-config"
+      - "./components/:/components"
+    depends_on:
+      - grace.server
+      - redis
+      - otel-collector
+
+  dapr-placement:
+    image: daprio/dapr:1.5.1
+    container_name: dapr-placement
+    command: ["./placement", "-port", "6050"]
+    ports:
+      - "6050:6050"
+    networks:
+      - grace
+  
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib
+    container_name: opentelemetry-collector
+    networks:
+      - grace
+    command: ["--config=/etc/otel-collector-config.yml"]
+    volumes:
+      - ./collector/otel-collector-config.yml:/etc/otel-collector-config.yml
+    ports:
+      - "1888:1888"   # pprof extension
+      - "8888:8888"   # Prometheus metrics exposed by the collector
+      - "8889:8889"   # Prometheus exporter metrics
+      - "9464:9464"   # Prometheus exporter port
+      - "13133:13133" # health_check extension
+      #- "4317:4317"   # OTLP gRPC receiver
+      - "4318:4318"   # OTLP/HTTP receiver
+    depends_on:
+      - zipkin
+      - prometheus
+
+  zipkin:
+    image: openzipkin/zipkin
+    container_name: zipkin
+    networks:
+      - grace
+    environment:
+      - STORAGE_TYPE=elasticsearch
+      # Point the zipkin at the storage backend
+      - ES_HOSTS=zipkin-elasticsearch:9200
+      # Uncomment to see requests to and from elasticsearch
+      # - ES_HTTP_LOGGING=BODY
+    depends_on:
+      - zipkin-elasticsearch
+    ports:
+      - "9410:9410"
+      - "9411:9411"
+
+  zipkin-elasticsearch:
+    image: ghcr.io/openzipkin/zipkin-elasticsearch7:latest
+    container_name: zipkin-elasticsearch
+    networks:
+      - grace
+    # Uncomment to expose the storage port for testing
+    # ports:
+      #- 9200:9200
+      
+  zipkin-dependencies:
+    image: ghcr.io/openzipkin/zipkin-dependencies
+    container_name: zipkin-dependencies
+    entrypoint: crond -f
+    networks:
+      - grace
+    environment:
+      # Uncomment to see dependency processing logs
+      # - ZIPKIN_LOG_LEVEL=DEBUG
+      # Uncomment to adjust memory used by the dependencies job
+      # - JAVA_OPTS=-verbose:gc -Xms1G -Xmx1G
+      - STORAGE_TYPE=elasticsearch
+      - ES_HOSTS=zipkin-elasticsearch:9200
+    depends_on:
+      - zipkin-elasticsearch
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    volumes:
+      - "./collector/prometheus.yaml:/etc/prometheus/prometheus.yml"
+    ports:
+      - "9090:9090"
+
+  redis:
+    image: redis:latest
+    container_name: redis
+    networks: 
+      - grace
+    ports:
+      - "6379:6379"
