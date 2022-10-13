@@ -155,6 +155,10 @@ Every time you run `grace commit`, `grace merge`, or `grace checkpoint`, and eve
 They're automatically aged out and deleted after a configurable length of time, so they don't waste resources.
 
 ![](https://gracevcsdevelopment.blob.core.windows.net/static/Green.svg)
+### Optional file locking
+If your repository includes large binary files, like edited video, graphics, or game artifacts, you need to make sure that only one person at a time edits each file. Grace will support optional file locking at the directory level to ensure that you don't have to re-do work.
+
+![](https://gracevcsdevelopment.blob.core.windows.net/static/Green.svg)
 ### A simple Web API
 Grace Server is a modern Web API application. Like Grace's CLI, the Web API is easy to use, and easy to understand.
 
