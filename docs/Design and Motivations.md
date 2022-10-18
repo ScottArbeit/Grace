@@ -30,7 +30,7 @@ For shorter answers to some of these, please see [Frequently Asked Questions](do
 
 [Monorepos](#monorepos)
 
-![](https://gracevcsdevelopment.blob.core.windows.net/static/Orange.svg)
+![](https://gracevcsdevelopment.blob.core.windows.net/static/Orange3.svg)
 ## A word about Git
 
 It's not possible to design a version control system (VCS) today (Grace was first conceived in December, 2020) without designing something that relates to, interfaces with, and/or somehow *just reacts to* Git. In order to explain some of the choices I've made in Grace, I *have* to mention Git. Mostly, of course, I'll do that if I think Grace is better in some way or other.
@@ -47,12 +47,12 @@ Git is amazing at what it does. I'm openly borrowing from Git where I think it's
 
 I just think that it's a different time now. The constraints that existed in 2005 in terms of hardware and networking, that Git was designed to fit in, don't hold anymore. We can take advantage of current client and server and cloud capabilities to design something really different.
 
-![](https://gracevcsdevelopment.blob.core.windows.net/static/Orange.svg)
+![](https://gracevcsdevelopment.blob.core.windows.net/static/Orange3.svg)
 ## User experience is everything
 
 Now that I've said some nice things about Git...
 
-### Git's UX is ~~terrible~~, uh... not always great.
+### Git's UX is ~~terrible~~ uh... not always great.
  
  [I](https://xkcd.com/1597/) [hope](https://gracevcsdevelopment.blob.core.windows.net/static/RandomGitCommands.jpeg) [this](https://git-man-page-generator.lokaltog.net) [is](https://rakhim.org/honestly-undefined/13/) [not](https://gracevcsdevelopment.blob.core.windows.net/static/MemorizingSixGitCommands.jpg) [a](https://www.quora.com/Why-is-Git-so-hard-to-learn) [controversial](https://www.quora.com/If-I-think-Git-is-too-hard-to-learn-does-it-mean-that-I-dont-have-the-potential-to-be-a-developer) [statement](https://twitter.com/markrussinovich/status/1395143648191279105). And [I](https://twitter.com/robertskmiles/status/1431560311086137353) **[know](https://twitter.com/markrussinovich/status/1578451245249052672)** [I'm](https://ohshitgit.com/) [not](https://twitter.com/dvd848/status/1508528441519484931) [alone](https://twitter.com/shanselman/status/1102296651081760768) [in](https://www.linuxjournal.com/content/terrible-ideas-git) [thinking](https://blog.acolyer.org/2016/10/24/whats-wrong-with-git-a-conceptual-design-analysis/) [it](https://matt-rickard.com/the-terrible-ux-of-git).
 
@@ -72,7 +72,7 @@ And in a world where hybrid and remote work is growing, Grace offers entirely ne
 
 There's so much more to do in UX for version control. Grace is a platform for exploring where it can go next, while remaining easy to use, and easy to understand.
 
-![](https://gracevcsdevelopment.blob.core.windows.net/static/Orange.svg)
+![](https://gracevcsdevelopment.blob.core.windows.net/static/Orange3.svg)
 ## Excellent perceived performance
 Measuring actual performance of any significant system is important, and Grace will have performance benchmarks that can be run alongside other kinds of tests to ensure that regressions don't sneak in. I care deeply about performance.
 
@@ -84,7 +84,7 @@ My experience is that running _fast enough_, _consistently_, is what gives the u
 
 That's what Grace is aiming for: both _fast_, and _consistent_. Fast + consistent means that users can develop expectations and muscle memory when using a command, and that running a command won't take them out of their flow.
 
-![](https://gracevcsdevelopment.blob.core.windows.net/static/Orange.svg)
+![](https://gracevcsdevelopment.blob.core.windows.net/static/Orange3.svg)
 ## CLI + Native GUI + Web UI + Web API
 Another avenue for providing great UX is in providing choices about how to interact with Grace.
 
@@ -118,7 +118,7 @@ Grace Server itself is simply a modern, 2022-style Web API. If there's something
 
 It's about choices for the user. It's about understanding that sometimes the best way to share something is with a URL. And it's about providing a place that we can collaborate on what the default Grace's UI should look like.
 
-![](https://gracevcsdevelopment.blob.core.windows.net/static/Orange.svg)
+![](https://gracevcsdevelopment.blob.core.windows.net/static/Orange3.svg)
 ## F# and functional programming
 
 ### Grace is written primarily in F#
@@ -164,7 +164,7 @@ I'm aware of what it means to be coding down-to-the-metal. I grew up on it, and 
 
 With that said, the idea that version control systems have to be written in a systems-level language, just because they all used to be, isn't true, especially for a centralized VCS that's really just a modern Web API + clients. Grace relies on external databases and object storage services, and so there's very little Git-style byte-level file manipulation going on, and where there is, .NET can tell the file system to do stuff just as quickly as any other framework. Given how fast .NET is (within 1% of native C++ when well-written), and the fact that network round-trips are involved in most things that Grace does, it's just not likely that writing Grace in C++ or Rust would make a difference in perceived performance for users. Most of the time is spent waiting for something over the network, both in the client, and on the server. The computation part is usually pretty quick compared to that.
 
-![](https://gracevcsdevelopment.blob.core.windows.net/static/Orange.svg)
+![](https://gracevcsdevelopment.blob.core.windows.net/static/Orange3.svg)
 ## Cloud-native version control
 
 I've personally installed and maintained hundreds of servers and virtual machines in my career. I racked some of them myself. It seemed fun at the time. I'm over it.
@@ -197,7 +197,7 @@ Although I've only implemented support for Azure Blob Storage so far, I've creat
 
 The simple version is: it adds 1-2ms per request through Dapr, when we ask Dapr's Actor Placement Service (running in a separate container) which Grace application instance will have the specific Actor we're interested in. It's negligable compared to overall network round-trip between client and server, and well worth it for the ease-of-use of the Actor pattern in Dapr.
 
-![](https://gracevcsdevelopment.blob.core.windows.net/static/Orange.svg)
+![](https://gracevcsdevelopment.blob.core.windows.net/static/Orange3.svg)
 ## Why Grace is centralized
 
 Grace is a centralized version control system (CVCS). To be clear, there are valid reasons to use a distibuted version control system (DVCS), like Git. There are other new DVCS projects underway, and there are some great ideas in them. Grace is clearly not well-suited for a situation where a DVCS is required, and that's OK.
@@ -216,7 +216,7 @@ I wanted to take a different approach with Grace, because:
 
 And, let's be honest: almost *everyone* uses Git in a pseudo-centralized, hub-and-spoke model, where the "real" version of the repo - the hub - is centralized at GitHub / GitLab / Atlassian / some other server, and the spokes are all of the users of the repo. In other words, we're already using Git as a centralized version control system, we're just kind-of pretending that we're not, and we're making things more complicated for ourselves because of it.
 
-![](https://gracevcsdevelopment.blob.core.windows.net/static/Orange.svg)
+![](https://gracevcsdevelopment.blob.core.windows.net/static/Orange3.svg)
 ## Performance; or, Isn't centralized version control slower?
 
 I've been around long enough to have used a couple of the older CVCS's, and I understand the reputation of them as feeling, just... slower. And heavier. That's not what Grace is like.
@@ -236,7 +236,7 @@ There are also scenarios where Grace will be faster than Git - scenarios where G
 
 So, Grace is designed to be *fast*, i.e. fast enough to keep users in flow, and to be *consistent*, i.e. users quickly develop muscle-memory for how long things take, helping them stay in flow. CVCS's just have a different performance profile than DVCS's, but there's no reason they can't *feel* responsive and fast.
 
-![](https://gracevcsdevelopment.blob.core.windows.net/static/Orange.svg)
+![](https://gracevcsdevelopment.blob.core.windows.net/static/Orange3.svg)
 ## Scalability
 
 Grace has no binary data format of its own, and relies on object storage (i.e. Azure Blob Storage, AWS S3, etc.) to store individual versions of files. Likewise, Grace's metadata is stored as documents in a database (i.e. Azure Cosmos DB, MongoDB, Redis, etc.) and not in a file on a filesystem. Therefore, to a large extent, the scalability of an installation of Grace depends on the Platform-as-a-Service components that it is deployed on.
@@ -245,7 +245,7 @@ Because Grace uses the Actor pattern extensively, Grace benefits when more memor
 
 I haven't yet run load tests, but... if the database used for Grace can support thousands of transactions/second, and the object storage service can handle thousands of transactions/second (and the message bus and the observability system etc.), then between that and Grace's natural use of memory for caching, Grace Server *should* be able to scale up and scale out pretty well. (I hope to do some first-ever load tests in Sept/Oct 2022 and no doubt I'll find some performance fixes when I do.)
 
-![](https://gracevcsdevelopment.blob.core.windows.net/static/Orange.svg)
+![](https://gracevcsdevelopment.blob.core.windows.net/static/Orange3.svg)
 ## Monorepos
 
 Defining what a "large repository" or a "monorepo" is isn't straightforward. "Large" can mean different things:

@@ -6,7 +6,7 @@ grace _(noun)_[^grace] -
 3. goodwill or favor
 4. a sense of propriety and consideration for others
 
-![](https://gracevcsdevelopment.blob.core.windows.net/static/Orange.svg)
+![](https://gracevcsdevelopment.blob.core.windows.net/static/Orange3.svg)
 ## Welcome to Grace.
 
 Grace is a **new**, **modern**, **cloud-native** **version control system**.
@@ -17,16 +17,16 @@ Grace can run in the background, making it **ambient**, **faster**, and **more v
 
 Grace **connects you with others** working in your repository, **across the globe**, **in real-time**, enabling **new experiences** and **new ways of sharing**.
 
-![](https://gracevcsdevelopment.blob.core.windows.net/static/Orange.svg)
+![](https://gracevcsdevelopment.blob.core.windows.net/static/Orange3.svg)
 
 to be clear:
 > Grace is **new** 🧑🏼‍🔬 and **alpha-level** right now. 🔥🧯 It is deeply incomplete. Grace is not currently meant to be relied on or used for anything other than its own development and testing (including playing with it to give feedback, of course).[^git]
 
-![](https://gracevcsdevelopment.blob.core.windows.net/static/Orange.svg)
+![](https://gracevcsdevelopment.blob.core.windows.net/static/Orange3.svg)
 ## FAQ
 For a list of (mostly imagined) frequently asked questions, please see the [Frequently Asked Questions](docs/Frequently%20asked%20questions.md) page.
 
-![](https://gracevcsdevelopment.blob.core.windows.net/static/Orange.svg)
+![](https://gracevcsdevelopment.blob.core.windows.net/static/Orange3.svg)
 ## Vision
 
 A lot of this remains to be built, but here's what I expect V1 to look like.
@@ -158,6 +158,8 @@ They're automatically aged out and deleted after a configurable length of time, 
 ### Optional file locking
 If your repository includes large binary files, like edited video, graphics, or game artifacts, you need to make sure that only one person at a time edits each file. Grace will support optional file locking at the directory level to ensure that you don't have to re-do work.
 
+(Don't worry... if you don't need file locking, you don't have to turn it on.)
+
 ![](https://gracevcsdevelopment.blob.core.windows.net/static/Green.svg)
 ### A simple Web API
 Grace Server is a modern Web API application. Like Grace's CLI, the Web API is easy to use, and easy to understand.
@@ -188,12 +190,12 @@ Grace Server is a modern, cloud-native Web API application. It will ship in a co
 
 Grace Server is designed to be easy to deploy and operate. It runs on your choice of dozens of cloud-native databases, components and services, using [Dapr](https://dapr.io), making it flexible and inherently scalable. Grace Server is stateless and scales up and down well using basic [KEDA](https://keda.sh/) counters.
 
-![](https://gracevcsdevelopment.blob.core.windows.net/static/Orange.svg)
+![](https://gracevcsdevelopment.blob.core.windows.net/static/Orange3.svg)
 ## Design and Motivations
 
 If you'd like to read about some of the design thinking and motivations behind Grace - topics like UX, performance, scalability, monorepos, Git, and more - please read [Design and Motivations](docs/Design%20and%20Motivations.md).
 
-![](https://gracevcsdevelopment.blob.core.windows.net/static/Orange.svg)
+![](https://gracevcsdevelopment.blob.core.windows.net/static/Orange3.svg)
 ## Project structure
 
 Grace is written primarily in [F#](), and is organized into nine .NET projects.
@@ -239,13 +241,13 @@ flowchart LR
     Blazor["(future) Grace.Blazor"]-->|"(not yet started)"|Grace.Shared
 ```
 
-![](https://gracevcsdevelopment.blob.core.windows.net/static/Orange.svg)
+![](https://gracevcsdevelopment.blob.core.windows.net/static/Orange3.svg)
 ## Deployment
 Grace Server will be shipped as a container, which will be made available on Docker Hub. Dapr's sidecar and actor placement processes are shipped as containers and are available on Docker Hub.
 
 We intend to provide a Docker Compose template, as well as Kubernetes configuration for deployment, allowing for deployment to any major public cloud provider, as well as on-premises hardware.
 
-![](https://gracevcsdevelopment.blob.core.windows.net/static/Orange.svg)
+![](https://gracevcsdevelopment.blob.core.windows.net/static/Orange3.svg)
 
 ---
 

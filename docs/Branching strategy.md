@@ -1,4 +1,4 @@
-![](https://gracevcsdevelopment.blob.core.windows.net/static/Orange.svg)
+![](https://gracevcsdevelopment.blob.core.windows.net/static/Orange3.svg)
 # Simplified branching strategy
 Grace's default branching strategy is meant to be simple, and to help surface merge conflicts as early as possible. It's called "single-step". In most cases, it's all you need to successfully run a project.
 

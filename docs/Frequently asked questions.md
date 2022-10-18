@@ -3,7 +3,7 @@ _or, what I imagine they might be_
 
 For deeper answers to some of these, please read [Design and Motivations](docs/Design%20and%20Motivations.md).
 
-![](https://gracevcsdevelopment.blob.core.windows.net/static/Orange.svg)
+![](https://gracevcsdevelopment.blob.core.windows.net/static/Orange3.svg)
 
 ## Is Grace centralized or decentralized?
 Grace is a centralized version control system (VCS).
@@ -85,6 +85,6 @@ Everything helps. Feel free to file an Issue in the repo. Please join us over in
 
 I confess the debug workflow is very much tailored to me and my local machine at the moment. I'm going to fix that, and when I do, I'll post instructions for how to write code for and debug Grace as easily as possible.
 
-![](https://gracevcsdevelopment.blob.core.windows.net/static/Orange.svg)
+![](https://gracevcsdevelopment.blob.core.windows.net/static/Orange3.svg)
 
 [^binary]: The algorithm is: is there a 0x00 byte anywhere in the first 8,000 bytes? If there is, it's assumed to be a binary file. Otherwise, it's assumed to be a text file.
