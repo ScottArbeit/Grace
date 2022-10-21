@@ -4,7 +4,7 @@ Hi, I'm Scott. I created Grace.
 
 I'll use first-person in this document, not because I wish to imply that Grace is *my project alone*, but because I want to share what the early design and technology decisions were for Grace, and why I started writing it in the first place.
 
-For shorter answers to some of these, please see [Frequently Asked Questions](docs/Frequently%20asked%20questions.md).
+For shorter answers to some of these, please see [Frequently Asked Questions](Frequently%20asked%20questions.md).
 
 ---
 
