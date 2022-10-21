@@ -1,7 +1,7 @@
 # Frequently Asked Questions
 _or, what I imagine they might be_
 
-For deeper answers to some of these, please read [Design and Motivations](docs/Design%20and%20Motivations.md).
+For deeper answers to some of these, please read [Design and Motivations](Design%20and%20Motivations.md).
 
 ![](https://gracevcsdevelopment.blob.core.windows.net/static/Orange3.svg)
 
