@@ -52,7 +52,7 @@ I just think that it's a different time now. The constraints that existed in 200
 
 Now that I've said some nice things about Git...
 
-### Git's UX is ~~terrible~~ uh... not always great.
+### Git's UX is ~~terrible~~ uh... not so great.
  
  [I](https://xkcd.com/1597/) [hope](https://gracevcsdevelopment.blob.core.windows.net/static/RandomGitCommands.jpeg) [this](https://git-man-page-generator.lokaltog.net) [is](https://rakhim.org/honestly-undefined/13/) [not](https://gracevcsdevelopment.blob.core.windows.net/static/MemorizingSixGitCommands.jpg) [a](https://www.quora.com/Why-is-Git-so-hard-to-learn) [controversial](https://www.quora.com/If-I-think-Git-is-too-hard-to-learn-does-it-mean-that-I-dont-have-the-potential-to-be-a-developer) [statement](https://twitter.com/markrussinovich/status/1395143648191279105). And [I](https://twitter.com/robertskmiles/status/1431560311086137353) **[know](https://twitter.com/markrussinovich/status/1578451245249052672)** [I'm](https://ohshitgit.com/) [not](https://twitter.com/dvd848/status/1508528441519484931) [alone](https://twitter.com/shanselman/status/1102296651081760768) [in](https://www.linuxjournal.com/content/terrible-ideas-git) [thinking](https://blog.acolyer.org/2016/10/24/whats-wrong-with-git-a-conceptual-design-analysis/) [it](https://matt-rickard.com/the-terrible-ux-of-git).
 
@@ -68,7 +68,7 @@ Because of that, Grace has fewer concepts for users to understand to become and 
 
 Grace formats output to make it as easy to read as possible, and also offers JSON output, minimal output, and silent output for each command. [^output]
 
-And in a world where hybrid and remote work is growing, Grace offers entirely new experiences with a live, two-way channel between client and server, linking repository users together in new ways, including auto-rebasing immediately after merges.
+And in a world where hybrid and remote work is growing, Grace offers entirely new experiences with a live, two-way channel between client and server, linking repository users together in new ways, including auto-rebasing immediately after promotions (which are merges, sort-of).
 
 There's so much more to do in UX for version control. Grace is a platform for exploring where it can go next, while remaining easy to use, and easy to understand.
 
@@ -137,7 +137,7 @@ You may disagree, and that's fine. There's a fair argument that when you design 
 
 Functional programming offers a new path to create large-scale codebases that sidestep these problems. No doubt, over the coming years, as more teams try functional code, we'll find anti-patterns that we need to deal with (and, no doubt, I have some of them in Grace), but having personally taken the mindset journey from OO to functional, my field report is: we'll benefit greatly as an industry if we take a more functional and declarative approach to coding. It can do wonders everywhere, not just in the UI frameworks where we've already seen the benefits.
 
-Whether you choose Haskell, Scala, F#, Crystal, or some other functional language, I'd like to invite you to try functional programming. It's a journey, for sure, but it's so worth it. Not only will you learn a new way to think about organizing code, you'll become a better OO programmer for it.
+Whether you choose Haskell, Scala, F#, Crystal, or some other functional language, I invite you to try functional programming. It's a journey, for sure, but it's so worth it. Not only will you learn a new way to think about organizing code, you'll become a better OO programmer for it.
 
 ### .NET is really nice to use, and well-supported
 
@@ -153,16 +153,16 @@ Is it perfect? No, of course not. Nothing in our business is.
 
 Does it get to "really good" and "great" more often than other frameworks / runtimes / languages? Does it continue to improve release after release? In my experience: yes, it does.
 
-I'm not aware of a programming framework that I think has a better chance of being well-supported for at least the next 10 years than .NET.
+Will it be supported for a long time? Yes, absolutely. .NET has great adoption in both open-source and enterprise shops. Unity, one of the most popular game engines, is written in C#. Microsoft itself runs many of its first-party Azure services on .NET, and that alone will keep .NET around and on a continuous improvement cycle for the forseeable future.
 
-So, it's very fast, it has great corporate and community support, it runs on every major platform, and it's loved by those who use it. It's a safe choice, it's a good choice, and I'm happy to be a .NET developer.
+So, it's very fast, it has great corporate and community support, it runs on every major platform, and it's loved by those who use it. I'm not saying that other tech stacks aren't great, just that .NET really is a good choice right now.
 
 ### Source control isn't "systems-level"
 I like things that go fast. My second programming language - at age 11 - was 6502 Assembler. I've written and read code in IBM 370 Assembler and 80x86 Assembler. I've written C and C++, and continue to pay attention to the wonderful work being led by [Herb Sutter](https://www.youtube.com/user/CppCon/search?query=herb%20sutter) and [Bjarne Stroustrup](https://www.youtube.com/user/CppCon/search?query=bjarne) to make C++ faster, safer, less verbose, and easier to use. I applaud the work by Mozilla and the Rust community to explore the space of safer, very fast systems programming. I consider any public talk by [Chandler Carruth](https://www.youtube.com/results?search_query=chandler+carruth) to be mandatory viewing.
 
 I'm aware of what it means to be coding down-to-the-metal. I grew up on it, and still try to think in terms of hardware capabilities, even as I use higher-level frameworks like .NET.
 
-With that said, the idea that version control systems have to be written in a systems-level language, just because they all used to be, isn't true, especially for a centralized VCS that's really just a modern Web API + clients. Grace relies on external databases and object storage services, and so there's very little Git-style byte-level file manipulation going on, and where there is, .NET can tell the file system to do stuff just as quickly as any other framework. Given how fast .NET is (within 1% of native C++ when well-written), and the fact that network round-trips are involved in most things that Grace does, it's just not likely that writing Grace in C++ or Rust would make a difference in perceived performance for users. Most of the time is spent waiting for something over the network, both in the client, and on the server. The computation part is usually pretty quick compared to that.
+With that said, the idea that version control systems have to be written in a systems-level language, just because they all used to be, isn't true, especially for a centralized VCS that's really just a modern Web API + clients. Grace relies on external databases and object storage services, and so there's very little Git-style byte-level file manipulation going on, and where there is, .NET can tell the file system to do stuff just as quickly as any other framework. Given how fast .NET is (within 1% of native C++ when well-written), and the fact that network round-trips are involved in most things that Grace does, it's just not likely that writing Grace in C++ or Rust would make a difference in perceived performance for users. Most of the clock time is spent waiting for something over the network, both in the client, and on the server. The on-device computation part is pretty quick compared to that.
 
 ![](https://gracevcsdevelopment.blob.core.windows.net/static/Orange3.svg)
 ## Cloud-native version control
@@ -195,7 +195,7 @@ Although I've only implemented support for Azure Blob Storage so far, I've creat
 
 ### How does Dapr affect performance?
 
-The simple version is: it adds 1-2ms per request through Dapr, when we ask Dapr's Actor Placement Service (running in a separate container) which Grace application instance will have the specific Actor we're interested in. It's negligable compared to overall network round-trip between client and server, and well worth it for the ease-of-use of the Actor pattern in Dapr.
+The simple version is: it adds ~1ms per request through Dapr, when we ask Dapr's Actor Placement Service (running in a separate container) which Grace application instance will have the specific Actor we're interested in. It's negligable compared to overall network round-trip between client and server, and well worth it for the ease-of-use of the Actor pattern in Dapr.
 
 ![](https://gracevcsdevelopment.blob.core.windows.net/static/Orange3.svg)
 ## Why Grace is centralized
@@ -209,12 +209,13 @@ I wanted to take a different approach with Grace, because:
 - being centralized allows Grace to handle arbitrarily large files, and to give users controls for which files get retrieved locally
 - being centralized allows Grace to scale up well by relying on mature Platform-as-a-Service components
 - it's 2022, and writing software that requires a file server seems... dated
-- I'm not smart enough to write a better DVCS protocol and storage layer than Git
+- I'm not sure I'm smart enough to write a better DVCS protocol and storage layer than Git
 - the "I have to be able to work disconnected" scenario is less-and-less important
   -  a growing number of developers today use cloud systems as part of their development and production environments, and if they're not connected to the internet, having their source control unavailable is the least of their problems
   - in the coming years, satellite Internet will provide always-on, high-speed connections in parts of the world that were previously cut-off or limited
 
-And, let's be honest: almost *everyone* uses Git in a pseudo-centralized, hub-and-spoke model, where the "real" version of the repo - the hub - is centralized at GitHub / GitLab / Atlassian / some other server, and the spokes are all of the users of the repo. In other words, we're already using Git as a centralized version control system, we're just kind-of pretending that we're not, and we're making things more complicated for ourselves because of it.
+And, let's be honest:
+  - almost *everyone* uses Git in a pseudo-centralized, hub-and-spoke model, where the "real" version of the repo - the hub - is centralized at GitHub / GitLab / Atlassian / some other server, and the spokes are all of the users of the repo. In other words, we're already using Git as a centralized version control system, we're just kind-of pretending that we're not, and we're making things more complicated for ourselves because of it.
 
 ![](https://gracevcsdevelopment.blob.core.windows.net/static/Orange3.svg)
 ## Performance; or, Isn't centralized version control slower?

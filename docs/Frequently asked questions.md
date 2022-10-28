@@ -1,5 +1,5 @@
 # Frequently Asked Questions
-_or, what I imagine they might be_
+(_or, what I imagine they might be_)
 
 For deeper answers to some of these, please read [Design and Motivations](Design%20and%20Motivations.md).
 
@@ -11,34 +11,34 @@ Grace is a centralized version control system (VCS).
 ## I thought centralized version control systems were really slow.
 Well, that's not a question... but... yeah, in some ways, the older centralized VCS's could feel slower, and heavier, especially when dealing with branches.
 
-Grace is not like that. Grace is new, modern, built to _be_ fast and _feel_ fast.
+Grace is not like that. Grace is new, modern, lightweight, and fast.
 
 ## Why did you create Grace?
 In the 2022 StackOverflow Developer Survey, Git is at 93.87% adoption. Git has won, no doubt.
 
 And there's sort-of nowhere for it to go but down.
 
-I've been around long enough to see different technologies rise and fall. Some have shorter market cycles (web UI frameworks, for instance), and some have longer market cycles, like hierarchical -> relational -> No-SQL databases, or popular social media products. I've seen technologies that had almost 95% market share, with very long cycles, like Windows and Windows Server, eventually lose market share for one reason or another.
+I've been around long enough to see different technologies rise and fall. Some have shorter market cycles (web UI frameworks, for instance), and some have longer market cycles, like hierarchical -> relational -> No-SQL databases, or popular social media apps. I've seen technologies that had almost 95% market share, with very long cycles, like Windows and Windows Server, eventually lose market share for one reason or another.
 
-Git is 17 years old now. It doesn't have the easiest UX, to say the least. Many projects are exploring version control right now to see where it's going next. Git won't stay near 95% forever. Nothing ever does.
+Git is 17 years old now. It doesn't have the easiest UX, to say the least. Many projects are exploring version control right now to see where it might go next. Git won't stay near 95% forever. Nothing ever does.
 
-Grace is my offering to that search for what's next. I wanted to create something that was easy-to-use and easy-to-understand, and powerful.
+Grace is my offering to that search for what's next. Grace's design is my attempt to bring ease-of-use into a corner of our world that hasn't had much of that lately, and to connect us together in a different way than ever before.
 
 ## I like the way Git does branches.
 Again with the not-question... I do too. I think that the lightweight branching in Git is one of the major reasons that it won.
 
 That's why I kept lightweight branching in Grace. Create and delete branches to your heart's content.
 
-## FOSSBro302698 says: _"\<something something\> M$ \<something something\>."_
-Uh, yeah, OK. Whatever.
+## On _HN_, FOSSBro761 says: _"\<something something\> M$ \<something something\>..."_
+Um, yeah, OK. Whatever.
 
 Here's what actually happened:
 
-I invented Grace by myself. I chose .NET because it's what I know and trust. I chose F# because I wanted to think functionally as I explored.
+Grace started as my personal 2021 pandemic lockdown side-project. I invented it. No one told me to, I just did. I chose .NET because it's what I know and trust. I chose F# because I wanted to think functionally as I explored.
 
 I chose to do it at all because I realized that _something_ was eventually going to replace Git, and I had some opinions about what that should be, and about what direction we should take as an industry in UX for source control.
 
-That's the origin story. Just a guy who had an idea he couldn't let go of, using tools that he trusts, and tools that he's learning.
+That's the origin story. Just a guy who had an idea he couldn't let go of, using good tools that he knows well, and a few tools that he's learning.
 
 ## What about when I'm disconnected?
 Well, you won't be able to run many Grace commands. And you probably won't be able to do lots of other things that you usually do.
@@ -47,12 +47,19 @@ More and more of us rely on cloud services and connectivity to the Internet just
 
 With the growth of satellite Internet, we're connecting more and more of the world at high-enough bandwidth to use centralized version control without issue. And I'm not designing for the 0.000001% "but I'm on a flight without Internet" scenario.
 
-If being able to use local version control while you're not connected to the Internet is an important scenario for you, please use Git. It's great at that. I'm guessing that there's just a small - important, but small - percentage of programmers in the world that _really need_ that, and that designing something that assumes connectivity isn't a barrier for the vast majority of us.
+If being able to use local version control while you're not connected to the Internet is an important scenario for you, please use Git. It's great at that. I'm guessing that there's still a small - important, but small - percentage of programmers in the world that _really need_ that. For the vast majority of us, though, assuming a working Internet connection isn't a big deal anymore.
 
 Anyway, Grace won't stop you from continuing to edit the local copies of your files that you already have. When your Internet connection resumes, `grace watch` will catch you up immediately.
 
 ## Have you thought about using blockchain to...
 🤦🏼‍♂️ Just... no.
+
+## Can Grace do live two-way synchronization with Git repositories?
+No, it can't. Two-way synchronization is a non-goal.
+
+One-time initial import from a Git repo will be supported, and point-in-time export to a `git bundle` file will be supported, but not continuous two-way synchronization.
+
+Grace just has a fundamentally different design than Git. That's intentional. Two-way synchronization would involve a messy translation between what Git calls a _merge_ and what Grace calls a _promotion_, and I don't see a good way right now to handle that well without writing a _lot_ of code and handling a _lot_ of edge cases, and that's time better spent on everything else I need to do.
 
 ## What are the scalability limits for Grace?
 Answer #1: It depends on the PaaS services that Grace is deployed on. In general, Grace itself is really fast, and will take advantage of however fast the underlying services it depends on will run.
@@ -83,7 +90,7 @@ Why, thank you for asking. ♥️
 
 Everything helps. Feel free to file an Issue in the repo. Please join us over in Discussions.
 
-I confess the debug workflow is very much tailored to me and my local machine at the moment. I'm going to fix that, and when I do, I'll post instructions for how to write code for and debug Grace as easily as possible.
+I'm working right now to get Grace in better shape for debugging for everyone. I confess the debug workflow is very much tailored to me and my local machine at the moment. I'm going to fix that, and when I do, I'll post instructions for how to write code for and debug Grace as easily as possible.
 
 ![](https://gracevcsdevelopment.blob.core.windows.net/static/Orange3.svg)
 
