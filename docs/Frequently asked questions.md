@@ -1,4 +1,5 @@
 # Frequently Asked Questions
+
 (_or, what I imagine they might be_)
 
 For deeper answers to some of these, please read [Design and Motivations](Design%20and%20Motivations.md).
@@ -6,14 +7,17 @@ For deeper answers to some of these, please read [Design and Motivations](Design
 ![](https://gracevcsdevelopment.blob.core.windows.net/static/Orange3.svg)
 
 ## Is Grace centralized or decentralized?
+
 Grace is a centralized version control system (VCS).
 
 ## I thought centralized version control systems were really slow.
+
 Well, that's not a question... but... yeah, in some ways, the older centralized VCS's could feel slower, and heavier, especially when dealing with branches.
 
 Grace is not like that. Grace is new, modern, lightweight, and fast.
 
 ## Why did you create Grace?
+
 In the 2022 StackOverflow Developer Survey, Git is at 93.87% adoption. Git has won, no doubt.
 
 And there's sort-of nowhere for it to go but down.
@@ -25,11 +29,13 @@ Git is 17 years old now. It doesn't have the easiest UX, to say the least. Many 
 Grace is my offering to that search for what's next. Grace's design is my attempt to bring ease-of-use into a corner of our world that hasn't had much of that lately, and to connect us together in a different way than ever before.
 
 ## I like the way Git does branches.
+
 Again with the not-question... I do too. I think that the lightweight branching in Git is one of the major reasons that it won.
 
 That's why I kept lightweight branching in Grace. Create and delete branches to your heart's content.
 
 ## On _HN_, FOSSBro761 says: _"\<something something\> M$ \<something something\>..."_
+
 Um, yeah, OK. Whatever.
 
 Here's what actually happened:
@@ -41,6 +47,7 @@ I chose to do it at all because I realized that _something_ was eventually going
 That's the origin story. Just a guy who had an idea he couldn't let go of, using good tools that he knows well, and a few tools that he's learning.
 
 ## What about when I'm disconnected?
+
 Well, you won't be able to run many Grace commands. And you probably won't be able to do lots of other things that you usually do.
 
 More and more of us rely on cloud services and connectivity to the Internet just to do our jobs. Think about this: if your Internet connection went down, could you continue to do your job as a developer, or would you have to stop? Some could keep working, but if you can't, not having a connection to your source control server is the least of your concerns compared to not having a connection to Azure or AWS or wherever your cloud stuff is. (Not to mention StackOverflow and your favorite search engine.)
@@ -52,9 +59,11 @@ If being able to use local version control while you're not connected to the Int
 Anyway, Grace won't stop you from continuing to edit the local copies of your files that you already have. When your Internet connection resumes, `grace watch` will catch you up immediately.
 
 ## Have you thought about using blockchain to...
+
 🤦🏼‍♂️ Just... no.
 
 ## Can Grace do live two-way synchronization with Git repositories?
+
 No, it can't. Two-way synchronization is a non-goal.
 
 One-time initial import from a Git repo will be supported, and point-in-time export to a `git bundle` file will be supported, but not continuous two-way synchronization.
@@ -62,6 +71,7 @@ One-time initial import from a Git repo will be supported, and point-in-time exp
 Grace just has a fundamentally different design than Git. That's intentional. Two-way synchronization would involve a messy translation between what Git calls a _merge_ and what Grace calls a _promotion_, and I don't see a good way right now to handle that well without writing a _lot_ of code and handling a _lot_ of edge cases, and that's time better spent on everything else I need to do.
 
 ## What are the scalability limits for Grace?
+
 Answer #1: It depends on the PaaS services that Grace is deployed on. In general, Grace itself is really fast, and will take advantage of however fast the underlying services it depends on will run.
 
 Answer #2: I'm not sure, because I haven't really pushed the limits yet.
@@ -73,6 +83,7 @@ I've also tested individual file sizes up to 10GB. I'm not sure that 10GB files 
 The stateless nature of Grace Server, and the use of the Actor Pattern, should allow for a significant number of concurrent users without too much hassle, but I haven't done that kind of scale testing yet. I expect that when I do, I'll find the Top 5 Stupid Things I Did and fix them, and then Grace should be able to handle thousands of transactions/second. We'll find out soon.
 
 ## What does Grace borrow from Git?
+
 A lot of things.
 
 Grace keeps the ephemeral working directory, and the idea of a `.grace/objects` directory for each repo.
@@ -86,6 +97,7 @@ We even borrowed the algorithm to decide if a file is text or binary.[^binary]
 And much more. Grace owes a debt of gratitude to Git and to its maintainers.
 
 ## How can I get involved?
+
 Why, thank you for asking. ♥️
 
 Everything helps. Feel free to file an Issue in the repo. Please join us over in Discussions.
