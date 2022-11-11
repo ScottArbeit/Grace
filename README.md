@@ -89,6 +89,16 @@ By default, `grace watch` uploads new file versions (and new directory versions 
 
 ![](https://gracevcsdevelopment.blob.core.windows.net/static/Green.svg)
 
+### Private branches, not forks
+
+Git has a hack - forks - that let you do private development on a repo when you either don't want to do your work directly on the source repo, or when you don't have rights to do work in the source repo. Forks are a consequence of Git being distributed.
+
+Grace won't have forks. Because Grace is centralized, there's no need for forking entire repositories. In Grace, you'll be able to create private branches against any repo you have access to, and then submit PR's to get your private code promoted into the public repo.
+
+Imagine dozens of open-source contributors, each with private branches, working on a large public project that remains controlled and secured, with no duplication of code, no networks of forked repositories, no "I'm ahead but I'm also behind" in your local clone... just separate devs working on the same repo, securely.
+
+![](https://gracevcsdevelopment.blob.core.windows.net/static/Green.svg)
+
 ### Full event log
 
 One way to think about a repository is: it's just a way to store a set of changes - i.e. _things that happened_ - over time.

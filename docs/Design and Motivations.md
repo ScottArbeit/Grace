@@ -2,7 +2,7 @@
 
 Hi, I'm Scott. I created Grace.
 
-I'll use first-person in this document, not because I wish to imply that Grace is *my project alone*, but because I want to share what the early design and technology decisions were for Grace, and why I started writing it in the first place.
+I'll use first-person in this document, not because I wish to imply that Grace is my project alone, but because I want to share what the early design and technology decisions were for Grace, and why I started writing it in the first place.
 
 For shorter answers to some of these, please see [Frequently Asked Questions](Frequently%20asked%20questions.md).
 
@@ -13,6 +13,8 @@ For shorter answers to some of these, please see [Frequently Asked Questions](Fr
 [A word about Git](#a-word-about-git)
 
 [User experience is everything](#user-experience-is-everything)
+
+[The origin of Grace](#the-origin-of-grace)
 
 [Excellent perceived performance](#excellent-perceived-performance)
 
@@ -26,6 +28,8 @@ For shorter answers to some of these, please see [Frequently Asked Questions](Fr
 
 [Performance; or, Isn't centralized version control slower?](#performance-or-isnt-centralized-version-control-slower)
 
+[How much Git should we keep?](#how-much-git-should-we-keep)
+
 [Scalability](#scalability)
 
 [Monorepos](#monorepos)
@@ -34,13 +38,13 @@ For shorter answers to some of these, please see [Frequently Asked Questions](Fr
 
 ## A word about Git
 
-It's not possible to design a version control system (VCS) today (Grace was first conceived in December, 2020) without designing something that relates to, interfaces with, and/or somehow *just reacts to* Git. In order to explain some of the choices I've made in Grace, I *have* to mention Git. Mostly, of course, I'll do that if I think Grace is better in some way or other.
+It's not possible to design a version control system (VCS) today without designing something that relates to, interfaces with, and/or somehow *just reacts to* Git. In order to explain some of the choices I've made in Grace, I *have* to mention Git. Mostly, of course, I'll do that if I think Grace is better in some way or other.
 
 With that said, and just to be clear... I respect Git enormously. It will take years for any new VCS to approximate the feature-set of Git. Until a new one starts to gain momentum and gets a sustained programming effort behind it - open-source and community-supported - every new VCS will sort-of be a sketch compared to everything that Git can do.
 
 The maintainers of Git are among the best programmers in the world. The way they continue to improve Git's scalability and performance, year-after-year, while maintaining compatibility with existing repositories, is an example of how to do world-impacting programming with skill and, dare I say, grace.
 
-Git has been around for 17 years now, and it's not disappearing anytime soon. If you love Git, if it fits your needs well, you will be able to continue to use Git for at least the next 20 years without a problem. (What source control might look like in 2042 is anyone's guess.)
+Git has been around for 17 years now, and it's not disappearing anytime soon. If you love Git, if it fits your needs well, I'm guessing you will be able to continue to use it for the next 15-20 years without a problem. (What source control might look like in 2042 is anyone's guess.)
 
 Whether Git will remain the dominant version control system for that entire time is quite another question. I believe that *something else* will capture people's imagination enough to get them to switch away from Git at some point. My guess about when that will happen is: soon-ish. Like, *something else* is being created now-ish, \<waves hands\>±2 years. There are some wonderful source control projects going on right now that are exploring this space. I offer Grace in the hope that *it* will be good enough to make people switch. Time will tell.
 
@@ -73,6 +77,28 @@ Grace formats output to make it as easy to read as possible, and also offers JSO
 And in a world where hybrid and remote work is growing, Grace offers entirely new experiences with a live, two-way channel between client and server, linking repository users together in new ways, including auto-rebasing immediately after promotions (which are merges, sort-of).
 
 There's so much more to do in UX for version control. Grace is a platform for exploring where it can go next, while remaining easy to use, and easy to understand.
+
+![](https://gracevcsdevelopment.blob.core.windows.net/static/Orange3.svg)
+
+## The origin of Grace
+
+There was an informal Source Control Summit in November, 2020 that I had the opportunity to attend, and I had the chance to have some additional side conversations with a few of the other attendees.
+
+The vibe I got from those interactions - and I want to emphasize that this was _my_ takeaway, and that I do not speak for anyone else - was that 1) we're all still just mining for incremental improvements in Git; 2) we're getting tired of Git and whatever else we're using; and 3) we're not sure what could come next that would change that.
+
+That led me to sitting outside on my front porch in December, 2020 - still in pandemic lockdown, in the darkest month of the year - and starting to think about what _I_ would want in a version control system.
+
+It all started that first night with a few main themes:
+
+- It had to be easy-to-use. The pain of learning Git, and the continuing fear of it, has always been a sore spot for me, and, I know, for millions of others.
+- It had to be cloud-native, so it could take advantage of the cloud-scale computing that we're all used to in almost every other kind of software, and get away from using file servers.
+- It had to have live synchronization between client and server - I was thinking of the OneDrive sync client as a good model - as the basis for being able to build important new features.
+- It had to be fast. Really fast.
+- It had to fundamentally break away from Git. No "Git client but a different backend". No "New client, but Git for the storage layer." No "it should speak Git protocol". Maybe 12-15 projects over the years have tried various combinations of those, and none of them have ever taken any market share from Git. None of those seemed like a successful way to go.
+
+I just wanted to start with a blank sheet of paper, keep the things about Git that we all like, take advantage of modern cloud-native services, and get rid of the complexity.
+
+Grace is the version control system that I'd want to use.
 
 ![](https://gracevcsdevelopment.blob.core.windows.net/static/Orange3.svg)
 
@@ -132,7 +158,7 @@ It's about choices for the user. It's about understanding that sometimes the bes
 
 ## F# and functional programming
 
-### Grace is written primarily in F #
+### Grace is written primarily in F\#
 
 One reason for this is simple: **F# is my favorite programming language right now**. It's beautiful, and it feels lightweight, but it's really strongly-typed and very fast.
 
@@ -252,6 +278,30 @@ Git is really fast locally, and because almost every command in Grace will requi
 There are also scenarios where Grace will be faster than Git - scenarios where Git communicates over a network - because, in Grace, the "heavy lifting" of tracking changes and uploading new versions and downloading new versions will have been done already, in the background (with `grace watch`). In those use cases, like `grace checkpoint` and `grace commit`, the command is just creating new database records, and that's easily faster than `git push`.
 
 So, Grace is designed to be *fast*, i.e. fast enough to keep users in flow, and to be *consistent*, i.e. users quickly develop muscle-memory for how long things take, helping them stay in flow. CVCS's just have a different performance profile than DVCS's, but there's no reason they can't *feel* responsive and fast.
+
+![](https://gracevcsdevelopment.blob.core.windows.net/static/Orange3.svg)
+
+## How much Git should we keep?
+
+Various version control projects over the years have attempted to be completely new front-ends for Git, or to keep some of it, but keep Git as the back-end storage format, or maybe keep the Git network protocol but have a different client or storage format... etc.
+
+My observation is: no matter how confusing Git itself is, none of those approaches have ever taken any market share away from Git, and I don't think they ever will.
+
+Git itself has tried to modernize a little bit over the years. For example, in 2020, Git added the `git switch` and `git restore` commands. In my completely informal and anecdotal asking around, I've found that not a single person has ever heard of them. 2½ years later, they're still marked as "EXPERIMENTAL".
+
+I point this out because I believe that, in most people's minds, the command surface of Git is locked. Once they go through the pain of learning enough Git to get by, very few people want to continue going deeper or to re-learn new ways of using it every few years. Certainly, in searching for help about Git, the search results overwhelmingly reflect older ways of using Git, and it will take years before top search results reflect any newer (meaning anything from 2019 and after) ways of using it. It's exactly in those years that I believe a new VCS will start taking market share away from Git and become the Cool New Thing.
+
+So... how much Git should we keep when we create new version control systems?
+
+Grace's answer is: none at all, other than a little design inspiration. It's time to start with a blank sheet of paper.
+
+Grace will support one-time import from Git, and snapshot-style export to the Git file format, but supporting two-way synchronization between Grace and Git, or using the Grace client as a front-end to a Git repository, is an explicit non-goal.
+
+Grace's design is so different from Git's that spending time trying to make them fit together in one client is less about composition, and more about duct-taping two totally different things together. It doesn't make sense.
+
+Only time will tell if developers respond to this kind of blank-slate approach, but given that the hang-onto-Git-part-way-but-do-it-differently path is already being explored by other projects, it's best to see what Grace can become without trying to force it to speak Git.
+
+Hey, someone's gotta try it.
 
 ![](https://gracevcsdevelopment.blob.core.windows.net/static/Orange3.svg)
 

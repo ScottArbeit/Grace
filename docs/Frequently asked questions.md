@@ -34,23 +34,11 @@ Again with the not-question... I do too. I think that the lightweight branching 
 
 That's why I kept lightweight branching in Grace. Create and delete branches to your heart's content.
 
-## On _HN_, FOSSBro761 says: _"\<something something\> M$ \<something something\>..."_
-
-Um, yeah, OK. Whatever.
-
-Here's what actually happened:
-
-Grace started as my personal 2021 pandemic lockdown side-project. I invented it. No one told me to, I just did. I chose .NET because it's what I know and trust. I chose F# because I wanted to think functionally as I explored.
-
-I chose to do it at all because I realized that _something_ was eventually going to replace Git, and I had some opinions about what that should be, and about what direction we should take as an industry in UX for source control.
-
-That's the origin story. Just a guy who had an idea he couldn't let go of, using good tools that he knows well, and a few tools that he's learning.
-
 ## What about when I'm disconnected?
 
 Well, you won't be able to run many Grace commands. And you probably won't be able to do lots of other things that you usually do.
 
-More and more of us rely on cloud services and connectivity to the Internet just to do our jobs. Think about this: if your Internet connection went down, could you continue to do your job as a developer, or would you have to stop? Some could keep working, but if you can't, not having a connection to your source control server is the least of your concerns compared to not having a connection to Azure or AWS or wherever your cloud stuff is. (Not to mention StackOverflow and your favorite search engine.)
+More and more of us rely on cloud services and connectivity to the Internet just to do our jobs. Think about this: if your Internet connection went down, could you continue to do your job as a developer, or would you have to stop? Some could keep working, but if you can't, not having a connection to your source control server is the least of your concerns compared to not having a connection to Azure or AWS or wherever your cloud stuff is... not to mention StackOverflow and your favorite search engine.
 
 With the growth of satellite Internet, we're connecting more and more of the world at high-enough bandwidth to use centralized version control without issue. And I'm not designing for the 0.000001% "but I'm on a flight without Internet" scenario.
 
@@ -60,7 +48,7 @@ Anyway, Grace won't stop you from continuing to edit the local copies of your fi
 
 ## Have you thought about using blockchain to...
 
-🤦🏼‍♂️ Just... no.
+No. 🤦🏼‍♂️ Just... no.
 
 ## Can Grace do live two-way synchronization with Git repositories?
 
@@ -95,6 +83,31 @@ Grace borrows the use of SHA-256 values as the hash function to uniquely identif
 We even borrowed the algorithm to decide if a file is text or binary.[^binary]
 
 And much more. Grace owes a debt of gratitude to Git and to its maintainers.
+
+## What about _\<other new version control project\>_?
+There are a few really good VCS projects going on right now. It's exciting to see.
+
+I'm fortunate enough to know the folks involved in [Jujutsu](https://github.com/martinvonz/jj). They're doing incredible work.
+
+I'm aware of [Pijul](https://pijul.org/). I know there are others.
+
+All I can say is: Grace has its own design philosophy and that's what I'm pursuing right now. I think of it as a friendly competition to see which one wins over the next generation of developers.
+
+Let 1,000 flowers bloom. One of them will lead us to the future of version control.
+
+## On _HN_, FOSSBro761 says: _"Grace \<something something\> M$ \<something something\>..."_
+
+Um, yeah, OK. Whatever.
+
+Here's what actually happened:
+
+Grace started as my personal 2021 pandemic lockdown side-project. I invented it. No one told me to, I just did. I chose .NET because it's what I know and trust. I chose F# because I wanted to think functionally as I explored.
+
+I chose to do it at all because I realized that _something_ was eventually going to replace Git, and I had some opinions about what that should be, and about what direction we should take as an industry in UX for source control. The only way to communicate that effectively was to start writing code and see if I could build something worthwhile.
+
+That's the origin story. Just a guy who had an idea he couldn't let go of, using good tools that he knows well, and a few tools that he's learning.
+
+If you look at my GitHub or LinkedIn profile you'll see that I work for GitHub, which means that I work for Microsoft. With that said, Grace is a personal side-project. It's probably the case that I wouldn't have thought to start a new version control system without having been at GitHub, but now I've caught the version control bug. It's a fascinating area to work in, and one that will see exciting innovation in the coming years. Grace's existence does not imply anything at all about GitHub's continued, massive, ongoing support of Git, or about GitHub's future direction in source control. So... it's the usual "All opinions and work here are personal, and not endorsed by my employers..." stuff.
 
 ## How can I get involved?
 
