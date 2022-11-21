@@ -254,9 +254,38 @@ I wanted to take a different approach with Grace, because:
   - a growing number of developers today use cloud systems as part of their development and production environments, and if they're not connected to the internet, having their source control unavailable is the least of their problems
   - in the coming years, satellite Internet will provide always-on, high-speed connections in parts of the world that were previously cut-off or limited
 
-And, let's be honest:
+And, by the way,
 
-- almost *everyone* uses Git in a pseudo-centralized, hub-and-spoke model, where the "real" version of the repo - the hub - is centralized at GitHub / GitLab / Atlassian / some other server, and the spokes are all of the users of the repo. In other words, we're already using Git as a centralized version control system, we're just kind-of pretending that we're not, and we're making things more complicated for ourselves because of it.
+### We're all using Git as a centralized VCS anyway
+
+Almost *everyone* uses Git in a pseudo-centralized, hub-and-spoke model, where the "real" version of the repo - the hub - is centralized at GitHub / GitLab / Atlassian / some other server, and the spokes are all of the users of the repo. In other words, we're already using Git as a centralized version control system, we're just kind-of pretending that we're not, and we're making things more complicated for ourselves because of it.
+
+### Centralized isn't necessarily less antifragile
+
+I get it. In an absolutely worst-case scenario, where `<insert world calamity here>` happens, isn't it better to have multiple full copies of a repo distributed across all of the users?
+
+Here's how I think about this for Grace:
+
+- In a professionally-run instance of Grace, the infrastructure generally will be PaaS services from serious cloud providers. They'll use georeplication of data to enable disaster recovery, and failover drills to make sure it all works (and lots of other professional things) and your repo will survive regional disasters.
+- Users of a repo will have the most recent versions of the branches that they're working on, and some number of previous versions, in Grace's local object cache. While that's not the entire history of the repo, if you're totally offline, it's enough to build the current version and keep going.
+- Grace is event-sourced, and if you really wanted to hook into every `New file version created` event and make your own backups, you'll be able to.
+- Grace will have an "export to Git" feature. If you want to (periodically) export the current state of your repo to a Git-format file, you'll be able to.
+
+#### What if my repo gets "banned" or "shut down" or something like that?
+
+There are many good reasons, and some not-so-good reasons I could imagine, that a repo might be shut down by a provider. GitHub and GitLab and Atlassian and Azure DevOps and every hoster everywhere all have to deal with those decisions regularly.
+
+Without getting into a discussion of which reasons fall into the good vs. not-so-good categories, I'll just say, again, you'll have the latest version of the branches that you're working on downloaded locally - in other words, the ones that matter. That's enough to keep going or start over if it comes down to it.
+
+### Every other service we use is centralized, this just seems weird because we're used to Git
+
+My email is centralized at Microsoft and Google, depending on the account. I don't have a full local copy of a mathematically-validated graph of all of my banking transactions to do my online banking. I have tons of files in OneDrive, but they're not all downloaded to my SSD. Etc.
+
+Having centralized source control just seems weird because we're not used to it anymore. Having a full local copy of all of the history of a repo seems like a warm, cozy safety thing, but, really, how often to you *actually* need the entire history of the repo to be local? How often do you *actually* look at it locally vs. looking at history on GitHub / GitLab / etc. online?
+
+Grace can provide the views you need, they'll just be run on the server.
+
+If you really need a full local copy of your repo with all of its history, Git's still your uncle. Most of us can let that go.
 
 ![](https://gracevcsdevelopment.blob.core.windows.net/static/Orange3.svg)
 

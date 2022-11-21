@@ -84,7 +84,8 @@ We even borrowed the algorithm to decide if a file is text or binary.[^binary]
 
 And much more. Grace owes a debt of gratitude to Git and to its maintainers.
 
-## What about _\<other new version control project\>_?
+## What about the other new version control projects?
+
 There are a few really good VCS projects going on right now. It's exciting to see.
 
 I'm fortunate enough to know the folks involved in [Jujutsu](https://github.com/martinvonz/jj). They're doing incredible work.

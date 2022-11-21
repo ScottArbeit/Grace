@@ -38,11 +38,19 @@ A lot of this remains to be built, but here's what I expect V1 to look like.
 
 ![](https://gracevcsdevelopment.blob.core.windows.net/static/Green.svg)
 
-### Simple CLI
+### Easy-to-use, easy-to-understand CLI
 
 Grace is explicitly designed to be easy to use, and easy to understand. And fast.
 
 The CLI reflects that. There's a simple-to-understand grammar, built-in aliases for common gestures, and common-sense defaults.
+
+![](https://gracevcsdevelopment.blob.core.windows.net/static/Green.svg)
+
+### Complete file versions are first class
+
+Grace uses complete versions of each file, not patches or diffs, as the source of truth for what changes between each version of the repo.
+
+Diffs in Grace are just generated projections of what changed between versions. They're never used as a changeset that is somehow "applied" to a previous version of the code.
 
 ![](https://gracevcsdevelopment.blob.core.windows.net/static/Green.svg)
 
@@ -89,16 +97,6 @@ By default, `grace watch` uploads new file versions (and new directory versions 
 
 ![](https://gracevcsdevelopment.blob.core.windows.net/static/Green.svg)
 
-### Private branches, not forks
-
-Git has a hack - forks - that let you do private development on a repo when you either don't want to do your work directly on the source repo, or when you don't have rights to do work in the source repo. Forks are a consequence of Git being distributed.
-
-Grace won't have forks. Because Grace is centralized, there's no need for forking entire repositories. In Grace, you'll be able to create private branches against any repo you have access to, and then submit PR's to get your private code promoted into the public repo.
-
-Imagine dozens of open-source contributors, each with private branches, working on a large public project that remains controlled and secured, with no duplication of code, no networks of forked repositories, no "I'm ahead but I'm also behind" in your local clone... just separate devs working on the same repo, securely.
-
-![](https://gracevcsdevelopment.blob.core.windows.net/static/Green.svg)
-
 ### Full event log
 
 One way to think about a repository is: it's just a way to store a set of changes - i.e. _things that happened_ - over time.
@@ -133,6 +131,12 @@ Grace can't promise to eliminate all conflicts, but it can help to reduce them.
 
 ![](https://gracevcsdevelopment.blob.core.windows.net/static/Green.svg)
 
+### Private branches, not forks
+
+Grace won't have forks. With Grace, there's no need for forking entire repositories just to make contributions. In open-source repos, you just create a private branch against the repo, and then (as you'd expect) submit PR's to get your private branch's version promoted into `main` (or whatever branch).
+
+Imagine a large, open-source project in Grace: dozens of contributors, each with private branches, working on a public project that remains securely controlled with ACL's. Everyone auto-rebased with every update to their parent branch, so there are no surprises later. No networks of forks to manage, no multiple entire copies of the repo. Just separate devs working on the same repo, securely, together.
+
 ### Simplified branching strategy
 
 Grace's default branching strategy is called _single-step_ and is designed to help reduce merge conflicts, and to make it easier to work on and promote code to shipping branches (like `main`).
@@ -155,7 +159,7 @@ No problem, Grace is ready for it. So far, Grace has been tested on repositories
 
 ### Store large files
 
-Because Grace is centralized, there's no problem storing large files. Really large files. It's been tested with 10GB files, and it should handle even larger files well.
+Grace has no problem storing large files. Really large files. It's been tested with 10GB files - not that I think files that large belong in version control - and it should handle even larger files well.
 
 Grace will let you specify how to handle those files, like only downloading them for the Design department, but not for Engineering. It's up to you.
 
