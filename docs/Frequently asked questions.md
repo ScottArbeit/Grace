@@ -90,13 +90,13 @@ There are a few really good VCS projects going on right now. It's exciting to se
 
 I'm fortunate enough to know the folks involved in [Jujutsu](https://github.com/martinvonz/jj). They're doing incredible work.
 
-I'm aware of [Pijul](https://pijul.org/). I know there are others.
+I'm aware of [Pijul](https://pijul.org/). I see Meta has just announced [Sapling](https://sapling-scm.com/). I know there are others.
 
-All I can say is: Grace has its own design philosophy and that's what I'm pursuing right now. I think of it as a friendly competition to see which one wins over the next generation of developers.
+All I can say is: Grace has its own design philosophy, and it's own perspective on what it should feel like to be using version control, and that's what I'm passionate about. I think of it as a friendly competition to see which one wins with the next generation of developers.
 
 Let 1,000 flowers bloom. One of them will lead us to the future of version control.
 
-## On _HN_, FOSSBro761 says: _"Grace \<something something\> M$ \<something something\>..."_
+## On _HN_, FOSSBro761 says: _"Grace \<something something\> M$ \<something\>..."_
 
 Um, yeah, OK. Whatever.
 
@@ -108,7 +108,7 @@ I chose to do it at all because I realized that _something_ was eventually going
 
 That's the origin story. Just a guy who had an idea he couldn't let go of, using good tools that he knows well, and a few tools that he's learning.
 
-If you look at my GitHub or LinkedIn profile you'll see that I work for GitHub, which means that I work for Microsoft. With that said, Grace is a personal side-project. It's probably the case that I wouldn't have thought to start a new version control system without having been at GitHub, but now I've caught the version control bug. It's a fascinating area to work in, and one that will see exciting innovation in the coming years. Grace's existence does not imply anything at all about GitHub's continued, massive, ongoing support of Git, or about GitHub's future direction in source control. So... it's the usual "All opinions and work here are personal, and not endorsed by my employers..." stuff.
+If you look at my GitHub or LinkedIn profile you'll see that I work for GitHub, which means that I work for Microsoft. With that said, Grace is a personal side-project. It's probably the case that I wouldn't have thought to start a new version control system without having been at GitHub, but now I've caught the version control bug. It's a fascinating area to work in, and one that will see exciting innovation in the coming years. Grace's existence does not imply anything at all about GitHub's continued, massive, ongoing support of Git, or about GitHub's future direction in source control. It's the usual "all opinions and work here are personal, and not endorsed by my employers..." stuff.
 
 ## How can I get involved?
 

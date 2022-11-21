@@ -137,6 +137,8 @@ Grace won't have forks. With Grace, there's no need for forking entire repositor
 
 Imagine a large, open-source project in Grace: dozens of contributors, each with private branches, working on a public project that remains securely controlled with ACL's. Everyone auto-rebased with every update to their parent branch, so there are no surprises later. No networks of forks to manage, no multiple entire copies of the repo. Just separate devs working on the same repo, securely, together.
 
+![](https://gracevcsdevelopment.blob.core.windows.net/static/Green.svg)
+
 ### Simplified branching strategy
 
 Grace's default branching strategy is called _single-step_ and is designed to help reduce merge conflicts, and to make it easier to work on and promote code to shipping branches (like `main`).
@@ -350,4 +352,4 @@ We intend to provide a Docker Compose template, as well as Kubernetes configurat
 
 [^mauilinux]: Grace will have a native Linux app if the [.NET MAUI team adds support for Linux Desktop](https://github.com/dotnet/maui/discussions/339), which you should totally go give a thumbs-up to.
 
-[^gitexport]: By default, Grace will export the latest state of each branch into a Git-formatted file. Exporting an entire Grace repository to Git can be an expensive operation, and is expected to be a rarely-used feature. Live two-way synchronization between Grace and Git is not expected to be supported.
+[^gitexport]: By default, Grace will export the latest state of each branch into a `git bundle` file. Exporting an entire Grace repository to Git can be an expensive operation, and isn't expected to be a commonly-used feature. Live two-way synchronization between Grace and Git is a non-goal.
