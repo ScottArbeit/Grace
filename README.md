@@ -9,13 +9,13 @@ grace _(noun)_ [^grace] -
 
 ![](https://gracevcsdevelopment.blob.core.windows.net/static/Orange3.svg)
 
-## Welcome to Grace
+## Welcome to Grace.
 
 Grace is a **new**, **modern**, **cloud-native** **version control system**.
 
 Grace is **easy to use**, **easy to understand**, and **consistently fast**. And it's **powerful**, ready to handle large repositories and large file sizes.
 
-Grace can run in the background, making it **ambient**, **faster**, and **more valuable to your everyday work** as a developer.
+Grace is meant to run in the background, making it **ambient**, **faster**, and **more valuable to your everyday work** as a developer.
 
 Grace **connects you with others** working in your repository, **across the globe**, **in real-time**, enabling **new experiences** and **new ways of sharing**.
 
@@ -38,25 +38,31 @@ A lot of this remains to be built, but here's what I expect V1 to look like.
 
 ![](https://gracevcsdevelopment.blob.core.windows.net/static/Green.svg)
 
-### Easy-to-use, easy-to-understand CLI
+### No more fear
 
-Grace is explicitly designed to be easy to use, and easy to understand. And fast.
+Stop being afraid of your version control system, and start _enjoying_ it instead.
 
-The CLI reflects that. There's a simple-to-understand grammar, built-in aliases for common gestures, and common-sense defaults.
+Grace is explicitly designed to be easy to use, and easy to understand. (And powerful.)
 
-![](https://gracevcsdevelopment.blob.core.windows.net/static/Green.svg)
+There are many fewer concepts to understand in Grace, so learning it is easy, and understanding what it's doing is easy.
 
-### Complete file versions are first class
+There's a simple-to-understand grammar, built-in aliases for common gestures, and common-sense defaults.
 
-Grace uses complete versions of each file, not patches or diffs, as the source of truth for what changes between each version of the repo.
-
-Diffs in Grace are just generated projections of what changed between versions. They're never used as a changeset that is somehow "applied" to a previous version of the code.
+Grace is source control without fear.
 
 ![](https://gracevcsdevelopment.blob.core.windows.net/static/Green.svg)
 
-### Fast UX
+### Yes, it's fast
 
-Grace maximizes speed as a part of providing great UX. To really speed things up, Grace can precompute views and projections that you're likely to want, like diffs and directory contents, ensuring that over 99% of requests for that data (or, P99) are served using precomputed projections. When these projections are likely never to be needed again, they're deleted, saving storage space.
+Grace UX requires great speed.
+
+Grace CLI is lightweight, self-documenting, and responsive.
+
+Grace's GUI apps will be platform-native, with all of the performance and responsiveness that native apps have always had.
+
+Grace Server is designed to run on fast, cloud-scale PaaS services for maximum speed, and uses networked, in-memory caching of data extensively.
+
+(To really speed things up, Grace Server can precompute views and projections that you're likely to want, like diffs and directory contents, so that almost all requests are served from cached data... and Grace will garbage-collect them when they're no longer needed.)
 
 ![](https://gracevcsdevelopment.blob.core.windows.net/static/Green.svg)
 
@@ -111,7 +117,7 @@ The event log can be viewed as a stream, and have analytics applied to it to det
 
 ### Live, two-way client-server communication
 
-When running `grace watch`, Grace uses [SignalR](https://dotnet.microsoft.com/en-us/apps/aspnet/signalr) to create a live, two-way communication channel between client and server. 
+When running `grace watch`, Grace uses [SignalR](https://dotnet.microsoft.com/en-us/apps/aspnet/signalr) to create a live, two-way communication channel between client and server.
 
 This connection allows Grace to do everything it does to connect you to everyone else working in your repository in real-time. Events happening across the repository can trigger actions both locally and on the server.
 
@@ -143,7 +149,7 @@ Imagine a large, open-source project in Grace: dozens of contributors, each with
 
 Grace's default branching strategy is called _single-step_ and is designed to help reduce merge conflicts, and to make it easier to work on and promote code to shipping branches (like `main`).
 
-While Grace will need to support other, more complex branching strategies, single-step should be all that you need to run most projects.
+Single-step branching is, we hope, both easy-to-use and powerful enough to be all that you need to run your projects. (We're open to supporting other branching models in the future.)
 
 There's a [separate page](docs/Branching%20strategy.md) that describes it in detail.
 
@@ -209,7 +215,7 @@ It's up to you.
 
 ![](https://gracevcsdevelopment.blob.core.windows.net/static/Green.svg)
 
-### Ephemeral checkpoints and saves.
+### Ephemeral checkpoints and saves
 
 Checkpoints and saves are features to help **you** be more productive, but we don't need to keep them forever. Grace allows you to control how long they're kept are kept in each repository. 72 hours? One week? A month? Or maybe just "keep the last 1,000 saves". It's up to you.
 
