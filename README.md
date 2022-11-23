@@ -54,7 +54,7 @@ Grace is source control without fear.
 
 ### Yes, it's fast
 
-Grace UX requires great speed.
+Great UX requires great speed.
 
 Grace CLI is lightweight, self-documenting, and responsive.
 
@@ -84,11 +84,11 @@ In Git, `commit` is an overloaded concept. It can mean:
 
 And then you get the "squash" vs. "don't squash" debate. Sigh.
 
-Grace simplifies this by breaking these usages out into their own commands:
+Grace simplifies this by breaking these usages out into their own gestures and events:
 
-- `grace promote` - this is sort-of a merge; it's what you'd get after approving a PR, which Grace calls a  _promotion review_[^pr]
-- `grace commit` - this is "I'm really done" or "This version is a candidate for promotion"; you'd use a commit for a PR
 - `grace checkpoint` - this means "I'm partially done", for you to keep track of your own progress
+- `grace commit` - this is "I'm really done" or "This version is a candidate for promotion"; you'd use a commit for a PR
+- `grace promote` - this is sort-of a merge; it's what you'd get after approving a PR, which Grace calls a  _promotion review_[^pr]
 - `grace save` - this is used by `grace watch` for saving versions of files between checkpoints, because...
 
 ![](https://gracevcsdevelopment.blob.core.windows.net/static/Green.svg)
