@@ -38,7 +38,7 @@ For shorter answers to some of these, please see [Frequently Asked Questions](Fr
 
 ## A word about Git
 
-It's not possible to design a version control system (VCS) today without designing something that relates to, interfaces with, and/or somehow *just reacts to* Git. In order to explain some of the choices I've made in Grace, I *have* to mention Git. Mostly, of course, I'll do that if I think Grace is better in some way or other.
+It's not possible to design a version control system (VCS) today without designing something that relates to, interfaces with, and/or somehow _just reacts to_ Git. In order to explain some of the choices I've made in Grace, I _have_ to mention Git. Mostly, of course, I'll do that if I think Grace is better in some way or other.
 
 With that said, and just to be clear... I respect Git enormously. It will take years for any new VCS to approximate the feature-set of Git. Until a new one starts to gain momentum and gets a sustained programming effort behind it - open-source and community-supported - every new VCS will sort-of be a sketch compared to everything that Git can do.
 
@@ -46,25 +46,29 @@ The maintainers of Git are among the best programmers in the world. The way they
 
 Git has been around for 17 years now, and it's not disappearing anytime soon. If you love Git, if it fits your needs well, I'm guessing you will be able to continue to use it for the next 15-20 years without a problem. (What source control might look like in 2042 is anyone's guess.)
 
-Whether Git will remain the dominant version control system for that entire time is quite another question. I believe that *something else* will capture people's imagination enough to get them to switch away from Git at some point. My guess about when that will happen is: soon-ish. Like, *something else* is being created now-ish, \<waves hands\>±2 years. There are some wonderful source control projects going on right now that are exploring this space. I offer Grace in the hope that *it* will be good enough to make people switch. Time will tell.
+### Git is dominant now, but...
+
+Whether Git will remain the dominant version control system for that entire time is quite another question. I believe that _something else_ will capture people's imagination enough to get them to switch away from Git at some point. My guess about when that will happen is: soon-ish. Like, _something else_ is being created now-ish, \<waves hands\>±2 years. There are some wonderful source control projects going on right now that are exploring this space. I offer Grace in the hope that _it_ will be good enough to make people switch. Time will tell.
 
 Git is amazing at what it does. I'm openly borrowing from Git where I think it's important to (ephemeral working directory, lightweight branching, SHA-256 hashes, and so much else).
 
-I just think that it's a different time now. The constraints that existed in 2005 in terms of hardware and networking, that Git was designed to fit in, don't hold anymore. We can take advantage of current client and server and cloud capabilities to design something really different.
+I just think that it's a different time now. The constraints that existed in 2005 in terms of hardware and networking, the constraints that Git was designed to fit in, don't hold anymore. We can take advantage of current client and server and cloud capabilities to design something really different, and even better.
 
 ![](https://gracevcsdevelopment.blob.core.windows.net/static/Orange3.svg)
 
 ## User experience is everything
 
-Now that I've said some nice things about Git...
+Now that I've said nice things about Git that I actually believe, let's switch gears:
 
-### Git's UX is ~~terrible~~ uh... not so great
+### Git's UX is ~~terrible~~ uh, not so great.
 
  [I](https://xkcd.com/1597/) [hope](https://gracevcsdevelopment.blob.core.windows.net/static/RandomGitCommands.jpeg) [this](https://git-man-page-generator.lokaltog.net) [is](https://rakhim.org/honestly-undefined/13/) [not](https://gracevcsdevelopment.blob.core.windows.net/static/MemorizingSixGitCommands.jpg) [a](https://www.quora.com/Why-is-Git-so-hard-to-learn) [controversial](https://www.quora.com/If-I-think-Git-is-too-hard-to-learn-does-it-mean-that-I-dont-have-the-potential-to-be-a-developer) [statement](https://twitter.com/markrussinovich/status/1395143648191279105). And [I](https://twitter.com/robertskmiles/status/1431560311086137353) **[know](https://twitter.com/markrussinovich/status/1578451245249052672)** [I'm](https://ohshitgit.com/) [not](https://twitter.com/dvd848/status/1508528441519484931) [alone](https://twitter.com/shanselman/status/1102296651081760768) [in](https://www.linuxjournal.com/content/terrible-ideas-git) [thinking](https://blog.acolyer.org/2016/10/24/whats-wrong-with-git-a-conceptual-design-analysis/) [it](https://matt-rickard.com/the-terrible-ux-of-git).
 
-Learning Git is far too hard. It's basically a hazing ritual that we put ourselves through as an industry. Git forces the user to understand far too much about its internals just to become a proficient user. Maybe 15%-20% of users really understand it. Many of its regular users are literally afraid of it. Including me.
+Learning Git is far too hard. It's basically a hazing ritual that we put ourselves through as an industry. Git forces the user to understand far too much about its internals just to become a proficient user. Maybe 15%-20% of users really understand it.
 
-### Grace's UX is much, much nicer
+Many of its regular users are literally afraid of it. Including me.
+
+### Grace's UX is simpler and nicer
 
 Grace is explicitly designed to be easy to use, and easy to understand.
 
@@ -86,15 +90,14 @@ There was an informal Source Control Summit in November, 2020 that I had the opp
 
 The vibe I got from those interactions - and I want to emphasize that this was _my_ takeaway, and that I do not speak for anyone else - was that 1) we're all still just mining for incremental improvements in Git; 2) we're getting tired of Git and whatever else we're using; and 3) we're not sure what could come next that would change that.
 
-That led me to sitting outside on my front porch in December, 2020 - still in pandemic lockdown, in the darkest month of the year - and starting to think about what _I_ would want in a version control system.
+That led me to sitting outside on my front porch in December, 2020 - still in pandemic lockdown, in the darkest month of a dark year - and starting to think about what _I_ would want in a version control system.
 
-It all started that first night with a few main themes:
+It all started that first night with a few themes:
 
 - It had to be easy-to-use. The pain of learning Git, and the continuing fear of it, has always been a sore spot for me, and, I know, for millions of others.
-- It had to be cloud-native, so it could take advantage of the cloud-scale computing that we're all used to in almost every other kind of software, and get away from using file servers.
-- It had to have live synchronization between client and server - I was thinking of the OneDrive sync client as a good model - as the basis for being able to build important new features.
-- It had to be fast. Really fast.
-- It had to fundamentally break away from Git. No "Git client but a different backend". No "New client, but Git for the storage layer." No "it should speak Git protocol". Maybe 12-15 projects over the years have tried various combinations of those, and none of them have ever taken any market share from Git. None of those seemed like a successful way to go.
+- It had to be cloud-native, so it could take advantage of the fast, cloud-scale computing that we're all used to in almost every other kind of software, and get away from using file servers.
+- It had to have live synchronization between client and server - I was thinking of the OneDrive sync client as a good example - as the basis for being able to build important new features.
+- It had to fundamentally break away from Git. No "Git client but a different backend". No "New client, but Git for the storage layer." No "it should speak Git protocol".
 
 I just wanted to start with a blank sheet of paper, keep the things about Git that we all like, take advantage of modern cloud-native services, and get rid of the complexity.
 
@@ -106,13 +109,13 @@ Grace is the version control system that I'd want to use.
 
 Measuring actual performance of any significant system is important, and Grace will have performance benchmarks that can be run alongside other kinds of tests to ensure that regressions don't sneak in. I care deeply about performance.
 
-What I care even more about is *perceived performance*. What I mean by that is something more subjective than just "how many milliseconds?" I mean: **does it *feel* fast**?
+What I care even more about is _perceived performance_. What I mean by that is something more subjective than just "how many milliseconds?" I mean: **does it _feel_ fast**?
 
 Perceived performance includes not just how long something takes, but how long it takes relative to other things that a user is doing, and how consistent that time is from one command invocation to the next, to the next, to the next.
 
-My experience is that running *fast enough*, *consistently*, is what gives the user the feeling that a system is fast and responsive.
+My experience is that running _fast enough_, _consistently_, is what gives the user the feeling that a system is fast and responsive.
 
-That's what Grace is aiming for: both *fast*, and *consistent*. Fast + consistent means that users can develop expectations and muscle memory when using a command, and that running a command won't take them out of their flow.
+That's what Grace is aiming for: both _fast_, and _consistent_. Fast + consistent means that users can develop expectations and muscle memory when using a command, and that running a command won't take them out of their flow.
 
 ![](https://gracevcsdevelopment.blob.core.windows.net/static/Orange3.svg)
 
@@ -128,15 +131,17 @@ Obviously, Grace starts with a command-line interface (CLI). I've designed it fo
 
 Wait, what? No one does those anymore.
 
-Yeah, well... the thing is, I really don't like Electron apps. Like, at all. I'm in the "it's called a *browser*... it's for *browsing*..." camp.
+Yeah, well... the thing is, I really don't like Electron apps. Like, at all.
 
-It's simply not possible to recreate the snappiness, the stick-to-your-finger-ness, the *certainty* that the UI is reacting to you, that you get in a native app when you're writing in a browser. It's just not. I've been watching this for years now, and almost no one even tries.
+It's simply not possible to recreate the snappiness, the stick-to-your-finger-ness, the _certainty_ that the UI is reacting to you, that you get in a native app when you're writing in a browser. It's just not. I've been watching this for years now, and almost no one even tries.
 
-"What about Visual Studio Code?" I hear someone say. It's among the best examples, for sure. (I admit it, I'm typing this in VS Code right now.) But I don't *love* it. Look how much programming and how many person-years have gone into it to make it OK. Look at the way they had to completely rewrite the terminal window output using Canvas because nothing else in a browser was fast enough.
+"What about Visual Studio Code?" I hear someone say. It's among the best examples, for sure. But I don't _love_ it. Look how much programming and how many person-years have gone into it to make it OK. Look at the way they had to completely rewrite the terminal window output using Canvas because nothing else in a browser was fast enough.
 
-I don't see a lot of other Electron apps getting nearly that level of programming. And they're all just... not great. And I fear that, as an industry, we're failing our fellow human beings, and we're failing each other, by accepting second-rate UX on the first-rate hardware we have.
+I don't see a lot of other Electron apps getting nearly that level of effort and programming. And they're all just... not great.
 
-We're making this choice for one reason: our own convenience as programmers. We're prioritizing developer ergonomics over user experience, and claiming that it's for business reasons. And we're usually not making great experiences, even with that.
+I fear that, as an industry, we're failing our fellow human beings, and we're failing each other, by accepting second-rate UX on the first-rate hardware we have.
+
+We're making this choice for one reason: our own convenience as programmers. We're prioritizing developer ergonomics over user experience, and claiming that it's for business reasons. And we're usually not making great UX with it.
 
 We have tools today that can create native apps on multiple platforms from a single codebase, and that's what I'm taking advantage of. There's nothing in Grace's UX that I'm currently imagining that requires any complex user controls that can't be rendered in any of those tools... you know: text blocks, lines, borders, normal input fields and buttons / checkboxes / radio buttons. Maybe a tree view or some graphs if I'm feeling fancy.
 
@@ -166,7 +171,7 @@ But... there are other reasons.
 
 ### Reconsidering object-oriented programming
 
-Like many of my peers, I've been specializing in object-oriented (OO) code for a long time. For me, it was C++ starting in 1998, and then .NET starting with .NET Framework Beta 2 in June, 2001. I've written tens-of-thousands of lines of object-oriented code. In 2015, I started to learn Category Theory, and in 2017-18, I had the opportunity to work on a project at Microsoft Research that was written in F#. I went back to C# for a bit after that, but, the seed was planted, and in a small 2020 pandemic side project, I decided to use F# to *really* learn to think functionally and put a little bit of that Category Theory to use.
+Like many of my peers, I've been specializing in object-oriented (OO) code for a long time. For me, it was C++ starting in 1998, and then .NET starting with .NET Framework Beta 2 in June, 2001. I've written tens-of-thousands of lines of object-oriented code. In 2015, I started to learn Category Theory, and in 2017-18, I had the opportunity to work on a project at Microsoft Research that was written in F#. I went back to C# for a bit after that, but, the seed was planted, and in a small 2020 pandemic side project, I decided to use F# to _really_ learn to think functionally and put a little bit of that Category Theory to use.
 
 After 20+ years of writing OO code, I've come to the conclusion, as have others, that we've hit a ceiling in quality and maintainability in object-oriented-ish code for anything beyond a medium-sized codebase. We've adopted many practices to cover up for the problems with OO, like dependency injection and automated unit testing so we can refactor safely, but the truth is that without a significant investment in Developer Experience, and sustained effort to just keep the code clean, many large OO projects become supremely brittle and hard to maintain.
 
@@ -188,11 +193,11 @@ As far as developer experience, .NET is just a really nice place to spend time. 
 
 Is it perfect? No, of course not. Nothing in our business is.
 
-Does it get to "really good" and "great" more often than other frameworks / runtimes / languages? Does it continue to improve release after release? In my experience: yes, it does.
+Does it deliver "really good" and "great" more often than other frameworks / runtimes / languages? Does it continue to improve release after release? In my experience: yes, it does.
 
-Will it be supported for a long time? Yes, absolutely. .NET has great adoption in both open-source and enterprise shops. Unity, one of the most popular game engines, is written in C#. Microsoft itself runs many of its first-party Azure services on .NET, and that alone will keep .NET around and on a continuous improvement cycle for the forseeable future.
+Will it be supported for a long time? Yes, absolutely. .NET has great adoption in both open-source and enterprise shops. Unity, one of the most popular game engines, is written in C#. Microsoft itself runs many of its insanely large first-party Azure services on .NET, and that alone will keep .NET around and on a continuous improvement cycle for the forseeable future.
 
-So, it's very fast, it has great corporate and community support, it runs on every major platform, and it's loved by those who use it. I'm not saying that other tech stacks aren't great, just that .NET really is a good choice right now.
+So, it's very fast, it has great corporate and community support, it runs on every major platform, and it's loved by those who use it. I'm not saying that other tech stacks aren't great, just that .NET is great now and well worth a long-term bet.
 
 ### Source control isn't "systems-level"
 
@@ -200,7 +205,9 @@ I like things that go fast. My second programming language - at age 11 - was 650
 
 I'm aware of what it means to be coding down-to-the-metal. I grew up on it, and still try to think in terms of hardware capabilities, even as I use higher-level frameworks like .NET.
 
-With that said, the idea that version control systems have to be written in a systems-level language, just because they all used to be, isn't true, especially for a centralized VCS that's really just a modern Web API + clients. Grace relies on external databases and object storage services, and so there's very little Git-style byte-level file manipulation going on, and where there is, .NET can tell the file system to do stuff just as quickly as any other framework. Given how fast .NET is (within 1% of native C++ when well-written), and the fact that network round-trips are involved in most things that Grace does, it's just not likely that writing Grace in C++ or Rust would make a difference in perceived performance for users. Most of the clock time is spent waiting for something over the network, both in the client, and on the server. The on-device computation part is pretty quick compared to that.
+With that said, the idea that version control systems have to be written in a systems-level language, just because they all used to be, isn't true, especially for a centralized VCS that's really just a modern Web API + clients.
+
+Grace relies on external databases and object storage services, and so there's very little Git-style byte-level file manipulation going on, and where there is, .NET can tell the file system to do stuff just as quickly as any other framework. Given how fast .NET is (within 1% of native C++ when well-written), and the fact that network round-trips are involved in most things that Grace does, it's just not likely that writing Grace in C++ or Rust would make a difference in perceived performance for users. Most of the clock time is spent waiting for something over the network, both in the client, and on the server. The on-device computation part is pretty quick compared to that.
 
 ![](https://gracevcsdevelopment.blob.core.windows.net/static/Orange3.svg)
 
@@ -245,7 +252,7 @@ Grace is a centralized version control system (CVCS). To be clear, there are val
 I wanted to take a different approach with Grace, because:
 
 - by removing the complexity of being distributed, Grace's command surface can be much simpler to use and understand
-- as long as Grace is *fast enough* (see [below](#performance-or-isnt-centralized-version-control-slower)), and easy to use, most users won't care if it's centralized
+- as long as Grace is _fast enough_ (see [below](#performance-or-isnt-centralized-version-control-slower)), and easy to use, most users won't care if it's centralized
 - being centralized allows Grace to handle arbitrarily large files, and to give users controls for which files get retrieved locally
 - being centralized allows Grace to scale up well by relying on mature Platform-as-a-Service components
 - it's 2022, and writing software that requires a file server seems... dated
@@ -258,7 +265,7 @@ And, by the way,
 
 ### We're all using Git as a centralized VCS anyway
 
-Almost *everyone* uses Git in a pseudo-centralized, hub-and-spoke model, where the "real" version of the repo - the hub - is centralized at GitHub / GitLab / Atlassian / some other server, and the spokes are all of the users of the repo. In other words, we're already using Git as a centralized version control system, we're just kind-of pretending that we're not, and we're making things more complicated for ourselves because of it.
+Almost _everyone_ uses Git in a pseudo-centralized, hub-and-spoke model, where the "real" version of the repo - the hub - is centralized at GitHub / GitLab / Atlassian / some other server, and the spokes are all of the users of the repo. In other words, we're already using Git as a centralized version control system, we're just kind-of pretending that we're not, and we're making things more complicated for ourselves because of it.
 
 ### Centralized isn't necessarily less antifragile
 
@@ -281,7 +288,7 @@ Without getting into a discussion of which reasons fall into the good vs. not-so
 
 My email is centralized at Microsoft and Google, depending on the account. I don't have a full local copy of a mathematically-validated graph of all of my banking transactions to do my online banking. I have tons of files in OneDrive, but they're not all downloaded to my SSD. Etc.
 
-Having centralized source control just seems weird because we're not used to it anymore. Having a full local copy of all of the history of a repo seems like a warm, cozy safety thing, but, really, how often to you *actually* need the entire history of the repo to be local? How often do you *actually* look at it locally vs. looking at history on GitHub / GitLab / etc. online?
+Having centralized source control just seems weird because we're not used to it anymore. Having a full local copy of all of the history of a repo seems like a warm, cozy, safe thing, but, really, how often to you _actually_ need the entire history of the repo to be local? How often do you _actually_ look at it locally vs. looking at history on GitHub / GitLab / etc. online?
 
 Grace can provide the views you need, they'll just be run on the server.
 
@@ -293,44 +300,56 @@ If you really need a full local copy of your repo with all of its history, Git's
 
 I've been around long enough to have used a couple of the older CVCS's, and I understand the reputation of them as feeling, just... slower. And heavier. That's not what Grace is like.
 
-Grace is designed to feel lightweight, and to be *consistently fast*, by which I mean:
+Grace is designed to feel lightweight, and to be _consistently fast_, by which I mean:
 
 1. running a command in Grace should never take so long that it takes you out of your flow
-2. running the same Grace command (i.e. `grace commit` or `grace diff` or whatever) should take roughly the same amount of time *every time*, within a few hundred milliseconds (i.e. within most users' tolerance for what they would call "consistent").
+2. running the same Grace command (i.e. `grace commit` or `grace diff` or whatever) in the same repo should take roughly the same amount of time _every time_, within a few hundred milliseconds (i.e. within most users' tolerance for what they would call "consistent").
 
-### Git is faster than Grace
+### Git is sometimes faster than Grace...
 
-Git is really fast locally, and because almost every command in Grace will require at least one round-trip to the server, there are some commands for which Grace will never be as fast as Git. In those situations, my aim is for Grace to be as-fast-as-possible, and always *fast enough* to feel responsive to the user. I expect most Grace commands to execute in under 1.0s on the server (+network round-trip, of course); so... slower than local Git, but *fast enough*.
+Git is really fast locally, and because almost every command in Grace will require at least one round-trip to the server, there are some commands for which Grace will never be as fast as Git. In those situations, my aim is for Grace to be as-fast-as-possible, and always _fast enough_ to feel responsive to the user. I expect most Grace commands to execute in under 1.0s on the server (+ network round-trip, of course); so... slower than local Git, but _fast enough_ to be good UX.
 
 ### ...except when Grace is faster than Git
 
-There are also scenarios where Grace will be faster than Git - scenarios where Git communicates over a network - because, in Grace, the "heavy lifting" of tracking changes and uploading new versions and downloading new versions will have been done already, in the background (with `grace watch`). In those use cases, like `grace checkpoint` and `grace commit`, the command is just creating new database records, and that's easily faster than `git push`.
+There are also scenarios where Grace will be faster than Git - usually scenarios where Git communicates over a network - because, in Grace, the "heavy lifting" of tracking changes and uploading new versions and downloading new versions will have been done already, in the background (with `grace watch`). In those use cases, like `grace checkpoint` and `grace commit`, the command is just creating a new database record, and that's faster than `git push`.
 
-So, Grace is designed to be *fast*, i.e. fast enough to keep users in flow, and to be *consistent*, i.e. users quickly develop muscle-memory for how long things take, helping them stay in flow. CVCS's just have a different performance profile than DVCS's, but there's no reason they can't *feel* responsive and fast.
+So, Grace is designed to be _fast_, i.e. fast enough to keep users in flow, and to be _consistent_, i.e. users quickly develop muscle-memory for how long things take, helping them stay in flow.
 
 ![](https://gracevcsdevelopment.blob.core.windows.net/static/Orange3.svg)
 
 ## How much Git should we keep?
 
-Various version control projects over the years have attempted to be completely new front-ends for Git, or to keep some of it, but keep Git as the back-end storage format, or maybe keep the Git network protocol but have a different client or storage format... etc.
+Various version control projects over the years, and today, have attempted to be completely new front-ends for Git, or to keep some of it, but keep Git as the back-end storage format, or maybe keep the Git network protocol but have a different client or storage format, or be Git-compatible.  Or something like that.
 
-My observation is: no matter how confusing Git itself is, none of those approaches have ever taken any market share away from Git, and I don't think they ever will.
+My observation is: no matter how confusing Git itself is, none of those approaches have ever taken any market share away from Git.
+
+### Even Git can't be the new Git
 
 Git itself has tried to modernize a little bit over the years. For example, in 2020, Git added the `git switch` and `git restore` commands. In my completely informal and anecdotal asking around, I've found that not a single person has ever heard of them. 2½ years later, they're still marked as "EXPERIMENTAL".
 
-I point this out because I believe that, in most people's minds, the command surface of Git is locked. Once they go through the pain of learning enough Git to get by, very few people want to continue going deeper or to re-learn new ways of using it every few years. Certainly, in searching for help about Git, the search results overwhelmingly reflect older ways of using Git, and it will take years before top search results reflect any newer (meaning anything from 2019 and after) ways of using it. It's exactly in those years that I believe a new VCS will start taking market share away from Git and become the Cool New Thing.
+I point this out because I believe that, in most people's minds, the command surface of Git is locked. Once they go through the pain of learning enough Git to get by, very few people want to continue going deeper or to re-learn new ways of using it every few years. When searching for help about Git, the search results overwhelmingly reflect older ways of using Git, and it will take years before those search results reflect newer (like, since 2019) ways of using it.
+
+It's exactly in those years that I believe a new VCS will start taking market share away from Git and become the Cool New Thing.
+
+### So how much?
 
 So... how much Git should we keep when we create new version control systems?
 
-Grace's answer is: none at all, other than a little design inspiration. It's time to start with a blank sheet of paper.
+Many projects seem to think: _a lot_, because (the thinking goes) in order to get adoption, you have to be Git-compatible.
 
-Grace will support one-time import from Git, and snapshot-style export to the Git file format, but supporting two-way synchronization between Grace and Git, or using the Grace client as a front-end to a Git repository, is an explicit non-goal.
+Grace's answer is: _not very much_. I mean, it definitely borrows things from Git, but, fundamentally, it's _really_ different.
+
+Grace says: It's time to start with a blank sheet of paper.
+
+Only time will tell if this design decision is right - i.e. if it wins hearts and minds - but given that the hang-onto-Git-somewhat-but-do-it-differently path is already being explored by other projects, I want to see what can happen when we really let go of Git.
+
+I mean, someone's gotta do it.
+
+### Import and export, but not sync
+
+Grace will support one-time import from Git, and snapshot-style export to a `git bundle` file, but supporting two-way synchronization between Grace and Git, or using the Grace client as a front-end to a Git repository, is an explicit non-goal.
 
 Grace's design is so different from Git's that spending time trying to make them fit together in one client is less about composition, and more about duct-taping two totally different things together. It doesn't make sense.
-
-Only time will tell if developers respond to this kind of blank-slate approach, but given that the hang-onto-Git-part-way-but-do-it-differently path is already being explored by other projects, it's best to see what Grace can become without trying to force it to speak Git.
-
-Hey, someone's gotta try it.
 
 ![](https://gracevcsdevelopment.blob.core.windows.net/static/Orange3.svg)
 

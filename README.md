@@ -247,7 +247,7 @@ If your repository includes large binary files, like edited video, graphics, or 
 
 Grace Server is a modern Web API application. Like Grace's CLI, the Web API is easy to use, and easy to understand.
 
-Grace ships with a .NET SDK, which is simply a projection of the Web API into .NET (and which Grace CLI uses). SDK's for other platforms are welcomed as community contributions.
+Grace ships with a .NET SDK, which is simply a projection of the Web API into .NET (and which Grace itself uses). SDK's for other platforms are welcomed as community contributions.
 
 ![](https://gracevcsdevelopment.blob.core.windows.net/static/Green.svg)
 
