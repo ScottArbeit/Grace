@@ -56,7 +56,7 @@ flowchart BT
 
 ![](https://gracevcsdevelopment.blob.core.windows.net/static/Green.svg)
 
-Everything goes well, Grace completes the promotion, and `main` is updatd to point to the 56d626f4 version.
+Everything goes well, Grace completes the promotion, and `main` is updated to point to the 56d626f4 version.
 
 `Alice`, also pointing to 56d626f4, marks itself as based on it.
 
