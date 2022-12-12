@@ -344,8 +344,8 @@ module Branch =
                                         let updatedRelativePaths = 
                                             differences.Select(fun difference ->
                                                 match difference.DifferenceType with
-                                                | Add -> match difference.FileSystemEntryType with | FileSystemEntryType.File -> Some difference.RelativePath | FileSystemEntryType.Directory _ -> None
-                                                | Change -> match difference.FileSystemEntryType with | FileSystemEntryType.File -> Some difference.RelativePath | FileSystemEntryType.Directory _ -> None
+                                                | Add -> match difference.FileSystemEntryType with | FileSystemEntryType.File -> Some difference.RelativePath | FileSystemEntryType.Directory -> None
+                                                | Change -> match difference.FileSystemEntryType with | FileSystemEntryType.File -> Some difference.RelativePath | FileSystemEntryType.Directory -> None
                                                 | Delete -> None)
                                                 .Where(fun relativePathOption -> relativePathOption.IsSome)
                                                 .Select(fun relativePath -> relativePath.Value)
@@ -392,8 +392,8 @@ module Branch =
                         let updatedRelativePaths = 
                             differences.Select(fun difference ->
                                 match difference.DifferenceType with
-                                | Add -> match difference.FileSystemEntryType with | FileSystemEntryType.File -> Some difference.RelativePath | FileSystemEntryType.Directory _ -> None
-                                | Change -> match difference.FileSystemEntryType with | FileSystemEntryType.File -> Some difference.RelativePath | FileSystemEntryType.Directory _ -> None
+                                | Add -> match difference.FileSystemEntryType with | FileSystemEntryType.File -> Some difference.RelativePath | FileSystemEntryType.Directory -> None
+                                | Change -> match difference.FileSystemEntryType with | FileSystemEntryType.File -> Some difference.RelativePath | FileSystemEntryType.Directory -> None
                                 | Delete -> None)
                                 .Where(fun relativePathOption -> relativePathOption.IsSome)
                                 .Select(fun relativePath -> relativePath.Value)
@@ -903,8 +903,8 @@ module Branch =
                                             let updatedRelativePaths = 
                                                 differences.Select(fun difference ->
                                                     match difference.DifferenceType with
-                                                    | Add -> match difference.FileSystemEntryType with | FileSystemEntryType.File -> Some difference.RelativePath | FileSystemEntryType.Directory _ -> None
-                                                    | Change -> match difference.FileSystemEntryType with | FileSystemEntryType.File -> Some difference.RelativePath | FileSystemEntryType.Directory _ -> None
+                                                    | Add -> match difference.FileSystemEntryType with | FileSystemEntryType.File -> Some difference.RelativePath | FileSystemEntryType.Directory -> None
+                                                    | Change -> match difference.FileSystemEntryType with | FileSystemEntryType.File -> Some difference.RelativePath | FileSystemEntryType.Directory -> None
                                                     | Delete -> None)
                                                     .Where(fun relativePathOption -> relativePathOption.IsSome)
                                                     .Select(fun relativePath -> relativePath.Value)
@@ -1050,8 +1050,8 @@ module Branch =
                                 let updatedRelativePaths = 
                                     differences.Select(fun difference ->
                                         match difference.DifferenceType with
-                                        | Add -> match difference.FileSystemEntryType with | FileSystemEntryType.File -> Some difference.RelativePath | FileSystemEntryType.Directory _ -> None
-                                        | Change -> match difference.FileSystemEntryType with | FileSystemEntryType.File -> Some difference.RelativePath | FileSystemEntryType.Directory _ -> None
+                                        | Add -> match difference.FileSystemEntryType with | FileSystemEntryType.File -> Some difference.RelativePath | FileSystemEntryType.Directory -> None
+                                        | Change -> match difference.FileSystemEntryType with | FileSystemEntryType.File -> Some difference.RelativePath | FileSystemEntryType.Directory -> None
                                         | Delete -> None)
                                         .Where(fun relativePathOption -> relativePathOption.IsSome)
                                         .Select(fun relativePath -> relativePath.Value)

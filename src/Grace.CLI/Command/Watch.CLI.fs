@@ -14,7 +14,6 @@ open Microsoft.AspNetCore.Http.Connections
 open Microsoft.AspNetCore.SignalR.Client
 open NodaTime
 open Spectre.Console
-open Spectre.Console.Cli
 open System
 open System.Buffers
 open System.Collections.Generic

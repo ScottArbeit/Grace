@@ -536,7 +536,7 @@ module Services =
 
     /// Determines if the given difference is for a directory, instead of a file.
     let isDirectoryChange (difference: FileSystemDifference) =
-        match difference.FileSystemEntryType with | FileSystemEntryType.Directory _ -> true | FileSystemEntryType.File _ -> false
+        match difference.FileSystemEntryType with | FileSystemEntryType.Directory -> true | FileSystemEntryType.File -> false
 
     /// Determines if the given difference is for a file, instead of a directory.
     let isFileChange difference = not (isDirectoryChange difference)

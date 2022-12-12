@@ -1,7 +1,7 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
 	<PropertyGroup>
-		<TargetFramework>net6.0</TargetFramework>
+		<TargetFramework>net7.0</TargetFramework>
 		<GenerateDocumentationFile>true</GenerateDocumentationFile>
 		<WarningsAsErrors>FS0025</WarningsAsErrors>
 		<NoWarn>1057</NoWarn>
@@ -35,14 +35,14 @@
 	</ItemGroup>
 
 	<ItemGroup>
-		<PackageReference Include="Azure.Storage.Blobs" Version="12.13.0" />
-		<PackageReference Include="Azure.Storage.Blobs.Batch" Version="12.10.0" />
-		<PackageReference Include="Azure.Storage.Common" Version="12.12.0" />
-		<PackageReference Include="Dapr.Actors" Version="1.8.0" />
-		<PackageReference Include="Dapr.Client" Version="1.8.0" />
-		<PackageReference Include="FSharpPlus" Version="1.2.4" />
+		<PackageReference Include="Azure.Storage.Blobs" Version="12.14.1" />
+		<PackageReference Include="Azure.Storage.Blobs.Batch" Version="12.11.0" />
+		<PackageReference Include="Azure.Storage.Common" Version="12.13.0" />
+		<PackageReference Include="Dapr.Actors" Version="1.9.0" />
+		<PackageReference Include="Dapr.Client" Version="1.9.0" />
+		<PackageReference Include="FSharpPlus" Version="1.2.5" />
 		<PackageReference Include="Nito.AsyncEx" Version="5.1.2" />
-		<PackageReference Include="NodaTime" Version="3.1.0" />
+		<PackageReference Include="NodaTime" Version="3.1.5" />
 		<PackageReference Include="NodaTime.Serialization.SystemTextJson" Version="1.0.0" />
 	</ItemGroup>
 
@@ -51,7 +51,7 @@
 	</ItemGroup>
 
 	<ItemGroup>
-		<PackageReference Update="FSharp.Core" Version="6.0.5" />
+		<PackageReference Update="FSharp.Core" Version="7.0.0" />
 	</ItemGroup>
 
 </Project>

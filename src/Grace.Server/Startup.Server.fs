@@ -169,34 +169,33 @@ module Application =
             |> text
             |> RequestErrors.notFound
 
-        let enrichTelemetry (activity: Activity) (eventName: string) (obj: Object) =
-            match obj with
-            | :? HttpRequest as request ->
-                let currentProcess = Process.GetCurrentProcess()
-                let context = request.HttpContext
-                let workingSet = currentProcess.WorkingSet64.ToString("N0")
-                let threadCount = currentProcess.Threads.Count.ToString("N0")
-                let maxWorkingSet = currentProcess.PeakWorkingSet64.ToString("N0")
+        let enrichTelemetry (activity: Activity) (request: HttpRequest) = //(eventName: string) (obj: Object) =
+            let currentProcess = Process.GetCurrentProcess()
+            let context = request.HttpContext
+            let workingSet = currentProcess.WorkingSet64.ToString("N0")
+            let threadCount = currentProcess.Threads.Count.ToString("N0")
+            let maxWorkingSet = currentProcess.PeakWorkingSet64.ToString("N0")
 
-                let user = context.User                
-                if user.Identity.IsAuthenticated then
+            let user = context.User                
+            if user.Identity.IsAuthenticated then
 
-                    let claimsList = new StringBuilder()
-                    if not <| isNull user.Claims then
-                        for claim in user.Claims do
-                            claimsList.Append($"{claim.Type}:{claim.Value};") |> ignore
-                    if claimsList.Length > 1 then
-                        claimsList.Remove(claimsList.Length - 1, 1) |> ignore
-                    activity.AddTag("enduser.id", user.Identity.Name)
-                            .AddTag("enduser.claims", claimsList.ToString()) |> ignore
-                activity.AddTag("working_set", workingSet)
-                        .AddTag("max_working_set", maxWorkingSet)
-                        .AddTag("thread_count", threadCount)
-                        .AddTag("http.client_ip", context.Connection.RemoteIpAddress)
-                        .AddTag("enduser.is_authenticated", user.Identity.IsAuthenticated) |> ignore
-            | :? HttpResponse as response ->
-                activity.AddTag("http.response_content_length", response.ContentLength) |> ignore
-            | _ -> activity.AddTag("eventName", eventName) |> ignore
+                let claimsList = new StringBuilder()
+                if not <| isNull user.Claims then
+                    for claim in user.Claims do
+                        claimsList.Append($"{claim.Type}:{claim.Value};") |> ignore
+                if claimsList.Length > 1 then
+                    claimsList.Remove(claimsList.Length - 1, 1) |> ignore
+                activity.AddTag("enduser.id", user.Identity.Name)
+                        .AddTag("enduser.claims", claimsList.ToString()) |> ignore
+            activity.AddTag("working_set", workingSet)
+                    .AddTag("max_working_set", maxWorkingSet)
+                    .AddTag("thread_count", threadCount)
+                    .AddTag("http.client_ip", context.Connection.RemoteIpAddress)
+                    .AddTag("enduser.is_authenticated", user.Identity.IsAuthenticated) |> ignore
+
+            //| :? HttpResponse as response ->
+            //    activity.AddTag("http.response_content_length", response.ContentLength) |> ignore
+            //| _ -> activity.AddTag("eventName", eventName) |> ignore
 
         member _.ConfigureServices (services: IServiceCollection) =
             let n = Constants.JsonSerializerOptions.Converters.Count
@@ -233,7 +232,7 @@ module Application =
                                     .AddService(Constants.GraceServerAppId)
                                     .AddTelemetrySdk()
                                     .AddAttributes(globalOpenTelemetryAttributes))
-                               .AddAspNetCoreInstrumentation(fun options -> options.Enrich <- enrichTelemetry)
+                               .AddAspNetCoreInstrumentation(fun options -> options.EnrichWithHttpRequest <- enrichTelemetry)
                                .AddHttpClientInstrumentation()
                                .AddAzureMonitorTraceExporter(fun options -> options.ConnectionString <- azureMonitorConnectionString) |> ignore)
                                //.AddZipkinExporter() |> ignore)

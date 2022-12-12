@@ -2,19 +2,12 @@
   "profiles": {
     "Docker Compose": {
       "commandName": "DockerCompose",
+      "commandVersion": "1.0",
       "composeLaunchAction": "None",
       "composeLaunchServiceName": "grace.server",
-      "commandVersion": "1.0",
       "serviceActions": {
-        "daprd": "StartWithoutDebugging",
         "grace.server": "StartDebugging",
-        "dapr-placement": "StartWithoutDebugging",
-        "otel-collector": "StartWithoutDebugging",
-        "prometheus": "StartWithoutDebugging",
-        "redis": "StartWithoutDebugging",
-        "zipkin": "StartWithoutDebugging",
-        "zipkin-dependencies": "StartWithoutDebugging",
-        "zipkin-elasticsearch": "StartWithoutDebugging"
+        "dapr-placement": "StartWithoutDebugging"
       }
     }
   }

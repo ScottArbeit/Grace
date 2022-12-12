@@ -1,17 +1,23 @@
+name: Grace-Compose
+
 networks:
   grace:
     name: grace
     enable_ipv6: false
     attachable: false
+    ipam:
+      driver: default
+      config:
+        - subnet: 172.28.0.0/16
+          ip_range: 172.28.5.0/24
+          gateway: 172.28.5.254
 
 services:
   grace.server:
-    image: grace.server
+    image: ${DOCKER_REGISTRY-}grace.server
     container_name: Grace.Server
     networks: 
       - grace
-    #extra_hosts:
-    #  - "localhost:192.168.1.201"
     build:
       context: .
       dockerfile: Grace.Server/Dockerfile
@@ -22,6 +28,7 @@ services:
       DAPR_HTTP_PORT: "3500"
       DAPR_GRPC_PORT: "50001"
       AZURE_MONITOR_CONNECTION_STRING: "InstrumentationKey=e0955eb4-1817-4a94-bf6e-d48f6ae54a8c;IngestionEndpoint=https://westus2-2.in.applicationinsights.azure.com/"
+      Azure_CosmosDB_Connection_String: "AccountEndpoint=https://localhost:8081/;AccountKey=C2y6yDjf5/R+ob0N8A7Cgv30VRDJIWEHLM+4QDU5DE2nQ9nDuVTqobD4b8mGGyPMbIZnqyMsEcaGQy67XIw/Jw==" # This is a well-known default key.
     volumes:
      - "C:\\Users\\Scott\\.aspnet\\https:/https/"
     ports:
@@ -30,8 +37,20 @@ services:
     depends_on:
       - dapr-placement
 
+  dapr-placement:
+    image: daprio/dapr:1.9.4
+    container_name: dapr-placement
+    command: ["./placement", "-port", "6050"]
+    ports:
+      - "6050:6050"
+    networks:
+      - grace
+    depends_on:
+      - cosmosdb
+      - redis
+        
   daprd:
-    image: daprio/daprd:1.5.1
+    image: daprio/daprd:1.9.4
     container_name: daprd
     networks:
       - grace
@@ -52,18 +71,18 @@ services:
       - "./components/:/components"
     depends_on:
       - grace.server
+      - cosmosdb
       - redis
       - otel-collector
-
-  dapr-placement:
-    image: daprio/dapr:1.5.1
-    container_name: dapr-placement
-    command: ["./placement", "-port", "6050"]
-    ports:
-      - "6050:6050"
-    networks:
+      
+  redis:
+    image: redis:latest
+    container_name: redis
+    networks: 
       - grace
-  
+    ports:
+      - "6379:6379"
+
   otel-collector:
     image: otel/opentelemetry-collector-contrib
     container_name: opentelemetry-collector
@@ -84,22 +103,13 @@ services:
       - zipkin
       - prometheus
 
-  zipkin:
-    image: openzipkin/zipkin
-    container_name: zipkin
-    networks:
-      - grace
-    environment:
-      - STORAGE_TYPE=elasticsearch
-      # Point the zipkin at the storage backend
-      - ES_HOSTS=zipkin-elasticsearch:9200
-      # Uncomment to see requests to and from elasticsearch
-      # - ES_HTTP_LOGGING=BODY
-    depends_on:
-      - zipkin-elasticsearch
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    volumes:
+      - "./collector/prometheus.yaml:/etc/prometheus/prometheus.yml"
     ports:
-      - "9410:9410"
-      - "9411:9411"
+      - "9090:9090"
 
   zipkin-elasticsearch:
     image: ghcr.io/openzipkin/zipkin-elasticsearch7:latest
@@ -126,18 +136,37 @@ services:
     depends_on:
       - zipkin-elasticsearch
 
-  prometheus:
-    image: prom/prometheus:latest
-    container_name: prometheus
-    volumes:
-      - "./collector/prometheus.yaml:/etc/prometheus/prometheus.yml"
-    ports:
-      - "9090:9090"
-
-  redis:
-    image: redis:latest
-    container_name: redis
-    networks: 
+  zipkin:
+    image: openzipkin/zipkin
+    container_name: zipkin
+    networks:
       - grace
+    environment:
+      - STORAGE_TYPE=elasticsearch
+      # Point the zipkin at the storage backend
+      - ES_HOSTS=zipkin-elasticsearch:9200
+      # Uncomment to see requests to and from elasticsearch
+      # - ES_HTTP_LOGGING=BODY
     ports:
-      - "6379:6379"
+      - "9410:9410"
+      - "9411:9411"
+    depends_on:
+      - zipkin-dependencies
+
+  cosmosdb:
+    container_name: local.cosmosdb
+    image: "mcr.microsoft.com/cosmosdb/linux/azure-cosmos-emulator"
+    tty: true
+    #mem_limit: 500M
+    cpu_count: 2
+    environment:
+      - AZURE_COSMOS_EMULATOR_PARTITION_COUNT=8
+      - AZURE_COSMOS_EMULATOR_ENABLE_DATA_PERSISTENCE=true
+      #- AZURE_COSMOS_EMULATOR_IP_ADDRESS_OVERRIDE=${IP_Address}
+    ports:
+        # Documentation on port numbers for the emulator can be found at
+        #   https://learn.microsoft.com/en-us/azure/cosmos-db/docker-emulator-linux#configuration-options.
+        - "8081:8081"   # CosmosDB Explorer port
+        - "10251-10255:10251-10255" # DirectPorts
+    #volumes:
+    #  - cosmosdb_volume:C:\CosmosDB.Emulator

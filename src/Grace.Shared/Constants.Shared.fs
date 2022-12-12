@@ -125,6 +125,8 @@ module Constants =
         /// The environment variable that contains the Dapr gRPC port.
         let DaprGrpcPort = "DAPR_GRPC_PORT"
 
+        let AzureCosmosDBConnectionString = "Azure_CosmosDB_Connection_String"
+
     /// The default CacheControl header for object storage.
     let BlobCacheControl = "public,max-age=86400,no-transform"
 

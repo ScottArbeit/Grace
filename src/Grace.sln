@@ -14,13 +14,13 @@ Project("{6EC3EE1D-3C4E-46DD-8F32-0CC8E7565705}") = "Grace.Shared", "Grace.Share
 EndProject
 Project("{6EC3EE1D-3C4E-46DD-8F32-0CC8E7565705}") = "Grace.SDK", "Grace.SDK\Grace.SDK.fsproj", "{F52765E4-A97D-4BE8-951D-BAB4B7018E79}"
 EndProject
-Project("{E53339B2-1760-4266-BCC7-CA923CBCF16C}") = "docker-compose", "docker-compose.dcproj", "{6BFBBDFC-C5FC-454D-986A-D4A19BEDFD5F}"
-EndProject
 Project("{6EC3EE1D-3C4E-46DD-8F32-0CC8E7565705}") = "Grace.Load", "Grace.Load\Grace.Load.fsproj", "{05E1442F-7263-459F-B726-80D7AE7A0DEC}"
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "CosmosJsonSerializer", "CosmosSerializer\CosmosJsonSerializer.csproj", "{72660935-7140-4D48-9BF2-020A790AC747}"
 EndProject
 Project("{6EC3EE1D-3C4E-46DD-8F32-0CC8E7565705}") = "Grace.CLI", "Grace.CLI\Grace.CLI.fsproj", "{9003426D-A5D8-4623-815E-A31C0279DA3A}"
+EndProject
+Project("{E53339B2-1760-4266-BCC7-CA923CBCF16C}") = "docker-compose", "docker-compose.dcproj", "{17B590BA-543E-49B1-9EB7-262CE73D86FE}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -44,8 +44,6 @@ Global
 		{F52765E4-A97D-4BE8-951D-BAB4B7018E79}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{F52765E4-A97D-4BE8-951D-BAB4B7018E79}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{F52765E4-A97D-4BE8-951D-BAB4B7018E79}.Release|Any CPU.Build.0 = Release|Any CPU
-		{6BFBBDFC-C5FC-454D-986A-D4A19BEDFD5F}.Debug|Any CPU.ActiveCfg = Debug|x64
-		{6BFBBDFC-C5FC-454D-986A-D4A19BEDFD5F}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{05E1442F-7263-459F-B726-80D7AE7A0DEC}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
 		{05E1442F-7263-459F-B726-80D7AE7A0DEC}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{05E1442F-7263-459F-B726-80D7AE7A0DEC}.Release|Any CPU.ActiveCfg = Release|Any CPU
@@ -58,6 +56,10 @@ Global
 		{9003426D-A5D8-4623-815E-A31C0279DA3A}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{9003426D-A5D8-4623-815E-A31C0279DA3A}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{9003426D-A5D8-4623-815E-A31C0279DA3A}.Release|Any CPU.Build.0 = Release|Any CPU
+		{17B590BA-543E-49B1-9EB7-262CE73D86FE}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{17B590BA-543E-49B1-9EB7-262CE73D86FE}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{17B590BA-543E-49B1-9EB7-262CE73D86FE}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{17B590BA-543E-49B1-9EB7-262CE73D86FE}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

@@ -9,6 +9,7 @@ open Grace.Shared.Utilities
 open Grace.Shared.Validation
 open NodaTime
 open System
+open System.Diagnostics
 open System.IO
 open System.Net
 open System.Net.Http
@@ -16,18 +17,32 @@ open System.Net.Http.Json
 open System.Net.Security
 open System.Text.Json
 
+// Supresses the warning for using AllowNoEncryption in Debug builds.
+#nowarn "0044"
+
 module Common =
 
     let rnd = Random()
-
-    // We're limiting the SSL protocol to TLS 1.2+.
-    let private sslClientAuthenticationOptions = SslClientAuthenticationOptions(
-        EncryptionPolicy = EncryptionPolicy.RequireEncryption,
-        EnabledSslProtocols = (Security.Authentication.SslProtocols.Tls12 ||| Security.Authentication.SslProtocols.Tls13)
-    )
-
-    // This construct is an equivalent to using IHttpClientFactory in the ASP.NET DI container, for code (like this) that isn't using GenericHost.
-    // See https://docs.microsoft.com/en-us/aspnet/core/fundamentals/http-requests?view=aspnetcore-6.0#alternatives-to-ihttpclientfactory for more information.
+    
+    let private sslClientAuthenticationOptions = 
+#if DEBUG
+        // In debug mode, we'll accept only TLS 1.2 and allow no encryption to enable access to the CosmosDB emulator without having to deal with certificates.
+        // TLS 1.3 requires a non-null cipher, so limiting ourselves to TLS 1.2 lets us get away with using this.
+        // AllowNoEncryption = Prefer secure connections, but if there's a null cipher (which we'll get from the CosmosDB emulator because it has a self-signed certificate), we'll allow it.
+        SslClientAuthenticationOptions(
+            EncryptionPolicy = EncryptionPolicy.AllowNoEncryption,
+            EnabledSslProtocols = Security.Authentication.SslProtocols.Tls12
+        )
+    #else
+        // In release mode, we'll accept TLS 1.2 and TLS 1.3.
+        SslClientAuthenticationOptions(
+            EncryptionPolicy = EncryptionPolicy.RequireEncryption,
+            EnabledSslProtocols = (Security.Authentication.SslProtocols.Tls12 ||| Security.Authentication.SslProtocols.Tls13)
+        )
+    #endif
+    
+    // This construct is equivalent to using IHttpClientFactory in the ASP.NET DI container, for code (like this) that isn't using GenericHost.
+    // See https://docs.microsoft.com/en-us/aspnet/core/fundamentals/http-requests?view=aspnetcore-7.0#alternatives-to-ihttpclientfactory for more information.
     let private socketsHttpHandler = new SocketsHttpHandler(
         AllowAutoRedirect = true,                               // We expect to use Traffic Manager or equivalents, so there will be redirects.
         MaxAutomaticRedirections = 6,                           // Not sure of the exact right number, but definitely want a limit here.

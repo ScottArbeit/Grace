@@ -20,6 +20,7 @@ open System.Globalization
 open System.Linq
 open System.Threading.Tasks
 open NodaTime.Text
+open System.Net.Http
 
 module ApplicationContext =
 
@@ -71,17 +72,26 @@ module ApplicationContext =
         if not <| isNull cosmosClient then
             cosmosClient
         else
-            (task {
-                let! secrets = daprClient.GetSecretAsync(Constants.GraceSecretStoreName, "AzureCosmosDBConnectionString")
-                let cosmosDbConnectionString = secrets.First().Value
-                let cosmosClientOptions = CosmosClientOptions(
-                    ApplicationName = Constants.GraceServerAppId, 
-                    EnableContentResponseOnWrite = false, 
-                    LimitToEndpoint = true, 
-                    Serializer = new CosmosJsonSerializer(Constants.JsonSerializerOptions))
-                cosmosClient <- new CosmosClient(cosmosDbConnectionString, cosmosClientOptions)
-                return cosmosClient
-            }).Result
+            let cosmosDbConnectionString = Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.AzureCosmosDBConnectionString)
+            let cosmosClientOptions = CosmosClientOptions(
+                ApplicationName = Constants.GraceServerAppId, 
+                EnableContentResponseOnWrite = false, 
+                LimitToEndpoint = true, 
+                Serializer = new CosmosJsonSerializer(Constants.JsonSerializerOptions))
+#if DEBUG
+            // The CosmosDB emulator uses a self-signed certificate, and, by default, HttpClient will refuse
+            //   to connect over https: if the certificate can't be traced back to a root.
+            // These settings allow Grace Server to access the CosmosDB Emulator by bypassing TLS.
+            // And none of this matters if Dapr won't bypass TLS as well. 🤷
+            let httpClientFactory = fun () ->
+                let httpMessageHandler: HttpMessageHandler = new HttpClientHandler(
+                    ServerCertificateCustomValidationCallback = (fun _ _ _ _ -> true))
+                new HttpClient(httpMessageHandler)
+            cosmosClientOptions.HttpClientFactory <- httpClientFactory
+            cosmosClientOptions.ConnectionMode <- ConnectionMode.Direct
+#endif
+            cosmosClient <- new CosmosClient(cosmosDbConnectionString, cosmosClientOptions)
+            cosmosClient
 
     let CosmosContainer() = 
         if not <| isNull cosmosContainer then
