@@ -58,11 +58,17 @@ One-time initial import from a Git repo will be supported, and point-in-time exp
 
 Grace just has a fundamentally different design than Git. That's intentional. Two-way synchronization would involve a messy translation between what Git calls a _merge_ and what Grace calls a _promotion_, and I don't see a good way right now to handle that well without writing a _lot_ of code and handling a _lot_ of edge cases, and that's time better spent on everything else I need to do.
 
+Also, I'm not sure that new version control systems need to sync with Git to catch on. Git didn't have two-way sync with any of the VCS's that we all migrated from, and it didn't stop us: we did the migrations and went on with our lives.
+
 ## What are the scalability limits for Grace?
 
-Answer #1: It depends on the PaaS services that Grace is deployed on. In general, Grace itself is really fast, and will take advantage of however fast the underlying services it depends on will run.
+### Answer #1
 
-Answer #2: I'm not sure, because I haven't really pushed the limits yet.
+It depends on the PaaS services that Grace is deployed on. In general, Grace itself is really fast, and will take advantage of however fast the underlying services it depends on will run.
+
+### Answer #2
+
+I'm not sure, because I haven't really pushed the limits yet.
 
 I _can_ tell you that I've tested repositories of up to 100,000 files and 15,000 directories, with Grace deployed using Azure CosmosDB and Azure Blob Storage. If `grace watch` is running, performance on those large repositories is really good, and similar to performance on medium-sized and even small repositories for most commands.
 
@@ -92,7 +98,7 @@ I'm fortunate enough to know the folks involved in [Jujutsu](https://github.com/
 
 I'm aware of [Pijul](https://pijul.org/). I see Meta has just announced [Sapling](https://sapling-scm.com/). I know there are others.
 
-All I can say is: Grace has its own design philosophy, and it's own perspective on what it should feel like to be using version control, and that's what I'm passionate about. I think of it as a friendly competition to see which one wins with the next generation of developers.
+All I can say is: Grace has its own design philosophy, and its own perspective on what it should feel like to be using version control, and that's what I'm passionate about. I think of it as a friendly competition to see which one wins with the next generation of developers.
 
 Let 1,000 flowers bloom. One of them will lead us to the future of version control.
 

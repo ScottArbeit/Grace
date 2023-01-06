@@ -2,7 +2,7 @@
 
 Hi, I'm Scott. I created Grace.
 
-I'll use first-person in this document, not because I wish to imply that Grace is my project alone, but because I want to share what the early design and technology decisions were for Grace, and why I started writing it in the first place.
+I'll use first-person singular in this document because I want to share what the early design and technology decisions were for Grace, and why I started writing it in the first place. I'll happily rewrite it in first-person plural when it's appropriate.
 
 For shorter answers to some of these, please see [Frequently Asked Questions](Frequently%20asked%20questions.md).
 
@@ -58,9 +58,9 @@ I just think that it's a different time now. The constraints that existed in 200
 
 ## User experience is everything
 
-Now that I've said nice things about Git that I actually believe, let's switch gears:
+Now that I've said nice things about Git....
 
-### Git's UX is ~~terrible~~ uh, not so great.
+### Git's UX is terrible.
 
  [I](https://xkcd.com/1597/) [hope](https://gracevcsdevelopment.blob.core.windows.net/static/RandomGitCommands.jpeg) [this](https://git-man-page-generator.lokaltog.net) [is](https://rakhim.org/honestly-undefined/13/) [not](https://gracevcsdevelopment.blob.core.windows.net/static/MemorizingSixGitCommands.jpg) [a](https://www.quora.com/Why-is-Git-so-hard-to-learn) [controversial](https://www.quora.com/If-I-think-Git-is-too-hard-to-learn-does-it-mean-that-I-dont-have-the-potential-to-be-a-developer) [statement](https://twitter.com/markrussinovich/status/1395143648191279105). And [I](https://twitter.com/robertskmiles/status/1431560311086137353) **[know](https://twitter.com/markrussinovich/status/1578451245249052672)** [I'm](https://ohshitgit.com/) [not](https://twitter.com/dvd848/status/1508528441519484931) [alone](https://twitter.com/shanselman/status/1102296651081760768) [in](https://www.linuxjournal.com/content/terrible-ideas-git) [thinking](https://blog.acolyer.org/2016/10/24/whats-wrong-with-git-a-conceptual-design-analysis/) [it](https://matt-rickard.com/the-terrible-ux-of-git).
 
@@ -68,7 +68,11 @@ Learning Git is far too hard. It's basically a hazing ritual that we put ourselv
 
 Many of its regular users are literally afraid of it. Including me.
 
-### Grace's UX is simpler and nicer
+> Bad software, designed without empathy, that restricts people to only follow strict procedures to achieve one specific goal, has trained millions of people that software is cumbersome, inflexible, and even hostile and that users have to adapt to the machine, if they want to get anything done. The future of computing should be very much the opposite. Good software can augment the human experience by becoming the tool that’s needed in the moment, unrestricted by limitations in the physical world. It can become the personal dynamic medium through which exploring and expressing our ideas should become simpler rather than more difficult. [^StefanLesser]
+> 
+> \- Stefan Lesser
+
+### Grace's UX is focused on simplicity
 
 Grace is explicitly designed to be easy to use, and easy to understand.
 
@@ -379,5 +383,7 @@ Grace is designed to handle all of these scenarios well. Grace decomposes a repo
 There are, of course, some operations that will take longer on larger repositories (`grace init` is an obvious example where a lot of files might need to be downloaded), but, in general, Grace Server's performance shouldn't degrade as the repository size grows. (Grace CLI as well... *if* you're running `grace watch`).
 
 ![](https://gracevcsdevelopment.blob.core.windows.net/static/Orange3.svg)
+
+[^StefanLesser]: From [How to adopt Christopher Alexander’s ideas in the software industry](https://stefan-lesser.com/2020/10/27/how-to-adopt-christopher-alexanders-ideas-in-the-software-industry/).
 
 [^output]: That's the intention, anyway. I have some work to do on some of the commands to light all of that up.

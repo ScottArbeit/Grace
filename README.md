@@ -15,7 +15,7 @@ Grace is a **new**, **modern**, **cloud-native** **version control system**.
 
 Grace is **easy to use**, **easy to understand**, and **consistently fast**. And it's **powerful**, ready to handle large repositories and large file sizes.
 
-Grace is meant to run in the background, making it **ambient**, **faster**, and **more valuable to your everyday work** as a developer.
+Grace is meant to run in the background, making it **ambient**, **faster**, and **more valuable to your everyday work** as a developer.****
 
 Grace **connects you with others** working in your repository, **across the globe**, **in real-time**, enabling **new experiences** and **new ways of sharing**.
 
@@ -32,9 +32,11 @@ For a list of (mostly imagined) frequently asked questions, please see the [Freq
 
 ![](https://gracevcsdevelopment.blob.core.windows.net/static/Orange3.svg)
 
-## Vision
+A lot of this remains to be built, but here's my vision of Grace v1.0:
 
-A lot of this remains to be built, but here's what I expect V1 to look like.
+---
+
+## Vision
 
 ![](https://gracevcsdevelopment.blob.core.windows.net/static/Green.svg)
 
@@ -42,27 +44,25 @@ A lot of this remains to be built, but here's what I expect V1 to look like.
 
 Stop being afraid of your version control system, and start _enjoying_ it instead.
 
-Grace is explicitly designed to be easy to use, and easy to understand. (And powerful.)
-
 There are many fewer concepts to understand in Grace, so learning it is easy, and understanding what it's doing is easy.
 
 There's a simple-to-understand grammar, built-in aliases for common gestures, and common-sense defaults.
 
-Grace is source control without fear.
+Grace is powerful source control, minus the fear.
 
 ![](https://gracevcsdevelopment.blob.core.windows.net/static/Green.svg)
 
 ### Yes, it's fast
 
-Great UX requires great speed.
+Great UX requires great speed. And Grace is fast.
 
-Grace CLI is lightweight, self-documenting, and responsive.
+Grace Server is designed to run on fast, cloud-based PaaS services for incredible scale and performance. Grace uses virtual actors as networked, in-memory data caches to maximize performance.
 
-Grace's GUI apps will be platform-native, with all of the performance and responsiveness that native apps have always had.
+Grace CLI adds just milliseconds to the server response time for each command.
 
-Grace Server is designed to run on fast, cloud-scale PaaS services for maximum speed, and uses networked, in-memory caching of data extensively.
+Grace's GUI apps will be platform-native, with all of the performance and stick-to-your-finger-ness that native apps have always had.
 
-(To really speed things up, Grace Server can precompute views and projections that you're likely to want, like diffs and directory contents, so that almost all requests are served from cached data... and Grace will garbage-collect them when they're no longer needed.)
+(To really speed things up, Grace Server can precompute views and projections that you're likely to want, like diffs and directory contents, and garbage-collect them when they're no longer needed.)
 
 ![](https://gracevcsdevelopment.blob.core.windows.net/static/Green.svg)
 
@@ -78,9 +78,9 @@ Grace CLI includes a command - `grace watch` - that watches your working directo
 
 In Git, `commit` is an overloaded concept. It can mean:
 
-- "I'm partially done" - doing a local commit after each unit of work
-- "I'm really done" - this one is for the pull request
-- Even merges get called `commits`.
+- "I'm partially done" - local commit after each unit of work is done
+- "I'm really done" - ready for the pull request
+- "Merge" - merges are called `commits`, even if they're not.
 
 And then you get the "squash" vs. "don't squash" debate. Sigh.
 
@@ -88,30 +88,33 @@ Grace simplifies this by breaking these usages out into their own gestures and e
 
 - `grace checkpoint` - this means "I'm partially done", for you to keep track of your own progress
 - `grace commit` - this is "I'm really done" or "This version is a candidate for promotion"; you'd use a commit for a PR
-- `grace promote` - this is sort-of a merge; it's what you'd get after approving a PR, which Grace calls a  _promotion review_[^pr]
+- `grace promote` - this is sort-of a merge; it's what you'd get after approving a PR, which Grace calls a  _promotion request_[^pr]
+
+and, introducing:
+
 - `grace save` - this is used by `grace watch` for saving versions of files between checkpoints, because...
 
 ![](https://gracevcsdevelopment.blob.core.windows.net/static/Green.svg)
 
-### Every save uploaded
+### Every save is uploaded, automatically
 
-By default, `grace watch` uploads new file versions (and new directory versions with recomputed SHA-256 hashes) after every save-on-disk. This lets Grace give you some very cool things, like:
+By default, `grace watch` uploads new file versions after every save-on-disk, along with new directory contents and SHA-256 hashes.
+
+It happens so quickly, you don't even notice it.
+
+And it gives you some very cool things, like:
 
 - **file-level undo** for as far back as your repository allows,
-- very fast `grace checkpoint`, `grace commit`, and `grace promote`, and,
+- **very fast** `grace checkpoint`, `grace commit`, and `grace promote` commands, and,
 - a **Version History view** that will let you to flip through your versions, helping you remember what you were thinking, and enabling easy, instant restoration of any of your past changes.
 
 ![](https://gracevcsdevelopment.blob.core.windows.net/static/Green.svg)
 
-### Full event log
+### Every change recorded
 
-One way to think about a repository is: it's just a way to store a set of changes - i.e. _things that happened_ - over time.
+Grace is event-sourced. That means that everything that changes the state of the repository - every `save` and `commit`, every `branch name change`, every _everything_, is stored as a separate event.
 
-At its heart, Grace is event-sourced. That means that there's a global event log so you can see the who, what, where, and when of everything that happens in your repository, and even set up custom automation based on those events.
-
-The event log can be viewed as a stream, and have analytics applied to it to detect... well, whatever you want.[^stream]
-
-(And, of course, the event log enables auditing - an enterprise must-have.)
+As they're handled, they're sent to an event processor, which can log them in your choice of format and system. You can see the _who / what / where / when_ of everything that happens in your repository, using your favorite event analytics and stream analytics tools, and even set up custom auditing and automation based on those events.[^stream]
 
 ![](https://gracevcsdevelopment.blob.core.windows.net/static/Green.svg)
 
@@ -119,9 +122,9 @@ The event log can be viewed as a stream, and have analytics applied to it to det
 
 When running `grace watch`, Grace uses [SignalR](https://dotnet.microsoft.com/en-us/apps/aspnet/signalr) to create a live, two-way communication channel between client and server.
 
-This connection allows Grace to do everything it does to connect you to everyone else working in your repository in real-time. Events happening across the repository can trigger actions both locally and on the server.
+This connection allows Grace to do All The Cool Things. Things like connecting you in real-time to everyone else working in your repository. Things like auto-rebasing. Things like watching for a set of events in your repository, notifying you when you want to be notified, and running custom local actions.
 
-And it lets you share your code with team members faster than ever.
+Things like sharing your code with team members instantly, for those times when you need another set of eyes on it, or just want to show them something cool.
 
 ![](https://gracevcsdevelopment.blob.core.windows.net/static/Green.svg)
 
@@ -133,15 +136,17 @@ When your parent branch (or any branch above that in the tree) gets updated, by 
 
 Almost all of the time, when you rebase, nothing bad happens. You don't even notice it. The rest of the time, auto-rebase lets you find out right away, fix it while you're in flow, and skip the conflict later.
 
-Grace can't promise to eliminate all conflicts, but it can help to reduce them.
+Grace can't promise to eliminate all conflicts, but it should reduce them quite a bit.
 
 ![](https://gracevcsdevelopment.blob.core.windows.net/static/Green.svg)
 
-### Private branches, not forks
+### Personal branches, not forks
 
-Grace won't have forks. With Grace, there's no need for forking entire repositories just to make contributions. In open-source repos, you just create a private branch against the repo, and then (as you'd expect) submit PR's to get your private branch's version promoted into `main` (or whatever branch).
+With Grace, there's no need for forking entire repositories just to make contributions. In open-source repos, you'll just create a personal branch against the repo.
 
-Imagine a large, open-source project in Grace: dozens of contributors, each with private branches, working on a public project that remains securely controlled with ACL's. Everyone auto-rebased with every update to their parent branch, so there are no surprises later. No networks of forks to manage, no multiple entire copies of the repo. Just separate devs working on the same repo, securely, together.
+You'll own your personal branch, and you can make it visible or not. When your change is ready you can submit PR's to get your personal branch's version promoted to a public branch in the repo.
+
+This is how I expect a large, open-source project in Grace to be: dozens of contributors, each with personal branches, working on a public project that remains securely controlled with ACL's. Everyone auto-rebased with every update to their parent branch, so there are no surprises later. No networks of forks to manage, no multiple entire copies of the repo. Just individuals working on the same repo, securely, together.
 
 ![](https://gracevcsdevelopment.blob.core.windows.net/static/Green.svg)
 
@@ -253,19 +258,21 @@ Grace ships with a .NET SDK, which is simply a projection of the Web API into .N
 
 ### SHA-256 hashes
 
-Grace uses SHA-256 hashes to verify that the files that you save and commit are exactly the ones that get retrieved by clients. Grace will include a command to verify the SHA-256 hashes of all downloaded files.
+Grace uses SHA-256 hashes to verify that the files you uploaded, and the directory versions that went with them, are exactly the ones that get retrieved by clients. Grace will include a command to verify the SHA-256 hashes of all downloaded files and directory versions.
 
 ![](https://gracevcsdevelopment.blob.core.windows.net/static/Green.svg)
 
 ### Local file cache
 
-Grace maintains a local file cache of versions of files that it's downloaded, and prunes it regularly. When running `grace watch`, Grace can download new file versions from multiple branches in the background so your `grace switch` commands run nearly instantly.
+Grace repositories have a local cache of file versions that have been uploaded and downloaded. When running `grace watch`, Grace can download new file versions from multiple branches in the background so your `grace switch` commands run nearly instantly.
+
+The local file cache is pruned regularly.
 
 ![](https://gracevcsdevelopment.blob.core.windows.net/static/Green.svg)
 
 ### 2048 characters
 
-When you're running `grace promote/commit/checkpoint/save/tag -m <some message>`... that _\<some message\>_ can be up to 2048 characters.
+When you're running `grace promote/commit/checkpoint/save/tag -m <some message>`, the _\<some message\>_ part can be up to 2048 characters.
 
 50 characters... I don't think so. Feel free to share details. The person you help might be future you.
 
@@ -273,7 +280,7 @@ When you're running `grace promote/commit/checkpoint/save/tag -m <some message>`
 
 ### Import from Git / Export to Git
 
-Yes, we know... it's hard to let go. Grace will perform an initial import from Git repo, and will export to a Git repo.[^gitexport]
+Yes, we know... it's hard to let go. Grace will perform an initial import from a Git repo, and will export to a Git repo.[^gitexport]
 
 ![](https://gracevcsdevelopment.blob.core.windows.net/static/Green.svg)
 
@@ -287,7 +294,7 @@ Grace Server is designed to be easy to deploy and operate. It runs on your choic
 
 ## Design and Motivations
 
-If you'd like to read about some of the design thinking and motivations behind Grace - topics like UX, performance, scalability, monorepos, Git, and more - please read [Design and Motivations](docs/Design%20and%20Motivations.md).
+If you'd like to read about some of the design thinking and motivations behind Grace - topics like UX, performance, scalability, monorepos, Git, why F#, and more - please read [Design and Motivations](docs/Design%20and%20Motivations.md).
 
 ![](https://gracevcsdevelopment.blob.core.windows.net/static/Orange3.svg)
 
@@ -352,10 +359,10 @@ We intend to provide a Docker Compose template, as well as Kubernetes configurat
 
 [^git]: Grace currently uses Git for its source control, and runs Grace in the same directory as a means of testing. Officially self-hosting Grace's source code on Grace will, of course, happen when it's safe to.
 
-[^pr]: They're not "pull requests" for Grace because there isn't a "pull" gesture in Grace.
+[^pr]: They're not really "pull requests" because there isn't a "pull" gesture in Grace. It's still a "PR", though.
 
-[^stream]: One application of taking a streaming perspective on the event log that we hope to create is in detecting invalid sequences of events in Grace that would indicate bugs and/or attacks.
+[^stream]: One thing I'd like to do with the event log as a stream: detect invalid sequences and frequencies of events in Grace that would indicate bugs or attacks.
 
 [^mauilinux]: Grace will have a native Linux app if the [.NET MAUI team adds support for Linux Desktop](https://github.com/dotnet/maui/discussions/339), which you should totally go give a thumbs-up to.
 
-[^gitexport]: By default, Grace will export the latest state of each branch into a `git bundle` file. Exporting an entire Grace repository to Git can be an expensive operation, and isn't expected to be a commonly-used feature. Live two-way synchronization between Grace and Git is a non-goal.
+[^gitexport]: Grace will export the latest state of each branch into a `git bundle` file. Exporting an entire Grace repository, including history, to a Git repository probably won't be supported, but maybe someone else will write it. (There are, no doubt, a lot of edge cases to be found the hard way in that translation, and it's a very low priority item for me.) Live two-way synchronization between Grace and Git is a non-goal, for the same reason.
