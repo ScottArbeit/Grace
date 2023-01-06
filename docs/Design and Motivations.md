@@ -94,7 +94,7 @@ There was an informal Source Control Summit in November, 2020 that I had the opp
 
 The vibe I got from those interactions - and I want to emphasize that this was _my_ takeaway, and that I do not speak for anyone else - was that 1) we're all still just mining for incremental improvements in Git; 2) we're getting tired of Git and whatever else we're using; and 3) we're not sure what could come next that would change that.
 
-That led me to sitting outside on my front porch in December, 2020 - still in pandemic lockdown, in the darkest month of a dark year - and starting to think about what _I_ would want in a version control system.
+That led me to sitting outside on my front porch in December, 2020 - still in pandemic lockdown, in the darkest month of a dark year - and starting to think about what **I** would want in a version control system.
 
 It all started that first night with a few themes:
 
