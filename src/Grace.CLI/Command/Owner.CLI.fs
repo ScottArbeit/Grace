@@ -18,6 +18,7 @@ open System.Linq
 open System.Threading
 open System.CommandLine
 open Spectre.Console
+open Grace.Shared.Client
 
 module Owner =
 

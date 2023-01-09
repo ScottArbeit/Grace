@@ -124,6 +124,8 @@ module Owner =
                     return Ok returnValue
                 with ex ->
                     let graceError = GraceError.Create (OwnerError.getErrorMessage OwnerError.FailedWhileApplyingEvent) ownerEvent.Metadata.CorrelationId
+                    let exceptionResponse = createExceptionResponse ex
+                    graceError.Properties.Add("Exception details", exceptionResponse.``exception`` + exceptionResponse.innerException)
                     return Error graceError
             }
 

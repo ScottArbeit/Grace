@@ -53,6 +53,10 @@
       "commandName": "Project",
       "commandLineArgs": "refs -b main --output Verbose",
       "workingDirectory": "C:\\Source\\GraceDemo\\Chris"
+    },
+    "grace (no parameters)": {
+      "commandName": "Project",
+      "workingDirectory": "C:\\Source\\grace\\src"
     }
   }
 }

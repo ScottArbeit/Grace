@@ -1,6 +1,8 @@
 namespace Grace.Shared
+#nowarn "9"
 
 open Grace.Shared.Resources
+open Microsoft.FSharp.NativeInterop
 open Microsoft.FSharp.Reflection
 open NodaTime
 open NodaTime.Text
@@ -11,6 +13,7 @@ open System.Reflection
 open System.Text
 open System.Text.Json
 open System.Threading.Tasks
+open System
 
 module Utilities =
     let instantToLocalTime (instant: Instant) = instant.ToDateTimeUtc().ToLocalTime().ToString("g", CultureInfo.CurrentUICulture)
@@ -181,7 +184,7 @@ module Utilities =
     /// Formats a byte array as a string. For example, [0xab, 0x15, 0x03] -> "ab1503"
     /// </summary>
     /// <param name="array">An array of bytes to convert to a string.</param>
-    let byteArrayAsString (array: byte[]) =
+    let byteArrayToString (array: Span<byte>) =
         let sb = StringBuilder(array.Length * 2)
         for b in array do
           sb.Append($"{b:x2}") |> ignore
@@ -303,3 +306,10 @@ module Utilities =
             isBinary then "application/octet-stream"
         else 
             "application/text"
+
+    /// Creates a Span<`T> on the stack to minimize heap usage and GC. This is an F# implementation of the C# keyword `stackalloc`.
+    /// This should be used for smaller allocations, as the stack has ~1MB size.
+    // Borrowed from https://bartoszsypytkowski.com/writing-high-performance-f-code/.
+    let inline stackalloc<'a when 'a: unmanaged> (length: int): Span<'a> =
+      let p = NativePtr.stackalloc<'a> length |> NativePtr.toVoidPtr
+      Span<'a>(p, length)

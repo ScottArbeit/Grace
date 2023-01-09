@@ -97,7 +97,6 @@ module Storage =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 try
-                    let rnd = Random()
                     let! fileVersions = context.BindJsonAsync<List<FileVersion>>()
                     Activity.Current.SetTag("fileVersions.Count", $"{fileVersions.Count}") |> ignore
                     if fileVersions.Count > 0 then

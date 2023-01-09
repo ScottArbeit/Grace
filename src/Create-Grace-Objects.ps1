@@ -13,10 +13,10 @@ $startTime = Get-Date
     $branchId = (New-Guid).ToString()
     $branchName = 'Branch' + $suffix
 
-    C:\Source\Grace\src\Grace.CLI\bin\Debug\net7.0\Grace.CLI.exe owner create --output Json --ownerName $ownerName
-    C:\Source\Grace\src\Grace.CLI\bin\Debug\net7.0\Grace.CLI.exe org create --output Json --ownerName $ownerName --organizationName $orgName
-    C:\Source\Grace\src\Grace.CLI\bin\Debug\net7.0\Grace.CLI.exe repo create --output Json --ownerName $ownerName --organizationName $orgName --repositoryName $repoName
-    C:\Source\Grace\src\Grace.CLI\bin\Debug\net7.0\Grace.CLI.exe branch create --output Json --ownerName $ownerName --organizationName $orgName --repositoryName $repoName --branchName $branchName
+    C:\Source\Grace\src\Grace.CLI\bin\Debug\net7.0\win10-x64\Grace.CLI.exe owner create --output Json --ownerName $ownerName
+    C:\Source\Grace\src\Grace.CLI\bin\Debug\net7.0\win10-x64\Grace.CLI.exe org create --output Json --ownerName $ownerName --organizationName $orgName
+    C:\Source\Grace\src\Grace.CLI\bin\Debug\net7.0\win10-x64\Grace.CLI.exe repo create --output Json --ownerName $ownerName --organizationName $orgName --repositoryName $repoName
+    C:\Source\Grace\src\Grace.CLI\bin\Debug\net7.0\win10-x64\Grace.CLI.exe branch create --output Json --ownerName $ownerName --organizationName $orgName --repositoryName $repoName --branchName $branchName
 
     1..50 | ForEach-Object {
         $numberOfWords = Get-Random -Minimum 3 -Maximum 9
@@ -27,10 +27,10 @@ $startTime = Get-Date
         }
 
         switch (Get-Random -Maximum 4) {
-            0 {C:\Source\Grace\src\Grace.CLI\bin\Debug\net7.0\Grace.CLI.exe branch save --output Json --ownerName $ownerName --organizationName $orgName --repositoryName $repoName --branchName $branchName}
-            1 {C:\Source\Grace\src\Grace.CLI\bin\Debug\net7.0\Grace.CLI.exe branch checkpoint --output Json --ownerName $ownerName --organizationName $orgName --repositoryName $repoName --branchName $branchName -m $message}
-            2 {C:\Source\Grace\src\Grace.CLI\bin\Debug\net7.0\Grace.CLI.exe branch commit --output Json --ownerName $ownerName --organizationName $orgName --repositoryName $repoName --branchName $branchName -m $message}
-            3 {C:\Source\Grace\src\Grace.CLI\bin\Debug\net7.0\Grace.CLI.exe branch tag --output Json --ownerName $ownerName --organizationName $orgName --repositoryName $repoName --branchName $branchName -m $message}
+            0 {C:\Source\Grace\src\Grace.CLI\bin\Debug\net7.0\win10-x64\Grace.CLI.exe branch save --output Json --ownerName $ownerName --organizationName $orgName --repositoryName $repoName --branchName $branchName}
+            1 {C:\Source\Grace\src\Grace.CLI\bin\Debug\net7.0\win10-x64\Grace.CLI.exe branch checkpoint --output Json --ownerName $ownerName --organizationName $orgName --repositoryName $repoName --branchName $branchName -m $message}
+            2 {C:\Source\Grace\src\Grace.CLI\bin\Debug\net7.0\win10-x64\Grace.CLI.exe branch commit --output Json --ownerName $ownerName --organizationName $orgName --repositoryName $repoName --branchName $branchName -m $message}
+            3 {C:\Source\Grace\src\Grace.CLI\bin\Debug\net7.0\win10-x64\Grace.CLI.exe branch tag --output Json --ownerName $ownerName --organizationName $orgName --repositoryName $repoName --branchName $branchName -m $message}
         }
     }
 } -ThrottleLimit 8

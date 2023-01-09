@@ -54,7 +54,6 @@ module Watch =
     let mutable private graceStatus = GraceStatus.Default
     let mutable graceStatusMemoryStream: MemoryStream = null
     let mutable graceStatusHasChanged = false
-    let private rnd = Random()
     
     /// Generates a temporary file name within the ObjectDirectory, and returns the full file path.
     /// This file name will be used to copy modified files into before renaming them with their proper names and SHA256 values.
@@ -442,6 +441,7 @@ module Watch =
                     //logToAnsiConsole Colors.Error $"{exceptionMarkup}"
                     let exceptionSettings = ExceptionSettings()
                     // Need to fill in some styles here.
+                    exceptionSettings.Format <- ExceptionFormats.Default
                     AnsiConsole.WriteException(ex, exceptionSettings)
             } :> Task
         )

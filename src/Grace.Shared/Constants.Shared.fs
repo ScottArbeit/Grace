@@ -15,10 +15,9 @@ open System.Threading.Tasks
 
 module Constants =
 
-    /// <summary>The universal serialization options for F#-specific data types in Grace.
+    /// The universal serialization options for F#-specific data types in Grace.
     ///
     /// See https://github.com/Tarmil/FSharp.SystemTextJson/blob/master/docs/Customizing.md for more information about these options.
-    /// </summary>
     let private jsonFSharpOptions = 
         JsonFSharpOptions(
             unionEncoding = (JsonUnionEncoding.ExternalTag ||| 
@@ -48,19 +47,19 @@ module Constants =
     JsonSerializerOptions.WriteIndented <- true
     
     /// Converts the full name of a discriminated union to a string. Example: ServerApiVersions.Latest -> "ServerApiVersions.Latest"
-    let discriminatedUnionToString (x:'T) = 
+    let discriminatedUnionFullName (value:'T) = 
         let discriminatedUnionType = typeof<'T>
-        let (case, _ ) = FSharpValue.GetUnionFields(x, discriminatedUnionType)
+        let (case, _ ) = FSharpValue.GetUnionFields(value, discriminatedUnionType)
         $"{discriminatedUnionType.Name}.{case.Name}"
 
     /// Converts just the case name of a discriminated union to a string. Example: ServerApiVersions.Latest -> "Latest"
-    let discriminatedUnionCaseName (x:'T) = 
+    let discriminatedUnionCaseName (value:'T) = 
         let discriminatedUnionType = typeof<'T>
-        let (case, _ ) = FSharpValue.GetUnionFields(x, discriminatedUnionType)
+        let (case, _ ) = FSharpValue.GetUnionFields(value, discriminatedUnionType)
         $"{case.Name}"
 
     /// The name of the Dapr service running Grace Server.
-    let GraceServerAppId = "grace"
+    let GraceServerAppId = "grace-server"
 
     /// The name of the Dapr service for Grace object storage.
     let GraceObjectsStorage = "graceObjectsStorage"
@@ -69,7 +68,7 @@ module Constants =
     let GracePubSubService = "graceEventStream"
 
     /// The name of the event topic to publish to.
-    let GraceEventStreamTopic = "graceevents"
+    let GraceEventStreamTopic = "graceeventstream"
 
     /// The name of the Dapr service for retrieving application secrets.
     let GraceSecretStoreName = "cloudSecretStore"
@@ -109,7 +108,7 @@ module Constants =
         | ``V2022-02-01``
         | Latest
         | Edge
-        override this.ToString() = discriminatedUnionToString this
+        override this.ToString() = discriminatedUnionFullName this
 
     /// Environment variables used by Grace.
     module EnvironmentVariables =
@@ -117,7 +116,7 @@ module Constants =
         let DaprServerUri = "DAPR_SERVER_URI"
 
         /// The environment variable that contains the application's port.
-        let DaprAppPort = "DAPR_APP_PORT"
+        let GraceAppPort = "GRACE_APP_PORT"
 
         /// The environment variable that contains the Dapr HTTP port.
         let DaprHttpPort = "DAPR_HTTP_PORT"
@@ -191,10 +190,10 @@ module Constants =
     // we get an IOException when we try to compute the Sha256Hash and copy it to the object directory. This policy allows us to wait until the file is complete.
     let DefaultFileCopyRetryPolicy = Policy.Handle<IOException>(fun ex -> ex.GetType() <> typeof<KeyNotFoundException>).WaitAndRetry(fileCopyBackoff)
 
-    /// Settings to use for Parallel.ForEach statements. 
-    let ParallelOptions = ParallelOptions(MaxDegreeOfParallelism = Environment.ProcessorCount * 8)
+    /// Global settings for Parallel.ForEach statements; sets MaxDegreeofParallelism to maximize performance.
     // I'm choosing a high number here because these parallel loops are used where most of the time is spent on network 
     //   and disk traffic - and therefore Task<'T> - and we can run lots of them simultaneously.
+    let ParallelOptions = ParallelOptions(MaxDegreeOfParallelism = Environment.ProcessorCount * 8)
 
     /// Default directory size magic value.
     let InitialDirectorySize = uint64 Int64.MaxValue

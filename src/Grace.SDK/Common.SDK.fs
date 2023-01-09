@@ -22,8 +22,6 @@ open System.Text.Json
 
 module Common =
 
-    let rnd = Random()
-    
     let private sslClientAuthenticationOptions = 
 #if DEBUG
         // In debug mode, we'll accept only TLS 1.2 and allow no encryption to enable access to the CosmosDB emulator without having to deal with certificates.
@@ -55,12 +53,12 @@ module Common =
 
     /// Gets an HttpClient instance from a custom HttpClientFactory.
     let getHttpClient (correlationId: string) =
-        let traceIdBytes: byte array = Array.zeroCreate 16
-        let parentIdBytes: byte array = Array.zeroCreate 8
-        rnd.NextBytes(traceIdBytes)
-        rnd.NextBytes(parentIdBytes)
-        let traceId = byteArrayAsString(traceIdBytes)
-        let parentId = byteArrayAsString(parentIdBytes)
+        let traceIdBytes = stackalloc<byte> 16
+        let parentIdBytes = stackalloc<byte> 8
+        Random.Shared.NextBytes(traceIdBytes)
+        Random.Shared.NextBytes(parentIdBytes)
+        let traceId = byteArrayToString(traceIdBytes)
+        let parentId = byteArrayToString(parentIdBytes)
 
         let httpClient = new HttpClient(handler = socketsHttpHandler, disposeHandler = false)
         httpClient.DefaultRequestVersion <- HttpVersion.Version20   // We'll aggressively move to Version30 as soon as we can.
@@ -80,8 +78,8 @@ module Common =
                 use httpClient = getHttpClient parameters.CorrelationId
                 let startTime = getCurrentInstant()
                 let daprServerUri = Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.DaprServerUri)
-                let daprAppPort = Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.DaprAppPort)
-                let serverUri = Uri($"{daprServerUri}:{daprAppPort}/{route}")
+                let graceServerPort = Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.GraceAppPort)
+                let serverUri = Uri($"{daprServerUri}:{graceServerPort}/{route}")
                 let! response = Constants.DefaultAsyncRetryPolicy.ExecuteAsync(fun _ -> httpClient.GetAsync(new Uri($"{serverUri}")))
                 let endTime = getCurrentInstant()
                 if response.IsSuccessStatusCode then
@@ -101,8 +99,9 @@ module Common =
                 use httpClient = getHttpClient parameters.CorrelationId
                 let jsonContent = JsonContent.Create(parameters, options = Constants.JsonSerializerOptions)
                 let daprServerUri = Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.DaprServerUri)
-                let daprAppPort = Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.DaprAppPort)
-                let serverUri = Uri($"{daprServerUri}:{daprAppPort}/{route}")
+                let graceServerPort = Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.GraceAppPort)
+                let serverUri = Uri($"{daprServerUri}:{graceServerPort}/{route}")
+                //logToConsole $"serverUri: {serverUri}"
                 let startTime = getCurrentInstant()
                 let! response = Constants.DefaultAsyncRetryPolicy.ExecuteAsync(fun _ -> httpClient.PostAsync(serverUri, jsonContent))
                 let endTime = getCurrentInstant()

@@ -11,6 +11,7 @@ open System.IO
 open System.Linq
 open System.Security.Cryptography
 open System.Text
+open Microsoft.FSharp.NativeInterop
 
 module Services =
 
@@ -36,24 +37,26 @@ module Services =
                 // 1. Create an IncrementalHash instance.
                 use hasher = IncrementalHash.CreateHash(HashAlgorithmName.SHA256)
                 // 2. Read bytes from the file and feed them into the hasher.
-                let mutable loop = true
-                while loop do
-                    let! bytesRead = stream.ReadAsync(buffer.AsMemory(0, bufferLength))
+                let mutable moreToRead = true
+                while moreToRead do
+                    let! bytesRead = stream.ReadAsync(buffer, 0, bufferLength)
                     if bytesRead > 0 then
-                        hasher.AppendData(buffer.AsSpan(0, bytesRead))
+                        hasher.AppendData(buffer, 0, bytesRead)
                     else
-                        loop <- false
+                        moreToRead <- false
                 // 3. Convert the relative path of the file to a byte array, and add it to the hasher.
                 hasher.AppendData(Encoding.UTF8.GetBytes(relativeFilePath))
                 // 4. Convert the Int64 file length into a byte array, and add it to the hasher.
                 hasher.AppendData(BitConverter.GetBytes(stream.Length))
-                // 5. Get the SHA-256 hash as a byte[].
-                let sha256Bytes = hasher.GetHashAndReset()
+                // 5. Get the SHA-256 hash as a byte array.
+                let sha256Bytes = stackalloc<byte> SHA256.HashSizeInBytes
+                hasher.GetHashAndReset(sha256Bytes) |> ignore
                 // 6. Convert the SHA-256 value from a byte[] to a string, and return it.
                 //    Example: byte[]{0x43, 0x2a, 0x01, 0xfa} -> "432a01fa"
-                return byteArrayAsString(sha256Bytes)
+                return byteArrayToString(sha256Bytes)
             finally
-                ArrayPool<byte>.Shared.Return(buffer, clearArray = true)
+                if not <| isNull(buffer) then 
+                    ArrayPool<byte>.Shared.Return(buffer, clearArray = true)
         }
 
     let computeSha256ForDirectory (relativeDirectoryPath: RelativePath) (directories: List<LocalDirectoryVersion>) (files: List<LocalFileVersion>) =
@@ -70,8 +73,9 @@ module Services =
         for file in sortedFiles do
             hasher.AppendData(ReadOnlySpan(Encoding.UTF8.GetBytes(file.Sha256Hash)))
 
-        let sha256Bytes = hasher.GetHashAndReset()
-        byteArrayAsString sha256Bytes
+        let sha256Bytes = stackalloc<byte> SHA256.HashSizeInBytes
+        hasher.GetHashAndReset(sha256Bytes) |> ignore
+        byteArrayToString sha256Bytes
 
     /// Gets the total size of the files contained within this specific directory. This does not include the size of any subdirectories.
     let getDirectorySize (files: IList<FileVersion>) =

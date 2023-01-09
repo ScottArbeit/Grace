@@ -8,16 +8,16 @@ EXPOSE 443
 FROM mcr.microsoft.com/dotnet/sdk:7.0 AS build
 WORKDIR /src
 COPY ["Grace.Server/Grace.Server.fsproj", "Grace.Server/"]
-COPY ["CosmosSerializer/CosmosJsonSerializer.csproj", "CosmosSerializer/"]
 COPY ["Grace.Actors/Grace.Actors.fsproj", "Grace.Actors/"]
 COPY ["Grace.Shared/Grace.Shared.fsproj", "Grace.Shared/"]
+COPY ["CosmosSerializer/CosmosJsonSerializer.csproj", "CosmosSerializer/"]
 RUN dotnet restore "Grace.Server/Grace.Server.fsproj"
 COPY . .
 WORKDIR "/src/Grace.Server"
-RUN dotnet build "Grace.Server.fsproj" -c Release -o /app/build
+RUN dotnet build "Grace.Server.fsproj" -c Debug -o /app/build
 
 FROM build AS publish
-RUN dotnet publish "Grace.Server.fsproj" -c Release -o /app/publish /p:UseAppHost=false
+RUN dotnet publish "Grace.Server.fsproj" -c Debug -o /app/publish /p:UseAppHost=false
 
 FROM base AS final
 WORKDIR /app

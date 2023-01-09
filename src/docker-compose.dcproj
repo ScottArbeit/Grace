@@ -6,7 +6,7 @@
     <ProjectGuid>17b590ba-543e-49b1-9eb7-262ce73d86fe</ProjectGuid>
     <DockerLaunchAction>None</DockerLaunchAction>
     <DockerServiceUrl>{Scheme}://localhost:{ServicePort}</DockerServiceUrl>
-    <DockerServiceName>grace.server</DockerServiceName>
+    <DockerServiceName>grace-server</DockerServiceName>
   </PropertyGroup>
   <ItemGroup>
     <None Include="docker-compose.override.yml">

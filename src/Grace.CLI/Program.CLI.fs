@@ -40,6 +40,9 @@ module Configuration =
 
 module GraceCommand =
 
+    type OptionToUpdate = {optionName: string; displayValue: string}
+
+    /// Built-in aliases for Grace commands.
     let private aliases = 
         let aliases = Dictionary<string, string[]>()
         aliases.Add("merge", [| "branch"; "merge" |])
@@ -80,11 +83,13 @@ module GraceCommand =
         rootCommand.AddCommand(Owner.Build)
         rootCommand.AddCommand(Maintenance.Build)
 
+        /// The feedback section is printed at the end of any CLI request for help.
         let feedbackSection: HelpSectionDelegate = HelpSectionDelegate(fun context -> 
             context.Output.WriteLine()
             context.Output.WriteLine("More help and feedback:")
-            context.Output.WriteLine("  For more help, or to give us feedback, please create an issue in our repo at https://github.com/github/grace."))
+            context.Output.WriteLine("  For more help, or to give us feedback, please create an issue in our repo at https://github.com/scottarbeit/grace."))
 
+        /// Handles command aliases by removing the alias and substituting the full Grace command before execution.
         let aliasHandler (context: InvocationContext) =
             let tokens = context.ParseResult.Tokens.Select(fun token -> token.Value).ToList()
             if tokens.Count > 0 then
@@ -99,15 +104,23 @@ module GraceCommand =
         let commandLineBuilder = CommandLineBuilder(rootCommand)
         commandLineBuilder
             .UseDefaults()
+            .RegisterWithDotnetSuggest()
             .AddMiddleware(aliasHandler, MiddlewareOrder.ExceptionHandler)
+            .UseParseErrorReporting()
             .UseHelp(fun helpContext ->
+                // This is where we configure how help is displayed by Grace.
+
+                // These are the character sequences that Grace will recognize as a request for help.
                 let helpOptions = [| "-h"; "/h"; "--help"; "-?"; "/?" |]
+
+                // This checks to see if help was requested at the parent `grace` level, or if no commands or parameters were specified.
+                // If so, we'll show the Figlet text and top-level commands and options, and skip the 
                 if helpContext.ParseResult.Tokens.Count = 0 || 
                         (helpContext.ParseResult.Tokens.Count = 1 && helpOptions.Contains(helpContext.ParseResult.Tokens[0].Value)) then
-                    let graceVCS = FigletText("Grace Version Control System")
-                    graceVCS.Color <- Color.Green3
-                    graceVCS.Alignment <- Justify.Center
-                    AnsiConsole.Write(graceVCS)
+                    let graceFiglet = FigletText("Grace Version Control System")
+                    graceFiglet.Color <- Color.Green3
+                    graceFiglet.Alignment <- Justify.Center
+                    AnsiConsole.Write(graceFiglet)
                     AnsiConsole.WriteLine()
 
                     // Skip the description section if we printed FigletText.
@@ -134,20 +147,20 @@ module GraceCommand =
                 //for xx in allOptions do
                 //    logToConsole $"{xx.Name}; {xx.Description}"
 
-                for option in allOptions.Where(fun opt -> opt.Name = "correlationId") do
-                    helpContext.HelpBuilder.CustomizeSymbol(option, defaultValue = "new Guid")
+                // This section sets the display of the default value for these options in all commands in Grace CLI.
+                // Without setting it here, by default, we'd get something like "[default: thing-we-said-in-the-Option-definition] [default:e4def31b-4547-4f6b-9324-56eba666b4b2]" i.e. whatever the generated Guid value on create might be.
+                let optionsToUpdate = [
+                    {optionName = "correlationId"; displayValue = "new Guid"}
+                    {optionName = "branchId"; displayValue = "current branch, or new Guid on create"}
+                    {optionName = "organizationId"; displayValue = "current organization, or new Guid on create"}
+                    {optionName = "ownerId"; displayValue = "current owner, or new Guid on create"}
+                    {optionName = "repositoryId"; displayValue = "current repository, or new Guid on create"}
+                    {optionName = "parentBranchId"; displayValue = "current branch, empty if parentBranchName is provided"}
+                ]
 
-                for option in allOptions.Where(fun opt -> opt.Name = "branchId") do
-                    helpContext.HelpBuilder.CustomizeSymbol(option, defaultValue = "current branch, or new Guid on create")
-
-                for option in allOptions.Where(fun opt -> opt.Name = "organizationId") do
-                    helpContext.HelpBuilder.CustomizeSymbol(option, defaultValue = "current organization, or new Guid on create")
-
-                for option in allOptions.Where(fun opt -> opt.Name = "ownerId") do
-                    helpContext.HelpBuilder.CustomizeSymbol(option, defaultValue = "current owner, or new Guid on create")
-
-                for option in allOptions.Where(fun opt -> opt.Name = "repositoryId") do
-                    helpContext.HelpBuilder.CustomizeSymbol(option, defaultValue = "current repository, or new Guid on create")
+                for optionToUpdate in optionsToUpdate do
+                    for option in allOptions.Where(fun opt -> opt.Name = optionToUpdate.optionName) do
+                        helpContext.HelpBuilder.CustomizeSymbol(option, defaultValue = optionToUpdate.displayValue)
 
                 // Add the feedback section at the end.
                 helpContext.HelpBuilder.CustomizeLayout(fun layoutContext ->
@@ -161,10 +174,10 @@ module GraceCommand =
 
     [<EntryPoint>]
     let main args =
+        let startTime = getCurrentInstant()
         (task {
             let mutable parseResult: ParseResult = null
             try
-                let startTime = getCurrentInstant()
                 //use logListener = new TextWriterTraceListener(Path.Combine(Current().ConfigurationDirectory, "grace.log"))
                 //Threading.ThreadPool.SetMinThreads(Constants.ParallelOptions.MaxDegreeOfParallelism, Constants.ParallelOptions.MaxDegreeOfParallelism) |> ignore
                 let command = Build
@@ -175,10 +188,11 @@ module GraceCommand =
 
                 parseResult <- command.Parse(args)
                 if parseResult |> showOutput then
-                    //AnsiConsole.Write((new Rule($"[{Colors.Important}]Started: {startTime.ToString(InstantPattern.ExtendedIso.PatternText, CultureInfo.InvariantCulture)}.[/]")).RightAligned())
+                    if parseResult |> verbose then
+                        AnsiConsole.Write((new Rule($"[{Colors.Important}]Started: {startTime.ToString(InstantPattern.ExtendedIso.PatternText, CultureInfo.InvariantCulture)}.[/]")).RightAligned())
                     AnsiConsole.Write(new Rule())
 
-                if not <| isGraceWatch parseResult then
+                if not <| (parseResult |> isGraceWatch) then
                     let! graceWatchStatus = getGraceWatchStatus()
                     match graceWatchStatus with
                     | Some status ->
@@ -191,7 +205,7 @@ module GraceCommand =
                 let! returnValue = command.InvokeAsync(args)
 
                 // We'll tell the user now, before the Rule(), but we actually delete the inter-process communication file in the finally clause.
-                if isGraceWatch parseResult then
+                if parseResult |> isGraceWatch then
                     logToAnsiConsole Colors.Important $"Inter-process communication file deleted."
 
                 if parseResult |> showOutput then
@@ -201,6 +215,6 @@ module GraceCommand =
                 return returnValue
             finally
                 // If this was grace watch, delete the inter-process communication file.
-                if isGraceWatch parseResult then
+                if parseResult |> isGraceWatch then
                     File.Delete(IpcFileName())
         }).Result

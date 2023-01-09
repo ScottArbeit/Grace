@@ -64,7 +64,7 @@ module Branch =
         let repositoryId = new Option<String>([|"--repositoryId"; "-r"|], IsRequired = false, Description = "The repository's ID <Guid>.", Arity = ArgumentArity.ExactlyOne)
         repositoryId.SetDefaultValue($"{Current().RepositoryId}")
         let repositoryName = new Option<String>([|"--repositoryName"; "-n"|], IsRequired = false, Description = "The name of the repository. [default: current repository]", Arity = ArgumentArity.ExactlyOne)
-        let parentBranchId = new Option<String>([|"--parentBranchId"|], IsRequired = false, Description = "The parent branch's ID <Guid>. [default: current branch]", Arity = ArgumentArity.ExactlyOne)
+        let parentBranchId = new Option<String>([|"--parentBranchId"|], IsRequired = false, Description = "The parent branch's ID <Guid>.", Arity = ArgumentArity.ExactlyOne)
         parentBranchId.SetDefaultValue($"{Current().BranchId}")
         let parentBranchName = new Option<String>([|"--parentBranchName"|], IsRequired = false, Description = "The name of the parent branch. [default: current branch]", Arity = ArgumentArity.ExactlyOne)
         let newName = new Option<String>("--newName", IsRequired = true, Description = "The new name of the branch.", Arity = ArgumentArity.ExactlyOne)
@@ -296,7 +296,6 @@ module Branch =
                 let validateIncomingParameters = CommonValidations parseResult parameters
                 match validateIncomingParameters with
                 | Ok _ -> 
-                    let rnd = Random()
                     //let sha256Bytes = SHA256.HashData(Encoding.ASCII.GetBytes(rnd.NextInt64().ToString("x8")))
                     //let sha256Hash = Seq.fold (fun (sb: StringBuilder) currentByte ->
                     //    sb.Append(sprintf $"{currentByte:X2}")) (StringBuilder(sha256Bytes.Length)) sha256Bytes
@@ -414,8 +413,8 @@ module Branch =
                         let! result = command sdkParameters
                         return result                    
                 | Error error -> return Error error
-            with
-                | ex -> return Error (GraceError.Create $"{createExceptionResponse ex}" (parseResult |> getCorrelationId))
+            with ex ->
+                return Error (GraceError.Create $"{createExceptionResponse ex}" (parseResult |> getCorrelationId))
         }
 
     let mergeHandler (parseResult: ParseResult) (parameters: CreateRefParameters) =

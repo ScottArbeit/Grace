@@ -10,6 +10,8 @@
 **/appsettings.Development.json
 /Play/
 /.vscode/
+**/[Cc]omponents
+**/dapr
 
 # Secrets file to configure Orleans persistence
 Orleans.secrets.fs

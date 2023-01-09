@@ -4,10 +4,15 @@
       "commandName": "DockerCompose",
       "commandVersion": "1.0",
       "composeLaunchAction": "None",
-      "composeLaunchServiceName": "grace.server",
+      "composeLaunchServiceName": "grace-server",
       "serviceActions": {
-        "grace.server": "StartDebugging",
-        "dapr-placement": "StartWithoutDebugging"
+        "daprd": "StartWithoutDebugging",
+        "dapr-placement": "StartWithoutDebugging",
+        "grace-server": "StartDebugging",
+        "otel-collector": "StartWithoutDebugging",
+        "prometheus": "StartWithoutDebugging",
+        "redis": "StartWithoutDebugging",
+        "zipkin": "StartWithoutDebugging"
       }
     }
   }

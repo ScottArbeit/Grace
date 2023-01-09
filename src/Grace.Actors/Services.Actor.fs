@@ -26,18 +26,19 @@ module Services =
     let repositoryContainerNameCache = ConcurrentDictionary<Guid, string>()
     let containerClients = new ConcurrentDictionary<string, BlobContainerClient>()
     
-    let daprEndpoint = $"{Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.DaprServerUri)}:{Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.DaprHttpPort)}"
-    let daprClient = DaprClientBuilder().UseJsonSerializationOptions(Constants.JsonSerializerOptions).UseHttpEndpoint(daprEndpoint).Build()
+    let daprHttpEndpoint = $"{Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.DaprServerUri)}:{Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.DaprHttpPort)}"
+    let daprGrpcEndpoint = $"{Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.DaprServerUri)}:{Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.DaprGrpcPort)}"
+    let daprClient = DaprClientBuilder().UseJsonSerializationOptions(Constants.JsonSerializerOptions).UseHttpEndpoint(daprHttpEndpoint).UseGrpcEndpoint(daprGrpcEndpoint).Build()
     //let actorProxyOptions = ActorProxyOptions(JsonSerializerOptions = Constants.JsonSerializerOptions, HttpEndpoint = daprEndpoint)
     //let actorProxyFactory = ActorProxyFactory(actorProxyOptions)
 
     let mutable private actorProxyFactory: IActorProxyFactory = null
-    let ActorProxyFactory() = actorProxyFactory
+    //let ActorProxyFactory() = actorProxyFactory
     let setActorProxyFactory proxyFactory =
         actorProxyFactory <- proxyFactory
 
     let private storageKey = daprClient.GetSecretAsync(Constants.GraceSecretStoreName, "AzureStorageKey").Result
-    let sharedKeyCredential = StorageSharedKeyCredential(defaultObjectStorageAccount, storageKey.First().Value)
+    let private sharedKeyCredential = StorageSharedKeyCredential(defaultObjectStorageAccount, storageKey.First().Value)
 
     let getContainerClient (storageAccountName: StorageAccountName) (containerName: StorageContainerName) =
         task {

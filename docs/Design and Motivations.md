@@ -84,7 +84,7 @@ Grace formats output to make it as easy to read as possible, and also offers JSO
 
 And in a world where hybrid and remote work is growing, Grace offers entirely new experiences with a live, two-way channel between client and server, linking repository users together in new ways, including auto-rebasing immediately after promotions (which are merges, sort-of).
 
-There's so much more to do in UX for version control. Grace is a platform for exploring where it can go next, while remaining easy to use, and easy to understand.
+There's so much more to do in UX for version control. Grace is a platform for exploring where it can go next.
 
 ![](https://gracevcsdevelopment.blob.core.windows.net/static/Orange3.svg)
 

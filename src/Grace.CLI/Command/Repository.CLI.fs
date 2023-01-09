@@ -142,7 +142,8 @@ module Repository =
     let private createHandler (parseResult: ParseResult) (createParameters: CreateParameters) =
         task {
             try
-                if parseResult |> verbose then printParseResult parseResult
+                //if parseResult |> verbose then printParseResult parseResult
+                if verbose parseResult then printParseResult parseResult
                 let validateIncomingParameters = CommonValidations parseResult createParameters >>= ``Either RepositoryId or RepositoryName must be specified``
                 match validateIncomingParameters with
                 | Ok _ -> 

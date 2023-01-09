@@ -12,8 +12,6 @@ open System.Threading.Tasks
 
 module Load =
 
-    let rnd = Random()
-
     let showResult<'T> (r: GraceResult<'T>) =
         match r with
         | Ok result -> printfn $"{result}"
@@ -27,7 +25,7 @@ module Load =
             let parallelOptions = ParallelOptions(MaxDegreeOfParallelism = Environment.ProcessorCount * 2, CancellationToken = cancellationToken)
             Parallel.ForEachAsync({0 .. 20}, parallelOptions, (fun (i: int) (cancellationToken: CancellationToken) ->
                 (task {
-                    let suffix = rnd.Next(65536).ToString("X4")
+                    let suffix = Random.Shared.Next(65536).ToString("X4")
                     let ownerId = Guid.NewGuid().ToString()
                     let ownerName = $"Owner{suffix}"
                     let organizationId = Guid.NewGuid().ToString()
@@ -53,7 +51,7 @@ module Load =
                     | Error error -> ()
 
                     for i in 1..16 do
-                        match rnd.Next(4) with
+                        match Random.Shared.Next(4) with
                         | 0 -> 
                             let! r = Branch.Save(Branch.CreateReferenceParameters(OwnerName = ownerName, OrganizationName = organizationName, RepositoryName = repositoryName, 
                                         BranchName = branchName, Message = $"Save - {DateTime.UtcNow}", DirectoryId = Guid.Empty))

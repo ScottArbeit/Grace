@@ -19,6 +19,10 @@ open Microsoft.Extensions.DependencyInjection
 open Microsoft.Extensions.Hosting
 open Microsoft.Extensions.Hosting.Internal
 open Microsoft.Extensions.Logging
+open Swashbuckle.AspNetCore.Swagger
+open Swashbuckle.AspNetCore.SwaggerGen
+open Microsoft.OpenApi.Models
+open OpenTelemetry
 open OpenTelemetry.Exporter
 open OpenTelemetry.Instrumentation.AspNetCore
 open OpenTelemetry.Metrics
@@ -203,10 +207,6 @@ module Application =
             //logToConsole $"Was {n}, now {Constants.JsonSerializerOptions.Converters.Count}."
 
             let env = (services.First(fun service -> service.ImplementationType = Type.GetType("IWebHostEnvironment")).ImplementationInstance) :?> HostingEnvironment
-            //let actorProxyOptions = ActorProxyOptions(JsonSerializerOptions = Constants.JsonSerializerOptions, DaprApiToken = Environment.GetEnvironmentVariable("DAPR_API_TOKEN"))
-            let actorProxyOptions = ActorProxyOptions(JsonSerializerOptions = Constants.JsonSerializerOptions)
-            actorProxyOptions.HttpEndpoint <- $"{Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.DaprServerUri)}:{Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.DaprHttpPort)}"
-            printfn $"actorProxyOptions.HttpEndpoint: {actorProxyOptions.HttpEndpoint}"
 
             let azureMonitorConnectionString = Environment.GetEnvironmentVariable("AZURE_MONITOR_CONNECTION_STRING")
 
@@ -218,26 +218,38 @@ module Application =
             globalOpenTelemetryAttributes.Add("process.executable.name", Process.GetCurrentProcess().ProcessName)
             globalOpenTelemetryAttributes.Add("process.runtime.version", System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription)
             
+            //let actorProxyOptions = ActorProxyOptions(JsonSerializerOptions = Constants.JsonSerializerOptions, DaprApiToken = Environment.GetEnvironmentVariable("DAPR_API_TOKEN"))
+            let actorProxyOptions = ActorProxyOptions(JsonSerializerOptions = Constants.JsonSerializerOptions)
+            actorProxyOptions.HttpEndpoint <- $"{Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.DaprServerUri)}:{Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.DaprHttpPort)}"
+            logToConsole $"actorProxyOptions.HttpEndpoint: {actorProxyOptions.HttpEndpoint}"
             let actorProxyFactory = ActorProxyFactory(actorProxyOptions)
             ApplicationContext.setActorProxyFactory actorProxyFactory
 
+            let openApiInfo = new OpenApiInfo()
+            openApiInfo.Description <- "Grace is a version control system. Code and documentation can be found at https://gracevcs.com."
+            openApiInfo.Title <- "Grace Server API"
+            services.AddOpenTelemetry()
+                .WithTracing(fun config -> 
+                    //if env.IsDevelopment() then
+                    //    config.AddConsoleExporter(fun options -> options.Targets <- ConsoleExporterOutputTargets.Console) |> ignore
+                    config.AddSource(Constants.GraceServerAppId)
+                           .SetResourceBuilder(ResourceBuilder.CreateDefault()
+                                .AddService(Constants.GraceServerAppId)
+                                .AddTelemetrySdk()
+                                .AddAttributes(globalOpenTelemetryAttributes))
+                           .AddAspNetCoreInstrumentation(fun options -> options.EnrichWithHttpRequest <- enrichTelemetry)
+                           .AddHttpClientInstrumentation()
+                           .AddAzureMonitorTraceExporter(fun options -> options.ConnectionString <- azureMonitorConnectionString) |> ignore)
+                           .StartWithHost() |> ignore
+                           //.AddZipkinExporter() |> ignore)
+            
             services.AddRouting()
                     .AddLogging()
-                    .AddOpenTelemetryTracing(fun builder -> 
-                        //if env.IsDevelopment() then
-                        //    builder.AddConsoleExporter(fun options -> options.Targets <- ConsoleExporterOutputTargets.Console) |> ignore
-
-                        builder.AddSource(Constants.GraceServerAppId)
-                               .SetResourceBuilder(ResourceBuilder.CreateDefault()
-                                    .AddService(Constants.GraceServerAppId)
-                                    .AddTelemetrySdk()
-                                    .AddAttributes(globalOpenTelemetryAttributes))
-                               .AddAspNetCoreInstrumentation(fun options -> options.EnrichWithHttpRequest <- enrichTelemetry)
-                               .AddHttpClientInstrumentation()
-                               .AddAzureMonitorTraceExporter(fun options -> options.ConnectionString <- azureMonitorConnectionString) |> ignore)
-                               //.AddZipkinExporter() |> ignore)
+                    //.AddSwaggerGen(fun config -> config.SwaggerDoc("v0.1", openApiInfo))
                     .AddGiraffe()
-                    .AddSingleton<Json.ISerializer>(SystemTextJson.Serializer(Constants.JsonSerializerOptions))
+                    .AddSingleton(Constants.JsonSerializerOptions)
+                    //.AddSingleton<Json.ISerializer>(SystemTextJson.Serializer(Constants.JsonSerializerOptions))
+                    .AddSingleton<Json.ISerializer, SystemTextJson.Serializer>()
                     .AddW3CLogging(fun options -> options.FileName <- "Grace.Server.log-"
                                                   options.LogDirectory <- Path.Combine(Environment.GetEnvironmentVariable("TEMP"), "Grace.Server.Logs"))
                     .AddSingleton<ActorProxyOptions>(actorProxyOptions)
@@ -289,7 +301,9 @@ module Application =
 
         member _.Configure(app: IApplicationBuilder, env: IWebHostEnvironment) =
             if env.IsDevelopment() then
-                app.UseDeveloperExceptionPage() |> ignore
+                app//.UseSwagger()
+                   //.UseSwaggerUI(fun config -> config.SwaggerEndpoint("/swagger", "Grace Server API"))
+                   .UseDeveloperExceptionPage() |> ignore
 
             // This line enables Azure SDK (i.e. CosmosDB) OpenTelemetry output, which is currently in experimental support. 
             //   When this is fully supported, we can remove it.

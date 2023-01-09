@@ -49,10 +49,15 @@ module ApplicationContext =
             StorageAccountConnectionString: string;
         }
 
-    let StorageAccounts = ConcurrentDictionary<String, String>()
-    let daprClient = DaprClientBuilder().UseJsonSerializationOptions(Constants.JsonSerializerOptions).Build()
+    let daprHttpEndpoint = $"{Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.DaprServerUri)}:{Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.DaprHttpPort)}"
+    let daprGrpcEndpoint = $"{Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.DaprServerUri)}:{Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.DaprGrpcPort)}"
+    logToConsole $"daprHttpEndpoint: {daprHttpEndpoint}; daprGrpcEndpoint: {daprGrpcEndpoint}"
+    //let daprClient = DaprClientBuilder().UseJsonSerializationOptions(Constants.JsonSerializerOptions).Build()
+    let daprClient = DaprClientBuilder().UseJsonSerializationOptions(Constants.JsonSerializerOptions).UseHttpEndpoint(daprHttpEndpoint).UseGrpcEndpoint(daprGrpcEndpoint).Build()
     
     let mutable sharedKeyCredential: StorageSharedKeyCredential = null
+    
+    //let StorageAccounts = ConcurrentDictionary<String, String>()
     //let storageAccountNames = Configuration.Item "StorageAccountNames"
     //let storageAccountNames = (Configuration.Item "StorageAccountNames").Split(";")
     //storageAccountNames |> 
@@ -72,7 +77,8 @@ module ApplicationContext =
         if not <| isNull cosmosClient then
             cosmosClient
         else
-            let cosmosDbConnectionString = Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.AzureCosmosDBConnectionString)
+            //let cosmosDbConnectionString = Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.AzureCosmosDBConnectionString)
+            let cosmosDbConnectionString = daprClient.GetSecretAsync(Constants.GraceSecretStoreName, "AzureCosmosDBConnectionString").Result.First().Value
             let cosmosClientOptions = CosmosClientOptions(
                 ApplicationName = Constants.GraceServerAppId, 
                 EnableContentResponseOnWrite = false, 
@@ -108,7 +114,7 @@ module ApplicationContext =
 
     let Set = 
         task {
-            let mutable isReady = false
+            let mutable isReady = true
             let mutable gRPCPort: int = 50001
             let grpcPortString = Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.DaprGrpcPort)
             Int32.TryParse(grpcPortString, &gRPCPort) |> ignore
@@ -116,6 +122,8 @@ module ApplicationContext =
                 do! Task.Delay(TimeSpan.FromSeconds(1.0))
                 logToConsole $"Checking if gRPC port {gRPCPort} is ready."
                 let tcpListeners = Net.NetworkInformation.IPGlobalProperties.GetIPGlobalProperties().GetActiveTcpListeners()
+                //for t in tcpListeners do
+                //    logToConsole $"{t.Address}:{t.Port} {t.AddressFamily}"
                 if tcpListeners.Any(fun tcpListener -> tcpListener.Port = gRPCPort) then
                     logToConsole $"gRPC port is ready."
                     isReady <- true

@@ -2,13 +2,13 @@
 	<PropertyGroup>
 		<TargetFramework>net7.0</TargetFramework>
 		<Version>0.1</Version>
-		<Description>The server module for Grace.</Description>
+		<Description>The server module for Grace Version Control System.</Description>
 		<UserSecretsId>f1167a88-7f15-49c3-8ea1-30c2608081c9</UserSecretsId>
 		<DockerDefaultTargetOS>Linux</DockerDefaultTargetOS>
-		<DockerfileTag>scottarbeit/grace.server</DockerfileTag>
+		<DockerfileTag>scottarbeit/grace-server</DockerfileTag>
 		<DockerComposeProjectPath>..\docker-compose.dcproj</DockerComposeProjectPath>
 		<WarningsAsErrors>FS0025</WarningsAsErrors>
-		<GenerateDocumentationFile>true</GenerateDocumentationFile>
+		<GenerateDocumentationFile>false</GenerateDocumentationFile>
 		<NoWarn>NETSDK1057</NoWarn>
 		<Platforms>AnyCPU;x64</Platforms>
 	</PropertyGroup>
@@ -39,7 +39,7 @@
 		<PackageReference Include="Azure.Monitor.OpenTelemetry.Exporter" Version="1.0.0-beta.5" />
 		<PackageReference Include="Azure.Storage.Blobs" Version="12.14.1" />
 		<PackageReference Include="Azure.Storage.Blobs.Batch" Version="12.11.0" />
-		<PackageReference Include="FSharp.SystemTextJson" Version="1.0.6" />
+		<PackageReference Include="FSharp.SystemTextJson" Version="1.0.7" />
 		<PackageReference Include="Giraffe" Version="6.0.0" />
 		<PackageReference Include="Dapr.Client" Version="1.9.0" />
 		<PackageReference Include="Dapr.AspNetCore" Version="1.9.0" />
@@ -49,17 +49,26 @@
 		<PackageReference Include="Microsoft.AspNetCore.Mvc.Versioning" Version="5.0.0" />
 		<PackageReference Include="Microsoft.AspNetCore.Mvc.Versioning.ApiExplorer" Version="5.0.0" />
 		<PackageReference Include="Microsoft.Azure.Cosmos" Version="3.31.2" />
+		<!--<PackageReference Include="Microsoft.Extensions.ApiDescription.Server" Version="7.0.1">
+		  <PrivateAssets>all</PrivateAssets>
+		  <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+		</PackageReference>-->
 		<PackageReference Include="Microsoft.Extensions.Configuration" Version="7.0.0" />
 		<PackageReference Include="Microsoft.Extensions.Logging" Version="7.0.0" />
+		<PackageReference Include="Microsoft.Extensions.Logging.Configuration" Version="7.0.0" />
+		<PackageReference Include="Microsoft.OpenApi" Version="1.4.5" />
 		<PackageReference Include="Microsoft.VisualStudio.Azure.Containers.Tools.Targets" Version="1.17.0" />
-		<PackageReference Include="OpenTelemetry" Version="1.4.0-beta.3" />
-		<PackageReference Include="OpenTelemetry.Exporter.Console" Version="1.4.0-beta.3" />
-		<PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.4.0-beta.3" />
+		<PackageReference Include="OpenTelemetry" Version="1.4.0-rc.1" />
+		<PackageReference Include="OpenTelemetry.Exporter.Console" Version="1.4.0-rc.1" />
+		<PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.4.0-rc.1" />
 		<PackageReference Include="OpenTelemetry.Exporter.Prometheus" Version="1.3.0-rc.2" />
-		<PackageReference Include="OpenTelemetry.Exporter.Zipkin" Version="1.4.0-beta.3" />
-		<PackageReference Include="OpenTelemetry.Extensions.Hosting" Version="1.0.0-rc9.9" />
-		<PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.0.0-rc9.9" />
-		<PackageReference Include="OpenTelemetry.Instrumentation.Http" Version="1.0.0-rc9.9" />
+		<PackageReference Include="OpenTelemetry.Exporter.Zipkin" Version="1.4.0-rc.1" />
+		<PackageReference Include="OpenTelemetry.Extensions.Hosting" Version="1.4.0-rc.1" />
+		<PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.0.0-rc9.10" />
+		<PackageReference Include="OpenTelemetry.Instrumentation.Http" Version="1.0.0-rc9.10" />
+		<PackageReference Include="Swashbuckle.AspNetCore.Swagger" Version="6.4.0" />
+		<PackageReference Include="Swashbuckle.AspNetCore.SwaggerGen" Version="6.4.0" />
+		<PackageReference Include="Swashbuckle.AspNetCore.SwaggerUI" Version="6.4.0" />
 	</ItemGroup>
 	<ItemGroup>
 		<PackageReference Update="FSharp.Core" Version="7.0.0" />

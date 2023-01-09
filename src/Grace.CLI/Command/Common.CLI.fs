@@ -80,15 +80,22 @@ module Common =
             | Normal -> AnsiConsole.MarkupLine($"""[{Colors.Highlighted}]{Markup.Escape($"{graceReturnValue.ReturnValue}")}[/]""")
             0
         | Error error -> 
-            let json = if error.Error.Contains("Stack trace") then 
-                                let exceptionResponse = JsonSerializer.Deserialize<ExceptionResponse>(error.Error, Constants.JsonSerializerOptions)
-                                sprintf "%A" exceptionResponse
+            let json = if error.Error.Contains("Stack trace") then
+                                logToConsole $"Error: {error.Error}"
+                                try
+                                    let exceptionResponse = JsonSerializer.Deserialize<ExceptionResponse>(error.Error, Constants.JsonSerializerOptions)
+                                    sprintf "%A" exceptionResponse
+                                with ex -> 
+                                    sprintf "%A" error.Error
                             else
                                 JsonSerializer.Serialize(error, Constants.JsonSerializerOptions)
 
             let errorText = if error.Error.Contains("Stack trace") then 
-                                let exceptionResponse = JsonSerializer.Deserialize<ExceptionResponse>(error.Error, Constants.JsonSerializerOptions)
-                                sprintf "%A" exceptionResponse
+                                try
+                                    let exceptionResponse = JsonSerializer.Deserialize<ExceptionResponse>(error.Error, Constants.JsonSerializerOptions)
+                                    sprintf "%A" exceptionResponse
+                                with ex -> 
+                                    sprintf "%A" error.Error
                             else
                                 error.Error
 
