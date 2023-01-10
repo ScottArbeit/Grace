@@ -26,16 +26,19 @@ module Directory =
     type DirectoryActor(host: ActorHost) =
         inherit Actor(host)
 
+        let actorName = Constants.ActorName.Directory
         let dtoStateName = "DirectoryVersionState"
         let directoryVersionCacheStateName = "DirectoryVersionCacheState"
 
         let mutable methodStartTime = Instant.MinValue
         let mutable directoryVersion = DirectoryVersion.Default
-        let logger = host.LoggerFactory.CreateLogger(nameof(DirectoryActor))
+        let mutable actorStartTime = Instant.MinValue
+        let mutable logScope: IDisposable = null
+        let log = host.LoggerFactory.CreateLogger(nameof(DirectoryActor))
 
         override this.OnActivateAsync() =
             let stateManager = this.StateManager
-            logger.LogInformation("{CurrentInstant} Activated {ActorType} {ActorId}.", getCurrentInstantExtended(), this.GetType().Name, host.Id)
+            log.LogInformation("{CurrentInstant} Activated {ActorType} {ActorId}.", getCurrentInstantExtended(), this.GetType().Name, host.Id)
             task {
                 try
                     let! retrievedDto = Storage.RetrieveState<DirectoryVersion> stateManager dtoStateName
@@ -44,18 +47,20 @@ module Directory =
                         | None -> ()
                 with ex ->
                     let exc = createExceptionResponse ex
-                    logger.LogError("{CurrentInstant} Error in {ActorType} {ActorId}.", getCurrentInstantExtended(), this.GetType().Name, host.Id)
-                    logger.LogError("{CurrentInstant} {ExceptionDetails}", getCurrentInstantExtended(), exc.ToString())
+                    log.LogError("{CurrentInstant} Error in {ActorType} {ActorId}.", getCurrentInstantExtended(), this.GetType().Name, host.Id)
+                    log.LogError("{CurrentInstant} {ExceptionDetails}", getCurrentInstantExtended(), exc.ToString())
             } :> Task
 
-        override this.OnPreActorMethodAsync context =
-            methodStartTime <- getCurrentInstant()
+        override this.OnPreActorMethodAsync(context) =
+            actorStartTime <- getCurrentInstant()
+            logScope <- log.BeginScope("Actor {actorName}", actorName)
+            //log.LogInformation("{CurrentInstant}: Started {ActorName}.{MethodName} Id: {Id}.", getCurrentInstantExtended(), actorName, context.MethodName, this.Id.GetId())
             Task.CompletedTask
 
-        override this.OnPostActorMethodAsync context =
-            let methodDuration = getCurrentInstant().Minus(methodStartTime)
-            Activity.Current.SetTag("Actor method elapsed time", $"{methodDuration.TotalMilliseconds}ms") |> ignore
-            //logger.LogInformation $"DirectoryActor.{context.MethodName} took {methodDuration.TotalMilliseconds}ms."
+        override this.OnPostActorMethodAsync(context) =
+            let duration = getCurrentInstant().Minus(actorStartTime)
+            log.LogInformation("{CurrentInstant}: Finished {ActorName}.{MethodName} Id: {Id}; Duration: {duration}ms.", getCurrentInstantExtended(), actorName, context.MethodName, this.Id.GetId(), duration.TotalMilliseconds.ToString("F3"))
+            logScope.Dispose()
             Task.CompletedTask
 
         member private this.DeleteCachedStateReminder() =

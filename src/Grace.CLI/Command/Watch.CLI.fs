@@ -146,9 +146,10 @@ module Watch =
                 logToAnsiConsole Colors.Changed $"I saw that {args.FullPath} changed."
                 filesToProcess.TryAdd(args.FullPath, String.Empty) |> ignore
 
+            // Special handling for the Grace status file; if that is the changed file, we'll reload it in OnWatch() in the main loop
             if not <| graceStatusHasChanged && args.FullPath = Current().GraceStatusFile then
-                logToAnsiConsole Colors.Highlighted $"Grace Status file has been updated."
                 graceStatusHasChanged <- true
+                logToAnsiConsole Colors.Highlighted $"Grace Status file has been updated."
 
     let OnDeleted (args: FileSystemEventArgs) =
         if updateNotInProgress() && not <| Directory.Exists(args.FullPath) then

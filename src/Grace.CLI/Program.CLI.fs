@@ -190,7 +190,8 @@ module GraceCommand =
                 if parseResult |> showOutput then
                     if parseResult |> verbose then
                         AnsiConsole.Write((new Rule($"[{Colors.Important}]Started: {startTime.ToString(InstantPattern.ExtendedIso.PatternText, CultureInfo.InvariantCulture)}.[/]")).RightAligned())
-                    AnsiConsole.Write(new Rule())
+                    else
+                        AnsiConsole.Write(new Rule())
 
                 if not <| (parseResult |> isGraceWatch) then
                     let! graceWatchStatus = getGraceWatchStatus()
@@ -209,7 +210,13 @@ module GraceCommand =
                     logToAnsiConsole Colors.Important $"Inter-process communication file deleted."
 
                 if parseResult |> showOutput then
-                    AnsiConsole.Write((new Rule($"[{Colors.Important}]Elapsed: {(getCurrentInstant() - startTime).TotalSeconds:F3}s. Exit code: {returnValue}.[/]")).RightAligned())
+                    let finishTime = getCurrentInstant()
+                    let elapsed = finishTime - startTime
+                    if parseResult |> verbose then
+                        AnsiConsole.Write((new Rule($"[{Colors.Important}]Elapsed: {elapsed.TotalSeconds:F3}s. Exit code: {returnValue}. Finished: {finishTime.ToString(InstantPattern.ExtendedIso.PatternText, CultureInfo.InvariantCulture)}[/]")).RightAligned())
+                    else
+                        AnsiConsole.Write((new Rule($"[{Colors.Important}]Elapsed: {elapsed.TotalSeconds:F3}s. Exit code: {returnValue}.[/]")).RightAligned())
+
                     AnsiConsole.WriteLine()
 
                 return returnValue

@@ -152,12 +152,12 @@ module Repository =
         override this.OnPreActorMethodAsync(context) =
             actorStartTime <- getCurrentInstant()
             logScope <- log.BeginScope("Actor {actorName}", actorName)
-            log.LogInformation("{CurrentInstant}: Starting actor {ActorName}; Method: {MethodName}.", getCurrentInstantExtended(), actorName, context.MethodName)
+            //log.LogInformation("{CurrentInstant}: Started {ActorName}.{MethodName} Id: {Id}.", getCurrentInstantExtended(), actorName, context.MethodName, this.Id.GetId())
             Task.CompletedTask
             
         override this.OnPostActorMethodAsync(context) =
             let duration = getCurrentInstant().Minus(actorStartTime)
-            log.LogInformation("{CurrentInstant}: Finished actor {actorName}; Method: {methodName}; Duration: {duration}ms.", getCurrentInstantExtended(), actorName, context.MethodName, duration.TotalMilliseconds.ToString("F3"))
+            log.LogInformation("{CurrentInstant}: Finished {ActorName}.{MethodName} Id: {Id}; Duration: {duration}ms.", getCurrentInstantExtended(), actorName, context.MethodName, this.Id.GetId(), duration.TotalMilliseconds.ToString("F3"))
             logScope.Dispose()
             Task.CompletedTask
 

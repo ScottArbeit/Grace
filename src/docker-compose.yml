@@ -35,7 +35,7 @@ services:
       - daprd
 
   daprd:
-    image: daprio/daprd:1.9.5-mariner
+    image: daprio/daprd:1.9.5
     container_name: daprd
     command: ["./daprd",
         "--app-id", "grace-server",
@@ -65,7 +65,7 @@ services:
       - dapr-placement
 
   dapr-placement:
-    image: daprio/dapr:1.9.5-mariner
+    image: daprio/dapr:1.9.5
     container_name: dapr-placement
     command: ["./placement", "-port", "6050", "--log-level", "info"]
     networks:
