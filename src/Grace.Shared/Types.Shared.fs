@@ -58,7 +58,7 @@ module Types =
     [<KnownType("GetKnownTypes")>]
     type ActorStateStorageProvider =
         | AzureCosmosDb
-        | DynamoDb
+        | Cassandra
         | Unknown   // Not calling it None because that really belongs to Option.
         // etc.
         static member GetKnownTypes() = GetKnownTypes<ActorStateStorageProvider>()

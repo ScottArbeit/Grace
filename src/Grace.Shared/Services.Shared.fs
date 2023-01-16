@@ -15,6 +15,7 @@ open Microsoft.FSharp.NativeInterop
 
 module Services =
 
+    /// Adds a property to a GraceResult instance.
     let enhance<'T> (key: string, value: string) (result: GraceResult<'T>) =
         if not <| String.IsNullOrEmpty(key) then
             match result with
@@ -59,6 +60,7 @@ module Services =
                     ArrayPool<byte>.Shared.Return(buffer, clearArray = true)
         }
 
+    /// Computes the SHA-256 value for a given relative directory.
     let computeSha256ForDirectory (relativeDirectoryPath: RelativePath) (directories: List<LocalDirectoryVersion>) (files: List<LocalFileVersion>) =
         use hasher = IncrementalHash.CreateHash(HashAlgorithmName.SHA256)
         hasher.AppendData(ReadOnlySpan(Encoding.UTF8.GetBytes(relativeDirectoryPath)))

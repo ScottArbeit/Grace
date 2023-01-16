@@ -53,10 +53,11 @@ module Utilities =
         |[|case|] -> Some(FSharpValue.MakeUnion(case,[||]) :?> 'T)
         |_ -> None
 
-    /// Gets the cases of a discriminated union as an array of s
+    /// Gets the cases of a discriminated union as an array of strings.
     let listCases (T: Type) =
         FSharpType.GetUnionCases T |> Array.map (fun c -> c.Name)
 
+    /// Gets the cases of discriminated union for serialization.
     let GetKnownTypes<'T>() = typeof<'T>.GetNestedTypes(BindingFlags.Public ||| BindingFlags.NonPublic) |> Array.filter FSharpType.IsUnion
 
     /// <summary>
@@ -190,19 +191,18 @@ module Utilities =
           sb.Append($"{b:x2}") |> ignore
         sb.ToString()
 
-    /// <summary>
-    /// Converts a string to a byte array. For example, "ab1503" -> [0xab, 0x15, 0x03]
+    /// Converts a string of hexadecimal numbers to a byte array. For example, "ab1503" -> [0xab, 0x15, 0x03]
+    ///
+    /// The hex string must have an even number of digits; for this function, "1a8" will throw an ArgumentException, but "01a8" will be converted to a byte array.
+    ///
     /// Note: This is different from Encoding.UTF8.GetBytes().
-    /// </summary>
-    /// <param name="array">An array of bytes to convert to a string.</param>
-    let stringAsByteArray (s: string) =
-        if s.Length / 2 % 2 <> 0 then raise (ArgumentException("The hexadecimal string must have an even number of digits.", nameof(s)))
+    let stringAsByteArray (s: ReadOnlySpan<char>) =
+        if s.Length % 2 <> 0 then raise (ArgumentException("The hexadecimal string must have an even number of digits.", nameof(s)))
 
         let byteArrayLength = int32 (s.Length / 2)
         let bytes = Array.zeroCreate byteArrayLength
-        let span = s.AsSpan()
         for index in [0..byteArrayLength] do
-            let byteValue = s.Substring(index * 2, 2);
+            let byteValue = s.Slice(index * 2, 2)
             bytes[index] <- Byte.Parse(byteValue, NumberStyles.HexNumber, CultureInfo.InvariantCulture)
         bytes
 

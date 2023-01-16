@@ -37,8 +37,9 @@ module Repository =
 
     let activitySource = new ActivitySource("Repository")
 
+    let actorProxyFactory = ApplicationContext.ActorProxyFactory()
+
     let getActorProxy (repositoryId: string) (context: HttpContext) =
-        let actorProxyFactory = context.GetService<IActorProxyFactory>()
         let actorId = ActorId(repositoryId)
         actorProxyFactory.CreateActorProxy<IRepositoryActor>(actorId, ActorName.Repository)
 

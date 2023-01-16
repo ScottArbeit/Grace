@@ -31,8 +31,9 @@ module Owner =
 
     let activitySource = new ActivitySource("Owner")
 
+    let actorProxyFactory = ApplicationContext.ActorProxyFactory()
+
     let getActorProxy (context: HttpContext) (ownerId: string) =
-        let actorProxyFactory = context.GetService<IActorProxyFactory>()
         let actorId = ActorId(ownerId)
         actorProxyFactory.CreateActorProxy<IOwnerActor>(actorId, ActorName.Owner)
 

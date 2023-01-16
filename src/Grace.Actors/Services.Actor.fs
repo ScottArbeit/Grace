@@ -33,7 +33,6 @@ module Services =
     //let actorProxyFactory = ActorProxyFactory(actorProxyOptions)
 
     let mutable private actorProxyFactory: IActorProxyFactory = null
-    //let ActorProxyFactory() = actorProxyFactory
     let setActorProxyFactory proxyFactory =
         actorProxyFactory <- proxyFactory
 

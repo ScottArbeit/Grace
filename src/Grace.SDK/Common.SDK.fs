@@ -16,6 +16,7 @@ open System.Net.Http
 open System.Net.Http.Json
 open System.Net.Security
 open System.Text.Json
+open System.Threading.Tasks
 
 // Supresses the warning for using AllowNoEncryption in Debug builds.
 #nowarn "0044"
@@ -26,7 +27,7 @@ module Common =
 #if DEBUG
         // In debug mode, we'll accept only TLS 1.2 and allow no encryption to enable access to the CosmosDB emulator without having to deal with certificates.
         // TLS 1.3 requires a non-null cipher, so limiting ourselves to TLS 1.2 lets us get away with using this.
-        // AllowNoEncryption = Prefer secure connections, but if there's a null cipher (which we'll get from the CosmosDB emulator because it has a self-signed certificate), we'll allow it.
+        // AllowNoEncryption means: Prefer secure connections, but if there's a null cipher (which we'll get from the CosmosDB emulator because it has a self-signed certificate), we'll allow it.
         SslClientAuthenticationOptions(
             EncryptionPolicy = EncryptionPolicy.AllowNoEncryption,
             EnabledSslProtocols = Security.Authentication.SslProtocols.Tls12
@@ -71,7 +72,8 @@ module Common =
         httpClient.Timeout <- TimeSpan.FromSeconds(1800.0)  // Keeps client commands open while debugging.
 #endif
         httpClient
-        
+
+    /// Sends GET commands to Grace Server.        
     let getServer<'T, 'U when 'T :> CommonParameters>(parameters: 'T, route: string) =
         task {
             try
@@ -93,6 +95,7 @@ module Common =
                 return Error (GraceError.Create (JsonSerializer.Serialize(exceptionResponse)) parameters.CorrelationId)
         }
 
+    /// Sends POST commands to Grace Server.
     let postServer<'T, 'U when 'T :> CommonParameters>(parameters: 'T, route: string) =
         task {
             try
@@ -121,10 +124,13 @@ module Common =
                 return Error (GraceError.Create ($"{exceptionResponse}") parameters.CorrelationId)
         }
 
+    /// Ensures that the CorrelationId is set in the parameters for calling Grace Server. If it hasn't already been set, one will be created.
     let ensureCorrelationIdIsSet<'T when 'T :> CommonParameters> (parameters: 'T)  =
         parameters.CorrelationId <- (Utilities.ensureNonEmptyCorrelationId parameters.CorrelationId)
         parameters
 
+    /// Returns the object file name for a given file version, including the SHA-256 hash.
+    /// Example: foo.txt with a SHA-256 hash of "8e798...980c" -> "foo_8e798...980c.txt".
     let getObjectFileName (fileVersion: FileVersion) = 
         let file = FileInfo(Path.Combine(Current().RootDirectory, $"{fileVersion.RelativePath}"))
         $"{file.Name.Replace(file.Extension, String.Empty)}_{fileVersion.Sha256Hash}{file.Extension}"

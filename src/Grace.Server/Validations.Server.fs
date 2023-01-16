@@ -18,13 +18,14 @@ open System.Threading.Tasks
 
 module Validations =
 
+    let actorProxyFactory = ApplicationContext.ActorProxyFactory()
+
     /// Validates that the given ownerId exists in the database.
     let ownerIdExists<'T> (ownerId: string) (context: HttpContext) (error: 'T) =
         task {
             let mutable ownerGuid = Guid.Empty
             if (not <| String.IsNullOrEmpty(ownerId)) && Guid.TryParse(ownerId, &ownerGuid) then
                 let actorId = Owner.GetActorId(ownerGuid)
-                let actorProxyFactory = context.GetService<IActorProxyFactory>()
                 let ownerActorProxy = actorProxyFactory.CreateActorProxy<IOwnerActor>(actorId, ActorName.Owner)
                 let! exists = ownerActorProxy.Exists()
                 if exists then
@@ -41,7 +42,6 @@ module Validations =
             let mutable ownerGuid = Guid.Empty
             if (not <| String.IsNullOrEmpty(ownerId)) && Guid.TryParse(ownerId, &ownerGuid) then
                 let actorId = Owner.GetActorId(ownerGuid)
-                let actorProxyFactory = context.GetService<IActorProxyFactory>()
                 let ownerActorProxy = actorProxyFactory.CreateActorProxy<IOwnerActor>(actorId, ActorName.Owner)
                 let! exists = ownerActorProxy.Exists()
                 if exists then
@@ -60,7 +60,6 @@ module Validations =
             | Some ownerId ->
                 if Guid.TryParse(ownerId, &ownerGuid) then
                     let actorId = Owner.GetActorId(ownerGuid)
-                    let actorProxyFactory = context.GetService<IActorProxyFactory>()
                     let ownerActorProxy = actorProxyFactory.CreateActorProxy<IOwnerActor>(actorId, ActorName.Owner)
                     let! exists = ownerActorProxy.Exists()
                     if exists then
@@ -88,7 +87,6 @@ module Validations =
             | Some ownerId ->
                 if Guid.TryParse(ownerId, &ownerGuid) then
                     let actorId = Owner.GetActorId(ownerGuid)
-                    let actorProxyFactory = context.GetService<IActorProxyFactory>()
                     let ownerActorProxy = actorProxyFactory.CreateActorProxy<IOwnerActor>(actorId, ActorName.Owner)
                     let! isDeleted = ownerActorProxy.IsDeleted()
                     if isDeleted then
@@ -108,7 +106,6 @@ module Validations =
             | Some ownerId ->
                 if Guid.TryParse(ownerId, &ownerGuid) then
                     let actorId = Owner.GetActorId(ownerGuid)
-                    let actorProxyFactory = context.GetService<IActorProxyFactory>()
                     let ownerActorProxy = actorProxyFactory.CreateActorProxy<IOwnerActor>(actorId, ActorName.Owner)
                     let! isDeleted = ownerActorProxy.IsDeleted()
                     if isDeleted then
@@ -137,7 +134,6 @@ module Validations =
             let mutable organizationGuid = Guid.Empty
             if (not <| String.IsNullOrEmpty(organizationId)) && Guid.TryParse(organizationId, &organizationGuid) then
                 let actorId = Organization.GetActorId(organizationGuid)
-                let actorProxyFactory = context.GetService<IActorProxyFactory>()
                 let organizationActorProxy = actorProxyFactory.CreateActorProxy<IOrganizationActor>(actorId, ActorName.Organization)
                 let! exists = organizationActorProxy.Exists()
                 if exists then
@@ -167,7 +163,6 @@ module Validations =
             | Some organizationId ->
                 if Guid.TryParse(organizationId, &organizationGuid) then
                     let actorId = Organization.GetActorId(organizationGuid)
-                    let actorProxyFactory = context.GetService<IActorProxyFactory>()
                     let organizationActorProxy = actorProxyFactory.CreateActorProxy<IOrganizationActor>(actorId, ActorName.Organization)
                     let! exists = organizationActorProxy.Exists()
                     if exists then
@@ -195,7 +190,6 @@ module Validations =
             match! resolveOrganizationId ownerId ownerName organizationId organizationName with
             | Some organizationId ->
                 let actorId = Organization.GetActorId(Guid.Parse(organizationId))
-                let actorProxyFactory = context.GetService<IActorProxyFactory>()
                 let organizationActorProxy = actorProxyFactory.CreateActorProxy<IOrganizationActor>(actorId, ActorName.Organization)
                 let! isDeleted = organizationActorProxy.IsDeleted()
                 if isDeleted then
@@ -208,7 +202,6 @@ module Validations =
     /// Validates that the organization is not deleted.
     let organizationIsNotDeleted<'T> ownerId ownerName organizationId organizationName (context: HttpContext) (error: 'T) =
         task {
-            let actorProxyFactory = context.GetService<IActorProxyFactory>()
             match! resolveOrganizationId ownerId ownerName organizationId organizationName with
             | Some organizationId ->
                 let actorId = Organization.GetActorId(Guid.Parse(organizationId))
@@ -226,7 +219,6 @@ module Validations =
         task {
             if not <| (referenceId = Guid.Empty) then
                 let actorId = ActorId($"{referenceId}")
-                let actorProxyFactory = context.GetService<IActorProxyFactory>()
                 let referenceActorProxy = actorProxyFactory.CreateActorProxy<IReferenceActor>(actorId, ActorName.Reference)
                 let! exists = referenceActorProxy.Exists()
                 if exists then
@@ -243,7 +235,6 @@ module Validations =
             let mutable guid = Guid.Empty
             if (not <| String.IsNullOrEmpty(repositoryId)) && Guid.TryParse(repositoryId, &guid) then
                 let actorId = ActorId($"{guid}")
-                let actorProxyFactory = context.GetService<IActorProxyFactory>()
                 let repositoryActorProxy = actorProxyFactory.CreateActorProxy<IRepositoryActor>(actorId, ActorName.Repository)
                 let! exists = repositoryActorProxy.Exists()
                 if exists then
@@ -273,7 +264,6 @@ module Validations =
             | Some repositoryId ->
                 if Guid.TryParse(repositoryId, &guid) then
                     let actorId = ActorId($"{guid}")
-                    let actorProxyFactory = context.GetService<IActorProxyFactory>()
                     let repositoryActorProxy = actorProxyFactory.CreateActorProxy<IRepositoryActor>(actorId, ActorName.Repository)
                     let! exists = repositoryActorProxy.Exists()
                     if exists then
@@ -293,7 +283,6 @@ module Validations =
             | Some repositoryId ->
                 if Guid.TryParse(repositoryId, &guid) then
                     let actorId = ActorId($"{guid}")
-                    let actorProxyFactory = context.GetService<IActorProxyFactory>()
                     let repositoryActorProxy = actorProxyFactory.CreateActorProxy<IRepositoryActor>(actorId, ActorName.Repository)
                     let! isDeleted = repositoryActorProxy.IsDeleted()
                     if isDeleted then
@@ -313,7 +302,6 @@ module Validations =
             | Some repositoryId ->
                 if Guid.TryParse(repositoryId, &guid) then
                     let actorId = ActorId($"{guid}")
-                    let actorProxyFactory = context.GetService<IActorProxyFactory>()
                     let repositoryActorProxy = actorProxyFactory.CreateActorProxy<IRepositoryActor>(actorId, ActorName.Repository)
                     let! isDeleted = repositoryActorProxy.IsDeleted()
                     if isDeleted then
@@ -331,7 +319,6 @@ module Validations =
             let mutable guid = Guid.Empty
             if (not <| String.IsNullOrEmpty(branchId)) && Guid.TryParse(branchId, &guid) then
                 let actorId = ActorId($"{guid}")
-                let actorProxyFactory = context.GetService<IActorProxyFactory>()
                 let branchActorProxy = actorProxyFactory.CreateActorProxy<IBranchActor>(actorId, ActorName.Branch)
                 let! exists = branchActorProxy.Exists()
                 if exists then
@@ -349,7 +336,6 @@ module Validations =
             let mutable guid = Guid.Empty
             if (not <| String.IsNullOrEmpty(branchId)) && Guid.TryParse(branchId, &guid) then
                 let actorId = ActorId($"{guid}")
-                let actorProxyFactory = context.GetService<IActorProxyFactory>()
                 let branchActorProxy = actorProxyFactory.CreateActorProxy<IBranchActor>(actorId, ActorName.Branch)
                 let! exists = branchActorProxy.Exists()
                 if exists then
@@ -370,7 +356,6 @@ module Validations =
                 | Some branchId ->
                     if Guid.TryParse(branchId, &guid) then
                         let actorId = ActorId($"{guid}")
-                        let actorProxyFactory = context.GetService<IActorProxyFactory>()
                         let branchActorProxy = actorProxyFactory.CreateActorProxy<IBranchActor>(actorId, ActorName.Branch)
                         let! exists = branchActorProxy.Exists()
                         if exists then
@@ -393,7 +378,6 @@ module Validations =
                 | Some branchId ->
                     if Guid.TryParse(branchId, &guid) then
                         let actorId = ActorId($"{guid}")
-                        let actorProxyFactory = context.GetService<IActorProxyFactory>()
                         let branchActorProxy = actorProxyFactory.CreateActorProxy<IBranchActor>(actorId, ActorName.Branch)
                         let! branchDto = branchActorProxy.Get()
                         let allowed = 
@@ -441,7 +425,7 @@ module Validations =
             while directoryIdStack.Count > 0 && allExist do
                 let directoryId = directoryIdStack.Dequeue()
                 let actorId = Directory.GetActorId(directoryId)
-                let directoryActorProxy = ApplicationContext.ActorProxyFactory().CreateActorProxy<IDirectoryActor>(actorId, ActorName.Directory)
+                let directoryActorProxy = actorProxyFactory.CreateActorProxy<IDirectoryActor>(actorId, ActorName.Directory)
                 let! exists = directoryActorProxy.Exists()
                 allExist <- exists
             if allExist then
@@ -458,7 +442,6 @@ module Validations =
             | Some branchId ->
                 if Guid.TryParse(branchId, &guid) then
                     let actorId = ActorId($"{guid}")
-                    let actorProxyFactory = context.GetService<IActorProxyFactory>()
                     let branchActorProxy = actorProxyFactory.CreateActorProxy<IBranchActor>(actorId, ActorName.Branch)
                     let! exists = branchActorProxy.Exists()
                     if exists || guid = Grace.Shared.Constants.DefaultParentBranchId then

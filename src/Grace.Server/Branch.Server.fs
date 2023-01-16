@@ -28,12 +28,13 @@ open System.Threading.Tasks
 
 module Branch =
 
-    type Validations<'T when 'T :> BranchParameters> = 'T -> HttpContext -> Task<Result<unit, BranchError>>[]
+    type Validations<'T when 'T :> BranchParameters> = 'T -> HttpContext -> Task<Result<unit, BranchError>> array
     
     let activitySource = new ActivitySource("Branch")
 
+    let actorProxyFactory = ApplicationContext.ActorProxyFactory()
+
     let getActorProxy (context: HttpContext) (branchId: BranchId) =
-        let actorProxyFactory = context.GetService<IActorProxyFactory>()
         let actorId = ActorId($"{branchId}")
         actorProxyFactory.CreateActorProxy<IBranchActor>(actorId, ActorName.Branch)
 

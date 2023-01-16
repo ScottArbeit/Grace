@@ -264,8 +264,9 @@ module Diff =
                                         DirectoryId2 = directoryId2
                                         Directory2CreatedAt = createdAt2
                                         Differences = differences}
-                        this.setDeleteReminder()
                         do! Storage.SaveState stateManager dtoStateName diffDto
+                        
+                        this.setDeleteReminder()
                         return true
                     with ex ->
                         logToConsole $"Exception in DiffActor.Populate(): {createExceptionResponse ex}"

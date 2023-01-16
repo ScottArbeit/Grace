@@ -32,8 +32,9 @@ module Directory =
     
     let activitySource = new ActivitySource("Branch")
 
+    let actorProxyFactory = ApplicationContext.ActorProxyFactory()
+
     let getActorProxy (context: HttpContext) (directoryId: DirectoryId) =
-        let actorProxyFactory = context.GetService<IActorProxyFactory>()
         let actorId = GetActorId directoryId
         actorProxyFactory.CreateActorProxy<IDirectoryActor>(actorId, ActorName.Directory)
 

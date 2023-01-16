@@ -132,8 +132,8 @@ module Services =   //.
             elif String.IsNullOrEmpty(ownerName) then
                 return None
             else
-                let actorProxy = ActorProxyFactory().CreateActorProxy<IOwnerNameActor>(OwnerName.GetActorId(ownerName), ActorName.OwnerName)
-                match! actorProxy.GetOwnerId() with
+                let ownerNameActorProxy = ActorProxyFactory().CreateActorProxy<IOwnerNameActor>(OwnerName.GetActorId(ownerName), ActorName.OwnerName)
+                match! ownerNameActorProxy.GetOwnerId() with
                 | Some ownerId -> return Some ownerId
                 | None ->
                     match ApplicationContext.actorStateStorageProvider with
@@ -149,10 +149,10 @@ module Services =   //.
                             if String.IsNullOrEmpty(ownerId) then
                                 return None
                             else
-                                do! actorProxy.SetOwnerId(ownerId)
+                                do! ownerNameActorProxy.SetOwnerId(ownerId)
                                 return Some ownerId
                         else return None
-                    | DynamoDb -> return None
+                    | Cassandra -> return None
         }
 
     /// <summary>
@@ -169,8 +169,8 @@ module Services =   //.
                 elif String.IsNullOrEmpty(organizationName) then
                     return None
                 else
-                    let actorProxy = ApplicationContext.ActorProxyFactory().CreateActorProxy<IOrganizationNameActor>(OrganizationName.GetActorId(organizationName), ActorName.OrganizationName)
-                    match! actorProxy.GetOrganizationId() with
+                    let organizationNameActorProxy = ApplicationContext.ActorProxyFactory().CreateActorProxy<IOrganizationNameActor>(OrganizationName.GetActorId(organizationName), ActorName.OrganizationName)
+                    match! organizationNameActorProxy.GetOrganizationId() with
                     | Some ownerId -> return Some ownerId
                     | None ->
                         match ApplicationContext.actorStateStorageProvider with
@@ -187,14 +187,14 @@ module Services =   //.
                                 if String.IsNullOrEmpty(organizationId) then
                                     return None
                                 else
-                                    do! actorProxy.SetOrganizationId(organizationId)
+                                    do! organizationNameActorProxy.SetOrganizationId(organizationId)
                                     return Some organizationId
                             else return None
-                        | DynamoDb -> return None
+                        | Cassandra -> return None
             | None -> return None
         }
 
-    /// Gets the RepositoryId by returning RepositoryId if provided, or searching by RepositoryName.
+    /// Gets the RepositoryId by returning RepositoryId if provided, or searching by RepositoryName within the provided owner and organization.
     let resolveRepositoryId (ownerId: string) (ownerName: string) (organizationId: string) (organizationName: string) (repositoryId: string) (repositoryName: string) =
         task {
             match! resolveOwnerId ownerId ownerName with
@@ -206,9 +206,9 @@ module Services =   //.
                     elif String.IsNullOrEmpty(repositoryName) then
                         return None
                     else
-                        let actorProxy = ApplicationContext.ActorProxyFactory().CreateActorProxy<IRepositoryNameActor>(RepositoryName.GetActorId(repositoryName), ActorName.RepositoryName)
-                        match! actorProxy.GetRepositoryId() with
-                        | Some ownerId -> return Some ownerId
+                        let repositoryNameActorProxy = ApplicationContext.ActorProxyFactory().CreateActorProxy<IRepositoryNameActor>(RepositoryName.GetActorId(repositoryName), ActorName.RepositoryName)
+                        match! repositoryNameActorProxy.GetRepositoryId() with
+                        | Some repositoryId -> return Some repositoryId
                         | None ->
                             match ApplicationContext.actorStateStorageProvider with
                             | Unknown -> return None
@@ -225,10 +225,10 @@ module Services =   //.
                                     if String.IsNullOrEmpty(repositoryId) then
                                         return None
                                     else
-                                        do! actorProxy.SetRepositoryId(repositoryId)
+                                        do! repositoryNameActorProxy.SetRepositoryId(repositoryId)
                                         return Some repositoryId
                                 else return None
-                            | DynamoDb -> return None
+                            | Cassandra -> return None
                 | None -> return None
             | None -> return None
         }
@@ -274,7 +274,7 @@ module Services =   //.
                                 else
                                     do! actorProxy.SetRepositoryId(retrievedRepositoryId)
                                     return Some retrievedRepositoryId
-                            | DynamoDb -> return None
+                            | Cassandra -> return None
                 | None -> return None
             | None -> return None
         }
@@ -286,8 +286,8 @@ module Services =   //.
             elif String.IsNullOrEmpty(branchName) then
                 return None
             else
-                let actorProxy = ApplicationContext.ActorProxyFactory().CreateActorProxy<IBranchNameActor>(BranchName.GetActorId repositoryId branchName, ActorName.BranchName)
-                match! actorProxy.GetBranchId() with
+                let branchNameActorProxy = ApplicationContext.ActorProxyFactory().CreateActorProxy<IBranchNameActor>(BranchName.GetActorId repositoryId branchName, ActorName.BranchName)
+                match! branchNameActorProxy.GetBranchId() with
                 | Some branchId -> return Some branchId
                 | None ->
                     match ApplicationContext.actorStateStorageProvider with
@@ -304,10 +304,10 @@ module Services =   //.
                             if String.IsNullOrEmpty(branchId) then
                                 return None
                             else
-                                do! actorProxy.SetBranchId(branchId)
+                                do! branchNameActorProxy.SetBranchId(branchId)
                                 return Some branchId
                         else return None
-                    | DynamoDb -> return None
+                    | Cassandra -> return None
         }
         
     let resolveBranchIdLinq (repositoryId: string) (branchId: string) (branchName: string) =
@@ -344,7 +344,7 @@ module Services =   //.
                         return None
                     else
                         return Some retrievedBranchId
-                | DynamoDb -> return None
+                | Cassandra -> return None
         }
 
     type BranchDtoValue() =
@@ -379,7 +379,7 @@ module Services =   //.
                 with ex ->
                     logToConsole $"Got an exception."
                     logToConsole $"{createExceptionResponse ex}"
-            | DynamoDb -> ()
+            | Cassandra -> ()
             return branches
         }
 
@@ -403,7 +403,7 @@ module Services =   //.
                         referenceDto <- results.Resource.First()
                 Activity.Current.SetTag("indexMetrics", $"{indexMetrics.Remove(indexMetrics.Length - 2, 2)}")
                                 .SetTag("requestCharge", $"{requestCharge.Remove(requestCharge.Length - 2, 2)}") |> ignore
-            | DynamoDb -> ()
+            | Cassandra -> ()
             return referenceDto
         }
 
@@ -427,7 +427,7 @@ module Services =   //.
                         referenceDto <- results.Resource.First()
                 Activity.Current.SetTag("indexMetrics", $"{indexMetrics.Remove(indexMetrics.Length - 2, 2)}")
                                 .SetTag("requestCharge", $"{requestCharge.Remove(requestCharge.Length - 2, 2)}") |> ignore
-            | DynamoDb -> ()
+            | Cassandra -> ()
             return referenceDto
         }
 
@@ -452,7 +452,7 @@ module Services =   //.
                     references.AddRange(results.Resource)
                 Activity.Current.SetTag("indexMetrics", $"{indexMetrics.Remove(indexMetrics.Length - 2, 2)}")
                                 .SetTag("requestCharge", $"{requestCharge.Remove(requestCharge.Length - 2, 2)}") |> ignore
-            | DynamoDb -> ()
+            | Cassandra -> ()
 
             return references :> IReadOnlyList<ReferenceDto>
         }
@@ -506,7 +506,7 @@ module Services =   //.
                     references.AddRange(results.Resource)
                 Activity.Current.SetTag("indexMetrics", $"{indexMetrics.Remove(indexMetrics.Length - 2, 2)}")
                                 .SetTag("requestCharge", $"{requestCharge.Remove(requestCharge.Length - 2, 2)}") |> ignore
-            | DynamoDb -> ()
+            | Cassandra -> ()
 
             return references :> IReadOnlyList<ReferenceDto>
         }
@@ -532,7 +532,7 @@ module Services =   //.
                     references.AddRange(results.Resource)
                 Activity.Current.SetTag("indexMetrics", $"{indexMetrics.Remove(indexMetrics.Length - 2, 2)}")
                                 .SetTag("requestCharge", $"{requestCharge.Remove(requestCharge.Length - 2, 2)}") |> ignore
-            | DynamoDb -> ()
+            | Cassandra -> ()
 
             return references :> IReadOnlyList<ReferenceDto>
         }
@@ -567,7 +567,7 @@ module Services =   //.
                     return Some referenceDto
                 else
                     return None
-            | DynamoDb -> return None
+            | Cassandra -> return None
         }
 
     let getLatestReferenceByType referenceType (branchId: BranchId) =
@@ -595,7 +595,7 @@ module Services =   //.
                     return Some referenceDto
                 else
                     return None
-            | DynamoDb -> return None
+            | Cassandra -> return None
         }
 
     let getLatestMerge = getLatestReferenceByType ReferenceType.Merge
@@ -626,7 +626,7 @@ module Services =   //.
                         directoryVersion <- results.Resource.FirstOrDefault().value
                 Activity.Current.SetTag("indexMetrics", $"{indexMetrics.Remove(indexMetrics.Length - 2, 2)}")
                                 .SetTag("requestCharge", $"{requestCharge.Remove(requestCharge.Length - 2, 2)}") |> ignore
-            | DynamoDb -> ()
+            | Cassandra -> ()
 
             return directoryVersion
         }
@@ -657,7 +657,7 @@ module Services =   //.
                         directoryVersion <- results.Resource.FirstOrDefault().value
                 Activity.Current.SetTag("indexMetrics", $"{indexMetrics.Remove(indexMetrics.Length - 2, 2)}")
                                 .SetTag("requestCharge", $"{requestCharge.Remove(requestCharge.Length - 2, 2)}") |> ignore
-            | DynamoDb -> ()
+            | Cassandra -> ()
 
             return directoryVersion
         }
@@ -698,7 +698,7 @@ module Services =   //.
                 Activity.Current.SetTag("allExist", $"{allExist}")
                                 .SetTag("totalRequestCharge", $"{requestCharge}") |> ignore
                 return allExist
-            | DynamoDb -> return false
+            | Cassandra -> return false
         }
 
     /// Gets a list of ReferenceDtos based on ReferenceIds.
@@ -723,7 +723,7 @@ module Services =   //.
                 
                 Activity.Current.SetTag("referenceDtos.Count", $"{referenceDtos.Count}")
                                 .SetTag("totalRequestCharge", $"{requestCharge}") |> ignore
-            | DynamoDb -> ()
+            | Cassandra -> ()
 
             return referenceDtos 
         }
@@ -756,7 +756,7 @@ module Services =   //.
                 
                 Activity.Current.SetTag("referenceDtos.Count", $"{branchDtos.Count}")
                                 .SetTag("totalRequestCharge", $"{requestCharge}") |> ignore
-            | DynamoDb -> ()
+            | Cassandra -> ()
             
             return branchDtos
         }

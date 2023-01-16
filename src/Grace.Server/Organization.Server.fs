@@ -26,8 +26,9 @@ module Organization =
 
     let activitySource = new ActivitySource("Organization")
 
+    let actorProxyFactory = ApplicationContext.ActorProxyFactory()
+
     let getActorProxy (context: HttpContext) (organizationId: string) =
-        let actorProxyFactory = context.GetService<IActorProxyFactory>()
         let actorId = ActorId(organizationId)
         actorProxyFactory.CreateActorProxy<IOrganizationActor>(actorId, ActorName.Organization)
 

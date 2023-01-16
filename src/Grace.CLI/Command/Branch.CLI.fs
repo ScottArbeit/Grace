@@ -711,20 +711,21 @@ module Branch =
         }
 
     let private writeReferenceOutput (parseResult: ParseResult) (references: IEnumerable<ReferenceDto>) =
-        let sortedResults = references.OrderByDescending(fun row -> row.CreatedAt)
-        let table = Table(Border = TableBorder.DoubleEdge)
-        table.AddColumns([| TableColumn($"[{Colors.Important}]Type[/]"); TableColumn($"[{Colors.Important}]Message[/]"); TableColumn($"[{Colors.Important}]SHA-256[/]"); TableColumn($"[{Colors.Important}]When[/]", Alignment = Justify.Right); TableColumn($"[{Colors.Important}][/]") |]) |> ignore
-        for row in sortedResults do
-            //printfn "%A" row
-            let sha256Hash = if parseResult.HasOption(Options.fullSha) then
-                                 $"{row.Sha256Hash}"
-                             else
-                                 $"{row.Sha256Hash}".Substring(0, 8)
-            let localCreatedAtTime = row.CreatedAt.ToDateTimeUtc().ToLocalTime()
-            let x = 8
-            let referenceTime = $"""{localCreatedAtTime.ToString("g", CultureInfo.CurrentUICulture)}"""
-            table.AddRow([| $"{discriminatedUnionCaseNameToString(row.ReferenceType)}"; $"{row.ReferenceText}"; sha256Hash; ago row.CreatedAt; $"[{Colors.Deemphasized}]{referenceTime}[/]" |]) |> ignore
-        AnsiConsole.Write(table)
+        if references.Count() > 0 then
+            let sortedResults = references.OrderByDescending(fun row -> row.CreatedAt)
+            let table = Table(Border = TableBorder.DoubleEdge)
+            table.AddColumns([| TableColumn($"[{Colors.Important}]Type[/]"); TableColumn($"[{Colors.Important}]Message[/]"); TableColumn($"[{Colors.Important}]SHA-256[/]"); TableColumn($"[{Colors.Important}]When[/]", Alignment = Justify.Right); TableColumn($"[{Colors.Important}][/]") |]) |> ignore
+            for row in sortedResults do
+                //printfn "%A" row
+                let sha256Hash = if parseResult.HasOption(Options.fullSha) then
+                                     $"{row.Sha256Hash}"
+                                 else
+                                     $"{row.Sha256Hash}".Substring(0, 8)
+                let localCreatedAtTime = row.CreatedAt.ToDateTimeUtc().ToLocalTime()
+                let x = 8
+                let referenceTime = $"""{localCreatedAtTime.ToString("g", CultureInfo.CurrentUICulture)}"""
+                table.AddRow([| $"{discriminatedUnionCaseNameToString(row.ReferenceType)}"; $"{row.ReferenceText}"; sha256Hash; ago row.CreatedAt; $"[{Colors.Deemphasized}]{referenceTime}[/]" |]) |> ignore
+            AnsiConsole.Write(table)
         
     let private GetReferences =
         CommandHandler.Create(fun (parseResult: ParseResult) (getReferencesParameters: GetRefParameters) ->

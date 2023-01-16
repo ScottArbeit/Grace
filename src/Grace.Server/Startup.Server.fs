@@ -45,6 +45,14 @@ module Application =
 
         do ApplicationContext.setConfiguration configuration
 
+        let notLoggedIn =
+            RequestErrors.UNAUTHORIZED
+                "Basic"
+                "Some Realm"
+                "You must be logged in."
+        
+        let mustBeLoggedIn = requiresAuthentication notLoggedIn
+
         let endpoints = [
             GET [
                 route "/" (warbler (fun _ -> htmlString $"<h1>Hello From Grace!</h1><br/><p>{getCurrentInstantExtended()}.</p>"))
@@ -77,7 +85,7 @@ module Application =
                     route "/getReferences" Branch.GetReferences
                     route "/getDiffsForReferenceType" Branch.GetDiffsForReferenceType
                     route "/getSaves" Branch.GetSaves
-                    route "/getTags" Branch.GetTags
+                    route "/getTags" (Branch.GetTags >=> mustBeLoggedIn)
                     route "/getVersion" Branch.GetVersion
                     route "/delete" Branch.Delete
                 ]
@@ -243,6 +251,8 @@ module Application =
                            .StartWithHost() |> ignore
                            //.AddZipkinExporter() |> ignore)
             
+            services.AddAuthentication()
+
             services.AddRouting()
                     .AddLogging()
                     //.AddSwaggerGen(fun config -> config.SwaggerDoc("v0.1", openApiInfo))
@@ -312,6 +322,7 @@ module Application =
             app.UseW3CLogging()
                .UseMiddleware<CorrelationIdMiddleware>()
                .UseMiddleware<HttpSecurityHeadersMiddleware>()
+               .UseAuthentication()
                .UseStatusCodePages()
                .UseRouting()
                .UseStaticFiles()

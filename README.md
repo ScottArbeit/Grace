@@ -1,6 +1,6 @@
 # Grace Version Control System
 
-grace _(noun)_ [^grace] -
+grace[^grace] _(n)_ -
 
 1. elegance and beauty of movement, form, or expression
 2. a pleasing or charming quality
@@ -15,14 +15,14 @@ Grace is a **new**, **modern**, **cloud-native** **version control system**.
 
 Grace is **easy to use**, **easy to understand**, and **consistently fast**. And it's **powerful**, ready to handle large repositories and large file sizes.
 
-Grace is meant to run in the background, making it **ambient**, **faster**, and **more valuable to your everyday work** as a developer.****
+Grace is meant to run in the background, making it **ambient**, **faster**, and **more valuable to your everyday work** as a developer.
 
 Grace **connects you with others** working in your repository, **across the globe**, **in real-time**, enabling **new experiences** and **new ways of sharing**.
 
 ![](https://gracevcsdevelopment.blob.core.windows.net/static/Orange3.svg)
 
 to be clear:
-> Grace is **new** 🧑🏼‍🔬 and **alpha-level** right now. 🔥🧯 It is deeply incomplete. Grace is not currently meant to be relied on or used for anything other than its own development and testing (including playing with it to give feedback, of course).[^git]
+> Grace is **new** 🧑🏼‍🔬 and **alpha-level** right now. 🔥🧯 It is deeply incomplete. Grace is not currently meant to be relied on or used for anything other than its own development and testing, and for getting user feedback on its design and function.[^git]
 
 ![](https://gracevcsdevelopment.blob.core.windows.net/static/Orange3.svg)
 
@@ -32,11 +32,15 @@ For a list of (mostly imagined) frequently asked questions, please see the [Freq
 
 ![](https://gracevcsdevelopment.blob.core.windows.net/static/Orange3.svg)
 
-A lot of this remains to be built, but here's my vision of Grace v1.0:
+## Design and Motivations
 
----
+If you'd like to read about some of the design thinking and motivations behind Grace - topics like UX, performance, scalability, monorepos, Git, why F#, and more - please read [Design and Motivations](docs/Design%20and%20Motivations.md).
+
+![](https://gracevcsdevelopment.blob.core.windows.net/static/Orange3.svg)
 
 ## Vision
+
+#### A lot of this remains to be built, but here's the vision for Grace v1.0:
 
 ![](https://gracevcsdevelopment.blob.core.windows.net/static/Green.svg)
 
@@ -62,7 +66,7 @@ Grace CLI adds just milliseconds to the server response time for each command.
 
 Grace's GUI apps will be platform-native, with all of the performance and stick-to-your-finger-ness that native apps have always had.
 
-(To really speed things up, Grace Server can precompute views and projections that you're likely to want, like diffs and directory contents, and garbage-collect them when they're no longer needed.)
+Grace Server can even precompute views and projections that you're likely to want, like diffs and directory contents, and garbage-collect them when they're no longer needed.
 
 ![](https://gracevcsdevelopment.blob.core.windows.net/static/Green.svg)
 
@@ -71,6 +75,8 @@ Grace's GUI apps will be platform-native, with all of the performance and stick-
 Grace CLI includes a command - `grace watch` - that watches your working directory for changes, and keeps a live connection to Grace Server, connecting you in real-time to your team around the world.
 
 `grace watch` takes action for you, whether that's automatically uploading and downloading new file versions, processing notifications from other repo users, or running custom actions that you create.
+
+And don't worry about having yet-another application running in the background. `grace watch` is small and very quiet when nothing is going on.
 
 ![](https://gracevcsdevelopment.blob.core.windows.net/static/Green.svg)
 
@@ -100,7 +106,7 @@ and, introducing:
 
 By default, `grace watch` uploads new file versions after every save-on-disk, along with new directory contents and SHA-256 hashes.
 
-It happens so quickly, you don't even notice it.
+It happens so quickly you don't even notice it.
 
 And it gives you some very cool things, like:
 
@@ -292,12 +298,6 @@ Grace Server is designed to be easy to deploy and operate. It runs on your choic
 
 ![](https://gracevcsdevelopment.blob.core.windows.net/static/Orange3.svg)
 
-## Design and Motivations
-
-If you'd like to read about some of the design thinking and motivations behind Grace - topics like UX, performance, scalability, monorepos, Git, why F#, and more - please read [Design and Motivations](docs/Design%20and%20Motivations.md).
-
-![](https://gracevcsdevelopment.blob.core.windows.net/static/Orange3.svg)
-
 ## Project structure
 
 Grace is written primarily in [F#](https://learn.microsoft.com/en-us/dotnet/fsharp/what-is-fsharp), and is organized into nine .NET projects.
@@ -344,6 +344,14 @@ flowchart LR
     MAUI["(future) Grace.MAUI"]-->|"(just started)"|Grace.Shared
     Blazor["(future) Grace.Blazor"]-->|"(not yet started)"|Grace.Shared
 ```
+
+![](https://gracevcsdevelopment.blob.core.windows.net/static/Orange3.svg)
+
+## Code of Conduct
+
+Our Code of Conduct is available [here](code_of_conduct.md). The short version is:
+
+> **This project is called Grace**. We intend to embody that in how we treat each other, and in what we design and create together.
 
 ![](https://gracevcsdevelopment.blob.core.windows.net/static/Orange3.svg)
 
