@@ -323,17 +323,19 @@ So, Grace is designed to be _fast_, i.e. fast enough to keep users in flow, and 
 
 ## How much Git should we keep?
 
-Various version control projects over the years, and today, have attempted to be completely new front-ends for Git, or to keep some of it, but keep Git as the back-end storage format, or maybe keep the Git network protocol but have a different client or storage format, or be Git-compatible.  Or something like that.
+Various version control projects over the years, and today, have attempted to be completely new front-ends for Git, while keeping Git's back-end storage format. Or maybe they keep the Git network protocol, but have a different client, or a different storage format. Or something like that. They keep some of Git but not all of it, and hope to deliver a better UX that Git.
 
 My observation is: no matter how confusing Git itself is, none of those approaches have ever taken any market share away from Git.
 
 ### Even Git can't be the new Git
 
-Git itself has tried to modernize a little bit over the years. For example, in 2020, Git added the `git switch` and `git restore` commands. In my completely informal and anecdotal asking around, I've found that not a single person has ever heard of them. 2½ years later, they're still marked as "EXPERIMENTAL".
+Git itself has tried to modernize a little bit over the years. For example, in 2020, Git added the `git switch` and `git restore` commands. In my completely informal and anecdotal asking around, no one has ever heard of them. 2½ years later, they're still marked as "EXPERIMENTAL".
 
-I point this out because I believe that, in most people's minds, the command surface of Git is locked. Once they go through the pain of learning enough Git to get by, very few people want to continue going deeper or to re-learn new ways of using it every few years. When searching for help about Git, the search results overwhelmingly reflect older ways of using Git, and it will take years before those search results reflect newer (like, since 2019) ways of using it.
+I point this out because I believe that, in most people's minds, the command surface of Git is locked. Once they go through the pain of learning enough Git to get by, very few people want to continue going deeper or to re-learn new ways of using it every few years.
 
-It's exactly in those years that I believe a new VCS will start taking market share away from Git and become the Cool New Thing.
+When searching for help about Git, the search results overwhelmingly reflect older ways of using Git, and it will take years before those search results reflect newer ways of using it, where "newer" = "the last 4-5 years". Even new web content about Git sometimes uses old constructs.
+
+It's exactly in those years that I believe a new version control system will start taking market share away from Git and become the Cool New Thing.
 
 ### So how much?
 
@@ -341,7 +343,7 @@ So... how much Git should we keep when we create new version control systems?
 
 Many projects seem to think: _a lot_, because (the thinking goes) in order to get adoption, you have to be Git-compatible.
 
-Grace's answer is: _not very much_. I mean, it definitely borrows things from Git, but, fundamentally, it's _really_ different.
+Grace's answer is: _not very much_. It definitely borrows things from Git, but, fundamentally, Grace is _really_ different.
 
 Grace says: It's time to start with a blank sheet of paper.
 
@@ -351,9 +353,9 @@ I mean, someone's gotta do it.
 
 ### Import and export, but not sync
 
-Grace will support one-time import from Git, and snapshot-style export to a `git bundle` file, but supporting two-way synchronization between Grace and Git, or using the Grace client as a front-end to a Git repository, is an explicit non-goal.
+Grace will support one-time import from Git, and snapshot-style export to a `git bundle` file, but supporting two-way synchronization between Grace and Git is an explicit non-goal. Getting through the edge cases of that would take a while, and I have much higher-priority things to do.
 
-Grace's design is so different from Git's that spending time trying to make them fit together in one client is less about composition, and more about duct-taping two totally different things together. It doesn't make sense.
+Grace's design is so different from Git's that spending time trying to make them fit together is less about composition, and more about duct-taping two totally different things together.
 
 ![](https://gracevcsdevelopment.blob.core.windows.net/static/Orange3.svg)
 

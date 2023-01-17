@@ -1,5 +1,6 @@
 ﻿namespace Grace.Shared.Validation
 
+open FSharp.Control
 open System.Threading.Tasks
 
 module Utilities =
@@ -11,16 +12,13 @@ module Utilities =
     /// <remarks>
     /// This function is written in procedural style to prevent having to call .Result on a Task. I tried Array.tryPick, but the chooser function there can't return a Task. Performance should be identical.
     /// </remarks>
-    let getFirstError (validations: Task<Result<'T, 'TError>>[]) =
+    let getFirstError (validations: Task<Result<'T, 'TError>> array) =
         task {
-            let mutable firstError: 'TError option = None
-            let mutable i: int = 0
-            while firstError.IsNone && i < validations.Length do
-                match! validations[i] with 
-                | Ok _ -> ()
-                | Error error -> firstError <- Some error
-                i <- i + 1
-            return firstError
+            let taskSeq = TaskSeq.ofTaskArray validations
+            let! firstError = taskSeq |> TaskSeq.tryFind(fun validation -> Result.isError validation)
+            return match firstError with
+                    | Some result -> match result with | Ok _ -> None | Error error -> Some error   // This line will always return Some error
+                    | None -> None
         }
 
     /// <summary>
@@ -29,8 +27,8 @@ module Utilities =
     /// <param name="validations">A list of Result values.</param>
     let haveError validations =
         task {
-            let! validationResult = validations |> getFirstError
-            return validationResult |> Option.isSome
+            let taskSeq = TaskSeq.ofTaskArray validations
+            return! taskSeq |> TaskSeq.exists(fun validation -> Result.isError validation)
         }
 
     /// <summary>
@@ -39,6 +37,6 @@ module Utilities =
     /// <param name="validations">A list of Result values.</param>
     let areValid validations =
         task {
-            let! validationResult = validations |> getFirstError
-            return validationResult |> Option.isNone
+            let! haveError = haveError validations
+            return not haveError
         }

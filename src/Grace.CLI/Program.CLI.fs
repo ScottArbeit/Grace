@@ -51,6 +51,7 @@ module GraceCommand =
         aliases.Add("checkpoint", [| "branch"; "checkpoint" |])
         aliases.Add("save", [| "branch"; "save" |])
         aliases.Add("rebase", [| "branch"; "rebase" |])
+        aliases.Add("tags", [| "branch"; "get-tags" |])
         aliases.Add("merges", [| "branch"; "get-merges" |])
         aliases.Add("commits", [| "branch"; "get-commits" |])
         aliases.Add("checkpoints", [| "branch"; "get-checkpoints" |])
