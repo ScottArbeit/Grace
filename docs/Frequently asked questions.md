@@ -62,19 +62,25 @@ Also, I'm not sure that new version control systems need to sync with Git to cat
 
 ## What are the scalability limits for Grace?
 
-### Answer #1
+### Hopeful answer
 
 It depends on the PaaS services that Grace is deployed on. In general, Grace itself is really fast, and will take advantage of however fast the underlying services it depends on will run.
 
-### Answer #2
+I know Microsoft Azure well, so when I think about running Grace on services like Azure Kubernetes Service, Azure Cosmos DB, Azure Blob Storage, Azure Event Hubs and Service Bus, Azure Monitor, and others, where you can look at Grace Server as orchestrating the usage of insanely high-scale PaaS pieces, I expect Grace to be able to take advantage of the scale and speed of those PaaS services really well.
 
-I'm not sure, because I haven't really pushed the limits yet.
+The stateless nature of Grace Server, and the use of the Actor Pattern, should allow for a significant number of concurrent users without too much hassle. I know .NET well, so I've been able to use its collections and data structures appropriately for good performance.
 
-I _can_ tell you that I've tested repositories of up to 100,000 files and 15,000 directories, with Grace deployed using Azure CosmosDB and Azure Blob Storage. If `grace watch` is running, performance on those large repositories is really good, and similar to performance on medium-sized and even small repositories for most commands.
+I haven't done any real load-testing yet, but I expect that when I do, I'll find the Top 5 Stupid Things I Did and fix them, and then Grace should be able to handle thousands of transactions/second.
 
-I've also tested individual file sizes up to 10GB. I'm not sure that 10GB files should fall under the purview of version control - they should probably be versioned blobs in an object storage service - but we'll see what happens. There will be a configurable size limit for each repository.
+### Actual current answer
 
-The stateless nature of Grace Server, and the use of the Actor Pattern, should allow for a significant number of concurrent users without too much hassle, but I haven't done that kind of scale testing yet. I expect that when I do, I'll find the Top 5 Stupid Things I Did and fix them, and then Grace should be able to handle thousands of transactions/second. We'll find out soon.
+I haven't done any real load-testing yet. I'm not sure.
+
+I _can_ tell you that I've tested repositories of up to 100,000 files and 15,000 directories, with Grace deployed using Azure CosmosDB and Azure Blob Storage. If `grace watch` is running, client performance for most commands on those large repositories is around 1.0-1.5s (which includes 1-2 200ms roundtrips to the Azure data center). Performance on small- and medium-sized repositories is around 0.6-1.2s. Grace Server performance is unaffected by repository size for most commands. These times are from debug builds.
+
+I've also tested individual file sizes up to 10GB. I'm not sure that 10GB files should fall under the purview of version control - they should probably be versioned blobs in an object storage service - but we'll see what happens. Grace doesn't have a technical limitation on file size (it's a uint64).
+
+Each command, on its own, runs quickly enough to make me happy. I hope they all still do at scale.
 
 ## What does Grace borrow from Git?
 
@@ -123,7 +129,7 @@ That's the origin story. Just a guy who had an idea he couldn't let go of, using
 
 ## How can I get involved?
 
-Why, thank you for asking. ♥️
+Why, thank you for asking. ❤️
 
 Everything helps. Feel free to file an Issue in the repo. Please join us over in Discussions.
 
