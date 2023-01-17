@@ -49,7 +49,7 @@ module Repository =
                 use activity = activitySource.StartActivity("processCommand", ActivityKind.Server)
                 let! parameters = context |> parse<'T>
                 let validationResults = validations parameters context
-                let! validationsPassed = validationResults |> areValid
+                let! validationsPassed = validationResults |> allPass
                 if validationsPassed then
                     let! repositoryId = resolveRepositoryId parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName
                     match repositoryId with
@@ -92,7 +92,7 @@ module Repository =
                 use activity = activitySource.StartActivity("processQuery", ActivityKind.Server)
                 //let! parameters = context |> parse<'T>
                 let validationResults = validations parameters context
-                let! validationsPassed = validationResults |> areValid
+                let! validationsPassed = validationResults |> allPass
                 if validationsPassed then
                     context.Items.Add(nameof(RepositoryId), RepositoryId parameters.RepositoryId)
                     let actorProxy = getActorProxy parameters.RepositoryId context

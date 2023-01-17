@@ -86,7 +86,7 @@ module Diff =
                 use activity = activitySource.StartActivity("processQuery", ActivityKind.Server)
                 //let! parameters = context |> parse<'T>
                 let validationResults = validations parameters context
-                let! validationsPassed = validationResults |> areValid
+                let! validationsPassed = validationResults |> allPass
                 if validationsPassed then
                     let actorProxy = getActorProxy parameters.DirectoryId1 parameters.DirectoryId2 context
 

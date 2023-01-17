@@ -43,7 +43,7 @@ module Owner =
                 use activity = activitySource.StartActivity("processCommand", ActivityKind.Server)
                 let! parameters = context |> parse<'T>
                 let validationResults = validations parameters context
-                let! validationsPassed = validationResults |> areValid
+                let! validationsPassed = validationResults |> allPass
                 if validationsPassed then
                     let! ownerId = resolveOwnerId parameters.OwnerId parameters.OwnerName
                     match ownerId with
@@ -68,7 +68,7 @@ module Owner =
             use activity = activitySource.StartActivity("processQuery", ActivityKind.Server)
             try
                 let validationResults = validations parameters context
-                let! validationsPassed = validationResults |> areValid
+                let! validationsPassed = validationResults |> allPass
                 if validationsPassed then
                     let! ownerId = resolveOwnerId parameters.OwnerId parameters.OwnerName
                     match ownerId with

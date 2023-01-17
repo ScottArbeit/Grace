@@ -14,8 +14,9 @@ module Utilities =
     /// </remarks>
     let getFirstError (validations: Task<Result<'T, 'TError>> array) =
         task {
-            let taskSeq = TaskSeq.ofTaskArray validations
-            let! firstError = taskSeq |> TaskSeq.tryFind(fun validation -> Result.isError validation)
+            let! firstError = validations
+                              |> TaskSeq.ofTaskArray 
+                              |> TaskSeq.tryFind(fun validation -> Result.isError validation)
             return match firstError with
                     | Some result -> match result with | Ok _ -> None | Error error -> Some error   // This line will always return Some error
                     | None -> None
@@ -25,18 +26,19 @@ module Utilities =
     /// Checks if any of a list of validations fail.
     ///</summary>
     /// <param name="validations">A list of Result values.</param>
-    let haveError validations =
+    let anyFail validations =
         task {
-            let taskSeq = TaskSeq.ofTaskArray validations
-            return! taskSeq |> TaskSeq.exists(fun validation -> Result.isError validation)
+            return! validations
+                    |> TaskSeq.ofTaskArray 
+                    |> TaskSeq.exists(fun validation -> Result.isError validation)
         }
 
     /// <summary>
     /// Checks that all validations in a list pass.
     /// </summary>
     /// <param name="validations">A list of Result values.</param>
-    let areValid validations =
+    let allPass validations =
         task {
-            let! haveError = haveError validations
-            return not haveError
+            let! anyFail = anyFail validations
+            return not anyFail
         }

@@ -44,7 +44,7 @@ module Branch =
                 use activity = activitySource.StartActivity("processCommand", ActivityKind.Server)
                 let! parameters = context |> parse<'T>
                 let validationResults = validations parameters context
-                let! validationsPassed = validationResults |> areValid
+                let! validationsPassed = validationResults |> allPass
                 if validationsPassed then
                     let! repositoryId = resolveRepositoryId parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName
                     match repositoryId with
@@ -76,7 +76,7 @@ module Branch =
             try
                 //let! parameters = context |> parse<'T>
                 let validationResults = validations parameters context
-                let! validationsPassed = validationResults |> areValid
+                let! validationsPassed = validationResults |> allPass
                 if validationsPassed then
                     match! resolveBranchId parameters.RepositoryId parameters.BranchId parameters.BranchName with
                     | Some branchId ->

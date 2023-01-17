@@ -38,7 +38,7 @@ module Organization =
                 use activity = activitySource.StartActivity("processCommand", ActivityKind.Server)
                 let! parameters = context |> parse<'T>
                 let validationResults = validations parameters context
-                let! validationsPassed = validationResults |> areValid
+                let! validationsPassed = validationResults |> allPass
                 if validationsPassed then
                     let! organizationId = resolveOrganizationId parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName
                     match organizationId with
@@ -64,7 +64,7 @@ module Organization =
             use activity = activitySource.StartActivity("processQuery", ActivityKind.Server)
             try
                 let validationResults = validations parameters context
-                let! validationsPassed = validationResults |> areValid
+                let! validationsPassed = validationResults |> allPass
                 if validationsPassed then
                     let actorProxy = getActorProxy context parameters.OrganizationId
                     let! exists = actorProxy.Exists()

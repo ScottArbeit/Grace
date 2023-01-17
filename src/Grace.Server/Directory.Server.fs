@@ -44,7 +44,7 @@ module Directory =
                 use activity = activitySource.StartActivity("processCommand", ActivityKind.Server)
                 let! parameters = context |> parse<'T>
                 let validationResults = validations parameters context
-                let! validationsPassed = validationResults |> areValid
+                let! validationsPassed = validationResults |> allPass
                 if validationsPassed then
                     let! cmd = command parameters context
                     match cmd with
@@ -67,7 +67,7 @@ module Directory =
             use activity = activitySource.StartActivity("processQuery", ActivityKind.Server)
             try
                 let validationResults = validations parameters context
-                let! validationsPassed = validationResults |> areValid
+                let! validationsPassed = validationResults |> allPass
                 if validationsPassed then
                     let actorProxy = getActorProxy context (Guid.Parse(parameters.DirectoryId))
                     let! queryResult = query context maxCount actorProxy
