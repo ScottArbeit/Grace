@@ -94,27 +94,32 @@ And much more. Grace owes a debt of gratitude to Git and to its maintainers.
 
 There are a few really good VCS projects going on right now. It's exciting to see.
 
-I'm fortunate enough to know the folks involved in [Jujutsu](https://github.com/martinvonz/jj). They're doing incredible work.
-
-I'm aware of [Pijul](https://pijul.org/). I see Meta has just announced [Sapling](https://sapling-scm.com/). I know there are others.
+I'm fortunate enough to know the folks involved in [Jujutsu](https://github.com/martinvonz/jj). They're doing incredible work. I'm aware of [Pijul](https://pijul.org/). I see Meta has just announced [Sapling](https://sapling-scm.com/). [PlasticSCM](https://www.plasticscm.com/) is really good; I have enormous respect for Pablo and his whole team. I know there are others. If you're interested, I recommend searching YouTube for some good, short introductions to all of them.
 
 All I can say is: Grace has its own design philosophy, and its own perspective on what it should feel like to be using version control, and that's what I'm passionate about. I think of it as a friendly competition to see which one wins with the next generation of developers.
 
-Let 1,000 flowers bloom. One of them will lead us to the future of version control.
+One of them will catch on and get popular soon enough.
 
 ## On _HN_, FOSSBro761 says: _"Grace \<something something\> M$ \<something\>..."_
 
-Um, yeah, OK. Whatever.
+Sigh. Um, OK. So...
 
-Here's what actually happened:
+If you look at my GitHub or LinkedIn profile you'll see that I work for GitHub, which means that I work for Microsoft. With that said, Grace is a personal side-project. It's probably the case that I wouldn't have thought to start a new version control system without having been at GitHub, but now I've caught the version control bug. (Some people tried to warn me that that happens, but I didn't listen.)
 
-Grace started as my personal 2021 pandemic lockdown side-project. I invented it. No one told me to, I just did. I chose .NET because it's what I know and trust. I chose F# because I wanted to think functionally as I explored.
+It's a fascinating area to work in, and one that will see exciting innovation in the coming years. Grace's existence does not imply anything at all about GitHub's continued, massive, ongoing ❤️ and support of Git, or about GitHub's future direction in source control, or about anything else about GitHub.
+
+All opinions and work here is personal, and not endorsed by my employers. (There, I said it.)
+
+_What actually happened was..._
+
+I started thinking about Grace in December 2020, and it became my personal 2021 pandemic lockdown side-project. I invented it. No one told me to invent it, I just did.
+
+I chose .NET because it's what I know and trust, and because trying to write my first, big functional system was challenging enough without also having to learn a new ecosystem at the same time. I chose F# because I wanted to think functionally as I explored.
 
 I chose to do it at all because I realized that _something_ was eventually going to replace Git, and I had some opinions about what that should be, and about what direction we should take as an industry in UX for source control. The only way to communicate that effectively was to start writing code and see if I could build something worthwhile.
 
 That's the origin story. Just a guy who had an idea he couldn't let go of, using good tools that he knows well, and a few tools that he's learning.
 
-If you look at my GitHub or LinkedIn profile you'll see that I work for GitHub, which means that I work for Microsoft. With that said, Grace is a personal side-project. It's probably the case that I wouldn't have thought to start a new version control system without having been at GitHub, but now I've caught the version control bug. It's a fascinating area to work in, and one that will see exciting innovation in the coming years. Grace's existence does not imply anything at all about GitHub's continued, massive, ongoing support of Git, or about GitHub's future direction in source control. It's the usual "all opinions and work here are personal, and not endorsed by my employers..." stuff.
 
 ## How can I get involved?
 

@@ -16,7 +16,7 @@ For shorter answers to some of these, please see [Frequently Asked Questions](Fr
 
 [The origin of Grace](#the-origin-of-grace)
 
-[Excellent perceived performance](#excellent-perceived-performance)
+[Perceived performance](#perceived-performance)
 
 [CLI + Native GUI + Web UI + Web API](#cli--native-gui--web-ui--web-api)
 
@@ -109,7 +109,7 @@ Grace is the version control system that I'd want to use.
 
 ![](https://gracevcsdevelopment.blob.core.windows.net/static/Orange3.svg)
 
-## Excellent perceived performance
+## Perceived performance
 
 Measuring actual performance of any significant system is important, and Grace will have performance benchmarks that can be run alongside other kinds of tests to ensure that regressions don't sneak in. I care deeply about performance.
 
