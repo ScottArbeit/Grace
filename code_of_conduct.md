@@ -1,23 +1,17 @@
 # Grace - Code of Conduct
 
-## tl;dr: This project is called **Grace**.
-
 ![](https://gracevcsdevelopment.blob.core.windows.net/static/Orange3.svg)
+![](https://gracevcsdevelopment.blob.core.windows.net/static/Green.svg)
+## tl;dr: This project is called **Grace**.
 
 Be **graceful** in your interactions here.
 
-![](https://gracevcsdevelopment.blob.core.windows.net/static/Green.svg)
-
 Give **grace** to everyone participating with us.
-
-![](https://gracevcsdevelopment.blob.core.windows.net/static/Green.svg)
 
 Create something together that embodies **grace** in its design and form.
 
-![](https://gracevcsdevelopment.blob.core.windows.net/static/Green.svg)
-
 When in doubt, **_remember the name of the project._**
-
+![](https://gracevcsdevelopment.blob.core.windows.net/static/Green.svg)
 ![](https://gracevcsdevelopment.blob.core.windows.net/static/Orange3.svg)
 
 ## Introduction
@@ -28,7 +22,7 @@ Culture is _interior_; it lives _inside_ each member of a group. It's what it me
 
 I want to create a culture at Grace that lives up to its name. We all deserve it.
 
-I wish that the tl;dr were all I needed to say. It's pithy, and it's broadly applicable, but I know that it's helpful to say more, with more specificity. Please think of the Code of Conduct below as an elaboration on the tl;dr above. The simplicity and open-heartedness of the words above infuse everything that's below.
+I wish that the tl;dr were all I needed to say. It's pithy, and it's broadly applicable, but I know that it's helpful to add some specifics. Please think of the Code of Conduct below as an elaboration on the tl;dr above. The simplicity and open-heartedness of the words above infuse everything that's below.
 
 It's an attempt to capture the culture of Grace – a feeling – in words. It will evolve over time, as all things do.
 
