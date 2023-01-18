@@ -28,7 +28,7 @@ open System.Threading.Tasks
 
 module Branch =
 
-    type Validations<'T when 'T :> BranchParameters> = 'T -> HttpContext -> Task<Result<unit, BranchError>> array
+    type Validations<'T when 'T :> BranchParameters> = 'T -> HttpContext -> Task<Result<unit, BranchError>> list
     
     let activitySource = new ActivitySource("Branch")
 
@@ -57,8 +57,10 @@ module Branch =
                             match! actorProxy.Handle cmd (Services.createMetadata context) with
                                 | Ok graceReturn -> return! context |> result200Ok graceReturn
                                 | Error graceError -> return! context |> result400BadRequest graceError
-                        | None -> return! context |> result400BadRequest (GraceError.Create (BranchError.getErrorMessage BranchDoesNotExist) (context.Items[Constants.CorrelationId] :?> string))
-                    | None -> return! context |> result400BadRequest (GraceError.Create (BranchError.getErrorMessage RepositoryDoesNotExist) (context.Items[Constants.CorrelationId] :?> string))
+                        | None -> 
+                            return! context |> result400BadRequest (GraceError.Create (BranchError.getErrorMessage BranchDoesNotExist) (context.Items[Constants.CorrelationId] :?> string))
+                    | None -> 
+                        return! context |> result400BadRequest (GraceError.Create (BranchError.getErrorMessage RepositoryDoesNotExist) (context.Items[Constants.CorrelationId] :?> string))
                 else
                     let! error = validationResults |> getFirstError
                     let graceError = GraceError.Create (BranchError.getErrorMessage error) (context.Items[Constants.CorrelationId] :?> string)
@@ -98,26 +100,26 @@ module Branch =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let validations (parameters: CreateParameters) (context: HttpContext) =
-                    [| guidIsValidAndNotEmpty parameters.OwnerId InvalidOwnerId |> returnTask
-                       stringIsValidGraceName parameters.OwnerName InvalidOwnerName |> returnTask
-                       eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired |> returnTask
-                       guidIsValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId |> returnTask
-                       stringIsValidGraceName parameters.OrganizationName InvalidOrganizationName |> returnTask
-                       eitherIdOrNameMustBeProvided parameters.OrganizationId parameters.OrganizationName EitherOrganizationIdOrOrganizationNameRequired |> returnTask
-                       guidIsValidAndNotEmpty parameters.RepositoryId InvalidRepositoryId |> returnTask
-                       stringIsValidGraceName parameters.RepositoryName InvalidRepositoryName |> returnTask
-                       eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherBranchIdOrBranchNameRequired |> returnTask
-                       stringIsNotEmpty parameters.BranchId BranchIdIsRequired |> returnTask
-                       guidIsValidAndNotEmpty parameters.BranchId InvalidBranchId |> returnTask
-                       stringIsNotEmpty parameters.BranchName BranchNameIsRequired |> returnTask
-                       stringIsValidGraceName parameters.BranchName InvalidBranchName |> returnTask
-                       guidIsValidAndNotEmpty parameters.ParentBranchId InvalidBranchId |> returnTask
-                       stringIsValidGraceName parameters.ParentBranchName InvalidBranchName |> returnTask
-                       ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
-                       organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName context OrganizationDoesNotExist
-                       repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName context RepositoryDoesNotExist
-                       branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.ParentBranchId parameters.ParentBranchName context ParentBranchDoesNotExist
-                       branchNameDoesNotExist parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchName context BranchNameAlreadyExists |]
+                    [ guidIsValidAndNotEmpty parameters.OwnerId InvalidOwnerId
+                      stringIsValidGraceName parameters.OwnerName InvalidOwnerName
+                      eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
+                      guidIsValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId
+                      stringIsValidGraceName parameters.OrganizationName InvalidOrganizationName
+                      eitherIdOrNameMustBeProvided parameters.OrganizationId parameters.OrganizationName EitherOrganizationIdOrOrganizationNameRequired
+                      guidIsValidAndNotEmpty parameters.RepositoryId InvalidRepositoryId
+                      stringIsValidGraceName parameters.RepositoryName InvalidRepositoryName
+                      eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherBranchIdOrBranchNameRequired
+                      stringIsNotEmpty parameters.BranchId BranchIdIsRequired
+                      guidIsValidAndNotEmpty parameters.BranchId InvalidBranchId
+                      stringIsNotEmpty parameters.BranchName BranchNameIsRequired
+                      stringIsValidGraceName parameters.BranchName InvalidBranchName
+                      guidIsValidAndNotEmpty parameters.ParentBranchId InvalidBranchId
+                      stringIsValidGraceName parameters.ParentBranchName InvalidBranchName
+                      ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
+                      organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName context OrganizationDoesNotExist
+                      repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName context RepositoryDoesNotExist
+                      branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.ParentBranchId parameters.ParentBranchName context ParentBranchDoesNotExist
+                      branchNameDoesNotExist parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchName context BranchNameAlreadyExists ]
 
                 let command (parameters: CreateParameters) = 
                     task {
@@ -143,23 +145,23 @@ module Branch =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let validations (parameters: RebaseParameters) (context: HttpContext) =
-                    [| guidIsValidAndNotEmpty parameters.OwnerId InvalidOwnerId |> returnTask
-                       stringIsValidGraceName parameters.OwnerName InvalidOwnerName |> returnTask
-                       eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired |> returnTask
-                       guidIsValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId |> returnTask
-                       stringIsValidGraceName parameters.OrganizationName InvalidOrganizationName |> returnTask
-                       eitherIdOrNameMustBeProvided parameters.OrganizationId parameters.OrganizationName EitherOrganizationIdOrOrganizationNameRequired |> returnTask
-                       guidIsValidAndNotEmpty parameters.RepositoryId InvalidRepositoryId |> returnTask
-                       stringIsValidGraceName parameters.RepositoryName InvalidRepositoryName |> returnTask
-                       eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherBranchIdOrBranchNameRequired |> returnTask
-                       guidIsValidAndNotEmpty parameters.BranchId InvalidBranchId |> returnTask
-                       stringIsValidGraceName parameters.BranchName InvalidBranchName |> returnTask
-                       referenceIdExists parameters.BasedOn context ReferenceIdDoesNotExist
-                       ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
-                       organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName context OrganizationDoesNotExist
-                       repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName context RepositoryDoesNotExist
-                       branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName context ParentBranchDoesNotExist
-                       branchAllowsReferenceType parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName ReferenceType.Commit context CommitIsDisabled |]
+                    [ guidIsValidAndNotEmpty parameters.OwnerId InvalidOwnerId
+                      stringIsValidGraceName parameters.OwnerName InvalidOwnerName
+                      eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
+                      guidIsValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId
+                      stringIsValidGraceName parameters.OrganizationName InvalidOrganizationName
+                      eitherIdOrNameMustBeProvided parameters.OrganizationId parameters.OrganizationName EitherOrganizationIdOrOrganizationNameRequired
+                      guidIsValidAndNotEmpty parameters.RepositoryId InvalidRepositoryId
+                      stringIsValidGraceName parameters.RepositoryName InvalidRepositoryName
+                      eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherBranchIdOrBranchNameRequired
+                      guidIsValidAndNotEmpty parameters.BranchId InvalidBranchId
+                      stringIsValidGraceName parameters.BranchName InvalidBranchName
+                      referenceIdExists parameters.BasedOn context ReferenceIdDoesNotExist
+                      ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
+                      organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName context OrganizationDoesNotExist
+                      repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName context RepositoryDoesNotExist
+                      branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName context ParentBranchDoesNotExist
+                      branchAllowsReferenceType parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName ReferenceType.Commit context CommitIsDisabled ]
 
                 let command (parameters: RebaseParameters) = Rebase(parameters.BasedOn) |> returnTask
 
@@ -170,24 +172,24 @@ module Branch =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let validations (parameters: CreateReferenceParameters) (context: HttpContext) =
-                    [| guidIsValidAndNotEmpty parameters.OwnerId InvalidOwnerId |> returnTask
-                       stringIsValidGraceName parameters.OwnerName InvalidOwnerName |> returnTask
-                       eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired |> returnTask
-                       guidIsValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId |> returnTask
-                       stringIsValidGraceName parameters.OrganizationName InvalidOrganizationName |> returnTask
-                       eitherIdOrNameMustBeProvided parameters.OrganizationId parameters.OrganizationName EitherOrganizationIdOrOrganizationNameRequired |> returnTask
-                       guidIsValidAndNotEmpty parameters.RepositoryId InvalidRepositoryId |> returnTask
-                       stringIsValidGraceName parameters.RepositoryName InvalidRepositoryName |> returnTask
-                       eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherBranchIdOrBranchNameRequired |> returnTask
-                       guidIsValidAndNotEmpty parameters.BranchId InvalidBranchId |> returnTask
-                       stringIsValidGraceName parameters.BranchName InvalidBranchName |> returnTask
-                       stringIsNotEmpty parameters.Message MessageIsRequired |> returnTask
-                       stringMaxLength parameters.Message 2048 StringIsTooLong |> returnTask
-                       ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
-                       organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName context OrganizationDoesNotExist
-                       repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName context RepositoryDoesNotExist
-                       branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName context ParentBranchDoesNotExist
-                       branchAllowsReferenceType parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName ReferenceType.Merge context MergeIsDisabled |]
+                    [ guidIsValidAndNotEmpty parameters.OwnerId InvalidOwnerId
+                      stringIsValidGraceName parameters.OwnerName InvalidOwnerName
+                      eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
+                      guidIsValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId
+                      stringIsValidGraceName parameters.OrganizationName InvalidOrganizationName
+                      eitherIdOrNameMustBeProvided parameters.OrganizationId parameters.OrganizationName EitherOrganizationIdOrOrganizationNameRequired
+                      guidIsValidAndNotEmpty parameters.RepositoryId InvalidRepositoryId
+                      stringIsValidGraceName parameters.RepositoryName InvalidRepositoryName
+                      eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherBranchIdOrBranchNameRequired
+                      guidIsValidAndNotEmpty parameters.BranchId InvalidBranchId
+                      stringIsValidGraceName parameters.BranchName InvalidBranchName
+                      stringIsNotEmpty parameters.Message MessageIsRequired
+                      stringMaxLength parameters.Message 2048 StringIsTooLong
+                      ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
+                      organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName context OrganizationDoesNotExist
+                      repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName context RepositoryDoesNotExist
+                      branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName context ParentBranchDoesNotExist
+                      branchAllowsReferenceType parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName ReferenceType.Merge context MergeIsDisabled ]
 
                 let command (parameters: CreateReferenceParameters) = BranchCommand.Merge(parameters.DirectoryId, parameters.Sha256Hash, ReferenceText parameters.Message) |> returnTask
 
@@ -198,24 +200,24 @@ module Branch =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let validations (parameters: CreateReferenceParameters) (context: HttpContext) =
-                    [| guidIsValidAndNotEmpty parameters.OwnerId InvalidOwnerId |> returnTask
-                       stringIsValidGraceName parameters.OwnerName InvalidOwnerName |> returnTask
-                       eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired |> returnTask
-                       guidIsValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId |> returnTask
-                       stringIsValidGraceName parameters.OrganizationName InvalidOrganizationName |> returnTask
-                       eitherIdOrNameMustBeProvided parameters.OrganizationId parameters.OrganizationName EitherOrganizationIdOrOrganizationNameRequired |> returnTask
-                       guidIsValidAndNotEmpty parameters.RepositoryId InvalidRepositoryId |> returnTask
-                       stringIsValidGraceName parameters.RepositoryName InvalidRepositoryName |> returnTask
-                       eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherBranchIdOrBranchNameRequired |> returnTask
-                       guidIsValidAndNotEmpty parameters.BranchId InvalidBranchId |> returnTask
-                       stringIsValidGraceName parameters.BranchName InvalidBranchName |> returnTask
-                       stringIsNotEmpty parameters.Message MessageIsRequired |> returnTask
-                       stringMaxLength parameters.Message 2048 StringIsTooLong |> returnTask
-                       ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
-                       organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName context OrganizationDoesNotExist
-                       repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName context RepositoryDoesNotExist
-                       branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName context ParentBranchDoesNotExist
-                       branchAllowsReferenceType parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName ReferenceType.Commit context CommitIsDisabled |]
+                    [ guidIsValidAndNotEmpty parameters.OwnerId InvalidOwnerId
+                      stringIsValidGraceName parameters.OwnerName InvalidOwnerName
+                      eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
+                      guidIsValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId
+                      stringIsValidGraceName parameters.OrganizationName InvalidOrganizationName
+                      eitherIdOrNameMustBeProvided parameters.OrganizationId parameters.OrganizationName EitherOrganizationIdOrOrganizationNameRequired
+                      guidIsValidAndNotEmpty parameters.RepositoryId InvalidRepositoryId
+                      stringIsValidGraceName parameters.RepositoryName InvalidRepositoryName
+                      eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherBranchIdOrBranchNameRequired
+                      guidIsValidAndNotEmpty parameters.BranchId InvalidBranchId
+                      stringIsValidGraceName parameters.BranchName InvalidBranchName
+                      stringIsNotEmpty parameters.Message MessageIsRequired
+                      stringMaxLength parameters.Message 2048 StringIsTooLong
+                      ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
+                      organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName context OrganizationDoesNotExist
+                      repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName context RepositoryDoesNotExist
+                      branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName context BranchDoesNotExist
+                      branchAllowsReferenceType parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName ReferenceType.Commit context CommitIsDisabled ]
 
                 let command (parameters: CreateReferenceParameters) = BranchCommand.Commit(parameters.DirectoryId, parameters.Sha256Hash, ReferenceText parameters.Message) |> returnTask
 
@@ -226,24 +228,24 @@ module Branch =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let validations (parameters: CreateReferenceParameters) (context: HttpContext) =
-                    [| guidIsValidAndNotEmpty parameters.OwnerId InvalidOwnerId |> returnTask
-                       stringIsValidGraceName parameters.OwnerName InvalidOwnerName |> returnTask
-                       eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired |> returnTask
-                       guidIsValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId |> returnTask
-                       stringIsValidGraceName parameters.OrganizationName InvalidOrganizationName |> returnTask
-                       eitherIdOrNameMustBeProvided parameters.OrganizationId parameters.OrganizationName EitherOrganizationIdOrOrganizationNameRequired |> returnTask
-                       guidIsValidAndNotEmpty parameters.RepositoryId InvalidRepositoryId |> returnTask
-                       stringIsValidGraceName parameters.RepositoryName InvalidRepositoryName |> returnTask
-                       eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherRepositoryIdOrRepositoryNameIsRequired |> returnTask
-                       guidIsValidAndNotEmpty parameters.BranchId InvalidBranchId |> returnTask
-                       stringIsValidGraceName parameters.BranchName InvalidBranchName |> returnTask
-                       eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired |> returnTask
-                       stringMaxLength parameters.Message 2048 StringIsTooLong |> returnTask
-                       ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
-                       organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName context OrganizationDoesNotExist
-                       repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName context RepositoryDoesNotExist
-                       branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName context ParentBranchDoesNotExist
-                       branchAllowsReferenceType parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName ReferenceType.Checkpoint context CheckpointIsDisabled |]
+                    [ guidIsValidAndNotEmpty parameters.OwnerId InvalidOwnerId
+                      stringIsValidGraceName parameters.OwnerName InvalidOwnerName
+                      eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
+                      guidIsValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId
+                      stringIsValidGraceName parameters.OrganizationName InvalidOrganizationName
+                      eitherIdOrNameMustBeProvided parameters.OrganizationId parameters.OrganizationName EitherOrganizationIdOrOrganizationNameRequired
+                      guidIsValidAndNotEmpty parameters.RepositoryId InvalidRepositoryId
+                      stringIsValidGraceName parameters.RepositoryName InvalidRepositoryName
+                      eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherRepositoryIdOrRepositoryNameIsRequired
+                      guidIsValidAndNotEmpty parameters.BranchId InvalidBranchId
+                      stringIsValidGraceName parameters.BranchName InvalidBranchName
+                      eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
+                      stringMaxLength parameters.Message 2048 StringIsTooLong
+                      ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
+                      organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName context OrganizationDoesNotExist
+                      repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName context RepositoryDoesNotExist
+                      branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName context BranchDoesNotExist
+                      branchAllowsReferenceType parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName ReferenceType.Checkpoint context CheckpointIsDisabled ]
 
                 let command (parameters: CreateReferenceParameters) = BranchCommand.Checkpoint(parameters.DirectoryId, parameters.Sha256Hash, ReferenceText parameters.Message) |> returnTask
 
@@ -254,24 +256,24 @@ module Branch =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let validations (parameters: CreateReferenceParameters) (context: HttpContext) =
-                    [| guidIsValidAndNotEmpty parameters.OwnerId InvalidOwnerId |> returnTask
-                       stringIsValidGraceName parameters.OwnerName InvalidOwnerName |> returnTask
-                       eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired |> returnTask
-                       guidIsValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId |> returnTask
-                       stringIsValidGraceName parameters.OrganizationName InvalidOrganizationName |> returnTask
-                       eitherIdOrNameMustBeProvided parameters.OrganizationId parameters.OrganizationName EitherOrganizationIdOrOrganizationNameRequired |> returnTask
-                       guidIsValidAndNotEmpty parameters.RepositoryId InvalidRepositoryId |> returnTask
-                       stringIsValidGraceName parameters.RepositoryName InvalidRepositoryName |> returnTask
-                       eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherRepositoryIdOrRepositoryNameIsRequired |> returnTask
-                       guidIsValidAndNotEmpty parameters.BranchId InvalidBranchId |> returnTask
-                       stringIsValidGraceName parameters.BranchName InvalidBranchName |> returnTask
-                       eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired |> returnTask
-                       stringMaxLength parameters.Message 4096 StringIsTooLong |> returnTask
-                       ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
-                       organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName context OrganizationDoesNotExist
-                       repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName context RepositoryDoesNotExist
-                       branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName context ParentBranchDoesNotExist
-                       branchAllowsReferenceType parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName ReferenceType.Save context SaveIsDisabled |]
+                    [ guidIsValidAndNotEmpty parameters.OwnerId InvalidOwnerId
+                      stringIsValidGraceName parameters.OwnerName InvalidOwnerName
+                      eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
+                      guidIsValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId
+                      stringIsValidGraceName parameters.OrganizationName InvalidOrganizationName
+                      eitherIdOrNameMustBeProvided parameters.OrganizationId parameters.OrganizationName EitherOrganizationIdOrOrganizationNameRequired
+                      guidIsValidAndNotEmpty parameters.RepositoryId InvalidRepositoryId
+                      stringIsValidGraceName parameters.RepositoryName InvalidRepositoryName
+                      eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherRepositoryIdOrRepositoryNameIsRequired
+                      guidIsValidAndNotEmpty parameters.BranchId InvalidBranchId
+                      stringIsValidGraceName parameters.BranchName InvalidBranchName
+                      eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
+                      stringMaxLength parameters.Message 4096 StringIsTooLong
+                      ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
+                      organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName context OrganizationDoesNotExist
+                      repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName context RepositoryDoesNotExist
+                      branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName context BranchDoesNotExist
+                      branchAllowsReferenceType parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName ReferenceType.Save context SaveIsDisabled ]
 
                 let command (parameters: CreateReferenceParameters) = BranchCommand.Save(parameters.DirectoryId, parameters.Sha256Hash, ReferenceText parameters.Message) |> returnTask
 
@@ -282,24 +284,24 @@ module Branch =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let validations (parameters: CreateReferenceParameters) (context: HttpContext) =
-                    [| guidIsValidAndNotEmpty parameters.OwnerId InvalidOwnerId |> returnTask
-                       stringIsValidGraceName parameters.OwnerName InvalidOwnerName |> returnTask
-                       eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired |> returnTask
-                       guidIsValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId |> returnTask
-                       stringIsValidGraceName parameters.OrganizationName InvalidOrganizationName |> returnTask
-                       eitherIdOrNameMustBeProvided parameters.OrganizationId parameters.OrganizationName EitherOrganizationIdOrOrganizationNameRequired |> returnTask
-                       guidIsValidAndNotEmpty parameters.RepositoryId InvalidRepositoryId |> returnTask
-                       stringIsValidGraceName parameters.RepositoryName InvalidRepositoryName |> returnTask
-                       eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherRepositoryIdOrRepositoryNameIsRequired |> returnTask
-                       guidIsValidAndNotEmpty parameters.BranchId InvalidBranchId |> returnTask
-                       stringIsValidGraceName parameters.BranchName InvalidBranchName |> returnTask
-                       eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired |> returnTask
-                       stringMaxLength parameters.Message 2048 StringIsTooLong |> returnTask
-                       ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
-                       organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName context OrganizationDoesNotExist
-                       repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName context RepositoryDoesNotExist
-                       branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName context ParentBranchDoesNotExist
-                       branchAllowsReferenceType parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName ReferenceType.Tag context TagIsDisabled |]
+                    [ guidIsValidAndNotEmpty parameters.OwnerId InvalidOwnerId
+                      stringIsValidGraceName parameters.OwnerName InvalidOwnerName
+                      eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
+                      guidIsValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId
+                      stringIsValidGraceName parameters.OrganizationName InvalidOrganizationName
+                      eitherIdOrNameMustBeProvided parameters.OrganizationId parameters.OrganizationName EitherOrganizationIdOrOrganizationNameRequired
+                      guidIsValidAndNotEmpty parameters.RepositoryId InvalidRepositoryId
+                      stringIsValidGraceName parameters.RepositoryName InvalidRepositoryName
+                      eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherRepositoryIdOrRepositoryNameIsRequired
+                      guidIsValidAndNotEmpty parameters.BranchId InvalidBranchId
+                      stringIsValidGraceName parameters.BranchName InvalidBranchName
+                      eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
+                      stringMaxLength parameters.Message 2048 StringIsTooLong
+                      ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
+                      organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName context OrganizationDoesNotExist
+                      repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName context RepositoryDoesNotExist
+                      branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName context BranchDoesNotExist
+                      branchAllowsReferenceType parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName ReferenceType.Tag context TagIsDisabled ]
 
                 let command (parameters: CreateReferenceParameters) = BranchCommand.Tag(parameters.DirectoryId, parameters.Sha256Hash, ReferenceText parameters.Message) |> returnTask
 
@@ -310,22 +312,22 @@ module Branch =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let validations (parameters: EnableFeatureParameters) (context: HttpContext) =
-                    [| guidIsValidAndNotEmpty parameters.OwnerId InvalidOwnerId |> returnTask
-                       stringIsValidGraceName parameters.OwnerName InvalidOwnerName |> returnTask
-                       eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired |> returnTask
-                       guidIsValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId |> returnTask
-                       stringIsValidGraceName parameters.OrganizationName InvalidOrganizationName |> returnTask
-                       eitherIdOrNameMustBeProvided parameters.OrganizationId parameters.OrganizationName EitherOrganizationIdOrOrganizationNameRequired |> returnTask
-                       guidIsValidAndNotEmpty parameters.RepositoryId InvalidRepositoryId |> returnTask
-                       stringIsValidGraceName parameters.RepositoryName InvalidRepositoryName |> returnTask
-                       eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherRepositoryIdOrRepositoryNameIsRequired |> returnTask
-                       guidIsValidAndNotEmpty parameters.BranchId InvalidBranchId |> returnTask
-                       stringIsValidGraceName parameters.BranchName InvalidBranchName |> returnTask
-                       eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired |> returnTask
-                       ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
-                       organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName context OrganizationDoesNotExist
-                       repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName context RepositoryDoesNotExist
-                       branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName context ParentBranchDoesNotExist |]
+                    [ guidIsValidAndNotEmpty parameters.OwnerId InvalidOwnerId
+                      stringIsValidGraceName parameters.OwnerName InvalidOwnerName
+                      eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
+                      guidIsValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId
+                      stringIsValidGraceName parameters.OrganizationName InvalidOrganizationName
+                      eitherIdOrNameMustBeProvided parameters.OrganizationId parameters.OrganizationName EitherOrganizationIdOrOrganizationNameRequired
+                      guidIsValidAndNotEmpty parameters.RepositoryId InvalidRepositoryId
+                      stringIsValidGraceName parameters.RepositoryName InvalidRepositoryName
+                      eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherRepositoryIdOrRepositoryNameIsRequired
+                      guidIsValidAndNotEmpty parameters.BranchId InvalidBranchId
+                      stringIsValidGraceName parameters.BranchName InvalidBranchName
+                      eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
+                      ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
+                      organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName context OrganizationDoesNotExist
+                      repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName context RepositoryDoesNotExist
+                      branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName context BranchDoesNotExist ]
 
                 let command (parameters: EnableFeatureParameters) = EnableMerge(parameters.Enabled) |> returnTask
 
@@ -336,22 +338,22 @@ module Branch =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let validations (parameters: EnableFeatureParameters) (context: HttpContext) =
-                    [| guidIsValidAndNotEmpty parameters.OwnerId InvalidOwnerId |> returnTask
-                       stringIsValidGraceName parameters.OwnerName InvalidOwnerName |> returnTask
-                       eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired |> returnTask
-                       guidIsValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId |> returnTask
-                       stringIsValidGraceName parameters.OrganizationName InvalidOrganizationName |> returnTask
-                       eitherIdOrNameMustBeProvided parameters.OrganizationId parameters.OrganizationName EitherOrganizationIdOrOrganizationNameRequired |> returnTask
-                       guidIsValidAndNotEmpty parameters.RepositoryId InvalidRepositoryId |> returnTask
-                       stringIsValidGraceName parameters.RepositoryName InvalidRepositoryName |> returnTask
-                       eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherRepositoryIdOrRepositoryNameIsRequired |> returnTask
-                       guidIsValidAndNotEmpty parameters.BranchId InvalidBranchId |> returnTask
-                       stringIsValidGraceName parameters.BranchName InvalidBranchName |> returnTask
-                       eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired |> returnTask
-                       ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
-                       organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName context OrganizationDoesNotExist
-                       repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName context RepositoryDoesNotExist
-                       branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName context ParentBranchDoesNotExist |]
+                    [ guidIsValidAndNotEmpty parameters.OwnerId InvalidOwnerId
+                      stringIsValidGraceName parameters.OwnerName InvalidOwnerName
+                      eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
+                      guidIsValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId
+                      stringIsValidGraceName parameters.OrganizationName InvalidOrganizationName
+                      eitherIdOrNameMustBeProvided parameters.OrganizationId parameters.OrganizationName EitherOrganizationIdOrOrganizationNameRequired
+                      guidIsValidAndNotEmpty parameters.RepositoryId InvalidRepositoryId
+                      stringIsValidGraceName parameters.RepositoryName InvalidRepositoryName
+                      eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherRepositoryIdOrRepositoryNameIsRequired
+                      guidIsValidAndNotEmpty parameters.BranchId InvalidBranchId
+                      stringIsValidGraceName parameters.BranchName InvalidBranchName
+                      eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
+                      ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
+                      organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName context OrganizationDoesNotExist
+                      repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName context RepositoryDoesNotExist
+                      branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName context BranchDoesNotExist ]
 
                 let command (parameters: EnableFeatureParameters) = EnableCommit(parameters.Enabled) |> returnTask
 
@@ -362,22 +364,22 @@ module Branch =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let validations (parameters: EnableFeatureParameters) (context: HttpContext) =
-                    [| guidIsValidAndNotEmpty parameters.OwnerId InvalidOwnerId |> returnTask
-                       stringIsValidGraceName parameters.OwnerName InvalidOwnerName |> returnTask
-                       eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired |> returnTask
-                       guidIsValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId |> returnTask
-                       stringIsValidGraceName parameters.OrganizationName InvalidOrganizationName |> returnTask
-                       eitherIdOrNameMustBeProvided parameters.OrganizationId parameters.OrganizationName EitherOrganizationIdOrOrganizationNameRequired |> returnTask
-                       guidIsValidAndNotEmpty parameters.RepositoryId InvalidRepositoryId |> returnTask
-                       stringIsValidGraceName parameters.RepositoryName InvalidRepositoryName |> returnTask
-                       eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherRepositoryIdOrRepositoryNameIsRequired |> returnTask
-                       guidIsValidAndNotEmpty parameters.BranchId InvalidBranchId |> returnTask
-                       stringIsValidGraceName parameters.BranchName InvalidBranchName |> returnTask
-                       eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired |> returnTask
-                       ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
-                       organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName context OrganizationDoesNotExist
-                       repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName context RepositoryDoesNotExist
-                       branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName context ParentBranchDoesNotExist |]
+                    [ guidIsValidAndNotEmpty parameters.OwnerId InvalidOwnerId
+                      stringIsValidGraceName parameters.OwnerName InvalidOwnerName
+                      eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
+                      guidIsValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId
+                      stringIsValidGraceName parameters.OrganizationName InvalidOrganizationName
+                      eitherIdOrNameMustBeProvided parameters.OrganizationId parameters.OrganizationName EitherOrganizationIdOrOrganizationNameRequired
+                      guidIsValidAndNotEmpty parameters.RepositoryId InvalidRepositoryId
+                      stringIsValidGraceName parameters.RepositoryName InvalidRepositoryName
+                      eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherRepositoryIdOrRepositoryNameIsRequired
+                      guidIsValidAndNotEmpty parameters.BranchId InvalidBranchId
+                      stringIsValidGraceName parameters.BranchName InvalidBranchName
+                      eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
+                      ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
+                      organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName context OrganizationDoesNotExist
+                      repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName context RepositoryDoesNotExist
+                      branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName context BranchDoesNotExist ]
 
                 let command (parameters: EnableFeatureParameters) = EnableCheckpoint(parameters.Enabled) |> returnTask
 
@@ -388,22 +390,22 @@ module Branch =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let validations (parameters: EnableFeatureParameters) (context: HttpContext) =
-                    [| guidIsValidAndNotEmpty parameters.OwnerId InvalidOwnerId |> returnTask
-                       stringIsValidGraceName parameters.OwnerName InvalidOwnerName |> returnTask
-                       eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired |> returnTask
-                       guidIsValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId |> returnTask
-                       stringIsValidGraceName parameters.OrganizationName InvalidOrganizationName |> returnTask
-                       eitherIdOrNameMustBeProvided parameters.OrganizationId parameters.OrganizationName EitherOrganizationIdOrOrganizationNameRequired |> returnTask
-                       guidIsValidAndNotEmpty parameters.RepositoryId InvalidRepositoryId |> returnTask
-                       stringIsValidGraceName parameters.RepositoryName InvalidRepositoryName |> returnTask
-                       eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherRepositoryIdOrRepositoryNameIsRequired |> returnTask
-                       guidIsValidAndNotEmpty parameters.BranchId InvalidBranchId |> returnTask
-                       stringIsValidGraceName parameters.BranchName InvalidBranchName |> returnTask
-                       eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired |> returnTask
-                       ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
-                       organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName context OrganizationDoesNotExist
-                       repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName context RepositoryDoesNotExist
-                       branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName context ParentBranchDoesNotExist |]
+                    [ guidIsValidAndNotEmpty parameters.OwnerId InvalidOwnerId
+                      stringIsValidGraceName parameters.OwnerName InvalidOwnerName
+                      eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
+                      guidIsValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId
+                      stringIsValidGraceName parameters.OrganizationName InvalidOrganizationName
+                      eitherIdOrNameMustBeProvided parameters.OrganizationId parameters.OrganizationName EitherOrganizationIdOrOrganizationNameRequired
+                      guidIsValidAndNotEmpty parameters.RepositoryId InvalidRepositoryId
+                      stringIsValidGraceName parameters.RepositoryName InvalidRepositoryName
+                      eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherRepositoryIdOrRepositoryNameIsRequired
+                      guidIsValidAndNotEmpty parameters.BranchId InvalidBranchId
+                      stringIsValidGraceName parameters.BranchName InvalidBranchName
+                      eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
+                      ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
+                      organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName context OrganizationDoesNotExist
+                      repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName context RepositoryDoesNotExist
+                      branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName context ParentBranchDoesNotExist ]
 
                 let command (parameters: EnableFeatureParameters) = EnableSave(parameters.Enabled) |> returnTask
 
@@ -414,22 +416,22 @@ module Branch =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let validations (parameters: EnableFeatureParameters) (context: HttpContext) =
-                    [| guidIsValidAndNotEmpty parameters.OwnerId InvalidOwnerId |> returnTask
-                       stringIsValidGraceName parameters.OwnerName InvalidOwnerName |> returnTask
-                       eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired |> returnTask
-                       guidIsValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId |> returnTask
-                       stringIsValidGraceName parameters.OrganizationName InvalidOrganizationName |> returnTask
-                       eitherIdOrNameMustBeProvided parameters.OrganizationId parameters.OrganizationName EitherOrganizationIdOrOrganizationNameRequired |> returnTask
-                       guidIsValidAndNotEmpty parameters.RepositoryId InvalidRepositoryId |> returnTask
-                       stringIsValidGraceName parameters.RepositoryName InvalidRepositoryName |> returnTask
-                       eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherRepositoryIdOrRepositoryNameIsRequired |> returnTask
-                       guidIsValidAndNotEmpty parameters.BranchId InvalidBranchId |> returnTask
-                       stringIsValidGraceName parameters.BranchName InvalidBranchName |> returnTask
-                       eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired |> returnTask
-                       ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
-                       organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName context OrganizationDoesNotExist
-                       repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName context RepositoryDoesNotExist
-                       branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName context ParentBranchDoesNotExist |]
+                    [ guidIsValidAndNotEmpty parameters.OwnerId InvalidOwnerId
+                      stringIsValidGraceName parameters.OwnerName InvalidOwnerName
+                      eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
+                      guidIsValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId
+                      stringIsValidGraceName parameters.OrganizationName InvalidOrganizationName
+                      eitherIdOrNameMustBeProvided parameters.OrganizationId parameters.OrganizationName EitherOrganizationIdOrOrganizationNameRequired
+                      guidIsValidAndNotEmpty parameters.RepositoryId InvalidRepositoryId
+                      stringIsValidGraceName parameters.RepositoryName InvalidRepositoryName
+                      eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherRepositoryIdOrRepositoryNameIsRequired
+                      guidIsValidAndNotEmpty parameters.BranchId InvalidBranchId
+                      stringIsValidGraceName parameters.BranchName InvalidBranchName
+                      eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
+                      ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
+                      organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName context OrganizationDoesNotExist
+                      repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName context RepositoryDoesNotExist
+                      branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName context BranchDoesNotExist ]
 
                 let command (parameters: EnableFeatureParameters) = EnableTag(parameters.Enabled) |> returnTask
 
@@ -440,22 +442,22 @@ module Branch =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let validations (parameters: DeleteParameters) (context: HttpContext) =
-                    [| guidIsValidAndNotEmpty parameters.OwnerId InvalidOwnerId |> returnTask
-                       stringIsValidGraceName parameters.OwnerName InvalidOwnerName |> returnTask
-                       eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired |> returnTask
-                       guidIsValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId |> returnTask
-                       stringIsValidGraceName parameters.OrganizationName InvalidOrganizationName |> returnTask
-                       eitherIdOrNameMustBeProvided parameters.OrganizationId parameters.OrganizationName EitherOrganizationIdOrOrganizationNameRequired |> returnTask
-                       guidIsValidAndNotEmpty parameters.RepositoryId InvalidRepositoryId |> returnTask
-                       stringIsValidGraceName parameters.RepositoryName InvalidRepositoryName |> returnTask
-                       eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherRepositoryIdOrRepositoryNameIsRequired |> returnTask
-                       guidIsValidAndNotEmpty parameters.BranchId InvalidBranchId |> returnTask
-                       stringIsValidGraceName parameters.BranchName InvalidBranchName |> returnTask
-                       eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired |> returnTask
-                       ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
-                       organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName context OrganizationDoesNotExist
-                       repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName context RepositoryDoesNotExist
-                       branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName context ParentBranchDoesNotExist |]
+                    [ guidIsValidAndNotEmpty parameters.OwnerId InvalidOwnerId
+                      stringIsValidGraceName parameters.OwnerName InvalidOwnerName
+                      eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
+                      guidIsValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId
+                      stringIsValidGraceName parameters.OrganizationName InvalidOrganizationName
+                      eitherIdOrNameMustBeProvided parameters.OrganizationId parameters.OrganizationName EitherOrganizationIdOrOrganizationNameRequired
+                      guidIsValidAndNotEmpty parameters.RepositoryId InvalidRepositoryId
+                      stringIsValidGraceName parameters.RepositoryName InvalidRepositoryName
+                      eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherRepositoryIdOrRepositoryNameIsRequired
+                      guidIsValidAndNotEmpty parameters.BranchId InvalidBranchId
+                      stringIsValidGraceName parameters.BranchName InvalidBranchName
+                      eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
+                      ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
+                      organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName context OrganizationDoesNotExist
+                      repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName context RepositoryDoesNotExist
+                      branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName context BranchDoesNotExist ]
 
                 let command (parameters: DeleteParameters) = DeleteLogical |> returnTask
 
@@ -467,22 +469,22 @@ module Branch =
             task {
                 try
                     let validations (parameters: GetParameters) (context: HttpContext) =
-                        [| guidIsValidAndNotEmpty parameters.OwnerId InvalidOwnerId |> returnTask
-                           stringIsValidGraceName parameters.OwnerName InvalidOwnerName |> returnTask
-                           eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired |> returnTask
-                           guidIsValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId |> returnTask
-                           stringIsValidGraceName parameters.OrganizationName InvalidOrganizationName |> returnTask
-                           eitherIdOrNameMustBeProvided parameters.OrganizationId parameters.OrganizationName EitherOrganizationIdOrOrganizationNameRequired |> returnTask
-                           guidIsValidAndNotEmpty parameters.RepositoryId InvalidRepositoryId |> returnTask
-                           stringIsValidGraceName parameters.RepositoryName InvalidRepositoryName |> returnTask
-                           eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherRepositoryIdOrRepositoryNameIsRequired |> returnTask
-                           guidIsValidAndNotEmpty parameters.BranchId InvalidBranchId |> returnTask
-                           stringIsValidGraceName parameters.BranchName InvalidBranchName |> returnTask
-                           eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired |> returnTask
-                           ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
-                           organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName context OrganizationDoesNotExist
-                           repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName context RepositoryDoesNotExist
-                           branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName context ParentBranchDoesNotExist |]
+                        [ guidIsValidAndNotEmpty parameters.OwnerId InvalidOwnerId
+                          stringIsValidGraceName parameters.OwnerName InvalidOwnerName
+                          eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
+                          guidIsValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId
+                          stringIsValidGraceName parameters.OrganizationName InvalidOrganizationName
+                          eitherIdOrNameMustBeProvided parameters.OrganizationId parameters.OrganizationName EitherOrganizationIdOrOrganizationNameRequired
+                          guidIsValidAndNotEmpty parameters.RepositoryId InvalidRepositoryId
+                          stringIsValidGraceName parameters.RepositoryName InvalidRepositoryName
+                          eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherRepositoryIdOrRepositoryNameIsRequired
+                          guidIsValidAndNotEmpty parameters.BranchId InvalidBranchId
+                          stringIsValidGraceName parameters.BranchName InvalidBranchName
+                          eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
+                          ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
+                          organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName context OrganizationDoesNotExist
+                          repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName context RepositoryDoesNotExist
+                          branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName context BranchDoesNotExist ]
 
                     let query (context: HttpContext) maxCount (actorProxy: IBranchActor) =
                         task {
@@ -501,22 +503,22 @@ module Branch =
             task {
                 try
                     let validations (parameters: BranchParameters) (context: HttpContext) =
-                        [| guidIsValidAndNotEmpty parameters.OwnerId InvalidOwnerId |> returnTask
-                           stringIsValidGraceName parameters.OwnerName InvalidOwnerName |> returnTask
-                           eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired |> returnTask
-                           guidIsValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId |> returnTask
-                           stringIsValidGraceName parameters.OrganizationName InvalidOrganizationName |> returnTask
-                           eitherIdOrNameMustBeProvided parameters.OrganizationId parameters.OrganizationName EitherOrganizationIdOrOrganizationNameRequired |> returnTask
-                           guidIsValidAndNotEmpty parameters.RepositoryId InvalidRepositoryId |> returnTask
-                           stringIsValidGraceName parameters.RepositoryName InvalidRepositoryName |> returnTask
-                           eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherRepositoryIdOrRepositoryNameIsRequired |> returnTask
-                           guidIsValidAndNotEmpty parameters.BranchId InvalidBranchId |> returnTask
-                           stringIsValidGraceName parameters.BranchName InvalidBranchName |> returnTask
-                           eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired |> returnTask
-                           ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
-                           organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName context OrganizationDoesNotExist
-                           repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName context RepositoryDoesNotExist
-                           branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName context ParentBranchDoesNotExist |]
+                        [ guidIsValidAndNotEmpty parameters.OwnerId InvalidOwnerId
+                          stringIsValidGraceName parameters.OwnerName InvalidOwnerName
+                          eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
+                          guidIsValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId
+                          stringIsValidGraceName parameters.OrganizationName InvalidOrganizationName
+                          eitherIdOrNameMustBeProvided parameters.OrganizationId parameters.OrganizationName EitherOrganizationIdOrOrganizationNameRequired
+                          guidIsValidAndNotEmpty parameters.RepositoryId InvalidRepositoryId
+                          stringIsValidGraceName parameters.RepositoryName InvalidRepositoryName
+                          eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherRepositoryIdOrRepositoryNameIsRequired
+                          guidIsValidAndNotEmpty parameters.BranchId InvalidBranchId
+                          stringIsValidGraceName parameters.BranchName InvalidBranchName
+                          eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
+                          ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
+                          organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName context OrganizationDoesNotExist
+                          repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName context RepositoryDoesNotExist
+                          branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName context ParentBranchDoesNotExist ]
 
                     let query (context: HttpContext) maxCount (actorProxy: IBranchActor) =
                         task {
@@ -535,22 +537,22 @@ module Branch =
             task {
                 try
                     let validations (parameters: GetReferenceParameters) (context: HttpContext) =
-                        [| guidIsValidAndNotEmpty parameters.OwnerId InvalidOwnerId |> returnTask
-                           stringIsValidGraceName parameters.OwnerName InvalidOwnerName |> returnTask
-                           eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired |> returnTask
-                           guidIsValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId |> returnTask
-                           stringIsValidGraceName parameters.OrganizationName InvalidOrganizationName |> returnTask
-                           eitherIdOrNameMustBeProvided parameters.OrganizationId parameters.OrganizationName EitherOrganizationIdOrOrganizationNameRequired |> returnTask
-                           guidIsValidAndNotEmpty parameters.RepositoryId InvalidRepositoryId |> returnTask
-                           stringIsValidGraceName parameters.RepositoryName InvalidRepositoryName |> returnTask
-                           eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherRepositoryIdOrRepositoryNameIsRequired |> returnTask
-                           guidIsValidAndNotEmpty parameters.BranchId InvalidBranchId |> returnTask
-                           stringIsValidGraceName parameters.BranchName InvalidBranchName |> returnTask
-                           eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired |> returnTask
-                           ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
-                           organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName context OrganizationDoesNotExist
-                           repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName context RepositoryDoesNotExist
-                           branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName context BranchDoesNotExist |]
+                        [ guidIsValidAndNotEmpty parameters.OwnerId InvalidOwnerId
+                          stringIsValidGraceName parameters.OwnerName InvalidOwnerName
+                          eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
+                          guidIsValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId
+                          stringIsValidGraceName parameters.OrganizationName InvalidOrganizationName
+                          eitherIdOrNameMustBeProvided parameters.OrganizationId parameters.OrganizationName EitherOrganizationIdOrOrganizationNameRequired
+                          guidIsValidAndNotEmpty parameters.RepositoryId InvalidRepositoryId
+                          stringIsValidGraceName parameters.RepositoryName InvalidRepositoryName
+                          eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherRepositoryIdOrRepositoryNameIsRequired
+                          guidIsValidAndNotEmpty parameters.BranchId InvalidBranchId
+                          stringIsValidGraceName parameters.BranchName InvalidBranchName
+                          eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
+                          ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
+                          organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName context OrganizationDoesNotExist
+                          repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName context RepositoryDoesNotExist
+                          branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName context BranchDoesNotExist ]
 
                     let query (context: HttpContext) maxCount (actorProxy: IBranchActor) =
                         task {
@@ -572,23 +574,23 @@ module Branch =
             task {
                 try
                     let validations (parameters: GetReferencesParameters) (context: HttpContext) =
-                        [| guidIsValidAndNotEmpty parameters.OwnerId InvalidOwnerId |> returnTask
-                           stringIsValidGraceName parameters.OwnerName InvalidOwnerName |> returnTask
-                           eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired |> returnTask
-                           guidIsValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId |> returnTask
-                           stringIsValidGraceName parameters.OrganizationName InvalidOrganizationName |> returnTask
-                           eitherIdOrNameMustBeProvided parameters.OrganizationId parameters.OrganizationName EitherOrganizationIdOrOrganizationNameRequired |> returnTask
-                           guidIsValidAndNotEmpty parameters.RepositoryId InvalidRepositoryId |> returnTask
-                           stringIsValidGraceName parameters.RepositoryName InvalidRepositoryName |> returnTask
-                           eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherRepositoryIdOrRepositoryNameIsRequired |> returnTask
-                           guidIsValidAndNotEmpty parameters.BranchId InvalidBranchId |> returnTask
-                           stringIsValidGraceName parameters.BranchName InvalidBranchName |> returnTask
-                           eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired |> returnTask
-                           numberIsPositive parameters.MaxCount ValueMustBePositive |> returnTask
-                           ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
-                           organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName context OrganizationDoesNotExist
-                           repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName context RepositoryDoesNotExist
-                           branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName context BranchDoesNotExist |]
+                        [ guidIsValidAndNotEmpty parameters.OwnerId InvalidOwnerId
+                          stringIsValidGraceName parameters.OwnerName InvalidOwnerName
+                          eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
+                          guidIsValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId
+                          stringIsValidGraceName parameters.OrganizationName InvalidOrganizationName
+                          eitherIdOrNameMustBeProvided parameters.OrganizationId parameters.OrganizationName EitherOrganizationIdOrOrganizationNameRequired
+                          guidIsValidAndNotEmpty parameters.RepositoryId InvalidRepositoryId
+                          stringIsValidGraceName parameters.RepositoryName InvalidRepositoryName
+                          eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherRepositoryIdOrRepositoryNameIsRequired
+                          guidIsValidAndNotEmpty parameters.BranchId InvalidBranchId
+                          stringIsValidGraceName parameters.BranchName InvalidBranchName
+                          eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
+                          numberIsPositive parameters.MaxCount ValueMustBePositive
+                          ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
+                          organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName context OrganizationDoesNotExist
+                          repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName context RepositoryDoesNotExist
+                          branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName context BranchDoesNotExist ]
 
                     let query (context: HttpContext) (maxCount: int) (actorProxy: IBranchActor) =
                         task {
@@ -608,25 +610,25 @@ module Branch =
             task {
                 try
                     let validations (parameters: GetDiffsForReferenceTypeParameters) (context: HttpContext) =
-                        [| guidIsValidAndNotEmpty parameters.OwnerId InvalidOwnerId |> returnTask
-                           stringIsValidGraceName parameters.OwnerName InvalidOwnerName |> returnTask
-                           eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired |> returnTask
-                           guidIsValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId |> returnTask
-                           stringIsValidGraceName parameters.OrganizationName InvalidOrganizationName |> returnTask
-                           eitherIdOrNameMustBeProvided parameters.OrganizationId parameters.OrganizationName EitherOrganizationIdOrOrganizationNameRequired |> returnTask
-                           guidIsValidAndNotEmpty parameters.RepositoryId InvalidRepositoryId |> returnTask
-                           stringIsValidGraceName parameters.RepositoryName InvalidRepositoryName |> returnTask
-                           eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherRepositoryIdOrRepositoryNameIsRequired |> returnTask
-                           guidIsValidAndNotEmpty parameters.BranchId InvalidBranchId |> returnTask
-                           stringIsValidGraceName parameters.BranchName InvalidBranchName |> returnTask
-                           eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired |> returnTask
-                           numberIsPositive parameters.MaxCount ValueMustBePositive |> returnTask
-                           stringIsNotEmpty parameters.ReferenceType ReferenceTypeMustBeProvided |> returnTask
-                           isMemberOfDiscriminatedUnion<ReferenceType, BranchError> parameters.ReferenceType InvalidReferenceType |> returnTask
-                           ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
-                           organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName context OrganizationDoesNotExist
-                           repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName context RepositoryDoesNotExist
-                           branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName context BranchDoesNotExist |]
+                        [ guidIsValidAndNotEmpty parameters.OwnerId InvalidOwnerId
+                          stringIsValidGraceName parameters.OwnerName InvalidOwnerName
+                          eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
+                          guidIsValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId
+                          stringIsValidGraceName parameters.OrganizationName InvalidOrganizationName
+                          eitherIdOrNameMustBeProvided parameters.OrganizationId parameters.OrganizationName EitherOrganizationIdOrOrganizationNameRequired
+                          guidIsValidAndNotEmpty parameters.RepositoryId InvalidRepositoryId
+                          stringIsValidGraceName parameters.RepositoryName InvalidRepositoryName
+                          eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherRepositoryIdOrRepositoryNameIsRequired
+                          guidIsValidAndNotEmpty parameters.BranchId InvalidBranchId
+                          stringIsValidGraceName parameters.BranchName InvalidBranchName
+                          eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
+                          numberIsPositive parameters.MaxCount ValueMustBePositive
+                          stringIsNotEmpty parameters.ReferenceType ReferenceTypeMustBeProvided
+                          isMemberOfDiscriminatedUnion<ReferenceType, BranchError> parameters.ReferenceType InvalidReferenceType
+                          ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
+                          organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName context OrganizationDoesNotExist
+                          repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName context RepositoryDoesNotExist
+                          branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName context BranchDoesNotExist ]
 
                     let query (context: HttpContext) (maxCount: int) (actorProxy: IBranchActor) =
                         task {
@@ -662,23 +664,23 @@ module Branch =
             task {
                 try
                     let validations (parameters: GetReferencesParameters) (context: HttpContext) =
-                        [| guidIsValidAndNotEmpty parameters.OwnerId InvalidOwnerId |> returnTask
-                           stringIsValidGraceName parameters.OwnerName InvalidOwnerName |> returnTask
-                           eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired |> returnTask
-                           guidIsValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId |> returnTask
-                           stringIsValidGraceName parameters.OrganizationName InvalidOrganizationName |> returnTask
-                           eitherIdOrNameMustBeProvided parameters.OrganizationId parameters.OrganizationName EitherOrganizationIdOrOrganizationNameRequired |> returnTask
-                           guidIsValidAndNotEmpty parameters.RepositoryId InvalidRepositoryId |> returnTask
-                           stringIsValidGraceName parameters.RepositoryName InvalidRepositoryName |> returnTask
-                           eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherRepositoryIdOrRepositoryNameIsRequired |> returnTask
-                           guidIsValidAndNotEmpty parameters.BranchId InvalidBranchId |> returnTask
-                           stringIsValidGraceName parameters.BranchName InvalidBranchName |> returnTask
-                           eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired |> returnTask
-                           numberIsPositive parameters.MaxCount ValueMustBePositive |> returnTask
-                           ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
-                           organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName context OrganizationDoesNotExist
-                           repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName context RepositoryDoesNotExist
-                           branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName context BranchDoesNotExist |]
+                        [ guidIsValidAndNotEmpty parameters.OwnerId InvalidOwnerId
+                          stringIsValidGraceName parameters.OwnerName InvalidOwnerName
+                          eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
+                          guidIsValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId
+                          stringIsValidGraceName parameters.OrganizationName InvalidOrganizationName
+                          eitherIdOrNameMustBeProvided parameters.OrganizationId parameters.OrganizationName EitherOrganizationIdOrOrganizationNameRequired
+                          guidIsValidAndNotEmpty parameters.RepositoryId InvalidRepositoryId
+                          stringIsValidGraceName parameters.RepositoryName InvalidRepositoryName
+                          eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherRepositoryIdOrRepositoryNameIsRequired
+                          guidIsValidAndNotEmpty parameters.BranchId InvalidBranchId
+                          stringIsValidGraceName parameters.BranchName InvalidBranchName
+                          eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
+                          numberIsPositive parameters.MaxCount ValueMustBePositive
+                          ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
+                          organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName context OrganizationDoesNotExist
+                          repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName context RepositoryDoesNotExist
+                          branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName context BranchDoesNotExist ]
 
                     let query (context: HttpContext) maxCount (actorProxy: IBranchActor) =
                         task {
@@ -698,23 +700,23 @@ module Branch =
             task {
                 try
                     let validations (parameters: GetReferencesParameters) (context: HttpContext) =
-                        [| guidIsValidAndNotEmpty parameters.OwnerId InvalidOwnerId |> returnTask
-                           stringIsValidGraceName parameters.OwnerName InvalidOwnerName |> returnTask
-                           eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired |> returnTask
-                           guidIsValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId |> returnTask
-                           stringIsValidGraceName parameters.OrganizationName InvalidOrganizationName |> returnTask
-                           eitherIdOrNameMustBeProvided parameters.OrganizationId parameters.OrganizationName EitherOrganizationIdOrOrganizationNameRequired |> returnTask
-                           guidIsValidAndNotEmpty parameters.RepositoryId InvalidRepositoryId |> returnTask
-                           stringIsValidGraceName parameters.RepositoryName InvalidRepositoryName |> returnTask
-                           eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherRepositoryIdOrRepositoryNameIsRequired |> returnTask
-                           guidIsValidAndNotEmpty parameters.BranchId InvalidBranchId |> returnTask
-                           stringIsValidGraceName parameters.BranchName InvalidBranchName |> returnTask
-                           eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired |> returnTask
-                           numberIsPositive parameters.MaxCount ValueMustBePositive |> returnTask
-                           ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
-                           organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName context OrganizationDoesNotExist
-                           repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName context RepositoryDoesNotExist
-                           branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName context BranchDoesNotExist |]
+                        [ guidIsValidAndNotEmpty parameters.OwnerId InvalidOwnerId
+                          stringIsValidGraceName parameters.OwnerName InvalidOwnerName
+                          eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
+                          guidIsValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId
+                          stringIsValidGraceName parameters.OrganizationName InvalidOrganizationName
+                          eitherIdOrNameMustBeProvided parameters.OrganizationId parameters.OrganizationName EitherOrganizationIdOrOrganizationNameRequired
+                          guidIsValidAndNotEmpty parameters.RepositoryId InvalidRepositoryId
+                          stringIsValidGraceName parameters.RepositoryName InvalidRepositoryName
+                          eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherRepositoryIdOrRepositoryNameIsRequired
+                          guidIsValidAndNotEmpty parameters.BranchId InvalidBranchId
+                          stringIsValidGraceName parameters.BranchName InvalidBranchName
+                          eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
+                          numberIsPositive parameters.MaxCount ValueMustBePositive
+                          ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
+                          organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName context OrganizationDoesNotExist
+                          repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName context RepositoryDoesNotExist
+                          branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName context BranchDoesNotExist ]
 
                     let query (context: HttpContext) maxCount (actorProxy: IBranchActor) =
                         task {
@@ -735,23 +737,23 @@ module Branch =
             task {
                 try
                     let validations (parameters: GetReferencesParameters) (context: HttpContext) =
-                        [| guidIsValidAndNotEmpty parameters.OwnerId InvalidOwnerId |> returnTask
-                           stringIsValidGraceName parameters.OwnerName InvalidOwnerName |> returnTask
-                           eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired |> returnTask
-                           guidIsValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId |> returnTask
-                           stringIsValidGraceName parameters.OrganizationName InvalidOrganizationName |> returnTask
-                           eitherIdOrNameMustBeProvided parameters.OrganizationId parameters.OrganizationName EitherOrganizationIdOrOrganizationNameRequired |> returnTask
-                           guidIsValidAndNotEmpty parameters.RepositoryId InvalidRepositoryId |> returnTask
-                           stringIsValidGraceName parameters.RepositoryName InvalidRepositoryName |> returnTask
-                           eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherRepositoryIdOrRepositoryNameIsRequired |> returnTask
-                           guidIsValidAndNotEmpty parameters.BranchId InvalidBranchId |> returnTask
-                           stringIsValidGraceName parameters.BranchName InvalidBranchName |> returnTask
-                           eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired |> returnTask
-                           numberIsPositive parameters.MaxCount ValueMustBePositive |> returnTask
-                           ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
-                           organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName context OrganizationDoesNotExist
-                           repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName context RepositoryDoesNotExist
-                           branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName context BranchDoesNotExist |]
+                        [ guidIsValidAndNotEmpty parameters.OwnerId InvalidOwnerId
+                          stringIsValidGraceName parameters.OwnerName InvalidOwnerName
+                          eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
+                          guidIsValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId
+                          stringIsValidGraceName parameters.OrganizationName InvalidOrganizationName
+                          eitherIdOrNameMustBeProvided parameters.OrganizationId parameters.OrganizationName EitherOrganizationIdOrOrganizationNameRequired
+                          guidIsValidAndNotEmpty parameters.RepositoryId InvalidRepositoryId
+                          stringIsValidGraceName parameters.RepositoryName InvalidRepositoryName
+                          eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherRepositoryIdOrRepositoryNameIsRequired
+                          guidIsValidAndNotEmpty parameters.BranchId InvalidBranchId
+                          stringIsValidGraceName parameters.BranchName InvalidBranchName
+                          eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
+                          numberIsPositive parameters.MaxCount ValueMustBePositive
+                          ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
+                          organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName context OrganizationDoesNotExist
+                          repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName context RepositoryDoesNotExist
+                          branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName context BranchDoesNotExist ]
 
                     let query (context: HttpContext) maxCount (actorProxy: IBranchActor) =
                         task {
@@ -771,23 +773,23 @@ module Branch =
             task {
                 try
                     let validations (parameters: GetReferencesParameters) (context: HttpContext) =
-                        [| guidIsValidAndNotEmpty parameters.OwnerId InvalidOwnerId |> returnTask
-                           stringIsValidGraceName parameters.OwnerName InvalidOwnerName |> returnTask
-                           eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired |> returnTask
-                           guidIsValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId |> returnTask
-                           stringIsValidGraceName parameters.OrganizationName InvalidOrganizationName |> returnTask
-                           eitherIdOrNameMustBeProvided parameters.OrganizationId parameters.OrganizationName EitherOrganizationIdOrOrganizationNameRequired |> returnTask
-                           guidIsValidAndNotEmpty parameters.RepositoryId InvalidRepositoryId |> returnTask
-                           stringIsValidGraceName parameters.RepositoryName InvalidRepositoryName |> returnTask
-                           eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherRepositoryIdOrRepositoryNameIsRequired |> returnTask
-                           guidIsValidAndNotEmpty parameters.BranchId InvalidBranchId |> returnTask
-                           stringIsValidGraceName parameters.BranchName InvalidBranchName |> returnTask
-                           eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired |> returnTask
-                           numberIsPositive parameters.MaxCount ValueMustBePositive |> returnTask
-                           ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
-                           organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName context OrganizationDoesNotExist
-                           repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName context RepositoryDoesNotExist
-                           branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName context BranchDoesNotExist |]
+                        [ guidIsValidAndNotEmpty parameters.OwnerId InvalidOwnerId
+                          stringIsValidGraceName parameters.OwnerName InvalidOwnerName
+                          eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
+                          guidIsValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId
+                          stringIsValidGraceName parameters.OrganizationName InvalidOrganizationName
+                          eitherIdOrNameMustBeProvided parameters.OrganizationId parameters.OrganizationName EitherOrganizationIdOrOrganizationNameRequired
+                          guidIsValidAndNotEmpty parameters.RepositoryId InvalidRepositoryId
+                          stringIsValidGraceName parameters.RepositoryName InvalidRepositoryName
+                          eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherRepositoryIdOrRepositoryNameIsRequired
+                          guidIsValidAndNotEmpty parameters.BranchId InvalidBranchId
+                          stringIsValidGraceName parameters.BranchName InvalidBranchName
+                          eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
+                          numberIsPositive parameters.MaxCount ValueMustBePositive
+                          ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
+                          organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName context OrganizationDoesNotExist
+                          repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName context RepositoryDoesNotExist
+                          branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName context BranchDoesNotExist ]
 
 
                     let query (context: HttpContext) maxCount (actorProxy: IBranchActor) =
@@ -808,24 +810,23 @@ module Branch =
             task {
                 try
                     let validations (parameters: GetReferencesParameters) (context: HttpContext) =
-                        [| guidIsValidAndNotEmpty parameters.OwnerId InvalidOwnerId |> returnTask
-                           stringIsValidGraceName parameters.OwnerName InvalidOwnerName |> returnTask
-                           eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired |> returnTask
-                           guidIsValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId |> returnTask
-                           stringIsValidGraceName parameters.OrganizationName InvalidOrganizationName |> returnTask
-                           eitherIdOrNameMustBeProvided parameters.OrganizationId parameters.OrganizationName EitherOrganizationIdOrOrganizationNameRequired |> returnTask
-                           guidIsValidAndNotEmpty parameters.RepositoryId InvalidRepositoryId |> returnTask
-                           stringIsValidGraceName parameters.RepositoryName InvalidRepositoryName |> returnTask
-                           eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherRepositoryIdOrRepositoryNameIsRequired |> returnTask
-                           guidIsValidAndNotEmpty parameters.BranchId InvalidBranchId |> returnTask
-                           stringIsValidGraceName parameters.BranchName InvalidBranchName |> returnTask
-                           eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired |> returnTask
-                           numberIsPositive parameters.MaxCount ValueMustBePositive |> returnTask
-                           ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
-                           organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName context OrganizationDoesNotExist
-                           repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName context RepositoryDoesNotExist
-                           branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName context BranchDoesNotExist |]
-
+                        [ guidIsValidAndNotEmpty parameters.OwnerId InvalidOwnerId
+                          stringIsValidGraceName parameters.OwnerName InvalidOwnerName
+                          eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
+                          guidIsValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId
+                          stringIsValidGraceName parameters.OrganizationName InvalidOrganizationName
+                          eitherIdOrNameMustBeProvided parameters.OrganizationId parameters.OrganizationName EitherOrganizationIdOrOrganizationNameRequired
+                          guidIsValidAndNotEmpty parameters.RepositoryId InvalidRepositoryId
+                          stringIsValidGraceName parameters.RepositoryName InvalidRepositoryName
+                          eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherRepositoryIdOrRepositoryNameIsRequired
+                          guidIsValidAndNotEmpty parameters.BranchId InvalidBranchId
+                          stringIsValidGraceName parameters.BranchName InvalidBranchName
+                          eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
+                          numberIsPositive parameters.MaxCount ValueMustBePositive
+                          ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
+                          organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName context OrganizationDoesNotExist
+                          repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName context RepositoryDoesNotExist
+                          branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName context BranchDoesNotExist ]
 
                     let query (context: HttpContext) maxCount (actorProxy: IBranchActor) =
                         task {
@@ -845,24 +846,24 @@ module Branch =
             task {
                 try
                     let validations (parameters: GetVersionParameters) (context: HttpContext) =
-                        [| guidIsValidAndNotEmpty parameters.OwnerId InvalidOwnerId |> returnTask
-                           stringIsValidGraceName parameters.OwnerName InvalidOwnerName |> returnTask
-                           eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired |> returnTask
-                           guidIsValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId |> returnTask
-                           stringIsValidGraceName parameters.OrganizationName InvalidOrganizationName |> returnTask
-                           eitherIdOrNameMustBeProvided parameters.OrganizationId parameters.OrganizationName EitherOrganizationIdOrOrganizationNameRequired |> returnTask
-                           guidIsValidAndNotEmpty parameters.RepositoryId InvalidRepositoryId |> returnTask
-                           stringIsValidGraceName parameters.RepositoryName InvalidRepositoryName |> returnTask
-                           eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherRepositoryIdOrRepositoryNameIsRequired |> returnTask
-                           guidIsValidAndNotEmpty parameters.BranchId InvalidBranchId |> returnTask
-                           stringIsValidGraceName parameters.BranchName InvalidBranchName |> returnTask
-                           eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired |> returnTask
-                           stringIsEmptyOrValidSha256Hash parameters.Sha256Hash Sha256HashDoesNotExist |> returnTask
-                           guidIsValidAndNotEmpty parameters.ReferenceId ReferenceIdDoesNotExist |> returnTask
-                           ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
-                           organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName context OrganizationDoesNotExist
-                           repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName context RepositoryDoesNotExist
-                           branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName context BranchDoesNotExist |]
+                        [ guidIsValidAndNotEmpty parameters.OwnerId InvalidOwnerId
+                          stringIsValidGraceName parameters.OwnerName InvalidOwnerName
+                          eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
+                          guidIsValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId
+                          stringIsValidGraceName parameters.OrganizationName InvalidOrganizationName
+                          eitherIdOrNameMustBeProvided parameters.OrganizationId parameters.OrganizationName EitherOrganizationIdOrOrganizationNameRequired
+                          guidIsValidAndNotEmpty parameters.RepositoryId InvalidRepositoryId
+                          stringIsValidGraceName parameters.RepositoryName InvalidRepositoryName
+                          eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherRepositoryIdOrRepositoryNameIsRequired
+                          guidIsValidAndNotEmpty parameters.BranchId InvalidBranchId
+                          stringIsValidGraceName parameters.BranchName InvalidBranchName
+                          eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
+                          stringIsEmptyOrValidSha256Hash parameters.Sha256Hash Sha256HashDoesNotExist
+                          guidIsValidAndNotEmpty parameters.ReferenceId ReferenceIdDoesNotExist
+                          ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
+                          organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName context OrganizationDoesNotExist
+                          repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName context RepositoryDoesNotExist
+                          branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName context BranchDoesNotExist ]
 
                     let query (context: HttpContext) maxCount (actorProxy: IBranchActor) =
                         task {

@@ -9,13 +9,10 @@ module Utilities =
     /// Retrieves the first error from a list of validations.
     /// </summary>
     /// <param name="validations">A list of Result values.</param>
-    /// <remarks>
-    /// This function is written in procedural style to prevent having to call .Result on a Task. I tried Array.tryPick, but the chooser function there can't return a Task. Performance should be identical.
-    /// </remarks>
-    let getFirstError (validations: Task<Result<'T, 'TError>> array) =
+    let getFirstError (validations: Task<Result<'T, 'TError>> list) =
         task {
             let! firstError = validations
-                              |> TaskSeq.ofTaskArray 
+                              |> TaskSeq.ofTaskList
                               |> TaskSeq.tryFind(fun validation -> Result.isError validation)
             return match firstError with
                     | Some result -> match result with | Ok _ -> None | Error error -> Some error   // This line will always return Some error
@@ -29,7 +26,7 @@ module Utilities =
     let anyFail validations =
         task {
             return! validations
-                    |> TaskSeq.ofTaskArray 
+                    |> TaskSeq.ofTaskList
                     |> TaskSeq.exists(fun validation -> Result.isError validation)
         }
 

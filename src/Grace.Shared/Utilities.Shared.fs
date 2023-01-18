@@ -234,9 +234,8 @@ module Utilities =
 //        {|message = $"Internal server error, and, yes, it's been logged. The correlationId is in the X-Correlation-Id header."|}
 //#endif
 
-    /// Calls Task.FromResult() with the provided value.
-    let returnTask<'T> (value: 'T) =
-        Task.FromResult<'T>(value)
+    /// Alias for calling Task.FromResult() with the provided value.
+    let returnTask<'T> value = Task.FromResult<'T>(value)
 
     /// Computes text for the time between two instants
     let elapsedBetween (instant1: Instant) (instant2: Instant) =

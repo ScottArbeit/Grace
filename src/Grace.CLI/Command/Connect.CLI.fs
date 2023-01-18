@@ -42,8 +42,7 @@ module Connect =
         let ``RepositoryId must be a non-empty Guid`` (parseResult: ParseResult, commonParameters: CommonParameters) =
             let mutable repositoryId: Guid = Guid.Empty
             if parseResult.HasOption(Options.repositoryId) then
-            //if parseResult.HasOption("--repositoryId") then 
-                match guidIsValidAndNotEmpty commonParameters.RepositoryId InvalidRepositoryId with
+                match (guidIsValidAndNotEmpty commonParameters.RepositoryId InvalidRepositoryId).Result with
                     | Ok result -> Result.Ok (parseResult, commonParameters)
                     | Error error -> Result.Error error
             else    
@@ -51,7 +50,7 @@ module Connect =
 
         let ``RepositoryName must be valid`` (parseResult: ParseResult, commonParameters: CommonParameters) =
             if parseResult.HasOption(Options.repositoryName) then 
-                match (stringIsValidGraceName commonParameters.RepositoryName InvalidRepositoryName) with
+                match (stringIsValidGraceName commonParameters.RepositoryName InvalidRepositoryName).Result with
                     | Ok result -> Result.Ok (parseResult, commonParameters)
                     | Error error -> Result.Error error
             else
@@ -60,7 +59,7 @@ module Connect =
         let ``OwnerId must be a non-empty Guid`` (parseResult: ParseResult, commonParameters: CommonParameters) =
             let mutable ownerId: Guid = Guid.Empty
             if parseResult.HasOption(Options.ownerId) then
-                match guidIsValidAndNotEmpty commonParameters.OwnerId InvalidOwnerId with
+                match (guidIsValidAndNotEmpty commonParameters.OwnerId InvalidOwnerId).Result with
                     | Ok result -> Result.Ok (parseResult, commonParameters)
                     | Error error -> Result.Error error
             else    
@@ -68,7 +67,7 @@ module Connect =
 
         let ``OwnerName must be valid`` (parseResult: ParseResult, commonParameters: CommonParameters) =
             if parseResult.HasOption(Options.ownerName) then 
-                match (stringIsValidGraceName commonParameters.OwnerName InvalidOwnerName) with
+                match (stringIsValidGraceName commonParameters.OwnerName InvalidOwnerName).Result with
                     | Ok result -> Result.Ok (parseResult, commonParameters)
                     | Error error -> Result.Error error
             else
@@ -77,7 +76,7 @@ module Connect =
         let ``OrganizationId must be a non-empty Guid`` (parseResult: ParseResult, commonParameters: CommonParameters) =
             let mutable organizationId: Guid = Guid.Empty
             if parseResult.HasOption(Options.organizationId) then
-                match guidIsValidAndNotEmpty commonParameters.OrganizationId InvalidOrganizationId with
+                match (guidIsValidAndNotEmpty commonParameters.OrganizationId InvalidOrganizationId).Result with
                     | Ok result -> Result.Ok (parseResult, commonParameters)
                     | Error error -> Result.Error error
             else    
@@ -85,7 +84,7 @@ module Connect =
 
         let ``OrganizationName must be valid`` (parseResult: ParseResult, commonParameters: CommonParameters) =
             if parseResult.HasOption(Options.organizationName) then 
-                match (stringIsValidGraceName commonParameters.OrganizationName InvalidOrganizationName) with
+                match (stringIsValidGraceName commonParameters.OrganizationName InvalidOrganizationName).Result with
                     | Ok result -> Result.Ok (parseResult, commonParameters)
                     | Error error -> Result.Error error
             else

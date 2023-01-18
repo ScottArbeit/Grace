@@ -28,7 +28,7 @@ open System.Threading.Tasks
 open System.Text.Json
 
 module Diff = 
-    type Validations<'T when 'T :> DiffParameters> = 'T -> HttpContext -> Task<Result<unit, DiffError>>[]
+    type Validations<'T when 'T :> DiffParameters> = 'T -> HttpContext -> Task<Result<unit, DiffError>> list
 
     let activitySource = new ActivitySource("Repository")
 
@@ -119,10 +119,10 @@ module Diff =
             task {
                 try
                     let validations (parameters: PopulateParameters) (context: HttpContext) =
-                        [| guidIsNotEmpty parameters.DirectoryId1 DiffError.InvalidDirectoryId |> returnTask
-                           guidIsNotEmpty parameters.DirectoryId2 DiffError.InvalidDirectoryId |> returnTask
-                           directoryIdExists parameters.DirectoryId1 context DiffError.DirectoryDoesNotExist
-                           directoryIdExists parameters.DirectoryId2 context DiffError.DirectoryDoesNotExist |]
+                        [ guidIsNotEmpty parameters.DirectoryId1 DiffError.InvalidDirectoryId
+                          guidIsNotEmpty parameters.DirectoryId2 DiffError.InvalidDirectoryId
+                          directoryIdExists parameters.DirectoryId1 context DiffError.DirectoryDoesNotExist
+                          directoryIdExists parameters.DirectoryId2 context DiffError.DirectoryDoesNotExist ]
 
                     let query (context: HttpContext) _ (actorProxy: IDiffActor) =
                         task {
@@ -141,10 +141,10 @@ module Diff =
             task {
                 try
                     let validations (parameters: GetDiffParameters) (context: HttpContext) =
-                        [| guidIsNotEmpty parameters.DirectoryId1 DiffError.InvalidDirectoryId |> returnTask
-                           guidIsNotEmpty parameters.DirectoryId2 DiffError.InvalidDirectoryId |> returnTask
-                           directoryIdExists parameters.DirectoryId1 context DiffError.DirectoryDoesNotExist
-                           directoryIdExists parameters.DirectoryId2 context DiffError.DirectoryDoesNotExist |]
+                        [ guidIsNotEmpty parameters.DirectoryId1 DiffError.InvalidDirectoryId
+                          guidIsNotEmpty parameters.DirectoryId2 DiffError.InvalidDirectoryId
+                          directoryIdExists parameters.DirectoryId1 context DiffError.DirectoryDoesNotExist
+                          directoryIdExists parameters.DirectoryId2 context DiffError.DirectoryDoesNotExist ]
 
                     let query (context: HttpContext) _ (actorProxy: IDiffActor) =
                         task {
@@ -164,10 +164,10 @@ module Diff =
             task {
                 try
                     let validations (parameters: GetDiffBySha256HashParameters) (context: HttpContext) =
-                        [| stringIsNotEmpty parameters.Sha256Hash1 DiffError.Sha256HashIsRequired |> returnTask
-                           stringIsNotEmpty parameters.Sha256Hash2 DiffError.Sha256HashIsRequired |> returnTask
-                           stringIsValidSha256Hash parameters.Sha256Hash1 DiffError.InvalidSha256Hash |> returnTask
-                           stringIsValidSha256Hash parameters.Sha256Hash2 DiffError.InvalidSha256Hash |> returnTask |]
+                        [ stringIsNotEmpty parameters.Sha256Hash1 DiffError.Sha256HashIsRequired
+                          stringIsNotEmpty parameters.Sha256Hash2 DiffError.Sha256HashIsRequired
+                          stringIsValidSha256Hash parameters.Sha256Hash1 DiffError.InvalidSha256Hash
+                          stringIsValidSha256Hash parameters.Sha256Hash2 DiffError.InvalidSha256Hash ]
 
                     let query (context: HttpContext) _ (actorProxy: IDiffActor) =
                         task {
