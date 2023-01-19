@@ -20,7 +20,7 @@ module Validations =
 
     let actorProxyFactory = ApplicationContext.ActorProxyFactory()
 
-    module Domain =
+    module Owner =
 
         /// Validates that the given ownerId exists in the database.
         let ownerIdExists<'T> (ownerId: string) (context: HttpContext) (error: 'T) =
@@ -130,6 +130,8 @@ module Validations =
                     return Ok ()
             }
 
+    module Organization =
+
         /// Validates that the given organizationId exists in the database.
         let organizationIdExists<'T> (organizationId: string) (context: HttpContext) (error: 'T) =
             task {
@@ -216,20 +218,7 @@ module Validations =
                 | None -> return Error error
             }
 
-        /// Validates that the given ReferenceId exists in the database.
-        let referenceIdExists<'T> (referenceId: ReferenceId) (context: HttpContext) (error: 'T) =
-            task {
-                if not <| (referenceId = Guid.Empty) then
-                    let actorId = ActorId($"{referenceId}")
-                    let referenceActorProxy = actorProxyFactory.CreateActorProxy<IReferenceActor>(actorId, ActorName.Reference)
-                    let! exists = referenceActorProxy.Exists()
-                    if exists then
-                        return Ok ()
-                    else
-                        return Error error
-                else
-                    return Ok ()
-            }
+    module Repository =
 
         /// Validates that the given RepositoryId exists in the database.
         let repositoryIdExists<'T> (repositoryId: string) (context: HttpContext) (error: 'T) =
@@ -314,6 +303,8 @@ module Validations =
                         return Error error
                 | None -> return Error error
             }
+
+    module Branch =
 
         /// Validates that the given branchId exists in the database.
         let branchIdExists<'T> (branchId: string) (context: HttpContext) (error: 'T) =
@@ -407,6 +398,22 @@ module Validations =
                 | None -> return Ok ()
             }
 
+        /// Validates that the given ReferenceId exists in the database.
+        let referenceIdExists<'T> (referenceId: ReferenceId) (context: HttpContext) (error: 'T) =
+            task {
+                if not <| (referenceId = Guid.Empty) then
+                    let actorId = ActorId($"{referenceId}")
+                    let referenceActorProxy = actorProxyFactory.CreateActorProxy<IReferenceActor>(actorId, ActorName.Reference)
+                    let! exists = referenceActorProxy.Exists()
+                    if exists then
+                        return Ok ()
+                    else
+                        return Error error
+                else
+                    return Ok ()
+            }
+
+    module Directory =
         /// Validates that the given DirectoryId exists in the database.
         let directoryIdExists<'T> (directoryId: Guid) (context: HttpContext) (error: 'T) =
             task {

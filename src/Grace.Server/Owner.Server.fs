@@ -100,8 +100,8 @@ module Owner =
                       Guid.isValidAndNotEmpty parameters.OwnerId InvalidOwnerId
                       String.isNotEmpty parameters.OwnerName OwnerNameIsRequired
                       String.isValidGraceName parameters.OwnerName InvalidOwnerName
-                      Domain.ownerIdDoesNotExist parameters.OwnerId context OwnerIdAlreadyExists
-                      Domain.ownerNameDoesNotExist parameters.OwnerName context OwnerNameAlreadyExists ]
+                      Owner.ownerIdDoesNotExist parameters.OwnerId context OwnerIdAlreadyExists
+                      Owner.ownerNameDoesNotExist parameters.OwnerName context OwnerNameAlreadyExists ]
 
                 let command (parameters: CreateParameters) = 
                     let ownerIdGuid = Guid.Parse(parameters.OwnerId)
@@ -119,9 +119,9 @@ module Owner =
                       Input.eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
                       String.isNotEmpty parameters.NewName OwnerNameIsRequired
                       String.isValidGraceName parameters.NewName InvalidOwnerName
-                      Domain.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
-                      Domain.ownerIsNotDeleted parameters.OwnerId parameters.OwnerName context OwnerIsDeleted
-                      Domain.ownerNameDoesNotExist parameters.NewName context OwnerNameAlreadyExists ]
+                      Owner.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
+                      Owner.ownerIsNotDeleted parameters.OwnerId parameters.OwnerName context OwnerIsDeleted
+                      Owner.ownerNameDoesNotExist parameters.NewName context OwnerNameAlreadyExists ]
 
                 let command (parameters: SetNameParameters) = 
                     OwnerCommand.SetName (OwnerName parameters.NewName) |> returnTask
@@ -138,8 +138,8 @@ module Owner =
                       Input.eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
                       String.isNotEmpty parameters.OwnerType OwnerTypeIsRequired
                       DiscriminatedUnion.isMemberOf<OwnerType, OwnerError> parameters.OwnerType InvalidOwnerType
-                      Domain.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
-                      Domain.ownerIsNotDeleted parameters.OwnerId parameters.OwnerName context OwnerIsDeleted ]
+                      Owner.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
+                      Owner.ownerIsNotDeleted parameters.OwnerId parameters.OwnerName context OwnerIsDeleted ]
 
                 let command (parameters: SetTypeParameters) = OwnerCommand.SetType (Utilities.discriminatedUnionFromString<OwnerType>(parameters.OwnerType).Value) |> returnTask
 
@@ -154,8 +154,8 @@ module Owner =
                       String.isValidGraceName parameters.OwnerName InvalidOwnerName
                       Input.eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
                       DiscriminatedUnion.isMemberOf<SearchVisibility, OwnerError> parameters.SearchVisibility InvalidSearchVisibility
-                      Domain.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
-                      Domain.ownerIsNotDeleted parameters.OwnerId parameters.OwnerName context OwnerIsDeleted ]
+                      Owner.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
+                      Owner.ownerIsNotDeleted parameters.OwnerId parameters.OwnerName context OwnerIsDeleted ]
 
                 let command (parameters: SetSearchVisibilityParameters) = OwnerCommand.SetSearchVisibility (Utilities.discriminatedUnionFromString<SearchVisibility>(parameters.SearchVisibility).Value) |> returnTask
 
@@ -170,8 +170,8 @@ module Owner =
                       String.isValidGraceName parameters.OwnerName InvalidOwnerName
                       Input.eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
                       String.isNotEmpty parameters.Description DescriptionIsRequired
-                      Domain.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
-                      Domain.ownerIsNotDeleted parameters.OwnerId parameters.OwnerName context OwnerIsDeleted ]
+                      Owner.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
+                      Owner.ownerIsNotDeleted parameters.OwnerId parameters.OwnerName context OwnerIsDeleted ]
 
                 let command (parameters: SetDescriptionParameters) = OwnerCommand.SetDescription (parameters.Description) |> returnTask
 
@@ -205,8 +205,8 @@ module Owner =
                       String.isValidGraceName parameters.OwnerName InvalidOwnerName
                       Input.eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
                       String.isNotEmpty parameters.DeleteReason DeleteReasonIsRequired
-                      Domain.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
-                      Domain.ownerIsNotDeleted parameters.OwnerId parameters.OwnerName context OwnerIsDeleted ]
+                      Owner.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
+                      Owner.ownerIsNotDeleted parameters.OwnerId parameters.OwnerName context OwnerIsDeleted ]
 
                 let command (parameters: DeleteParameters) = OwnerCommand.DeleteLogical (parameters.Force, parameters.DeleteReason) |> returnTask
 
@@ -220,8 +220,8 @@ module Owner =
                     [ Guid.isValidAndNotEmpty parameters.OwnerId InvalidOwnerId
                       String.isValidGraceName parameters.OwnerName InvalidOwnerName
                       Input.eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
-                      Domain.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
-                      Domain.ownerIsDeleted parameters.OwnerId parameters.OwnerName context OwnerIsNotDeleted ]
+                      Owner.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
+                      Owner.ownerIsDeleted parameters.OwnerId parameters.OwnerName context OwnerIsNotDeleted ]
 
                 let command (parameters: OwnerParameters) = OwnerCommand.Undelete |> returnTask
 
