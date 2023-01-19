@@ -96,12 +96,12 @@ module Owner =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let validations (parameters: CreateParameters) (context: HttpContext) =
-                    [ stringIsNotEmpty parameters.OwnerId OwnerIdIsRequired
-                      guidIsValidAndNotEmpty parameters.OwnerId InvalidOwnerId
-                      stringIsNotEmpty parameters.OwnerName OwnerNameIsRequired
-                      stringIsValidGraceName parameters.OwnerName InvalidOwnerName
-                      ownerIdDoesNotExist parameters.OwnerId context OwnerIdAlreadyExists
-                      ownerNameDoesNotExist parameters.OwnerName context OwnerNameAlreadyExists ]
+                    [ String.isNotEmpty parameters.OwnerId OwnerIdIsRequired
+                      Guid.isValidAndNotEmpty parameters.OwnerId InvalidOwnerId
+                      String.isNotEmpty parameters.OwnerName OwnerNameIsRequired
+                      String.isValidGraceName parameters.OwnerName InvalidOwnerName
+                      Domain.ownerIdDoesNotExist parameters.OwnerId context OwnerIdAlreadyExists
+                      Domain.ownerNameDoesNotExist parameters.OwnerName context OwnerNameAlreadyExists ]
 
                 let command (parameters: CreateParameters) = 
                     let ownerIdGuid = Guid.Parse(parameters.OwnerId)
@@ -114,14 +114,14 @@ module Owner =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let validations (parameters: SetNameParameters) (context: HttpContext) =
-                    [ guidIsValidAndNotEmpty parameters.OwnerId InvalidOwnerId
-                      stringIsValidGraceName parameters.OwnerName InvalidOwnerName
-                      eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
-                      stringIsNotEmpty parameters.NewName OwnerNameIsRequired
-                      stringIsValidGraceName parameters.NewName InvalidOwnerName
-                      ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
-                      ownerIsNotDeleted parameters.OwnerId parameters.OwnerName context OwnerIsDeleted
-                      ownerNameDoesNotExist parameters.NewName context OwnerNameAlreadyExists ]
+                    [ Guid.isValidAndNotEmpty parameters.OwnerId InvalidOwnerId
+                      String.isValidGraceName parameters.OwnerName InvalidOwnerName
+                      Input.eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
+                      String.isNotEmpty parameters.NewName OwnerNameIsRequired
+                      String.isValidGraceName parameters.NewName InvalidOwnerName
+                      Domain.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
+                      Domain.ownerIsNotDeleted parameters.OwnerId parameters.OwnerName context OwnerIsDeleted
+                      Domain.ownerNameDoesNotExist parameters.NewName context OwnerNameAlreadyExists ]
 
                 let command (parameters: SetNameParameters) = 
                     OwnerCommand.SetName (OwnerName parameters.NewName) |> returnTask
@@ -133,13 +133,13 @@ module Owner =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let validations (parameters: SetTypeParameters) (context: HttpContext) =
-                    [ guidIsValidAndNotEmpty parameters.OwnerId InvalidOwnerId
-                      stringIsValidGraceName parameters.OwnerName InvalidOwnerName
-                      eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
-                      stringIsNotEmpty parameters.OwnerType OwnerTypeIsRequired
-                      isMemberOfDiscriminatedUnion<OwnerType, OwnerError> parameters.OwnerType InvalidOwnerType
-                      ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
-                      ownerIsNotDeleted parameters.OwnerId parameters.OwnerName context OwnerIsDeleted ]
+                    [ Guid.isValidAndNotEmpty parameters.OwnerId InvalidOwnerId
+                      String.isValidGraceName parameters.OwnerName InvalidOwnerName
+                      Input.eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
+                      String.isNotEmpty parameters.OwnerType OwnerTypeIsRequired
+                      DiscriminatedUnion.isMemberOf<OwnerType, OwnerError> parameters.OwnerType InvalidOwnerType
+                      Domain.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
+                      Domain.ownerIsNotDeleted parameters.OwnerId parameters.OwnerName context OwnerIsDeleted ]
 
                 let command (parameters: SetTypeParameters) = OwnerCommand.SetType (Utilities.discriminatedUnionFromString<OwnerType>(parameters.OwnerType).Value) |> returnTask
 
@@ -150,12 +150,12 @@ module Owner =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let validations (parameters: SetSearchVisibilityParameters) (context: HttpContext) =
-                    [ guidIsValidAndNotEmpty parameters.OwnerId InvalidOwnerId
-                      stringIsValidGraceName parameters.OwnerName InvalidOwnerName
-                      eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
-                      isMemberOfDiscriminatedUnion<SearchVisibility, OwnerError> parameters.SearchVisibility InvalidSearchVisibility
-                      ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
-                      ownerIsNotDeleted parameters.OwnerId parameters.OwnerName context OwnerIsDeleted ]
+                    [ Guid.isValidAndNotEmpty parameters.OwnerId InvalidOwnerId
+                      String.isValidGraceName parameters.OwnerName InvalidOwnerName
+                      Input.eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
+                      DiscriminatedUnion.isMemberOf<SearchVisibility, OwnerError> parameters.SearchVisibility InvalidSearchVisibility
+                      Domain.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
+                      Domain.ownerIsNotDeleted parameters.OwnerId parameters.OwnerName context OwnerIsDeleted ]
 
                 let command (parameters: SetSearchVisibilityParameters) = OwnerCommand.SetSearchVisibility (Utilities.discriminatedUnionFromString<SearchVisibility>(parameters.SearchVisibility).Value) |> returnTask
 
@@ -166,12 +166,12 @@ module Owner =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let validations (parameters: SetDescriptionParameters) (context: HttpContext) =
-                    [ guidIsValidAndNotEmpty parameters.OwnerId InvalidOwnerId
-                      stringIsValidGraceName parameters.OwnerName InvalidOwnerName
-                      eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
-                      stringIsNotEmpty parameters.Description DescriptionIsRequired
-                      ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
-                      ownerIsNotDeleted parameters.OwnerId parameters.OwnerName context OwnerIsDeleted ]
+                    [ Guid.isValidAndNotEmpty parameters.OwnerId InvalidOwnerId
+                      String.isValidGraceName parameters.OwnerName InvalidOwnerName
+                      Input.eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
+                      String.isNotEmpty parameters.Description DescriptionIsRequired
+                      Domain.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
+                      Domain.ownerIsNotDeleted parameters.OwnerId parameters.OwnerName context OwnerIsDeleted ]
 
                 let command (parameters: SetDescriptionParameters) = OwnerCommand.SetDescription (parameters.Description) |> returnTask
 
@@ -183,7 +183,7 @@ module Owner =
             task {
                 try
                     let validations (parameters: ListOrganizationsParameters) (context: HttpContext) =
-                        [ guidIsValidAndNotEmpty parameters.OwnerId InvalidOwnerId ]
+                        [ Guid.isValidAndNotEmpty parameters.OwnerId InvalidOwnerId ]
 
                     let query (context: HttpContext) (maxCount: int) (actorProxy: IOwnerActor) =
                         task {
@@ -201,12 +201,12 @@ module Owner =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let validations (parameters: DeleteParameters) (context: HttpContext) =
-                    [ guidIsValidAndNotEmpty parameters.OwnerId InvalidOwnerId
-                      stringIsValidGraceName parameters.OwnerName InvalidOwnerName
-                      eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
-                      stringIsNotEmpty parameters.DeleteReason DeleteReasonIsRequired
-                      ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
-                      ownerIsNotDeleted parameters.OwnerId parameters.OwnerName context OwnerIsDeleted ]
+                    [ Guid.isValidAndNotEmpty parameters.OwnerId InvalidOwnerId
+                      String.isValidGraceName parameters.OwnerName InvalidOwnerName
+                      Input.eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
+                      String.isNotEmpty parameters.DeleteReason DeleteReasonIsRequired
+                      Domain.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
+                      Domain.ownerIsNotDeleted parameters.OwnerId parameters.OwnerName context OwnerIsDeleted ]
 
                 let command (parameters: DeleteParameters) = OwnerCommand.DeleteLogical (parameters.Force, parameters.DeleteReason) |> returnTask
 
@@ -217,11 +217,11 @@ module Owner =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let validations (parameters: OwnerParameters) (context: HttpContext) =
-                    [ guidIsValidAndNotEmpty parameters.OwnerId InvalidOwnerId
-                      stringIsValidGraceName parameters.OwnerName InvalidOwnerName
-                      eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
-                      ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
-                      ownerIsDeleted parameters.OwnerId parameters.OwnerName context OwnerIsNotDeleted ]
+                    [ Guid.isValidAndNotEmpty parameters.OwnerId InvalidOwnerId
+                      String.isValidGraceName parameters.OwnerName InvalidOwnerName
+                      Input.eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
+                      Domain.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
+                      Domain.ownerIsDeleted parameters.OwnerId parameters.OwnerName context OwnerIsNotDeleted ]
 
                 let command (parameters: OwnerParameters) = OwnerCommand.Undelete |> returnTask
 
@@ -233,7 +233,7 @@ module Owner =
             task {
                 try
                     let validations (parameters: GetParameters) (context: HttpContext) =
-                        [ guidIsValidAndNotEmpty parameters.OwnerId InvalidOwnerId ]
+                        [ Guid.isValidAndNotEmpty parameters.OwnerId InvalidOwnerId ]
 
                     let query (context: HttpContext) (maxCount: int) (actorProxy: IOwnerActor) =
                         task {

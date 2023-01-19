@@ -86,9 +86,9 @@ module Directory =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let validations (parameters: CreateParameters) (context: HttpContext) =
-                    [ guidIsValidAndNotEmpty $"{parameters.DirectoryVersion.DirectoryId}" DirectoryError.InvalidDirectoryId
-                      guidIsValidAndNotEmpty $"{parameters.DirectoryVersion.RepositoryId}" DirectoryError.InvalidRepositoryId
-                      repositoryIdExists $"{parameters.DirectoryVersion.RepositoryId}" context DirectoryError.RepositoryDoesNotExist ]
+                    [ Guid.isValidAndNotEmpty $"{parameters.DirectoryVersion.DirectoryId}" DirectoryError.InvalidDirectoryId
+                      Guid.isValidAndNotEmpty $"{parameters.DirectoryVersion.RepositoryId}" DirectoryError.InvalidRepositoryId
+                      Domain.repositoryIdExists $"{parameters.DirectoryVersion.RepositoryId}" context DirectoryError.RepositoryDoesNotExist ]
 
                 let command (parameters: CreateParameters) (context: HttpContext) =
                     task {
@@ -105,10 +105,10 @@ module Directory =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let validations (parameters: GetParameters) (context: HttpContext) =
-                    [ guidIsValidAndNotEmpty $"{parameters.RepositoryId}" DirectoryError.InvalidRepositoryId
-                      guidIsValidAndNotEmpty $"{parameters.DirectoryId}" DirectoryError.InvalidRepositoryId
-                      repositoryIdExists $"{parameters.RepositoryId}" context DirectoryError.RepositoryDoesNotExist
-                      directoryIdExists (Guid.Parse(parameters.DirectoryId)) context DirectoryError.DirectoryDoesNotExist ]
+                    [ Guid.isValidAndNotEmpty $"{parameters.RepositoryId}" DirectoryError.InvalidRepositoryId
+                      Guid.isValidAndNotEmpty $"{parameters.DirectoryId}" DirectoryError.InvalidRepositoryId
+                      Domain.repositoryIdExists $"{parameters.RepositoryId}" context DirectoryError.RepositoryDoesNotExist
+                      Domain.directoryIdExists (Guid.Parse(parameters.DirectoryId)) context DirectoryError.DirectoryDoesNotExist ]
 
                 let query (context: HttpContext) (maxCount: int) (actorProxy: IDirectoryActor) =
                     task {
@@ -124,10 +124,10 @@ module Directory =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let validations (parameters: GetParameters) (context: HttpContext) =
-                    [ guidIsValidAndNotEmpty $"{parameters.RepositoryId}" DirectoryError.InvalidRepositoryId
-                      guidIsValidAndNotEmpty $"{parameters.DirectoryId}" DirectoryError.InvalidRepositoryId
-                      repositoryIdExists $"{parameters.RepositoryId}" context DirectoryError.RepositoryDoesNotExist
-                      directoryIdExists (Guid.Parse(parameters.DirectoryId)) context DirectoryError.DirectoryDoesNotExist ]
+                    [ Guid.isValidAndNotEmpty $"{parameters.RepositoryId}" DirectoryError.InvalidRepositoryId
+                      Guid.isValidAndNotEmpty $"{parameters.DirectoryId}" DirectoryError.InvalidRepositoryId
+                      Domain.repositoryIdExists $"{parameters.RepositoryId}" context DirectoryError.RepositoryDoesNotExist
+                      Domain.directoryIdExists (Guid.Parse(parameters.DirectoryId)) context DirectoryError.DirectoryDoesNotExist ]
 
                 let query (context: HttpContext) (maxCount: int) (actorProxy: IDirectoryActor) =
                     task {
@@ -143,9 +143,9 @@ module Directory =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let validations (parameters: GetByDirectoryIdsParameters) (context: HttpContext) =
-                    [ guidIsValidAndNotEmpty $"{parameters.RepositoryId}" DirectoryError.InvalidRepositoryId
-                      repositoryIdExists $"{parameters.RepositoryId}" context DirectoryError.RepositoryDoesNotExist
-                      directoryIdsExist parameters.DirectoryIds context DirectoryError.DirectoryDoesNotExist ]
+                    [ Guid.isValidAndNotEmpty $"{parameters.RepositoryId}" DirectoryError.InvalidRepositoryId
+                      Domain.repositoryIdExists $"{parameters.RepositoryId}" context DirectoryError.RepositoryDoesNotExist
+                      Domain.directoryIdsExist parameters.DirectoryIds context DirectoryError.DirectoryDoesNotExist ]
 
                 let query (context: HttpContext) (maxCount: int) (actorProxy: IDirectoryActor) =
                     task {
@@ -167,10 +167,10 @@ module Directory =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let validations (parameters: GetBySha256HashParameters) (context: HttpContext) =
-                    [ guidIsValidAndNotEmpty $"{parameters.DirectoryId}" DirectoryError.InvalidDirectoryId
-                      guidIsValidAndNotEmpty $"{parameters.RepositoryId}" DirectoryError.InvalidRepositoryId
-                      stringIsNotEmpty parameters.Sha256Hash DirectoryError.Sha256HashIsRequired
-                      repositoryIdExists $"{parameters.RepositoryId}" context DirectoryError.RepositoryDoesNotExist ]
+                    [ Guid.isValidAndNotEmpty $"{parameters.DirectoryId}" DirectoryError.InvalidDirectoryId
+                      Guid.isValidAndNotEmpty $"{parameters.RepositoryId}" DirectoryError.InvalidRepositoryId
+                      String.isNotEmpty parameters.Sha256Hash DirectoryError.Sha256HashIsRequired
+                      Domain.repositoryIdExists $"{parameters.RepositoryId}" context DirectoryError.RepositoryDoesNotExist ]
 
                 let query (context: HttpContext) (maxCount: int) (actorProxy: IDirectoryActor) =
                     task {
@@ -191,11 +191,11 @@ module Directory =
                     let mutable allValidations: Task<Result<unit, DirectoryError>> list = List.Empty
                     for directoryVersion in parameters.DirectoryVersions do
                         let validations = 
-                            [ guidIsValidAndNotEmpty $"{directoryVersion.DirectoryId}" DirectoryError.InvalidDirectoryId
-                              guidIsValidAndNotEmpty $"{directoryVersion.RepositoryId}" DirectoryError.InvalidRepositoryId
-                              stringIsNotEmpty $"{directoryVersion.Sha256Hash}" DirectoryError.Sha256HashIsRequired 
-                              stringIsNotEmpty $"{directoryVersion.RelativePath}" DirectoryError.RelativePathMustNotBeEmpty
-                              repositoryIdExists $"{directoryVersion.RepositoryId}" context DirectoryError.RepositoryDoesNotExist ]
+                            [ Guid.isValidAndNotEmpty $"{directoryVersion.DirectoryId}" DirectoryError.InvalidDirectoryId
+                              Guid.isValidAndNotEmpty $"{directoryVersion.RepositoryId}" DirectoryError.InvalidRepositoryId
+                              String.isNotEmpty $"{directoryVersion.Sha256Hash}" DirectoryError.Sha256HashIsRequired 
+                              String.isNotEmpty $"{directoryVersion.RelativePath}" DirectoryError.RelativePathMustNotBeEmpty
+                              Domain.repositoryIdExists $"{directoryVersion.RepositoryId}" context DirectoryError.RepositoryDoesNotExist ]
                         allValidations <- List.append allValidations validations
                     allValidations
 
