@@ -738,9 +738,11 @@ module Branch =
                 let! result = getReferenceHandler parseResult (getReferencesParameters |> normalizeIdsAndNames parseResult) query
                 match result with
                 | Ok graceReturnValue ->
-                    writeReferenceOutput parseResult graceReturnValue.ReturnValue
-                    AnsiConsole.MarkupLine($"[{Colors.Important}]Returned {graceReturnValue.ReturnValue.Count()} rows.[/]")
-                    return 0
+                    let intReturn = result |> renderOutput parseResult
+                    if parseResult |> showOutput then
+                        writeReferenceOutput parseResult graceReturnValue.ReturnValue
+                        AnsiConsole.MarkupLine($"[{Colors.Important}]Returned {graceReturnValue.ReturnValue.Count()} rows.[/]")
+                    return intReturn
                 | Error error ->
                     return result |> renderOutput parseResult
             })
@@ -756,9 +758,11 @@ module Branch =
                 let! result = getReferenceHandler parseResult (getReferencesParameters |> normalizeIdsAndNames parseResult) query
                 match result with
                 | Ok graceReturnValue ->
-                    writeReferenceOutput parseResult graceReturnValue.ReturnValue
-                    AnsiConsole.MarkupLine($"[{Colors.Important}]Returned {graceReturnValue.ReturnValue.Count()} rows.[/]")
-                    return 0
+                    let intReturn = result |> renderOutput parseResult
+                    if parseResult |> showOutput then
+                        writeReferenceOutput parseResult graceReturnValue.ReturnValue
+                        AnsiConsole.MarkupLine($"[{Colors.Important}]Returned {graceReturnValue.ReturnValue.Count()} rows.[/]")
+                    return intReturn
                 | Error error ->
                     return result |> renderOutput parseResult
             })
@@ -774,9 +778,11 @@ module Branch =
                 let! result = getReferenceHandler parseResult (getReferencesParameters |> normalizeIdsAndNames parseResult) query
                 match result with
                 | Ok graceReturnValue ->
-                    writeReferenceOutput parseResult graceReturnValue.ReturnValue
-                    AnsiConsole.MarkupLine($"[{Colors.Important}]Returned {graceReturnValue.ReturnValue.Count()} rows.[/]")
-                    return 0
+                    let intReturn = result |> renderOutput parseResult
+                    if parseResult |> showOutput then
+                        writeReferenceOutput parseResult graceReturnValue.ReturnValue
+                        AnsiConsole.MarkupLine($"[{Colors.Important}]Returned {graceReturnValue.ReturnValue.Count()} rows.[/]")
+                    return intReturn
                 | Error error ->
                     return result |> renderOutput parseResult
             })
@@ -799,9 +805,11 @@ module Branch =
                 let! result = getReferenceHandler parseResult (getReferencesParameters |> normalizeIdsAndNames parseResult) query
                 match result with
                 | Ok graceReturnValue ->
-                    writeReferenceOutput parseResult graceReturnValue.ReturnValue
-                    AnsiConsole.MarkupLine($"[{Colors.Important}]Returned {graceReturnValue.ReturnValue.Count()} rows.[/]")
-                    return 0
+                    let intReturn = result |> renderOutput parseResult
+                    if parseResult |> showOutput then
+                        writeReferenceOutput parseResult graceReturnValue.ReturnValue
+                        AnsiConsole.MarkupLine($"[{Colors.Important}]Returned {graceReturnValue.ReturnValue.Count()} rows.[/]")
+                    return intReturn
                 | Error error ->
                     return result |> renderOutput parseResult
             })
@@ -817,9 +825,11 @@ module Branch =
                 let! result = getReferenceHandler parseResult (getReferencesParameters |> normalizeIdsAndNames parseResult) query
                 match result with
                 | Ok graceReturnValue ->
-                    writeReferenceOutput parseResult graceReturnValue.ReturnValue
-                    AnsiConsole.MarkupLine($"[{Colors.Important}]Returned {graceReturnValue.ReturnValue.Count()} rows.[/]")
-                    return 0
+                    let intReturn = result |> renderOutput parseResult
+                    if parseResult |> showOutput then
+                        writeReferenceOutput parseResult graceReturnValue.ReturnValue
+                        AnsiConsole.MarkupLine($"[{Colors.Important}]Returned {graceReturnValue.ReturnValue.Count()} rows.[/]")
+                    return intReturn
                 | Error error ->
                     return result |> renderOutput parseResult
             })
@@ -835,9 +845,11 @@ module Branch =
                 let! result = getReferenceHandler parseResult (getReferencesParameters |> normalizeIdsAndNames parseResult) query
                 match result with
                 | Ok graceReturnValue ->
-                    writeReferenceOutput parseResult graceReturnValue.ReturnValue
-                    AnsiConsole.MarkupLine($"[{Colors.Important}]Returned {graceReturnValue.ReturnValue.Count()} rows.[/]")
-                    return 0
+                    let intReturn = result |> renderOutput parseResult
+                    if parseResult |> showOutput then
+                        writeReferenceOutput parseResult graceReturnValue.ReturnValue
+                        AnsiConsole.MarkupLine($"[{Colors.Important}]Returned {graceReturnValue.ReturnValue.Count()} rows.[/]")
+                    return intReturn
                 | Error error ->
                     return result |> renderOutput parseResult
             })

@@ -279,7 +279,8 @@ module Diff =
                 else
                     // Do the thing here
                     return 0
-            | Error error -> return (renderOutput parseResult (Error error))
+            | Error error ->
+                return (Error error) |> renderOutput parseResult
         }
 
     let private mergeHandler = 

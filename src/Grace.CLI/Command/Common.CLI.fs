@@ -72,12 +72,11 @@ module Common =
         | Ok graceReturnValue -> 
             match outputFormat with
             | Json -> AnsiConsole.WriteLine(Markup.Escape($"{graceReturnValue}"))
-            | Minimal -> AnsiConsole.MarkupLine($"""[{Colors.Highlighted}]{Markup.Escape($"{graceReturnValue.ReturnValue}")}[/]""")
+            | Minimal -> ()     //AnsiConsole.MarkupLine($"""[{Colors.Highlighted}]{Markup.Escape($"{graceReturnValue.ReturnValue}")}[/]""")
             | Silent -> ()
             | Verbose -> AnsiConsole.MarkupLine($"""[{Colors.Verbose}]{Markup.Escape($"{graceReturnValue}")}[/]""")
                          AnsiConsole.WriteLine()
-                         AnsiConsole.MarkupLine($"""[{Colors.Highlighted}]{Markup.Escape($"{graceReturnValue.ReturnValue}")}[/]""")
-            | Normal -> AnsiConsole.MarkupLine($"""[{Colors.Highlighted}]{Markup.Escape($"{graceReturnValue.ReturnValue}")}[/]""")
+            | Normal -> ()
             0
         | Error error -> 
             let json = if error.Error.Contains("Stack trace") then
@@ -105,7 +104,7 @@ module Common =
             | Silent -> ()
             | Verbose -> AnsiConsole.MarkupLine($"[{Colors.Verbose}]{Markup.Escape(json)}[/]")
                          AnsiConsole.WriteLine()
-                         AnsiConsole.MarkupLine($"[{Colors.Error}]{Markup.Escape(errorText)}[/]")
+                         //AnsiConsole.MarkupLine($"[{Colors.Error}]{Markup.Escape(errorText)}[/]")
             | Normal -> AnsiConsole.MarkupLine($"[{Colors.Error}]{Markup.Escape(errorText)}[/]")
             -1
 

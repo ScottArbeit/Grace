@@ -273,28 +273,30 @@ module Repository =
                 let! result = getBranchesHandler parseResult getBranchesParameters
                 match result with
                 | Ok returnValue ->
-                    let table = Table(Border = TableBorder.DoubleEdge)
-                    table.AddColumn(TableColumn(Markup($"[{Colors.Important}]Branch[/]")))
-                         .AddColumn(TableColumn(Markup($"[{Colors.Important}]Updated at[/]")))
-                         .AddColumn(TableColumn(Markup($"[{Colors.Important}]Branch Id[/]")))
-                         .AddColumn(TableColumn(Markup($"[{Colors.Important}]Parent branch[/]"))) |> ignore
-                    let allBranches = returnValue.ReturnValue
-                    let parents = allBranches.Select(fun branch -> {|
-                        branchId = branch.BranchId
-                        branchName = if branch.ParentBranchId = Constants.DefaultParentBranchId then "root"
-                                     else allBranches.Where(fun br -> br.BranchId = branch.ParentBranchId).Select(fun br -> br.BranchName).First() |})
+                    let intResult = result |> renderOutput parseResult
+                    if parseResult |> showOutput then
+                        let table = Table(Border = TableBorder.DoubleEdge)
+                        table.AddColumn(TableColumn(Markup($"[{Colors.Important}]Branch[/]")))
+                             .AddColumn(TableColumn(Markup($"[{Colors.Important}]Updated at[/]")))
+                             .AddColumn(TableColumn(Markup($"[{Colors.Important}]Branch Id[/]")))
+                             .AddColumn(TableColumn(Markup($"[{Colors.Important}]Parent branch[/]"))) |> ignore
+                        let allBranches = returnValue.ReturnValue
+                        let parents = allBranches.Select(fun branch -> {|
+                            branchId = branch.BranchId
+                            branchName = if branch.ParentBranchId = Constants.DefaultParentBranchId then "root"
+                                         else allBranches.Where(fun br -> br.BranchId = branch.ParentBranchId).Select(fun br -> br.BranchName).First() |})
 
-                    let branchesWithParentNames = allBranches.Join(parents, (fun branch -> branch.BranchId), (fun parent -> parent.branchId), 
-                        (fun branch parent -> {| branchId = branch.BranchId; branchName = branch.BranchName; updatedAt = branch.UpdatedAt; parentBranchName = parent.branchName |})).OrderBy(fun branch -> branch.parentBranchName, branch.branchName)
+                        let branchesWithParentNames = allBranches.Join(parents, (fun branch -> branch.BranchId), (fun parent -> parent.branchId), 
+                            (fun branch parent -> {| branchId = branch.BranchId; branchName = branch.BranchName; updatedAt = branch.UpdatedAt; parentBranchName = parent.branchName |})).OrderBy(fun branch -> branch.parentBranchName, branch.branchName)
 
-                    for br in branchesWithParentNames do
-                        let updatedAt = match br.updatedAt with | Some t -> instantToLocalTime(t) | None -> String.Empty
-                        table.AddRow(br.branchName, updatedAt, $"[{Colors.Deemphasized}]{br.branchId}[/]", br.parentBranchName) |> ignore
-                    AnsiConsole.Write(table)
-                    return 0
+                        for br in branchesWithParentNames do
+                            let updatedAt = match br.updatedAt with | Some t -> instantToLocalTime(t) | None -> String.Empty
+                            table.AddRow(br.branchName, updatedAt, $"[{Colors.Deemphasized}]{br.branchId}[/]", br.parentBranchName) |> ignore
+                        AnsiConsole.Write(table)
+
+                    return intResult
                 | Error error ->
-                    logToAnsiConsole Colors.Error $"{error.ToString()}"
-                    return -1
+                    return result |> renderOutput parseResult
             })
 
     // Set-Visibility subcommand

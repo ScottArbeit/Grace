@@ -312,6 +312,10 @@ module Types =
             Permissions: List<ClaimPermission>
         }
 
+    /// Cleans up extra backslashes (escape characters) and converts \r\n to Environment.NewLine.
+    let cleanJson (s: string) =
+        s.Replace("\\\\\\\\", @"\").Replace("\\\\", @"\").Replace(@"\r\n", Environment.NewLine)
+
     type GraceReturnValue<'T> = 
         {
             ReturnValue: 'T
@@ -324,7 +328,7 @@ module Types =
         member this.enhance(key, value) =
             this.Properties.Add(key, value)
             this
-        override this.ToString() = JsonSerializer.Serialize(this, Constants.JsonSerializerOptions).Replace("\\\\\\\\", @"\").Replace("\\\\", @"\").Replace(@"\r\n", Environment.NewLine)
+        override this.ToString() = JsonSerializer.Serialize(this, Constants.JsonSerializerOptions) |> cleanJson
 
     type GraceError =
         {
@@ -338,7 +342,7 @@ module Types =
         member this.enhance(key, value) =
             this.Properties.Add(key, value)
             this
-        override this.ToString() = JsonSerializer.Serialize(this, Constants.JsonSerializerOptions).Replace("\\\\\\\\", @"\").Replace("\\\\", @"\").Replace(@"\r\n", Environment.NewLine)
+        override this.ToString() = JsonSerializer.Serialize(this, Constants.JsonSerializerOptions) |> cleanJson
 
     type GraceResult<'T> = Result<GraceReturnValue<'T>, GraceError>
 
