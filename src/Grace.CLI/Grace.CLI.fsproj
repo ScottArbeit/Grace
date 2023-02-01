@@ -43,8 +43,8 @@
 		<PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.4.0-rc.2" />
 		<PackageReference Include="OpenTelemetry.Exporter.Zipkin" Version="1.4.0-rc.2" />
 		<PackageReference Include="Polly" Version="7.2.3" />
-		<PackageReference Include="Spectre.Console" Version="0.45.0" />
-		<PackageReference Include="Spectre.Console.ImageSharp" Version="0.45.0" />
+		<PackageReference Include="Spectre.Console" Version="0.46.0" />
+		<PackageReference Include="Spectre.Console.ImageSharp" Version="0.46.0" />
 		<PackageReference Include="System.CommandLine" Version="2.0.0-beta4.22272.1" />
 		<PackageReference Include="System.CommandLine.Hosting" Version="0.4.0-alpha.22272.1" />
 		<PackageReference Include="System.Diagnostics.DiagnosticSource" Version="7.0.0" />

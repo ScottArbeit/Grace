@@ -99,6 +99,7 @@ module Maintenance =
                                         let! graceResult = Storage.FilesExistInObjectStorage (fileVersions.Select(fun f -> f.Value.ToFileVersion).ToList()) (getCorrelationId parseResult)
                                         match graceResult with
                                         | Ok graceReturnValue ->
+                                            logToConsole $"In Ok"
                                             let uploadMetadata = graceReturnValue.ReturnValue
                                             // First, increment the counter for the files that we don't have to upload.
                                             t5.Increment(incrementAmount * float (fileVersions.Count() - uploadMetadata.Count))
@@ -115,7 +116,9 @@ module Maintenance =
                                                     | Error error -> errors.Enqueue(error)
                                                 })))
 
-                                        | Error error -> AnsiConsole.MarkupLine($"[{Colors.Error}]{error}[/]")
+                                        | Error error ->
+                                            AnsiConsole.Write((new Panel($"{error}"))
+                                                                  .BorderColor(Color.Red3))
                                     })))
 
                                 if errors.Count = 0 then

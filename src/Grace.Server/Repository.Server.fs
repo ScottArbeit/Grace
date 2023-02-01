@@ -45,12 +45,22 @@ module Repository =
         let actorId = ActorId(repositoryId)
         actorProxyFactory.CreateActorProxy<IRepositoryActor>(actorId, ActorName.Repository)
 
+    let commonValidations<'T when 'T :> RepositoryParameters> (parameters: 'T) (context: HttpContext) =
+        [ Guid.isValidAndNotEmpty parameters.OwnerId InvalidOwnerId
+          String.isValidGraceName parameters.OwnerName InvalidOwnerName
+          Input.eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
+          Guid.isValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId
+          String.isValidGraceName parameters.OrganizationName InvalidOrganizationName
+          Input.eitherIdOrNameMustBeProvided parameters.OrganizationId parameters.OrganizationName EitherOrganizationIdOrOrganizationNameRequired
+          Guid.isValidAndNotEmpty parameters.RepositoryId InvalidRepositoryId
+          String.isValidGraceName parameters.RepositoryName InvalidRepositoryName ]
+
     let processCommand<'T when 'T :> RepositoryParameters> (context: HttpContext) (validations: Validations<'T>) (command: 'T -> Task<RepositoryCommand>) = 
         task {
             try
                 use activity = activitySource.StartActivity("processCommand", ActivityKind.Server)
                 let! parameters = context |> parse<'T>
-                let validationResults = validations parameters context
+                let validationResults = List.append (commonValidations parameters context) (validations parameters context)
                 let! validationsPassed = validationResults |> allPass
                 if validationsPassed then
                     let! repositoryId = resolveRepositoryId parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName
@@ -95,8 +105,9 @@ module Repository =
         task {
             try
                 use activity = activitySource.StartActivity("processQuery", ActivityKind.Server)
-                //let! parameters = context |> parse<'T>
-                let validationResults = validations parameters context
+                //let! parameters = context |> parse<'T>              
+                let validationResults = List.append (commonValidations parameters context) (validations parameters context)
+                //let validationResults = validations parameters context
                 let! validationsPassed = validationResults |> allPass
                 if validationsPassed then
                     context.Items.Add(nameof(RepositoryId), RepositoryId parameters.RepositoryId)

@@ -36,12 +36,14 @@ open System.Threading.Tasks
 open System.Text
 open Grace.Actors.Interfaces
 
-module Services =   //.
+module Services =
 
     /// Defines the type of all server queries in Grace.
     ///
     /// Takes an HttpContext, the MaxCount of results to return, and the ActorProxy to use for the query, and returns a Task containing the return value.
     type QueryResult<'T, 'U when 'T :> IActor> = HttpContext -> int -> 'T -> Task<'U>
+
+    let actorProxyFactory = ApplicationContext.ActorProxyFactory()
 
     /// <summary>
     /// Creates common metadata for Grace events.
@@ -286,7 +288,7 @@ module Services =   //.
             elif String.IsNullOrEmpty(branchName) then
                 return None
             else
-                let branchNameActorProxy = ApplicationContext.ActorProxyFactory().CreateActorProxy<IBranchNameActor>(BranchName.GetActorId repositoryId branchName, ActorName.BranchName)
+                let branchNameActorProxy = actorProxyFactory.CreateActorProxy<IBranchNameActor>(BranchName.GetActorId repositoryId branchName, ActorName.BranchName)
                 match! branchNameActorProxy.GetBranchId() with
                 | Some branchId -> return Some branchId
                 | None ->

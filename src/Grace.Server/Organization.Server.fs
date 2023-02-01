@@ -90,7 +90,7 @@ module Organization =
             task {
                 let validations (parameters: CreateParameters) (context: HttpContext) =
                     [ Guid.isValidAndNotEmpty parameters.OwnerId InvalidOwnerId
-                      String.isNotEmpty parameters.OwnerName OwnerIdIsRequired
+                      String.isValidGraceName parameters.OwnerName InvalidOwnerName
                       Input.eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
                       String.isNotEmpty parameters.OrganizationId OrganizationIdIsRequired
                       Guid.isValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId

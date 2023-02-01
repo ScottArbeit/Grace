@@ -19,17 +19,17 @@ module Constants =
     ///
     /// See https://github.com/Tarmil/FSharp.SystemTextJson/blob/master/docs/Customizing.md for more information about these options.
     let private jsonFSharpOptions = 
-        JsonFSharpOptions(
-            unionEncoding = (JsonUnionEncoding.ExternalTag ||| 
-                             JsonUnionEncoding.UnwrapFieldlessTags |||
-                             JsonUnionEncoding.UnwrapSingleFieldCases ||| 
-                             JsonUnionEncoding.UnwrapSingleCaseUnions ||| 
-                             JsonUnionEncoding.NamedFields),
-            unionFieldsName = "value",
-            unionTagNamingPolicy = JsonNamingPolicy.CamelCase,
-            unionTagCaseInsensitive = true,
-            allowNullFields = true
-        )
+        JsonFSharpOptions.Default()
+            .WithAllowNullFields(true)
+            .WithUnionFieldsName("value")
+            .WithUnionTagNamingPolicy(JsonNamingPolicy.CamelCase)
+            .WithUnionTagCaseInsensitive(true)
+            .WithUnionEncoding(JsonUnionEncoding.ExternalTag ||| 
+                JsonUnionEncoding.UnwrapFieldlessTags |||
+                JsonUnionEncoding.UnwrapSingleFieldCases ||| 
+                JsonUnionEncoding.UnwrapSingleCaseUnions ||| 
+                JsonUnionEncoding.NamedFields)
+            .WithUnwrapOption(true)
 
     /// The universal JSON serialization options for Grace.
     let public JsonSerializerOptions = JsonSerializerOptions()
@@ -150,20 +150,20 @@ module Constants =
     /// <summary>
     /// Validates that a string is a valid Grace object name.
     ///
-    /// Regex: [A-Za-z][A-Za-z0-9\-_]{1,63}$
+    /// Regex: [A-Za-z][A-Za-z0-9\-]{1,63}$
     ///
-    /// A valid object name in Grace has between 2 and 64 characters, has a letter for the first character ([A-Za-z]), and letters, numbers, -, or _  for the rest ([A-Za-z0-9\-_]{1,63}).
+    /// A valid object name in Grace has between 2 and 64 characters, has a letter for the first character ([A-Za-z]), and letters, numbers, or a dash (-) for the rest ([A-Za-z0-9\-_]{1,63}).
     /// 
     /// See https://regexper.com for a diagram.
     /// </summary>
-    let GraceNameRegexText = "^[A-Za-z][A-Za-z0-9\-_]{1,63}$"
+    let GraceNameRegexText = "^[A-Za-z][A-Za-z0-9\-]{1,63}$"
 
     /// <summary>
     /// Validates that a string is a valid Grace object name.
     ///
-    /// Regex: [A-Za-z][A-Za-z0-9\-_]{1,63}$
+    /// Regex: [A-Za-z][A-Za-z0-9\-]{1,63}$
     ///
-    /// A valid object name in Grace has between 2 and 64 characters, has a letter for the first character ([A-Za-z]), and letters, numbers, -, or _  for the rest ([A-Za-z0-9\-_]{1,63}).
+    /// A valid object name in Grace has between 2 and 64 characters, has a letter for the first character ([A-Za-z]), and letters, numbers, or a dash (-) for the rest ([A-Za-z0-9\-_]{1,63}).
     /// 
     /// See https://regexper.com for a diagram.
     /// </summary>

@@ -120,7 +120,7 @@ module GraceCommand =
                         (helpContext.ParseResult.Tokens.Count = 1 && helpOptions.Contains(helpContext.ParseResult.Tokens[0].Value)) then
                     let graceFiglet = FigletText("Grace Version Control System")
                     graceFiglet.Color <- Color.Green3
-                    graceFiglet.Alignment <- Justify.Center
+                    graceFiglet.Justification <- Justify.Center
                     AnsiConsole.Write(graceFiglet)
                     AnsiConsole.WriteLine()
 
@@ -190,7 +190,7 @@ module GraceCommand =
                 parseResult <- command.Parse(args)
                 if parseResult |> showOutput then
                     if parseResult |> verbose then
-                        AnsiConsole.Write((new Rule($"[{Colors.Important}]Started: {startTime.ToString(InstantPattern.ExtendedIso.PatternText, CultureInfo.InvariantCulture)}.[/]")).RightAligned())
+                        AnsiConsole.Write((new Rule($"[{Colors.Important}]Started: {startTime.ToString(InstantPattern.ExtendedIso.PatternText, CultureInfo.InvariantCulture)}.[/]")).RightJustified())
                     else
                         AnsiConsole.Write(new Rule())
 
@@ -214,9 +214,9 @@ module GraceCommand =
                     let finishTime = getCurrentInstant()
                     let elapsed = finishTime - startTime
                     if parseResult |> verbose then
-                        AnsiConsole.Write((new Rule($"[{Colors.Important}]Elapsed: {elapsed.TotalSeconds:F3}s. Exit code: {returnValue}. Finished: {finishTime.ToString(InstantPattern.ExtendedIso.PatternText, CultureInfo.InvariantCulture)}[/]")).RightAligned())
+                        AnsiConsole.Write((new Rule($"[{Colors.Important}]Elapsed: {elapsed.TotalSeconds:F3}s. Exit code: {returnValue}. Finished: {finishTime.ToString(InstantPattern.ExtendedIso.PatternText, CultureInfo.InvariantCulture)}[/]")).RightJustified())
                     else
-                        AnsiConsole.Write((new Rule($"[{Colors.Important}]Elapsed: {elapsed.TotalSeconds:F3}s. Exit code: {returnValue}.[/]")).RightAligned())
+                        AnsiConsole.Write((new Rule($"[{Colors.Important}]Elapsed: {elapsed.TotalSeconds:F3}s. Exit code: {returnValue}.[/]")).RightJustified())
 
                     AnsiConsole.WriteLine()
 

@@ -65,8 +65,8 @@ module Branch =
         repositoryId.SetDefaultValue($"{Current().RepositoryId}")
         let repositoryName = new Option<String>([|"--repositoryName"; "-n"|], IsRequired = false, Description = "The name of the repository. [default: current repository]", Arity = ArgumentArity.ExactlyOne)
         let parentBranchId = new Option<String>([|"--parentBranchId"|], IsRequired = false, Description = "The parent branch's ID <Guid>.", Arity = ArgumentArity.ExactlyOne)
-        parentBranchId.SetDefaultValue($"{Current().BranchId}")
         let parentBranchName = new Option<String>([|"--parentBranchName"|], IsRequired = false, Description = "The name of the parent branch. [default: current branch]", Arity = ArgumentArity.ExactlyOne)
+        parentBranchName.SetDefaultValue($"{Current().BranchName}")
         let newName = new Option<String>("--newName", IsRequired = true, Description = "The new name of the branch.", Arity = ArgumentArity.ExactlyOne)
         let message = new Option<String>([|"--message"; "-m"|], IsRequired = false, Description = "The text to store with this reference.", Arity = ArgumentArity.ExactlyOne)
         let messageRequired = new Option<String>([|"--message"; "-m"|], IsRequired = true, Description = "The text to store with this reference.", Arity = ArgumentArity.ExactlyOne)
@@ -1408,8 +1408,11 @@ module Branch =
                                     if returnValue.ReturnValue.Count() > 0 then returnValue.ReturnValue.First() else ReferenceDto.Default
                                     
                                 let table = Table(Border = TableBorder.DoubleEdge)
-                                table.AddColumns("", "")
+                                table.AddColumns(String.replicate (Current().OwnerName.Length) "_", String.replicate (Current().OwnerName.Length) "_")  // Using Current().OwnerName.Length is aesthetically pleasing, there's no deeper reason for it.
+                                     .AddRow($"[{Colors.Important}]Owner[/]", $"[{Colors.Important}]{Current().OwnerName}[/] [{Colors.Deemphasized}]- {Current().OwnerId}[/]")
+                                     .AddRow($"[{Colors.Important}]Organization[/]", $"[{Colors.Important}]{Current().OrganizationName}[/] [{Colors.Deemphasized}]- {Current().OrganizationId}[/]")
                                      .AddRow($"[{Colors.Important}]Repository[/]", $"[{Colors.Important}]{Current().RepositoryName}[/] [{Colors.Deemphasized}]- {Current().RepositoryId}[/]")
+                                     .AddRow(String.Empty, String.Empty)
                                      .AddRow($"[{Colors.Important}]Branch[/]", $"[{Colors.Important}]{branchDto.BranchName}[/] [{Colors.Deemphasized}]- {branchDto.BranchId}[/]")
                                      .AddRow($"  - latest reference - {discriminatedUnionCaseNameToString latestReference.ReferenceType}", $"  {getShortenedSha256Hash latestReference.Sha256Hash} - {instantToLocalTime latestReference.CreatedAt} [{Colors.Deemphasized}]- {latestReference.ReferenceId}[/]")
                                      .AddRow($"  - latest commit", $"  {getShortenedSha256Hash latestCommit.Sha256Hash} - {instantToLocalTime latestCommit.CreatedAt} [{Colors.Deemphasized}]- {latestCommit.ReferenceId}[/]")
@@ -1418,6 +1421,9 @@ module Branch =
                                      .AddRow($"  - latest merge", $"  {getShortenedSha256Hash latestMerge.Sha256Hash} - {instantToLocalTime latestMerge.CreatedAt} [{Colors.Deemphasized}]- {latestMerge.ReferenceId}[/]")
                                      .AddRow($"[{Colors.Important}]Based on latest merge[/]", $"[{Colors.Important}]{branchDto.BasedOn = parentBranchDto.LatestMerge}[/]")
                                      |> ignore
+                                // Need to add this portion of the header after everything else is rendered so we know the width.
+                                //let headerWidth = if table.Columns[0].Width.HasValue then table.Columns[0].Width.Value else 27  // 27 = longest current text
+                                //table.Columns[0].Header <- Markup(String.replicate headerWidth "_")
                                 AnsiConsole.Write(table)
                                 return 0
                             | Error error ->

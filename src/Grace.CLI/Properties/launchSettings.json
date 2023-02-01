@@ -57,6 +57,16 @@
     "grace (no parameters)": {
       "commandName": "Project",
       "workingDirectory": "C:\\Source\\grace\\src"
+    },
+    "grace organization create": {
+      "commandName": "Project",
+      "commandLineArgs": "org create --organizationName SomeOrganizationName",
+      "workingDirectory": "C:\\Source\\gracedemo\\Chris"
+    },
+    "grace maint update-index": {
+      "commandName": "Project",
+      "commandLineArgs": "maint update-index",
+      "workingDirectory": "C:\\Source\\gracedemo\\Chris"
     }
   }
 }

@@ -29,6 +29,12 @@ module Services =
     let daprHttpEndpoint = $"{Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.DaprServerUri)}:{Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.DaprHttpPort)}"
     let daprGrpcEndpoint = $"{Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.DaprServerUri)}:{Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.DaprGrpcPort)}"
     let daprClient = DaprClientBuilder().UseJsonSerializationOptions(Constants.JsonSerializerOptions).UseHttpEndpoint(daprHttpEndpoint).UseGrpcEndpoint(daprGrpcEndpoint).Build()
+    let azureStorageConnectionString = 
+        (task {
+            let! secret = daprClient.GetSecretAsync(Constants.GraceSecretStoreName, "AzureStorageConnectionString")
+            return secret.First().Value
+        }).Result
+
     //let actorProxyOptions = ActorProxyOptions(JsonSerializerOptions = Constants.JsonSerializerOptions, HttpEndpoint = daprEndpoint)
     //let actorProxyFactory = ActorProxyFactory(actorProxyOptions)
 
@@ -45,8 +51,7 @@ module Services =
             if containerClients.ContainsKey(key) then
                 return containerClients[key]
             else
-                let! connectionString = daprClient.GetSecretAsync(Constants.GraceSecretStoreName, "AzureStorageConnectionString")
-                let blobContainerClient = BlobContainerClient(connectionString.First().Value, $"{containerName}")
+                let blobContainerClient = BlobContainerClient(azureStorageConnectionString, $"{containerName}")
                 let! azureResponse = blobContainerClient.CreateIfNotExistsAsync(publicAccessType = Models.PublicAccessType.None)
                 containerClients[key] <- blobContainerClient
                 return blobContainerClient
