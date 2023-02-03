@@ -84,6 +84,20 @@ module Services =
         }
 
     /// <summary>
+    /// Adds common attributes to the current OpenTelemetry activity, and returns a 404 Not found status.
+    /// </summary>
+    /// <param name="statusCode">The HTTP status code to return to the user.</param>
+    /// <param name="result">The result value to serialize into JSON.</param>
+    /// <param name="context">The current HttpContext.</param>
+    let result404NotFound (context: HttpContext) =
+        task {
+            Activity.Current.AddTag("correlation_id", context.Items[Constants.CorrelationId] :?> string)
+                            .AddTag("http.status_code", StatusCodes.Status404NotFound) |> ignore
+            context.SetStatusCode(StatusCodes.Status404NotFound)
+            return Some context
+        }
+
+    /// <summary>
     /// Adds common attributes to the current OpenTelemetry activity, and returns the result with a 200 Ok status.
     /// </summary>
     /// <param name="result">The result value to serialize into JSON.</param>
@@ -98,11 +112,11 @@ module Services =
     let result400BadRequest<'T> = returnResult<'T> StatusCodes.Status400BadRequest
 
     /// <summary>
-    /// Adds common attributes to the current OpenTelemetry activity, and returns the result with a 400 Bad request status.
+    /// Adds common attributes to the current OpenTelemetry activity, and returns the result with a 404 Not found status.
     /// </summary>
     /// <param name="result">The result value to serialize into JSON.</param>
     /// <param name="context">The current HttpContext.</param>
-    let result404NotFound<'T> = returnResult<'T> StatusCodes.Status404NotFound
+    //let result404NotFound<'T> = returnResult<'T> StatusCodes.Status404NotFound
 
     /// <summary>
     /// Adds common attributes to the current OpenTelemetry activity, and returns the result with a 500 Internal server error status.
@@ -539,7 +553,7 @@ module Services =
             return references :> IReadOnlyList<ReferenceDto>
         }
 
-    let getMerges = getReferencesByType ReferenceType.Merge
+    let getPromotions = getReferencesByType ReferenceType.Promotion
     let getCommits = getReferencesByType ReferenceType.Commit
     let getCheckpoints = getReferencesByType ReferenceType.Checkpoint
     let getSaves = getReferencesByType ReferenceType.Save
@@ -600,7 +614,7 @@ module Services =
             | Cassandra -> return None
         }
 
-    let getLatestMerge = getLatestReferenceByType ReferenceType.Merge
+    let getLatestPromotion = getLatestReferenceByType ReferenceType.Promotion
     let getLatestCommit = getLatestReferenceByType ReferenceType.Commit
     let getLatestCheckpoint = getLatestReferenceByType ReferenceType.Checkpoint
     let getLatestSave = getLatestReferenceByType ReferenceType.Save

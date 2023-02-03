@@ -45,14 +45,14 @@ module GraceCommand =
     /// Built-in aliases for Grace commands.
     let private aliases = 
         let aliases = Dictionary<string, string[]>()
-        aliases.Add("merge", [| "branch"; "merge" |])
+        aliases.Add("promote", [| "branch"; "promote" |])
         aliases.Add("commit", [| "branch"; "commit" |])
         aliases.Add("tag", [| "branch"; "tag" |])
         aliases.Add("checkpoint", [| "branch"; "checkpoint" |])
         aliases.Add("save", [| "branch"; "save" |])
         aliases.Add("rebase", [| "branch"; "rebase" |])
         aliases.Add("tags", [| "branch"; "get-tags" |])
-        aliases.Add("merges", [| "branch"; "get-merges" |])
+        aliases.Add("promotions", [| "branch"; "get-promotions" |])
         aliases.Add("commits", [| "branch"; "get-commits" |])
         aliases.Add("checkpoints", [| "branch"; "get-checkpoints" |])
         aliases.Add("saves", [| "branch"; "get-references" |])

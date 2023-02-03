@@ -375,7 +375,7 @@ module Validations =
                             let! branchDto = branchActorProxy.Get()
                             let allowed = 
                                 match referenceType with
-                                | Merge -> if branchDto.EnabledMerge then true else false
+                                | Promotion -> if branchDto.EnabledPromotion then true else false
                                 | Commit -> if branchDto.EnabledCommit then true else false
                                 | Checkpoint -> if branchDto.EnabledCheckpoint then true else false
                                 | Save -> if branchDto.EnabledSave then true else false

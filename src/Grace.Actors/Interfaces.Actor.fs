@@ -54,8 +54,8 @@ module Interfaces =
         abstract member Get: unit -> Task<BranchDto>
         /// Retrieves the most recent commit from this branch.
         abstract member GetLatestCommit: unit -> Task<ReferenceId>
-        /// Retrieves the most recent merge from this branch.
-        abstract member GetLatestMerge: unit -> Task<ReferenceId>
+        /// Retrieves the most recent promotion from this branch.
+        abstract member GetLatestPromotion: unit -> Task<ReferenceId>
         /// Retrieves the parent branch for a given branch.
         abstract member GetParentBranch: unit -> Task<BranchDto>
 

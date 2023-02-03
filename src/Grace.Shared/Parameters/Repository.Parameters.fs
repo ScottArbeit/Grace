@@ -60,7 +60,7 @@ module Repository =
         member val public Force = false with get, set
         member val public DeleteReason = String.Empty with get, set
 
-    type EnableMergeTypeParameters() =
+    type EnablePromotionTypeParameters() =
         inherit RepositoryParameters()
         member val public Enabled = false with get, set
 

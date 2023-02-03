@@ -171,9 +171,9 @@ module Diff =
                             let! getAReferenceResult = 
                                 task {
                                     match referenceType with
-                                    | Merge -> 
-                                        let merges = List<ReferenceDto>()
-                                        // Merges are different, because we actually want the merge from the parent branch that this branch is based on.
+                                    | Promotion -> 
+                                        let promotions = List<ReferenceDto>()
+                                        // Promotions are different, because we actually want the promotion from the parent branch that this branch is based on.
                                         let branchParameters = Parameters.Branch.GetParameters(BranchId = $"{Current().BranchId}", OwnerId = $"{Current().OwnerId}", 
                                             OrganizationId = $"{Current().OrganizationId}", RepositoryId = $"{Current().RepositoryId}")
                                         match! Branch.Get(branchParameters) with
@@ -186,17 +186,17 @@ module Diff =
                                                 if returnValue.ReturnValue.Count() > 0 then
                                                     // We're only taking the first one because we've only asked for one in the parameters.
                                                     let referenceDto = returnValue.ReturnValue.First()
-                                                    merges.Add(referenceDto)
-                                                    //logToAnsiConsole Colors.Verbose $"In diffToReference / Merge: Got merge reference from branchDto.BasedOn. ReferenceId: {referenceDto.ReferenceId}; Sha256Hash: {referenceDto.Sha256Hash}."
+                                                    promotions.Add(referenceDto)
+                                                    //logToAnsiConsole Colors.Verbose $"In diffToReference / Promotion: Got promotion reference from branchDto.BasedOn. ReferenceId: {referenceDto.ReferenceId}; Sha256Hash: {referenceDto.Sha256Hash}."
                                                 else
-                                                    logToAnsiConsole Colors.Verbose $"In diffToReference / Merge: Did not find the basedOn reference."
+                                                    logToAnsiConsole Colors.Verbose $"In diffToReference / Promotion: Did not find the basedOn reference."
                                                     ()
                                             | Error error ->
                                                 logToAnsiConsole Colors.Error (Markup.Escape($"{error}"))
                                         | Error error ->
                                             logToAnsiConsole Colors.Error (Markup.Escape($"{error}"))
                                         
-                                        return Ok (GraceReturnValue.Create (merges :> IEnumerable<ReferenceDto>) parameters.CorrelationId) 
+                                        return Ok (GraceReturnValue.Create (promotions :> IEnumerable<ReferenceDto>) parameters.CorrelationId) 
                                     | Commit -> return! Branch.GetCommits getReferencesParameters
                                     | Checkpoint -> return! Branch.GetCheckpoints getReferencesParameters
                                     | Save -> return! Branch.GetSaves getReferencesParameters
@@ -283,10 +283,10 @@ module Diff =
                 return (Error error) |> renderOutput parseResult
         }
 
-    let private mergeHandler = 
+    let private promotionHandler = 
         CommandHandler.Create(fun (parseResult: ParseResult) (parameters: CommonParameters) ->
             task {
-                return! diffToReference parseResult parameters ReferenceType.Merge
+                return! diffToReference parseResult parameters ReferenceType.Promotion
             } :> Task)
 
 
@@ -337,9 +337,9 @@ module Diff =
     let Build = 
         let diffCommand = new Command("diff", Description = "Displays the difference between two versions of your repository.") 
 
-        let mergeCommand = new Command("merge", Description = "Displays the difference between the merge that this branch is based on and your current version.") 
-        mergeCommand.Handler <- mergeHandler
-        diffCommand.AddCommand(mergeCommand)
+        let promotionCommand = new Command("promotion", Description = "Displays the difference between the promotion that this branch is based on and your current version.") 
+        promotionCommand.Handler <- promotionHandler
+        diffCommand.AddCommand(promotionCommand)
 
         let commitCommand = new Command("commit", Description = "Displays the difference between the most recent commit and your current version.") 
         commitCommand.Handler <- commitHandler

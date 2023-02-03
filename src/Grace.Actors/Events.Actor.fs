@@ -13,12 +13,12 @@ module Events =
             | Created of branchId: BranchId * branchName: BranchName * parentBranchId: BranchId * repositoryId: RepositoryId
             | Rebased of basedOn: ReferenceId
             | NameSet of newName: BranchName
-            | Merged of referenceId: ReferenceId * directoryId: DirectoryId * sha256Hash: Sha256Hash * referenceText: ReferenceText
+            | Promoted of referenceId: ReferenceId * directoryId: DirectoryId * sha256Hash: Sha256Hash * referenceText: ReferenceText
             | Committed of referenceId: ReferenceId * directoryId: DirectoryId * sha256Hash: Sha256Hash * referenceText: ReferenceText
             | Checkpointed of referenceId: ReferenceId * directoryId: DirectoryId * sha256Hash: Sha256Hash * referenceText: ReferenceText
             | Saved of referenceId: ReferenceId * directoryId: DirectoryId * sha256Hash: Sha256Hash * referenceText: ReferenceText
             | Tagged of referenceId: ReferenceId * directoryId: DirectoryId * sha256Hash: Sha256Hash * referenceText: ReferenceText
-            | EnabledMerge of allowed: bool
+            | EnabledPromotion of allowed: bool
             | EnabledCommit of allowed: bool
             | EnabledCheckpoint of allowed: bool
             | EnabledSave of allowed: bool
@@ -92,8 +92,8 @@ module Events =
             | DefaultBranchNameSet of defaultBranchName: BranchName
             | SaveDaysSet of duration: float
             | CheckpointDaysSet of duration: float
-            | SingleStepMergeEnabled of enabled: bool
-            | ComplexMergeEnabled of enabled: bool
+            | EnabledSingleStepPromotion of enabled: bool
+            | EnabledComplexPromotion of enabled: bool
             | DescriptionSet of description: string
             | LogicalDeleted of force: bool * deleteReason: string
             | PhysicalDeleted

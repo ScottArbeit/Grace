@@ -89,8 +89,8 @@ module Repository =
                 | DefaultBranchNameSet defaultBranchName -> {currentRepositoryDto with DefaultBranchName = defaultBranchName}
                 | SaveDaysSet days -> {currentRepositoryDto with SaveDays = days}
                 | CheckpointDaysSet days -> {currentRepositoryDto with CheckpointDays = days}
-                | SingleStepMergeEnabled enabled -> {currentRepositoryDto with EnabledSingleStepMerge = enabled}
-                | ComplexMergeEnabled enabled -> {currentRepositoryDto with EnabledComplexMerge = enabled}
+                | EnabledSingleStepPromotion enabled -> {currentRepositoryDto with EnabledSingleStepPromotion = enabled}
+                | EnabledComplexPromotion enabled -> {currentRepositoryDto with EnabledComplexPromotion = enabled}
                 | DescriptionSet description -> {currentRepositoryDto with Description = description}
                 | LogicalDeleted _ -> {currentRepositoryDto with DeletedAt = Some (getCurrentInstant())}
                 | PhysicalDeleted _ -> currentRepositoryDto // Do nothing because it's about to be deleted anyway.
@@ -291,8 +291,8 @@ module Repository =
                                 | SetDefaultBranchName defaultBranchName -> DefaultBranchNameSet defaultBranchName
                                 | SetSaveDays days -> SaveDaysSet days
                                 | SetCheckpointDays days -> CheckpointDaysSet days
-                                | EnableSingleStepMerge enabled -> SingleStepMergeEnabled enabled
-                                | EnableComplexMerge enabled -> ComplexMergeEnabled enabled
+                                | EnableSingleStepPromotion enabled -> EnabledSingleStepPromotion enabled
+                                | EnableComplexPromotion enabled -> EnabledComplexPromotion enabled
                                 | SetDescription description -> DescriptionSet description
                                 | DeleteLogical (force, deleteReason) -> LogicalDeleted (force, deleteReason)
                                 | DeletePhysical ->

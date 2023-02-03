@@ -229,10 +229,10 @@ module Repository =
                 return! processCommand context validations command
             }
 
-    let EnableSingleStepMerge: HttpHandler =
+    let EnableSingleStepPromotion: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) -> 
             task {
-                let validations (parameters: EnableMergeTypeParameters) (context: HttpContext) =
+                let validations (parameters: EnablePromotionTypeParameters) (context: HttpContext) =
                     [ Guid.isValidAndNotEmpty parameters.OwnerId InvalidOwnerId
                       String.isValidGraceName parameters.OwnerName InvalidOwnerName
                       Input.eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
@@ -245,15 +245,15 @@ module Repository =
                       Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName context RepositoryDoesNotExist
                       Repository.repositoryIsNotDeleted parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName context RepositoryIsDeleted ]
                 
-                let command (parameters: EnableMergeTypeParameters) = EnableSingleStepMerge (parameters.Enabled) |> returnTask
+                let command (parameters: EnablePromotionTypeParameters) = EnableSingleStepPromotion (parameters.Enabled) |> returnTask
                 
                 return! processCommand context validations command
             }
 
-    let EnableComplexMerge: HttpHandler =
+    let EnableComplexPromotion: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) -> 
             task {
-                let validations (parameters: EnableMergeTypeParameters) (context: HttpContext) =
+                let validations (parameters: EnablePromotionTypeParameters) (context: HttpContext) =
                     [ Guid.isValidAndNotEmpty parameters.OwnerId InvalidOwnerId
                       String.isValidGraceName parameters.OwnerName InvalidOwnerName
                       Input.eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
@@ -266,7 +266,7 @@ module Repository =
                       Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName context RepositoryDoesNotExist
                       Repository.repositoryIsNotDeleted parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName context RepositoryIsDeleted ]
                 
-                let command (parameters: EnableMergeTypeParameters) = EnableComplexMerge (parameters.Enabled) |> returnTask
+                let command (parameters: EnablePromotionTypeParameters) = EnableComplexPromotion (parameters.Enabled) |> returnTask
                 
                 return! processCommand context validations command
             }

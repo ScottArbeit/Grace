@@ -24,7 +24,7 @@ module Notifications =
 
     type IGraceClientConnection =
         abstract member RegisterParentBranch: BranchId -> BranchId -> Task
-        abstract member NotifyOnMerge: BranchId * ReferenceId -> Task
+        abstract member NotifyOnPromotion: BranchId * ReferenceId -> Task
         abstract member NotifyOnCommit: BranchId * ReferenceId -> Task
         abstract member NotifyOnCheckpoint: BranchId * ReferenceId -> Task
         abstract member NotifyOnSave: BranchId * ReferenceId -> Task
@@ -49,10 +49,10 @@ module Notifications =
                 do! this.Groups.AddToGroupAsync(this.Context.ConnectionId, $"{parentBranchId}")
             }
 
-        member this.NotifyOnMerge((branchId: BranchId), (referenceId: ReferenceId)) =
+        member this.NotifyOnPromotion((branchId: BranchId), (referenceId: ReferenceId)) =
             task {
-                logToConsole $"In NotifyOnMerge. branchId: {branchId}; referenceId: {referenceId}."
-                do! this.Clients.Group($"{branchId}").NotifyOnMerge(branchId, referenceId)
+                logToConsole $"In NotifyOnPromotion. branchId: {branchId}; referenceId: {referenceId}."
+                do! this.Clients.Group($"{branchId}").NotifyOnPromotion(branchId, referenceId)
             } :> Task
 
         member this.NotifyOnSave((parentBranchId: BranchId), (branchId: BranchId), (referenceId: ReferenceId)) =
@@ -105,8 +105,8 @@ module Notifications =
                 | BranchEvent branchEvent ->
                     logToConsole $"Received BranchEvent: {discriminatedUnionFullNameToString branchEvent.Event} {Environment.NewLine}{branchEvent.Metadata}"
                     match branchEvent.Event with
-                    | Branch.Merged (referenceId, directoryId, sha256Hash, referenceText) -> 
-                        logToConsole $"Received Branch.Merged; referenceId: {referenceId}, directoryId: {directoryId}, sha256Hash: {sha256Hash}, referenceText: {referenceText}"
+                    | Branch.Promoted (referenceId, directoryId, sha256Hash, referenceText) -> 
+                        logToConsole $"Received Branch.Promoted; referenceId: {referenceId}, directoryId: {directoryId}, sha256Hash: {sha256Hash}, referenceText: {referenceText}"
                         let referenceActorId = Reference.GetActorId referenceId
                         let referenceActorProxy = actorProxyFactory.CreateActorProxy<IReferenceActor>(referenceActorId, ActorName.Reference, actorProxyOptions)
                         let! referenceDto = referenceActorProxy.Get()
@@ -116,12 +116,12 @@ module Notifications =
                         let! branchDto = branchActorProxy.Get()
 
                         logToConsole $"About to send signalR message to clients for group {branchDto.BranchId}."                                
-                        do! hubContext.Clients.Group($"{branchDto.BranchId}").NotifyOnMerge(branchDto.BranchId, referenceId)
+                        do! hubContext.Clients.Group($"{branchDto.BranchId}").NotifyOnPromotion(branchDto.BranchId, referenceId)
 
-                        // Create the diff between the new merge and previous merge.
-                        let! latestTwoMerges = getMerges referenceDto.BranchId 2
-                        if latestTwoMerges.Count = 2 then
-                            do! diffTwoDirectoryVersions latestTwoMerges[0].DirectoryId latestTwoMerges[1].DirectoryId
+                        // Create the diff between the new promotion and previous promotion.
+                        let! latestTwoPromotions = getPromotions referenceDto.BranchId 2
+                        if latestTwoPromotions.Count = 2 then
+                            do! diffTwoDirectoryVersions latestTwoPromotions[0].DirectoryId latestTwoPromotions[1].DirectoryId
                     
                     | Branch.Committed (referenceId, directoryId, sha256Hash, referenceText) ->
                         let referenceActorId = Reference.GetActorId referenceId
@@ -139,9 +139,9 @@ module Notifications =
                         if latestTwoCommits.Count = 2 then
                             do! diffTwoDirectoryVersions latestTwoCommits[0].DirectoryId latestTwoCommits[1].DirectoryId
 
-                        // Create the diff between the commit and the parent branch's most recent merge.
-                        match! getLatestMerge branchDto.ParentBranchId with
-                        | Some latestMerge -> do! diffTwoDirectoryVersions referenceDto.DirectoryId latestMerge.DirectoryId
+                        // Create the diff between the commit and the parent branch's most recent promotion.
+                        match! getLatestPromotion branchDto.ParentBranchId with
+                        | Some latestPromotion -> do! diffTwoDirectoryVersions referenceDto.DirectoryId latestPromotion.DirectoryId
                         | None -> ()
                         
                     | Branch.Checkpointed (referenceId, directoryId, sha256Hash, referenceText) ->

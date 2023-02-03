@@ -365,9 +365,9 @@ module Watch =
                                                 .Build()
 
                     use serverToClient = signalRConnection.On<string>("ServerToClientMessage", fun message -> logToAnsiConsole Colors.Important $"From Grace Server: {message}")
-                    use notifyOnMerge = signalRConnection.On<BranchId, ReferenceId>("NotifyOnMerge", fun (parentBranchId: BranchId) (referenceId: ReferenceId) ->
+                    use notifyOnPromotion = signalRConnection.On<BranchId, ReferenceId>("NotifyOnPromotion", fun (parentBranchId: BranchId) (referenceId: ReferenceId) ->
                         (task {
-                            logToAnsiConsole Colors.Highlighted $"Parent branch {parentBranchId} has a new merge; referenceId: {referenceId}."
+                            logToAnsiConsole Colors.Highlighted $"Parent branch {parentBranchId} has a new promotion; referenceId: {referenceId}."
                             let! graceStatus = readGraceStatusFile()
                             let rebaseParameters = RebaseParameters(OwnerId = $"{Current().OwnerId}", OrganizationId = $"{Current().OrganizationId}",
                                 RepositoryId = $"{Current().RepositoryId}", BranchId = $"{Current().BranchId}", BasedOn = referenceId, CorrelationId = (parseResult |> getCorrelationId))

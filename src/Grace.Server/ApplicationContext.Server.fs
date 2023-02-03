@@ -144,4 +144,4 @@ module ApplicationContext =
             //    ()
             //| DynamoDb -> ()
             //| Nul -> ()
-        }
+        } :> Task

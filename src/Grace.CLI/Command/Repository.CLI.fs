@@ -59,7 +59,7 @@ module Repository =
         let graceConfig = new Option<String>("--graceConfig", IsRequired = false, Description = "The path of a Grace config file that you'd like to use instead of the default graceconfig.json.", Arity = ArgumentArity.ExactlyOne)
         let force = new Option<bool>("--force", IsRequired = false, Description = "Deletes repository even if there are links to other repositories.", Arity = ArgumentArity.ExactlyOne)
         let doNotSwitch = new Option<bool>("--doNotSwitch", IsRequired = false, Description = "Do not switch to the new repository as the current repository.", Arity = ArgumentArity.ExactlyOne)
-        let enabled = new Option<bool>("--enabled", IsRequired = true, Description = "True to enable the merge type; false to disable it.", Arity = ArgumentArity.ExactlyOne)
+        let enabled = new Option<bool>("--enabled", IsRequired = true, Description = "True to enable the promotion type; false to disable it.", Arity = ArgumentArity.ExactlyOne)
         //enabled.SetDefaultValue(false)
         let includeDeleted = new Option<bool>("--includeDeleted", IsRequired = false, Description = "True to include deleted branches; false to exclude them.", Arity = ArgumentArity.ZeroOrOne)
         //includeDeleted.SetDefaultValue(false)
@@ -519,12 +519,12 @@ module Repository =
                         return result |> renderOutput parseResult
                     })
                     
-    // Enable merge type subcommands
-    type EnableMergeTypeCommand = EnableMergeTypeParameters -> Task<GraceResult<string>>
-    type EnableMergeParameters() =
+    // Enable promotion type subcommands
+    type EnablePromotionTypeCommand = EnablePromotionTypeParameters -> Task<GraceResult<string>>
+    type EnablePromotionParameters() =
         inherit CommonParameters()
         member val public Enabled = false with get, set
-    let private enableMergeTypeHandler (parseResult: ParseResult) (parameters: EnableMergeParameters) (command: EnableMergeTypeCommand) (mergeType: MergeType) =
+    let private enablePromotionTypeHandler (parseResult: ParseResult) (parameters: EnablePromotionParameters) (command: EnablePromotionTypeCommand) (promotionType: PromotionType) =
         task {
             try
                 if parseResult |> verbose then printParseResult parseResult
@@ -532,7 +532,7 @@ module Repository =
                 match validateIncomingParameters with
                 | Ok _ -> 
                     let normalizedParameters = parameters |> normalizeIdsAndNames parseResult
-                    let enableMergeTypeParameters = EnableMergeTypeParameters(
+                    let enablePromotionTypeParameters = EnablePromotionTypeParameters(
                         OwnerId = normalizedParameters.OwnerId,
                         OwnerName = normalizedParameters.OwnerName,
                         OrganizationId = normalizedParameters.OrganizationId,
@@ -547,44 +547,44 @@ module Repository =
                                 .StartAsync(fun progressContext ->
                                 task {
                                     let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
-                                    let! result = command enableMergeTypeParameters
-                                    //let! result = 
-                                    //    task {
-                                    //        match mergeType with
-                                    //        | SingleStep -> return! Repository.EnableSingleStepMerge(enhancedParameters)
-                                    //        | Complex -> return! Repository.EnableComplexMerge(enhancedParameters)
-                                    //    }
+                                    let! result = command enablePromotionTypeParameters
+                                    let! result = 
+                                        task {
+                                            match promotionType with
+                                            | SingleStep -> return! Repository.EnableSingleStepPromotion(enablePromotionTypeParameters)
+                                            | Complex -> return! Repository.EnableComplexPromotion(enablePromotionTypeParameters)
+                                        }
                                     t0.Increment(100.0)
                                     return result
                                 })
                     else
-                        return! command enableMergeTypeParameters
+                        return! command enablePromotionTypeParameters
                 | Error error -> return Error error
             with ex ->
                 return Error (GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
         }
 
-    let private EnableSingleStepMerge =
-        CommandHandler.Create(fun (parseResult: ParseResult) (enableMergeParameters: EnableMergeParameters) ->
+    let private EnableSingleStepPromotion =
+        CommandHandler.Create(fun (parseResult: ParseResult) (enablePromotionParameters: EnablePromotionParameters) ->
             task {
-                let command (parameters: EnableMergeTypeParameters) =
+                let command (parameters: EnablePromotionTypeParameters) =
                     task {
-                        return! Repository.EnableSingleStepMerge(parameters)
+                        return! Repository.EnableSingleStepPromotion(parameters)
                     }
 
-                let! result = enableMergeTypeHandler parseResult enableMergeParameters command MergeType.SingleStep
+                let! result = enablePromotionTypeHandler parseResult enablePromotionParameters command PromotionType.SingleStep
                 return result |> renderOutput parseResult
             })
 
-    let private EnableComplexMerge =
-        CommandHandler.Create(fun (parseResult: ParseResult) (enableMergeParameters: EnableMergeParameters) ->
+    let private EnableComplexPromotion =
+        CommandHandler.Create(fun (parseResult: ParseResult) (enablePromotionParameters: EnablePromotionParameters) ->
             task {
-                let command (parameters: EnableMergeTypeParameters) =
+                let command (parameters: EnablePromotionTypeParameters) =
                     task {
-                        return! Repository.EnableComplexMerge(parameters)
+                        return! Repository.EnableComplexPromotion(parameters)
                     }
 
-                let! result = enableMergeTypeHandler parseResult enableMergeParameters command MergeType.Complex
+                let! result = enablePromotionTypeHandler parseResult enablePromotionParameters command PromotionType.Complex
                 return result |> renderOutput parseResult
             })
 
@@ -816,13 +816,13 @@ module Repository =
         setCheckpointDaysCommand.Handler <- SetCheckpointDays
         repositoryCommand.AddCommand(setCheckpointDaysCommand)
 
-        let enableSingleStepMergeCommand = new Command("enable-singlestepmerge", Description = "Enables or disables single-step merges in the repository.") |> addOption Options.enabled |> addCommonOptions
-        enableSingleStepMergeCommand.Handler <- EnableSingleStepMerge
-        repositoryCommand.AddCommand(enableSingleStepMergeCommand)
+        //let enableSingleStepPromotionCommand = new Command("enable-single-step-promotion", Description = "Enables or disables single-step promotions in the repository.") |> addOption Options.enabled |> addCommonOptions
+        //enableSingleStepPromotionCommand.Handler <- EnableSingleStepPromotion
+        //repositoryCommand.AddCommand(enableSingleStepPromotionCommand)
 
-        let enableComplexMergeCommand = new Command("enable-complexmerge", Description = "Enables or disables complex merges in the repository.") |> addOption Options.enabled |> addCommonOptions
-        enableComplexMergeCommand.Handler <- EnableComplexMerge
-        repositoryCommand.AddCommand(enableComplexMergeCommand)
+        //let enableComplexPromotionCommand = new Command("enable-complex-promotion", Description = "Enables or disables complex promotions in the repository.") |> addOption Options.enabled |> addCommonOptions
+        //enableComplexPromotionCommand.Handler <- EnableComplexPromotion
+        //repositoryCommand.AddCommand(enableComplexPromotionCommand)
 
         let setNameCommand = new Command("set-name", Description = "Set the name of the repository.") |> addOption Options.newName |> addCommonOptions
         setNameCommand.Handler <- SetName

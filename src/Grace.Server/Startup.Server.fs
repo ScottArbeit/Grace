@@ -68,17 +68,17 @@ module Application =
                     route "/rebase" Branch.Rebase
                     route "/get" Branch.Get
                     route "/getParentBranch" Branch.GetParentBranch
-                    route "/merge" Branch.Merge
+                    route "/promote" Branch.Promote
                     route "/commit" Branch.Commit
                     route "/checkpoint" Branch.Checkpoint
                     route "/save" Branch.Save
                     route "/tag" Branch.Tag
-                    route "/enableMerge" Branch.EnableMerge
+                    route "/enablePromotion" Branch.EnablePromotion
                     route "/enableCommit" Branch.EnableCommit
                     route "/enableCheckpoint" Branch.EnableCheckpoint
                     route "/enableSave" Branch.EnableSave
                     route "/enableTag" Branch.EnableTag
-                    route "/getMerges" Branch.GetMerges
+                    route "/getPromotions" Branch.GetPromotions
                     route "/getCommits" Branch.GetCommits
                     route "/getCheckpoints" Branch.GetCheckpoints
                     route "/getReference" Branch.GetReference
@@ -149,8 +149,8 @@ module Application =
                 POST [
                     route "/create" Repository.Create
                     route "/delete" Repository.Delete
-                    route "/enableSingleStepMerge" Repository.EnableSingleStepMerge
-                    route "/enableComplexMerge" Repository.EnableComplexMerge
+                    route "/enableSingleStepPromotion" Repository.EnableSingleStepPromotion
+                    route "/enableComplexPromotion" Repository.EnableComplexPromotion
                     route "/exists" Repository.Exists
                     route "/get" Repository.Get
                     route "/getBranches" Repository.GetBranches

@@ -11,7 +11,7 @@ module Errors =
             | BranchAlreadyExists
             | BranchDoesNotExist
             | BranchIdIsRequired
-            | BranchIsNotBasedOnLatestMerge
+            | BranchIsNotBasedOnLatestPromotion
             | BranchNameAlreadyExists
             | BranchNameIsRequired
             | CheckpointIsDisabled
@@ -33,8 +33,8 @@ module Errors =
             | InvalidReferenceType
             | InvalidRepositoryId
             | InvalidRepositoryName
-            | MergeIsDisabled
-            | MergeNotAvailableBecauseThereAreNoMergeableReferences
+            | PromotionIsDisabled
+            | PromotionNotAvailableBecauseThereAreNoPromotableReferences
             | MessageIsRequired
             | ObjectCacheFileNotFound
             | OrganizationDoesNotExist
@@ -54,7 +54,7 @@ module Errors =
                 | BranchAlreadyExists -> getLocalizedString StringResourceName.BranchAlreadyExists
                 | BranchDoesNotExist -> getLocalizedString StringResourceName.BranchDoesNotExist
                 | BranchIdIsRequired -> getLocalizedString StringResourceName.BranchIdIsRequired
-                | BranchIsNotBasedOnLatestMerge -> getLocalizedString StringResourceName.BranchIsNotBasedOnLatestMerge
+                | BranchIsNotBasedOnLatestPromotion -> getLocalizedString StringResourceName.BranchIsNotBasedOnLatestPromotion
                 | BranchNameAlreadyExists -> getLocalizedString StringResourceName.BranchNameAlreadyExists
                 | BranchNameIsRequired -> getLocalizedString StringResourceName.BranchNameIsRequired
                 | CheckpointIsDisabled -> getLocalizedString StringResourceName.CheckpointIsDisabled
@@ -76,8 +76,8 @@ module Errors =
                 | InvalidReferenceType -> getLocalizedString StringResourceName.InvalidReferenceType
                 | InvalidRepositoryId -> getLocalizedString StringResourceName.InvalidRepositoryId
                 | InvalidRepositoryName -> getLocalizedString StringResourceName.InvalidRepositoryName
-                | MergeIsDisabled -> getLocalizedString StringResourceName.MergeIsDisabled
-                | MergeNotAvailableBecauseThereAreNoMergeableReferences -> getLocalizedString StringResourceName.MergeNotAvailableBecauseThereAreNoMergeableReferences
+                | PromotionIsDisabled -> getLocalizedString StringResourceName.PromotionIsDisabled
+                | PromotionNotAvailableBecauseThereAreNoPromotableReferences -> getLocalizedString StringResourceName.PromotionNotAvailableBecauseThereAreNoPromotableReferences
                 | MessageIsRequired -> getLocalizedString StringResourceName.MessageIsRequired
                 | ObjectCacheFileNotFound -> getLocalizedString StringResourceName.ObjectCacheFileNotFound
                 | OrganizationDoesNotExist -> getLocalizedString StringResourceName.OrganizationDoesNotExist

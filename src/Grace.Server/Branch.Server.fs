@@ -168,7 +168,7 @@ module Branch =
                 return! processCommand context validations command
             }
 
-    let Merge: HttpHandler =
+    let Promote: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let validations (parameters: CreateReferenceParameters) (context: HttpContext) =
@@ -189,9 +189,9 @@ module Branch =
                       Organization.organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName context OrganizationDoesNotExist
                       Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName context RepositoryDoesNotExist
                       Branch.branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName context ParentBranchDoesNotExist
-                      Branch.branchAllowsReferenceType parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName ReferenceType.Merge context MergeIsDisabled ]
+                      Branch.branchAllowsReferenceType parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName ReferenceType.Promotion context PromotionIsDisabled ]
 
-                let command (parameters: CreateReferenceParameters) = BranchCommand.Merge(parameters.DirectoryId, parameters.Sha256Hash, ReferenceText parameters.Message) |> returnTask
+                let command (parameters: CreateReferenceParameters) = BranchCommand.Promote(parameters.DirectoryId, parameters.Sha256Hash, ReferenceText parameters.Message) |> returnTask
 
                 return! processCommand context validations command
             }
@@ -308,7 +308,7 @@ module Branch =
                 return! processCommand context validations command
             }
 
-    let EnableMerge: HttpHandler =
+    let EnablePromotion: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let validations (parameters: EnableFeatureParameters) (context: HttpContext) =
@@ -329,7 +329,7 @@ module Branch =
                       Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName context RepositoryDoesNotExist
                       Branch.branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName context BranchDoesNotExist ]
 
-                let command (parameters: EnableFeatureParameters) = EnableMerge(parameters.Enabled) |> returnTask
+                let command (parameters: EnableFeatureParameters) = EnablePromotion(parameters.Enabled) |> returnTask
 
                 return! processCommand context validations command
             }
@@ -659,7 +659,7 @@ module Branch =
                     return! context |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (context.Items[Constants.CorrelationId] :?> string))
             }
         
-    let GetMerges: HttpHandler =
+    let GetPromotions: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 try
@@ -685,7 +685,7 @@ module Branch =
                     let query (context: HttpContext) maxCount (actorProxy: IBranchActor) =
                         task {
                             let! branchDto = actorProxy.Get()
-                            let! results = getMerges branchDto.BranchId maxCount
+                            let! results = getPromotions branchDto.BranchId maxCount
                             return results
                         }
 

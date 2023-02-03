@@ -21,13 +21,13 @@ module Dto =
                 RepositoryId: RepositoryId
                 UserId: UserId
                 //References: SortedList<Instant, ReferenceDto>
-                EnabledMerge: bool
+                EnabledPromotion: bool
                 EnabledCommit: bool
                 EnabledCheckpoint: bool
                 EnabledSave: bool
                 EnabledTag: bool
                 LatestCommit: ReferenceId
-                LatestMerge: ReferenceId
+                LatestPromotion: ReferenceId
                 CreatedAt: Instant
                 UpdatedAt: Instant option
                 DeletedAt: Instant option
@@ -41,13 +41,13 @@ module Dto =
                 RepositoryId = RepositoryId.Empty
                 UserId = UserId String.Empty
                 //References = SortedList<Instant, ReferenceDto>()
-                EnabledMerge = true
+                EnabledPromotion = true
                 EnabledCommit = true
                 EnabledCheckpoint = true
                 EnabledSave = true
                 EnabledTag = true
                 LatestCommit = ReferenceId.Empty
-                LatestMerge = ReferenceId.Empty
+                LatestPromotion = ReferenceId.Empty
                 CreatedAt = getCurrentInstant()
                 UpdatedAt = None
                 DeletedAt = None
@@ -184,8 +184,8 @@ module Dto =
                 DefaultBranchName: BranchName
                 SaveDays: float
                 CheckpointDays: float
-                EnabledSingleStepMerge: bool
-                EnabledComplexMerge: bool
+                EnabledSingleStepPromotion: bool
+                EnabledComplexPromotion: bool
                 Description: string
                 RecordSaves: bool
                 CreatedAt: Instant
@@ -211,8 +211,8 @@ module Dto =
                 DefaultBranchName = BranchName Constants.InitialBranchName
                 SaveDays = 7.0
                 CheckpointDays = 0.0
-                EnabledSingleStepMerge = true
-                EnabledComplexMerge = false
+                EnabledSingleStepPromotion = true
+                EnabledComplexPromotion = false
                 Description = String.Empty
                 RecordSaves  = true
                 CreatedAt = getCurrentInstant()

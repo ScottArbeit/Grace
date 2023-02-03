@@ -11,6 +11,9 @@
 		<GenerateDocumentationFile>false</GenerateDocumentationFile>
 		<NoWarn>NETSDK1057</NoWarn>
 		<Platforms>AnyCPU;x64</Platforms>
+		<PublishReadyToRun>true</PublishReadyToRun>
+		<LangVersion>preview</LangVersion>
+		<PackageProjectUrl>https://github.com/ScottArbeit/Grace</PackageProjectUrl>
 	</PropertyGroup>
 	<ItemGroup>
 		<Compile Include="CosmosSystemTextJsonSerializer.Server.fs" />

@@ -15,7 +15,7 @@ module Text =
         | BranchDoesNotExist
         | BranchIdIsRequired
         | BranchIdsAreRequired
-        | BranchIsNotBasedOnLatestMerge
+        | BranchIsNotBasedOnLatestPromotion
         | BranchNameAlreadyExists
         | BranchNameIsRequired
         | CheckpointIsDisabled
@@ -58,8 +58,8 @@ module Text =
         | InvalidSha256Hash
         | InvalidSize
         | InvalidVisibilityValue
-        | MergeIsDisabled
-        | MergeNotAvailableBecauseThereAreNoMergeableReferences
+        | PromotionIsDisabled
+        | PromotionNotAvailableBecauseThereAreNoPromotableReferences
         | MessageIsRequired
         | NotImplemented
         | ObjectCacheFileNotFound

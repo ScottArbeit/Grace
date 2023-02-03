@@ -417,7 +417,7 @@ module Branch =
                 return Error (GraceError.Create $"{createExceptionResponse ex}" (parseResult |> getCorrelationId))
         }
 
-    let mergeHandler (parseResult: ParseResult) (parameters: CreateRefParameters) =
+    let promotionHandler (parseResult: ParseResult) (parameters: CreateRefParameters) =
         task {
             try
                 if parseResult |> verbose then printParseResult parseResult
@@ -429,7 +429,7 @@ module Branch =
                                 .StartAsync(fun progressContext ->
                                 task {
                                     let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Reading Grace status file.[/]")
-                                    let t1 = progressContext.AddTask($"[{Color.DodgerBlue1}]Checking if the merge is valid.[/]", autoStart = false)
+                                    let t1 = progressContext.AddTask($"[{Color.DodgerBlue1}]Checking if the promotion is valid.[/]", autoStart = false)
                                     let t2 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]", autoStart = false)
                                                                     
                                     // Read Grace status file.
@@ -438,11 +438,10 @@ module Branch =
                                     let rootDirectorySha256Hash = graceStatus.RootDirectorySha256Hash
                                     t0.Value <- 100.0
 
-                                    // Check if the merge is valid; i.e. it's allowed by the MergeTypes enabled in the repository.
+                                    // Check if the promotion is valid; i.e. it's allowed by the ReferenceTypes enabled in the repository.
                                     t1.StartTask()
-                                    // For single-step merges, the current branch's latest commit will become the parent branch's next merge.
+                                    // For single-step promotion, the current branch's latest commit will become the parent branch's next promotion.
                                     // If our current state is not the latest commit, print a warning message.
-                                    let mutable okToMerge = false
 
                                     // Get the Dto for the current branch. That will have its latest commit.
                                     let branchGetParameters = 
@@ -454,7 +453,7 @@ module Branch =
                                     let! branchResult = Branch.Get(branchGetParameters)
                                     match branchResult with
                                     | Ok branchReturnValue -> 
-                                        // If we succeeded, get the parent branch Dto. That will have its latest merge.
+                                        // If we succeeded, get the parent branch Dto. That will have its latest promotion.
                                         let! parentBranchResult = Branch.GetParentBranch(branchGetParameters)
                                         match parentBranchResult with
                                         | Ok parentBranchReturnValue -> 
@@ -462,7 +461,7 @@ module Branch =
                                             let branchDto = branchReturnValue.ReturnValue
                                             let parentBranchDto = parentBranchReturnValue.ReturnValue
 
-                                            // Get the references for the latest commit and/or merge on the current branch.
+                                            // Get the references for the latest commit and/or promotion on the current branch.
                                             //let getReferenceParameters = 
                                             //    Parameters.Branch.GetReferenceParameters(BranchId = parameters.BranchId, BranchName = parameters.BranchName, 
                                             //        OwnerId = parameters.OwnerId, OwnerName = parameters.OwnerName,
@@ -474,8 +473,8 @@ module Branch =
                                             let referenceIds = List<ReferenceId>()
                                             if branchDto.LatestCommit <> ReferenceId.Empty then
                                                 referenceIds.Add(branchDto.LatestCommit)
-                                            if branchDto.LatestMerge <> ReferenceId.Empty then
-                                                referenceIds.Add(branchDto.LatestMerge)
+                                            if branchDto.LatestPromotion <> ReferenceId.Empty then
+                                                referenceIds.Add(branchDto.LatestPromotion)
                                             if referenceIds.Count > 0 then
                                                 let getReferencesByReferenceIdParameters = 
                                                     Parameters.Repository.GetReferencesByReferenceIdParameters(
@@ -486,10 +485,10 @@ module Branch =
                                                 match! Repository.GetReferencesByReferenceId(getReferencesByReferenceIdParameters) with
                                                 | Ok returnValue ->
                                                     let references = returnValue.ReturnValue
-                                                    let latestMergeableReference =
+                                                    let latestPromotableReference =
                                                         references.OrderByDescending(fun reference -> reference.CreatedAt).First()
                                                     // If the current branch's latest reference is not the latest commit - i.e. they've done more work in the branch 
-                                                    //   after the commit they're expecting to merge - print a warning.
+                                                    //   after the commit they're expecting to promote - print a warning.
                                                     //match getReferencesByReferenceIdResult with 
                                                     //| Ok returnValue -> 
                                                     //    let references = returnValue.ReturnValue
@@ -498,44 +497,44 @@ module Branch =
                                                     //| Error error -> () // I don't really care if this call fails, it's just a warning message.
                                                     t1.Value <- 100.0
                                                 
-                                                    // If the current branch is based on the parent's latest merge, then we can proceed with the merge.
-                                                    if branchDto.BasedOn = parentBranchDto.LatestMerge then
+                                                    // If the current branch is based on the parent's latest promotion, then we can proceed with the promotion.
+                                                    if branchDto.BasedOn = parentBranchDto.LatestPromotion then
                                                         t2.StartTask()
-                                                        let mergeParameters = 
+                                                        let promotionParameters = 
                                                             Parameters.Branch.CreateReferenceParameters(BranchId = $"{parentBranchDto.BranchId}",
                                                                 OwnerId = parameters.OwnerId, OwnerName = parameters.OwnerName,
                                                                 OrganizationId = parameters.OrganizationId, OrganizationName = parameters.OrganizationName,
                                                                 RepositoryId = parameters.RepositoryId, RepositoryName = parameters.RepositoryName,
-                                                                DirectoryId = latestMergeableReference.DirectoryId, Sha256Hash = latestMergeableReference.Sha256Hash,
+                                                                DirectoryId = latestPromotableReference.DirectoryId, Sha256Hash = latestPromotableReference.Sha256Hash,
                                                                 Message = parameters.Message, CorrelationId = parameters.CorrelationId)
-                                                        let! mergeResult = Branch.Merge(mergeParameters)
-                                                        match mergeResult with
+                                                        let! promotionResult = Branch.Promote(promotionParameters)
+                                                        match promotionResult with
                                                         | Ok returnValue ->
-                                                            logToAnsiConsole Colors.Verbose $"Succeeded doing merge."
-                                                            let mergeReferenceId = returnValue.Properties["ReferenceId"]
+                                                            logToAnsiConsole Colors.Verbose $"Succeeded doing promotion."
+                                                            let promotionReferenceId = returnValue.Properties["ReferenceId"]
                                                             let rebaseParameters = Parameters.Branch.RebaseParameters(
                                                                 BranchId = $"{branchDto.BranchId}", RepositoryId = $"{branchDto.RepositoryId}",
                                                                 OwnerId = parameters.OwnerId, OwnerName = parameters.OwnerName,
                                                                 OrganizationId = parameters.OrganizationId, OrganizationName = parameters.OrganizationName,
-                                                                BasedOn = (Guid.Parse(mergeReferenceId)))
+                                                                BasedOn = (Guid.Parse(promotionReferenceId)))
                                                             let! rebaseResult = Branch.Rebase(rebaseParameters)
                                                             t2.Value <- 100.0
                                                             match rebaseResult with
                                                             | Ok returnValue -> 
                                                                 logToAnsiConsole Colors.Verbose $"Succeeded doing rebase."
-                                                                return mergeResult
+                                                                return promotionResult
                                                             | Error error -> return Error error
                                                         | Error error -> 
                                                             t2.Value <- 100.0
                                                             return Error error
-                                                        //return mergeResult
+
                                                     else
-                                                        return Error (GraceError.Create (BranchError.getErrorMessage BranchIsNotBasedOnLatestMerge) (parseResult |> getCorrelationId))
+                                                        return Error (GraceError.Create (BranchError.getErrorMessage BranchIsNotBasedOnLatestPromotion) (parseResult |> getCorrelationId))
                                                 | Error error -> 
                                                     t2.Value <- 100.0
                                                     return Error error
                                             else
-                                                return Error (GraceError.Create (BranchError.getErrorMessage MergeNotAvailableBecauseThereAreNoMergeableReferences) (parseResult |> getCorrelationId))
+                                                return Error (GraceError.Create (BranchError.getErrorMessage PromotionNotAvailableBecauseThereAreNoPromotableReferences) (parseResult |> getCorrelationId))
                                         | Error error -> 
                                             t1.Value <- 100.0
                                             return Error error
@@ -550,11 +549,11 @@ module Branch =
             with ex ->
                 return Error (GraceError.Create $"{createExceptionResponse ex}" (parseResult |> getCorrelationId))
         }
-    let private Merge =
+    let private Promote =
         CommandHandler.Create(fun (parseResult: ParseResult) (createReferencesParameters: CreateRefParameters) ->
             task {        
                 try
-                    let! result = mergeHandler parseResult (createReferencesParameters |> normalizeIdsAndNames parseResult)
+                    let! result = promotionHandler parseResult (createReferencesParameters |> normalizeIdsAndNames parseResult)
                     return result |> renderOutput parseResult
                 with ex -> 
                     logToAnsiConsole Colors.Error (Markup.Escape($"{createExceptionResponse ex}"))
@@ -618,15 +617,15 @@ module Branch =
             return Ok (GraceReturnValue.Create "Not yet implemented." (getCorrelationId parseResult))
         }
 
-    let private EnableMerge =
+    let private EnablePromotion =
         CommandHandler.Create(fun (parseResult: ParseResult) (enableFeaturesParameters: EnableFeaturesParameters) ->
             task {
                 let command (parameters: EnableFeatureParameters) =
                     task {
-                        return! Branch.EnableMerge(parameters)
+                        return! Branch.EnablePromotion(parameters)
                     }
                     
-                let! result = enableFeatureHandler parseResult (enableFeaturesParameters |> normalizeIdsAndNames parseResult) command "merge"
+                let! result = enableFeatureHandler parseResult (enableFeaturesParameters |> normalizeIdsAndNames parseResult) command "promotion"
                 return result |> renderOutput parseResult
             })
 
@@ -638,7 +637,7 @@ module Branch =
                         return! Branch.EnableCommit(parameters)
                     }
 
-                let! result = enableFeatureHandler parseResult (enableFeaturesParameters |> normalizeIdsAndNames parseResult) command "merge"
+                let! result = enableFeatureHandler parseResult (enableFeaturesParameters |> normalizeIdsAndNames parseResult) command "commit"
                 return result |> renderOutput parseResult
             })
 
@@ -747,12 +746,12 @@ module Branch =
                     return result |> renderOutput parseResult
             })
 
-    let private GetMerges =
+    let private GetPromotions =
         CommandHandler.Create(fun (parseResult: ParseResult) (getReferencesParameters: GetRefParameters) ->
             task {                
                 let query (parameters: GetReferencesParameters) = 
                     task {
-                        return! Branch.GetMerges(parameters)
+                        return! Branch.GetPromotions(parameters)
                     }
 
                 let! result = getReferenceHandler parseResult (getReferencesParameters |> normalizeIdsAndNames parseResult) query
@@ -1184,10 +1183,10 @@ module Branch =
     let rebaseHandler parseResult (parameters: RebaseParameters) (graceStatus: GraceStatus) =
         task {
             // --------------------------------------------------------------------------------------------------------------------------------------
-            // Get a diff between the merge from the parent branch that the current branch is based on, and the latest merge from the parent branch.
+            // Get a diff between the promotion from the parent branch that the current branch is based on, and the latest promotion from the parent branch.
             //   These are the changes that we expect to apply to the current branch.
 
-            // Get a diff between the latest reference on this branch and the merge that it's based on from the parent branch.
+            // Get a diff between the latest reference on this branch and the promotion that it's based on from the parent branch.
             //   This will be what's changed in the current branch since it was last rebased.
             
             // If a file has changed in the first diff, but not in the second diff, cool, we can automatically copy them.
@@ -1197,7 +1196,7 @@ module Branch =
             // Then we call Branch.Rebase() to actually record the update.
             // --------------------------------------------------------------------------------------------------------------------------------------
             
-            // First, get the current branchDto so we have the latest merge that it's based on.
+            // First, get the current branchDto so we have the latest promotion that it's based on.
             let branchGetParameters = Parameters.Branch.GetParameters(OwnerId = $"{Current().OwnerId}", 
                 OrganizationId = $"{Current().OrganizationId}", RepositoryId = $"{Current().RepositoryId}", BranchId = $"{Current().BranchId}",
                 CorrelationId = parameters.CorrelationId)
@@ -1205,24 +1204,24 @@ module Branch =
             | Ok returnValue ->
                 let branchDto = returnValue.ReturnValue
                 
-                // Now, get the parent branch information so we have its latest merge.
+                // Now, get the parent branch information so we have its latest promotion.
                 match! Branch.GetParentBranch(branchGetParameters) with
                 | Ok returnValue ->
                     let parentBranchDto = returnValue.ReturnValue
 
-                    if branchDto.BasedOn = parentBranchDto.LatestMerge then
-                        printfn $"The current branch is already based on the latest merge."
+                    if branchDto.BasedOn = parentBranchDto.LatestPromotion then
+                        printfn $"The current branch is already based on the latest promotion."
                         return 0
                     else
-                        // Now, get ReferenceDtos for current.BasedOn and parent.LatestMerge so we have their DirectoryId's.
+                        // Now, get ReferenceDtos for current.BasedOn and parent.LatestPromotion so we have their DirectoryId's.
                         let getReferencesByReferenceIdParameters = Parameters.Repository.GetReferencesByReferenceIdParameters(OwnerId = $"{Current().OwnerId}", 
                             OrganizationId = $"{Current().OrganizationId}", RepositoryId = $"{Current().RepositoryId}", CorrelationId = parameters.CorrelationId,
-                            ReferenceIds = [| branchDto.BasedOn; branchDto.LatestCommit; parentBranchDto.LatestMerge |])
+                            ReferenceIds = [| branchDto.BasedOn; branchDto.LatestCommit; parentBranchDto.LatestPromotion |])
                         match! Repository.GetReferencesByReferenceId(getReferencesByReferenceIdParameters) with
                         | Ok returnValue ->
                             let referenceDtos = returnValue.ReturnValue
                             let latestCommit = referenceDtos.FirstOrDefault((fun ref -> ref.ReferenceId = branchDto.LatestCommit), ReferenceDto.Default)
-                            let parentLatestMerge = referenceDtos.FirstOrDefault((fun ref -> ref.ReferenceId = parentBranchDto.LatestMerge), ReferenceDto.Default)
+                            let parentLatestPromotion = referenceDtos.FirstOrDefault((fun ref -> ref.ReferenceId = parentBranchDto.LatestPromotion), ReferenceDto.Default)
                             let basedOn = referenceDtos.FirstOrDefault((fun ref -> ref.ReferenceId = branchDto.BasedOn), ReferenceDto.Default)
 
                             // Get the latest reference from the current branch.
@@ -1237,12 +1236,12 @@ module Branch =
                                 logToAnsiConsole Colors.Verbose $"latestReference: {JsonSerializer.Serialize(latestReference, Constants.JsonSerializerOptions)}"
                                 // Now we have all of the references we need, so we have DirectoryId's to do diffs with.
 
-                                // First diff: parent merge that current branch is based on vs. parent's latest merge.
-                                let diffParameters = Parameters.Diff.GetDiffParameters(DirectoryId1 = basedOn.DirectoryId, DirectoryId2 = parentLatestMerge.DirectoryId, CorrelationId = parameters.CorrelationId)
+                                // First diff: parent promotion that current branch is based on vs. parent's latest promotion.
+                                let diffParameters = Parameters.Diff.GetDiffParameters(DirectoryId1 = basedOn.DirectoryId, DirectoryId2 = parentLatestPromotion.DirectoryId, CorrelationId = parameters.CorrelationId)
                                 logToAnsiConsole Colors.Verbose $"First diff: {JsonSerializer.Serialize(diffParameters, Constants.JsonSerializerOptions)}"
                                 let! firstDiff = Diff.GetDiff(diffParameters)
 
-                                // Second diff: latest reference on current branch vs. parent merge that current branch is based on.
+                                // Second diff: latest reference on current branch vs. parent promotion that current branch is based on.
                                 let diffParameters = Parameters.Diff.GetDiffParameters(DirectoryId1 = latestReference.DirectoryId, DirectoryId2 = basedOn.DirectoryId, CorrelationId = parameters.CorrelationId)
                                 logToAnsiConsole Colors.Verbose $"Second diff: {JsonSerializer.Serialize(diffParameters, Constants.JsonSerializerOptions)}"
                                 let! secondDiff = Diff.GetDiff(diffParameters)
@@ -1262,13 +1261,13 @@ module Branch =
                                             // Copy different file version into place - similar to how we do it for switch
                                             filesToDownload.Add(fileDifference)
 
-                                    let getParentLatestMergeDirectoryParameters = Parameters.Directory.GetParameters(RepositoryId = $"{branchDto.RepositoryId}", 
-                                        DirectoryId = $"{parentLatestMerge.DirectoryId}", CorrelationId = parameters.CorrelationId)
+                                    let getParentLatestPromotionDirectoryParameters = Parameters.Directory.GetParameters(RepositoryId = $"{branchDto.RepositoryId}", 
+                                        DirectoryId = $"{parentLatestPromotion.DirectoryId}", CorrelationId = parameters.CorrelationId)
                                     let getLatestReferenceDirectoryParameters = Parameters.Directory.GetParameters(RepositoryId = $"{branchDto.RepositoryId}", 
                                         DirectoryId = $"{latestReference.DirectoryId}", CorrelationId = parameters.CorrelationId)
                                     
-                                    // Get the directory versions for the parent merge that we're rebasing on, and the latest reference.
-                                    let! d1 = Directory.GetDirectoryVersionsRecursive(getParentLatestMergeDirectoryParameters)
+                                    // Get the directory versions for the parent promotion that we're rebasing on, and the latest reference.
+                                    let! d1 = Directory.GetDirectoryVersionsRecursive(getParentLatestPromotionDirectoryParameters)
                                     let! d2 = Directory.GetDirectoryVersionsRecursive(getLatestReferenceDirectoryParameters)
                                     
                                     let createFileVersionLookupDictionary (directoryVersions: IEnumerable<DirectoryVersion>) =
@@ -1282,17 +1281,17 @@ module Branch =
                                     
                                     let (directories, errors) = Result.partition [ d1; d2 ]
                                     if errors.Count() = 0 then
-                                        let parentLatestMergeDirectoryVersions = directories[0].ReturnValue
+                                        let parentLatestPromotionDirectoryVersions = directories[0].ReturnValue
                                         let latestReferenceDirectoryVersions = directories[1].ReturnValue
                                         
-                                        let parentLatestMergeLookup = createFileVersionLookupDictionary parentLatestMergeDirectoryVersions
+                                        let parentLatestPromotionLookup = createFileVersionLookupDictionary parentLatestPromotionDirectoryVersions
                                         let latestReferenceLookup = createFileVersionLookupDictionary latestReferenceDirectoryVersions                                            
                                         
-                                        // Get the specific FileVersions for those files from the contents of the parent's latest merge.
+                                        // Get the specific FileVersions for those files from the contents of the parent's latest promotion.
                                         let fileVersionsToDownload =
                                             filesToDownload 
-                                                |> Seq.where (fun fileToDownload -> parentLatestMergeLookup.ContainsKey($"{fileToDownload.RelativePath}")) 
-                                                |> Seq.map (fun fileToDownload -> parentLatestMergeLookup[$"{fileToDownload.RelativePath}"])
+                                                |> Seq.where (fun fileToDownload -> parentLatestPromotionLookup.ContainsKey($"{fileToDownload.RelativePath}")) 
+                                                |> Seq.map (fun fileToDownload -> parentLatestPromotionLookup[$"{fileToDownload.RelativePath}"])
                                         logToAnsiConsole Colors.Verbose $"fileVersionsToDownload: {fileVersionsToDownload.Count()}"
                                         for f in fileVersionsToDownload do
                                             logToAnsiConsole Colors.Verbose  $"relativePath: {f.RelativePath}"
@@ -1314,7 +1313,7 @@ module Branch =
                                         // If a file has changed in the second diff, but not in the first diff, cool, we can keep those changes, nothing to be done.
                                         
                                         // If a file has changed in both, we have to check the two diffs at the line-level to see if there are any conflicts.
-                                        let mutable potentialMergeConflicts = false
+                                        let mutable potentialPromotionConflicts = false
                                         for diff1Difference in diff1.Differences do
                                             let diff2DifferenceQuery = diff2.Differences.Where(fun d -> d.RelativePath = diff1Difference.RelativePath &&
                                                                                                         d.FileSystemEntryType = FileSystemEntryType.File &&
@@ -1325,21 +1324,21 @@ module Branch =
                                                 let diff2Difference = diff2DifferenceQuery.First()
                                                 
                                                 // Check the Sha256Hash values; if they're identical, ignore the file.
-                                                let fileVersion1 = parentLatestMergeLookup[$"{diff1Difference.RelativePath}"]
+                                                let fileVersion1 = parentLatestPromotionLookup[$"{diff1Difference.RelativePath}"]
                                                 let fileVersion2 = latestReferenceLookup[$"{diff2Difference.RelativePath}"]
                                                 if fileVersion1.Sha256Hash <> fileVersion2.Sha256Hash then
                                                     // Compare them at a line level; if there are no overlapping lines, we can just modify the working-directory version.
                                                     // ...
                                                     // For now, we're just going to show a message.
-                                                    AnsiConsole.MarkupLine($"[{Colors.Important}]Potential merge conflict: file {diff1Difference.RelativePath} has been changed in both the latest merge, and in the current branch.[/]")
-                                                    potentialMergeConflicts <- true
+                                                    AnsiConsole.MarkupLine($"[{Colors.Important}]Potential promotion conflict: file {diff1Difference.RelativePath} has been changed in both the latest promotion, and in the current branch.[/]")
+                                                    potentialPromotionConflicts <- true
 
-                                        if not <| potentialMergeConflicts then
-                                            // Yay! No merge conflicts.
+                                        if not <| potentialPromotionConflicts then
+                                            // Yay! No promotion conflicts.
                                             let rebaseParameters = Parameters.Branch.RebaseParameters(BranchId = $"{branchDto.BranchId}", RepositoryId = $"{branchDto.RepositoryId}",
                                                 OwnerId = parameters.OwnerId, OwnerName = parameters.OwnerName,
                                                 OrganizationId = parameters.OrganizationId, OrganizationName = parameters.OrganizationName,
-                                                BasedOn = parentLatestMerge.ReferenceId)
+                                                BasedOn = parentLatestPromotion.ReferenceId)
                                             match! Branch.Rebase(rebaseParameters) with
                                             | Ok returnValue ->
                                                 AnsiConsole.MarkupLine($"[{Colors.Important}]Rebase succeeded.[/]")
@@ -1349,7 +1348,7 @@ module Branch =
                                                 logToAnsiConsole Colors.Error (Markup.Escape($"{error}"))
                                                 return -1
                                         else 
-                                            AnsiConsole.MarkupLine($"[{Colors.Highlighted}]A potential merge conflict was detected. Rebase not successful.[/]")
+                                            AnsiConsole.MarkupLine($"[{Colors.Highlighted}]A potential promotion conflict was detected. Rebase not successful.[/]")
                                             return -1 
                                     else
                                         logToAnsiConsole Colors.Error (Markup.Escape($"{errors.First()}"))
@@ -1397,7 +1396,7 @@ module Branch =
                     match! Branch.GetParentBranch(getParameters) with
                     | Ok returnValue ->
                         let parentBranchDto = returnValue.ReturnValue
-                        let referenceIds = [| parentBranchDto.LatestMerge; branchDto.LatestCommit; branchDto.BasedOn |]
+                        let referenceIds = [| parentBranchDto.LatestPromotion; branchDto.LatestCommit; branchDto.BasedOn |]
                         let getReferencesByIdParameters = Parameters.Repository.GetReferencesByReferenceIdParameters(
                             OwnerId = parameters.OwnerId, OwnerName = parameters.OwnerName,
                             OrganizationId = parameters.OrganizationId, OrganizationName = parameters.OrganizationName,
@@ -1407,7 +1406,7 @@ module Branch =
                         | Ok returnValue -> 
                             let referenceDtos = returnValue.ReturnValue
                             let latestCommit = referenceDtos.FirstOrDefault((fun ref -> ref.ReferenceId = branchDto.LatestCommit), ReferenceDto.Default)
-                            let latestMerge = referenceDtos.FirstOrDefault((fun ref -> ref.ReferenceId = parentBranchDto.LatestMerge), ReferenceDto.Default)
+                            let latestPromotion = referenceDtos.FirstOrDefault((fun ref -> ref.ReferenceId = parentBranchDto.LatestPromotion), ReferenceDto.Default)
                             let basedOn = referenceDtos.FirstOrDefault((fun ref -> ref.ReferenceId = branchDto.BasedOn), ReferenceDto.Default)
                             
                             let getReferencesParameters = Parameters.Branch.GetReferencesParameters(OwnerId = parameters.OwnerId, OwnerName = parameters.OwnerName,
@@ -1428,10 +1427,10 @@ module Branch =
                                      .AddRow($"[{Colors.Important}]Branch[/]", $"[{Colors.Important}]{branchDto.BranchName}[/] [{Colors.Deemphasized}]- {branchDto.BranchId}[/]")
                                      .AddRow($"  - latest reference - {discriminatedUnionCaseNameToString latestReference.ReferenceType}", $"  {getShortenedSha256Hash latestReference.Sha256Hash} - {instantToLocalTime latestReference.CreatedAt} [{Colors.Deemphasized}]- {latestReference.ReferenceId}[/]")
                                      .AddRow($"  - latest commit", $"  {getShortenedSha256Hash latestCommit.Sha256Hash} - {instantToLocalTime latestCommit.CreatedAt} [{Colors.Deemphasized}]- {latestCommit.ReferenceId}[/]")
-                                     .AddRow($"  - based on merge", $"  {getShortenedSha256Hash basedOn.Sha256Hash} - {instantToLocalTime basedOn.CreatedAt} [{Colors.Deemphasized}]- {basedOn.ReferenceId}[/]")
+                                     .AddRow($"  - based on promotion", $"  {getShortenedSha256Hash basedOn.Sha256Hash} - {instantToLocalTime basedOn.CreatedAt} [{Colors.Deemphasized}]- {basedOn.ReferenceId}[/]")
                                      .AddRow($"[{Colors.Important}]Parent branch[/]", $"[{Colors.Important}]{parentBranchDto.BranchName}[/] [{Colors.Deemphasized}]- {parentBranchDto.BranchId}[/]")
-                                     .AddRow($"  - latest merge", $"  {getShortenedSha256Hash latestMerge.Sha256Hash} - {instantToLocalTime latestMerge.CreatedAt} [{Colors.Deemphasized}]- {latestMerge.ReferenceId}[/]")
-                                     .AddRow($"[{Colors.Important}]Based on latest merge[/]", $"[{Colors.Important}]{branchDto.BasedOn = parentBranchDto.LatestMerge}[/]")
+                                     .AddRow($"  - latest promotion", $"  {getShortenedSha256Hash latestPromotion.Sha256Hash} - {instantToLocalTime latestPromotion.CreatedAt} [{Colors.Deemphasized}]- {latestPromotion.ReferenceId}[/]")
+                                     .AddRow($"[{Colors.Important}]Based on latest promotion[/]", $"[{Colors.Important}]{branchDto.BasedOn = parentBranchDto.LatestPromotion}[/]")
                                      |> ignore
                                 // Need to add this portion of the header after everything else is rendered so we know the width.
                                 //let headerWidth = if table.Columns[0].Width.HasValue then table.Columns[0].Width.Value else 27  // 27 = longest current text
@@ -1560,9 +1559,9 @@ module Branch =
         statusCommand.Handler <- Status
         branchCommand.AddCommand(statusCommand)
 
-        let mergeCommand = new Command("merge", Description = "Merge a commit into the parent branch.") |> addOption Options.message |> addCommonOptions
-        mergeCommand.Handler <- Merge
-        branchCommand.AddCommand(mergeCommand)
+        let promoteCommand = new Command("promote", Description = "Promotes a commit into the parent branch.") |> addOption Options.message |> addCommonOptions
+        promoteCommand.Handler <- Promote
+        branchCommand.AddCommand(promoteCommand)
 
         let commitCommand = new Command("commit", Description = "Create a commit.") |> addOption Options.messageRequired |> addCommonOptions
         commitCommand.Handler <- Commit
@@ -1580,13 +1579,13 @@ module Branch =
         tagCommand.Handler <- Tag
         branchCommand.AddCommand(tagCommand)
 
-        let rebaseCommand = new Command("rebase", Description = "Rebase this branch on a merge from the parent branch.") |> addCommonOptions
+        let rebaseCommand = new Command("rebase", Description = "Rebase this branch on a promotion from the parent branch.") |> addCommonOptions
         rebaseCommand.Handler <- Rebase
         branchCommand.AddCommand(rebaseCommand)
 
-        let enableMergeCommand = new Command("enable-merge", Description = "Enable or disable merges on this branch.") |> addOption Options.enabled |> addCommonOptions
-        enableMergeCommand.Handler <- EnableMerge
-        branchCommand.AddCommand(enableMergeCommand)
+        let enablePromotionCommand = new Command("enable-promotion", Description = "Enable or disable promotions on this branch.") |> addOption Options.enabled |> addCommonOptions
+        enablePromotionCommand.Handler <- EnablePromotion
+        branchCommand.AddCommand(enablePromotionCommand)
 
         let enableCommitCommand = new Command("enable-commit", Description = "Enable or disable commits on this branch.") |> addOption Options.enabled |> addCommonOptions
         enableCommitCommand.Handler <- EnableCommit
@@ -1608,27 +1607,27 @@ module Branch =
         setNameCommand.Handler <- SetName
         branchCommand.AddCommand(setNameCommand)
 
-        let getReferencesCommand = new Command("get-references", Description = "Retrieves all references from the branch.") |> addCommonOptions |> addOption Options.maxCount |> addOption Options.fullSha
+        let getReferencesCommand = new Command("get-references", Description = "Retrieves a list of the most recent references from the branch.") |> addCommonOptions |> addOption Options.maxCount |> addOption Options.fullSha
         getReferencesCommand.Handler <- GetReferences
         branchCommand.AddCommand(getReferencesCommand)
 
-        let getMergesCommand = new Command("get-merges", Description = "Retrieves all merges from the branch.") |> addCommonOptions |> addOption Options.maxCount |> addOption Options.fullSha
-        getMergesCommand.Handler <- GetMerges
-        branchCommand.AddCommand(getMergesCommand)
+        let getPromotionsCommand = new Command("get-promotions", Description = "Retrieves a list of the most recent promotions from the branch.") |> addCommonOptions |> addOption Options.maxCount |> addOption Options.fullSha
+        getPromotionsCommand.Handler <- GetPromotions
+        branchCommand.AddCommand(getPromotionsCommand)
 
-        let getCommitsCommand = new Command("get-commits", Description = "Retrieves all commits from the branch.") |> addCommonOptions |> addOption Options.maxCount |> addOption Options.fullSha
+        let getCommitsCommand = new Command("get-commits", Description = "Retrieves a list of the most recent commits from the branch.") |> addCommonOptions |> addOption Options.maxCount |> addOption Options.fullSha
         getCommitsCommand.Handler <- GetCommits
         branchCommand.AddCommand(getCommitsCommand)
 
-        let getCheckpointsCommand = new Command("get-checkpoints", Description = "Retrieves all checkpoints from the branch.") |> addCommonOptions |> addOption Options.maxCount |> addOption Options.fullSha
+        let getCheckpointsCommand = new Command("get-checkpoints", Description = "Retrieves a list of the most recent checkpoints from the branch.") |> addCommonOptions |> addOption Options.maxCount |> addOption Options.fullSha
         getCheckpointsCommand.Handler <- GetCheckpoints
         branchCommand.AddCommand(getCheckpointsCommand)
 
-        let getSavesCommand = new Command("get-saves", Description = "Retrieves all saves from the branch.") |> addCommonOptions |> addOption Options.maxCount |> addOption Options.fullSha
+        let getSavesCommand = new Command("get-saves", Description = "Retrieves a list of the most recent saves from the branch.") |> addCommonOptions |> addOption Options.maxCount |> addOption Options.fullSha
         getSavesCommand.Handler <- GetSaves
         branchCommand.AddCommand(getSavesCommand)
 
-        let getTagsCommand = new Command("get-tags", Description = "Retrieves all tags from the branch.") |> addCommonOptions |> addOption Options.maxCount |> addOption Options.fullSha
+        let getTagsCommand = new Command("get-tags", Description = "Retrieves a list of the most recent tags from the branch.") |> addCommonOptions |> addOption Options.maxCount |> addOption Options.fullSha
         getTagsCommand.Handler <- GetTags
         branchCommand.AddCommand(getTagsCommand)
 

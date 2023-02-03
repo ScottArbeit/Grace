@@ -19,16 +19,16 @@ type Branch() =
     static member public Create(parameters: CreateParameters) =
         postServer<CreateParameters, string>(parameters |> ensureCorrelationIdIsSet, $"branch/{nameof(Branch.Create)}")
 
-    /// Rebases a branch on a merge from the parent branch.
+    /// Rebases a branch on a promotion from the parent branch.
     static member public Rebase(parameters: RebaseParameters) =
         postServer<RebaseParameters, string>(parameters |> ensureCorrelationIdIsSet, $"branch/{nameof(Branch.Rebase)}")
 
     /// <summary>
-    /// Creates a merge reference in the parent branch of this branch.
+    /// Creates a promotion reference in the parent branch of this branch.
     /// </summary>
     /// <param name="parameters">Values to use when creating the new reference.</param>
-    static member public Merge(parameters: CreateReferenceParameters) =
-        postServer<CreateReferenceParameters, string>(parameters |> ensureCorrelationIdIsSet, $"branch/{nameof(Branch.Merge)}")
+    static member public Promote(parameters: CreateReferenceParameters) =
+        postServer<CreateReferenceParameters, string>(parameters |> ensureCorrelationIdIsSet, $"branch/{nameof(Branch.Promote)}")
     
     /// <summary>
     /// Creates a commit reference in this branch.
@@ -58,9 +58,9 @@ type Branch() =
     static member public Tag(parameters: CreateReferenceParameters) =
         postServer<CreateReferenceParameters, string>(parameters |> ensureCorrelationIdIsSet, $"branch/{nameof(Branch.Tag)}")
 
-    /// Sets the flag to allow merges in this branch.
-    static member public EnableMerge(parameters: EnableFeatureParameters) =
-        postServer<EnableFeatureParameters, string>(parameters |> ensureCorrelationIdIsSet, $"branch/{nameof(Branch.EnableMerge)}")
+    /// Sets the flag to allow promotion in this branch.
+    static member public EnablePromotion(parameters: EnableFeatureParameters) =
+        postServer<EnableFeatureParameters, string>(parameters |> ensureCorrelationIdIsSet, $"branch/{nameof(Branch.EnablePromotion)}")
 
     /// Sets the flag to allow commits in this branch.
     static member public EnableCommit(parameters: EnableFeatureParameters) =
@@ -94,11 +94,11 @@ type Branch() =
         postServer<GetReferencesParameters, IEnumerable<ReferenceDto>>(parameters |> ensureCorrelationIdIsSet, $"branch/{nameof(Branch.GetReferences)}")
 
     /// <summary>
-    /// Gets the merges from a branch.
+    /// Gets the promotions from a branch.
     /// </summary>
     /// <param name="parameters">Values to use when retrieving references from a branch.</param>
-    static member public GetMerges(parameters: GetReferencesParameters) =
-        postServer<GetReferencesParameters, IEnumerable<ReferenceDto>>(parameters |> ensureCorrelationIdIsSet, $"branch/{nameof(Branch.GetMerges)}")
+    static member public GetPromotions(parameters: GetReferencesParameters) =
+        postServer<GetReferencesParameters, IEnumerable<ReferenceDto>>(parameters |> ensureCorrelationIdIsSet, $"branch/{nameof(Branch.GetPromotions)}")
 
     /// <summary>
     /// Gets the commits from a branch.

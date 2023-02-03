@@ -86,7 +86,7 @@ module Types =
     
     [<KnownType("GetKnownTypes")>]
     type ReferenceType =
-        | Merge
+        | Promotion
         | Commit
         | Checkpoint
         | Save
@@ -422,8 +422,8 @@ module Types =
             {RelativePath = relativePath; FileSha1 = fileSha1; CreatedAt1 = createdAt1; FileSha2 = fileSha2; CreatedAt2 = createdAt2; IsBinary = isBinary; InlineDiff = inlineDiff; SideBySideOld = sideBySideOld; SideBySideNew = sideBySideNew}
 
     [<KnownType("GetKnownTypes")>]
-    type MergeType =
+    type PromotionType =
         | SingleStep
         | Complex
-        static member GetKnownTypes() = GetKnownTypes<FileSystemEntryType>()
+        static member GetKnownTypes() = GetKnownTypes<PromotionType>()
         override this.ToString() = Utilities.discriminatedUnionFullNameToString this

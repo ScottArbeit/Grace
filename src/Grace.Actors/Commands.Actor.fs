@@ -12,12 +12,12 @@ module Commands =
             | Create of branchId: BranchId * branchName: BranchName * parentBranchId: BranchId * repositoryId: RepositoryId
             | Rebase of basedOn: ReferenceId
             | SetName of newName: BranchName
-            | Merge of directoryId: DirectoryId * sha256Hash: Sha256Hash * referenceText: ReferenceText
+            | Promote of directoryId: DirectoryId * sha256Hash: Sha256Hash * referenceText: ReferenceText
             | Commit of directoryId: DirectoryId * sha256Hash: Sha256Hash * referenceText: ReferenceText
             | Checkpoint of directoryId: DirectoryId * sha256Hash: Sha256Hash * referenceText: ReferenceText
             | Save of directoryId: DirectoryId * sha256Hash: Sha256Hash * referenceText: ReferenceText
             | Tag of directoryId: DirectoryId * sha256Hash: Sha256Hash * referenceText: ReferenceText
-            | EnableMerge of enabled: bool
+            | EnablePromotion of enabled: bool
             | EnableCommit of enabled: bool
             | EnableCheckpoint of enabled: bool
             | EnableSave of enabled: bool
@@ -73,8 +73,8 @@ module Commands =
             | SetSaveDays of duration: float
             | SetCheckpointDays of duration: float
             | SetDescription of description: string
-            | EnableSingleStepMerge of enabled: bool
-            | EnableComplexMerge of enabled: bool
+            | EnableSingleStepPromotion of enabled: bool
+            | EnableComplexPromotion of enabled: bool
             | AddBranch of branchName: BranchName
             | DeleteBranch of branchName: BranchName
             | DeleteLogical of force: bool * deleteReason: string

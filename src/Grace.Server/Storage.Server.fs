@@ -136,6 +136,6 @@ module Storage =
                     for fail in failed do sb.AppendLine(fail) |> ignore
                     return! context |> result500ServerError (GraceError.Create $"Failed to delete all rows from Cosmos DB. Failures: {failed.Count}.{Environment.NewLine}{sb.ToString()}" (getCorrelationId context))
             #else
-                return! context |> result400BadRequest (GraceError.Create "Not implemented." (getCorrelationId context))
+                return! context |> result404NotFound
             #endif
             }

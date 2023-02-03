@@ -45,12 +45,12 @@ module Branch =
                 | Created (branchId, branchName, parentBranchId, repositoryId) -> {BranchDto.Default with BranchId = branchId; BranchName = branchName; ParentBranchId = parentBranchId; RepositoryId = repositoryId}
                 | Rebased referenceId -> {currentBranchDto with BasedOn = referenceId}
                 | NameSet branchName -> {currentBranchDto with BranchName = branchName}
-                | Merged (referenceId, directoryVersion, sha256Hash, referenceText) -> {currentBranchDto with LatestMerge = referenceId}
+                | Promoted (referenceId, directoryVersion, sha256Hash, referenceText) -> {currentBranchDto with LatestPromotion = referenceId}
                 | Committed (referenceId, directoryVersion, sha256Hash, referenceText) -> {currentBranchDto with LatestCommit = referenceId}
                 | Checkpointed (referenceId, directoryVersion, sha256Hash, referenceText) -> currentBranchDto
                 | Saved (referenceId, directoryVersion, sha256Hash, referenceText) -> currentBranchDto
                 | Tagged (referenceId, directoryVersion, sha256Hash, referenceText) -> currentBranchDto
-                | EnabledMerge enabled -> {currentBranchDto with EnabledMerge = enabled}
+                | EnabledPromotion enabled -> {currentBranchDto with EnabledPromotion = enabled}
                 | EnabledCommit enabled -> {currentBranchDto with EnabledCommit = enabled}
                 | EnabledCheckpoint enabled -> {currentBranchDto with EnabledCheckpoint = enabled}
                 | EnabledSave enabled -> {currentBranchDto with EnabledSave = enabled}
@@ -190,14 +190,14 @@ module Branch =
                                         return Created(branchId, branchName, parentBranchId, repositoryId)
                                     | Rebase referenceId -> return Rebased referenceId
                                     | SetName organizationName -> return NameSet (organizationName)
-                                    | BranchCommand.Merge (directoryId, sha256Hash, referenceText) ->
-                                        let! referenceId = addReference directoryId sha256Hash referenceText ReferenceType.Merge
+                                    | BranchCommand.Promote (directoryId, sha256Hash, referenceText) ->
+                                        let! referenceId = addReference directoryId sha256Hash referenceText ReferenceType.Promotion
                                         metadata.Properties.Add("ReferenceId", $"{referenceId}")
                                         metadata.Properties.Add("DirectoryId", $"{directoryId}")
                                         metadata.Properties.Add("Sha256Hash", $"{sha256Hash}")
                                         metadata.Properties.Add("ReferenceText", $"{referenceText}")
                                         metadata.Properties.Add("BranchId", $"{this.Id}")
-                                        return Merged (referenceId, directoryId, sha256Hash, referenceText)
+                                        return Promoted (referenceId, directoryId, sha256Hash, referenceText)
                                     | BranchCommand.Commit (directoryId, sha256Hash, referenceText) ->
                                         let! referenceId = addReference directoryId sha256Hash referenceText ReferenceType.Commit
                                         metadata.Properties.Add("ReferenceId", $"{referenceId}")
@@ -230,7 +230,7 @@ module Branch =
                                         metadata.Properties.Add("ReferenceText", $"{referenceText}")
                                         metadata.Properties.Add("BranchId", $"{this.Id}")
                                         return Tagged (referenceId, directoryId, sha256Hash, referenceText)
-                                    | EnableMerge enabled -> return EnabledMerge enabled
+                                    | EnablePromotion enabled -> return EnabledPromotion enabled
                                     | EnableCommit enabled -> return EnabledCommit enabled
                                     | EnableCheckpoint enabled -> return EnabledCheckpoint enabled
                                     | EnableSave enabled -> return EnabledSave enabled
@@ -266,4 +266,4 @@ module Branch =
 
             member this.GetLatestCommit() = branchDto.LatestCommit |> returnTask
 
-            member this.GetLatestMerge() = branchDto.LatestMerge |> returnTask
+            member this.GetLatestPromotion() = branchDto.LatestPromotion |> returnTask
