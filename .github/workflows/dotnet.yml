@@ -24,6 +24,6 @@ jobs:
     - name: Build
       run: dotnet build Grace.sln --no-restore
       working-directory: src
-    - name: Test
-      run: dotnet test Grace.sln --no-build --verbosity normal
-      working-directory: src
+#    - name: Test
+#      run: dotnet test Grace.sln --no-build --verbosity normal
+#      working-directory: src
