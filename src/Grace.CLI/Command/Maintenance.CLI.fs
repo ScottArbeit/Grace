@@ -61,7 +61,7 @@ module Maintenance =
                                 for fileVersion in ldv.Files do
                                     fileVersions.TryAdd(fileVersion.RelativePath, fileVersion) |> ignore
                             ))
-                            let incrementAmount = 100.0 / float fileVersions.Count
+                            let incrementAmount = 100.0 / double fileVersions.Count
 
                             let plr = Parallel.ForEach(fileVersions, Constants.ParallelOptions, (fun kvp _ ->
                                 let fileVersion = kvp.Value
@@ -74,7 +74,7 @@ module Maintenance =
 
                             t4.StartTask()
                             let! objectCache = readGraceObjectCacheFile()
-                            let incrementAmount = 100.0 / float graceStatus.Index.Count
+                            let incrementAmount = 100.0 / double graceStatus.Index.Count
                             let plr = Parallel.ForEach(graceStatus.Index.Values, Constants.ParallelOptions, (fun ldv ->
                                 if not <| objectCache.Index.ContainsKey(ldv.DirectoryId) then
                                     objectCache.Index.AddOrUpdate(ldv.DirectoryId, (fun _ -> ldv), (fun _ _ -> ldv)) |> ignore
@@ -84,7 +84,7 @@ module Maintenance =
                             t4.Value <- 100.0
 
                             t5.StartTask()
-                            let incrementAmount = 100.0 / float fileVersions.Count
+                            let incrementAmount = 100.0 / double fileVersions.Count
                             match Current().ObjectStorageProvider with
                             | ObjectStorageProvider.Unknown -> ()
                             | AzureBlobStorage -> 
@@ -102,7 +102,7 @@ module Maintenance =
                                             logToConsole $"In Ok"
                                             let uploadMetadata = graceReturnValue.ReturnValue
                                             // First, increment the counter for the files that we don't have to upload.
-                                            t5.Increment(incrementAmount * float (fileVersions.Count() - uploadMetadata.Count))
+                                            t5.Increment(incrementAmount * double (fileVersions.Count() - uploadMetadata.Count))
                                             let filesIndexedBySha256Hash = Dictionary<Sha256Hash, LocalFileVersion>(fileVersions.Select(fun kvp -> KeyValuePair(kvp.Value.Sha256Hash, kvp.Value)))
 
                                             do! Parallel.ForEachAsync(uploadMetadata, Constants.ParallelOptions, (fun upload ct ->
@@ -136,7 +136,7 @@ module Maintenance =
                             let chunkSize = 16
                             let succeeded = ConcurrentQueue<GraceReturnValue<string>>()
                             let errors = ConcurrentQueue<GraceError>()
-                            let incrementAmount = 100.0 / float graceStatus.Index.Count
+                            let incrementAmount = 100.0 / double graceStatus.Index.Count
 
                             // We'll segment the uploads by the number of segments in the path, 
                             //   so we process the deepest paths first, and the new children exist before the parent is created.
@@ -156,7 +156,7 @@ module Maintenance =
                                         match sdvResult with
                                         | Ok result -> succeeded.Enqueue(result)
                                         | Error error -> errors.Enqueue(error)
-                                        t6.Increment(incrementAmount * float directoryVersionGroup.Length)
+                                        t6.Increment(incrementAmount * double directoryVersionGroup.Length)
                                     })))
                             t6.Value <- 100.0
 

@@ -52,8 +52,8 @@ module Repository =
         let recordSaves = new Option<bool>("--recordSaves", IsRequired = true, Description = "True to record all saves; false to turn it off.", Arity = ArgumentArity.ExactlyOne)
         let defaultServerApiVersion = (new Option<String>("--defaultServerApiVersion", IsRequired = true, Description = "The default version of the server API that clients should use when accessing this repository.", Arity = ArgumentArity.ExactlyOne))
                                             .FromAmong(Utilities.listCases(typeof<Constants.ServerApiVersions>))
-        let saveDays = new Option<RepositoryVisibility>("--saveDays", IsRequired = true, Description = "How many days to keep saves. [default: 7.0]", Arity = ArgumentArity.ExactlyOne)
-        let checkpointDays = new Option<RepositoryVisibility>("--checkpointDays", IsRequired = true, Description = "How many days to keep checkpoints. [default: Double.MaxValue]", Arity = ArgumentArity.ExactlyOne)
+        let saveDays = new Option<double>("--saveDays", IsRequired = true, Description = "How many days to keep saves. [default: 7.0]", Arity = ArgumentArity.ExactlyOne)
+        let checkpointDays = new Option<double>("--checkpointDays", IsRequired = true, Description = "How many days to keep checkpoints. [default: 365.0]", Arity = ArgumentArity.ExactlyOne)
         let newName = new Option<String>("--newName", IsRequired = true, Description = "The new name for the repository.", Arity = ArgumentArity.ExactlyOne)
         let deleteReason = new Option<String>("--deleteReason", IsRequired = true, Description = "The reason for deleting the repository.", Arity = ArgumentArity.ExactlyOne)
         let graceConfig = new Option<String>("--graceConfig", IsRequired = false, Description = "The path of a Grace config file that you'd like to use instead of the default graceconfig.json.", Arity = ArgumentArity.ExactlyOne)
@@ -434,7 +434,7 @@ module Repository =
     // Set-SaveDays subcommand
     type SaveDaysParameters() = 
         inherit CommonParameters()
-        member val public SaveDays: float = Double.MinValue with get, set
+        member val public SaveDays: double = Double.MinValue with get, set
     let private setSaveDaysHandler (parseResult: ParseResult) (parameters: SaveDaysParameters) =
         task {
             try
@@ -469,16 +469,16 @@ module Repository =
                 | ex -> return Error (GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
         }
     let private SetSaveDays =
-        CommandHandler.Create(fun (parseResult: ParseResult) (setNameParameters: SaveDaysParameters) ->
+        CommandHandler.Create(fun (parseResult: ParseResult) (saveDaysParameters: SaveDaysParameters) ->
                     task {                
-                        let! result = setSaveDaysHandler parseResult setNameParameters
+                        let! result = setSaveDaysHandler parseResult saveDaysParameters
                         return result |> renderOutput parseResult
                     })
 
     // Set-CheckpointDays subcommand
     type CheckpointDaysParameters() = 
         inherit CommonParameters()
-        member val public CheckpointDays: float = Double.MinValue with get, set
+        member val public CheckpointDays: double = Double.MinValue with get, set
     let private setCheckpointDaysHandler (parseResult: ParseResult) (parameters: CheckpointDaysParameters) =
         task {
             try
@@ -513,9 +513,9 @@ module Repository =
                 return Error (GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
         }
     let private SetCheckpointDays =
-        CommandHandler.Create(fun (parseResult: ParseResult) (setNameParameters: CheckpointDaysParameters) ->
+        CommandHandler.Create(fun (parseResult: ParseResult) (checkpointDaysParameters: CheckpointDaysParameters) ->
                     task {                
-                        let! result = setCheckpointDaysHandler parseResult setNameParameters
+                        let! result = setCheckpointDaysHandler parseResult checkpointDaysParameters
                         return result |> renderOutput parseResult
                     })
                     
@@ -548,12 +548,12 @@ module Repository =
                                 task {
                                     let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
                                     let! result = command enablePromotionTypeParameters
-                                    let! result = 
-                                        task {
-                                            match promotionType with
-                                            | SingleStep -> return! Repository.EnableSingleStepPromotion(enablePromotionTypeParameters)
-                                            | Complex -> return! Repository.EnableComplexPromotion(enablePromotionTypeParameters)
-                                        }
+                                    //let! result = 
+                                    //    task {
+                                    //        match promotionType with
+                                    //        | SingleStep -> return! Repository.EnableSingleStepPromotion(enablePromotionTypeParameters)
+                                    //        | Complex -> return! Repository.EnableComplexPromotion(enablePromotionTypeParameters)
+                                    //    }
                                     t0.Increment(100.0)
                                     return result
                                 })
@@ -564,29 +564,29 @@ module Repository =
                 return Error (GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
         }
 
-    let private EnableSingleStepPromotion =
-        CommandHandler.Create(fun (parseResult: ParseResult) (enablePromotionParameters: EnablePromotionParameters) ->
-            task {
-                let command (parameters: EnablePromotionTypeParameters) =
-                    task {
-                        return! Repository.EnableSingleStepPromotion(parameters)
-                    }
+    //let private EnableSingleStepPromotion =
+    //    CommandHandler.Create(fun (parseResult: ParseResult) (enablePromotionParameters: EnablePromotionParameters) ->
+    //        task {
+    //            let command (parameters: EnablePromotionTypeParameters) =
+    //                task {
+    //                    return! Repository.EnableSingleStepPromotion(parameters)
+    //                }
 
-                let! result = enablePromotionTypeHandler parseResult enablePromotionParameters command PromotionType.SingleStep
-                return result |> renderOutput parseResult
-            })
+    //            let! result = enablePromotionTypeHandler parseResult enablePromotionParameters command PromotionType.SingleStep
+    //            return result |> renderOutput parseResult
+    //        })
 
-    let private EnableComplexPromotion =
-        CommandHandler.Create(fun (parseResult: ParseResult) (enablePromotionParameters: EnablePromotionParameters) ->
-            task {
-                let command (parameters: EnablePromotionTypeParameters) =
-                    task {
-                        return! Repository.EnableComplexPromotion(parameters)
-                    }
+    //let private EnableComplexPromotion =
+    //    CommandHandler.Create(fun (parseResult: ParseResult) (enablePromotionParameters: EnablePromotionParameters) ->
+    //        task {
+    //            let command (parameters: EnablePromotionTypeParameters) =
+    //                task {
+    //                    return! Repository.EnableComplexPromotion(parameters)
+    //                }
 
-                let! result = enablePromotionTypeHandler parseResult enablePromotionParameters command PromotionType.Complex
-                return result |> renderOutput parseResult
-            })
+    //            let! result = enablePromotionTypeHandler parseResult enablePromotionParameters command PromotionType.Complex
+    //            return result |> renderOutput parseResult
+    //        })
 
     // Set-DefaultServerApiVersion subcommand
     type DefaultServerApiVersionParameters() = 

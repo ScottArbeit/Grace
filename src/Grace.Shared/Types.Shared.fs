@@ -103,7 +103,7 @@ module Types =
             Principal: string
             Properties: Dictionary<string, string>
         }
-        override this.ToString() = JsonSerializer.Serialize(this, Constants.JsonSerializerOptions)
+        override this.ToString() = serialize this
         static member New correlationId principal = {
             Timestamp = getCurrentInstant(); 
             CorrelationId = correlationId; 
@@ -328,7 +328,7 @@ module Types =
         member this.enhance(key, value) =
             this.Properties.Add(key, value)
             this
-        override this.ToString() = JsonSerializer.Serialize(this, Constants.JsonSerializerOptions) |> cleanJson
+        override this.ToString() = serialize this
 
     type GraceError =
         {
@@ -342,7 +342,7 @@ module Types =
         member this.enhance(key, value) =
             this.Properties.Add(key, value)
             this
-        override this.ToString() = JsonSerializer.Serialize(this, Constants.JsonSerializerOptions) |> cleanJson
+        override this.ToString() = serialize this
 
     type GraceResult<'T> = Result<GraceReturnValue<'T>, GraceError>
 

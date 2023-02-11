@@ -166,15 +166,7 @@ module Repository =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let validations (parameters: VisibilityParameters) (context: HttpContext) =
-                    [ Guid.isValidAndNotEmpty parameters.OwnerId InvalidOwnerId
-                      String.isValidGraceName parameters.OwnerName InvalidOwnerName
-                      Input.eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
-                      Guid.isValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId
-                      String.isValidGraceName parameters.OrganizationName InvalidOrganizationName
-                      Input.eitherIdOrNameMustBeProvided parameters.OrganizationId parameters.OrganizationName EitherOrganizationIdOrOrganizationNameRequired
-                      Guid.isValidAndNotEmpty parameters.RepositoryId InvalidRepositoryId
-                      String.isValidGraceName parameters.RepositoryName InvalidRepositoryName
-                      Input.eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherRepositoryIdOrRepositoryNameRequired
+                    [ Input.eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherRepositoryIdOrRepositoryNameRequired
                       Repository.visibilityIsValid parameters.Visibility InvalidVisibilityValue
                       Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName context RepositoryDoesNotExist
                       Repository.repositoryIsNotDeleted parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName context RepositoryIsDeleted ]
@@ -189,15 +181,7 @@ module Repository =
         fun (next: HttpFunc) (context: HttpContext) -> 
             task {
                 let validations (parameters: SaveDaysParameters) (context: HttpContext) =
-                    [ Guid.isValidAndNotEmpty parameters.OwnerId InvalidOwnerId
-                      String.isValidGraceName parameters.OwnerName InvalidOwnerName
-                      Input.eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
-                      Guid.isValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId
-                      String.isValidGraceName parameters.OrganizationName InvalidOrganizationName
-                      Input.eitherIdOrNameMustBeProvided parameters.OrganizationId parameters.OrganizationName EitherOrganizationIdOrOrganizationNameRequired
-                      Guid.isValidAndNotEmpty parameters.RepositoryId InvalidRepositoryId
-                      String.isValidGraceName parameters.RepositoryName InvalidRepositoryName
-                      Input.eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherRepositoryIdOrRepositoryNameRequired
+                    [ Input.eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherRepositoryIdOrRepositoryNameRequired
                       Repository.daysIsValid parameters.SaveDays InvalidSaveDaysValue
                       Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName context RepositoryDoesNotExist
                       Repository.repositoryIsNotDeleted parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName context RepositoryIsDeleted ]
@@ -211,15 +195,7 @@ module Repository =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let validations (parameters: CheckpointDaysParameters) (context: HttpContext) =
-                    [ Guid.isValidAndNotEmpty parameters.OwnerId InvalidOwnerId
-                      String.isValidGraceName parameters.OwnerName InvalidOwnerName
-                      Input.eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
-                      Guid.isValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId
-                      String.isValidGraceName parameters.OrganizationName InvalidOrganizationName
-                      Input.eitherIdOrNameMustBeProvided parameters.OrganizationId parameters.OrganizationName EitherOrganizationIdOrOrganizationNameRequired
-                      Guid.isValidAndNotEmpty parameters.RepositoryId InvalidRepositoryId
-                      String.isValidGraceName parameters.RepositoryName InvalidRepositoryName
-                      Input.eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherRepositoryIdOrRepositoryNameRequired
+                    [ Input.eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherRepositoryIdOrRepositoryNameRequired
                       Repository.daysIsValid parameters.CheckpointDays InvalidCheckpointDaysValue
                       Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName context RepositoryDoesNotExist
                       Repository.repositoryIsNotDeleted parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName context RepositoryIsDeleted ]
@@ -233,15 +209,7 @@ module Repository =
         fun (next: HttpFunc) (context: HttpContext) -> 
             task {
                 let validations (parameters: EnablePromotionTypeParameters) (context: HttpContext) =
-                    [ Guid.isValidAndNotEmpty parameters.OwnerId InvalidOwnerId
-                      String.isValidGraceName parameters.OwnerName InvalidOwnerName
-                      Input.eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
-                      Guid.isValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId
-                      String.isValidGraceName parameters.OrganizationName InvalidOrganizationName
-                      Input.eitherIdOrNameMustBeProvided parameters.OrganizationId parameters.OrganizationName EitherOrganizationIdOrOrganizationNameRequired
-                      Guid.isValidAndNotEmpty parameters.RepositoryId InvalidRepositoryId
-                      String.isValidGraceName parameters.RepositoryName InvalidRepositoryName
-                      Input.eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherRepositoryIdOrRepositoryNameRequired
+                    [ Input.eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherRepositoryIdOrRepositoryNameRequired
                       Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName context RepositoryDoesNotExist
                       Repository.repositoryIsNotDeleted parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName context RepositoryIsDeleted ]
                 
@@ -254,15 +222,7 @@ module Repository =
         fun (next: HttpFunc) (context: HttpContext) -> 
             task {
                 let validations (parameters: EnablePromotionTypeParameters) (context: HttpContext) =
-                    [ Guid.isValidAndNotEmpty parameters.OwnerId InvalidOwnerId
-                      String.isValidGraceName parameters.OwnerName InvalidOwnerName
-                      Input.eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
-                      Guid.isValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId
-                      String.isValidGraceName parameters.OrganizationName InvalidOrganizationName
-                      Input.eitherIdOrNameMustBeProvided parameters.OrganizationId parameters.OrganizationName EitherOrganizationIdOrOrganizationNameRequired
-                      Guid.isValidAndNotEmpty parameters.RepositoryId InvalidRepositoryId
-                      String.isValidGraceName parameters.RepositoryName InvalidRepositoryName
-                      Input.eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherRepositoryIdOrRepositoryNameRequired
+                    [ Input.eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherRepositoryIdOrRepositoryNameRequired
                       Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName context RepositoryDoesNotExist
                       Repository.repositoryIsNotDeleted parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName context RepositoryIsDeleted ]
                 
@@ -275,15 +235,7 @@ module Repository =
         fun (next: HttpFunc) (context: HttpContext) -> 
             task {
                 let validations (parameters: StatusParameters) (context: HttpContext) =
-                    [ Guid.isValidAndNotEmpty parameters.OwnerId InvalidOwnerId
-                      String.isValidGraceName parameters.OwnerName InvalidOwnerName
-                      Input.eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
-                      Guid.isValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId
-                      String.isValidGraceName parameters.OrganizationName InvalidOrganizationName
-                      Input.eitherIdOrNameMustBeProvided parameters.OrganizationId parameters.OrganizationName EitherOrganizationIdOrOrganizationNameRequired
-                      Guid.isValidAndNotEmpty parameters.RepositoryId InvalidRepositoryId
-                      String.isValidGraceName parameters.RepositoryName InvalidRepositoryName
-                      Input.eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherRepositoryIdOrRepositoryNameRequired
+                    [ Input.eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherRepositoryIdOrRepositoryNameRequired
                       DiscriminatedUnion.isMemberOf<RepositoryStatus, RepositoryError> parameters.Status InvalidRepositoryStatus
                       Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName context RepositoryDoesNotExist
                       Repository.repositoryIsNotDeleted parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName context RepositoryIsDeleted ]
@@ -298,15 +250,7 @@ module Repository =
         fun (next: HttpFunc) (context: HttpContext) -> 
             task {
                 let validations (parameters: DefaultServerApiVersionParameters) (context: HttpContext) =
-                    [ Guid.isValidAndNotEmpty parameters.OwnerId InvalidOwnerId
-                      String.isValidGraceName parameters.OwnerName InvalidOwnerName
-                      Input.eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
-                      Guid.isValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId
-                      String.isValidGraceName parameters.OrganizationName InvalidOrganizationName
-                      Input.eitherIdOrNameMustBeProvided parameters.OrganizationId parameters.OrganizationName EitherOrganizationIdOrOrganizationNameRequired
-                      Guid.isValidAndNotEmpty parameters.RepositoryId InvalidRepositoryId
-                      String.isValidGraceName parameters.RepositoryName InvalidRepositoryName
-                      Input.eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherRepositoryIdOrRepositoryNameRequired
+                    [ Input.eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherRepositoryIdOrRepositoryNameRequired
                       String.isNotEmpty parameters.DefaultServerApiVersion InvalidServerApiVersion
                       Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName context RepositoryDoesNotExist
                       Repository.repositoryIsNotDeleted parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName context RepositoryIsDeleted ]
@@ -320,15 +264,7 @@ module Repository =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let validations (parameters: RecordSavesParameters) (context: HttpContext) =
-                    [ Guid.isValidAndNotEmpty parameters.OwnerId InvalidOwnerId
-                      String.isValidGraceName parameters.OwnerName InvalidOwnerName
-                      Input.eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
-                      Guid.isValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId
-                      String.isValidGraceName parameters.OrganizationName InvalidOrganizationName
-                      Input.eitherIdOrNameMustBeProvided parameters.OrganizationId parameters.OrganizationName EitherOrganizationIdOrOrganizationNameRequired
-                      Guid.isValidAndNotEmpty parameters.RepositoryId InvalidRepositoryId
-                      String.isValidGraceName parameters.RepositoryName InvalidRepositoryName
-                      Input.eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherRepositoryIdOrRepositoryNameRequired
+                    [ Input.eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherRepositoryIdOrRepositoryNameRequired
                       Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName context RepositoryDoesNotExist
                       Repository.repositoryIsNotDeleted parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName context RepositoryIsDeleted ]
                 
@@ -341,16 +277,8 @@ module Repository =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let validations (parameters: DescriptionParameters) (context: HttpContext) =
-                    [ Guid.isValidAndNotEmpty parameters.OwnerId InvalidOwnerId
-                      String.isValidGraceName parameters.OwnerName InvalidOwnerName
-                      Input.eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
-                      Guid.isValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId
-                      String.isValidGraceName parameters.OrganizationName InvalidOrganizationName
-                      Input.eitherIdOrNameMustBeProvided parameters.OrganizationId parameters.OrganizationName EitherOrganizationIdOrOrganizationNameRequired
-                      Guid.isValidAndNotEmpty parameters.RepositoryId InvalidRepositoryId
-                      String.isValidGraceName parameters.RepositoryName InvalidRepositoryName
+                    [ Input.eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherRepositoryIdOrRepositoryNameRequired
                       String.isNotEmpty parameters.Description DescriptionIsRequired
-                      Input.eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherRepositoryIdOrRepositoryNameRequired
                       Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName context RepositoryDoesNotExist
                       Repository.repositoryIsNotDeleted parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName context RepositoryIsDeleted ]
 
@@ -363,16 +291,8 @@ module Repository =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let validations (parameters: DeleteParameters) (context: HttpContext) =
-                    [ Guid.isValidAndNotEmpty parameters.OwnerId InvalidOwnerId
-                      String.isValidGraceName parameters.OwnerName InvalidOwnerName
-                      Input.eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
-                      Guid.isValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId
-                      String.isValidGraceName parameters.OrganizationName InvalidOrganizationName
-                      Input.eitherIdOrNameMustBeProvided parameters.OrganizationId parameters.OrganizationName EitherOrganizationIdOrOrganizationNameRequired
-                      Guid.isValidAndNotEmpty parameters.RepositoryId InvalidRepositoryId
-                      String.isValidGraceName parameters.RepositoryName InvalidRepositoryName
+                    [ Input.eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherRepositoryIdOrRepositoryNameRequired
                       String.isNotEmpty parameters.DeleteReason DeleteReasonIsRequired
-                      Input.eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherRepositoryIdOrRepositoryNameRequired
                       Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName context RepositoryDoesNotExist
                       Repository.repositoryIsNotDeleted parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName context RepositoryIsDeleted ]
 
@@ -385,15 +305,7 @@ module Repository =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let validations (parameters: RepositoryParameters) (context: HttpContext) =
-                    [ Guid.isValidAndNotEmpty parameters.OwnerId InvalidOwnerId
-                      String.isValidGraceName parameters.OwnerName InvalidOwnerName
-                      Input.eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
-                      Guid.isValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId
-                      String.isValidGraceName parameters.OrganizationName InvalidOrganizationName
-                      Input.eitherIdOrNameMustBeProvided parameters.OrganizationId parameters.OrganizationName EitherOrganizationIdOrOrganizationNameRequired
-                      Guid.isValidAndNotEmpty parameters.RepositoryId InvalidRepositoryId
-                      String.isValidGraceName parameters.RepositoryName InvalidRepositoryName
-                      Input.eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherRepositoryIdOrRepositoryNameRequired
+                    [ Input.eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherRepositoryIdOrRepositoryNameRequired
                       Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName context RepositoryDoesNotExist
                       Repository.repositoryIsDeleted parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName context RepositoryIsNotDeleted ]
 

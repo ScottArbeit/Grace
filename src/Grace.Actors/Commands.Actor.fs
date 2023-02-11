@@ -70,8 +70,8 @@ module Commands =
             | SetRecordSaves of recordSaves: bool
             | SetDefaultServerApiVersion of defaultServerApiVersion: string
             | SetDefaultBranchName of defaultBranchName: BranchName
-            | SetSaveDays of duration: float
-            | SetCheckpointDays of duration: float
+            | SetSaveDays of duration: double
+            | SetCheckpointDays of duration: double
             | SetDescription of description: string
             | EnableSingleStepPromotion of enabled: bool
             | EnableComplexPromotion of enabled: bool

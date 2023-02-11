@@ -114,7 +114,7 @@ module Repository =
 
                     // Publish the event to the rest of the world.
                     let graceEvent = Events.GraceEvent.RepositoryEvent repositoryEvent
-                    let message = JsonSerializer.Serialize<Events.GraceEvent>(graceEvent, options = Constants.JsonSerializerOptions)
+                    let message = graceEvent |> serialize
                     do! daprClient.PublishEventAsync(GracePubSubService, GraceEventStreamTopic, message)
 
                     let returnValue = GraceReturnValue.Create $"Repository command succeeded." repositoryEvent.Metadata.CorrelationId
@@ -152,12 +152,12 @@ module Repository =
         override this.OnPreActorMethodAsync(context) =
             actorStartTime <- getCurrentInstant()
             logScope <- log.BeginScope("Actor {actorName}", actorName)
-            //log.LogInformation("{CurrentInstant}: Started {ActorName}.{MethodName} Id: {Id}.", getCurrentInstantExtended(), actorName, context.MethodName, this.Id.GetId())
+            //log.LogInformation("{CurrentInstant}: Started {ActorName}.{MethodName}, Id: {Id}.", getCurrentInstantExtended(), actorName, context.MethodName, this.Id.GetId())
             Task.CompletedTask
             
         override this.OnPostActorMethodAsync(context) =
             let duration = getCurrentInstant().Minus(actorStartTime)
-            log.LogInformation("{CurrentInstant}: Finished {ActorName}.{MethodName} Id: {Id}; Duration: {duration}ms.", getCurrentInstantExtended(), actorName, context.MethodName, this.Id.GetId(), duration.TotalMilliseconds.ToString("F3"))
+            log.LogInformation("{CurrentInstant}: Finished {ActorName}.{MethodName}, Id: {Id}; Duration: {duration}ms.", getCurrentInstantExtended(), actorName, context.MethodName, this.Id.GetId(), duration.TotalMilliseconds.ToString("F3"))
             logScope.Dispose()
             Task.CompletedTask
 
@@ -308,8 +308,10 @@ module Repository =
                     }
 
                 match isValid command metadata with
-                | Ok command -> processCommand command metadata
-                | Error error -> Task.FromResult(Error error)
+                | Ok command -> 
+                    processCommand command metadata
+                | Error error -> 
+                    Task.FromResult(Error error)
 
         interface IRemindable with
             member this.ReceiveReminderAsync(reminderName, state, dueTime, period) =

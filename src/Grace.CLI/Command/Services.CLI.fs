@@ -210,7 +210,7 @@ module Services =
             if File.Exists(Current().GraceStatusFile) then
                 use fileStream = Constants.DefaultRetryPolicy.Execute(fun _ -> File.Open(Current().GraceStatusFile, FileMode.Open, FileAccess.Read))
                 use gzStream = new GZipStream(fileStream, CompressionMode.Decompress, leaveOpen = false)
-                let! graceStatus = JsonSerializer.DeserializeAsync<GraceStatus>(gzStream, Constants.JsonSerializerOptions)
+                let! graceStatus = deserializeAsync<GraceStatus> gzStream
                 //logToAnsiConsole Colors.Important $"Read Grace Status file from disk."
                 return graceStatus
             else
@@ -222,7 +222,7 @@ module Services =
         (task {
             use fileStream = Constants.DefaultRetryPolicy.Execute(fun _ -> File.Open(Current().GraceStatusFile, FileMode.Create, FileAccess.Write, FileShare.None))
             use gzStream = new GZipStream(fileStream, CompressionLevel.SmallestSize, leaveOpen = false)
-            do! JsonSerializer.SerializeAsync(gzStream, graceStatus, Constants.JsonSerializerOptions)
+            do! serializeAsync gzStream graceStatus 
             //logToAnsiConsole Colors.Important $"Wrote new Grace Status file to disk."
         }) :> Task
 
@@ -232,7 +232,7 @@ module Services =
             if File.Exists(Current().GraceObjectCacheFile) then
                 use fileStream = Constants.DefaultRetryPolicy.Execute(fun _ -> File.Open(Current().GraceStatusFile, FileMode.Open, FileAccess.Read))
                 use gzStream = new GZipStream(fileStream, CompressionMode.Decompress, leaveOpen = false)
-                return! JsonSerializer.DeserializeAsync<GraceObjectCache>(gzStream, Constants.JsonSerializerOptions)
+                return! deserializeAsync<GraceObjectCache> gzStream
 
             else
                 return GraceObjectCache.Default
@@ -243,7 +243,7 @@ module Services =
         (task {
             use fileStream = Constants.DefaultRetryPolicy.Execute(fun _ -> File.Open(Current().GraceObjectCacheFile, FileMode.Create, FileAccess.Write, FileShare.None))
             use gzStream = new GZipStream(fileStream, CompressionLevel.SmallestSize, leaveOpen = false)
-            do! JsonSerializer.SerializeAsync(gzStream, graceObjectCache, Constants.JsonSerializerOptions)
+            do! serializeAsync gzStream graceObjectCache
         }) :> Task
 
     /// Compared the repository's working directory against the Grace index file and returns the differences.
@@ -391,7 +391,7 @@ module Services =
                 let allFilesExist = localDirectoryVersion.Files |> Seq.forall(fun file -> File.Exists(Path.Combine(Current().ObjectDirectory, file.RelativeDirectory, file.GetObjectFileName)))
                 if allFilesExist then
                     objectCache.Index.TryAdd(localDirectoryVersion.DirectoryId, localDirectoryVersion) |> ignore
-                    do! File.WriteAllTextAsync(Current().GraceObjectCacheFile, JsonSerializer.Serialize(objectCache, Constants.JsonSerializerOptions))
+                    do! File.WriteAllTextAsync(Current().GraceObjectCacheFile, serialize objectCache)
                     return Ok ()
                 else
                     return Error "Directory could not be added to object cache. All files do not exist in /objects directory."
@@ -406,7 +406,7 @@ module Services =
             if objectCache.Index.ContainsKey(directoryId) then
                 let mutable ldv = LocalDirectoryVersion.Default
                 objectCache.Index.TryRemove(directoryId, &ldv) |> ignore
-                do! File.WriteAllTextAsync(Current().GraceObjectCacheFile, JsonSerializer.Serialize(objectCache, Constants.JsonSerializerOptions))
+                do! File.WriteAllTextAsync(Current().GraceObjectCacheFile, serialize objectCache)
         }
     
     /// Downloads files from object storage that aren't already present in the local object cache.
@@ -750,7 +750,7 @@ module Services =
                 }
 
                 use fileStream = new FileStream(IpcFileName(), FileMode.Create, FileAccess.Write, FileShare.None)
-                JsonSerializer.Serialize(fileStream, newGraceWatchStatus, options = Constants.JsonSerializerOptions)
+                do! serializeAsync fileStream newGraceWatchStatus
                 graceWatchStatusUpdateTime <- getCurrentInstant()
                 logToAnsiConsole Colors.Important $"Wrote inter-process communication file."
             with ex -> 
@@ -768,7 +768,7 @@ module Services =
                 if File.Exists(IpcFileName()) then
                     //logToAnsiConsole Colors.Verbose $"File {IpcFileName} exists."
                     use fileStream = new FileStream(IpcFileName(), FileMode.Open, FileAccess.Read, FileShare.Read)
-                    let graceWatchStatus = JsonSerializer.Deserialize<GraceWatchStatus>(fileStream, options = Constants.JsonSerializerOptions)
+                    let! graceWatchStatus = deserializeAsync<GraceWatchStatus> fileStream
 
                     // `grace watch` updates the file at least every five minutes to indicate that it's still alive.
                     // When `grace watch` exits, the status file is deleted in a try...finally (Program.CLI.fs), so the only 

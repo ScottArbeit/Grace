@@ -92,7 +92,7 @@ module Common =
                     return Error graceError |> enhance ("ServerElapsedTime", $"{(endTime - startTime).TotalMilliseconds:F3} ms")
             with ex ->
                 let exceptionResponse = Utilities.createExceptionResponse ex
-                return Error (GraceError.Create (JsonSerializer.Serialize(exceptionResponse)) parameters.CorrelationId)
+                return Error (GraceError.Create (serialize exceptionResponse) parameters.CorrelationId)
         }
 
     /// Sends POST commands to Grace Server.

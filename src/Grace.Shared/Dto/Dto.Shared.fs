@@ -182,8 +182,8 @@ module Dto =
                 //Tags: SortedSet<TagName>
                 DefaultServerApiVersion: string
                 DefaultBranchName: BranchName
-                SaveDays: float
-                CheckpointDays: float
+                SaveDays: double
+                CheckpointDays: double
                 EnabledSingleStepPromotion: bool
                 EnabledComplexPromotion: bool
                 Description: string
@@ -210,7 +210,7 @@ module Dto =
                 DefaultServerApiVersion = "latest"
                 DefaultBranchName = BranchName Constants.InitialBranchName
                 SaveDays = 7.0
-                CheckpointDays = 0.0
+                CheckpointDays = 365.0
                 EnabledSingleStepPromotion = true
                 EnabledComplexPromotion = false
                 Description = String.Empty

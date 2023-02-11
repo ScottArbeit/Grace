@@ -37,11 +37,11 @@ module Repository =
     
     type SaveDaysParameters() = 
         inherit RepositoryParameters()
-        member val public SaveDays = Double.MinValue with get, set
+        member val public SaveDays: Double = Double.MinValue with get, set
 
     type CheckpointDaysParameters() = 
         inherit RepositoryParameters()
-        member val public CheckpointDays = Double.MinValue with get, set
+        member val public CheckpointDays: Double = Double.MinValue with get, set
 
     type DescriptionParameters() =
         inherit RepositoryParameters()

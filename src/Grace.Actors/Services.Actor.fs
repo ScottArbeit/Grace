@@ -35,15 +35,19 @@ module Services =
             return secret.First().Value
         }).Result
 
+    let private storageKey = 
+        (task {
+            let! secret = daprClient.GetSecretAsync(Constants.GraceSecretStoreName, "AzureStorageKey")
+            return secret.First().Value
+         }).Result
+    let private sharedKeyCredential = StorageSharedKeyCredential(defaultObjectStorageAccount, storageKey)
+
     //let actorProxyOptions = ActorProxyOptions(JsonSerializerOptions = Constants.JsonSerializerOptions, HttpEndpoint = daprEndpoint)
     //let actorProxyFactory = ActorProxyFactory(actorProxyOptions)
 
     let mutable private actorProxyFactory: IActorProxyFactory = null
     let setActorProxyFactory proxyFactory =
         actorProxyFactory <- proxyFactory
-
-    let private storageKey = daprClient.GetSecretAsync(Constants.GraceSecretStoreName, "AzureStorageKey").Result
-    let private sharedKeyCredential = StorageSharedKeyCredential(defaultObjectStorageAccount, storageKey.First().Value)
 
     let getContainerClient (storageAccountName: StorageAccountName) (containerName: StorageContainerName) =
         task {

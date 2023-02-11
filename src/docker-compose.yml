@@ -194,3 +194,13 @@ services:
   #    - grace
   #  ports:
   #    - 80:80
+
+  loadtest:
+    container_name: daprdevcontainer_loadtest
+    image: locustio/locust
+    build:
+      context: ./loadtest
+    ports:
+      - "8089:8089"
+    networks:
+      - grace

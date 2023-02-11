@@ -39,9 +39,9 @@
 		<ProjectReference Include="..\Grace.Shared\Grace.Shared.fsproj" />
 	</ItemGroup>
 	<ItemGroup>
-		<PackageReference Include="Azure.Monitor.OpenTelemetry.Exporter" Version="1.0.0-beta.6" />
-		<PackageReference Include="Azure.Storage.Blobs" Version="12.14.1" />
-		<PackageReference Include="Azure.Storage.Blobs.Batch" Version="12.11.0" />
+		<PackageReference Include="Azure.Monitor.OpenTelemetry.Exporter" Version="1.0.0-beta.7" />
+		<PackageReference Include="Azure.Storage.Blobs" Version="12.15.0-beta.1" />
+		<PackageReference Include="Azure.Storage.Blobs.Batch" Version="12.12.0-beta.1" />
 		<PackageReference Include="FSharp.SystemTextJson" Version="1.1.23" />
 		<PackageReference Include="Giraffe" Version="6.0.0" />
 		<PackageReference Include="Dapr.Client" Version="1.9.0" />
@@ -51,7 +51,7 @@
 		<PackageReference Include="Dapr.Extensions.Configuration" Version="1.9.0" />
 		<PackageReference Include="Microsoft.AspNetCore.Mvc.Versioning" Version="5.0.0" />
 		<PackageReference Include="Microsoft.AspNetCore.Mvc.Versioning.ApiExplorer" Version="5.0.0" />
-		<PackageReference Include="Microsoft.Azure.Cosmos" Version="3.31.2" />
+		<PackageReference Include="Microsoft.Azure.Cosmos" Version="3.32.0" />
 		<!--<PackageReference Include="Microsoft.Extensions.ApiDescription.Server" Version="7.0.1">
 		  <PrivateAssets>all</PrivateAssets>
 		  <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
@@ -61,19 +61,22 @@
 		<PackageReference Include="Microsoft.Extensions.Logging.Configuration" Version="7.0.0" />
 		<PackageReference Include="Microsoft.OpenApi" Version="1.6.0" />
 		<PackageReference Include="Microsoft.VisualStudio.Azure.Containers.Tools.Targets" Version="1.17.0" />
-		<PackageReference Include="OpenTelemetry" Version="1.4.0-rc.2" />
-		<PackageReference Include="OpenTelemetry.Exporter.Console" Version="1.4.0-rc.2" />
-		<PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.4.0-rc.2" />
+		<PackageReference Include="OpenTelemetry" Version="1.4.0-rc.4" />
+		<PackageReference Include="OpenTelemetry.Exporter.Console" Version="1.4.0-rc.4" />
+		<PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.4.0-rc.4" />
 		<PackageReference Include="OpenTelemetry.Exporter.Prometheus" Version="1.3.0-rc.2" />
-		<PackageReference Include="OpenTelemetry.Exporter.Zipkin" Version="1.4.0-rc.2" />
-		<PackageReference Include="OpenTelemetry.Extensions.Hosting" Version="1.4.0-rc.2" />
-		<PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.0.0-rc9.11" />
-		<PackageReference Include="OpenTelemetry.Instrumentation.Http" Version="1.0.0-rc9.11" />
+		<PackageReference Include="OpenTelemetry.Exporter.Zipkin" Version="1.4.0-rc.4" />
+		<PackageReference Include="OpenTelemetry.Extensions.Hosting" Version="1.4.0-rc.4" />
+		<PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.0.0-rc9.13" />
+		<PackageReference Include="OpenTelemetry.Instrumentation.Http" Version="1.0.0-rc9.13" />
 		<PackageReference Include="Swashbuckle.AspNetCore.Swagger" Version="6.5.0" />
 		<PackageReference Include="Swashbuckle.AspNetCore.SwaggerGen" Version="6.5.0" />
 		<PackageReference Include="Swashbuckle.AspNetCore.SwaggerUI" Version="6.5.0" />
 	</ItemGroup>
 	<ItemGroup>
 		<PackageReference Update="FSharp.Core" Version="7.0.0" />
+	</ItemGroup>
+	<ItemGroup>
+		<InternalsVisibleTo Include="Grace.Server.Tests" />
 	</ItemGroup>
 </Project>

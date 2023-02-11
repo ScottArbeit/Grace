@@ -87,7 +87,7 @@ module Common =
                                 with ex -> 
                                     sprintf "%A" error.Error
                             else
-                                JsonSerializer.Serialize(error, Constants.JsonSerializerOptions)
+                                serialize error
 
             let errorText = if error.Error.Contains("Stack trace") then 
                                 try

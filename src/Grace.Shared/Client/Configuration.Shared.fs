@@ -87,13 +87,13 @@ module Configuration =
         /// Indicates that this instance of GraceConfiguration has been populated.
         [<JsonIgnore(Condition=JsonIgnoreCondition.Always)>]
         member val public IsPopulated = false with get, set
-        override this.ToString() = JsonSerializer.Serialize(this, Constants.JsonSerializerOptions)
+        override this.ToString() = serialize this
             
     let mutable private graceConfiguration = GraceConfiguration()
 
     let private saveConfigFile graceConfigurationFilePath (graceConfiguration: GraceConfiguration) =
         try
-            let json = JsonSerializer.Serialize(graceConfiguration, Constants.JsonSerializerOptions)
+            let json = serialize graceConfiguration
             File.WriteAllText(graceConfigurationFilePath, json)
         with ex -> 
             printfn $"Exception: {ex.Message}{Environment.NewLine}Stack trace: {ex.StackTrace}"

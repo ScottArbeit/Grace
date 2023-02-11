@@ -24,11 +24,6 @@
       "commandLineArgs": "switch -b scottarbeit",
       "workingDirectory": "C:\\Source\\grace\\src"
     },
-    "grace status - PlayWithFlexbox": {
-      "commandName": "Project",
-      "commandLineArgs": "status",
-      "workingDirectory": "C:\\Source\\PlayWithFlexbox"
-    },
     "grace merge - PlayWithFlexbox": {
       "commandName": "Project",
       "commandLineArgs": "merge -m \"Merge from Debug\"",
@@ -67,6 +62,11 @@
       "commandName": "Project",
       "commandLineArgs": "maint update-index",
       "workingDirectory": "C:\\Source\\gracedemo\\Chris"
+    },
+    "grace repo set-checkpointdays": {
+      "commandName": "Project",
+      "commandLineArgs": "repo set-checkpointdays --checkpointDays 5.1 --output Verbose",
+      "workingDirectory": "C:\\Source\\GraceDemo\\Chris"
     }
   }
 }

@@ -121,7 +121,7 @@ module Branch =
 
                     // Publish the event to the rest of the world.
                     let graceEvent = Events.GraceEvent.BranchEvent branchEvent
-                    let message = JsonSerializer.Serialize<Events.GraceEvent>(graceEvent, options = Constants.JsonSerializerOptions)
+                    let message = graceEvent |> serialize
                     do! daprClient.PublishEventAsync(Constants.GracePubSubService, Constants.GraceEventStreamTopic, message)
 
                     let returnValue = GraceReturnValue.Create "Branch command succeeded." branchEvent.Metadata.CorrelationId

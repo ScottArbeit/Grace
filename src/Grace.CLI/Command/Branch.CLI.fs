@@ -1229,21 +1229,21 @@ module Branch =
                                 OrganizationId = parameters.OrganizationId, OrganizationName = parameters.OrganizationName,
                                 RepositoryId = parameters.RepositoryId, RepositoryName = parameters.RepositoryName,
                                 BranchId = $"{branchDto.BranchId}", MaxCount = 1, CorrelationId = parameters.CorrelationId)
-                            //logToAnsiConsole Colors.Verbose $"getReferencesParameters: {JsonSerializer.Serialize(getReferencesParameters, Constants.JsonSerializerOptions)}"
+                            //logToAnsiConsole Colors.Verbose $"getReferencesParameters: {getReferencesParameters |> serialize)}"
                             match! Branch.GetReferences(getReferencesParameters) with
                             | Ok returnValue ->
                                 let latestReference = if returnValue.ReturnValue.Count() > 0 then returnValue.ReturnValue.First() else ReferenceDto.Default
-                                logToAnsiConsole Colors.Verbose $"latestReference: {JsonSerializer.Serialize(latestReference, Constants.JsonSerializerOptions)}"
+                                logToAnsiConsole Colors.Verbose $"latestReference: {serialize latestReference}"
                                 // Now we have all of the references we need, so we have DirectoryId's to do diffs with.
 
                                 // First diff: parent promotion that current branch is based on vs. parent's latest promotion.
                                 let diffParameters = Parameters.Diff.GetDiffParameters(DirectoryId1 = basedOn.DirectoryId, DirectoryId2 = parentLatestPromotion.DirectoryId, CorrelationId = parameters.CorrelationId)
-                                logToAnsiConsole Colors.Verbose $"First diff: {JsonSerializer.Serialize(diffParameters, Constants.JsonSerializerOptions)}"
+                                logToAnsiConsole Colors.Verbose $"First diff: {serialize diffParameters}"
                                 let! firstDiff = Diff.GetDiff(diffParameters)
 
                                 // Second diff: latest reference on current branch vs. parent promotion that current branch is based on.
                                 let diffParameters = Parameters.Diff.GetDiffParameters(DirectoryId1 = latestReference.DirectoryId, DirectoryId2 = basedOn.DirectoryId, CorrelationId = parameters.CorrelationId)
-                                logToAnsiConsole Colors.Verbose $"Second diff: {JsonSerializer.Serialize(diffParameters, Constants.JsonSerializerOptions)}"
+                                logToAnsiConsole Colors.Verbose $"Second diff: {serialize diffParameters}"
                                 let! secondDiff = Diff.GetDiff(diffParameters)
 
                                 let (diffs, errors) = Result.partition [ firstDiff; secondDiff ]
@@ -1342,7 +1342,7 @@ module Branch =
                                             match! Branch.Rebase(rebaseParameters) with
                                             | Ok returnValue ->
                                                 AnsiConsole.MarkupLine($"[{Colors.Important}]Rebase succeeded.[/]")
-                                                AnsiConsole.MarkupLine($"[{Colors.Verbose}]({JsonSerializer.Serialize(returnValue, Constants.JsonSerializerOptions)})[/]")
+                                                AnsiConsole.MarkupLine($"[{Colors.Verbose}]({serialize returnValue})[/]")
                                                 return 0
                                             | Error error ->
                                                 logToAnsiConsole Colors.Error (Markup.Escape($"{error}"))
@@ -1425,11 +1425,11 @@ module Branch =
                                      .AddRow($"[{Colors.Important}]Repository[/]", $"[{Colors.Important}]{Current().RepositoryName}[/] [{Colors.Deemphasized}]- {Current().RepositoryId}[/]")
                                      .AddRow(String.Empty, String.Empty)
                                      .AddRow($"[{Colors.Important}]Branch[/]", $"[{Colors.Important}]{branchDto.BranchName}[/] [{Colors.Deemphasized}]- {branchDto.BranchId}[/]")
-                                     .AddRow($"  - latest reference - {discriminatedUnionCaseNameToString latestReference.ReferenceType}", $"  {getShortenedSha256Hash latestReference.Sha256Hash} - {instantToLocalTime latestReference.CreatedAt} [{Colors.Deemphasized}]- {latestReference.ReferenceId}[/]")
-                                     .AddRow($"  - latest commit", $"  {getShortenedSha256Hash latestCommit.Sha256Hash} - {instantToLocalTime latestCommit.CreatedAt} [{Colors.Deemphasized}]- {latestCommit.ReferenceId}[/]")
-                                     .AddRow($"  - based on promotion", $"  {getShortenedSha256Hash basedOn.Sha256Hash} - {instantToLocalTime basedOn.CreatedAt} [{Colors.Deemphasized}]- {basedOn.ReferenceId}[/]")
+                                     .AddRow($"  - latest reference - {discriminatedUnionCaseNameToString latestReference.ReferenceType}", $"  {getShortenedSha256Hash latestReference.Sha256Hash} - {ago latestReference.CreatedAt} - {instantToLocalTime latestReference.CreatedAt} [{Colors.Deemphasized}]- {latestReference.ReferenceId}[/]")
+                                     .AddRow($"  - latest commit", $"  {getShortenedSha256Hash latestCommit.Sha256Hash} - {ago latestCommit.CreatedAt} - {instantToLocalTime latestCommit.CreatedAt} [{Colors.Deemphasized}]- {latestCommit.ReferenceId}[/]")
+                                     .AddRow($"  - based on promotion", $"  {getShortenedSha256Hash basedOn.Sha256Hash} - {ago basedOn.CreatedAt} - {instantToLocalTime basedOn.CreatedAt} [{Colors.Deemphasized}]- {basedOn.ReferenceId}[/]")
                                      .AddRow($"[{Colors.Important}]Parent branch[/]", $"[{Colors.Important}]{parentBranchDto.BranchName}[/] [{Colors.Deemphasized}]- {parentBranchDto.BranchId}[/]")
-                                     .AddRow($"  - latest promotion", $"  {getShortenedSha256Hash latestPromotion.Sha256Hash} - {instantToLocalTime latestPromotion.CreatedAt} [{Colors.Deemphasized}]- {latestPromotion.ReferenceId}[/]")
+                                     .AddRow($"  - latest promotion", $"  {getShortenedSha256Hash latestPromotion.Sha256Hash} - {ago latestPromotion.CreatedAt} - {instantToLocalTime latestPromotion.CreatedAt} [{Colors.Deemphasized}]- {latestPromotion.ReferenceId}[/]")
                                      .AddRow($"[{Colors.Important}]Based on latest promotion[/]", $"[{Colors.Important}]{branchDto.BasedOn = parentBranchDto.LatestPromotion}[/]")
                                      |> ignore
                                 // Need to add this portion of the header after everything else is rendered so we know the width.

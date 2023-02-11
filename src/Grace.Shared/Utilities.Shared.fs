@@ -60,19 +60,25 @@ module Utilities =
     /// Gets the cases of discriminated union for serialization.
     let GetKnownTypes<'T>() = typeof<'T>.GetNestedTypes(BindingFlags.Public ||| BindingFlags.NonPublic) |> Array.filter FSharpType.IsUnion
 
-    /// <summary>
-    /// Helper method to serialize the given item to JSON, using the Grace JsonSerializerOptions.
-    /// </summary>
-    /// <param name="item">Any item to serialize to JSON.</param>
-    let serialize<'T> (item: 'T) =
+    /// Serializes an object to JSON, using the Grace JsonSerializerOptions.
+    let serialize<'T> item =
         JsonSerializer.Serialize<'T>(item, options = Constants.JsonSerializerOptions)
 
-    /// <summary>
-    /// Helper method to deserialize a given JSON string to a generic type, using the Grace JsonSerializerOptions.
-    /// </summary>
-    /// <param name="item">Any item to serialize to JSON.</param>
+    /// Serializes a stream to JSON, using the Grace JsonSerializerOptions.
+    let serializeAsync<'T> stream item =
+        task {
+            return! JsonSerializer.SerializeAsync<'T>(stream, item, Constants.JsonSerializerOptions)
+        }
+
+    /// Deserializes a JSON string to a provided type, using the Grace JsonSerializerOptions.
     let deserialize<'T> (s: string) =
         JsonSerializer.Deserialize<'T>(s, options = Constants.JsonSerializerOptions)
+
+    /// Deserializes a stream to a provided type, using the Grace JsonSerializerOptions.
+    let deserializeAsync<'T> stream =
+        task {
+            return! JsonSerializer.DeserializeAsync<'T>(stream, Constants.JsonSerializerOptions)
+        }
 
     /// <summary>
     /// Retrieves the localized version of a system resource string.
@@ -116,7 +122,7 @@ module Utilities =
         else
             filePath
 
-    /// Checks if a file is a binary file, by scanning the first 8K for a 0x00 character; if it finds one, we assume the file is binary.
+    /// Checks if a file is a binary file by scanning the first 8K for a 0x00 character; if it finds one, we assume the file is binary.
     let isBinaryFile (stream: Stream) =
         task {
             let defaultBytesToCheck = 8 * 1024
@@ -172,19 +178,14 @@ module Utilities =
             //logToConsole $"In getRelativeDirectory: relativeDirectoryPath.ToString(): {relativeDirectoryPath.ToString()}"
             (relativeDirectoryPath.ToString())
 
-    /// <summary>
     /// Returns either the supplied correlationId, if not null, or a new Guid.
-    /// </summary>
     let ensureNonEmptyCorrelationId (correlationId: string) =
         if not <| String.IsNullOrEmpty(correlationId) then
             correlationId
         else
             Guid.NewGuid().ToString()
 
-    /// <summary>
     /// Formats a byte array as a string. For example, [0xab, 0x15, 0x03] -> "ab1503"
-    /// </summary>
-    /// <param name="array">An array of bytes to convert to a string.</param>
     let byteArrayToString (array: Span<byte>) =
         let sb = StringBuilder(array.Length * 2)
         for b in array do
@@ -212,7 +213,7 @@ module Utilities =
             ``exception``: string
             innerException: string
         }
-        override this.ToString() = JsonSerializer.Serialize(this, Constants.JsonSerializerOptions).Replace("\\\\\\\\", @"\").Replace("\\\\", @"\").Replace(@"\r\n", Environment.NewLine)
+        override this.ToString() = (serialize this).Replace("\\\\\\\\", @"\").Replace("\\\\", @"\").Replace(@"\r\n", Environment.NewLine)
 
     /// Converts an Exception-based instance into an ExceptionResponse instance.
     let createExceptionResponse (ex: Exception): ExceptionResponse =
@@ -220,7 +221,7 @@ module Utilities =
         let stackTrace (ex: Exception) = 
             if not <| String.IsNullOrEmpty(ex.StackTrace) then
                 //ex.StackTrace.Replace("\\\\\\\\", @"\").Replace("\\\\", @"\").Replace("\r\n", Environment.NewLine)
-                JsonSerializer.Serialize(ex.StackTrace, Constants.JsonSerializerOptions) //.Replace("\\\\\\\\", @"\").Replace("\\\\", @"\").Replace(@"\r\n", Environment.NewLine)
+                serialize ex.StackTrace //.Replace("\\\\\\\\", @"\").Replace("\\\\", @"\").Replace(@"\r\n", Environment.NewLine)
             else
                 String.Empty
         let exceptionMessage (ex: Exception) = $"Message: {ex.Message}{Environment.NewLine}{Environment.NewLine}Stack trace:{Environment.NewLine}{stackTrace ex}{Environment.NewLine}"
@@ -228,8 +229,8 @@ module Utilities =
         | null -> {``exception`` = exceptionMessage ex; innerException = "null"}
         | innerEx -> {``exception`` = exceptionMessage ex; innerException = exceptionMessage ex.InnerException}
         //match ex.InnerException with
-        //| null -> {``exception`` = JsonSerializer.Serialize(ex, Constants.JsonSerializerOptions); innerException = String.Empty}
-        //| innerEx -> {``exception`` = JsonSerializer.Serialize(ex, Constants.JsonSerializerOptions); innerException = JsonSerializer.Serialize(innerEx, Constants.JsonSerializerOptions)}
+        //| null -> {``exception`` = serialize ex; innerException = String.Empty}
+        //| innerEx -> {``exception`` = serialize ex; innerException = serialize innerEx}
 //#else
 //        {|message = $"Internal server error, and, yes, it's been logged. The correlationId is in the X-Correlation-Id header."|}
 //#endif

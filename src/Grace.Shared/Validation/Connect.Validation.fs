@@ -7,7 +7,7 @@ open System
 
 module Connect =
 
-    let saveDaysIsAPositiveNumber (saveDays: float) (error: ConnectError) =
+    let saveDaysIsAPositiveNumber (saveDays: double) (error: ConnectError) =
         if saveDays < 0.0 then
             Error error
         else

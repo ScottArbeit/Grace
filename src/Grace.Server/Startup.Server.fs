@@ -248,18 +248,19 @@ module Application =
                            .AddAspNetCoreInstrumentation(fun options -> options.EnrichWithHttpRequest <- enrichTelemetry)
                            .AddHttpClientInstrumentation()
                            .AddAzureMonitorTraceExporter(fun options -> options.ConnectionString <- azureMonitorConnectionString) |> ignore)
-                           .StartWithHost() |> ignore
-                           //.AddZipkinExporter() |> ignore)
+                           //.StartWithHost()
+                           //.AddZipkinExporter()
+                           |> ignore
             
-            services.AddAuthentication()
+            services.AddAuthentication() |> ignore
 
             services.AddRouting()
                     .AddLogging()
                     //.AddSwaggerGen(fun config -> config.SwaggerDoc("v0.1", openApiInfo))
                     .AddGiraffe()
                     .AddSingleton(Constants.JsonSerializerOptions)
-                    //.AddSingleton<Json.ISerializer>(SystemTextJson.Serializer(Constants.JsonSerializerOptions))
-                    .AddSingleton<Json.ISerializer, SystemTextJson.Serializer>()
+                    .AddSingleton<Json.ISerializer>(SystemTextJson.Serializer(Constants.JsonSerializerOptions))
+                    //.AddSingleton<Json.ISerializer, SystemTextJson.Serializer>()
                     .AddW3CLogging(fun options -> options.FileName <- "Grace.Server.log-"
                                                   options.LogDirectory <- Path.Combine(Environment.GetEnvironmentVariable("TEMP"), "Grace.Server.Logs"))
                     .AddSingleton<ActorProxyOptions>(actorProxyOptions)

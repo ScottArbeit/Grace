@@ -282,7 +282,7 @@ module Watch =
             logToAnsiConsole Colors.Verbose $"Storing Grace Status in compressed memory stream."
             graceStatusMemoryStream <- new MemoryStream()
             use gzStream = new GZipStream(graceStatusMemoryStream, CompressionLevel.SmallestSize, leaveOpen = true)
-            do! JsonSerializer.SerializeAsync(gzStream, graceStatus, Constants.JsonSerializerOptions)
+            do! serializeAsync gzStream graceStatus
             do! gzStream.FlushAsync()
             do! graceStatusMemoryStream.FlushAsync()
             logToAnsiConsole Colors.Verbose $"Stored Grace Status in compressed memory stream."

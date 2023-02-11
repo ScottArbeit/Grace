@@ -90,8 +90,8 @@ module Events =
             | RecordSavesSet of recordSaves: bool
             | DefaultServerApiVersionSet of defaultServerApiVersion: string
             | DefaultBranchNameSet of defaultBranchName: BranchName
-            | SaveDaysSet of duration: float
-            | CheckpointDaysSet of duration: float
+            | SaveDaysSet of duration: double
+            | CheckpointDaysSet of duration: double
             | EnabledSingleStepPromotion of enabled: bool
             | EnabledComplexPromotion of enabled: bool
             | DescriptionSet of description: string
