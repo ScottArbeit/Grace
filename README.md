@@ -15,7 +15,9 @@ Grace is a **new**, **modern**, **cloud-native** **version control system**.
 
 Grace is **easy to use**, **easy to understand**, and **consistently fast**. And it's **powerful**, ready to handle large repositories and large file sizes.
 
-Grace is meant to run in the background, making it **ambient**, **faster**, and **more valuable to your everyday work** as a developer.
+Grace Server **scales up** by running on Kubernetes and **massive PaaS services** from large cloud providers.
+
+Grace Client runs in the background, making it **ambient**, **faster**, and **more valuable to your everyday work** as a developer.
 
 Grace **connects you with others** working in your repository, **across the globe**, **in real-time**, enabling **new experiences** and **new ways of sharing**.
 
@@ -335,6 +337,10 @@ flowchart LR
 
     subgraph Utilities
     Grace.Load-->Grace.SDK
+    end
+
+    subgraph Tests
+    Grace.Server.Tests-->Grace.Server
     end
 
     Grace.Actors-->Grace.Shared

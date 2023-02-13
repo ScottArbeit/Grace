@@ -8,7 +8,7 @@ open System
 open System.Net.Http.Json
 open System.Net
 
-[<Parallelizable>]
+[<Parallelizable(ParallelScope.Children)>]
 type Repository() =
 
     [<SetUp>]
@@ -16,7 +16,6 @@ type Repository() =
         ()
    
     [<Test>]
-    [<Parallelizable>]
     [<Repeat(1)>]
     member public this.SetDescriptionWithValidValues() =
         task {
@@ -34,7 +33,6 @@ type Repository() =
         }
 
     [<Test>]
-    [<Parallelizable>]
     [<Repeat(1)>]
     member public this.SetDescriptionWithInvalidValues() =
         task {
@@ -52,7 +50,6 @@ type Repository() =
         }
 
     [<Test>]
-    [<Parallelizable>]
     [<Repeat(1)>]
     member public this.SetSaveDaysWithValidValues() =
         task {
@@ -70,7 +67,6 @@ type Repository() =
         }
         
     [<Test>]
-    [<Parallelizable>]
     [<Repeat(1)>]
     member public this.SetSaveDaysWithInvalidValues() =
         task {
@@ -88,7 +84,6 @@ type Repository() =
         }
 
     [<Test>]
-    [<Parallelizable>]
     [<Repeat(1)>]
     member public this.SetCheckpointDaysWithValidValues() =
         task {
@@ -106,7 +101,6 @@ type Repository() =
         }
         
     [<Test>]
-    [<Parallelizable>]
     [<Repeat(1)>]
     member public this.SetCheckpointDaysWithInvalidValues() =
         task {
@@ -124,7 +118,6 @@ type Repository() =
         }
                 
     [<Test>]
-    [<Parallelizable>]
     [<Repeat(1)>]
     member public this.GetBranchesWithValidValues() =
         task {
@@ -141,7 +134,6 @@ type Repository() =
         }
         
     [<Test>]
-    [<Parallelizable>]
     [<Repeat(1)>]
     member public this.GetBranchesWithInvalidValues() =
         task {
@@ -158,7 +150,6 @@ type Repository() =
         }
         
     [<Test>]
-    [<Parallelizable>]
     [<Repeat(1)>]
     member public this.SetStatusWithValidValues() =
         task {
@@ -176,7 +167,6 @@ type Repository() =
         }
         
     [<Test>]
-    [<Parallelizable>]
     [<Repeat(1)>]
     member public this.SetStatusWithInvalidValues() =
         task {
@@ -194,7 +184,6 @@ type Repository() =
         }
 
     [<Test>]
-    [<Parallelizable>]
     [<Repeat(1)>]
     member public this.SetVisibilityWithValidValues() =
         task {
@@ -212,7 +201,6 @@ type Repository() =
         }
         
     [<Test>]
-    [<Parallelizable>]
     [<Repeat(1)>]
     member public this.SetVisibilityWithInvalidValues() =
         task {
