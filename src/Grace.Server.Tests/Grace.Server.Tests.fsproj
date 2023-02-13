@@ -28,7 +28,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\src\Grace.Server\Grace.Server.fsproj" />
+    <ProjectReference Include="..\Grace.Server\Grace.Server.fsproj" />
   </ItemGroup>
 
   <ItemGroup>
