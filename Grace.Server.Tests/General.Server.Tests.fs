@@ -8,6 +8,10 @@ open NUnit.Framework
 open System
 open System.Net.Http.Json
 
+module Common =    
+    let okResult: Result<unit, string> = Result.Ok () 
+    let errorResult: Result<unit, string> = Result.Error "error"
+
 module Services =
     let public Factory = (new WebApplicationFactory<Grace.Server.Application.Startup>()).WithWebHostBuilder(fun builder -> 
         builder.UseEnvironment("Development")

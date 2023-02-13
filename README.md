@@ -1,11 +1,11 @@
 # Grace Version Control System
 
-grace[^grace] _(n)_ -
+grace _(n)_ -
 
 1. elegance and beauty of movement, form, or expression
 2. a pleasing or charming quality
 3. goodwill or favor
-4. a sense of propriety and consideration for others
+4. a sense of propriety and consideration for others [^grace]
 
 ![](https://gracevcsdevelopment.blob.core.windows.net/static/Orange3.svg)
 

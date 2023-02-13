@@ -1,5 +1,4 @@
 namespace Grace.Shared
-#nowarn "9"
 
 open Grace.Shared.Resources
 open Microsoft.FSharp.NativeInterop
@@ -9,11 +8,13 @@ open NodaTime.Text
 open System
 open System.Globalization
 open System.IO
+open System.Net.Http.Json
 open System.Reflection
 open System.Text
 open System.Text.Json
 open System.Threading.Tasks
-open System
+
+#nowarn "9"
 
 module Utilities =
     let instantToLocalTime (instant: Instant) = instant.ToDateTimeUtc().ToLocalTime().ToString("g", CultureInfo.CurrentUICulture)
@@ -79,6 +80,10 @@ module Utilities =
         task {
             return! JsonSerializer.DeserializeAsync<'T>(stream, Constants.JsonSerializerOptions)
         }
+
+    /// Create JsonContent from the provided object, using Grace JsonSerializerOptions.
+    let jsonContent<'T> item =
+        JsonContent.Create(item, options = Constants.JsonSerializerOptions)
 
     /// <summary>
     /// Retrieves the localized version of a system resource string.

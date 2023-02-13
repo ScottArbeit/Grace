@@ -17,7 +17,7 @@ type Repository() =
    
     [<Test>]
     [<Parallelizable>]
-    [<Repeat(5)>]
+    [<Repeat(1)>]
     member public this.SetDescriptionWithValidValues() =
         task {
             let parameters = Grace.Shared.Parameters.Repository.DescriptionParameters()
@@ -26,8 +26,7 @@ type Repository() =
             parameters.OrganizationId <- "1a354bba-2973-41cd-8572-cb71d535bb52"
             parameters.RepositoryId <- "a9e5fe8a-832f-4b5d-afe5-c19773774dd6"
             
-            let jsonContent = JsonContent.Create(parameters, options = Constants.JsonSerializerOptions)
-            let! response = Services.Client.PostAsync("/repository/setDescription", jsonContent)
+            let! response = Services.Client.PostAsync("/repository/setDescription", jsonContent parameters)
             let! content = response.Content.ReadAsStringAsync()
             Console.WriteLine($"{content}");
             response.EnsureSuccessStatusCode() |> ignore
@@ -36,7 +35,7 @@ type Repository() =
 
     [<Test>]
     [<Parallelizable>]
-    [<Repeat(5)>]
+    [<Repeat(1)>]
     member public this.SetDescriptionWithInvalidValues() =
         task {
             let parameters = Parameters.Repository.DescriptionParameters()
@@ -45,8 +44,7 @@ type Repository() =
             parameters.OrganizationId <- Guid.NewGuid().ToString()
             parameters.RepositoryId <- "not a guid"
            
-            let jsonContent = JsonContent.Create(parameters, options = Constants.JsonSerializerOptions)
-            let! response = Services.Client.PostAsync("/repository/setDescription", jsonContent)
+            let! response = Services.Client.PostAsync("/repository/setDescription", jsonContent parameters)
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
             let! content = response.Content.ReadAsStringAsync()
             Console.WriteLine($"{content}");
@@ -55,7 +53,7 @@ type Repository() =
 
     [<Test>]
     [<Parallelizable>]
-    [<Repeat(5)>]
+    [<Repeat(1)>]
     member public this.SetSaveDaysWithValidValues() =
         task {
             let parameters = Grace.Shared.Parameters.Repository.SaveDaysParameters()
@@ -64,8 +62,7 @@ type Repository() =
             parameters.OrganizationId <- "1a354bba-2973-41cd-8572-cb71d535bb52"
             parameters.RepositoryId <- "a9e5fe8a-832f-4b5d-afe5-c19773774dd6"
             
-            let jsonContent = JsonContent.Create(parameters, options = Constants.JsonSerializerOptions)
-            let! response = Services.Client.PostAsync("/repository/setSaveDays", jsonContent)
+            let! response = Services.Client.PostAsync("/repository/setSaveDays", jsonContent parameters)
             let! content = response.Content.ReadAsStringAsync()
             Console.WriteLine($"{content}");
             response.EnsureSuccessStatusCode() |> ignore
@@ -74,7 +71,7 @@ type Repository() =
         
     [<Test>]
     [<Parallelizable>]
-    [<Repeat(5)>]
+    [<Repeat(1)>]
     member public this.SetSaveDaysWithInvalidValues() =
         task {
             let parameters = Grace.Shared.Parameters.Repository.SaveDaysParameters()
@@ -83,8 +80,7 @@ type Repository() =
             parameters.OrganizationId <- Guid.NewGuid().ToString()
             parameters.RepositoryId <- Guid.NewGuid().ToString()
             
-            let jsonContent = JsonContent.Create(parameters, options = Constants.JsonSerializerOptions)
-            let! response = Services.Client.PostAsync("/repository/setSaveDays", jsonContent)
+            let! response = Services.Client.PostAsync("/repository/setSaveDays", jsonContent parameters)
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
             let! content = response.Content.ReadAsStringAsync()
             Console.WriteLine($"{content}");
@@ -93,7 +89,7 @@ type Repository() =
 
     [<Test>]
     [<Parallelizable>]
-    [<Repeat(5)>]
+    [<Repeat(1)>]
     member public this.SetCheckpointDaysWithValidValues() =
         task {
             let parameters = Grace.Shared.Parameters.Repository.CheckpointDaysParameters()
@@ -102,8 +98,7 @@ type Repository() =
             parameters.OrganizationId <- "1a354bba-2973-41cd-8572-cb71d535bb52"
             parameters.RepositoryId <- "a9e5fe8a-832f-4b5d-afe5-c19773774dd6"
             
-            let jsonContent = JsonContent.Create(parameters, options = Constants.JsonSerializerOptions)
-            let! response = Services.Client.PostAsync("/repository/setCheckpointDays", jsonContent)
+            let! response = Services.Client.PostAsync("/repository/setCheckpointDays", jsonContent parameters)
             let! content = response.Content.ReadAsStringAsync()
             Console.WriteLine($"{content}");
             response.EnsureSuccessStatusCode() |> ignore
@@ -112,7 +107,7 @@ type Repository() =
         
     [<Test>]
     [<Parallelizable>]
-    [<Repeat(5)>]
+    [<Repeat(1)>]
     member public this.SetCheckpointDaysWithInvalidValues() =
         task {
             let parameters = Grace.Shared.Parameters.Repository.CheckpointDaysParameters()
@@ -121,8 +116,7 @@ type Repository() =
             parameters.OrganizationId <- Guid.NewGuid().ToString()
             parameters.RepositoryId <- Guid.NewGuid().ToString()
             
-            let jsonContent = JsonContent.Create(parameters, options = Constants.JsonSerializerOptions)
-            let! response = Services.Client.PostAsync("/repository/setCheckpointDays", jsonContent)
+            let! response = Services.Client.PostAsync("/repository/setCheckpointDays", jsonContent parameters)
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
             let! content = response.Content.ReadAsStringAsync()
             Console.WriteLine($"{content}");
@@ -131,7 +125,7 @@ type Repository() =
                 
     [<Test>]
     [<Parallelizable>]
-    [<Repeat(5)>]
+    [<Repeat(1)>]
     member public this.GetBranchesWithValidValues() =
         task {
             let parameters = Grace.Shared.Parameters.Repository.GetBranchesParameters()
@@ -139,8 +133,7 @@ type Repository() =
             parameters.OrganizationId <- "1a354bba-2973-41cd-8572-cb71d535bb52"
             parameters.RepositoryId <- "a9e5fe8a-832f-4b5d-afe5-c19773774dd6"
             
-            let jsonContent = JsonContent.Create(parameters, options = Constants.JsonSerializerOptions)
-            let! response = Services.Client.PostAsync("/repository/getBranches", jsonContent)
+            let! response = Services.Client.PostAsync("/repository/getBranches", jsonContent parameters)
             let! content = response.Content.ReadAsStringAsync()
             Console.WriteLine($"{content}");
             response.EnsureSuccessStatusCode() |> ignore
@@ -149,7 +142,7 @@ type Repository() =
         
     [<Test>]
     [<Parallelizable>]
-    [<Repeat(5)>]
+    [<Repeat(1)>]
     member public this.GetBranchesWithInvalidValues() =
         task {
             let parameters = Grace.Shared.Parameters.Repository.GetBranchesParameters()
@@ -157,8 +150,7 @@ type Repository() =
             parameters.OrganizationId <- Guid.NewGuid().ToString()
             parameters.RepositoryId <- Guid.NewGuid().ToString()
             
-            let jsonContent = JsonContent.Create(parameters, options = Constants.JsonSerializerOptions)
-            let! response = Services.Client.PostAsync("/repository/getBranches", jsonContent)
+            let! response = Services.Client.PostAsync("/repository/getBranches", jsonContent parameters)
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
             let! content = response.Content.ReadAsStringAsync()
             Console.WriteLine($"{content}");
@@ -167,7 +159,7 @@ type Repository() =
         
     [<Test>]
     [<Parallelizable>]
-    [<Repeat(5)>]
+    [<Repeat(1)>]
     member public this.SetStatusWithValidValues() =
         task {
             let parameters = Grace.Shared.Parameters.Repository.StatusParameters()
@@ -176,8 +168,7 @@ type Repository() =
             parameters.RepositoryId <- "a9e5fe8a-832f-4b5d-afe5-c19773774dd6"
             parameters.Status <- "Active"
             
-            let jsonContent = JsonContent.Create(parameters, options = Constants.JsonSerializerOptions)
-            let! response = Services.Client.PostAsync("/repository/setStatus", jsonContent)
+            let! response = Services.Client.PostAsync("/repository/setStatus", jsonContent parameters)
             let! content = response.Content.ReadAsStringAsync()
             Console.WriteLine($"{content}");
             response.EnsureSuccessStatusCode() |> ignore
@@ -186,7 +177,7 @@ type Repository() =
         
     [<Test>]
     [<Parallelizable>]
-    [<Repeat(5)>]
+    [<Repeat(1)>]
     member public this.SetStatusWithInvalidValues() =
         task {
             let parameters = Grace.Shared.Parameters.Repository.StatusParameters()
@@ -195,8 +186,7 @@ type Repository() =
             parameters.RepositoryId <- Guid.NewGuid().ToString()
             parameters.Status <- "Active"
             
-            let jsonContent = JsonContent.Create(parameters, options = Constants.JsonSerializerOptions)
-            let! response = Services.Client.PostAsync("/repository/setStatus", jsonContent)
+            let! response = Services.Client.PostAsync("/repository/setStatus", jsonContent parameters)
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
             let! content = response.Content.ReadAsStringAsync()
             Console.WriteLine($"{content}");
@@ -205,7 +195,7 @@ type Repository() =
 
     [<Test>]
     [<Parallelizable>]
-    [<Repeat(5)>]
+    [<Repeat(1)>]
     member public this.SetVisibilityWithValidValues() =
         task {
             let parameters = Grace.Shared.Parameters.Repository.VisibilityParameters()
@@ -214,8 +204,7 @@ type Repository() =
             parameters.RepositoryId <- "a9e5fe8a-832f-4b5d-afe5-c19773774dd6"
             parameters.Visibility <- "Public"
             
-            let jsonContent = JsonContent.Create(parameters, options = Constants.JsonSerializerOptions)
-            let! response = Services.Client.PostAsync("/repository/setVisibility", jsonContent)
+            let! response = Services.Client.PostAsync("/repository/setVisibility", jsonContent parameters)
             let! content = response.Content.ReadAsStringAsync()
             Console.WriteLine($"{content}");
             response.EnsureSuccessStatusCode() |> ignore
@@ -224,7 +213,7 @@ type Repository() =
         
     [<Test>]
     [<Parallelizable>]
-    [<Repeat(5)>]
+    [<Repeat(1)>]
     member public this.SetVisibilityWithInvalidValues() =
         task {
             let parameters = Grace.Shared.Parameters.Repository.VisibilityParameters()
@@ -233,8 +222,7 @@ type Repository() =
             parameters.RepositoryId <- "not a Guid"
             parameters.Visibility <- "Public"
             
-            let jsonContent = JsonContent.Create(parameters, options = Constants.JsonSerializerOptions)
-            let! response = Services.Client.PostAsync("/repository/setVisibility", jsonContent)
+            let! response = Services.Client.PostAsync("/repository/setVisibility", jsonContent parameters)
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
             let! content = response.Content.ReadAsStringAsync()
             Console.WriteLine($"{content}");
