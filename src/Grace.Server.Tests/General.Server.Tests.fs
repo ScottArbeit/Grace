@@ -24,7 +24,7 @@ module Services =
     clientOptions.BaseAddress <- new Uri("http://localhost:5000")
     let public Client = Factory.CreateClient(clientOptions);
     
-[<Parallelizable>]
+[<Parallelizable(ParallelScope.All)>]
 type General() =
 
     [<Test>]

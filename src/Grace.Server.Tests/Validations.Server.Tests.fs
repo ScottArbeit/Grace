@@ -8,7 +8,7 @@ open NUnit.Framework
 open System
 open Microsoft.FSharp.Core
 
-[<Parallelizable(ParallelScope.Children)>]
+[<Parallelizable(ParallelScope.All)>]
 type Validations() =
 
     [<Test>]

@@ -22,6 +22,8 @@ For shorter answers to some of these, please see [Frequently Asked Questions](Fr
 
 [F# and Functional programming](#f-and-functional-programming)
 
+[Source control isn't systems-level](#source-control-isnt-systems-level)
+
 [Cloud-native version control](#cloud-native-version-control)
 
 [Why Grace is centralized](#why-grace-is-centralized)
@@ -169,7 +171,7 @@ It's about choices for the user. It's about understanding that sometimes the bes
 
 ### Grace is written primarily in F\#
 
-One reason for this is simple: **F# is my favorite programming language right now**. It's beautiful, and it feels lightweight, but it's really strongly-typed and very fast.
+The main reason for this is simple: **F# is my favorite programming language right now**. It's beautiful, and it feels lightweight, but it's really strongly-typed and very fast.
 
 But... there are other reasons.
 
@@ -195,23 +197,27 @@ In terms of performance, .NET has been near the top of the [Techempower Benchmar
 
 As far as developer experience, .NET is just a really nice place to spend time. The documentation is amazing, the examples and StackOverflow support are first-rate.
 
+The .NET team has written a wonderful blog post called [What is .NET, and why should you choose it?](https://devblogs.microsoft.com/dotnet/why-dotnet/), the first of a series diving into the design of the platform.
+
 Is it perfect? No, of course not. Nothing in our business is.
 
-Does it deliver "really good" and "great" more often than other frameworks / runtimes / languages? Does it continue to improve release after release? In my experience: yes, it does.
+Is it "really good" or "great" a lot of the time? Does it continue to improve release after release? In my experience... yes, absolutely.
 
-Will it be supported for a long time? Yes, absolutely. .NET has great adoption in both open-source and enterprise shops. Unity, one of the most popular game engines, is written in C#. Microsoft itself runs many of its insanely large first-party Azure services on .NET, and that alone will keep .NET around and on a continuous improvement cycle for the forseeable future.
+Will it be supported for a long time? .NET has great adoption in both open-source and enterprise shops. Unity, one of the most popular game engines, is written in C#. Microsoft itself runs many of its insanely large first-party Azure services on .NET, and that alone will keep .NET around and on a continuous improvement cycle for the forseeable future.
 
 So, it's very fast, it has great corporate and community support, it runs on every major platform, and it's loved by those who use it. I'm not saying that other tech stacks aren't great, just that .NET is great now and well worth a long-term bet.
 
-### Source control isn't "systems-level"
+![](https://gracevcsdevelopment.blob.core.windows.net/static/Orange3.svg)
+
+## Source control isn't systems-level
 
 I like things that go fast. My second programming language - at age 11 - was 6502 Assembler. I've written and read code in IBM 370 Assembler and 80x86 Assembler. I've written C and C++, and continue to pay attention to the wonderful work being led by [Herb Sutter](https://www.youtube.com/user/CppCon/search?query=herb%20sutter) and [Bjarne Stroustrup](https://www.youtube.com/user/CppCon/search?query=bjarne) to make C++ faster, safer, less verbose, and easier to use. I applaud the work by Mozilla and the Rust community to explore the space of safer, very fast systems programming. I consider any public talk by [Chandler Carruth](https://www.youtube.com/results?search_query=chandler+carruth) to be mandatory viewing.
 
 I'm aware of what it means to be coding down-to-the-metal. I grew up on it, and still try to think in terms of hardware capabilities, even as I use higher-level frameworks like .NET.
 
-With that said, the idea that version control systems have to be written in a systems-level language, just because they all used to be, isn't true, especially for a centralized VCS that's really just a modern Web API + clients.
+With that said, the idea that version control systems have to be written in a systems-level language, just because they all used to be, isn't true, especially for a centralized VCS that's just a modern Web API and its clients.
 
-Grace relies on external databases and object storage services, and so there's very little Git-style byte-level file manipulation going on, and where there is, .NET can tell the file system to do stuff just as quickly as any other framework. Given how fast .NET is (within 1% of native C++ when well-written), and the fact that network round-trips are involved in most things that Grace does, it's just not likely that writing Grace in C++ or Rust would make a difference in perceived performance for users. Most of the clock time is spent waiting for something over the network, both in the client, and on the server. The on-device computation part is pretty quick compared to that.
+Grace relies on external databases and object storage services, and so there's not much Git-style byte-level file manipulation. Given how fast .NET is (within 1% of native C++ when well-written), and the fact that network round-trips are involved in most things that Grace does, it's not likely that writing Grace in C++ or Rust would make a difference in perceived performance for users. Most of the clock time during commands is spent on those network round-trips, even on the server. Using F# and .NET for the computation – Grace itself – is more than fast enough compared to all of that.
 
 ![](https://gracevcsdevelopment.blob.core.windows.net/static/Orange3.svg)
 

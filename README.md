@@ -22,10 +22,12 @@ Grace Client runs in the background, making it **ambient**, **faster**, and **mo
 Grace **connects you with others** working in your repository, **across the globe**, **in real-time**, enabling **new experiences** and **new ways of sharing**.
 
 ![](https://gracevcsdevelopment.blob.core.windows.net/static/Orange3.svg)
+![](https://gracevcsdevelopment.blob.core.windows.net/static/Green.svg)
 
 to be clear:
-> Grace is **new** 🧑🏼‍🔬 and **alpha-level** right now. 🔥🧯 It is deeply incomplete. Grace is not currently meant to be relied on or used for anything other than its own development and testing, and for getting user feedback on its design and function.[^git]
+> Grace is **new** 🧑🏼‍🔬 and **alpha-level** right now. 🔥🧯 The parts that **are** implemented work, but there's much more to do. Grace is not ready to be relied on as a production version control system yet.  It should not be used for anything other than its own design, development and testing, and for feedback.[^git]
 
+![](https://gracevcsdevelopment.blob.core.windows.net/static/Green.svg)
 ![](https://gracevcsdevelopment.blob.core.windows.net/static/Orange3.svg)
 
 ## FAQ
@@ -355,9 +357,17 @@ flowchart LR
 
 ## Code of Conduct
 
-Our Code of Conduct is available [here](code_of_conduct.md). The short version is:
+Our Code of Conduct is available [here](code_of_conduct.md). The tl;dr is:
 
-> **This project is called Grace**. We intend to embody that in how we treat each other, and in what we design and create together.
+> **The name of this project is Grace**.
+>
+> Be **graceful** in your interactions.
+>
+> Give **grace** to everyone participating with us.
+>
+> Create something together that embodies **grace** in its design and form.
+>
+> When in doubt, **_remember the name of the project._**
 
 ![](https://gracevcsdevelopment.blob.core.windows.net/static/Orange3.svg)
 

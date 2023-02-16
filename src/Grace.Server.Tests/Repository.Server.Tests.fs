@@ -2,18 +2,71 @@ namespace Grace.Server.Tests
 
 open Grace.Shared
 open Grace.Shared.Utilities
-open Microsoft.AspNetCore.Mvc.Testing
 open NUnit.Framework
 open System
 open System.Net.Http.Json
 open System.Net
 
-[<Parallelizable(ParallelScope.Children)>]
+[<Parallelizable(ParallelScope.All)>]
 type Repository() =
 
-    [<SetUp>]
+    let ownerId = $"{Guid.NewGuid()}"
+    let organizationId = $"{Guid.NewGuid()}"
+    let repositoryId = $"{Guid.NewGuid()}"
+
+    [<OneTimeSetUp>]
     member public this.Setup() =
-        ()
+        task {
+            let ownerParameters = Parameters.Owner.CreateParameters()
+            ownerParameters.OwnerId <- ownerId
+            ownerParameters.OwnerName <- $"TestOwner{Random.Shared.Next(1000)}"
+            let! response = Services.Client.PostAsync("/owner/create", jsonContent ownerParameters)
+
+            let organizationParameters = Parameters.Organization.CreateParameters()
+            organizationParameters.OwnerId <- ownerId
+            organizationParameters.OrganizationId <- organizationId
+            organizationParameters.OrganizationName <- $"TestOrganization{Random.Shared.Next(1000)}"
+            let! response = Services.Client.PostAsync("/organization/create", jsonContent organizationParameters)
+
+            let repositoryParameters = Parameters.Repository.CreateParameters()
+            repositoryParameters.OwnerId <- ownerId
+            repositoryParameters.OrganizationId <- organizationId
+            repositoryParameters.RepositoryId <- repositoryId
+            repositoryParameters.RepositoryName <- $"TestRepository{Random.Shared.Next(1000)}"
+            let! response = Services.Client.PostAsync("/repository/create", jsonContent repositoryParameters)
+
+            let! content = response.Content.ReadAsStringAsync()
+            Console.WriteLine($"{content}");
+            response.EnsureSuccessStatusCode() |> ignore
+            Assert.That(content.Length, Is.GreaterThan(0))
+        }
+
+    [<OneTimeTearDown>]
+    member public this.Teardown() =
+        task {
+            let repositoryDeleteParameters = Parameters.Repository.DeleteParameters()
+            repositoryDeleteParameters.OwnerId <- ownerId
+            repositoryDeleteParameters.OrganizationId <- organizationId
+            repositoryDeleteParameters.RepositoryId <- repositoryId
+            repositoryDeleteParameters.DeleteReason <- "Deleting test repository"
+            let! response = Services.Client.PostAsync("/repository/delete", jsonContent repositoryDeleteParameters)
+
+            let organizationDeleteParameters = Parameters.Organization.DeleteParameters()
+            organizationDeleteParameters.OwnerId <- ownerId
+            organizationDeleteParameters.OrganizationId <- organizationId
+            organizationDeleteParameters.DeleteReason <- "Deleting test organization"
+            let! response = Services.Client.PostAsync("/organization/delete", jsonContent organizationDeleteParameters)
+
+            let ownerDeleteParameters = Parameters.Owner.DeleteParameters()
+            ownerDeleteParameters.OwnerId <- ownerId
+            ownerDeleteParameters.DeleteReason <- "Deleting test owner"
+            let! response = Services.Client.PostAsync("/owner/delete", jsonContent ownerDeleteParameters)
+
+            let! content = response.Content.ReadAsStringAsync()
+            Console.WriteLine($"{content}");
+            response.EnsureSuccessStatusCode() |> ignore
+            Assert.That(content.Length, Is.GreaterThan(0))
+        }
    
     [<Test>]
     [<Repeat(1)>]
@@ -21,9 +74,9 @@ type Repository() =
         task {
             let parameters = Grace.Shared.Parameters.Repository.DescriptionParameters()
             parameters.Description <- $"Description set at {getCurrentInstantGeneral()}."
-            parameters.OwnerId <- "c7fadc8b-17ee-4832-86e2-520ccc1d630d"
-            parameters.OrganizationId <- "1a354bba-2973-41cd-8572-cb71d535bb52"
-            parameters.RepositoryId <- "a9e5fe8a-832f-4b5d-afe5-c19773774dd6"
+            parameters.OwnerId <- ownerId
+            parameters.OrganizationId <- organizationId
+            parameters.RepositoryId <- repositoryId
             
             let! response = Services.Client.PostAsync("/repository/setDescription", jsonContent parameters)
             let! content = response.Content.ReadAsStringAsync()
@@ -38,8 +91,8 @@ type Repository() =
         task {
             let parameters = Parameters.Repository.DescriptionParameters()
             parameters.Description <- $"Description set at {getCurrentInstantGeneral()}."
-            parameters.OwnerId <- Guid.NewGuid().ToString()
-            parameters.OrganizationId <- Guid.NewGuid().ToString()
+            parameters.OwnerId <- ownerId
+            parameters.OrganizationId <- organizationId
             parameters.RepositoryId <- "not a guid"
            
             let! response = Services.Client.PostAsync("/repository/setDescription", jsonContent parameters)
@@ -55,9 +108,9 @@ type Repository() =
         task {
             let parameters = Grace.Shared.Parameters.Repository.SaveDaysParameters()
             parameters.SaveDays <- 17.5
-            parameters.OwnerId <- "c7fadc8b-17ee-4832-86e2-520ccc1d630d"
-            parameters.OrganizationId <- "1a354bba-2973-41cd-8572-cb71d535bb52"
-            parameters.RepositoryId <- "a9e5fe8a-832f-4b5d-afe5-c19773774dd6"
+            parameters.OwnerId <- ownerId
+            parameters.OrganizationId <- organizationId
+            parameters.RepositoryId <- repositoryId
             
             let! response = Services.Client.PostAsync("/repository/setSaveDays", jsonContent parameters)
             let! content = response.Content.ReadAsStringAsync()
@@ -72,9 +125,9 @@ type Repository() =
         task {
             let parameters = Grace.Shared.Parameters.Repository.SaveDaysParameters()
             parameters.SaveDays <- -1
-            parameters.OwnerId <- Guid.NewGuid().ToString()
-            parameters.OrganizationId <- Guid.NewGuid().ToString()
-            parameters.RepositoryId <- Guid.NewGuid().ToString()
+            parameters.OwnerId <- ownerId
+            parameters.OrganizationId <- organizationId
+            parameters.RepositoryId <- repositoryId
             
             let! response = Services.Client.PostAsync("/repository/setSaveDays", jsonContent parameters)
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
@@ -89,9 +142,9 @@ type Repository() =
         task {
             let parameters = Grace.Shared.Parameters.Repository.CheckpointDaysParameters()
             parameters.CheckpointDays <- 17.5
-            parameters.OwnerId <- "c7fadc8b-17ee-4832-86e2-520ccc1d630d"
-            parameters.OrganizationId <- "1a354bba-2973-41cd-8572-cb71d535bb52"
-            parameters.RepositoryId <- "a9e5fe8a-832f-4b5d-afe5-c19773774dd6"
+            parameters.OwnerId <- ownerId
+            parameters.OrganizationId <- organizationId
+            parameters.RepositoryId <- repositoryId
             
             let! response = Services.Client.PostAsync("/repository/setCheckpointDays", jsonContent parameters)
             let! content = response.Content.ReadAsStringAsync()
@@ -106,9 +159,9 @@ type Repository() =
         task {
             let parameters = Grace.Shared.Parameters.Repository.CheckpointDaysParameters()
             parameters.CheckpointDays <- -1
-            parameters.OwnerId <- Guid.NewGuid().ToString()
-            parameters.OrganizationId <- Guid.NewGuid().ToString()
-            parameters.RepositoryId <- Guid.NewGuid().ToString()
+            parameters.OwnerId <- ownerId
+            parameters.OrganizationId <- organizationId
+            parameters.RepositoryId <- repositoryId
             
             let! response = Services.Client.PostAsync("/repository/setCheckpointDays", jsonContent parameters)
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
@@ -122,9 +175,9 @@ type Repository() =
     member public this.GetBranchesWithValidValues() =
         task {
             let parameters = Grace.Shared.Parameters.Repository.GetBranchesParameters()
-            parameters.OwnerId <- "c7fadc8b-17ee-4832-86e2-520ccc1d630d"
-            parameters.OrganizationId <- "1a354bba-2973-41cd-8572-cb71d535bb52"
-            parameters.RepositoryId <- "a9e5fe8a-832f-4b5d-afe5-c19773774dd6"
+            parameters.OwnerId <- ownerId
+            parameters.OrganizationId <- organizationId
+            parameters.RepositoryId <- repositoryId
             
             let! response = Services.Client.PostAsync("/repository/getBranches", jsonContent parameters)
             let! content = response.Content.ReadAsStringAsync()
@@ -139,8 +192,8 @@ type Repository() =
         task {
             let parameters = Grace.Shared.Parameters.Repository.GetBranchesParameters()
             parameters.OwnerId <- "not a Guid"
-            parameters.OrganizationId <- Guid.NewGuid().ToString()
-            parameters.RepositoryId <- Guid.NewGuid().ToString()
+            parameters.OrganizationId <- organizationId
+            parameters.RepositoryId <- repositoryId
             
             let! response = Services.Client.PostAsync("/repository/getBranches", jsonContent parameters)
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
@@ -154,9 +207,9 @@ type Repository() =
     member public this.SetStatusWithValidValues() =
         task {
             let parameters = Grace.Shared.Parameters.Repository.StatusParameters()
-            parameters.OwnerId <- "c7fadc8b-17ee-4832-86e2-520ccc1d630d"
-            parameters.OrganizationId <- "1a354bba-2973-41cd-8572-cb71d535bb52"
-            parameters.RepositoryId <- "a9e5fe8a-832f-4b5d-afe5-c19773774dd6"
+            parameters.OwnerId <- ownerId
+            parameters.OrganizationId <- organizationId
+            parameters.RepositoryId <- repositoryId
             parameters.Status <- "Active"
             
             let! response = Services.Client.PostAsync("/repository/setStatus", jsonContent parameters)
@@ -171,9 +224,9 @@ type Repository() =
     member public this.SetStatusWithInvalidValues() =
         task {
             let parameters = Grace.Shared.Parameters.Repository.StatusParameters()
-            parameters.OwnerId <- Guid.NewGuid().ToString()
+            parameters.OwnerId <- ownerId
             parameters.OrganizationId <- "not a Guid"
-            parameters.RepositoryId <- Guid.NewGuid().ToString()
+            parameters.RepositoryId <- repositoryId
             parameters.Status <- "Active"
             
             let! response = Services.Client.PostAsync("/repository/setStatus", jsonContent parameters)
@@ -188,9 +241,9 @@ type Repository() =
     member public this.SetVisibilityWithValidValues() =
         task {
             let parameters = Grace.Shared.Parameters.Repository.VisibilityParameters()
-            parameters.OwnerId <- "c7fadc8b-17ee-4832-86e2-520ccc1d630d"
-            parameters.OrganizationId <- "1a354bba-2973-41cd-8572-cb71d535bb52"
-            parameters.RepositoryId <- "a9e5fe8a-832f-4b5d-afe5-c19773774dd6"
+            parameters.OwnerId <- ownerId
+            parameters.OrganizationId <- organizationId
+            parameters.RepositoryId <- repositoryId
             parameters.Visibility <- "Public"
             
             let! response = Services.Client.PostAsync("/repository/setVisibility", jsonContent parameters)
@@ -205,14 +258,14 @@ type Repository() =
     member public this.SetVisibilityWithInvalidValues() =
         task {
             let parameters = Grace.Shared.Parameters.Repository.VisibilityParameters()
-            parameters.OwnerId <- Guid.NewGuid().ToString()
-            parameters.OrganizationId <- Guid.NewGuid().ToString()
-            parameters.RepositoryId <- "not a Guid"
-            parameters.Visibility <- "Public"
+            parameters.OwnerId <- ownerId
+            parameters.OrganizationId <- organizationId
+            parameters.RepositoryId <- repositoryId
+            parameters.Visibility <- "Not a visibility value"
             
             let! response = Services.Client.PostAsync("/repository/setVisibility", jsonContent parameters)
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
             let! content = response.Content.ReadAsStringAsync()
             Console.WriteLine($"{content}");
-            Assert.That(content, Does.Contain("is not a valid Guid."))
+            Assert.That(content, Does.Contain("visibility"))
         }
