@@ -1,8 +1,10 @@
 # Grace - Code of Conduct
 
 ![](https://gracevcsdevelopment.blob.core.windows.net/static/Orange3.svg)
+## tl;dr
 ![](https://gracevcsdevelopment.blob.core.windows.net/static/Green.svg)
-## tl;dr: This project is called **Grace**.
+
+## The name of this project is **Grace**.
 
 Be **graceful** in your interactions here.
 
@@ -11,6 +13,7 @@ Give **grace** to everyone participating with us.
 Create something together that embodies **grace** in its design and form.
 
 When in doubt, **_remember the name of the project._**
+
 ![](https://gracevcsdevelopment.blob.core.windows.net/static/Green.svg)
 ![](https://gracevcsdevelopment.blob.core.windows.net/static/Orange3.svg)
 
@@ -18,11 +21,11 @@ When in doubt, **_remember the name of the project._**
 
 Culture is not a physical thing. You can't _touch_ culture. You can see it reflected in things like visual arts, clothing, books, code, UX, and so much else, but culture _itself_ is not an exterior object that can be seen and measured with some scientific apparatus.
 
-Culture is _interior_; it lives _inside_ each member of a group. It's what it means when we say "we". It's first-person, plural. Culture is a set of stories or perspectives, shared by a group, that help to define both _how_ to behave within that group, and how it _feels_ to be part of that group.
+Culture is _interior_; it lives _inside_ each member of a group. It's what it means when we say "we". It's first-person, plural. Culture is a set of stories or perspectives, shared by a group, that help to define both _how to behave_ within that group, and _how it feels_ to be part of that group.
 
 I want to create a culture at Grace that lives up to its name. We all deserve it.
 
-I wish that the tl;dr were all I needed to say. It's pithy, and it's broadly applicable, but I know that it's helpful to add some specifics. Please think of the Code of Conduct below as an elaboration on the tl;dr above. The simplicity and open-heartedness of the words above infuse everything that's below.
+I wish that the tl;dr were all I needed to say. It's pithy, and it's broadly applicable, but it's helpful to be more specific. Please think of the Code of Conduct below as an elaboration on the tl;dr above. The simplicity and open-heartedness of the words above infuse everything that's below.
 
 It's an attempt to capture the culture of Grace – a feeling – in words. It will evolve over time, as all things do.
 
