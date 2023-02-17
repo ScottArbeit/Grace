@@ -31,8 +31,8 @@
 		<Compile Include="Program.CLI.fs" />
 	</ItemGroup>
 	<ItemGroup>
-		<PackageReference Include="Microsoft.AspNetCore.SignalR.Client" Version="7.0.2" />
-		<PackageReference Include="Microsoft.AspNetCore.SignalR.Protocols.Json" Version="7.0.2" />
+		<PackageReference Include="Microsoft.AspNetCore.SignalR.Client" Version="7.0.3" />
+		<PackageReference Include="Microsoft.AspNetCore.SignalR.Protocols.Json" Version="7.0.3" />
 		<PackageReference Include="Microsoft.Extensions.Logging.Configuration" Version="7.0.0" />
 		<PackageReference Include="Microsoft.Extensions.Logging.Console" Version="7.0.0" />
 		<PackageReference Include="NodaTime" Version="3.1.6" />
@@ -47,7 +47,7 @@
 		<PackageReference Include="Spectre.Console.ImageSharp" Version="0.46.0" />
 		<PackageReference Include="System.CommandLine" Version="2.0.0-beta4.22272.1" />
 		<PackageReference Include="System.CommandLine.Hosting" Version="0.4.0-alpha.22272.1" />
-		<PackageReference Include="System.Diagnostics.DiagnosticSource" Version="7.0.0" />
+		<PackageReference Include="System.Diagnostics.DiagnosticSource" Version="7.0.1" />
 		<PackageReference Include="System.Reactive" Version="5.0.0" />
 	</ItemGroup>
 	<ItemGroup>
@@ -55,6 +55,6 @@
 		<ProjectReference Include="..\Grace.Shared\Grace.Shared.fsproj" />
 	</ItemGroup>
 	<ItemGroup>
-		<PackageReference Update="FSharp.Core" Version="7.0.0" />
+		<PackageReference Update="FSharp.Core" Version="7.0.200" />
 	</ItemGroup>
 </Project>
