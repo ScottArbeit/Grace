@@ -24,6 +24,7 @@ module Program =
             
             .ConfigureWebHostDefaults(fun webBuilder ->
                 webBuilder.UseStartup<Application.Startup>()
+                          .UseUrls("http://*:5000", "https://*:5001")
                           .UseKestrel(fun kestrelServerOptions ->
                               kestrelServerOptions.ConfigureEndpointDefaults(fun listenOptions -> listenOptions.Protocols <- HttpProtocols.Http1AndHttp2)
                               kestrelServerOptions.ConfigureHttpsDefaults(fun options -> options.SslProtocols <- SslProtocols.Tls12 ||| SslProtocols.Tls13)

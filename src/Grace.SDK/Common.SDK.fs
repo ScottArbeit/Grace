@@ -69,7 +69,8 @@ module Common =
         httpClient.DefaultRequestHeaders.Add(Constants.ServerApiVersionHeaderKey, $"{Constants.ServerApiVersions.Edge}")
         //httpClient.DefaultVersionPolicy <- HttpVersionPolicy.RequestVersionOrHigher
 #if DEBUG
-        httpClient.Timeout <- TimeSpan.FromSeconds(1800.0)  // Keeps client commands open while debugging.
+        //httpClient.Timeout <- TimeSpan.FromSeconds(1800.0)  // Keeps client commands open while debugging.
+        httpClient.Timeout <- TimeSpan.FromSeconds(15.0)  // Fast fail for testing network connectivity.
 #endif
         httpClient
 
@@ -101,12 +102,10 @@ module Common =
             try
                 use httpClient = getHttpClient parameters.CorrelationId
                 let jsonContent = JsonContent.Create(parameters, options = Constants.JsonSerializerOptions)
-                let daprServerUri = Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.DaprServerUri)
-                let graceServerPort = Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.GraceAppPort)
-                let serverUri = Uri($"{daprServerUri}:{graceServerPort}/{route}")
-                //logToConsole $"serverUri: {serverUri}"
+                let serverUriWithRoute = Uri($"{Current().ServerUri}/{route}")
+                //logToConsole $"serverUriWithRoute: {serverUriWithRoute}"
                 let startTime = getCurrentInstant()
-                let! response = Constants.DefaultAsyncRetryPolicy.ExecuteAsync(fun _ -> httpClient.PostAsync(serverUri, jsonContent))
+                let! response = Constants.DefaultAsyncRetryPolicy.ExecuteAsync(fun _ -> httpClient.PostAsync(serverUriWithRoute, jsonContent))
                 let endTime = getCurrentInstant()
                 if response.IsSuccessStatusCode then
                     let! graceReturnValue = response.Content.ReadFromJsonAsync<GraceReturnValue<'U>>(Constants.JsonSerializerOptions)

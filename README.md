@@ -52,9 +52,9 @@ If you'd like to read about some of the design thinking and motivations behind G
 
 Stop being afraid of your version control system, and start _enjoying_ it instead.
 
-There are many fewer concepts to understand in Grace, so learning it is easy, and understanding what it's doing is easy.
+Grace is easy-to-use, easy-to-understand, and fast, with cool new features that let version control fade into the background while you're working, and help you remember where you were when you get interrupted.
 
-There's a simple-to-understand grammar, built-in aliases for common gestures, and common-sense defaults.
+There are fewer concepts to understand in Grace, so learning it is easy, and understanding what it's doing is simple. There's a simple-to-understand grammar, built-in aliases for common gestures, and common-sense defaults.
 
 Grace is powerful source control, minus the fear.
 
@@ -108,7 +108,7 @@ and, introducing:
 
 ### Every save is uploaded, automatically
 
-By default, `grace watch` uploads new file versions after every save-on-disk, along with new directory contents and SHA-256 hashes.
+By default, `grace watch` uploads new file versions after every save-on-disk, along with a new snapshot of the entire directory structure of the repo, including new SHA-256 hashes.
 
 It happens so quickly you don't even notice it.
 
@@ -116,7 +116,7 @@ And it gives you some very cool things, like:
 
 - **file-level undo** for as far back as your repository allows,
 - **very fast** `grace checkpoint`, `grace commit`, and `grace promote` commands, and,
-- a **Version History view** that will let you to flip through your versions, helping you remember what you were thinking, and enabling easy, instant restoration of any of your past changes.
+- a **Version History view** that will let you to flip through your versions, helping you get remember where you were when you get interrupted, and enabling easy, instant restoration of any of your past changes.
 
 ![](https://gracevcsdevelopment.blob.core.windows.net/static/Green.svg)
 
@@ -132,21 +132,25 @@ As they're handled, they're sent to an event processor, which can log them in yo
 
 When running `grace watch`, Grace uses [SignalR](https://dotnet.microsoft.com/en-us/apps/aspnet/signalr) to create a live, two-way communication channel between client and server.
 
-This connection allows Grace to do All The Cool Things. Things like connecting you in real-time to everyone else working in your repository. Things like auto-rebasing. Things like watching for a set of events in your repository, notifying you when you want to be notified, and running custom local actions.
+This connection allows Grace to do All The Cool Things. Things like connecting you in real-time to everyone else working in your repository. Things like auto-rebasing. Things like watching for events in your repository, notifying you when you want to be notified, and running custom local actions if you want.
 
-Things like sharing your code with team members instantly, for those times when you need another set of eyes on it, or just want to show them something cool.
+Imagine: there's a promotion to `main`, your branch gets auto-rebased on those latest changes, and then your local unit test suite gets run automatically so you immediately know if there's a problem.
+
+Grace lets you share your code with team members effortlessly, around the world, for those times when you need another set of eyes on it, or just want to show them something cool.
+
+Auto-rebasing keeps you up-to-date and ready to go, because...
 
 ![](https://gracevcsdevelopment.blob.core.windows.net/static/Green.svg)
 
-### Shift left on merge conflicts
+### Grace reduces merge conflicts
 
-Merge conflicts suck. Finding out that you have one, when you thought you were already done with your work, is one of the most anxiety-inducing parts of coding. Grace helps you eliminate them by keeping your branch up-to-date.
+Merge conflicts suck. Finding out that you have one, when you thought you were already done with your work, is one of the most anxiety-inducing parts of using source control. Grace helps you eliminate them by keeping your branch up-to-date.
 
-When your parent branch (or any branch above that in the tree) gets updated, by default, `grace watch` will auto-rebase your branch on those changes, so you're always coding against the latest version that you'll have to merge with.
+When your parent branch gets updated, by default, `grace watch` will auto-rebase your branch on those changes, so you're always coding against the latest version that you'll have to merge with.
 
 Almost all of the time, when you rebase, nothing bad happens. You don't even notice it. The rest of the time, auto-rebase lets you find out right away, fix it while you're in flow, and skip the conflict later.
 
-Grace can't promise to eliminate all conflicts, but it should reduce them quite a bit.
+Let's shift left on merge conflicts. Grace can't eliminate all of them, but it should reduce how often they happen.
 
 ![](https://gracevcsdevelopment.blob.core.windows.net/static/Green.svg)
 
@@ -154,7 +158,7 @@ Grace can't promise to eliminate all conflicts, but it should reduce them quite 
 
 With Grace, there's no need for forking entire repositories just to make contributions. In open-source repos, you'll just create a personal branch against the repo.
 
-You'll own your personal branch, and you can make it visible or not. When your change is ready you can submit PR's to get your personal branch's version promoted to a public branch in the repo.
+You'll own your personal branch, and you can make it public or private. When your change is ready you can submit PR's to get your personal branch's version promoted to a parent branch in the repo.
 
 This is how I expect a large, open-source project in Grace to be: dozens of contributors, each with personal branches, working on a public project that remains securely controlled with ACL's. Everyone auto-rebased with every update to their parent branch, so there are no surprises later. No networks of forks to manage, no multiple entire copies of the repo. Just individuals working on the same repo, securely, together.
 
@@ -164,9 +168,9 @@ This is how I expect a large, open-source project in Grace to be: dozens of cont
 
 Grace's default branching strategy is called _single-step_ and is designed to help reduce merge conflicts, and to make it easier to work on and promote code to shipping branches (like `main`).
 
-Single-step branching is, we hope, both easy-to-use and powerful enough to be all that you need to run your projects. (We're open to supporting other branching models in the future.)
+Single-step branching is, we hope, both easy-to-use and powerful enough to be all that you need to run your projects.
 
-There's a [separate page](docs/Branching%20strategy.md) that describes it in detail.
+There's a [separate page](docs/Branching%20strategy.md) that describes it in more detail.
 
 ![](https://gracevcsdevelopment.blob.core.windows.net/static/Green.svg)
 
@@ -192,7 +196,7 @@ Grace will let you specify how to handle those files, like only downloading them
 
 Yeah, I said it.
 
-Grace will have a native GUI app for Windows, Mac, Android, and iOS. (And eventually Linux.[^mauilinux])
+Grace will have a native GUI app for Windows, Mac, Android, and iOS. (And probably Linux.)
 
 Take Grace with you wherever you go. Merge conflict UI, Version History view, repository browsing, current status and more... all running at full native speed on your devices.
 
@@ -200,7 +204,9 @@ Take Grace with you wherever you go. Merge conflict UI, Version History view, re
 
 ### Web UI
 
-And Grace will ship with a default web UI. Sometimes the best way to share information is using a URL.
+Shipping a native app doesn't mean that we don't also need a great web UI.
+
+Sometimes the best way to share information is using a URL.
 
 CLI + Web UI + GUI... use Grace the way you want to.
 
@@ -386,7 +392,5 @@ We intend to provide a Docker Compose template, as well as Kubernetes configurat
 [^pr]: They're not really "pull requests" because there isn't a "pull" gesture in Grace. It's still a "PR", though.
 
 [^stream]: One thing I'd like to do with the event log as a stream: detect invalid sequences and frequencies of events in Grace that would indicate bugs or attacks.
-
-[^mauilinux]: Grace will have a native Linux app if the [.NET MAUI team adds support for Linux Desktop](https://github.com/dotnet/maui/discussions/339), which you should totally go give a thumbs-up to.
 
 [^gitexport]: Grace will export the latest state of each branch into a `git bundle` file. Exporting an entire Grace repository, including history, to a Git repository probably won't be supported, but maybe someone else will write it. (There are, no doubt, a lot of edge cases to be found the hard way in that translation, and it's a very low priority item for me.) Live two-way synchronization between Grace and Git is a non-goal, for the same reason.
