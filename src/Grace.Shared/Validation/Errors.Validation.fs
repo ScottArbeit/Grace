@@ -111,6 +111,12 @@ module Errors =
         type DiffError =
             | DirectoryDoesNotExist
             | InvalidDirectoryId
+            | InvalidOrganizationId
+            | InvalidOrganizationName
+            | InvalidOwnerId
+            | InvalidOwnerName
+            | InvalidRepositoryId
+            | InvalidRepositoryName
             | InvalidSha256Hash
             | Sha256HashIsRequired
         
@@ -118,6 +124,12 @@ module Errors =
                 match diffError with
                 | DirectoryDoesNotExist -> getLocalizedString StringResourceName.DirectoryDoesNotExist
                 | InvalidDirectoryId -> getLocalizedString StringResourceName.InvalidDirectoryId
+                | InvalidOrganizationId -> getLocalizedString StringResourceName.InvalidOrganizationId
+                | InvalidOrganizationName -> getLocalizedString StringResourceName.InvalidOrganizationName
+                | InvalidOwnerId -> getLocalizedString StringResourceName.InvalidOwnerId
+                | InvalidOwnerName -> getLocalizedString StringResourceName.InvalidOwnerName
+                | InvalidRepositoryId -> getLocalizedString StringResourceName.InvalidRepositoryId
+                | InvalidRepositoryName -> getLocalizedString StringResourceName.InvalidRepositoryName
                 | InvalidSha256Hash -> getLocalizedString StringResourceName.InvalidSha256Hash
                 | Sha256HashIsRequired -> getLocalizedString StringResourceName.Sha256HashIsRequired
 
@@ -283,6 +295,7 @@ module Errors =
             | FailedWhileSavingEvent
             | FailedWhileApplyingEvent
             | InvalidCheckpointDaysValue
+            | InvalidMaxCountValue
             | InvalidObjectStorageProvider
             | InvalidOrganizationId
             | InvalidOrganizationName
@@ -318,6 +331,7 @@ module Errors =
                 | FailedWhileSavingEvent -> getLocalizedString StringResourceName.FailedWhileSavingEvent
                 | FailedWhileApplyingEvent -> getLocalizedString StringResourceName.FailedWhileApplyingEvent
                 | InvalidCheckpointDaysValue -> getLocalizedString StringResourceName.InvalidCheckpointDaysValue
+                | InvalidMaxCountValue -> getLocalizedString StringResourceName.InvalidMaxCountValue
                 | InvalidObjectStorageProvider -> getLocalizedString StringResourceName.InvalidObjectStorageProvider
                 | InvalidOwnerId -> getLocalizedString StringResourceName.InvalidOwnerId
                 | InvalidOrganizationId -> getLocalizedString StringResourceName.InvalidOrganizationId
