@@ -455,8 +455,7 @@ module Repository =
                     let! parameters = context |> parse<GetBranchesByBranchIdParameters>
                     let branchIdList = parameters.BranchIds.ToList()    // We need .Count below, so may as well materialize it once here.
                     let branchIds = branchIdList.Aggregate(StringBuilder(), (fun state branchId -> 
-                        state.Append($"{branchId}, ")
-                        state))
+                        state.Append($"{branchId}, ")))
                     context.Items.Add("BranchIds", (branchIds.ToString())[0..-2])
                     context.Items.Add("IncludeDeleted", parameters.IncludeDeleted)
                     return! processQuery context parameters validations (branchIdList.Count) query

@@ -2,6 +2,7 @@
 
 open DiffPlex
 open DiffPlex.DiffBuilder.Model
+open FSharpPlus
 open Grace.Cli.Common
 open Grace.Cli.Services
 open Grace.SDK
@@ -65,9 +66,10 @@ module Diff =
         let tag = new Option<string>("--tag", IsRequired = true, Description = "The tag to compare the current version to.", Arity = ArgumentArity.ExactlyOne)
 
     let private CommonValidations parseResult parameters =
+
         let ``OwnerId must be a Guid`` (parseResult: ParseResult, parameters: CommonParameters) =
-            let mutable ownerId = Guid.Empty
-            if parseResult.CommandResult.FindResultFor(Options.ownerId) <> null && not <| String.IsNullOrEmpty(parameters.OwnerId) && Guid.TryParse(parameters.OwnerId, &ownerId) = false then 
+            let mutable guid = Guid.Empty
+            if parseResult.CommandResult.FindResultFor(Options.ownerId) <> null && not <| String.IsNullOrEmpty(parameters.OwnerId) && Guid.TryParse(parameters.OwnerId, &guid) = false then 
                 Error (GraceError.Create (DiffError.getErrorMessage InvalidOwnerId) (parameters.CorrelationId))
             else
                 Ok (parseResult, parameters)
@@ -104,31 +106,43 @@ module Diff =
             else
                 Ok (parseResult, parameters)
     
+        //let ``DirectoryId1 must be a Guid`` (parseResult: ParseResult, parameters: CommonParameters) =
+        //    let mutable guid = Guid.Empty
+        //    if parseResult.CommandResult.FindResultFor(Options.directoryId1) <> null && String.IsNullOrEmpty(parameters.DirectoryId1) && Guid.TryParse(parameters.DirectoryId1, &guid) = false then 
+        //        Error (GraceError.Create (DiffError.getErrorMessage InvalidDirectoryId) (parameters.CorrelationId))
+        //    else
+        //        Ok (parseResult, parameters)
+
         let ``DirectoryId1 must not be Guid.Empty`` (parseResult: ParseResult, parameters: CommonParameters) =
             if parseResult.CommandResult.FindResultFor(Options.directoryId1) <> null && parameters.DirectoryId1 = DirectoryId.Empty then 
                 Error (GraceError.Create (DiffError.getErrorMessage InvalidDirectoryId) (parameters.CorrelationId))
             else
                 Ok (parseResult, parameters)
 
+        //let ``DirectoryId2 must be a Guid`` (parseResult: ParseResult, parameters: CommonParameters) =
+        //    let mutable guid = Guid.Empty
+        //    if parseResult.CommandResult.FindResultFor(Options.directoryId2) <> null && String.IsNullOrEmpty(parameters.DirectoryId2) && Guid.TryParse(parameters.DirectoryId2, &guid) = false then 
+        //        Error (GraceError.Create (DiffError.getErrorMessage InvalidDirectoryId) (parameters.CorrelationId))
+        //    else
+        //        Ok (parseResult, parameters)
+
         let ``DirectoryId2 must not be Guid.Empty`` (parseResult: ParseResult, parameters: CommonParameters) =
-            if parseResult.CommandResult.FindResultFor(Options.directoryId2) <> null && parameters.DirectoryId2 = DirectoryId.Empty then 
+            if parseResult.CommandResult.FindResultFor(Options.directoryId2) <> null && parameters.DirectoryId2 = DirectoryId.Empty then
                 Error (GraceError.Create (DiffError.getErrorMessage InvalidDirectoryId) (parameters.CorrelationId))
             else
                 Ok (parseResult, parameters)
 
-        // What the hell is happening here? Bind isn't working, but I believe this is a correctly-formed monad.
         (parseResult, parameters)
             |> ``OwnerId must be a Guid``
-            //>>= ``OwnerName must be a valid Grace name``
-            //>>= ``OrganizationId must be a Guid``
-            //>>= ``OrganizationName must be a valid Grace name``
-            //>>= ``RepositoryId must be a Guid``
-            //>>= ``RepositoryName must be a valid Grace name``
-
-            //|>  ``Sha256Hash1 must be a valid SHA-256 hash value``
-            //>>= ``Sha256Hash2 must be a valid SHA-256 hash value``
-            //>>= ``DirectoryId1 must not be Guid.Empty``
-            //>>= ``DirectoryId2 must not be Guid.Empty``
+            >>= ``OwnerName must be a valid Grace name``
+            >>= ``OrganizationId must be a Guid``
+            >>= ``OrganizationName must be a valid Grace name``
+            >>= ``RepositoryId must be a Guid``
+            >>= ``RepositoryName must be a valid Grace name``
+            //>>= ``DirectoryId1 must be a Guid``
+            >>= ``DirectoryId1 must not be Guid.Empty``
+            //>>= ``DirectoryId2 must be a Guid``
+            >>= ``DirectoryId2 must not be Guid.Empty``
    
     let private sha256Validations parseResult parameters =
         let ``Sha256Hash1 must be a valid SHA-256 hash value`` (parseResult: ParseResult, (parameters: GetDiffBySha256HashParameters)) =
@@ -145,7 +159,7 @@ module Diff =
 
         (parseResult, parameters) 
             |> ``Sha256Hash1 must be a valid SHA-256 hash value``
-            //>>= ``Sha256Hash2 must be a valid SHA-256 hash value``
+            >>= ``Sha256Hash2 must be a valid SHA-256 hash value``
 
     let private renderLine (diffLine: DiffPiece) = 
         if not <| diffLine.Position.HasValue then $"        {diffLine.Text.EscapeMarkup()}"
