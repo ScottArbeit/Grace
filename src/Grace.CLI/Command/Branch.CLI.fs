@@ -1531,11 +1531,15 @@ module Branch =
 
     let Build = 
         let addCommonOptions (command: Command) =
-            command |> addOption Options.branchName |> addOption Options.branchId 
-                    |> addOption Options.ownerName |> addOption Options.ownerId
-                    |> addOption Options.organizationName |> addOption Options.organizationId
-                    |> addOption Options.repositoryName |> addOption Options.repositoryId
-
+            command |> addOption Options.ownerName
+                    |> addOption Options.ownerId
+                    |> addOption Options.organizationName
+                    |> addOption Options.organizationId
+                    |> addOption Options.repositoryName
+                    |> addOption Options.repositoryId
+                    |> addOption Options.branchName 
+                    |> addOption Options.branchId 
+                    
         // Create main command and aliases, if any.`
         let branchCommand = new Command("branch", Description = "Create, change, or delete branch-level information.")
         branchCommand.AddAlias("br")

@@ -726,9 +726,10 @@ module Services =
             | AzureCosmosDb -> 
                 let mutable requestCharge = 0.0
                 for referenceId in referenceIds do
-                    let queryDefinition = QueryDefinition("""SELECT TOP 1 c["value"] FROM c 
+                    let queryDefinition = QueryDefinition("""SELECT TOP @maxCount c["value"] FROM c 
                                             WHERE c["value"].ReferenceId = @referenceId
                                                 AND c["value"].Class = @class""")
+                                            .WithParameter("@maxCount", maxCount)
                                             .WithParameter("@referenceId", $"{referenceId}")
                                             .WithParameter("@class", "ReferenceDto")
                     let iterator = CosmosContainer().GetItemQueryIterator<ReferenceDtoValue>(queryDefinition, requestOptions = queryRequestOptions)
@@ -756,11 +757,12 @@ module Services =
                 let branchIdStack = Queue<ReferenceId>(branchIds)
                 while branchIdStack.Count > 0 do 
                     let branchId = branchIdStack.Dequeue()
-                    let queryDefinition = QueryDefinition($"""SELECT TOP 1 c["value"] FROM c 
+                    let queryDefinition = QueryDefinition($"""SELECT TOP @maxCount c["value"] FROM c 
                                             WHERE c["value"].RepositoryId = @repositoryId 
                                                 AND c["value"].BranchId = @branchId
                                                 AND c["value"].Class = @class
                                                 {includeDeletedClause}""")
+                                            .WithParameter("@maxCount", maxCount)
                                             .WithParameter("@repositoryId", $"{repositoryId}")
                                             .WithParameter("@branchId", $"{branchId}")
                                             .WithParameter("@class", "BranchDto")

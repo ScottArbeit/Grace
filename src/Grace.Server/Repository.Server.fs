@@ -23,12 +23,14 @@ open Microsoft.AspNetCore.Http
 open Microsoft.AspNetCore.Mvc
 open Microsoft.Extensions.Logging
 open NodaTime
-open System
 open OpenTelemetry.Trace
+open System
 open System.Collections.Generic
 open System.Diagnostics
 open System.Globalization
+open System.Linq
 open System.Threading.Tasks
+open System.Text
 open System.Text.Json
 open Repository
 open FSharpPlus.Data
@@ -378,6 +380,7 @@ module Repository =
                           Input.eitherIdOrNameMustBeProvided parameters.OrganizationId parameters.OrganizationName EitherOrganizationIdOrOrganizationNameRequired
                           Guid.isValidAndNotEmpty parameters.RepositoryId InvalidRepositoryId
                           Input.eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherRepositoryIdOrRepositoryNameRequired
+                          Number.isWithinRange parameters.MaxCount 1 1000 InvalidMaxCountValue
                           Repository.repositoryIdExists parameters.RepositoryId context RepositoryIdDoesNotExist ]
 
                     let query (context: HttpContext) (maxCount: int) (actorProxy: IRepositoryActor) =
@@ -408,6 +411,7 @@ module Repository =
                           Guid.isValidAndNotEmpty parameters.RepositoryId InvalidRepositoryId
                           Input.eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherRepositoryIdOrRepositoryNameRequired
                           Input.listIsNonEmpty parameters.ReferenceIds ReferenceIdsAreRequired
+                          Number.isWithinRange parameters.MaxCount 1 1000 InvalidMaxCountValue
                           Repository.repositoryIdExists parameters.RepositoryId context RepositoryIdDoesNotExist ]
 
                     let query (context: HttpContext) (maxCount: int) (actorProxy: IRepositoryActor) =
@@ -418,7 +422,7 @@ module Repository =
 
                     let! parameters = context |> parse<GetReferencesByReferenceIdParameters>
                     context.Items.Add("ReferenceIds", parameters.ReferenceIds)
-                    return! processQuery context parameters validations 1000 query
+                    return! processQuery context parameters validations parameters.MaxCount query
                 with ex ->
                     return! context |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (context.Items[Constants.CorrelationId] :?> string))
             }
@@ -437,6 +441,7 @@ module Repository =
                           Guid.isValidAndNotEmpty parameters.RepositoryId InvalidRepositoryId
                           Input.eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherRepositoryIdOrRepositoryNameRequired
                           Input.listIsNonEmpty parameters.BranchIds BranchIdsAreRequired
+                          Number.isWithinRange parameters.MaxCount 1 1000 InvalidMaxCountValue
                           Repository.repositoryIdExists parameters.RepositoryId context RepositoryIdDoesNotExist ]
 
                     let query (context: HttpContext) (maxCount: int) (actorProxy: IRepositoryActor) =
@@ -448,9 +453,13 @@ module Repository =
                         }
 
                     let! parameters = context |> parse<GetBranchesByBranchIdParameters>
-                    context.Items.Add("BranchIds", parameters.BranchIds)
+                    let branchIdList = parameters.BranchIds.ToList()    // We need .Count below, so may as well materialize it once here.
+                    let branchIds = branchIdList.Aggregate(StringBuilder(), (fun state branchId -> 
+                        state.Append($"{branchId}, ")
+                        state))
+                    context.Items.Add("BranchIds", (branchIds.ToString())[0..-2])
                     context.Items.Add("IncludeDeleted", parameters.IncludeDeleted)
-                    return! processQuery context parameters validations 1000 query
+                    return! processQuery context parameters validations (branchIdList.Count) query
                 with ex ->
                     return! context |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (context.Items[Constants.CorrelationId] :?> string))
             }

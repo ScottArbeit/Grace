@@ -9,23 +9,23 @@ module Branch =
     type BranchParameters() = 
         inherit CommonParameters()
         member val public BranchId = String.Empty with get, set
-        member val public BranchName = String.Empty with get, set
+        member val public BranchName: BranchName = String.Empty with get, set
         member val public OwnerId = String.Empty with get, set
-        member val public OwnerName = String.Empty with get, set
+        member val public OwnerName: OwnerName = String.Empty with get, set
         member val public OrganizationId = String.Empty with get, set
-        member val public OrganizationName = String.Empty with get, set
+        member val public OrganizationName: OrganizationName = String.Empty with get, set
         member val public RepositoryId = String.Empty with get, set
-        member val public RepositoryName = String.Empty with get, set
+        member val public RepositoryName: RepositoryName = String.Empty with get, set
 
     type BranchQueryParameters() = 
         inherit BranchParameters()
-        member val public Sha256Hash: Sha256Hash  = String.Empty with get, set
+        member val public Sha256Hash: Sha256Hash = String.Empty with get, set
         member val public ReferenceId = String.Empty with get, set
 
     type CreateParameters() =
         inherit BranchParameters()
         member val public ParentBranchId = String.Empty with get, set
-        member val public ParentBranchName = String.Empty with get, set
+        member val public ParentBranchName: BranchName = String.Empty with get, set
 
     type RebaseParameters() =
         inherit BranchParameters()

@@ -146,11 +146,11 @@ Auto-rebasing keeps you up-to-date and ready to go, because...
 
 Merge conflicts suck. Finding out that you have one, when you thought you were already done with your work, is one of the most anxiety-inducing parts of using source control. Grace helps you eliminate them by keeping your branch up-to-date.
 
-When your parent branch gets updated, by default, `grace watch` will auto-rebase your branch on those changes, so you're always coding against the latest version that you'll have to merge with.
+When your parent branch gets updated, by default, `grace watch` will auto-rebase your branch on those changes, so you're always coding against the latest version that you'll have to promote to.
 
 Almost all of the time, when you rebase, nothing bad happens. You don't even notice it. The rest of the time, auto-rebase lets you find out right away, fix it while you're in flow, and skip the conflict later.
 
-Let's shift left on merge conflicts. Grace can't eliminate all of them, but it should reduce how often they happen.
+Let's shift left on promotion conflicts. Grace can't eliminate all of them, but it should reduce how often they happen.
 
 ![](https://gracevcsdevelopment.blob.core.windows.net/static/Green.svg)
 

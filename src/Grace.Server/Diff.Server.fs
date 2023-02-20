@@ -34,7 +34,7 @@ module Diff =
 
     let actorProxyFactory = ApplicationContext.ActorProxyFactory()
 
-    let getActorProxy (directoryId1: DirectoryId) (directoryId2: DirectoryId) (context: HttpContext) =
+    let getActorProxy directoryId1 directoryId2 (context: HttpContext) =
         let actorId = Diff.GetActorId directoryId1 directoryId2
         actorProxyFactory.CreateActorProxy<IDiffActor>(actorId, ActorName.Diff)
 

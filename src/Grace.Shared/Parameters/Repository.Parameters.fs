@@ -67,14 +67,17 @@ module Repository =
     type GetReferencesByReferenceIdParameters() =
         inherit RepositoryParameters()
         member val public ReferenceIds: IEnumerable<ReferenceId> = Array.Empty<ReferenceId>() with get, set
+        member val public MaxCount: int = 1 with get, set
 
     type GetBranchesParameters() =
         inherit RepositoryParameters()
         member val public IncludeDeleted = false with get, set
+        member val public MaxCount: int = 30 with get, set
         
     type GetBranchesByBranchIdParameters() =
         inherit RepositoryParameters()
         member val public BranchIds: IEnumerable<BranchId> = Array.Empty<BranchId>() with get, set
+        member val public MaxCount: int = 1 with get, set
         member val public IncludeDeleted = false with get, set
 
     type UndeleteParameters() =
