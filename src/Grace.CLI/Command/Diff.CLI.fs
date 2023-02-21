@@ -31,7 +31,6 @@ open System.Threading.Tasks
 open Spectre.Console
 open Spectre.Console
 open Spectre.Console.Rendering
-open Owner
 
 module Diff =
 
@@ -43,94 +42,62 @@ module Diff =
         member val public OrganizationName: string = String.Empty with get, set
         member val public RepositoryId: string = String.Empty with get, set
         member val public RepositoryName: string = String.Empty with get, set
-        member val public DirectoryId1: DirectoryId = Guid.Empty with get, set
-        member val public DirectoryId2: DirectoryId = Guid.Empty with get, set
+        member val public DirectoryId1: string = String.Empty with get, set
+        member val public DirectoryId2: string = String.Empty with get, set
 
     module private Options = 
-        let ownerId = new Option<String>("--ownerId", IsRequired = false, Description = "The repository's owner ID <Guid>.", Arity = ArgumentArity.ZeroOrOne)
+        let ownerId = new Option<string>("--ownerId", IsRequired = false, Description = "The repository's owner ID <Guid>.", Arity = ArgumentArity.ZeroOrOne)
         ownerId.SetDefaultValue($"{Current().OwnerId}")
-        let ownerName = new Option<String>("--ownerName", IsRequired = false, Description = "The repository's owner name. [default: current owner]", Arity = ArgumentArity.ExactlyOne)
-        let organizationId = new Option<String>("--organizationId", IsRequired = false, Description = "The repository's organization ID <Guid>.", Arity = ArgumentArity.ZeroOrOne)
+        let ownerName = new Option<string>("--ownerName", IsRequired = false, Description = "The repository's owner name. [default: current owner]", Arity = ArgumentArity.ExactlyOne)
+        let organizationId = new Option<string>("--organizationId", IsRequired = false, Description = "The repository's organization ID <Guid>.", Arity = ArgumentArity.ZeroOrOne)
         organizationId.SetDefaultValue($"{Current().OrganizationId}")
-        let organizationName = new Option<String>("--organizationName", IsRequired = false, Description = "The repository's organization name. [default: current organization]", Arity = ArgumentArity.ZeroOrOne)
-        let repositoryId = new Option<String>([|"--repositoryId"; "-r"|], IsRequired = false, Description = "The repository's ID <Guid>.", Arity = ArgumentArity.ExactlyOne)
+        let organizationName = new Option<string>("--organizationName", IsRequired = false, Description = "The repository's organization name. [default: current organization]", Arity = ArgumentArity.ZeroOrOne)
+        let repositoryId = new Option<string>([|"--repositoryId"; "-r"|], IsRequired = false, Description = "The repository's Id <Guid>.", Arity = ArgumentArity.ExactlyOne)
         repositoryId.SetDefaultValue($"{Current().RepositoryId}")
-        let repositoryName = new Option<String>([|"--repositoryName"; "-n"|], IsRequired = false, Description = "The name of the repository. [default: current repository]", Arity = ArgumentArity.ExactlyOne)
-        let branchId = new Option<String>([|"--branchId"; "-i"|], IsRequired = false, Description = "The branch's ID <Guid>.", Arity = ArgumentArity.ExactlyOne)
+        let repositoryName = new Option<string>([|"--repositoryName"; "-n"|], IsRequired = false, Description = "The name of the repository. [default: current repository]", Arity = ArgumentArity.ExactlyOne)
+        let branchId = new Option<string>([|"--branchId"; "-i"|], IsRequired = false, Description = "The branch's ID <Guid>.", Arity = ArgumentArity.ExactlyOne)
         branchId.SetDefaultValue($"{Current().BranchId}")
-        let branchName = new Option<String>([|"--branchName"; "-b"|], IsRequired = false, Description = "The name of the branch. [default: current branch]", Arity = ArgumentArity.ExactlyOne)
-        let directoryId1 = new Option<Guid>([|"--directoryId1"; "--d1"|], IsRequired = true, Description = "The first DirectoryId to compare in the diff.", Arity = ArgumentArity.ExactlyOne)
-        let directoryId2 = new Option<Guid>([|"--directoryId2"; "--d2"|], IsRequired = false, Description = "The second DirectoryId to compare in the diff.", Arity = ArgumentArity.ExactlyOne)
+        let branchName = new Option<string>([|"--branchName"; "-b"|], IsRequired = false, Description = "The name of the branch. [default: current branch]", Arity = ArgumentArity.ExactlyOne)
+        let directoryId1 = new Option<string>([|"--directoryId1"; "--d1"|], IsRequired = true, Description = "The first DirectoryId to compare in the diff.", Arity = ArgumentArity.ExactlyOne)
+        let directoryId2 = new Option<string>([|"--directoryId2"; "--d2"|], IsRequired = false, Description = "The second DirectoryId to compare in the diff.", Arity = ArgumentArity.ExactlyOne)
         let sha256Hash1 = new Option<Sha256Hash>([|"--sha256Hash1"; "--s1"|], IsRequired = true, Description = "The first partial or full SHA-256 hash to compare in the diff.", Arity = ArgumentArity.ExactlyOne)
         let sha256Hash2 = new Option<Sha256Hash>([|"--sha256Hash2"; "--s2"|], IsRequired = false, Description = "The second partial or full SHA-256 hash to compare in the diff.", Arity = ArgumentArity.ExactlyOne)
         let tag = new Option<string>("--tag", IsRequired = true, Description = "The tag to compare the current version to.", Arity = ArgumentArity.ExactlyOne)
 
-    let private CommonValidations parseResult parameters =
+    let mustBeAValidGuid (parseResult: ParseResult) (parameters: CommonParameters) (option: Option) (value: string) (error: DiffError) =
+        let mutable guid = Guid.Empty
+        if parseResult.CommandResult.FindResultFor(option) <> null 
+                && not <| String.IsNullOrEmpty(value) 
+                && (Guid.TryParse(value, &guid) = false || guid = Guid.Empty)
+                then 
+            Error (GraceError.Create (DiffError.getErrorMessage error) (parameters.CorrelationId))
+        else
+            Ok (parseResult, parameters)
 
+    let mustBeAValidGraceName (parseResult: ParseResult) (parameters: CommonParameters) (option: Option) (value: string) (error: DiffError) =
+        if parseResult.CommandResult.FindResultFor(option) <> null && not <| Constants.GraceNameRegex.IsMatch(value) then 
+            Error (GraceError.Create (DiffError.getErrorMessage error) (parameters.CorrelationId))
+        else
+            Ok (parseResult, parameters)
+
+    let private CommonValidations (parseResult, parameters) =
         let ``OwnerId must be a Guid`` (parseResult: ParseResult, parameters: CommonParameters) =
-            let mutable guid = Guid.Empty
-            if parseResult.CommandResult.FindResultFor(Options.ownerId) <> null && not <| String.IsNullOrEmpty(parameters.OwnerId) && Guid.TryParse(parameters.OwnerId, &guid) = false then 
-                Error (GraceError.Create (DiffError.getErrorMessage InvalidOwnerId) (parameters.CorrelationId))
-            else
-                Ok (parseResult, parameters)
+            mustBeAValidGuid parseResult parameters Options.ownerId parameters.OwnerId InvalidOwnerId
 
         let ``OwnerName must be a valid Grace name`` (parseResult: ParseResult, parameters: CommonParameters) =
-            if parseResult.CommandResult.FindResultFor(Options.ownerName) <> null && not <| Constants.GraceNameRegex.IsMatch(parameters.OwnerName) then 
-                Error (GraceError.Create (DiffError.getErrorMessage InvalidOwnerName) (parameters.CorrelationId))
-            else
-                Ok (parseResult, parameters)
+            mustBeAValidGraceName parseResult parameters Options.ownerName parameters.OwnerName InvalidOwnerName
 
         let ``OrganizationId must be a Guid`` (parseResult: ParseResult, parameters: CommonParameters) =
-            let mutable guid = Guid.Empty
-            if parseResult.CommandResult.FindResultFor(Options.organizationId) <> null && not <| String.IsNullOrEmpty(parameters.OrganizationId) && Guid.TryParse(parameters.OrganizationId, &guid) = false then 
-                Error (GraceError.Create (DiffError.getErrorMessage InvalidOrganizationId) (parameters.CorrelationId))
-            else
-                Ok (parseResult, parameters)
+            mustBeAValidGuid parseResult parameters Options.organizationId parameters.OrganizationId InvalidOrganizationId
 
         let ``OrganizationName must be a valid Grace name`` (parseResult: ParseResult, parameters: CommonParameters) =
-            if (parseResult.CommandResult.FindResultFor(Options.organizationName) <> null) && not <| Constants.GraceNameRegex.IsMatch(parameters.OrganizationName) then 
-                Error (GraceError.Create (DiffError.getErrorMessage InvalidOrganizationName) (parameters.CorrelationId))
-            else
-                Ok (parseResult, parameters)
+            mustBeAValidGraceName parseResult parameters Options.organizationName parameters.OrganizationName InvalidOrganizationName
 
         let ``RepositoryId must be a Guid`` (parseResult: ParseResult, parameters: CommonParameters) =
-            let mutable guid = Guid.Empty
-            if parseResult.CommandResult.FindResultFor(Options.repositoryId) <> null && not <| String.IsNullOrEmpty(parameters.RepositoryId) && Guid.TryParse(parameters.RepositoryId, &guid) = false then 
-                Error (GraceError.Create (DiffError.getErrorMessage InvalidRepositoryId) (parameters.CorrelationId))
-            else
-                Ok (parseResult, parameters)
+            mustBeAValidGuid parseResult parameters Options.repositoryId parameters.RepositoryId InvalidRepositoryId
 
         let ``RepositoryName must be a valid Grace name`` (parseResult: ParseResult, parameters: CommonParameters) =
-            if (parseResult.CommandResult.FindResultFor(Options.repositoryName) <> null) && not <| Constants.GraceNameRegex.IsMatch(parameters.RepositoryName) then 
-                Error (GraceError.Create (DiffError.getErrorMessage InvalidRepositoryName) (parameters.CorrelationId))
-            else
-                Ok (parseResult, parameters)
-    
-        //let ``DirectoryId1 must be a Guid`` (parseResult: ParseResult, parameters: CommonParameters) =
-        //    let mutable guid = Guid.Empty
-        //    if parseResult.CommandResult.FindResultFor(Options.directoryId1) <> null && String.IsNullOrEmpty(parameters.DirectoryId1) && Guid.TryParse(parameters.DirectoryId1, &guid) = false then 
-        //        Error (GraceError.Create (DiffError.getErrorMessage InvalidDirectoryId) (parameters.CorrelationId))
-        //    else
-        //        Ok (parseResult, parameters)
-
-        let ``DirectoryId1 must not be Guid.Empty`` (parseResult: ParseResult, parameters: CommonParameters) =
-            if parseResult.CommandResult.FindResultFor(Options.directoryId1) <> null && parameters.DirectoryId1 = DirectoryId.Empty then 
-                Error (GraceError.Create (DiffError.getErrorMessage InvalidDirectoryId) (parameters.CorrelationId))
-            else
-                Ok (parseResult, parameters)
-
-        //let ``DirectoryId2 must be a Guid`` (parseResult: ParseResult, parameters: CommonParameters) =
-        //    let mutable guid = Guid.Empty
-        //    if parseResult.CommandResult.FindResultFor(Options.directoryId2) <> null && String.IsNullOrEmpty(parameters.DirectoryId2) && Guid.TryParse(parameters.DirectoryId2, &guid) = false then 
-        //        Error (GraceError.Create (DiffError.getErrorMessage InvalidDirectoryId) (parameters.CorrelationId))
-        //    else
-        //        Ok (parseResult, parameters)
-
-        let ``DirectoryId2 must not be Guid.Empty`` (parseResult: ParseResult, parameters: CommonParameters) =
-            if parseResult.CommandResult.FindResultFor(Options.directoryId2) <> null && parameters.DirectoryId2 = DirectoryId.Empty then
-                Error (GraceError.Create (DiffError.getErrorMessage InvalidDirectoryId) (parameters.CorrelationId))
-            else
-                Ok (parseResult, parameters)
+            mustBeAValidGraceName parseResult parameters Options.repositoryName parameters.RepositoryName InvalidRepositoryName
 
         (parseResult, parameters)
             |> ``OwnerId must be a Guid``
@@ -139,12 +106,19 @@ module Diff =
             >>= ``OrganizationName must be a valid Grace name``
             >>= ``RepositoryId must be a Guid``
             >>= ``RepositoryName must be a valid Grace name``
-            //>>= ``DirectoryId1 must be a Guid``
-            >>= ``DirectoryId1 must not be Guid.Empty``
-            //>>= ``DirectoryId2 must be a Guid``
-            >>= ``DirectoryId2 must not be Guid.Empty``
+
+    let private DirectoryIdValidations (parseResult, parameters) =
+        let ``DirectoryId1 must be a Guid`` (parseResult: ParseResult, parameters: CommonParameters) =
+            mustBeAValidGuid parseResult parameters Options.directoryId1 parameters.DirectoryId1 InvalidDirectoryId
+
+        let ``DirectoryId2 must be a Guid`` (parseResult: ParseResult, parameters: CommonParameters) =
+            mustBeAValidGuid parseResult parameters Options.directoryId2 parameters.DirectoryId2 InvalidDirectoryId
+
+        (parseResult, parameters)
+            |> ``DirectoryId1 must be a Guid``
+            >>= ``DirectoryId2 must be a Guid``
    
-    let private sha256Validations parseResult parameters =
+    let private sha256Validations (parseResult, parameters) =
         let ``Sha256Hash1 must be a valid SHA-256 hash value`` (parseResult: ParseResult, (parameters: GetDiffBySha256HashParameters)) =
             if parseResult.CommandResult.FindResultFor(Options.sha256Hash1) <> null && not <| Constants.Sha256Regex.IsMatch(parameters.Sha256Hash1) then
                 Error (GraceError.Create (DiffError.getErrorMessage InvalidSha256Hash) (parameters.CorrelationId))
@@ -182,7 +156,7 @@ module Diff =
     let private diffToReferenceType (parseResult: ParseResult) (parameters: GetDiffByReferenceTypeParameters) (referenceType: ReferenceType) = 
         task {
             if parseResult |> verbose then printParseResult parseResult
-            let validateIncomingParameters = CommonValidations parseResult parameters
+            let validateIncomingParameters = (parseResult, parameters) |> CommonValidations
             match validateIncomingParameters with
             | Ok _ ->
                 if parseResult |> showOutput then
@@ -433,7 +407,16 @@ module Diff =
     let private DirectoryIdCommand =
         CommandHandler.Create(fun (parseResult: ParseResult) (parameters: DirectoryIdParameters) ->
             task {
-                return 0
+                if parseResult |> verbose then printParseResult parseResult
+                let validateIncomingParameters = 
+                    (parseResult, parameters)
+                        |> CommonValidations 
+                        >>= DirectoryIdValidations
+                match validateIncomingParameters with
+                | Ok _ ->
+                    return 0
+                | Error error ->
+                    return (Error error) |> renderOutput parseResult
             } :> Task)
 
     type ShaParameters() =
@@ -444,7 +427,7 @@ module Diff =
         CommandHandler.Create(fun (parseResult: ParseResult) (parameters: ShaParameters) ->
             task {
                 if parseResult |> verbose then printParseResult parseResult
-                let validateIncomingParameters = CommonValidations parseResult parameters
+                let validateIncomingParameters = (parseResult, parameters) |> CommonValidations
                 match validateIncomingParameters with
                 | Ok _ ->
                     if parseResult |> showOutput then

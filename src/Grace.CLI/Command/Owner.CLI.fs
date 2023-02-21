@@ -42,20 +42,28 @@ module Owner =
         let deleteReason = new Option<String>("--deleteReason", IsRequired = true, Description = "The reason for deleting the owner.", Arity = ArgumentArity.ExactlyOne)
         let doNotSwitch = new Option<bool>("--doNotSwitch", IsRequired = false, Description = "Do not switch to the new owner as the current owner.", Arity = ArgumentArity.ZeroOrOne)
 
-    let private CommonValidations parseResult commonParameters =
-        let ``OwnerId must be a Guid`` (parseResult: ParseResult, commonParameters: CommonParameters) =
-            let mutable ownerId: Guid = Guid.Empty
-            if parseResult.CommandResult.FindResultFor(Options.ownerId) <> null && Guid.TryParse(commonParameters.OwnerId, &ownerId) = false then 
-                Error (GraceError.Create (OwnerError.getErrorMessage InvalidOwnerId) (commonParameters.CorrelationId))
-            else
-                Ok (parseResult, commonParameters)
+    let mustBeAValidGuid (parseResult: ParseResult) (parameters: CommonParameters) (option: Option) (value: string) (error: OwnerError) =
+        let mutable guid = Guid.Empty
+        if parseResult.CommandResult.FindResultFor(option) <> null 
+                && not <| String.IsNullOrEmpty(value) 
+                && (Guid.TryParse(value, &guid) = false || guid = Guid.Empty)
+                then 
+            Error (GraceError.Create (OwnerError.getErrorMessage error) (parameters.CorrelationId))
+        else
+            Ok (parseResult, parameters)
 
-        let ``OwnerName must be a valid Grace name`` (parseResult: ParseResult, commonParameters: CommonParameters) =
-            if (parseResult.CommandResult.FindResultFor(Options.ownerName) <> null || parseResult.CommandResult.FindResultFor(Options.ownerNameRequired) <> null)
-                    && not <| Constants.GraceNameRegex.IsMatch(commonParameters.OwnerName) then 
-                Error (GraceError.Create (OwnerError.getErrorMessage InvalidOwnerName) (commonParameters.CorrelationId))
-            else
-                Ok (parseResult, commonParameters)
+    let mustBeAValidGraceName (parseResult: ParseResult) (parameters: CommonParameters) (option: Option) (value: string) (error: OwnerError) =
+        if parseResult.CommandResult.FindResultFor(option) <> null && not <| Constants.GraceNameRegex.IsMatch(value) then 
+            Error (GraceError.Create (OwnerError.getErrorMessage error) (parameters.CorrelationId))
+        else
+            Ok (parseResult, parameters)
+
+    let private CommonValidations (parseResult, commonParameters) =
+        let ``OwnerId must be a Guid`` (parseResult: ParseResult, parameters: CommonParameters) =
+            mustBeAValidGuid parseResult parameters Options.ownerId parameters.OwnerId InvalidOwnerId
+
+        let ``OwnerName must be a valid Grace name`` (parseResult: ParseResult, parameters: CommonParameters) =
+            mustBeAValidGraceName parseResult parameters Options.ownerName parameters.OwnerName InvalidOwnerName
 
         (parseResult, commonParameters)
             |>  ``OwnerId must be a Guid``
@@ -75,7 +83,7 @@ module Owner =
         task {
             try
                 if parseResult |> verbose then printParseResult parseResult
-                let validateIncomingParameters = CommonValidations parseResult createParameters
+                let validateIncomingParameters = CommonValidations (parseResult, createParameters)
                 match validateIncomingParameters with
                 | Ok _ -> 
                     let ownerId = if parseResult.FindResultFor(Options.ownerId).IsImplicit then Guid.NewGuid().ToString() else createParameters.OwnerId
@@ -118,7 +126,7 @@ module Owner =
         task {
             try
                 if parseResult |> verbose then printParseResult parseResult
-                let validateIncomingParameters = CommonValidations parseResult setNameParameters
+                let validateIncomingParameters = CommonValidations (parseResult, setNameParameters)
                 match validateIncomingParameters with
                 | Ok _ -> 
                     let parameters = Parameters.Owner.SetNameParameters(OwnerId = setNameParameters.OwnerId, OwnerName = setNameParameters.OwnerName, NewName= setNameParameters.NewName, CorrelationId = setNameParameters.CorrelationId)
@@ -151,7 +159,7 @@ module Owner =
         task {
             try
                 if parseResult |> verbose then printParseResult parseResult
-                let validateIncomingParameters = CommonValidations parseResult setTypeParameters
+                let validateIncomingParameters = CommonValidations (parseResult, setTypeParameters)
                 match validateIncomingParameters with
                 | Ok _ -> 
                     let parameters = Parameters.Owner.SetTypeParameters(OwnerId = setTypeParameters.OwnerId, OwnerName = setTypeParameters.OwnerName, OwnerType = setTypeParameters.OwnerType, CorrelationId = setTypeParameters.CorrelationId)
@@ -184,7 +192,7 @@ module Owner =
         task {
             try
                 if parseResult |> verbose then printParseResult parseResult
-                let validateIncomingParameters = CommonValidations parseResult setSearchVisibilityParameters
+                let validateIncomingParameters = CommonValidations (parseResult, setSearchVisibilityParameters)
                 match validateIncomingParameters with
                 | Ok _ -> 
                     let parameters = Parameters.Owner.SetSearchVisibilityParameters(OwnerId = setSearchVisibilityParameters.OwnerId, OwnerName = setSearchVisibilityParameters.OwnerName, SearchVisibility = setSearchVisibilityParameters.SearchVisibility, CorrelationId = setSearchVisibilityParameters.CorrelationId)
@@ -217,7 +225,7 @@ module Owner =
         task {
                 try
                     if parseResult |> verbose then printParseResult parseResult
-                    let validateIncomingParameters = CommonValidations parseResult setDescriptionParameters
+                    let validateIncomingParameters = CommonValidations (parseResult, setDescriptionParameters)
                     match validateIncomingParameters with
                     | Ok _ -> 
                         let parameters = Parameters.Owner.SetDescriptionParameters(OwnerId = setDescriptionParameters.OwnerId, OwnerName = setDescriptionParameters.OwnerName, Description = setDescriptionParameters.Description, CorrelationId = setDescriptionParameters.CorrelationId)
@@ -251,7 +259,7 @@ module Owner =
         task {
             try
                 if parseResult |> verbose then printParseResult parseResult
-                let validateIncomingParameters = CommonValidations parseResult deleteParameters
+                let validateIncomingParameters = CommonValidations (parseResult, deleteParameters)
                 match validateIncomingParameters with
                 | Ok _ -> 
                     let parameters = Parameters.Owner.DeleteParameters(OwnerId = deleteParameters.OwnerId, OwnerName = deleteParameters.OwnerName, Force = deleteParameters.Force, DeleteReason = deleteParameters.DeleteReason, CorrelationId = deleteParameters.CorrelationId)
@@ -283,7 +291,7 @@ module Owner =
         task {
             try
                 if parseResult |> verbose then printParseResult parseResult
-                let validateIncomingParameters = CommonValidations parseResult undeleteParameters
+                let validateIncomingParameters = CommonValidations (parseResult, undeleteParameters)
                 match validateIncomingParameters with
                 | Ok _ -> 
                     let parameters = Parameters.Owner.UndeleteParameters(OwnerId = undeleteParameters.OwnerId, OwnerName = undeleteParameters.OwnerName, CorrelationId = undeleteParameters.CorrelationId)

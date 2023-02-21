@@ -3,9 +3,9 @@
 	<PropertyGroup>
 		<OutputType>Exe</OutputType>
 		<TargetFramework>net7.0</TargetFramework>
-		<!-- <PublishAot>true</PublishAot> -->
+		<!--<PublishAot>true</PublishAot>-->
 		<PublishReadyToRun>true</PublishReadyToRun>
-		<RuntimeIdentifier>win10-x64</RuntimeIdentifier>
+		<!--<RuntimeIdentifier>win10-x64</RuntimeIdentifier>-->
 		<Version>0.1</Version>
 		<LangVersion>preview</LangVersion>
 		<Description>The command-line interface for Grace.</Description>
@@ -14,7 +14,6 @@
 		<NoWarn>67;NETSDK1057</NoWarn>
 		<Platforms>AnyCPU</Platforms>
 		<FSharpPreferNetFrameworkTools>False</FSharpPreferNetFrameworkTools>
-		<PlatformTarget>AnyCPU</PlatformTarget>
 	</PropertyGroup>
 	<ItemGroup>
 		<Compile Include="Log.CLI.fs" />

@@ -64,40 +64,38 @@ module Repository =
         let includeDeleted = new Option<bool>("--includeDeleted", IsRequired = false, Description = "True to include deleted branches; false to exclude them.", Arity = ArgumentArity.ZeroOrOne)
         //includeDeleted.SetDefaultValue(false)
 
-    let private CommonValidations parseResult parameters =
+    let mustBeAValidGuid (parseResult: ParseResult) (parameters: CommonParameters) (option: Option) (value: string) (error: RepositoryError) =
+        let mutable guid = Guid.Empty
+        if parseResult.CommandResult.FindResultFor(option) <> null 
+                && not <| String.IsNullOrEmpty(value) 
+                && (Guid.TryParse(value, &guid) = false || guid = Guid.Empty)
+                then 
+            Error (GraceError.Create (RepositoryError.getErrorMessage error) (parameters.CorrelationId))
+        else
+            Ok (parseResult, parameters)
+
+    let mustBeAValidGraceName (parseResult: ParseResult) (parameters: CommonParameters) (option: Option) (value: string) (error: RepositoryError) =
+        if parseResult.CommandResult.FindResultFor(option) <> null && not <| Constants.GraceNameRegex.IsMatch(value) then 
+            Error (GraceError.Create (RepositoryError.getErrorMessage error) (parameters.CorrelationId))
+        else
+            Ok (parseResult, parameters)
+
+    let private CommonValidations (parseResult, parameters) =
 
         let ``OwnerId must be a Guid`` (parseResult: ParseResult, parameters: CommonParameters) =
-            let mutable ownerId: Guid = Guid.Empty
-            if parseResult.HasOption(Options.ownerId) && Guid.TryParse(parameters.OwnerId, &ownerId) = false then 
-                Error (GraceError.Create (RepositoryError.getErrorMessage InvalidOwnerId) (parameters.CorrelationId))
-            else
-                Ok (parseResult, parameters)
+            mustBeAValidGuid parseResult parameters Options.ownerId parameters.OwnerId InvalidOwnerId
 
         let ``OwnerName must be a valid Grace name`` (parseResult: ParseResult, parameters: CommonParameters) =
-            if not (parseResult.HasOption(Options.ownerName)) || (parseResult.HasOption(Options.ownerName) && Constants.GraceNameRegex.IsMatch(parameters.OwnerName)) then 
-                Ok (parseResult, parameters)
-            else
-                Error (GraceError.Create (RepositoryError.getErrorMessage InvalidOwnerName) (parameters.CorrelationId))
+            mustBeAValidGraceName parseResult parameters Options.ownerName parameters.OwnerName InvalidOwnerName
 
         let ``OrganizationId must be a Guid`` (parseResult: ParseResult, parameters: CommonParameters) =
-            let mutable organizationId: Guid = Guid.Empty
-            if parseResult.HasOption(Options.organizationId) && Guid.TryParse(parameters.OrganizationId, &organizationId) = false then 
-                Error (GraceError.Create (RepositoryError.getErrorMessage InvalidOrganizationId) (parameters.CorrelationId))
-            else
-                Ok (parseResult, parameters)
+            mustBeAValidGuid parseResult parameters Options.organizationId parameters.OrganizationId InvalidOrganizationId
 
         let ``OrganizationName must be a valid Grace name`` (parseResult: ParseResult, parameters: CommonParameters) =
-            if not (parseResult.HasOption(Options.organizationName)) || (parseResult.HasOption(Options.organizationName) && Constants.GraceNameRegex.IsMatch(parameters.OrganizationName)) then 
-                Ok (parseResult, parameters)
-            else
-                Error (GraceError.Create (RepositoryError.getErrorMessage InvalidOrganizationName) (parameters.CorrelationId))
-
+            mustBeAValidGraceName parseResult parameters Options.organizationName parameters.OrganizationName InvalidOrganizationName
+            
         let ``RepositoryId must be a Guid`` (parseResult: ParseResult, parameters: CommonParameters) =
-            let mutable repositoryId: Guid = Guid.Empty
-            if parseResult.HasOption(Options.repositoryId) && Guid.TryParse(parameters.RepositoryId, &repositoryId) = false then 
-                Error (GraceError.Create (RepositoryError.getErrorMessage InvalidRepositoryId) (parameters.CorrelationId))
-            else
-                Ok (parseResult, parameters)
+            mustBeAValidGuid parseResult parameters Options.repositoryId parameters.RepositoryId InvalidRepositoryId
 
         (parseResult, parameters)
             |>  ``OwnerId must be a Guid``
@@ -105,6 +103,9 @@ module Repository =
             >>= ``OrganizationId must be a Guid``
             >>= ``OrganizationName must be a valid Grace name``
             >>= ``RepositoryId must be a Guid``
+
+    let ``RepositoryName must be a valid Grace name`` (parseResult: ParseResult, parameters: CommonParameters) =
+        mustBeAValidGraceName parseResult parameters Options.repositoryName parameters.RepositoryName InvalidRepositoryName
 
     let ``Either RepositoryId or RepositoryName must be specified`` (parseResult: ParseResult, parameters: CommonParameters) =
         if parseResult.HasOption(Options.repositoryId) || parseResult.HasOption(Options.repositoryName) || parseResult.HasOption(Options.requiredRepositoryName) then
@@ -144,7 +145,7 @@ module Repository =
             try
                 //if parseResult |> verbose then printParseResult parseResult
                 if verbose parseResult then printParseResult parseResult
-                let validateIncomingParameters = CommonValidations parseResult createParameters >>= ``Either RepositoryId or RepositoryName must be specified``
+                let validateIncomingParameters = CommonValidations (parseResult, createParameters) >>= ``Either RepositoryId or RepositoryName must be specified``
                 match validateIncomingParameters with
                 | Ok _ -> 
                     let optionResult = parseResult.FindResultFor(Options.repositoryId)
@@ -206,7 +207,7 @@ module Repository =
         task {
             try
                 if parseResult |> verbose then printParseResult parseResult
-                let validateIncomingParameters = CommonValidations parseResult parameters
+                let validateIncomingParameters = CommonValidations (parseResult, parameters)
                 match validateIncomingParameters with
                 | Ok _ -> 
                     let (ownerId, organizationId, repositoryId) = getIds parameters
@@ -238,7 +239,7 @@ module Repository =
         task {
             try
                 if parseResult |> verbose then printParseResult parseResult
-                let validateIncomingParameters = CommonValidations parseResult parameters
+                let validateIncomingParameters = CommonValidations (parseResult, parameters)
                 match validateIncomingParameters with
                 | Ok _ -> 
                     let normalizedParameters = parameters |> normalizeIdsAndNames parseResult
@@ -307,7 +308,7 @@ module Repository =
         task {
             try
                 if parseResult |> verbose then printParseResult parseResult
-                let validateIncomingParameters = CommonValidations parseResult parameters
+                let validateIncomingParameters = CommonValidations (parseResult, parameters)
                 match validateIncomingParameters with
                 | Ok _ -> 
                     let normalizedParameters = parameters |> normalizeIdsAndNames parseResult
@@ -351,7 +352,7 @@ module Repository =
         task {
             try
                 if parseResult |> verbose then printParseResult parseResult
-                let validateIncomingParameters = CommonValidations parseResult parameters
+                let validateIncomingParameters = CommonValidations (parseResult, parameters)
                 match validateIncomingParameters with
                 | Ok _ -> 
                     let normalizedParameters = parameters |> normalizeIdsAndNames parseResult
@@ -395,7 +396,7 @@ module Repository =
         task {
             try
                 if parseResult |> verbose then printParseResult parseResult
-                let validateIncomingParameters = CommonValidations parseResult parameters
+                let validateIncomingParameters = CommonValidations (parseResult, parameters)
                 match validateIncomingParameters with
                 | Ok _ -> 
                     let normalizedParameters = parameters |> normalizeIdsAndNames parseResult
@@ -439,7 +440,7 @@ module Repository =
         task {
             try
                 if parseResult |> verbose then printParseResult parseResult
-                let validateIncomingParameters = CommonValidations parseResult parameters
+                let validateIncomingParameters = CommonValidations (parseResult, parameters)
                 match validateIncomingParameters with
                 | Ok _ -> 
                     let normalizedParameters = parameters |> normalizeIdsAndNames parseResult
@@ -483,7 +484,7 @@ module Repository =
         task {
             try
                 if parseResult |> verbose then printParseResult parseResult
-                let validateIncomingParameters = CommonValidations parseResult parameters
+                let validateIncomingParameters = CommonValidations (parseResult, parameters)
                 match validateIncomingParameters with
                 | Ok _ -> 
                     let normalizedParameters = parameters |> normalizeIdsAndNames parseResult
@@ -528,7 +529,7 @@ module Repository =
         task {
             try
                 if parseResult |> verbose then printParseResult parseResult
-                let validateIncomingParameters = CommonValidations parseResult parameters
+                let validateIncomingParameters = CommonValidations (parseResult, parameters)
                 match validateIncomingParameters with
                 | Ok _ -> 
                     let normalizedParameters = parameters |> normalizeIdsAndNames parseResult
@@ -596,7 +597,7 @@ module Repository =
         task {
             try
                 if parseResult |> verbose then printParseResult parseResult
-                let validateIncomingParameters = CommonValidations parseResult parameters
+                let validateIncomingParameters = CommonValidations (parseResult, parameters)
                 match validateIncomingParameters with
                 | Ok _ -> 
                     let normalizedParameters = parameters |> normalizeIdsAndNames parseResult
@@ -640,7 +641,7 @@ module Repository =
         task {
             try
                 if parseResult |> verbose then printParseResult parseResult
-                let validateIncomingParameters = CommonValidations parseResult parameters
+                let validateIncomingParameters = CommonValidations (parseResult, parameters)
                 match validateIncomingParameters with
                 | Ok _ -> 
                     let normalizedParameters = parameters |> normalizeIdsAndNames parseResult
@@ -685,7 +686,7 @@ module Repository =
         task {
             try
                 if parseResult |> verbose then printParseResult parseResult
-                let validateIncomingParameters = CommonValidations parseResult parameters
+                let validateIncomingParameters = CommonValidations (parseResult, parameters)
                 match validateIncomingParameters with
                 | Ok _ -> 
                     let normalizedParameters = parameters |> normalizeIdsAndNames parseResult
@@ -729,7 +730,7 @@ module Repository =
         task {
             try
                 if parseResult |> verbose then printParseResult parseResult
-                let validateIncomingParameters = CommonValidations parseResult parameters
+                let validateIncomingParameters = CommonValidations (parseResult, parameters)
                 match validateIncomingParameters with
                 | Ok _ -> 
                     let normalizedParameters = parameters |> normalizeIdsAndNames parseResult

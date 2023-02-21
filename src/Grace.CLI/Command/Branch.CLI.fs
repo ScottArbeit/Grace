@@ -80,59 +80,46 @@ module Branch =
         let sha256Hash = new Option<String>([|"--sha256Hash"|], IsRequired = false, Description = "The full or partial SHA-256 hash value of the version to switch to.", Arity = ArgumentArity.ExactlyOne)
         let enabled = new Option<bool>("--enabled", IsRequired = false, Description = "True to enable the feature; false to disable it.", Arity = ArgumentArity.ZeroOrOne)
         
+    let mustBeAValidGuid (parseResult: ParseResult) (parameters: CommonParameters) (option: Option) (value: string) (error: BranchError) =
+        let mutable guid = Guid.Empty
+        if parseResult.CommandResult.FindResultFor(option) <> null 
+                && not <| String.IsNullOrEmpty(value) 
+                && (Guid.TryParse(value, &guid) = false || guid = Guid.Empty)
+                then 
+            Error (GraceError.Create (BranchError.getErrorMessage error) (parameters.CorrelationId))
+        else
+            Ok (parseResult, parameters)
+
+    let mustBeAValidGraceName (parseResult: ParseResult) (parameters: CommonParameters) (option: Option) (value: string) (error: BranchError) =
+        if parseResult.CommandResult.FindResultFor(option) <> null && not <| Constants.GraceNameRegex.IsMatch(value) then 
+            Error (GraceError.Create (BranchError.getErrorMessage error) (parameters.CorrelationId))
+        else
+            Ok (parseResult, parameters)
+
     let private CommonValidations parseResult commonParameters =
         let ``BranchId must be a Guid`` (parseResult: ParseResult, commonParameters: CommonParameters) =
-            let mutable guid = Guid.Empty
-            if parseResult.CommandResult.FindResultFor(Options.branchId) <> null && not <| String.IsNullOrEmpty(commonParameters.BranchId) && Guid.TryParse(commonParameters.BranchId, &guid) = false then 
-                Error (GraceError.Create (BranchError.getErrorMessage InvalidBranchId) (commonParameters.CorrelationId))
-            else
-                Ok (parseResult, commonParameters)
+            mustBeAValidGuid parseResult commonParameters Options.branchId commonParameters.BranchId InvalidBranchId
 
         let ``BranchName must be a valid Grace name`` (parseResult: ParseResult, commonParameters: CommonParameters) =
-            if (parseResult.CommandResult.FindResultFor(Options.branchName) <> null || parseResult.CommandResult.FindResultFor(Options.branchNameRequired) <> null)
-                    && not <| Constants.GraceNameRegex.IsMatch(commonParameters.BranchName) then 
-                Error (GraceError.Create (BranchError.getErrorMessage InvalidBranchName) (commonParameters.CorrelationId))
-            else
-                Ok (parseResult, commonParameters)
+            mustBeAValidGraceName parseResult commonParameters Options.branchName commonParameters.BranchName InvalidBranchName
 
         let ``OwnerId must be a Guid`` (parseResult: ParseResult, commonParameters: CommonParameters) =
-            let mutable ownerId = Guid.Empty
-            if parseResult.CommandResult.FindResultFor(Options.ownerId) <> null && not <| String.IsNullOrEmpty(commonParameters.OwnerId) && Guid.TryParse(commonParameters.OwnerId, &ownerId) = false then 
-                Error (GraceError.Create (BranchError.getErrorMessage InvalidOwnerId) (commonParameters.CorrelationId))
-            else
-                Ok (parseResult, commonParameters)
+            mustBeAValidGuid parseResult commonParameters Options.ownerId commonParameters.OwnerId InvalidOwnerId
 
         let ``OwnerName must be a valid Grace name`` (parseResult: ParseResult, commonParameters: CommonParameters) =
-            if parseResult.CommandResult.FindResultFor(Options.ownerName) <> null && not <| Constants.GraceNameRegex.IsMatch(commonParameters.OwnerName) then 
-                Error (GraceError.Create (BranchError.getErrorMessage InvalidOwnerName) (commonParameters.CorrelationId))
-            else
-                Ok (parseResult, commonParameters)
-
+            mustBeAValidGraceName parseResult commonParameters Options.ownerName commonParameters.OwnerName InvalidOwnerName
+            
         let ``OrganizationId must be a Guid`` (parseResult: ParseResult, commonParameters: CommonParameters) =
-            let mutable guid = Guid.Empty
-            if parseResult.CommandResult.FindResultFor(Options.organizationId) <> null && not <| String.IsNullOrEmpty(commonParameters.OrganizationId) && Guid.TryParse(commonParameters.OrganizationId, &guid) = false then 
-                Error (GraceError.Create (BranchError.getErrorMessage InvalidOrganizationId) (commonParameters.CorrelationId))
-            else
-                Ok (parseResult, commonParameters)
+            mustBeAValidGuid parseResult commonParameters Options.organizationId commonParameters.OrganizationId InvalidOrganizationId
 
         let ``OrganizationName must be a valid Grace name`` (parseResult: ParseResult, commonParameters: CommonParameters) =
-            if (parseResult.CommandResult.FindResultFor(Options.organizationName) <> null) && not <| Constants.GraceNameRegex.IsMatch(commonParameters.OrganizationName) then 
-                Error (GraceError.Create (BranchError.getErrorMessage InvalidOrganizationName) (commonParameters.CorrelationId))
-            else
-                Ok (parseResult, commonParameters)
-
+            mustBeAValidGraceName parseResult commonParameters Options.organizationName commonParameters.OrganizationName InvalidOrganizationName
+            
         let ``RepositoryId must be a Guid`` (parseResult: ParseResult, commonParameters: CommonParameters) =
-            let mutable guid = Guid.Empty
-            if parseResult.CommandResult.FindResultFor(Options.repositoryId) <> null && not <| String.IsNullOrEmpty(commonParameters.RepositoryId) && Guid.TryParse(commonParameters.RepositoryId, &guid) = false then 
-                Error (GraceError.Create (BranchError.getErrorMessage InvalidRepositoryId) (commonParameters.CorrelationId))
-            else
-                Ok (parseResult, commonParameters)
-
+            mustBeAValidGuid parseResult commonParameters Options.repositoryId commonParameters.RepositoryId InvalidRepositoryId
+            
         let ``RepositoryName must be a valid Grace name`` (parseResult: ParseResult, commonParameters: CommonParameters) =
-            if (parseResult.CommandResult.FindResultFor(Options.repositoryName) <> null) && not <| Constants.GraceNameRegex.IsMatch(commonParameters.RepositoryName) then 
-                Error (GraceError.Create (BranchError.getErrorMessage InvalidRepositoryName) (commonParameters.CorrelationId))
-            else
-                Ok (parseResult, commonParameters)
+            mustBeAValidGraceName parseResult commonParameters Options.repositoryName commonParameters.RepositoryName InvalidRepositoryName
 
         let ``Grace index file must exist`` (parseResult: ParseResult, commonParameters: CommonParameters) =
             if not <| File.Exists(Current().GraceStatusFile) then 
