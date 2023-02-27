@@ -57,17 +57,20 @@ module Notifications =
 
         member this.NotifyOnSave((parentBranchId: BranchId), (branchId: BranchId), (referenceId: ReferenceId)) =
             task {
+                logToConsole $"In NotifyOnSave. branchId: {branchId}; referenceId: {referenceId}."
                 do! this.Clients.Group($"{parentBranchId}").NotifyOnSave(parentBranchId, referenceId)
                 ()
             } :> Task
 
         member this.NotifyOnCheckpoint((parentBranchId: BranchId), (branchId: BranchId), (referenceId: ReferenceId)) =
             task {
+                logToConsole $"In NotifyOnCheckpoint. branchId: {branchId}; referenceId: {referenceId}."
                 do! this.Clients.Group($"{parentBranchId}").NotifyOnCheckpoint(parentBranchId, referenceId)
             } :> Task
 
         member this.NotifyOnCommit((parentBranchId: BranchId), (branchId: BranchId), (referenceId: ReferenceId)) =
             task {
+                logToConsole $"In NotifyOnCommit. branchId: {branchId}; referenceId: {referenceId}."
                 do! this.Clients.Group($"{parentBranchId}").NotifyOnCommit(parentBranchId, referenceId)
             } :> Task
 
@@ -82,7 +85,7 @@ module Notifications =
     let Post: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
-                //logToConsole $"In Notifications.Post."
+                logToConsole $"In Notifications.Post."
                 
                 let hubContext = context.GetService<IHubContext<NotificationHub, IGraceClientConnection>>()
                 let actorProxyFactory = context.GetService<IActorProxyFactory>()
@@ -99,8 +102,9 @@ module Notifications =
                         ()
                     }
             
-                let cloudEvent = JsonSerializer.Deserialize<CloudEvent<string>>(body, Constants.JsonSerializerOptions)
-                let graceEvent = JsonSerializer.Deserialize<GraceEvent>(cloudEvent.Data, Constants.JsonSerializerOptions)
+                //let cloudEvent = deserialize<CloudEvent<string>> body
+                let graceEvent = deserialize<GraceEvent> body
+            
                 match graceEvent with
                 | BranchEvent branchEvent ->
                     logToConsole $"Received BranchEvent: {discriminatedUnionFullNameToString branchEvent.Event} {Environment.NewLine}{branchEvent.Metadata}"

@@ -38,6 +38,9 @@ open Grace.Actors.Interfaces
 
 module Services =
 
+    /// <summary>/// Gets the CorrelationId from HttpContext.Items.
+    let getCorrelationId (context: HttpContext) = (context.Items[Constants.CorrelationId] :?> string)
+
     /// Defines the type of all server queries in Grace.
     ///
     /// Takes an HttpContext, the MaxCount of results to return, and the ActorProxy to use for the query, and returns a Task containing the return value.
@@ -77,7 +80,7 @@ module Services =
     /// <param name="context">The current HttpContext.</param>
     let returnResult<'T> (statusCode: int) (result: 'T) (context: HttpContext) =
         task {
-            Activity.Current.AddTag("correlation_id", context.Items[Constants.CorrelationId] :?> string)
+            Activity.Current.AddTag("correlation_id", getCorrelationId context)
                             .AddTag("http.status_code", statusCode) |> ignore
             context.SetStatusCode(statusCode)
             return! context.WriteJsonAsync(result)
@@ -91,7 +94,7 @@ module Services =
     /// <param name="context">The current HttpContext.</param>
     let result404NotFound (context: HttpContext) =
         task {
-            Activity.Current.AddTag("correlation_id", context.Items[Constants.CorrelationId] :?> string)
+            Activity.Current.AddTag("correlation_id", getCorrelationId context)
                             .AddTag("http.status_code", StatusCodes.Status404NotFound) |> ignore
             context.SetStatusCode(StatusCodes.Status404NotFound)
             return Some context
@@ -779,5 +782,3 @@ module Services =
             return branchDtos
         }
 
-    /// Gets the CorrelationId from HttpContext.Items.
-    let getCorrelationId (context: HttpContext) = (context.Items[Constants.CorrelationId] :?> string)

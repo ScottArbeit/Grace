@@ -19,6 +19,7 @@ open System.Runtime.Serialization
 open System.Threading.Tasks
 open NodaTime
 open System.Text.Json
+open System.Net.Http.Json
 
 module Branch =
 
@@ -38,6 +39,7 @@ module Branch =
         let actorName = Constants.ActorName.Branch
         let mutable actorStartTime = Instant.MinValue
         let mutable logScope: IDisposable = null
+        let mutable currentCommand = String.Empty
         
         let updateDto branchEventType currentBranchDto =
             let newOrganizationDto = 
@@ -96,12 +98,16 @@ module Branch =
         override this.OnPreActorMethodAsync(context) =
             actorStartTime <- getCurrentInstant()
             logScope <- log.BeginScope("Actor {actorName}", actorName)
+            currentCommand <- String.Empty
             //log.LogInformation("{CurrentInstant}: Started {ActorName}.{MethodName} Id: {Id}.", getCurrentInstantExtended(), actorName, context.MethodName, this.Id.GetId())
             Task.CompletedTask
 
         override this.OnPostActorMethodAsync(context) =
             let duration = getCurrentInstant().Minus(actorStartTime)
-            log.LogInformation("{CurrentInstant}: Finished {ActorName}.{MethodName} Id: {Id}; Duration: {duration}ms.", getCurrentInstantExtended(), actorName, context.MethodName, this.Id.GetId(), duration.TotalMilliseconds.ToString("F3"))
+            if String.IsNullOrEmpty(currentCommand) then
+                log.LogInformation("{CurrentInstant}: Finished {ActorName}.{MethodName}; Id: {Id}; Duration: {duration}ms.", getCurrentInstantExtended(), actorName, context.MethodName, this.Id.GetId(), duration.TotalMilliseconds.ToString("F3"))
+            else
+                log.LogInformation("{CurrentInstant}: Finished {ActorName}.{MethodName}; Command: {Command}; Id: {Id}; Duration: {duration}ms.", getCurrentInstantExtended(), actorName, context.MethodName, currentCommand, this.Id.GetId(), duration.TotalMilliseconds.ToString("F3"))
             logScope.Dispose()
             Task.CompletedTask
 
@@ -123,6 +129,12 @@ module Branch =
                     let graceEvent = Events.GraceEvent.BranchEvent branchEvent
                     let message = graceEvent |> serialize
                     do! daprClient.PublishEventAsync(Constants.GracePubSubService, Constants.GraceEventStreamTopic, message)
+                    
+                    //let httpClient = getHttpClient branchEvent.Metadata.CorrelationId
+                    //httpClient.BaseAddress <- Uri $"http://127.0.0.1:5000"
+                    //let! response = httpClient.PostAsync("notifications/post", jsonContent graceEvent)
+                    //if not <| response.IsSuccessStatusCode then
+                    //    log.LogError("Failed to send SignalR notification. Event: {event}", message)
 
                     let returnValue = GraceReturnValue.Create "Branch command succeeded." branchEvent.Metadata.CorrelationId
                     returnValue.Properties.Add(nameof(RepositoryId), $"{branchDto.RepositoryId}")
@@ -134,6 +146,7 @@ module Branch =
                         returnValue.Properties.Add("ReferenceId", branchEvent.Metadata.Properties["ReferenceId"])
                     return Ok returnValue
                 with ex ->
+                    logToConsole (createExceptionResponse ex)
                     let graceError = GraceError.Create (BranchError.getErrorMessage FailedWhileApplyingEvent) branchEvent.Metadata.CorrelationId
                     return Error graceError
             }
@@ -250,6 +263,7 @@ module Branch =
                     }
 
                 task {
+                    currentCommand <- discriminatedUnionCaseNameToString command
                     match! isValid command metadata with
                     | Ok command -> return! processCommand command metadata 
                     | Error error -> return Error error

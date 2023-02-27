@@ -70,14 +70,14 @@ module Diff =
     //                            | _ ->
     //                                return! context |> result200Ok graceReturn
     //                        | Error graceError -> return! context |> result400BadRequest graceError
-    //                | None -> return! context |> result400BadRequest (GraceError.Create (RepositoryError.getErrorMessage RepositoryError.RepositoryDoesNotExist) (context.Items[Constants.CorrelationId] :?> string))
+    //                | None -> return! context |> result400BadRequest (GraceError.Create (RepositoryError.getErrorMessage RepositoryError.RepositoryDoesNotExist) (getCorrelationId context))
     //            else
     //                let! error = validationResults |> getFirstError
-    //                let graceError = GraceError.Create (RepositoryError.getErrorMessage error) (context.Items[Constants.CorrelationId] :?> string)
+    //                let graceError = GraceError.Create (RepositoryError.getErrorMessage error) (getCorrelationId context)
     //                graceError.Properties.Add("Path", context.Request.Path)
     //                return! context |> result400BadRequest graceError
     //        with ex ->
-    //            return! context |> result500ServerError (GraceError.Create $"{Utilities.createExceptionResponse ex}" (context.Items[Constants.CorrelationId] :?> string))
+    //            return! context |> result500ServerError (GraceError.Create $"{Utilities.createExceptionResponse ex}" (getCorrelationId context))
     //    }
 
     let processQuery<'T, 'U when 'T :> DiffParameters> (context: HttpContext) (parameters: 'T) (validations: Validations<'T>) (query: QueryResult<IDiffActor, 'U>) =

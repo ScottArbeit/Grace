@@ -38,7 +38,6 @@ open Spectre.Console
 open System.Text
 open Branch
 
-
 module Watch =
 
     /// Holds a list of the created or changed files that we need to process, as determined by the FileSystemWatcher.
@@ -354,11 +353,12 @@ module Watch =
                     // Enable the FileSystemWatcher.
                     fileSystemWatcher.EnableRaisingEvents <- true
 
-                    let timerTimeSpan = TimeSpan.FromSeconds(3.0)
+                    let timerTimeSpan = TimeSpan.FromSeconds(1.0)
                     logToAnsiConsole Colors.Verbose $"The change processor timer will tick every {timerTimeSpan.TotalSeconds:F1} seconds."
 
                     // Open a SignalR connection to the server.
-                    let signalRUrl = Uri($"{Current().ServerUri}/notification")
+                    let signalRUrl = Uri($"{Current().ServerUri}/notifications")
+                    logToConsole $"signalRUrl: {signalRUrl}."
                     use signalRConnection = HubConnectionBuilder()
                                                 .WithAutomaticReconnect()
                                                 .WithUrl(signalRUrl, HttpTransportType.ServerSentEvents)
@@ -441,7 +441,7 @@ module Watch =
                     //let exceptionMarkup = Markup.Escape($"{createExceptionResponse ex}").Replace("\\\\", @"\").Replace("\r\n", Environment.NewLine)
                     //logToAnsiConsole Colors.Error $"{exceptionMarkup}"
                     let exceptionSettings = ExceptionSettings()
-                    // Need to fill in some styles here.
+                    // Need to fill in some exception styles here.
                     exceptionSettings.Format <- ExceptionFormats.Default
                     AnsiConsole.WriteException(ex, exceptionSettings)
             } :> Task

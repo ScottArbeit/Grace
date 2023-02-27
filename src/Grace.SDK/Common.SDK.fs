@@ -40,7 +40,7 @@ module Common =
         )
     #endif
     
-    // This construct is equivalent to using IHttpClientFactory in the ASP.NET DI container, for code (like this) that isn't using GenericHost.
+    // This construct is equivalent to using IHttpClientFactory in the ASP.NET Dependency Injection container, for code (like this) that isn't using GenericHost.
     // See https://docs.microsoft.com/en-us/aspnet/core/fundamentals/http-requests?view=aspnetcore-7.0#alternatives-to-ihttpclientfactory for more information.
     let private socketsHttpHandler = new SocketsHttpHandler(
         AllowAutoRedirect = true,                               // We expect to use Traffic Manager or equivalents, so there will be redirects.
@@ -69,8 +69,8 @@ module Common =
         httpClient.DefaultRequestHeaders.Add(Constants.ServerApiVersionHeaderKey, $"{Constants.ServerApiVersions.Edge}")
         //httpClient.DefaultVersionPolicy <- HttpVersionPolicy.RequestVersionOrHigher
 #if DEBUG
-        //httpClient.Timeout <- TimeSpan.FromSeconds(1800.0)  // Keeps client commands open while debugging.
-        httpClient.Timeout <- TimeSpan.FromSeconds(15.0)  // Fast fail for testing network connectivity.
+        httpClient.Timeout <- TimeSpan.FromSeconds(1800.0)  // Keeps client commands open while debugging.
+        //httpClient.Timeout <- TimeSpan.FromSeconds(15.0)  // Fast fail for testing network connectivity.
 #endif
         httpClient
 
@@ -101,11 +101,10 @@ module Common =
         task {
             try
                 use httpClient = getHttpClient parameters.CorrelationId
-                let jsonContent = JsonContent.Create(parameters, options = Constants.JsonSerializerOptions)
                 let serverUriWithRoute = Uri($"{Current().ServerUri}/{route}")
                 //logToConsole $"serverUriWithRoute: {serverUriWithRoute}"
                 let startTime = getCurrentInstant()
-                let! response = Constants.DefaultAsyncRetryPolicy.ExecuteAsync(fun _ -> httpClient.PostAsync(serverUriWithRoute, jsonContent))
+                let! response = Constants.DefaultAsyncRetryPolicy.ExecuteAsync(fun _ -> httpClient.PostAsync(serverUriWithRoute, jsonContent parameters))
                 let endTime = getCurrentInstant()
                 if response.IsSuccessStatusCode then
                     let! graceReturnValue = response.Content.ReadFromJsonAsync<GraceReturnValue<'U>>(Constants.JsonSerializerOptions)

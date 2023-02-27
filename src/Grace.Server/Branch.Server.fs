@@ -58,16 +58,16 @@ module Branch =
                                 | Ok graceReturn -> return! context |> result200Ok graceReturn
                                 | Error graceError -> return! context |> result400BadRequest graceError
                         | None -> 
-                            return! context |> result400BadRequest (GraceError.Create (BranchError.getErrorMessage BranchDoesNotExist) (context.Items[Constants.CorrelationId] :?> string))
+                            return! context |> result400BadRequest (GraceError.Create (BranchError.getErrorMessage BranchDoesNotExist) (getCorrelationId context))
                     | None -> 
-                        return! context |> result400BadRequest (GraceError.Create (BranchError.getErrorMessage RepositoryDoesNotExist) (context.Items[Constants.CorrelationId] :?> string))
+                        return! context |> result400BadRequest (GraceError.Create (BranchError.getErrorMessage RepositoryDoesNotExist) (getCorrelationId context))
                 else
                     let! error = validationResults |> getFirstError
-                    let graceError = GraceError.Create (BranchError.getErrorMessage error) (context.Items[Constants.CorrelationId] :?> string)
+                    let graceError = GraceError.Create (BranchError.getErrorMessage error) (getCorrelationId context)
                     graceError.Properties.Add("Path", context.Request.Path)                    
                     return! context |> result400BadRequest graceError
             with ex ->
-                let graceError = GraceError.Create $"{Utilities.createExceptionResponse ex}" (context.Items[Constants.CorrelationId] :?> string)
+                let graceError = GraceError.Create $"{Utilities.createExceptionResponse ex}" (getCorrelationId context)
                 graceError.Properties.Add("Path", context.Request.Path)
                 return! context |> result500ServerError graceError
         }
@@ -84,16 +84,16 @@ module Branch =
                     | Some branchId ->
                         let actorProxy = getActorProxy context (Guid.Parse(branchId))
                         let! queryResult = query context maxCount actorProxy
-                        let! returnValue = context |> result200Ok (GraceReturnValue.Create queryResult (context.Items[Constants.CorrelationId] :?> string))
+                        let! returnValue = context |> result200Ok (GraceReturnValue.Create queryResult (getCorrelationId context))
                         return returnValue
-                    | None -> return! context |> result400BadRequest (GraceError.Create (BranchError.getErrorMessage BranchDoesNotExist) (context.Items[Constants.CorrelationId] :?> string))
+                    | None -> return! context |> result400BadRequest (GraceError.Create (BranchError.getErrorMessage BranchDoesNotExist) (getCorrelationId context))
                 else
                     let! error = validationResults |> getFirstError
-                    let graceError = GraceError.Create (BranchError.getErrorMessage error) (context.Items[Constants.CorrelationId] :?> string)
+                    let graceError = GraceError.Create (BranchError.getErrorMessage error) (getCorrelationId context)
                     graceError.Properties.Add("Path", context.Request.Path)                    
                     return! context |> result400BadRequest graceError
             with ex ->
-                return! context |> result500ServerError (GraceError.Create $"{Utilities.createExceptionResponse ex}" (context.Items[Constants.CorrelationId] :?> string))
+                return! context |> result500ServerError (GraceError.Create $"{Utilities.createExceptionResponse ex}" (getCorrelationId context))
         }
 
     let Create: HttpHandler =
@@ -495,7 +495,7 @@ module Branch =
                     let! parameters = context |> parse<GetParameters>
                     return! processQuery context parameters validations 1 query
                 with ex ->
-                    return! context |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (context.Items[Constants.CorrelationId] :?> string))
+                    return! context |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
             }
 
     let GetParentBranch: HttpHandler =
@@ -529,7 +529,7 @@ module Branch =
                     let! parameters = context |> parse<BranchParameters>
                     return! processQuery context parameters validations 1 query
                 with ex ->
-                    return! context |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (context.Items[Constants.CorrelationId] :?> string))
+                    return! context |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
             }
 
     let GetReference: HttpHandler =
@@ -566,7 +566,7 @@ module Branch =
                     context.Items.Add("ReferenceId", parameters.ReferenceId)
                     return! processQuery context parameters validations 1 query
                 with ex ->
-                    return! context |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (context.Items[Constants.CorrelationId] :?> string))
+                    return! context |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
             }
 
     let GetReferences: HttpHandler =
@@ -602,7 +602,7 @@ module Branch =
                     let! parameters = context |> parse<GetReferencesParameters>
                     return! processQuery context parameters validations (parameters.MaxCount) query
                 with ex ->
-                    return! context |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (context.Items[Constants.CorrelationId] :?> string))
+                    return! context |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
             }
             
     let GetDiffsForReferenceType: HttpHandler =
@@ -656,7 +656,7 @@ module Branch =
                     context.Items.Add(nameof(ReferenceType), parameters.ReferenceType)
                     return! processQuery context parameters validations (parameters.MaxCount) query
                 with ex ->
-                    return! context |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (context.Items[Constants.CorrelationId] :?> string))
+                    return! context |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
             }
         
     let GetPromotions: HttpHandler =
@@ -692,7 +692,7 @@ module Branch =
                     let! parameters = context |> parse<GetReferencesParameters>
                     return! processQuery context parameters validations (parameters.MaxCount) query
                 with ex ->
-                    return! context |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (context.Items[Constants.CorrelationId] :?> string))
+                    return! context |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
             }
 
     let GetCommits: HttpHandler =
@@ -728,7 +728,7 @@ module Branch =
                     let! parameters = context |> parse<GetReferencesParameters>
                     return! processQuery context parameters validations (parameters.MaxCount) query
                 with ex ->
-                    return! context |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (context.Items[Constants.CorrelationId] :?> string))
+                    return! context |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
             }
 
 
@@ -765,7 +765,7 @@ module Branch =
                     let! parameters = context |> parse<GetReferencesParameters>
                     return! processQuery context parameters validations (parameters.MaxCount) query
                 with ex ->
-                    return! context |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (context.Items[Constants.CorrelationId] :?> string))
+                    return! context |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
             }
 
     let GetSaves: HttpHandler =
@@ -802,7 +802,7 @@ module Branch =
                     let! parameters = context |> parse<GetReferencesParameters>
                     return! processQuery context parameters validations (parameters.MaxCount) query
                 with ex ->
-                    return! context |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (context.Items[Constants.CorrelationId] :?> string))
+                    return! context |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
             }
 
     let GetTags: HttpHandler =
@@ -838,7 +838,7 @@ module Branch =
                     let! parameters = context |> parse<GetReferencesParameters>
                     return! processQuery context parameters validations (parameters.MaxCount) query
                 with ex ->
-                    return! context |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (context.Items[Constants.CorrelationId] :?> string))
+                    return! context |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
             }
 
     let GetVersion: HttpHandler =
@@ -926,5 +926,5 @@ module Branch =
                     context.Items.Add("GetVersionParameters", parameters)
                     return! processQuery context parameters validations 1 query
                 with ex ->
-                    return! context |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (context.Items[Constants.CorrelationId] :?> string))
+                    return! context |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
             }

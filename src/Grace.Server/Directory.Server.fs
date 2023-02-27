@@ -53,11 +53,11 @@ module Directory =
                     | Error graceError -> return! context |> result400BadRequest graceError
                 else
                     let! error = validationResults |> getFirstError
-                    let graceError = GraceError.Create (DirectoryError.getErrorMessage error) (context.Items[Constants.CorrelationId] :?> string)
+                    let graceError = GraceError.Create (DirectoryError.getErrorMessage error) (getCorrelationId context)
                     graceError.Properties.Add("Path", context.Request.Path)                    
                     return! context |> result400BadRequest graceError
             with ex ->
-                let graceError = GraceError.Create $"{Utilities.createExceptionResponse ex}" (context.Items[Constants.CorrelationId] :?> string)
+                let graceError = GraceError.Create $"{Utilities.createExceptionResponse ex}" (getCorrelationId context)
                 graceError.Properties.Add("Path", context.Request.Path)
                 return! context |> result500ServerError graceError
         }
@@ -71,15 +71,15 @@ module Directory =
                 if validationsPassed then
                     let actorProxy = getActorProxy context (Guid.Parse(parameters.DirectoryId))
                     let! queryResult = query context maxCount actorProxy
-                    let! returnValue = context |> result200Ok (GraceReturnValue.Create queryResult (context.Items[Constants.CorrelationId] :?> string))
+                    let! returnValue = context |> result200Ok (GraceReturnValue.Create queryResult (getCorrelationId context))
                     return returnValue
                 else
                     let! error = validationResults |> getFirstError
-                    let graceError = GraceError.Create (DirectoryError.getErrorMessage error) (context.Items[Constants.CorrelationId] :?> string)
+                    let graceError = GraceError.Create (DirectoryError.getErrorMessage error) (getCorrelationId context)
                     graceError.Properties.Add("Path", context.Request.Path)                    
                     return! context |> result400BadRequest graceError
             with ex ->
-                return! context |> result500ServerError (GraceError.Create $"{Utilities.createExceptionResponse ex}" (context.Items[Constants.CorrelationId] :?> string))
+                return! context |> result500ServerError (GraceError.Create $"{Utilities.createExceptionResponse ex}" (getCorrelationId context))
         }
 
     let Create: HttpHandler =

@@ -330,7 +330,7 @@ module Application =
                .UseEndpoints(fun endpointBuilder ->
                    endpointBuilder.MapActorsHandlers() |> ignore
                    endpointBuilder.MapGiraffeEndpoints(endpoints)
-                   endpointBuilder.MapHub<Notifications.NotificationHub>("/notification") |> ignore)
+                   endpointBuilder.MapHub<Notifications.NotificationHub>("/notifications") |> ignore)
                .UseGiraffe(notFoundHandler)
 
             ApplicationContext.Set.Wait()

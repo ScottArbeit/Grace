@@ -50,16 +50,16 @@ module Organization =
                         | Ok graceReturn -> 
                             return! context |> result200Ok graceReturn 
                         | Error graceError -> 
-                            return! context |> result400BadRequest graceError
+                            return! context |> result400BadRequest {graceError with Properties = getPropertiesAsDictionary parameters}
                     | None -> 
-                        return! context |> result400BadRequest (GraceError.Create (OrganizationError.getErrorMessage OrganizationDoesNotExist) (context.Items[Constants.CorrelationId] :?> string))
+                        return! context |> result400BadRequest (GraceError.CreateWithMetadata (OrganizationError.getErrorMessage OrganizationDoesNotExist) (getCorrelationId context) (getPropertiesAsDictionary parameters))
                 else
                     let! error = validationResults |> getFirstError
-                    let graceError = GraceError.Create (OrganizationError.getErrorMessage error) (context.Items[Constants.CorrelationId] :?> string)
+                    let graceError = GraceError.CreateWithMetadata (OrganizationError.getErrorMessage error) (getCorrelationId context) (getPropertiesAsDictionary parameters)
                     graceError.Properties.Add("Path", context.Request.Path)
                     return! context |> result400BadRequest graceError
             with ex ->
-                return! context |> result500ServerError (GraceError.Create $"{Utilities.createExceptionResponse ex}" (context.Items[Constants.CorrelationId] :?> string))
+                return! context |> result500ServerError (GraceError.Create $"{Utilities.createExceptionResponse ex}" (getCorrelationId context))
         }
     
     let processQuery<'T, 'U when 'T :> OrganizationParameters> (context: HttpContext) (parameters: 'T) (validations: Validations<'T>) (maxCount: int) (query: QueryResult<IOrganizationActor, 'U>) =
@@ -73,16 +73,16 @@ module Organization =
                     let! exists = actorProxy.Exists()
                     if exists then
                         let! queryResult = query context maxCount actorProxy
-                        return! context |> result200Ok (GraceReturnValue.Create queryResult (context.Items[Constants.CorrelationId] :?> string))
+                        return! context |> result200Ok (GraceReturnValue.Create queryResult (getCorrelationId context))
                     else
-                        return! context |> result400BadRequest (GraceError.Create (OrganizationError.getErrorMessage OrganizationIdDoesNotExist) (context.Items[Constants.CorrelationId] :?> string))
+                        return! context |> result400BadRequest (GraceError.Create (OrganizationError.getErrorMessage OrganizationIdDoesNotExist) (getCorrelationId context))
                 else
                     let! error = validationResults |> getFirstError
-                    let graceError = GraceError.Create (OrganizationError.getErrorMessage error) (context.Items[Constants.CorrelationId] :?> string)
+                    let graceError = GraceError.Create (OrganizationError.getErrorMessage error) (getCorrelationId context)
                     graceError.Properties.Add("Path", context.Request.Path)
                     return! context |> result400BadRequest graceError
             with ex ->
-                return! context |> result500ServerError (GraceError.Create $"{Utilities.createExceptionResponse ex}" (context.Items[Constants.CorrelationId] :?> string))
+                return! context |> result500ServerError (GraceError.Create $"{Utilities.createExceptionResponse ex}" (getCorrelationId context))
         }
 
     let Create: HttpHandler =
@@ -198,7 +198,7 @@ module Organization =
                     let! parameters = context |> parse<ListRepositoriesParameters>
                     return! processQuery context parameters validations 1 query
                 with ex ->
-                    return! context |> result500ServerError (GraceError.Create $"{Utilities.createExceptionResponse ex}" (context.Items[Constants.CorrelationId] :?> string))
+                    return! context |> result500ServerError (GraceError.Create $"{Utilities.createExceptionResponse ex}" (getCorrelationId context))
             }
 
     let Delete: HttpHandler =
@@ -253,5 +253,5 @@ module Organization =
                     let! parameters = context |> parse<GetParameters>
                     return! processQuery context parameters validations 1 query
                 with ex ->
-                    return! context |> result500ServerError (GraceError.Create $"{Utilities.createExceptionResponse ex}" (context.Items[Constants.CorrelationId] :?> string))
+                    return! context |> result500ServerError (GraceError.Create $"{Utilities.createExceptionResponse ex}" (getCorrelationId context))
             }

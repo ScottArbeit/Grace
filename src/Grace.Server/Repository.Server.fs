@@ -34,6 +34,7 @@ open System.Text
 open System.Text.Json
 open Repository
 open FSharpPlus.Data
+open Giraffe.ViewEngine.HtmlElements
 
 module Repository =
 
@@ -87,20 +88,20 @@ module Repository =
                                         do graceReturn.Properties.Add(nameof(BranchName), Constants.InitialBranchName)
                                         return! context |> result200Ok graceReturn
                                     | Error graceError -> 
-                                        return! context |> result400BadRequest graceError
+                                        return! context |> result400BadRequest {graceError with Properties = getPropertiesAsDictionary parameters}
                                 | _ ->
                                     return! context |> result200Ok graceReturn
                             | Error graceError -> 
-                                return! context |> result400BadRequest graceError
+                                return! context |> result400BadRequest {graceError with Properties = getPropertiesAsDictionary parameters}
                     | None -> 
-                        return! context |> result400BadRequest (GraceError.Create (RepositoryError.getErrorMessage RepositoryDoesNotExist) (context.Items[Constants.CorrelationId] :?> string))
+                        return! context |> result400BadRequest (GraceError.CreateWithMetadata (RepositoryError.getErrorMessage RepositoryDoesNotExist) (getCorrelationId context) (getPropertiesAsDictionary parameters))
                 else
                     let! error = validationResults |> getFirstError
-                    let graceError = GraceError.Create (RepositoryError.getErrorMessage error) (context.Items[Constants.CorrelationId] :?> string)
+                    let graceError = GraceError.CreateWithMetadata (RepositoryError.getErrorMessage error) (getCorrelationId context) (getPropertiesAsDictionary parameters)
                     graceError.Properties.Add("Path", context.Request.Path)
                     return! context |> result400BadRequest graceError
             with ex ->
-                return! context |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (context.Items[Constants.CorrelationId] :?> string))
+                return! context |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
         }
 
     let processQuery<'T, 'U when 'T :> RepositoryParameters> (context: HttpContext) (parameters: 'T) (validations: Validations<'T>) (maxCount: int) (query: QueryResult<IRepositoryActor, 'U>) =
@@ -117,16 +118,16 @@ module Repository =
                     let! exists = actorProxy.Exists()
                     if exists then
                         let! queryResult = query context maxCount actorProxy
-                        return! context |> result200Ok (GraceReturnValue.Create queryResult (context.Items[Constants.CorrelationId] :?> string))
+                        return! context |> result200Ok (GraceReturnValue.Create queryResult (getCorrelationId context))
                     else
-                        return! context |> result400BadRequest (GraceError.Create (RepositoryError.getErrorMessage RepositoryIdDoesNotExist) (context.Items[Constants.CorrelationId] :?> string))
+                        return! context |> result400BadRequest (GraceError.Create (RepositoryError.getErrorMessage RepositoryIdDoesNotExist) (getCorrelationId context))
                 else
                     let! error = validationResults |> getFirstError
-                    let graceError = GraceError.Create (RepositoryError.getErrorMessage error) (context.Items[Constants.CorrelationId] :?> string)
+                    let graceError = GraceError.Create (RepositoryError.getErrorMessage error) (getCorrelationId context)
                     graceError.Properties.Add("Path", context.Request.Path)
                     return! context |> result400BadRequest graceError
             with ex ->
-                return! context |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (context.Items[Constants.CorrelationId] :?> string)) 
+                return! context |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context)) 
         }
 
     let Create: HttpHandler =
@@ -338,7 +339,7 @@ module Repository =
                     let! parameters = context |> parse<RepositoryParameters>
                     return! processQuery context parameters validations 1 query
                 with ex ->
-                    return! context |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (context.Items[Constants.CorrelationId] :?> string))
+                    return! context |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
         }
 
     let Get: HttpHandler =
@@ -364,7 +365,7 @@ module Repository =
                     let! parameters = context |> parse<RepositoryParameters>
                     return! processQuery context parameters validations 1 query
                 with ex ->
-                    return! context |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (context.Items[Constants.CorrelationId] :?> string))
+                    return! context |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
             }
 
     let GetBranches: HttpHandler =
@@ -394,7 +395,7 @@ module Repository =
                     context.Items.Add("IncludeDeleted", parameters.IncludeDeleted)
                     return! processQuery context parameters validations 1000 query
                 with ex ->
-                    return! context |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (context.Items[Constants.CorrelationId] :?> string))
+                    return! context |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
             }
 
     let GetReferencesByReferenceId: HttpHandler =
@@ -424,7 +425,7 @@ module Repository =
                     context.Items.Add("ReferenceIds", parameters.ReferenceIds)
                     return! processQuery context parameters validations parameters.MaxCount query
                 with ex ->
-                    return! context |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (context.Items[Constants.CorrelationId] :?> string))
+                    return! context |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
             }
 
     let GetBranchesByBranchId: HttpHandler =
@@ -460,5 +461,5 @@ module Repository =
                     context.Items.Add("IncludeDeleted", parameters.IncludeDeleted)
                     return! processQuery context parameters validations (branchIdList.Count) query
                 with ex ->
-                    return! context |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (context.Items[Constants.CorrelationId] :?> string))
+                    return! context |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
             }

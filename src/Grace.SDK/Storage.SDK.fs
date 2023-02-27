@@ -36,7 +36,7 @@ module Storage =
                 | AzureBlobStorage ->
                     let httpClient = getHttpClient correlationId
                     let serviceUrl = $"{Current().ServerUri}/storage/getDownloadUri"
-                    let jsonContent = JsonContent.Create(fileVersion, options = Constants.JsonSerializerOptions)
+                    let jsonContent = jsonContent fileVersion
                     let! response = httpClient.PostAsync(serviceUrl, jsonContent)
                     let! blobUriWithSasToken = response.Content.ReadAsStringAsync()
                     //logToConsole $"response.StatusCode: {response.StatusCode}; blobUriWithSasToken: {blobUriWithSasToken}"
@@ -88,7 +88,7 @@ module Storage =
                 | AzureBlobStorage ->
                     let httpClient = getHttpClient correlationId
                     let serviceUrl = $"{Current().ServerUri}/storage/filesExistInObjectStorage"
-                    let jsonContent = JsonContent.Create(fileVersions, options = Constants.JsonSerializerOptions)
+                    let jsonContent = jsonContent fileVersions
                     let! response = httpClient.PostAsync(serviceUrl, jsonContent)
                     if response.IsSuccessStatusCode then
                         let! returnValue = response.Content.ReadFromJsonAsync<GraceReturnValue<List<UploadMetadata>>>(Constants.JsonSerializerOptions)
@@ -194,7 +194,7 @@ module Storage =
                     | ObjectStorageProvider.AzureBlobStorage ->
                         let httpClient = getHttpClient correlationId
                         let serviceUrl = $"{Current().ServerUri}/storage/getUploadUri"
-                        let jsonContent = JsonContent.Create(fileVersion, options = Constants.JsonSerializerOptions)
+                        let jsonContent = jsonContent fileVersion
                         let! response = httpClient.PostAsync(serviceUrl, jsonContent)
                         let! blobUriWithSasToken = response.Content.ReadAsStringAsync()
                         //logToConsole $"blobUriWithSasToken: {blobUriWithSasToken}"
@@ -215,7 +215,7 @@ module Storage =
                     | ObjectStorageProvider.AzureBlobStorage ->
                         let httpClient = getHttpClient correlationId
                         let serviceUrl = $"{Current().ServerUri}/storage/getDownloadUri"
-                        let jsonContent = JsonContent.Create(fileVersion, options = Constants.JsonSerializerOptions)
+                        let jsonContent = jsonContent fileVersion
                         let! response = httpClient.PostAsync(serviceUrl, jsonContent)
                         let! blobUriWithSasToken = response.Content.ReadAsStringAsync()
                         //logToConsole $"blobUriWithSasToken: {blobUriWithSasToken}"

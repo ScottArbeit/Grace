@@ -113,7 +113,7 @@ module Storage =
                             })))
                         Activity.Current.SetTag("uploadMetadata.Count", $"{uploadMetadata.Count}") |> ignore
                         context.GetLogger().LogInformation($"{getCurrentInstantExtended()} Received {fileVersions.Count} FileVersions; Returning {uploadMetadata.Count} uploadMetadata records.")
-                        return! context |> result200Ok (GraceReturnValue.Create (uploadMetadata.ToList()) (context.Items[Constants.CorrelationId] :?> string))
+                        return! context |> result200Ok (GraceReturnValue.Create (uploadMetadata.ToList()) (getCorrelationId context))
                     else
                         return! context |> result400BadRequest (GraceError.Create (StorageError.getErrorMessage FilesMustNotBeEmpty) (getCorrelationId context))
                 with ex ->

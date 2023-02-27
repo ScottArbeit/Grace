@@ -1311,9 +1311,12 @@ module Branch =
                                                 let diff2Difference = diff2DifferenceQuery.First()
                                                 
                                                 // Check the Sha256Hash values; if they're identical, ignore the file.
-                                                let fileVersion1 = parentLatestPromotionLookup[$"{diff1Difference.RelativePath}"]
-                                                let fileVersion2 = latestReferenceLookup[$"{diff2Difference.RelativePath}"]
-                                                if fileVersion1.Sha256Hash <> fileVersion2.Sha256Hash then
+                                                //let fileVersion1 = parentLatestPromotionLookup[$"{diff1Difference.RelativePath}"]
+                                                let fileVersion1 = parentLatestPromotionLookup.FirstOrDefault(fun kvp -> kvp.Key = $"{diff1Difference.RelativePath}")
+                                                //let fileVersion2 = latestReferenceLookup[$"{diff2Difference.RelativePath}"]
+                                                let fileVersion2 = latestReferenceLookup.FirstOrDefault(fun kvp -> kvp.Key = $"{diff2Difference.RelativePath}")
+                                                //if (not <| isNull(fileVersion1) && not <| isNull(fileVersion2)) && (fileVersion1.Value.Sha256Hash <> fileVersion2.Value.Sha256Hash) then
+                                                if (fileVersion1.Value.Sha256Hash <> fileVersion2.Value.Sha256Hash) then
                                                     // Compare them at a line level; if there are no overlapping lines, we can just modify the working-directory version.
                                                     // ...
                                                     // For now, we're just going to show a message.
@@ -1367,6 +1370,15 @@ module Branch =
 
     type StatusParameters() =
         inherit CommonParameters()
+    let private newStatusHandler parseResult (parameters: StatusParameters) =
+        task {
+            try
+                return 0
+            with ex ->
+                logToAnsiConsole Colors.Error (Markup.Escape($"{ex.Message}"))
+                return -1
+        }
+
     let private statusHandler parseResult (parameters: StatusParameters) =
         task {
             try

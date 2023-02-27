@@ -36,7 +36,6 @@ module Types =
     type StorageAccountName = string
     type StorageConnectionString = string
     type StorageContainerName = string
-    //type StorageAccountInfo = StorageAccountName * ObjectStorageProvider
     type UriWithSharedAccessSignature = string
     type UserId = string
     
@@ -339,6 +338,8 @@ module Types =
         }
         static member Create (error: string) (correlationId: string) =
             {Error = error; EventTime = getCurrentInstant(); CorrelationId = correlationId; Properties = new Dictionary<String, String>()}
+        static member CreateWithMetadata (error: string) (correlationId: string) (properties: Dictionary<String, String>) =
+                   {Error = error; EventTime = getCurrentInstant(); CorrelationId = correlationId; Properties = properties}
         member this.enhance(key, value) =
             this.Properties.Add(key, value)
             this

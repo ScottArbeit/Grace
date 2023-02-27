@@ -121,7 +121,10 @@ module Diff =
     let private sha256Validations (parseResult, parameters) =
         let ``Sha256Hash1 must be a valid SHA-256 hash value`` (parseResult: ParseResult, (parameters: GetDiffBySha256HashParameters)) =
             if parseResult.CommandResult.FindResultFor(Options.sha256Hash1) <> null && not <| Constants.Sha256Regex.IsMatch(parameters.Sha256Hash1) then
-                Error (GraceError.Create (DiffError.getErrorMessage InvalidSha256Hash) (parameters.CorrelationId))
+                let properties = Dictionary<string, string>()
+                properties.Add("repositoryId", $"{parameters.RepositoryId}")
+                properties.Add("sha256Hash1", parameters.Sha256Hash1)
+                Error (GraceError.CreateWithMetadata (DiffError.getErrorMessage InvalidSha256Hash) (parameters.CorrelationId) properties)
             else
                 Ok (parseResult, parameters)
 
@@ -374,7 +377,6 @@ module Diff =
             task {
                 return! diffToReferenceType parseResult parameters ReferenceType.Promotion
             } :> Task)
-
 
     let private commitHandler = 
         CommandHandler.Create(fun (parseResult: ParseResult) (parameters: GetDiffByReferenceTypeParameters) ->

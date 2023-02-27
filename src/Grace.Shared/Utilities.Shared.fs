@@ -6,6 +6,7 @@ open Microsoft.FSharp.Reflection
 open NodaTime
 open NodaTime.Text
 open System
+open System.Collections.Generic
 open System.Globalization
 open System.IO
 open System.Net.Http.Json
@@ -13,6 +14,9 @@ open System.Reflection
 open System.Text
 open System.Text.Json
 open System.Threading.Tasks
+open System.Net.Http
+open System.Net.Security
+open System.Net
 
 #nowarn "9"
 
@@ -318,3 +322,50 @@ module Utilities =
     let inline stackalloc<'a when 'a: unmanaged> (length: int): Span<'a> =
       let p = NativePtr.stackalloc<'a> length |> NativePtr.toVoidPtr
       Span<'a>(p, length)
+
+    /// Creates a dictionary from the properties of an object.
+    let getPropertiesAsDictionary<'T> (obj: 'T) =
+        let properties = typeof<'T>.GetProperties(BindingFlags.Instance ||| BindingFlags.Public)
+        let dict = Dictionary<string, string>()
+        for prop in properties do
+            let value = prop.GetValue(obj)
+            let valueString = match value with
+                              | null -> "null"
+                              | :? string as s -> s
+                              | _ -> value.ToString()
+            dict.Add(prop.Name, valueString)
+        dict
+
+    // This construct is equivalent to using IHttpClientFactory in the ASP.NET Dependency Injection container, for code (like this) that isn't using GenericHost.
+    // See https://docs.microsoft.com/en-us/aspnet/core/fundamentals/http-requests?view=aspnetcore-7.0#alternatives-to-ihttpclientfactory for more information.
+    let socketsHttpHandler = new SocketsHttpHandler(
+        AllowAutoRedirect = true,                               // We expect to use Traffic Manager or equivalents, so there will be redirects.
+        MaxAutomaticRedirections = 6,                           // Not sure of the exact right number, but definitely want a limit here.
+        SslOptions = SslClientAuthenticationOptions(EnabledSslProtocols = Security.Authentication.SslProtocols.Tls12),            
+        AutomaticDecompression = DecompressionMethods.All,      // We'll store blobs using GZip, and we'll enable Brotli on the server
+        EnableMultipleHttp2Connections = true,                  // I doubt this will ever happen, but don't mind making it possible
+        PooledConnectionLifetime = TimeSpan.FromMinutes(2.0),   // Default is 2m
+        PooledConnectionIdleTimeout = TimeSpan.FromMinutes(2.0) // Default is 2m
+    )
+
+    /// Gets an HttpClient instance from a custom HttpClientFactory.
+    let getHttpClient (correlationId: string) =
+        let traceIdBytes = stackalloc<byte> 16
+        let parentIdBytes = stackalloc<byte> 8
+        Random.Shared.NextBytes(traceIdBytes)
+        Random.Shared.NextBytes(parentIdBytes)
+        let traceId = byteArrayToString(traceIdBytes)
+        let parentId = byteArrayToString(parentIdBytes)
+
+        let httpClient = new HttpClient(handler = socketsHttpHandler, disposeHandler = false)
+        httpClient.DefaultRequestVersion <- HttpVersion.Version20   // We'll aggressively move to Version30 as soon as we can.
+        httpClient.DefaultRequestHeaders.Add(Constants.Traceparent, $"00-{traceId}-{parentId}-01")
+        httpClient.DefaultRequestHeaders.Add(Constants.Tracestate, $"graceserver-{parentId}")
+        httpClient.DefaultRequestHeaders.Add(Constants.CorrelationIdHeaderKey, $"{correlationId}")
+        httpClient.DefaultRequestHeaders.Add(Constants.ServerApiVersionHeaderKey, $"{Constants.ServerApiVersions.Edge}")
+        //httpClient.DefaultVersionPolicy <- HttpVersionPolicy.RequestVersionOrHigher
+#if DEBUG
+        httpClient.Timeout <- TimeSpan.FromSeconds(1800.0)  // Keeps client commands open while debugging.
+        //httpClient.Timeout <- TimeSpan.FromSeconds(15.0)  // Fast fail for testing network connectivity.
+#endif
+        httpClient
