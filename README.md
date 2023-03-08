@@ -10,7 +10,6 @@ grace _(n)_ -
 ![](https://gracevcsdevelopment.blob.core.windows.net/static/Orange3.svg)
 
 ## Welcome to Grace.
-
 Grace is a **new**, **modern**, **cloud-native** **version control system**.
 
 Grace is **easy to use**, **easy to understand**, and **consistently fast**. And it's **powerful**, ready to handle large repositories and large file sizes.
@@ -29,6 +28,22 @@ to be clear:
 
 ![](https://gracevcsdevelopment.blob.core.windows.net/static/Green.svg)
 ![](https://gracevcsdevelopment.blob.core.windows.net/static/Orange3.svg)
+![](https://gracevcsdevelopment.blob.core.windows.net/static/Green.svg)
+### Hi friends from On .NET Live!
+
+_08-Mar-2023_
+
+Thanks for stopping by. I really do appreciate it.
+
+I owe you some videos with the demos of Grace, and stuff in Grace's code, that I wanted to show you.
+
+To make those videos, I just bought a new computer (yeah, yeah...), with a serious GPU (of course...), and I'm learning a bit about recording and editing so they don't suck. I expect to publish them later this month. I appreciate your patience.
+
+In the meantime, please feel free to comment or ask questions in the Discussions here. I'd love to know what you're curious about.
+
+![](https://gracevcsdevelopment.blob.core.windows.net/static/Green.svg)
+![](https://gracevcsdevelopment.blob.core.windows.net/static/Orange3.svg)
+
 
 ## FAQ
 
