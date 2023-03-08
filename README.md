@@ -37,7 +37,7 @@ Thanks for stopping by. I really do appreciate it.
 
 I owe you some videos with the demos of Grace, and stuff in Grace's code, that I wanted to show you.
 
-To make those videos, I just bought a new computer (yeah, yeah...), with a serious GPU (of course...), and I'm learning a bit about recording and editing so they don't suck. I expect to publish them later this month. I appreciate your patience.
+To make those videos, I just bought a new computer (yeah, yeah...), with a serious GPU (of course...), and I'm learning a bit about recording and editing so they don't suck. I expect to publish them later this month. I appreciate your patience. If you'd like to be notified when each video is published, please subscribe to https://github.com/ScottArbeit/Grace/issues/12.
 
 In the meantime, please feel free to comment or ask questions in the Discussions here. I'd love to know what you're curious about.
 
