@@ -65,7 +65,8 @@ module DirectoryAppearance =
                     let wasRemoved = dto.Appearances.Remove(appearance)
                     if wasRemoved then
                         if dto.Appearances.Count = 0 then
-                            do! Storage.DeleteState stateManager dtoStateName
+                            let! deleteSucceeded = Storage.DeleteState stateManager dtoStateName
+                            ()
                         else
                             do! Storage.SaveState stateManager dtoStateName dto
                         ()

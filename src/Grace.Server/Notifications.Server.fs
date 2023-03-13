@@ -24,10 +24,10 @@ module Notifications =
 
     type IGraceClientConnection =
         abstract member RegisterParentBranch: BranchId -> BranchId -> Task
-        abstract member NotifyOnPromotion: BranchId * ReferenceId -> Task
-        abstract member NotifyOnCommit: BranchId * ReferenceId -> Task
-        abstract member NotifyOnCheckpoint: BranchId * ReferenceId -> Task
-        abstract member NotifyOnSave: BranchId * ReferenceId -> Task
+        abstract member NotifyOnPromotion: BranchId * BranchName * ReferenceId -> Task
+        abstract member NotifyOnCommit: BranchName * BranchName * BranchId * ReferenceId -> Task
+        abstract member NotifyOnCheckpoint: BranchName * BranchName * BranchId * ReferenceId -> Task
+        abstract member NotifyOnSave: BranchName * BranchName * BranchId * ReferenceId -> Task
         abstract member ServerToClientMessage: string -> Task
 
     type NotificationHub() =
@@ -49,29 +49,29 @@ module Notifications =
                 do! this.Groups.AddToGroupAsync(this.Context.ConnectionId, $"{parentBranchId}")
             }
 
-        member this.NotifyOnPromotion((branchId: BranchId), (referenceId: ReferenceId)) =
+        member this.NotifyOnPromotion((branchId: BranchId), (branchName: BranchName), (referenceId: ReferenceId)) =
             task {
-                logToConsole $"In NotifyOnPromotion. branchId: {branchId}; referenceId: {referenceId}."
-                do! this.Clients.Group($"{branchId}").NotifyOnPromotion(branchId, referenceId)
+                logToConsole $"In NotifyOnPromotion. branchName: {branchName}; referenceId: {referenceId}."
+                do! this.Clients.Group($"{branchId}").NotifyOnPromotion(branchId, branchName, referenceId)
             } :> Task
 
-        member this.NotifyOnSave((parentBranchId: BranchId), (branchId: BranchId), (referenceId: ReferenceId)) =
+        member this.NotifyOnSave((branchName: BranchName), (parentBranchName: BranchName), (parentBranchId: BranchId), (referenceId: ReferenceId)) =
             task {
-                logToConsole $"In NotifyOnSave. branchId: {branchId}; referenceId: {referenceId}."
-                do! this.Clients.Group($"{parentBranchId}").NotifyOnSave(parentBranchId, referenceId)
+                logToConsole $"In NotifyOnSave. branchName: {branchName}, parentBranchName: {parentBranchName}. parentBranchId: {parentBranchId}; referenceId: {referenceId}."
+                do! this.Clients.Group($"{parentBranchId}").NotifyOnSave(branchName, parentBranchName, parentBranchId, referenceId)
                 ()
             } :> Task
 
-        member this.NotifyOnCheckpoint((parentBranchId: BranchId), (branchId: BranchId), (referenceId: ReferenceId)) =
+        member this.NotifyOnCheckpoint((branchName: BranchName), (parentBranchName: BranchName), (parentBranchId: BranchId), (referenceId: ReferenceId)) =
             task {
-                logToConsole $"In NotifyOnCheckpoint. branchId: {branchId}; referenceId: {referenceId}."
-                do! this.Clients.Group($"{parentBranchId}").NotifyOnCheckpoint(parentBranchId, referenceId)
+                logToConsole $"In NotifyOnCheckpoint. branchName: {branchName}, parentBranchName: {parentBranchName}. parentBranchId: {parentBranchId}; referenceId: {referenceId}."
+                do! this.Clients.Group($"{parentBranchId}").NotifyOnCheckpoint(branchName, parentBranchName, parentBranchId, referenceId)
             } :> Task
 
-        member this.NotifyOnCommit((parentBranchId: BranchId), (branchId: BranchId), (referenceId: ReferenceId)) =
+        member this.NotifyOnCommit((branchName: BranchName), (parentBranchName: BranchName), (parentBranchId: BranchId), (referenceId: ReferenceId)) =
             task {
-                logToConsole $"In NotifyOnCommit. branchId: {branchId}; referenceId: {referenceId}."
-                do! this.Clients.Group($"{parentBranchId}").NotifyOnCommit(parentBranchId, referenceId)
+                logToConsole $"In NotifyOnCommit. branchName: {branchName}, parentBranchName: {parentBranchName}. parentBranchId: {parentBranchId}; referenceId: {referenceId}."
+                do! this.Clients.Group($"{parentBranchId}").NotifyOnCommit(branchName, parentBranchName, parentBranchId, referenceId)
             } :> Task
 
         member this.ServerToClientMessage (message: string) =
@@ -91,7 +91,7 @@ module Notifications =
                 let actorProxyFactory = context.GetService<IActorProxyFactory>()
                 let actorProxyOptions = context.GetService<ActorProxyOptions>()
 
-                let body = context.ReadBodyFromRequestAsync().Result
+                let! body = context.ReadBodyFromRequestAsync()
                 //logToConsole $"{body}"
 
                 let diffTwoDirectoryVersions directoryId1 directoryId2 =
@@ -120,7 +120,7 @@ module Notifications =
                         let! branchDto = branchActorProxy.Get()
 
                         logToConsole $"About to send signalR message to clients for group {branchDto.BranchId}."                                
-                        do! hubContext.Clients.Group($"{branchDto.BranchId}").NotifyOnPromotion(branchDto.BranchId, referenceId)
+                        do! hubContext.Clients.Group($"{branchDto.BranchId}").NotifyOnPromotion(branchDto.BranchId, branchDto.BranchName, referenceId)
 
                         // Create the diff between the new promotion and previous promotion.
                         let! latestTwoPromotions = getPromotions referenceDto.BranchId 2
@@ -135,8 +135,9 @@ module Notifications =
                         let branchActorId = ActorId($"{referenceDto.BranchId}")
                         let branchActorProxy = actorProxyFactory.CreateActorProxy<IBranchActor>(branchActorId, ActorName.Branch, actorProxyOptions)
                         let! branchDto = branchActorProxy.Get()
+                        let! parentBranchDto = branchActorProxy.GetParentBranch()
 
-                        do! hubContext.Clients.Group($"{branchDto.ParentBranchId}").NotifyOnCommit(branchDto.ParentBranchId, referenceId)
+                        do! hubContext.Clients.Group($"{branchDto.ParentBranchId}").NotifyOnCommit(branchDto.BranchName, parentBranchDto.BranchName, parentBranchDto.ParentBranchId, referenceId)
 
                         // Create the diff between the new commit and the previous commit.
                         let! latestTwoCommits = getCommits referenceDto.BranchId 2
@@ -156,8 +157,9 @@ module Notifications =
                         let branchActorId = ActorId($"{referenceDto.BranchId}")
                         let branchActorProxy = actorProxyFactory.CreateActorProxy<IBranchActor>(branchActorId, ActorName.Branch, actorProxyOptions)
                         let! branchDto = branchActorProxy.Get()
+                        let! parentBranchDto = branchActorProxy.GetParentBranch()
 
-                        do! hubContext.Clients.Group($"{branchDto.ParentBranchId}").NotifyOnCheckpoint(branchDto.ParentBranchId, referenceId)
+                        do! hubContext.Clients.Group($"{branchDto.ParentBranchId}").NotifyOnCheckpoint(branchDto.BranchName, parentBranchDto.BranchName, parentBranchDto.ParentBranchId, referenceId)
 
                         // Create the diff between the two most recent checkpoints.
                         let! checkpoints = getCheckpoints branchDto.BranchId 2
@@ -170,6 +172,7 @@ module Notifications =
                         | None -> ()
 
                     | Branch.Saved (referenceId, directoryId, sha256Hash, referenceText) ->
+                        logToConsole $"In Notifications.Post : Branch.Saved."
                         let actorId = Reference.GetActorId referenceId
                         let referenceActorProxy = actorProxyFactory.CreateActorProxy<IReferenceActor>(actorId, ActorName.Reference, actorProxyOptions)
                         let! referenceDto = referenceActorProxy.Get()
@@ -177,8 +180,10 @@ module Notifications =
                         let branchActorId = ActorId($"{referenceDto.BranchId}")
                         let branchActorProxy = actorProxyFactory.CreateActorProxy<IBranchActor>(branchActorId, ActorName.Branch, actorProxyOptions)
                         let! branchDto = branchActorProxy.Get()
+                        let! parentBranchDto = branchActorProxy.GetParentBranch()
                         
-                        do! hubContext.Clients.Group($"{branchDto.ParentBranchId}").NotifyOnSave(branchDto.ParentBranchId, referenceId)
+                        logToConsole $"About to send Saved message to SignalR group {branchDto.ParentBranchId} for child branches of {parentBranchDto.BranchName}."
+                        do! hubContext.Clients.Group($"{branchDto.ParentBranchId}").NotifyOnSave(branchDto.BranchName, parentBranchDto.BranchName, parentBranchDto.ParentBranchId, referenceId)
                         
                         // Create the diff between the new save and the previous save.
                         let! latestTwoSaves = getSaves referenceDto.BranchId 2

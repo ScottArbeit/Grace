@@ -1,5 +1,6 @@
 ﻿namespace Grace.Cli
 
+open Microsoft.Extensions
 open FSharp.Collections
 open Grace.SDK
 open Grace.Shared.Client.Configuration
@@ -10,11 +11,14 @@ open Grace.Shared.Types
 open Grace.Shared.Utilities
 open Grace.Shared.Validation.Errors.Storage
 open NodaTime
+open NodaTime.Text
 open Spectre.Console
 open System
 open System.Collections.Concurrent
 open System.Collections.Generic
 open System.CommandLine.Parsing
+open System.Diagnostics
+open System.Globalization
 open System.IO
 open System.IO.Compression
 open System.IO.Enumeration
@@ -27,7 +31,7 @@ open System.Threading.Tasks
 module Services =
 
     /// Utility method to write to the console using color.
-    let logToAnsiConsole color message = AnsiConsole.MarkupLine $"[{color}]{getCurrentInstantExtended(),-28} {message}[/]"
+    let logToAnsiConsole color message = AnsiConsole.MarkupLine $"[{color}]{getCurrentInstantExtended(),-28} {Environment.CurrentManagedThreadId:X2} {message}[/]"
     
     /// A cache of paths that we've already decided to ignore or not.
     let private shouldIgnoreCache = ConcurrentDictionary<FilePath, bool>()
@@ -748,6 +752,8 @@ module Services =
                     LastDirectoryVersionInstant = graceStatus.LastSuccessfulDirectoryVersionUpload
                     DirectoryIds = HashSet<DirectoryId>(graceStatus.Index.Keys)
                 }
+                logToAnsiConsole Colors.Important $"In updateGraceWatchStatus. newGraceWatchStatus.UpdatedAt: {newGraceWatchStatus.UpdatedAt.ToString(InstantPattern.ExtendedIso.PatternText, CultureInfo.InvariantCulture)}."
+                //logToAnsiConsole Colors.Highlighted $"{Markup.Escape(EnhancedStackTrace.Current().ToString())}"
 
                 use fileStream = new FileStream(IpcFileName(), FileMode.Create, FileAccess.Write, FileShare.None)
                 do! serializeAsync fileStream newGraceWatchStatus

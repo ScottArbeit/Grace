@@ -169,7 +169,7 @@ module Diff =
                 let stateManager = this.StateManager
                 task {
                     let (directoryId1, directoryId2) = deconstructActorId this.Id
-                    //logToConsole $"In DiffActor.Populate(); DirectoryId1: {directoryId1}; DirectoryId2: {directoryId2}"
+                    logToConsole $"In DiffActor.Populate(); DirectoryId1: {directoryId1}; DirectoryId2: {directoryId2}"
 
                     try
                         // Build a GraceIndex for each DirectoryId.
@@ -297,6 +297,7 @@ module Diff =
                 | "DeleteReminder" ->
                     let stateManager = this.StateManager
                     task {
-                        do! Storage.DeleteState stateManager dtoStateName
+                        let! deleteSucceeded = Storage.DeleteState stateManager dtoStateName
+                        ()
                     } :> Task
                 | _ -> Task.CompletedTask

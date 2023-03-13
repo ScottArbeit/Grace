@@ -121,14 +121,14 @@ module Watch =
 
     let fileDeleted filePath =
         logToConsole $"In Delete: filePath: {filePath}"
-      
-    let updateInProgress() = 
-        File.Exists(getUpdateInProgressFileName())
+
+    let isNotDirectory path = not <| Directory.Exists(path)      
+    let updateInProgress() = File.Exists(getUpdateInProgressFileName())
     let updateNotInProgress() = not <| updateInProgress()
 
     let OnCreated (args: FileSystemEventArgs) =
         // Ignore directory creation; need to think about this more... should we capture new empty directories?
-        if updateNotInProgress() && not <| Directory.Exists(args.FullPath) then
+        if updateNotInProgress() && isNotDirectory args.FullPath then
             let shouldIgnore = shouldIgnoreFile args.FullPath
             //logToConsole $"Should ignore {args.FullPath}: {shouldIgnore}."
 
@@ -137,21 +137,22 @@ module Watch =
                 filesToProcess.TryAdd(args.FullPath, String.Empty) |> ignore
 
     let OnChanged (args: FileSystemEventArgs) =
-        if updateNotInProgress() && not <| Directory.Exists(args.FullPath) then            
+        if updateNotInProgress() && isNotDirectory args.FullPath then            
             let shouldIgnore = shouldIgnoreFile args.FullPath
-            //logToConsole $"Should ignore {args.FullPath}: {shouldIgnore}."
+            //logToAnsiConsole Colors.Important $"Should ignore {args.FullPath}: {shouldIgnore}."
 
             if not <| shouldIgnore then
                 logToAnsiConsole Colors.Changed $"I saw that {args.FullPath} changed."
                 filesToProcess.TryAdd(args.FullPath, String.Empty) |> ignore
 
-            // Special handling for the Grace status file; if that is the changed file, we'll reload it in OnWatch() in the main loop
-            if not <| graceStatusHasChanged && args.FullPath = Current().GraceStatusFile then
+            // Special handling for the Grace status file; if that is the changed file, we'll set this flag so we reload it in OnWatch() in the main loop
+            if (args.FullPath = Current().GraceStatusFile) && (not <| graceStatusHasChanged) then
+                //logToAnsiConsole Colors.Important $"Setting graceStatusHasChanged to true in OnChanged(). Current value: {graceStatusHasChanged}."
                 graceStatusHasChanged <- true
-                logToAnsiConsole Colors.Highlighted $"Grace Status file has been updated."
+                logToAnsiConsole Colors.Important $"Grace Status file has been updated."
 
     let OnDeleted (args: FileSystemEventArgs) =
-        if updateNotInProgress() && not <| Directory.Exists(args.FullPath) then
+        if updateNotInProgress() && isNotDirectory args.FullPath then
             let shouldIgnore = shouldIgnoreFile args.FullPath
             //logToConsole $"Should ignore {args.FullPath}: {shouldIgnore}."
 
@@ -237,8 +238,10 @@ module Watch =
                         let newGraceStatusWithUpdatedTime = {newGraceStatus with LastSuccessfulDirectoryVersionUpload = getCurrentInstant()}
                         // Write the new Grace Status file to disk.
                         do! writeGraceStatusFile newGraceStatusWithUpdatedTime
+                        //logToAnsiConsole Colors.Important $"Setting graceStatusHasChanged to false in updateGraceStatus(). Current value: {graceStatusHasChanged}."
+                        graceStatusHasChanged <- false  // We *just* changed it ourselves, so we don't have to re-process it in the timer loop.
                         return Some newGraceStatusWithUpdatedTime
-                    | Error error -> 
+                    | Error error ->
                         logToAnsiConsole Colors.Error $"{Markup.Escape(error.Error)}"
                         return None
                 else
@@ -319,7 +322,6 @@ module Watch =
                         graceStatus <- newGraceStatus
                     | None -> ()    // Something went wrong, don't update the in-memory Grace Status.
 
-                graceStatusHasChanged <- false  // We *just* changed it ourselves, so we don't have to re-process it in the timer loop.
                 do! updateGraceWatchStatus graceStatus
                 graceStatus <- GraceStatus.Default
                 
@@ -365,26 +367,26 @@ module Watch =
                                                 .Build()
 
                     use serverToClient = signalRConnection.On<string>("ServerToClientMessage", fun message -> logToAnsiConsole Colors.Important $"From Grace Server: {message}")
-                    use notifyOnPromotion = signalRConnection.On<BranchId, ReferenceId>("NotifyOnPromotion", fun (parentBranchId: BranchId) (referenceId: ReferenceId) ->
+                    use notifyOnPromotion = signalRConnection.On<BranchId, BranchName, ReferenceId>("NotifyOnPromotion", fun parentBranchId parentBranchName referenceId ->
                         (task {
-                            logToAnsiConsole Colors.Highlighted $"Parent branch {parentBranchId} has a new promotion; referenceId: {referenceId}."
+                            logToAnsiConsole Colors.Highlighted $"Parent branch {parentBranchName} has a new promotion; referenceId: {referenceId}."
                             let! graceStatus = readGraceStatusFile()
                             let rebaseParameters = RebaseParameters(OwnerId = $"{Current().OwnerId}", OrganizationId = $"{Current().OrganizationId}",
                                 RepositoryId = $"{Current().RepositoryId}", BranchId = $"{Current().BranchId}", BasedOn = referenceId, CorrelationId = (parseResult |> getCorrelationId))
                             let! x = Branch.rebaseHandler parseResult rebaseParameters graceStatus
                             ()
                         }) :> Task)
-                    use notifyOnSave = signalRConnection.On<BranchId, ReferenceId>("NotifyOnSave", fun parentBranchId referenceId ->
+                    use notifyOnSave = signalRConnection.On<BranchName, BranchName, BranchId, ReferenceId>("NotifyOnSave", fun branchName parentBranchName parentBranchId referenceId ->
                         (task {
-                            logToAnsiConsole Colors.Highlighted $"A branch with parent branch {parentBranchId} has a new save; referenceId: {referenceId}."
+                            logToAnsiConsole Colors.Highlighted $"Branch {branchName} with parent branch {parentBranchName} has a new save; referenceId: {referenceId}."
                         }) :> Task)
-                    use notifyOnCheckpoint = signalRConnection.On<BranchId, ReferenceId>("NotifyOnCheckpoint", fun parentBranchId referenceId ->
+                    use notifyOnCheckpoint = signalRConnection.On<BranchName, BranchName, BranchId, ReferenceId>("NotifyOnCheckpoint", fun branchName parentBranchName parentBranchId referenceId ->
                         (task {
-                            logToAnsiConsole Colors.Highlighted $"A branch with parent branch {parentBranchId} has a new checkpoint; referenceId: {referenceId}."
+                            logToAnsiConsole Colors.Highlighted $"Branch {branchName} with parent branch {parentBranchName} has a new save; referenceId: {referenceId}."
                         }) :> Task)
-                    use notifyOnCommit = signalRConnection.On<BranchId, ReferenceId>("NotifyOnCommit", fun parentBranchId referenceId ->
+                    use notifyOnCommit = signalRConnection.On<BranchName, BranchName, BranchId, ReferenceId>("NotifyOnCommit", fun branchName parentBranchName parentBranchId referenceId ->
                         (task {
-                            logToAnsiConsole Colors.Highlighted $"A branch with parent branch {parentBranchId} has a new commit; reference: {referenceId}."
+                            logToAnsiConsole Colors.Highlighted $"Branch {branchName} with parent branch {parentBranchName} has a new save; referenceId: {referenceId}."
                         }) :> Task)
                     do! signalRConnection.StartAsync(cancellationToken)
                     
@@ -426,6 +428,7 @@ module Watch =
                             let! updatedGraceStatus = readGraceStatusFile()
                             graceStatus <- updatedGraceStatus
                             do! updateGraceWatchStatus graceStatus
+                            //logToAnsiConsole Colors.Important $"Setting graceStatusHasChanged to false in OnWatch(). Current value: {graceStatusHasChanged}."
                             graceStatusHasChanged <- false
                         do! processChangedFiles()
                         let! tick = periodicTimer.WaitForNextTickAsync()

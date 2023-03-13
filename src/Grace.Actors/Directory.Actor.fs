@@ -72,9 +72,8 @@ module Directory =
                 match reminderName with
                 | "DeleteCachedState" ->
                     task {
-                        do! Storage.DeleteState stateManager directoryVersionCacheStateName
-                        let token = ActorReminderToken(ActorName.Directory, this.Id, reminderName);
-                        do! this.Host.TimerManager.UnregisterReminderAsync(token)
+                        let! deleteSucceeded = Storage.DeleteState stateManager directoryVersionCacheStateName
+                        ()
                     } :> Task
                 | _ -> Task.CompletedTask
 

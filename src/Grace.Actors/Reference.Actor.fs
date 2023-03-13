@@ -61,6 +61,6 @@ module Reference =
             member this.Delete(correlationId: string) =
                 let stateManager = this.StateManager
                 task {
-                    do! Storage.DeleteState stateManager dtoStateName
+                    let! deleteSucceeded = Storage.DeleteState stateManager dtoStateName
                     return Ok (GraceReturnValue.Create "Reference deleted." correlationId)
                 }

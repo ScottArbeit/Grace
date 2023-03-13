@@ -7,8 +7,8 @@
 		<NoWarn>1057</NoWarn>
 	</PropertyGroup>
 	<ItemGroup>
-		<PackageReference Include="Azure.Core" Version="1.28.0" />
-		<PackageReference Include="Microsoft.Azure.Cosmos" Version="3.32.0" />
+		<PackageReference Include="Azure.Core" Version="1.30.0" />
+		<PackageReference Include="Microsoft.Azure.Cosmos" Version="3.32.1" />
 	</ItemGroup>
 
 </Project>

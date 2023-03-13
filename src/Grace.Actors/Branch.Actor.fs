@@ -130,8 +130,8 @@ module Branch =
                     let message = graceEvent |> serialize
                     do! daprClient.PublishEventAsync(Constants.GracePubSubService, Constants.GraceEventStreamTopic, message)
                     
-                    //let httpClient = getHttpClient branchEvent.Metadata.CorrelationId
-                    //httpClient.BaseAddress <- Uri $"http://127.0.0.1:5000"
+                    let httpClient = getHttpClient branchEvent.Metadata.CorrelationId
+                    httpClient.BaseAddress <- Uri $"http://127.0.0.1:5000"
                     //let! response = httpClient.PostAsync("notifications/post", jsonContent graceEvent)
                     //if not <| response.IsSuccessStatusCode then
                     //    log.LogError("Failed to send SignalR notification. Event: {event}", message)

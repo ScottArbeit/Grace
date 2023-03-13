@@ -11,11 +11,12 @@ open System.Linq
 open System.Threading
 open System.Threading.Tasks
 open System.Collections.Concurrent
+open System.Collections.Concurrent
 
 module Load =
 
-    let numberOfRepositories = 15
-    let numberOfEvents = 500
+    let numberOfRepositories = 50
+    let numberOfEvents = 1000
 
     let showResult<'T> (r: GraceResult<'T>) =
         match r with
@@ -31,37 +32,59 @@ module Load =
             let startTime = getCurrentInstant()
             let cancellationToken = new CancellationToken()
 
+            let suffixes = ConcurrentDictionary<int, string>()
+            let ownerIds = ConcurrentDictionary<int, OwnerId>()
+            let organizationIds = ConcurrentDictionary<int, OrganizationId>()
+            let repositoryIds = ConcurrentDictionary<int, RepositoryId>()
+            let parentBranchIds = ConcurrentDictionary<int, BranchId>()
             let ids = ConcurrentDictionary<int, OwnerId * OrganizationId * RepositoryId * BranchId>()
+
+            for i in {0..numberOfRepositories} do
+                suffixes[i] <- Random.Shared.Next(Int32.MaxValue).ToString("X8")
 
             do! Parallel.ForEachAsync({0..numberOfRepositories}, Constants.ParallelOptions, (fun (i: int) (cancellationToken: CancellationToken) ->
                 ValueTask(task {
-                    let suffix = Random.Shared.Next(Int32.MaxValue).ToString("X8")
-
                     let ownerId = Guid.NewGuid()
-                    let ownerName = $"Owner{suffix}{i:X2}"
+                    let ownerName = $"Owner{suffixes[i]}"
                     let! r = Owner.Create(Owner.CreateParameters(OwnerId = $"{ownerId}", OwnerName = ownerName, CorrelationId = g()))
+                    ownerIds.AddOrUpdate(i, ownerId, (fun _ _ -> ownerId)) |> ignore
                     showResult r
+                })
+            ))
 
+            do! Parallel.ForEachAsync({0..numberOfRepositories}, Constants.ParallelOptions, (fun (i: int) (cancellationToken: CancellationToken) ->
+                ValueTask(task {
                     let organizationId = Guid.NewGuid()
-                    let organizationName = $"Organization{suffix}{i:X2}"
-                    let! r = Organization.Create(Organization.CreateParameters(OwnerId = $"{ownerId}", OrganizationId = $"{organizationId}", OrganizationName = organizationName, CorrelationId = g()))
+                    let organizationName = $"Organization{suffixes[i]}"
+                    let! r = Organization.Create(Organization.CreateParameters(OwnerId = $"{ownerIds[i]}", OrganizationId = $"{organizationId}", OrganizationName = organizationName, CorrelationId = g()))
+                    organizationIds.AddOrUpdate(i, organizationId, (fun _ _ -> organizationId)) |> ignore
                     showResult r
+                })
+            ))
 
+            do! Parallel.ForEachAsync({0..numberOfRepositories}, Constants.ParallelOptions, (fun (i: int) (cancellationToken: CancellationToken) ->
+                ValueTask(task {
                     let repositoryId = Guid.NewGuid()
-                    let repositoryName = $"Repository{suffix}{i:X2}"
-                    let! repo = Repository.Create(Repository.CreateParameters(OwnerId = $"{ownerId}", OrganizationId = $"{organizationId}", RepositoryId = $"{repositoryId}", RepositoryName = repositoryName, CorrelationId = g()))
-                    showResult repo
-
-                    let branchId = Guid.NewGuid()
-                    let branchName = $"Branch{suffix}{i:X2}"
+                    let repositoryName = $"Repository{suffixes[i]}"
+                    let! repo = Repository.Create(Repository.CreateParameters(OwnerId = $"{ownerIds[i]}", OrganizationId = $"{organizationIds[i]}", RepositoryId = $"{repositoryId}", RepositoryName = repositoryName, CorrelationId = g()))
+                    repositoryIds.AddOrUpdate(i, repositoryId, (fun _ _ -> repositoryId)) |> ignore
                     match repo with
-                    | Ok repo ->
-                        let! r = Branch.Create(Branch.CreateParameters(OwnerId = $"{ownerId}", OrganizationId = $"{organizationId}", RepositoryId = $"{repositoryId}", BranchId = $"{branchId}", BranchName = branchName, ParentBranchId = repo.Properties[nameof(BranchId)], CorrelationId = g()))
-                        showResult r
-                        match r with
-                        | Ok r ->
-                            ids.AddOrUpdate(i, (ownerId, organizationId, repositoryId, branchId), (fun _ _ -> (ownerId, organizationId, repositoryId, branchId))) |> ignore
-                        | Error error -> ()
+                    | Ok r ->
+                        parentBranchIds.AddOrUpdate(i, Guid.Parse(r.Properties[nameof(BranchId)]), (fun _ _ -> Guid.Parse(r.Properties[nameof(BranchId)]))) |> ignore
+                    | Error error -> ()
+                    showResult repo
+                })
+            ))
+
+            do! Parallel.ForEachAsync({0..numberOfRepositories}, Constants.ParallelOptions, (fun (i: int) (cancellationToken: CancellationToken) ->
+                ValueTask(task {
+                    let branchId = Guid.NewGuid()
+                    let branchName = $"Branch{suffixes[i]}"
+                    let! r = Branch.Create(Branch.CreateParameters(OwnerId = $"{ownerIds[i]}", OrganizationId = $"{organizationIds[i]}", RepositoryId = $"{repositoryIds[i]}", BranchId = $"{branchId}", BranchName = branchName, ParentBranchId = $"{parentBranchIds[i]}", CorrelationId = g()))
+                    showResult r
+                    match r with
+                    | Ok r ->
+                        ids.AddOrUpdate(i, (ownerIds[i], organizationIds[i], repositoryIds[i], branchId), (fun _ _ -> (ownerIds[i], organizationIds[i], repositoryIds[i], branchId))) |> ignore
                     | Error error -> ()
                 })
             ))

@@ -40,11 +40,11 @@ module Storage =
     /// Deletes the actor's state from storage.
     let DeleteState (stateManager: IActorStateManager) (dtoStateName: string) = 
         task {
-            return! DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> 
-                task {
+            //return! DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> 
+                //task {
                     return! stateManager.TryRemoveStateAsync(dtoStateName)
-                })
-        } :> Task
+                //})
+        }
 
     //module AzureBlobStorage =
 
