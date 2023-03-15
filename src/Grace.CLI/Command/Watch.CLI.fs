@@ -382,11 +382,11 @@ module Watch =
                         }) :> Task)
                     use notifyOnCheckpoint = signalRConnection.On<BranchName, BranchName, BranchId, ReferenceId>("NotifyOnCheckpoint", fun branchName parentBranchName parentBranchId referenceId ->
                         (task {
-                            logToAnsiConsole Colors.Highlighted $"Branch {branchName} with parent branch {parentBranchName} has a new save; referenceId: {referenceId}."
+                            logToAnsiConsole Colors.Highlighted $"Branch {branchName} with parent branch {parentBranchName} has a new checkpoint; referenceId: {referenceId}."
                         }) :> Task)
                     use notifyOnCommit = signalRConnection.On<BranchName, BranchName, BranchId, ReferenceId>("NotifyOnCommit", fun branchName parentBranchName parentBranchId referenceId ->
                         (task {
-                            logToAnsiConsole Colors.Highlighted $"Branch {branchName} with parent branch {parentBranchName} has a new save; referenceId: {referenceId}."
+                            logToAnsiConsole Colors.Highlighted $"Branch {branchName} with parent branch {parentBranchName} has a new commit; referenceId: {referenceId}."
                         }) :> Task)
                     do! signalRConnection.StartAsync(cancellationToken)
                     

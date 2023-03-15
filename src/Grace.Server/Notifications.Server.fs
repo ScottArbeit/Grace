@@ -19,6 +19,7 @@ open System.Text.Json
 open System.Threading.Tasks
 open Dapr.Actors
 open Services
+open Microsoft.AspNetCore.Http.Features
 
 module Notifications =
 
@@ -33,10 +34,10 @@ module Notifications =
     type NotificationHub() =
         inherit Hub<IGraceClientConnection>()
 
-        //override this.OnConnectedAsync() =
-        //    task {
-        //        ()
-        //    }
+        override this.OnConnectedAsync() =
+            task {
+                logToConsole $"NotificationHub ConnectionId {this.Context.ConnectionId} established."
+            }
 
         //override this.OnDisconnectedAsync(ex: Exception) =
         //    task {
@@ -82,6 +83,7 @@ module Notifications =
                     logToConsole $"No SignalR clients connected."
             } :> Task
 
+    [<Topic("graceEventStream", "graceeventstream")>]
     let Post: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
@@ -92,7 +94,7 @@ module Notifications =
                 let actorProxyOptions = context.GetService<ActorProxyOptions>()
 
                 let! body = context.ReadBodyFromRequestAsync()
-                //logToConsole $"{body}"
+                logToConsole $"{body}"
 
                 let diffTwoDirectoryVersions directoryId1 directoryId2 =
                     task {
@@ -102,15 +104,15 @@ module Notifications =
                         ()
                     }
             
-                //let cloudEvent = deserialize<CloudEvent<string>> body
-                let graceEvent = deserialize<GraceEvent> body
+                let cloudEvent = body |> deserialize<CloudEvent<string>>
+                //let graceEvent = deserialize<GraceEvent> body
+                let graceEvent = cloudEvent.Data |> deserialize<GraceEvent>
             
                 match graceEvent with
                 | BranchEvent branchEvent ->
                     logToConsole $"Received BranchEvent: {discriminatedUnionFullNameToString branchEvent.Event} {Environment.NewLine}{branchEvent.Metadata}"
                     match branchEvent.Event with
                     | Branch.Promoted (referenceId, directoryId, sha256Hash, referenceText) -> 
-                        logToConsole $"Received Branch.Promoted; referenceId: {referenceId}, directoryId: {directoryId}, sha256Hash: {sha256Hash}, referenceText: {referenceText}"
                         let referenceActorId = Reference.GetActorId referenceId
                         let referenceActorProxy = actorProxyFactory.CreateActorProxy<IReferenceActor>(referenceActorId, ActorName.Reference, actorProxyOptions)
                         let! referenceDto = referenceActorProxy.Get()
@@ -119,7 +121,6 @@ module Notifications =
                         let branchActorProxy = actorProxyFactory.CreateActorProxy<IBranchActor>(branchActorId, ActorName.Branch, actorProxyOptions)
                         let! branchDto = branchActorProxy.Get()
 
-                        logToConsole $"About to send signalR message to clients for group {branchDto.BranchId}."                                
                         do! hubContext.Clients.Group($"{branchDto.BranchId}").NotifyOnPromotion(branchDto.BranchId, branchDto.BranchName, referenceId)
 
                         // Create the diff between the new promotion and previous promotion.
@@ -172,7 +173,6 @@ module Notifications =
                         | None -> ()
 
                     | Branch.Saved (referenceId, directoryId, sha256Hash, referenceText) ->
-                        logToConsole $"In Notifications.Post : Branch.Saved."
                         let actorId = Reference.GetActorId referenceId
                         let referenceActorProxy = actorProxyFactory.CreateActorProxy<IReferenceActor>(actorId, ActorName.Reference, actorProxyOptions)
                         let! referenceDto = referenceActorProxy.Get()
@@ -182,9 +182,8 @@ module Notifications =
                         let! branchDto = branchActorProxy.Get()
                         let! parentBranchDto = branchActorProxy.GetParentBranch()
                         
-                        logToConsole $"About to send Saved message to SignalR group {branchDto.ParentBranchId} for child branches of {parentBranchDto.BranchName}."
                         do! hubContext.Clients.Group($"{branchDto.ParentBranchId}").NotifyOnSave(branchDto.BranchName, parentBranchDto.BranchName, parentBranchDto.ParentBranchId, referenceId)
-                        
+
                         // Create the diff between the new save and the previous save.
                         let! latestTwoSaves = getSaves referenceDto.BranchId 2
                         if latestTwoSaves.Count = 2 then
@@ -196,7 +195,8 @@ module Notifications =
                         | Some latest ->
                             latestCommit <- latest
                             do! diffTwoDirectoryVersions latestCommit.DirectoryId referenceDto.DirectoryId
-                        | None -> ()
+                        | None ->
+                            ()
 
                         // Create the diff between the new save and the most recent checkpoint,
                         //   if the checkpoint is newer than the most recent commit.
@@ -204,7 +204,8 @@ module Notifications =
                         | Some latestCheckpoint ->
                             if latestCheckpoint.CreatedAt > latestCommit.CreatedAt then
                                 do! diffTwoDirectoryVersions latestCheckpoint.DirectoryId referenceDto.DirectoryId
-                        | None -> ()
+                        | None ->
+                            ()
                     | Branch.Tagged (referenceId, directoryId, sha256Hash, referenceText) -> ()
                     | _ -> ()
                 | OrganizationEvent organizationEvent -> logToConsole $"Received OrganizationEvent: {discriminatedUnionFullNameToString organizationEvent.Event} {Environment.NewLine}{organizationEvent.Metadata}"

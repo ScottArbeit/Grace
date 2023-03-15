@@ -329,6 +329,7 @@ module Application =
                .UseStaticFiles()
                .UseEndpoints(fun endpointBuilder ->
                    endpointBuilder.MapActorsHandlers() |> ignore
+                   endpointBuilder.MapSubscribeHandler() |> ignore
                    endpointBuilder.MapGiraffeEndpoints(endpoints)
                    endpointBuilder.MapHub<Notifications.NotificationHub>("/notifications") |> ignore)
                .UseGiraffe(notFoundHandler)
