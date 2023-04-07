@@ -297,8 +297,9 @@ module Branch =
                                     let t4 = progressContext.AddTask($"[{Color.DodgerBlue1}]Uploading new directory versions.[/]", autoStart = false)
                                     let t5 = progressContext.AddTask($"[{Color.DodgerBlue1}]Creating new {commandType}.[/]", autoStart = false)
                                 
-                                    let mutable rootDirectoryId = DirectoryId.Empty
-                                    let mutable rootDirectorySha256Hash = Sha256Hash String.Empty
+                                    //let mutable rootDirectoryId = DirectoryId.Empty
+                                    //let mutable rootDirectorySha256Hash = Sha256Hash String.Empty
+                                    let rootDirectoryVersion = ref (DirectoryId.Empty, Sha256Hash String.Empty)
 
                                     match! getGraceWatchStatus() with
                                     | Some graceWatchStatus ->
@@ -307,10 +308,9 @@ module Branch =
                                         t2.Value <- 100.0
                                         t3.Value <- 100.0
                                         t4.Value <- 100.0
-                                        rootDirectoryId <- graceWatchStatus.RootDirectoryId
-                                        rootDirectorySha256Hash <- graceWatchStatus.RootDirectorySha256Hash
+                                        rootDirectoryVersion.Value <- (graceWatchStatus.RootDirectoryId, graceWatchStatus.RootDirectorySha256Hash)
                                     | None ->
-                                        t0.Increment(0.0)   // Read Grace status file.
+                                        t0.StartTask()   // Read Grace status file.
                                         let! previousGraceStatus = readGraceStatusFile()
                                         let mutable newGraceStatus = previousGraceStatus
                                         t0.Value <- 100.0
@@ -322,8 +322,7 @@ module Branch =
                                         t2.StartTask()  // Create new directory versions.
                                         let! (updatedGraceStatus, newDirectoryVersions) = getNewGraceStatusAndDirectoryVersions previousGraceStatus differences
                                         newGraceStatus <- updatedGraceStatus
-                                        rootDirectoryId <- newGraceStatus.RootDirectoryId
-                                        rootDirectorySha256Hash <- newGraceStatus.RootDirectorySha256Hash
+                                        rootDirectoryVersion.Value <- (newGraceStatus.RootDirectoryId, newGraceStatus.RootDirectorySha256Hash)
                                         t2.Value <- 100.0
 
                                         t3.StartTask()  // Upload to object storage.
@@ -359,6 +358,7 @@ module Branch =
                                 
                                     t5.StartTask()  // Create new reference.
 
+                                    let (rootDirectoryId, rootDirectorySha256Hash) = rootDirectoryVersion.Value
                                     let sdkParameters = 
                                         Parameters.Branch.CreateReferenceParameters(BranchId = parameters.BranchId, BranchName = parameters.BranchName, 
                                             OwnerId = parameters.OwnerId, OwnerName = parameters.OwnerName,
@@ -403,7 +403,7 @@ module Branch =
             with ex ->
                 return Error (GraceError.Create $"{createExceptionResponse ex}" (parseResult |> getCorrelationId))
         }
-
+    
     let promotionHandler (parseResult: ParseResult) (parameters: CreateRefParameters) =
         task {
             try
@@ -1395,7 +1395,9 @@ module Branch =
                     match! Branch.GetParentBranch(getParameters) with
                     | Ok returnValue ->
                         let parentBranchDto = returnValue.ReturnValue
-                        let referenceIds = [| parentBranchDto.LatestPromotion; branchDto.LatestCommit; branchDto.BasedOn |]
+
+                        // Now that I have the current and parent branch, I can get the details for the latest promotion, latest commit, latest checkpoint, and latest save.
+                        let referenceIds = [| parentBranchDto.LatestPromotion; branchDto.LatestCommit; branchDto.LatestCheckpoint; branchDto.LatestSave; branchDto.BasedOn |]
                         let getReferencesByIdParameters = Parameters.Repository.GetReferencesByReferenceIdParameters(
                             OwnerId = parameters.OwnerId, OwnerName = parameters.OwnerName,
                             OrganizationId = parameters.OrganizationId, OrganizationName = parameters.OrganizationName,
@@ -1404,8 +1406,10 @@ module Branch =
                         match! Repository.GetReferencesByReferenceId(getReferencesByIdParameters) with
                         | Ok returnValue -> 
                             let referenceDtos = returnValue.ReturnValue
+                            let latestSave = referenceDtos.FirstOrDefault((fun ref -> ref.ReferenceId = branchDto.LatestSave), ReferenceDto.Default)
+                            let latestCheckpoint = referenceDtos.FirstOrDefault((fun ref -> ref.ReferenceId = branchDto.LatestCheckpoint), ReferenceDto.Default)
                             let latestCommit = referenceDtos.FirstOrDefault((fun ref -> ref.ReferenceId = branchDto.LatestCommit), ReferenceDto.Default)
-                            let latestPromotion = referenceDtos.FirstOrDefault((fun ref -> ref.ReferenceId = parentBranchDto.LatestPromotion), ReferenceDto.Default)
+                            let latestParentBranchPromotion = referenceDtos.FirstOrDefault((fun ref -> ref.ReferenceId = parentBranchDto.LatestPromotion), ReferenceDto.Default)
                             let basedOn = referenceDtos.FirstOrDefault((fun ref -> ref.ReferenceId = branchDto.BasedOn), ReferenceDto.Default)
                             
                             let getReferencesParameters = Parameters.Branch.GetReferencesParameters(OwnerId = parameters.OwnerId, OwnerName = parameters.OwnerName,
@@ -1417,6 +1421,12 @@ module Branch =
                                 let latestReference =
                                     if returnValue.ReturnValue.Count() > 0 then returnValue.ReturnValue.First() else ReferenceDto.Default
                                     
+                                let getReferenceRowValue referenceDto =
+                                    if referenceDto.ReferenceId = ReferenceId.Empty then
+                                        $"  None"
+                                    else
+                                        $"  {getShortenedSha256Hash referenceDto.Sha256Hash} - {ago referenceDto.CreatedAt} - {instantToLocalTime referenceDto.CreatedAt} [{Colors.Deemphasized}]- {referenceDto.ReferenceId}[/]"
+
                                 let table = Table(Border = TableBorder.DoubleEdge)
                                 table.AddColumns(String.replicate (Current().OwnerName.Length) "_", String.replicate (Current().OwnerName.Length) "_")  // Using Current().OwnerName.Length is aesthetically pleasing, there's no deeper reason for it.
                                      .AddRow($"[{Colors.Important}]Owner[/]", $"[{Colors.Important}]{Current().OwnerName}[/] [{Colors.Deemphasized}]- {Current().OwnerId}[/]")
@@ -1424,13 +1434,28 @@ module Branch =
                                      .AddRow($"[{Colors.Important}]Repository[/]", $"[{Colors.Important}]{Current().RepositoryName}[/] [{Colors.Deemphasized}]- {Current().RepositoryId}[/]")
                                      .AddRow(String.Empty, String.Empty)
                                      .AddRow($"[{Colors.Important}]Branch[/]", $"[{Colors.Important}]{branchDto.BranchName}[/] [{Colors.Deemphasized}]- {branchDto.BranchId}[/]")
-                                     .AddRow($"  - latest reference - {discriminatedUnionCaseNameToString latestReference.ReferenceType}", $"  {getShortenedSha256Hash latestReference.Sha256Hash} - {ago latestReference.CreatedAt} - {instantToLocalTime latestReference.CreatedAt} [{Colors.Deemphasized}]- {latestReference.ReferenceId}[/]")
-                                     .AddRow($"  - latest commit", $"  {getShortenedSha256Hash latestCommit.Sha256Hash} - {ago latestCommit.CreatedAt} - {instantToLocalTime latestCommit.CreatedAt} [{Colors.Deemphasized}]- {latestCommit.ReferenceId}[/]")
-                                     .AddRow($"  - based on promotion", $"  {getShortenedSha256Hash basedOn.Sha256Hash} - {ago basedOn.CreatedAt} - {instantToLocalTime basedOn.CreatedAt} [{Colors.Deemphasized}]- {basedOn.ReferenceId}[/]")
-                                     .AddRow($"[{Colors.Important}]Parent branch[/]", $"[{Colors.Important}]{parentBranchDto.BranchName}[/] [{Colors.Deemphasized}]- {parentBranchDto.BranchId}[/]")
-                                     .AddRow($"  - latest promotion", $"  {getShortenedSha256Hash latestPromotion.Sha256Hash} - {ago latestPromotion.CreatedAt} - {instantToLocalTime latestPromotion.CreatedAt} [{Colors.Deemphasized}]- {latestPromotion.ReferenceId}[/]")
-                                     .AddRow($"[{Colors.Important}]Based on latest promotion[/]", $"[{Colors.Important}]{branchDto.BasedOn = parentBranchDto.LatestPromotion}[/]")
-                                     |> ignore
+                                     .AddRow($"  - latest save ", getReferenceRowValue latestSave)
+                                     .AddRow($"  - latest checkpoint ", getReferenceRowValue latestCheckpoint)
+                                     .AddRow($"  - latest commit", getReferenceRowValue latestCommit)
+                                     .AddRow($"  - based on", getReferenceRowValue basedOn)
+                                     .AddRow(String.Empty, String.Empty)
+                                    |> ignore
+                                
+                                if branchDto.ParentBranchId <> Constants.DefaultParentBranchId then
+                                     table.AddRow($"[{Colors.Important}]Parent branch[/]", $"[{Colors.Important}]{parentBranchDto.BranchName}[/] [{Colors.Deemphasized}]- {parentBranchDto.BranchId}[/]")
+                                          .AddRow($"  - latest promotion", getReferenceRowValue latestParentBranchPromotion)
+                                          .AddRow($"", $"  {latestParentBranchPromotion.ReferenceText}")
+                                        |> ignore
+                                else
+                                    table.AddRow($"[{Colors.Important}]Parent branch[/]", $"[{Colors.Important}]  None[/]") |> ignore
+                                
+                                if branchDto.BasedOn = parentBranchDto.LatestPromotion then 
+                                    table.AddRow($"", $"[{Colors.Added}]  Based on latest promotion.[/]")
+                                        |> ignore
+                                else
+                                    table.AddRow($"", $"[{Colors.Important}]  Not based on latest promotion.[/]")
+                                        |> ignore
+
                                 // Need to add this portion of the header after everything else is rendered so we know the width.
                                 //let headerWidth = if table.Columns[0].Width.HasValue then table.Columns[0].Width.Value else 27  // 27 = longest current text
                                 //table.Columns[0].Header <- Markup(String.replicate headerWidth "_")

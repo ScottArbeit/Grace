@@ -17,6 +17,7 @@ open System.Threading.Tasks
 open System.Net.Http
 open System.Net.Security
 open System.Net
+open System
 
 #nowarn "9"
 
@@ -67,7 +68,7 @@ module Utilities =
 
     /// Serializes an object to JSON, using the Grace JsonSerializerOptions.
     let serialize<'T> item =
-        JsonSerializer.Serialize<'T>(item, options = Constants.JsonSerializerOptions)
+        JsonSerializer.Serialize<'T>(item, Constants.JsonSerializerOptions)
 
     /// Serializes a stream to JSON, using the Grace JsonSerializerOptions.
     let serializeAsync<'T> stream item =
@@ -77,7 +78,7 @@ module Utilities =
 
     /// Deserializes a JSON string to a provided type, using the Grace JsonSerializerOptions.
     let deserialize<'T> (s: string) =
-        JsonSerializer.Deserialize<'T>(s, options = Constants.JsonSerializerOptions)
+        JsonSerializer.Deserialize<'T>(s, Constants.JsonSerializerOptions)
 
     /// Deserializes a stream to a provided type, using the Grace JsonSerializerOptions.
     let deserializeAsync<'T> stream =
@@ -365,8 +366,8 @@ module Utilities =
         httpClient.DefaultRequestHeaders.Add(Constants.ServerApiVersionHeaderKey, $"{Constants.ServerApiVersions.Edge}")
         //httpClient.DefaultVersionPolicy <- HttpVersionPolicy.RequestVersionOrHigher
 #if DEBUG
-        //httpClient.Timeout <- TimeSpan.FromSeconds(1800.0)  // Keeps client commands open while debugging.
-        httpClient.Timeout <- TimeSpan.FromSeconds(7.5)  // Fast fail for normal testing.
+        httpClient.Timeout <- TimeSpan.FromSeconds(1800.0)  // Keeps client commands open while debugging.
+        //httpClient.Timeout <- TimeSpan.FromSeconds(7.5)  // Fast fail for normal testing.
 #else
         httpClient.Timeout <- TimeSpan.FromSeconds(15.0)  // Fast fail for testing network connectivity.
 #endif

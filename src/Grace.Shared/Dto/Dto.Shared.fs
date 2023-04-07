@@ -21,13 +21,15 @@ module Dto =
                 RepositoryId: RepositoryId
                 UserId: UserId
                 //References: SortedList<Instant, ReferenceDto>
-                EnabledPromotion: bool
-                EnabledCommit: bool
-                EnabledCheckpoint: bool
-                EnabledSave: bool
-                EnabledTag: bool
-                LatestCommit: ReferenceId
+                PromotionEnabled: bool
+                CommitEnabled: bool
+                CheckpointEnabled: bool
+                SaveEnabled: bool
+                TagEnabled: bool
                 LatestPromotion: ReferenceId
+                LatestCommit: ReferenceId
+                LatestCheckpoint: ReferenceId
+                LatestSave: ReferenceId
                 CreatedAt: Instant
                 UpdatedAt: Instant option
                 DeletedAt: Instant option
@@ -41,13 +43,15 @@ module Dto =
                 RepositoryId = RepositoryId.Empty
                 UserId = UserId String.Empty
                 //References = SortedList<Instant, ReferenceDto>()
-                EnabledPromotion = true
-                EnabledCommit = true
-                EnabledCheckpoint = true
-                EnabledSave = true
-                EnabledTag = true
-                LatestCommit = ReferenceId.Empty
+                PromotionEnabled = true
+                CommitEnabled = true
+                CheckpointEnabled = true
+                SaveEnabled = true
+                TagEnabled = true
                 LatestPromotion = ReferenceId.Empty
+                LatestCommit = ReferenceId.Empty
+                LatestCheckpoint = ReferenceId.Empty
+                LatestSave = ReferenceId.Empty
                 CreatedAt = getCurrentInstant()
                 UpdatedAt = None
                 DeletedAt = None

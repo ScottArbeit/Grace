@@ -23,10 +23,10 @@ module Directory =
 
     let GetActorId (directoryId: DirectoryId) = ActorId($"{directoryId}")
  
-    type DirectoryActor(host: ActorHost) =
+    type DirectoryVersionActor(host: ActorHost) =
         inherit Actor(host)
 
-        let actorName = Constants.ActorName.Directory
+        let actorName = Constants.ActorName.DirectoryVersion
         let dtoStateName = "DirectoryVersionState"
         let directoryVersionCacheStateName = "DirectoryVersionCacheState"
 
@@ -34,7 +34,7 @@ module Directory =
         let mutable directoryVersion = DirectoryVersion.Default
         let mutable actorStartTime = Instant.MinValue
         let mutable logScope: IDisposable = null
-        let log = host.LoggerFactory.CreateLogger(nameof(DirectoryActor))
+        let log = host.LoggerFactory.CreateLogger(nameof(DirectoryVersionActor))
 
         override this.OnActivateAsync() =
             let stateManager = this.StateManager
@@ -83,8 +83,10 @@ module Directory =
                     } :> Task
                 | _ -> Task.CompletedTask
 
-        interface IDirectoryActor with
+        interface IDirectoryVersionActor with
             member this.Exists() = (directoryVersion.CreatedAt > Instant.MinValue) |> returnTask
+
+            member this.Delete(correlationId) = GraceResult.Error (GraceError.Create "Not implemented" correlationId) |> returnTask
 
             member this.Get() = directoryVersion  |> returnTask
 
@@ -108,7 +110,7 @@ module Directory =
                             |> Seq.map(fun directoryId ->
                                             task {
                                                 let actorId = GetActorId directoryId
-                                                let subdirectoryActor = this.ProxyFactory.CreateActorProxy<IDirectoryActor>(actorId, ActorName.Directory)
+                                                let subdirectoryActor = this.ProxyFactory.CreateActorProxy<IDirectoryVersionActor>(actorId, ActorName.DirectoryVersion)
                                                 return! subdirectoryActor.GetSizeRecursive()
                                             })
                         Task.WaitAll(tasks.Cast<Task>().ToArray())
@@ -134,16 +136,16 @@ module Directory =
                         //let cachedSubdirectoryVersions = None
                         match cachedSubdirectoryVersions with
                         | Some subdirectoryVersions -> 
-                            logToConsole $"In DirectoryActor.GetDirectoryVersionsRecursive({this.Id.GetId()}). SubdirectoryVersions already cached."
+                            logToConsole $"In DirectoryVersionActor.GetDirectoryVersionsRecursive({this.Id.GetId()}). SubdirectoryVersions already cached."
                             return subdirectoryVersions
                         | None ->
-                            logToConsole $"In DirectoryActor.GetDirectoryVersionsRecursive({this.Id.GetId()}). SubdirectoryVersions not cached; generating the list."
+                            logToConsole $"In DirectoryVersionActor.GetDirectoryVersionsRecursive({this.Id.GetId()}). SubdirectoryVersions not cached; generating the list."
                             let subdirectoryVersions = ConcurrentQueue<DirectoryVersion>()
                             subdirectoryVersions.Enqueue(directoryVersion)
                             do! Parallel.ForEachAsync(directoryVersion.Directories, Constants.ParallelOptions, (fun directoryId ct ->
                                 ValueTask(task {
                                     let actorId = GetActorId directoryId
-                                    let subdirectoryActor = this.ProxyFactory.CreateActorProxy<IDirectoryActor>(actorId, ActorName.Directory)
+                                    let subdirectoryActor = this.ProxyFactory.CreateActorProxy<IDirectoryVersionActor>(actorId, ActorName.DirectoryVersion)
                                     let! subdirectoryContents = subdirectoryActor.GetDirectoryVersionsRecursive()
                                     for directoryVersion in subdirectoryContents do
                                         subdirectoryVersions.Enqueue(directoryVersion)
@@ -153,16 +155,16 @@ module Directory =
                             //    |> Seq.map(fun directoryId ->
                             //                    task {
                             //                        let actorId = GetActorId directoryId
-                            //                        let subdirectoryActor = this.ProxyFactory.CreateActorProxy<IDirectoryActor>(actorId, ActorName.Directory)
+                            //                        let subdirectoryActor = this.ProxyFactory.CreateActorProxy<IDirectoryVersionActor>(actorId, ActorName.Directory)
                             //                        return! subdirectoryActor.GetDirectoryVersionsRecursive()
                             //                    })
                             //Task.WaitAll(tasks.Cast<Task>().ToArray())
                             //tasks |> Seq.iter (fun task -> subdirectoryVersions.AddRange(task.Result))
                             let subdirectoryVersionsList = subdirectoryVersions.ToList()
                             do! Storage.SaveState stateManager directoryVersionCacheStateName subdirectoryVersionsList
-                            logToConsole $"In DirectoryActor.GetDirectoryVersionsRecursive(); storing subdirectoryVersion list."
+                            logToConsole $"In DirectoryVersionActor.GetDirectoryVersionsRecursive(); storing subdirectoryVersion list."
                             let! _ = this.SetReminderToDeleteCachedState()
-                            logToConsole $"In DirectoryActor.GetDirectoryVersionsRecursive(); set delete reminder."
+                            logToConsole $"In DirectoryVersionActor.GetDirectoryVersionsRecursive(); set delete reminder."
                             return subdirectoryVersionsList
                     with ex ->
                         log.LogError("{CurrentInstant}: Error in {methodName}. Exception: {exception}", getCurrentInstantExtended(), nameof(this.SetReminderToDeleteCachedState), createExceptionResponse ex)

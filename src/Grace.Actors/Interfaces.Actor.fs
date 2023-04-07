@@ -36,7 +36,7 @@ module Interfaces =
     type IExportable<'T> =
         //abstract member Export: unit -> Task<Result<IList<RepositoryEvent>, ExportError>>
         //abstract member Import: IList<RepositoryEvent> -> Task<Result<bool, ImportError>>
-        abstract member Export: unit -> Task<Result<IList<'T>, ExportError>>
+        abstract member Export: unit -> Task<Result<List<'T>, ExportError>>
         abstract member Import: IList<'T> -> Task<Result<int, ImportError>>
 
     type IRevertable<'T> =
@@ -73,7 +73,7 @@ module Interfaces =
         /// Gets the results of the diff.
         abstract member GetDiff: unit -> Task<DiffDto>
 
-    type IDirectoryActor =
+    type IDirectoryVersionActor =
         inherit IActor
         /// Returns true if the actor instance already exists.
         abstract member Exists: unit -> Task<bool>
@@ -95,6 +95,8 @@ module Interfaces =
         abstract member GetDirectoryVersionsRecursive: unit -> Task<List<DirectoryVersion>>
         /// Saves a DirectoryVersion instance as the state of this actor.
         abstract member Create: directoryContents: DirectoryVersion -> correlationId: string -> Task<GraceResult<string>>
+        /// Delete the DirectoryVersion and all subdirectories and files.
+        abstract member Delete: correlationId: string -> Task<GraceResult<string>>
 
     type IOrganizationActor =
         inherit IActor

@@ -67,6 +67,11 @@
       "commandName": "Project",
       "commandLineArgs": "repo set-checkpointdays --checkpointDays 5.1 --output Verbose",
       "workingDirectory": "C:\\Source\\GraceDemo\\Chris"
+    },
+    "grace repo create": {
+      "commandName": "Project",
+      "commandLineArgs": "repository create --ownerName \"Owner0009\" --organizationName \"Organization0009\" --repositoryName \"Repository0009\" --repositoryId 042dc71e-e7d7-4f7f-bdac-f930b398fa8e",
+      "workingDirectory": "C:\\Source\\GraceDemo\\Chris"
     }
   }
 }

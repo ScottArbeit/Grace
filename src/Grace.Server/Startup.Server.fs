@@ -22,6 +22,7 @@ open Microsoft.Extensions.Logging
 open Swashbuckle.AspNetCore.Swagger
 open Swashbuckle.AspNetCore.SwaggerGen
 open Microsoft.OpenApi.Models
+open NodaTime
 open OpenTelemetry
 open OpenTelemetry.Exporter
 open OpenTelemetry.Instrumentation.AspNetCore
@@ -181,12 +182,19 @@ module Application =
             |> text
             |> RequestErrors.notFound
 
+        let mutable currentWorkingSet = String.Empty
+        let mutable maxWorkingSet = String.Empty
+        let mutable lastMetricsUpdateTime = Instant.MinValue
+        let mutable threadCount = String.Empty
+
         let enrichTelemetry (activity: Activity) (request: HttpRequest) = //(eventName: string) (obj: Object) =
             let currentProcess = Process.GetCurrentProcess()
             let context = request.HttpContext
-            let workingSet = currentProcess.WorkingSet64.ToString("N0")
-            let threadCount = currentProcess.Threads.Count.ToString("N0")
-            let maxWorkingSet = currentProcess.PeakWorkingSet64.ToString("N0")
+            if (lastMetricsUpdateTime + Duration.FromSeconds 10.0) < getCurrentInstant() then
+                currentWorkingSet <- currentProcess.WorkingSet64.ToString("N0")
+                maxWorkingSet <- currentProcess.PeakWorkingSet64.ToString("N0")
+                lastMetricsUpdateTime <- getCurrentInstant()
+                threadCount <- currentProcess.Threads.Count.ToString("N0")
 
             let user = context.User                
             if user.Identity.IsAuthenticated then
@@ -199,7 +207,7 @@ module Application =
                     claimsList.Remove(claimsList.Length - 1, 1) |> ignore
                 activity.AddTag("enduser.id", user.Identity.Name)
                         .AddTag("enduser.claims", claimsList.ToString()) |> ignore
-            activity.AddTag("working_set", workingSet)
+            activity.AddTag("working_set", currentWorkingSet)
                     .AddTag("max_working_set", maxWorkingSet)
                     .AddTag("thread_count", threadCount)
                     .AddTag("http.client_ip", context.Connection.RemoteIpAddress)
@@ -288,7 +296,7 @@ module Application =
                 options.Actors.RegisterActor<BranchName.BranchNameActor>()
                 options.Actors.RegisterActor<ContainerName.ContainerNameActor>()
                 options.Actors.RegisterActor<Diff.DiffActor>()
-                options.Actors.RegisterActor<Directory.DirectoryActor>()
+                options.Actors.RegisterActor<Directory.DirectoryVersionActor>()
                 options.Actors.RegisterActor<DirectoryAppearance.DirectoryAppearanceActor>()
                 options.Actors.RegisterActor<FileAppearance.FileAppearanceActor>()
                 options.Actors.RegisterActor<Organization.OrganizationActor>()
@@ -304,7 +312,7 @@ module Application =
                 options.ActorScanInterval <- TimeSpan.FromSeconds(60.0)         // Default is 30s
                 options.DrainOngoingCallTimeout <- TimeSpan.FromSeconds(30.0)   // Default is 60s
                 options.DrainRebalancedActors <- true                           // Default is false
-                options.RemindersStoragePartitions <- 4
+                options.RemindersStoragePartitions <- 32
             )
 
             services.AddSignalR(fun options -> options.EnableDetailedErrors <- true)

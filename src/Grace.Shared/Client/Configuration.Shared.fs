@@ -19,7 +19,7 @@ module Configuration =
 
     let writeNewConfiguration = false
 
-    /// The global client-side configuration object for Grace.
+    /// The global, client-side configuration object for Grace.
     // GraceConfiguration is implemented as a class, rather than a record, to allow for less brittle JSON serialization and deserialization of the configuration file.
     // Records don't handle missing values well during deserialization.
     type GraceConfiguration() =

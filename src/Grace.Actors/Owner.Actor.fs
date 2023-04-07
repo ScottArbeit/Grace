@@ -31,6 +31,7 @@ module Owner =
         let log = host.LoggerFactory.CreateLogger(actorName)
         let mutable actorStartTime = Instant.MinValue
         let mutable logScope: IDisposable = null
+        let mutable currentCommand = String.Empty
 
         let dtoStateName = "ownerDtoState"
         let eventsStateName = "ownerEventsState"
@@ -67,21 +68,28 @@ module Owner =
         member private this.SetMaintenanceReminder() =
             this.RegisterReminderAsync("MaintenanceReminder", Array.empty<byte>, TimeSpan.FromDays(7.0), TimeSpan.FromDays(7.0))
 
+        member private this.UnregisterMaintenanceReminder() =
+            this.UnregisterReminderAsync("MaintenanceReminder")
+
         member private this.OnFirstWrite() =
             task {
-                let! _ = DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> this.SetMaintenanceReminder())
+                //let! _ = DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> this.SetMaintenanceReminder())
                 ()
             }
 
         override this.OnPreActorMethodAsync(context) =
             actorStartTime <- getCurrentInstant()
             logScope <- log.BeginScope("Actor {actorName}", actorName)
+            currentCommand <- String.Empty
             //log.LogInformation("{CurrentInstant}: Started {ActorName}.{MethodName} Id: {Id}.", getCurrentInstantExtended(), actorName, context.MethodName, this.Id.GetId())
             Task.CompletedTask
             
         override this.OnPostActorMethodAsync(context) =
             let duration = getCurrentInstant().Minus(actorStartTime)
-            log.LogInformation("{CurrentInstant}: Finished {ActorName}.{MethodName} Id: {Id}; Duration: {duration}ms.", getCurrentInstantExtended(), actorName, context.MethodName, this.Id.GetId(), duration.TotalMilliseconds.ToString("F3"))
+            if String.IsNullOrEmpty(currentCommand) then
+                log.LogInformation("{CurrentInstant}: Finished {ActorName}.{MethodName}; Id: {Id}; Duration: {duration}ms.", $"{getCurrentInstantExtended(),-28}", actorName, context.MethodName, this.Id.GetId(), duration.TotalMilliseconds.ToString("F3"))
+            else
+                log.LogInformation("{CurrentInstant}: Finished {ActorName}.{MethodName}; Command: {Command}; Id: {Id}; Duration: {duration}ms.", $"{getCurrentInstantExtended(),-28}", actorName, context.MethodName, currentCommand, this.Id.GetId(), duration.TotalMilliseconds.ToString("F3"))
             logScope.Dispose()
             Task.CompletedTask
             
@@ -175,27 +183,31 @@ module Owner =
                 let processCommand (command: OwnerCommand) metadata =
                     task {
                         try
-                            let event = 
-                                match command with
-                                | OwnerCommand.Create (ownerId, ownerName) -> OwnerEventType.Created (ownerId, ownerName)
-                                | OwnerCommand.SetName ownerName ->  OwnerEventType.NameSet ownerName
-                                | OwnerCommand.SetType ownerType -> OwnerEventType.TypeSet ownerType
-                                | OwnerCommand.SetSearchVisibility searchVisibility -> OwnerEventType.SearchVisibilitySet searchVisibility
-                                | OwnerCommand.SetDescription description -> OwnerEventType.DescriptionSet description
-                                | OwnerCommand.AddOrganization (repositoryId, repositoryName) -> OwnerEventType.OrganizationAdded (repositoryId, repositoryName)
-                                | OwnerCommand.DeleteOrganization repositoryId -> OwnerEventType.OrganizationDeleted repositoryId
-                                | OwnerCommand.DeleteLogical (force, deleteReason) -> OwnerEventType.LogicalDeleted (force, deleteReason)
-                                | OwnerCommand.DeletePhysical ->
-                                    this.SchedulePhysicalDeletion().RunSynchronously()
-                                    OwnerEventType.PhysicalDeleted
-                                | OwnerCommand.Undelete -> OwnerEventType.Undeleted
-                            
+                            let! event = 
+                                task {
+                                    match command with
+                                    | OwnerCommand.Create (ownerId, ownerName) -> return OwnerEventType.Created (ownerId, ownerName)
+                                    | OwnerCommand.SetName ownerName -> return OwnerEventType.NameSet ownerName
+                                    | OwnerCommand.SetType ownerType -> return OwnerEventType.TypeSet ownerType
+                                    | OwnerCommand.SetSearchVisibility searchVisibility -> return OwnerEventType.SearchVisibilitySet searchVisibility
+                                    | OwnerCommand.SetDescription description -> return OwnerEventType.DescriptionSet description
+                                    | OwnerCommand.AddOrganization (repositoryId, repositoryName) -> return OwnerEventType.OrganizationAdded (repositoryId, repositoryName)
+                                    | OwnerCommand.DeleteOrganization repositoryId -> return OwnerEventType.OrganizationDeleted repositoryId
+                                    | OwnerCommand.DeleteLogical (force, deleteReason) ->
+                                        //do! this.UnregisterMaintenanceReminder()
+                                        return OwnerEventType.LogicalDeleted (force, deleteReason)
+                                    | OwnerCommand.DeletePhysical ->
+                                        do! this.SchedulePhysicalDeletion()
+                                        return OwnerEventType.PhysicalDeleted
+                                    | OwnerCommand.Undelete -> return OwnerEventType.Undeleted
+                                }
                             return! this.ApplyEvent {Event = event; Metadata = metadata}
                         with ex ->
                             return Error (GraceError.Create $"{createExceptionResponse ex}" metadata.CorrelationId)
                     }
 
                 task {
+                    currentCommand <- discriminatedUnionCaseNameToString command
                     match! isValid command metadata with
                     | Ok command -> return! processCommand command metadata
                     | Error error -> return Error error

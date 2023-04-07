@@ -33,6 +33,7 @@ module Repository =
         let log = host.LoggerFactory.CreateLogger(actorName)
         let mutable actorStartTime = Instant.MinValue
         let mutable logScope: IDisposable = null
+        let mutable currentCommand = String.Empty
 
         let dtoStateName = "repositoryDtoState"
         let eventsStateName = "repositoryEventsState"
@@ -58,9 +59,12 @@ module Repository =
         member private this.SetMaintenanceReminder() =
             this.RegisterReminderAsync("MaintenanceReminder", Array.empty<byte>, TimeSpan.FromDays(7.0), TimeSpan.FromDays(7.0))
 
+        member private this.UnregisterMaintenanceReminder() =
+            this.UnregisterReminderAsync("MaintenanceReminder")
+
         member private this.OnFirstWrite() =
             task {
-                let! _ = DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> this.SetMaintenanceReminder())
+                //let! _ = DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> this.SetMaintenanceReminder())
                 ()
             }
 
@@ -98,11 +102,25 @@ module Repository =
 
             {newRepositoryDto with UpdatedAt = Some (getCurrentInstant())}
 
+        // This is essentially an object-oriented implementation of the Lazy<T> pattern. I was having issues with Lazy<T>, 
+        //   and after a solid day wrestling with it, I dropped it and did this. Works a treat.
+        member private this.RepositoryEvents() =
+            let stateManager = this.StateManager
+            task {
+                if repositoryEvents = null then            
+                    let! retrievedEvents = Storage.RetrieveState<List<RepositoryEvent>> stateManager eventsStateName
+                    repositoryEvents <- match retrievedEvents with
+                                           | Some retrievedEvents -> retrievedEvents; 
+                                           | None -> List<RepositoryEvent>()
+            
+                return repositoryEvents
+            }
+
         member private this.ApplyEvent(repositoryEvent) =
             let stateManager = this.StateManager
-            let (repositoryEvents: List<RepositoryEvent>) = this.RepositoryEvents
             task {
                 try
+                    let! repositoryEvents = this.RepositoryEvents()
                     if repositoryEvents.Count = 0 then
                         do! this.OnFirstWrite()
 
@@ -138,26 +156,19 @@ module Repository =
                 return ()
             }
 
-        member private this.RepositoryEvents with get() = (
-            let stateManager = this.StateManager
-            if repositoryEvents = null then            
-                let retrievedEvents = (Storage.RetrieveState<List<RepositoryEvent>> stateManager eventsStateName).Result
-                repositoryEvents <- match retrievedEvents with
-                                       | Some retrievedEvents -> retrievedEvents; 
-                                       | None -> List<RepositoryEvent>()
-            
-            repositoryEvents
-        )
-
         override this.OnPreActorMethodAsync(context) =
             actorStartTime <- getCurrentInstant()
             logScope <- log.BeginScope("Actor {actorName}", actorName)
+            currentCommand <- String.Empty
             //log.LogInformation("{CurrentInstant}: Started {ActorName}.{MethodName}, Id: {Id}.", getCurrentInstantExtended(), actorName, context.MethodName, this.Id.GetId())
             Task.CompletedTask
             
         override this.OnPostActorMethodAsync(context) =
             let duration = getCurrentInstant().Minus(actorStartTime)
-            log.LogInformation("{CurrentInstant}: Finished {ActorName}.{MethodName}, Id: {Id}; Duration: {duration}ms.", getCurrentInstantExtended(), actorName, context.MethodName, this.Id.GetId(), duration.TotalMilliseconds.ToString("F3"))
+            if String.IsNullOrEmpty(currentCommand) then
+                log.LogInformation("{CurrentInstant}: Finished {ActorName}.{MethodName}; Id: {Id}; Duration: {duration}ms.", $"{getCurrentInstantExtended(),-28}", actorName, context.MethodName, this.Id.GetId(), duration.TotalMilliseconds.ToString("F3"))
+            else
+                log.LogInformation("{CurrentInstant}: Finished {ActorName}.{MethodName}; Command: {Command}; Id: {Id}; Duration: {duration}ms.", $"{getCurrentInstantExtended(),-28}", actorName, context.MethodName, currentCommand, this.Id.GetId(), duration.TotalMilliseconds.ToString("F3"))
             logScope.Dispose()
             Task.CompletedTask
 
@@ -165,8 +176,9 @@ module Repository =
             member this.Export() = 
                 task {
                     try
-                        if this.RepositoryEvents.Count > 0 then
-                            return Ok this.RepositoryEvents
+                        let! repositoryEvents = this.RepositoryEvents()
+                        if repositoryEvents.Count > 0 then
+                            return Ok repositoryEvents
                         else
                             return Error ExportError.EventListIsEmpty
                     with ex ->
@@ -177,13 +189,14 @@ module Repository =
                 let stateManager = this.StateManager
                 task {
                     try
-                        this.RepositoryEvents.Clear()
-                        this.RepositoryEvents.AddRange(events)
-                        let newRepositoryDto = this.RepositoryEvents.Aggregate(RepositoryDto.Default,
+                        let! repositoryEvents = this.RepositoryEvents()
+                        repositoryEvents.Clear()
+                        repositoryEvents.AddRange(events)
+                        let newRepositoryDto = repositoryEvents.Aggregate(RepositoryDto.Default,
                             (fun state evnt -> (this.updateDto evnt state)))
                         do! DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> stateManager.SetStateAsync(eventsStateName, this.RepositoryEvents))
                         do! DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> stateManager.SetStateAsync(dtoStateName, newRepositoryDto))
-                        return Ok this.RepositoryEvents.Count
+                        return Ok repositoryEvents.Count
                     with ex -> 
                         return Error (ImportError.Exception (createExceptionResponse ex))
                 }
@@ -193,18 +206,19 @@ module Repository =
                 let stateManager = this.StateManager
                 task {
                     try
-                        if this.RepositoryEvents.Count > 0 then
-                            let eventsToKeep = this.RepositoryEvents.Count - eventsToRevert
+                        let! repositoryEvents = this.RepositoryEvents()
+                        if repositoryEvents.Count > 0 then
+                            let eventsToKeep = repositoryEvents.Count - eventsToRevert
                             if eventsToKeep <= 0 then  
                                 return Error RevertError.OutOfRange
                             else
-                                let revertedEvents = this.RepositoryEvents.Take(eventsToKeep)
+                                let revertedEvents = repositoryEvents.Take(eventsToKeep)
                                 let newRepositoryDto = revertedEvents.Aggregate(RepositoryDto.Default,
                                     (fun state evnt -> (this.updateDto evnt state)))
                                 match persist with
                                 | PersistAction.Save ->
-                                    this.RepositoryEvents.Clear()
-                                    this.RepositoryEvents.AddRange(revertedEvents)
+                                    repositoryEvents.Clear()
+                                    repositoryEvents.AddRange(revertedEvents)
                                     do! DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> stateManager.SetStateAsync(eventsStateName, revertedEvents))
                                     do! DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> stateManager.SetStateAsync(dtoStateName, newRepositoryDto))
                                 | DoNotSave -> ()
@@ -219,8 +233,9 @@ module Repository =
                 let stateManager = this.StateManager
                 task {
                     try
-                        if this.RepositoryEvents.Count > 0 then
-                            let revertedEvents = this.RepositoryEvents.Where(fun evnt -> evnt.Metadata.Timestamp < whenToRevertTo)
+                        let! repositoryEvents = this.RepositoryEvents()
+                        if repositoryEvents.Count > 0 then
+                            let revertedEvents = repositoryEvents.Where(fun evnt -> evnt.Metadata.Timestamp < whenToRevertTo)
                             if revertedEvents.Count() = 0 then  
                                 return Error RevertError.OutOfRange
                             else
@@ -229,8 +244,8 @@ module Repository =
                                 match persist with
                                 | PersistAction.Save -> 
                                     task {
-                                        this.RepositoryEvents.Clear()
-                                        this.RepositoryEvents.AddRange(revertedEvents)
+                                        repositoryEvents.Clear()
+                                        repositoryEvents.AddRange(revertedEvents)
                                         do! DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> stateManager.SetStateAsync(eventsStateName, revertedEvents))
                                         do! DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> stateManager.SetStateAsync(dtoStateName, newRepositoryDto))
                                     } |> ignore
@@ -242,8 +257,11 @@ module Repository =
                         return Error (RevertError.Exception (createExceptionResponse ex))
                 }
 
-            member this.EventCount() =
-                Task.FromResult(this.RepositoryEvents.Count)
+            member this.EventCount() = 
+                task {
+                    let! repositoryEvents = this.RepositoryEvents()
+                    return repositoryEvents.Count
+                }
 
         interface IRepositoryActor with
             member this.Get() =
@@ -260,58 +278,64 @@ module Repository =
 
             member this.Handle command metadata =
                 let isValid command (metadata: EventMetadata) =
-                    if this.RepositoryEvents.Exists(fun ev -> ev.Metadata.CorrelationId = metadata.CorrelationId) then
-                        Error (GraceError.Create (RepositoryError.getErrorMessage DuplicateCorrelationId) metadata.CorrelationId)
-                    else
-                        match command with 
-                            | RepositoryCommand.Create (_, _, _, _) ->
-                                match repositoryDto.UpdatedAt with
-                                | Some _ -> Error (GraceError.Create (RepositoryError.getErrorMessage RepositoryIdAlreadyExists) metadata.CorrelationId)
-                                | None -> Ok command
-                            | _ -> 
-                                match repositoryDto.UpdatedAt with
-                                | Some _ -> Ok command
-                                | None -> Error (GraceError.Create (RepositoryError.getErrorMessage RepositoryIdDoesNotExist) metadata.CorrelationId)
+                    task {
+                        let! repositoryEvents = this.RepositoryEvents()
+                        if repositoryEvents.Exists(fun ev -> ev.Metadata.CorrelationId = metadata.CorrelationId) then
+                            return Error (GraceError.Create (RepositoryError.getErrorMessage DuplicateCorrelationId) metadata.CorrelationId)
+                        else
+                            match command with 
+                                | RepositoryCommand.Create (_, _, _, _) ->
+                                    match repositoryDto.UpdatedAt with
+                                    | Some _ -> return Error (GraceError.Create (RepositoryError.getErrorMessage RepositoryIdAlreadyExists) metadata.CorrelationId)
+                                    | None -> return Ok command
+                                | _ -> 
+                                    match repositoryDto.UpdatedAt with
+                                    | Some _ -> return Ok command
+                                    | None -> return Error (GraceError.Create (RepositoryError.getErrorMessage RepositoryIdDoesNotExist) metadata.CorrelationId)
+                    }
 
                 let processCommand command metadata =
                     task {
                         try
-                            let event =
-                                match command with
-                                | Create (repositoryName, repositoryId, ownerId, organizationId) -> Created (repositoryName, repositoryId, ownerId, organizationId)
-                                | SetObjectStorageProvider objectStorageProvider ->  ObjectStorageProviderSet objectStorageProvider
-                                | SetStorageAccountName storageAccountName -> StorageAccountNameSet storageAccountName
-                                | SetStorageContainerName containerName -> StorageContainerNameSet containerName
-                                | SetRepositoryStatus repositoryStatus -> RepositoryStatusSet repositoryStatus
-                                | SetVisibility repositoryVisibility -> RepositoryVisibilitySet repositoryVisibility
-                                | AddBranch branchName -> BranchAdded branchName
-                                | DeleteBranch branchName -> BranchDeleted branchName
-                                | SetRecordSaves recordSaves -> RecordSavesSet recordSaves
-                                | SetDefaultServerApiVersion version -> DefaultServerApiVersionSet version
-                                | SetDefaultBranchName defaultBranchName -> DefaultBranchNameSet defaultBranchName
-                                | SetSaveDays days -> SaveDaysSet days
-                                | SetCheckpointDays days -> CheckpointDaysSet days
-                                | EnableSingleStepPromotion enabled -> EnabledSingleStepPromotion enabled
-                                | EnableComplexPromotion enabled -> EnabledComplexPromotion enabled
-                                | SetDescription description -> DescriptionSet description
-                                | DeleteLogical (force, deleteReason) -> LogicalDeleted (force, deleteReason)
-                                | DeletePhysical ->
-                                    (task {
+                            let! event =
+                                task {
+                                    match command with
+                                    | Create (repositoryName, repositoryId, ownerId, organizationId) -> return Created (repositoryName, repositoryId, ownerId, organizationId)
+                                    | SetObjectStorageProvider objectStorageProvider -> return ObjectStorageProviderSet objectStorageProvider
+                                    | SetStorageAccountName storageAccountName -> return StorageAccountNameSet storageAccountName
+                                    | SetStorageContainerName containerName -> return StorageContainerNameSet containerName
+                                    | SetRepositoryStatus repositoryStatus -> return RepositoryStatusSet repositoryStatus
+                                    | SetVisibility repositoryVisibility -> return RepositoryVisibilitySet repositoryVisibility
+                                    | AddBranch branchName -> return BranchAdded branchName
+                                    | DeleteBranch branchName -> return BranchDeleted branchName
+                                    | SetRecordSaves recordSaves -> return RecordSavesSet recordSaves
+                                    | SetDefaultServerApiVersion version -> return DefaultServerApiVersionSet version
+                                    | SetDefaultBranchName defaultBranchName -> return DefaultBranchNameSet defaultBranchName
+                                    | SetSaveDays days -> return SaveDaysSet days
+                                    | SetCheckpointDays days -> return CheckpointDaysSet days
+                                    | EnableSingleStepPromotion enabled -> return EnabledSingleStepPromotion enabled
+                                    | EnableComplexPromotion enabled -> return EnabledComplexPromotion enabled
+                                    | SetDescription description -> return DescriptionSet description
+                                    | DeleteLogical (force, deleteReason) -> 
+                                        //do! this.UnregisterMaintenanceReminder()
+                                        return LogicalDeleted (force, deleteReason)
+                                    | DeletePhysical ->
                                         do! this.SchedulePhysicalDeletion()
-                                    }).Wait()
-                                    PhysicalDeleted
-                                | RepositoryCommand.Undelete -> Undeleted
+                                        return PhysicalDeleted
+                                    | RepositoryCommand.Undelete -> return Undeleted
+                                }
                             
                             return! this.ApplyEvent {Event = event; Metadata = metadata}
                         with ex ->
                             return Error (GraceError.Create $"{createExceptionResponse ex}" metadata.CorrelationId)
                     }
 
-                match isValid command metadata with
-                | Ok command -> 
-                    processCommand command metadata
-                | Error error -> 
-                    Task.FromResult(Error error)
+                task {
+                    currentCommand <- discriminatedUnionCaseNameToString command
+                    match! isValid command metadata with
+                    | Ok command -> return! processCommand command metadata
+                    | Error error -> return Error error
+                }
 
         interface IRemindable with
             member this.ReceiveReminderAsync(reminderName, state, dueTime, period) =

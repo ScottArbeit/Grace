@@ -35,6 +35,7 @@ open System.Net
 open System.Threading.Tasks
 open System.Text
 open Grace.Actors.Interfaces
+open Microsoft.Azure.Cosmos
 
 module Services =
 
@@ -114,12 +115,12 @@ module Services =
     /// <param name="context">The current HttpContext.</param>
     let result400BadRequest<'T> = returnResult<'T> StatusCodes.Status400BadRequest
 
-    /// <summary>
-    /// Adds common attributes to the current OpenTelemetry activity, and returns the result with a 404 Not found status.
-    /// </summary>
-    /// <param name="result">The result value to serialize into JSON.</param>
-    /// <param name="context">The current HttpContext.</param>
-    //let result404NotFound<'T> = returnResult<'T> StatusCodes.Status404NotFound
+    // /// <summary>
+    // /// Adds common attributes to the current OpenTelemetry activity, and returns the result with a 404 Not found status.
+    // /// </summary>
+    // /// <param name="result">The result value to serialize into JSON.</param>
+    // /// <param name="context">The current HttpContext.</param>
+    // let result404NotFound<'T> = returnResult<'T> StatusCodes.Status404NotFound
 
     /// <summary>
     /// Adds common attributes to the current OpenTelemetry activity, and returns the result with a 500 Internal server error status.
@@ -488,7 +489,7 @@ module Services =
         #if DEBUG
             let failed = List<string>()
             try
-                let queryDefinition = QueryDefinition("SELECT c.id, c.partitionKey FROM c")
+                let queryDefinition = QueryDefinition("SELECT c.id, c.partitionKey FROM c ORDER BY c.partitionKey")
                 let iterator = CosmosContainer().GetItemQueryIterator<DocumentIdentifier>(queryDefinition, requestOptions = queryRequestOptions)
                 while iterator.HasMoreResults do
                     let! results = iterator.ReadNextAsync()

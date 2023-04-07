@@ -103,7 +103,7 @@ module Notifications =
                         let! x = diffActorProxy.Populate()
                         ()
                     }
-            
+
                 let cloudEvent = body |> deserialize<CloudEvent<string>>
                 //let graceEvent = deserialize<GraceEvent> body
                 let graceEvent = cloudEvent.Data |> deserialize<GraceEvent>

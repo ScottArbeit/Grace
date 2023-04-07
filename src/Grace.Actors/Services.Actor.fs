@@ -18,6 +18,7 @@ open System.Collections.Generic
 open System.IO
 open System.Linq
 open System.Threading.Tasks
+open Services
 
 module Services =
 
@@ -43,11 +44,11 @@ module Services =
     let private sharedKeyCredential = StorageSharedKeyCredential(defaultObjectStorageAccount, storageKey)
 
     //let actorProxyOptions = ActorProxyOptions(JsonSerializerOptions = Constants.JsonSerializerOptions, HttpEndpoint = daprEndpoint)
-    //let actorProxyFactory = ActorProxyFactory(actorProxyOptions)
+    //let ActorProxyFactory = ActorProxyFactory(actorProxyOptions)
 
-    let mutable private actorProxyFactory: IActorProxyFactory = null
+    let mutable ActorProxyFactory: IActorProxyFactory = null
     let setActorProxyFactory proxyFactory =
-        actorProxyFactory <- proxyFactory
+        ActorProxyFactory <- proxyFactory
 
     let getContainerClient (storageAccountName: StorageAccountName) (containerName: StorageContainerName) =
         task {
@@ -65,7 +66,7 @@ module Services =
         task {
             //logToConsole $"* In getAzureBlobClient; repositoryId: {repositoryDto.RepositoryId}; fileVersion: {fileVersion.RelativePath}."
             let containerNameActorId = ActorId($"{repositoryDto.RepositoryId}")
-            let containerNameActorProxy = actorProxyFactory.CreateActorProxy<IContainerNameActor>(containerNameActorId, ActorName.ContainerName)
+            let containerNameActorProxy = ActorProxyFactory.CreateActorProxy<IContainerNameActor>(containerNameActorId, ActorName.ContainerName)
             let! containerName = containerNameActorProxy.GetContainerName()
             match containerName with
             | Ok containerName ->
@@ -80,7 +81,7 @@ module Services =
         task {
             //logToConsole $"In createAzureBlobSasUri; fileVersion.RelativePath: {fileVersion.RelativePath}."
             let containerNameActorId = ActorId($"{repositoryDto.RepositoryId}")
-            let containerNameActorProxy = actorProxyFactory.CreateActorProxy<IContainerNameActor>(containerNameActorId, ActorName.ContainerName)
+            let containerNameActorProxy = ActorProxyFactory.CreateActorProxy<IContainerNameActor>(containerNameActorId, ActorName.ContainerName)
             let! containerName = containerNameActorProxy.GetContainerName()
             //logToConsole $"containerName: {containerName}."
             match containerName with

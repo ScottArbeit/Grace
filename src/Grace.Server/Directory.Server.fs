@@ -28,7 +28,7 @@ open System.Threading.Tasks
 module Directory =
 
     type Validations<'T when 'T :> DirectoryParameters> = 'T -> HttpContext -> Task<Result<unit, DirectoryError>> list
-    //type QueryResult<'T, 'U when 'T :> DirectoryParameters> = 'T -> int -> IDirectoryActor ->Task<'U>
+    //type QueryResult<'T, 'U when 'T :> DirectoryParameters> = 'T -> int -> IDirectoryVersionActor ->Task<'U>
     
     let activitySource = new ActivitySource("Branch")
 
@@ -36,7 +36,7 @@ module Directory =
 
     let getActorProxy (context: HttpContext) (directoryId: DirectoryId) =
         let actorId = GetActorId directoryId
-        actorProxyFactory.CreateActorProxy<IDirectoryActor>(actorId, ActorName.Directory)
+        actorProxyFactory.CreateActorProxy<IDirectoryVersionActor>(actorId, ActorName.DirectoryVersion)
 
     let processCommand<'T when 'T :> DirectoryParameters> (context: HttpContext) (validations: Validations<'T>) (command: 'T -> HttpContext -> Task<GraceResult<string>>) =
         task {
@@ -62,7 +62,7 @@ module Directory =
                 return! context |> result500ServerError graceError
         }
 
-    let processQuery<'T, 'U when 'T :> DirectoryParameters> (context: HttpContext) (parameters: 'T) (validations: Validations<'T>) maxCount (query: QueryResult<IDirectoryActor, 'U>) =
+    let processQuery<'T, 'U when 'T :> DirectoryParameters> (context: HttpContext) (parameters: 'T) (validations: Validations<'T>) maxCount (query: QueryResult<IDirectoryVersionActor, 'U>) =
         task {
             use activity = activitySource.StartActivity("processQuery", ActivityKind.Server)
             try
@@ -93,7 +93,7 @@ module Directory =
                 let command (parameters: CreateParameters) (context: HttpContext) =
                     task {
                         let actorId = GetActorId parameters.DirectoryVersion.DirectoryId
-                        let actorProxy = ApplicationContext.ActorProxyFactory().CreateActorProxy<IDirectoryActor>(actorId, ActorName.Directory)
+                        let actorProxy = ApplicationContext.ActorProxyFactory().CreateActorProxy<IDirectoryVersionActor>(actorId, ActorName.DirectoryVersion)
                         let correlationId = context.Items[Constants.CorrelationIdHeaderKey] :?> string
                         return! actorProxy.Create parameters.DirectoryVersion correlationId
                     }
@@ -110,7 +110,7 @@ module Directory =
                       Repository.repositoryIdExists $"{parameters.RepositoryId}" context DirectoryError.RepositoryDoesNotExist
                       Directory.directoryIdExists (Guid.Parse(parameters.DirectoryId)) context DirectoryError.DirectoryDoesNotExist ]
 
-                let query (context: HttpContext) (maxCount: int) (actorProxy: IDirectoryActor) =
+                let query (context: HttpContext) (maxCount: int) (actorProxy: IDirectoryVersionActor) =
                     task {
                         let! directoryVersion = actorProxy.Get()
                         return directoryVersion
@@ -129,7 +129,7 @@ module Directory =
                       Repository.repositoryIdExists $"{parameters.RepositoryId}" context DirectoryError.RepositoryDoesNotExist
                       Directory.directoryIdExists (Guid.Parse(parameters.DirectoryId)) context DirectoryError.DirectoryDoesNotExist ]
 
-                let query (context: HttpContext) (maxCount: int) (actorProxy: IDirectoryActor) =
+                let query (context: HttpContext) (maxCount: int) (actorProxy: IDirectoryVersionActor) =
                     task {
                         let! directoryVersions = actorProxy.GetDirectoryVersionsRecursive()
                         return directoryVersions
@@ -147,12 +147,12 @@ module Directory =
                       Repository.repositoryIdExists $"{parameters.RepositoryId}" context DirectoryError.RepositoryDoesNotExist
                       Directory.directoryIdsExist parameters.DirectoryIds context DirectoryError.DirectoryDoesNotExist ]
 
-                let query (context: HttpContext) (maxCount: int) (actorProxy: IDirectoryActor) =
+                let query (context: HttpContext) (maxCount: int) (actorProxy: IDirectoryVersionActor) =
                     task {
                         let directoryVersions = List<DirectoryVersion>()
                         let directoryIds = context.Items[nameof(GetByDirectoryIdsParameters)] :?> List<DirectoryId>
                         for directoryId in directoryIds do
-                            let actorProxy = ApplicationContext.ActorProxyFactory().CreateActorProxy<IDirectoryActor>(ActorId($"{directoryId}"), ActorName.Directory)
+                            let actorProxy = ApplicationContext.ActorProxyFactory().CreateActorProxy<IDirectoryVersionActor>(ActorId($"{directoryId}"), ActorName.DirectoryVersion)
                             let! directoryVersion = actorProxy.Get()
                             directoryVersions.Add(directoryVersion)
                         return directoryVersions
@@ -172,7 +172,7 @@ module Directory =
                       String.isNotEmpty parameters.Sha256Hash DirectoryError.Sha256HashIsRequired
                       Repository.repositoryIdExists $"{parameters.RepositoryId}" context DirectoryError.RepositoryDoesNotExist ]
 
-                let query (context: HttpContext) (maxCount: int) (actorProxy: IDirectoryActor) =
+                let query (context: HttpContext) (maxCount: int) (actorProxy: IDirectoryVersionActor) =
                     task {
                         let parameters = context.Items[nameof(GetBySha256HashParameters)] :?> GetBySha256HashParameters
                         let! directoryVersion = getDirectoryBySha256Hash (Guid.Parse(parameters.RepositoryId)) (Sha256Hash parameters.Sha256Hash)
@@ -206,7 +206,7 @@ module Directory =
                         do! Parallel.ForEachAsync(parameters.DirectoryVersions, Constants.ParallelOptions, (fun dv ct ->
                             ValueTask(task {
                                 let actorId = GetActorId dv.DirectoryId
-                                let actorProxy = ApplicationContext.ActorProxyFactory().CreateActorProxy<IDirectoryActor>(actorId, ActorName.Directory)
+                                let actorProxy = ApplicationContext.ActorProxyFactory().CreateActorProxy<IDirectoryVersionActor>(actorId, ActorName.DirectoryVersion)
                                 let! exists = actorProxy.Exists()
                                 if not <| exists then
                                     let! createResult = actorProxy.Create dv correlationId

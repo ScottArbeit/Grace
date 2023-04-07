@@ -375,11 +375,11 @@ module Validations =
                             let! branchDto = branchActorProxy.Get()
                             let allowed = 
                                 match referenceType with
-                                | Promotion -> if branchDto.EnabledPromotion then true else false
-                                | Commit -> if branchDto.EnabledCommit then true else false
-                                | Checkpoint -> if branchDto.EnabledCheckpoint then true else false
-                                | Save -> if branchDto.EnabledSave then true else false
-                                | Tag -> if branchDto.EnabledTag then true else false
+                                | Promotion -> if branchDto.PromotionEnabled then true else false
+                                | Commit -> if branchDto.CommitEnabled then true else false
+                                | Checkpoint -> if branchDto.CheckpointEnabled then true else false
+                                | Save -> if branchDto.SaveEnabled then true else false
+                                | Tag -> if branchDto.TagEnabled then true else false
                             if allowed then return Ok () else return Error error
                         else
                             return Error error
@@ -418,8 +418,8 @@ module Validations =
         let directoryIdExists<'T> (directoryId: Guid) (context: HttpContext) (error: 'T) =
             task {
                 let actorId = Directory.GetActorId(directoryId)
-                let directoryActorProxy = ApplicationContext.ActorProxyFactory().CreateActorProxy<IDirectoryActor>(actorId, ActorName.Directory)
-                let! exists = directoryActorProxy.Exists()
+                let directoryVersionActorProxy = ApplicationContext.ActorProxyFactory().CreateActorProxy<IDirectoryVersionActor>(actorId, ActorName.DirectoryVersion)
+                let! exists = directoryVersionActorProxy.Exists()
                 if exists then
                     return Ok ()
                 else
@@ -434,8 +434,8 @@ module Validations =
                 while directoryIdStack.Count > 0 && allExist do
                     let directoryId = directoryIdStack.Dequeue()
                     let actorId = Directory.GetActorId(directoryId)
-                    let directoryActorProxy = actorProxyFactory.CreateActorProxy<IDirectoryActor>(actorId, ActorName.Directory)
-                    let! exists = directoryActorProxy.Exists()
+                    let directoryVersionActorProxy = actorProxyFactory.CreateActorProxy<IDirectoryVersionActor>(actorId, ActorName.DirectoryVersion)
+                    let! exists = directoryVersionActorProxy.Exists()
                     allExist <- exists
                 if allExist then
                     return Ok ()

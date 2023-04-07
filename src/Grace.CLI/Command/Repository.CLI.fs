@@ -772,6 +772,7 @@ module Repository =
                     |> addOption Options.ownerId
                     |> addOption Options.organizationName
                     |> addOption Options.organizationId
+                    |> addOption Options.repositoryId
 
         let addCommonOptions (command: Command) =
             command |> addOption Options.repositoryId |> addOption Options.repositoryName |> addCommonOptionsExceptForRepositoryInfo
@@ -785,9 +786,13 @@ module Repository =
         repositoryCreateCommand.Handler <- Create
         repositoryCommand.AddCommand(repositoryCreateCommand)
 
-        let repositoryInitCommand = new Command("init", Description = "Initializes a new repository with the contents of a directory.") |> addOption Options.graceConfig |> addCommonOptions
+        let repositoryInitCommand = new Command("init", Description = "Initializes a new repository with the contents of a directory.") |> addOption Options.requiredRepositoryName |> addOption Options.graceConfig |> addCommonOptionsExceptForRepositoryInfo
         repositoryInitCommand.Handler <- Init
         repositoryCommand.AddCommand(repositoryInitCommand)
+
+        //let repositoryDownloadCommand = new Command("download", Description = "Downloads the current version of the repository.") |> addOption Options.requiredRepositoryName |> addOption Options.graceConfig |> addCommonOptionsExceptForRepositoryInfo
+        //repositoryInitCommand.Handler <- Init
+        //repositoryCommand.AddCommand(repositoryInitCommand)
 
         let getBranchesCommand = new Command("get-branches", Description = "Gets a list of branches in the repository.") |> addOption Options.includeDeleted |> addCommonOptions
         getBranchesCommand.Handler <- GetBranches

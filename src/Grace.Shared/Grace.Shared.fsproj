@@ -44,6 +44,7 @@
 	</ItemGroup>
 
 	<ItemGroup>
+		<PackageReference Include="Ben.Demystifier" Version="0.4.1" />
 		<PackageReference Include="DiffPlex" Version="1.7.1" />
 		<PackageReference Include="FSharp.Control.TaskSeq" Version="0.3.0" />
 		<PackageReference Include="FSharp.SystemTextJson" Version="1.1.23" />

@@ -7,6 +7,7 @@ open Grace.Shared
 open NodaTime
 open System.Collections.Generic
 open System.Threading.Tasks
+open Interfaces
 
 module DirectoryAppearance =
 
@@ -27,7 +28,7 @@ module DirectoryAppearance =
     type IDirectoryAppearanceActor =
         inherit IActor
         abstract member Add: appearance: Appearance -> Task
-        abstract member Remove: appearance: Appearance -> Task
+        abstract member Remove: appearance: Appearance -> correlationId: string-> Task
         abstract member Contains: appearance: Appearance -> Task<bool>
         abstract member Appearances: unit -> Task<AppearancesList>
 
@@ -59,14 +60,22 @@ module DirectoryAppearance =
                         do! Storage.SaveState stateManager dtoStateName dto
                 } :> Task
 
-            member this.Remove(appearance) =
+            member this.Remove appearance correlationId =
                 let stateManager = this.StateManager
                 task {
                     let wasRemoved = dto.Appearances.Remove(appearance)
                     if wasRemoved then
                         if dto.Appearances.Count = 0 then
                             let! deleteSucceeded = Storage.DeleteState stateManager dtoStateName
-                            ()
+                            if deleteSucceeded then
+                                let directoryVersionActorProxy = Services.ActorProxyFactory.CreateActorProxy<IDirectoryVersionActor>(this.Id, Constants.ActorName.DirectoryVersion)
+                                let! result = directoryVersionActorProxy.Delete(correlationId)
+                                match result with
+                                | Ok returnValue ->
+                                    ()
+                                | Error error ->
+                                    ()
+                                ()
                         else
                             do! Storage.SaveState stateManager dtoStateName dto
                         ()

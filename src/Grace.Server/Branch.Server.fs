@@ -886,9 +886,9 @@ module Branch =
                                 }
 
                             if rootDirectoryVersion.DirectoryId <> DirectoryVersion.Default.DirectoryId then
-                                let directoryActorId = ActorId($"{rootDirectoryVersion.DirectoryId}")
-                                let directoryActorProxy = ApplicationContext.ActorProxyFactory().CreateActorProxy<IDirectoryActor>(directoryActorId, ActorName.Directory)
-                                let! directoryVersions = directoryActorProxy.GetDirectoryVersionsRecursive()
+                                let directoryVersionActorId = ActorId($"{rootDirectoryVersion.DirectoryId}")
+                                let directoryVersionActorProxy = ApplicationContext.ActorProxyFactory().CreateActorProxy<IDirectoryVersionActor>(directoryVersionActorId, ActorName.DirectoryVersion)
+                                let! directoryVersions = directoryVersionActorProxy.GetDirectoryVersionsRecursive()
                                 let directoryIds = directoryVersions.Select(fun dv -> dv.DirectoryId).ToList()
                                 return directoryIds
                             else

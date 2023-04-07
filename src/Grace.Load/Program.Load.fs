@@ -15,12 +15,12 @@ open System.Collections.Concurrent
 
 module Load =
 
-    let numberOfRepositories = 50
-    let numberOfEvents = 1000
+    let numberOfRepositories = 20
+    let numberOfEvents = 200
 
     let showResult<'T> (r: GraceResult<'T>) =
         match r with
-        | Ok result -> logToConsole (sprintf "%s - CorrelationId: %s" (result.Properties["EventType"]) result.CorrelationId)
+        | Ok result -> () //logToConsole (sprintf "%s - CorrelationId: %s" (result.Properties["EventType"]) result.CorrelationId)
         | Error error -> logToConsole $"{error}"
     
     let g() = $"{Guid.NewGuid()}"
@@ -90,6 +90,7 @@ module Load =
             ))
 
             let setupTime = getCurrentInstant()
+            logToConsole "Setup complete."
 
             do! Parallel.ForEachAsync({0..numberOfEvents}, Constants.ParallelOptions, (fun (i: int) (cancellationToken: CancellationToken) ->
                 ValueTask(task {
@@ -116,6 +117,7 @@ module Load =
             ))
 
             let mainProcessingTime = getCurrentInstant()
+            logToConsole "Main processing complete."
 
             // Tear down
             do! Parallel.ForEachAsync({0..numberOfRepositories}, Constants.ParallelOptions, (fun (i: int) (cancellationToken: CancellationToken) ->
@@ -137,6 +139,8 @@ module Load =
             ))
 
             let endTime = getCurrentInstant()
+            logToConsole "Tear down complete."
+
             printfn $"Setup time:       {setupTime - startTime}."
             printfn $"Processing time:  {mainProcessingTime - setupTime}."
             printfn $"Tear down:        {endTime - mainProcessingTime}."

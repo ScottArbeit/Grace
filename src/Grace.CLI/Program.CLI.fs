@@ -25,6 +25,7 @@ open System.Globalization
 open System.IO
 open System.Linq
 open System.Threading.Tasks
+open Grace.Shared.Validation
 
 module Configuration =
     
@@ -44,23 +45,23 @@ module GraceCommand =
 
     /// Built-in aliases for Grace commands.
     let private aliases = 
-        let aliases = Dictionary<string, string[]>()
-        aliases.Add("promote", [| "branch"; "promote" |])
-        aliases.Add("commit", [| "branch"; "commit" |])
-        aliases.Add("tag", [| "branch"; "tag" |])
-        aliases.Add("checkpoint", [| "branch"; "checkpoint" |])
-        aliases.Add("save", [| "branch"; "save" |])
-        aliases.Add("rebase", [| "branch"; "rebase" |])
-        aliases.Add("tags", [| "branch"; "get-tags" |])
-        aliases.Add("promotions", [| "branch"; "get-promotions" |])
-        aliases.Add("commits", [| "branch"; "get-commits" |])
-        aliases.Add("checkpoints", [| "branch"; "get-checkpoints" |])
-        aliases.Add("saves", [| "branch"; "get-references" |])
-        aliases.Add("refs", [| "branch"; "get-references" |])
-        aliases.Add("status", [| "branch"; "status" |])
-        aliases.Add("switch", [| "branch"; "switch" |])
-        aliases.Add("branches", [| "repository"; "get-branches" |])
-        //aliases.Add("", [| ""; "" |])
+        let aliases = Dictionary<string, string seq>()
+        aliases.Add("branches", ["repository"; "get-branches"])
+        aliases.Add("checkpoint", ["branch"; "checkpoint"])
+        aliases.Add("checkpoints", ["branch"; "get-checkpoints"])
+        aliases.Add("commit", ["branch"; "commit"])
+        aliases.Add("commits", ["branch"; "get-commits"])
+        aliases.Add("promote", ["branch"; "promote"])
+        aliases.Add("promotions", ["branch"; "get-promotions"])
+        aliases.Add("rebase", ["branch"; "rebase"])
+        aliases.Add("refs", ["branch"; "get-references"])
+        aliases.Add("save", ["branch"; "save"])
+        aliases.Add("saves", ["branch"; "get-references"])
+        aliases.Add("status", ["branch"; "status"])
+        aliases.Add("switch", ["branch"; "switch"])
+        aliases.Add("tag", ["branch"; "tag"])
+        aliases.Add("tags", ["branch"; "get-tags"])
+        //aliases.Add("", [""; ""])
         aliases
         
     let Build =
@@ -97,6 +98,7 @@ module GraceCommand =
                 let firstToken = tokens[0]
                 if aliases.ContainsKey(firstToken) then
                     tokens.RemoveAt(0)
+                    // Reverse the full command so we insert them in the right order.
                     for token in aliases[firstToken].Reverse() do
                         tokens.Insert(0, token)
                 context.ParseResult <- context.Parser.Parse(tokens)
@@ -179,50 +181,55 @@ module GraceCommand =
         (task {
             let mutable parseResult: ParseResult = null
             try
-                //use logListener = new TextWriterTraceListener(Path.Combine(Current().ConfigurationDirectory, "grace.log"))
-                //Threading.ThreadPool.SetMinThreads(Constants.ParallelOptions.MaxDegreeOfParallelism, Constants.ParallelOptions.MaxDegreeOfParallelism) |> ignore
-                let command = Build
+                try
+                    //use logListener = new TextWriterTraceListener(Path.Combine(Current().ConfigurationDirectory, "grace.log"))
+                    //Threading.ThreadPool.SetMinThreads(Constants.ParallelOptions.MaxDegreeOfParallelism, Constants.ParallelOptions.MaxDegreeOfParallelism) |> ignore
+                    let command = Build
 
-                //let n = Constants.JsonSerializerOptions.Converters.Count
-                //Constants.JsonSerializerOptions.Converters.Add(BranchDtoConverter())
-                //logToAnsiConsole Colors.Important $"Was {n}, now {Constants.JsonSerializerOptions.Converters.Count}."
+                    //let n = Constants.JsonSerializerOptions.Converters.Count
+                    //Constants.JsonSerializerOptions.Converters.Add(BranchDtoConverter())
+                    //logToAnsiConsole Colors.Important $"Was {n}, now {Constants.JsonSerializerOptions.Converters.Count}."
 
-                parseResult <- command.Parse(args)
-                if parseResult |> showOutput then
-                    if parseResult |> verbose then
-                        AnsiConsole.Write((new Rule($"[{Colors.Important}]Started: {startTime.ToString(InstantPattern.ExtendedIso.PatternText, CultureInfo.InvariantCulture)}.[/]")).RightJustified())
-                    else
-                        AnsiConsole.Write(new Rule())
+                    parseResult <- command.Parse(args)
+                    if parseResult |> showOutput then
+                        if parseResult |> verbose then
+                            AnsiConsole.Write((new Rule($"[{Colors.Important}]Started: {startTime.ToString(InstantPattern.ExtendedIso.PatternText, CultureInfo.InvariantCulture)}.[/]")).RightJustified())
+                        else
+                            AnsiConsole.Write(new Rule())
 
-                if not <| (parseResult |> isGraceWatch) then
-                    let! graceWatchStatus = getGraceWatchStatus()
-                    match graceWatchStatus with
-                    | Some status ->
-                        //logToAnsiConsole Colors.Verbose $"Opened IPC file."
-                        Configuration.updateConfiguration {GraceWatchStatus = status}
-                    | None ->
-                            //logToAnsiConsole Colors.Verbose $"Couldn't open IPC file."
-                            ()
+                    if not <| (parseResult |> isGraceWatch) then
+                        let! graceWatchStatus = getGraceWatchStatus()
+                        match graceWatchStatus with
+                        | Some status ->
+                            //logToAnsiConsole Colors.Verbose $"Opened IPC file."
+                            Configuration.updateConfiguration {GraceWatchStatus = status}
+                        | None ->
+                                //logToAnsiConsole Colors.Verbose $"Couldn't open IPC file."
 
-                let! returnValue = command.InvokeAsync(args)
+                                ()
 
-                // We'll tell the user now, before the Rule(), but we actually delete the inter-process communication file in the finally clause.
-                if parseResult |> isGraceWatch then
-                    logToAnsiConsole Colors.Important $"Inter-process communication file deleted."
+                    let! returnValue = command.InvokeAsync(args)
 
-                if parseResult |> showOutput then
-                    let finishTime = getCurrentInstant()
-                    let elapsed = finishTime - startTime
-                    if parseResult |> verbose then
-                        AnsiConsole.Write((new Rule($"[{Colors.Important}]Elapsed: {elapsed.TotalSeconds:F3}s. Exit code: {returnValue}. Finished: {finishTime.ToString(InstantPattern.ExtendedIso.PatternText, CultureInfo.InvariantCulture)}[/]")).RightJustified())
-                    else
-                        AnsiConsole.Write((new Rule($"[{Colors.Important}]Elapsed: {elapsed.TotalSeconds:F3}s. Exit code: {returnValue}.[/]")).RightJustified())
+                    // We'll tell the user now, before the Rule(), but we actually delete the inter-process communication file in the finally clause.
+                    if parseResult |> isGraceWatch then
+                        logToAnsiConsole Colors.Important $"Inter-process communication file deleted."
 
-                    AnsiConsole.WriteLine()
+                    if parseResult |> showOutput then
+                        let finishTime = getCurrentInstant()
+                        let elapsed = finishTime - startTime
+                        if parseResult |> verbose then
+                            AnsiConsole.Write((new Rule($"[{Colors.Important}]Elapsed: {elapsed.TotalSeconds:F3}s. Exit code: {returnValue}. Finished: {finishTime.ToString(InstantPattern.ExtendedIso.PatternText, CultureInfo.InvariantCulture)}[/]")).RightJustified())
+                        else
+                            AnsiConsole.Write((new Rule($"[{Colors.Important}]Elapsed: {elapsed.TotalSeconds:F3}s. Exit code: {returnValue}.[/]")).RightJustified())
 
-                return returnValue
+                        AnsiConsole.WriteLine()
+
+                    return returnValue
+                with ex ->
+                    logToAnsiConsole Colors.Error $"{ex.Message}."
+                    return -1
             finally
                 // If this was grace watch, delete the inter-process communication file.
-                if parseResult |> isGraceWatch then
+                if not <| isNull(parseResult) && parseResult |> isGraceWatch then
                     File.Delete(IpcFileName())
         }).Result

@@ -49,14 +49,14 @@ module Branch =
                 | NameSet branchName -> {currentBranchDto with BranchName = branchName}
                 | Promoted (referenceId, directoryVersion, sha256Hash, referenceText) -> {currentBranchDto with LatestPromotion = referenceId}
                 | Committed (referenceId, directoryVersion, sha256Hash, referenceText) -> {currentBranchDto with LatestCommit = referenceId}
-                | Checkpointed (referenceId, directoryVersion, sha256Hash, referenceText) -> currentBranchDto
-                | Saved (referenceId, directoryVersion, sha256Hash, referenceText) -> currentBranchDto
+                | Checkpointed (referenceId, directoryVersion, sha256Hash, referenceText) -> {currentBranchDto with LatestCheckpoint = referenceId}
+                | Saved (referenceId, directoryVersion, sha256Hash, referenceText) -> {currentBranchDto with LatestSave = referenceId}
                 | Tagged (referenceId, directoryVersion, sha256Hash, referenceText) -> currentBranchDto
-                | EnabledPromotion enabled -> {currentBranchDto with EnabledPromotion = enabled}
-                | EnabledCommit enabled -> {currentBranchDto with EnabledCommit = enabled}
-                | EnabledCheckpoint enabled -> {currentBranchDto with EnabledCheckpoint = enabled}
-                | EnabledSave enabled -> {currentBranchDto with EnabledSave = enabled}
-                | EnabledTag enabled -> {currentBranchDto with EnabledTag = enabled}
+                | EnabledPromotion enabled -> {currentBranchDto with PromotionEnabled = enabled}
+                | EnabledCommit enabled -> {currentBranchDto with CommitEnabled = enabled}
+                | EnabledCheckpoint enabled -> {currentBranchDto with CheckpointEnabled = enabled}
+                | EnabledSave enabled -> {currentBranchDto with SaveEnabled = enabled}
+                | EnabledTag enabled -> {currentBranchDto with TagEnabled = enabled}
                 | ReferenceRemoved _ -> currentBranchDto
                 | LogicalDeleted  -> {currentBranchDto with DeletedAt = Some (getCurrentInstant())}
                 | PhysicalDeleted -> currentBranchDto // Do nothing because it's about to be deleted anyway.
@@ -89,9 +89,12 @@ module Branch =
         member private this.SetMaintenanceReminder() =
             this.RegisterReminderAsync("MaintenanceReminder", Array.empty<byte>, TimeSpan.FromDays(7.0), TimeSpan.FromDays(7.0))
 
+        member private this.UnregisterMaintenanceReminder() =
+            this.UnregisterReminderAsync("MaintenanceReminder")
+
         member private this.OnFirstWrite() =
             task {
-                let! _ = Constants.DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> this.SetMaintenanceReminder())
+                //let! _ = Constants.DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> this.SetMaintenanceReminder())
                 ()
             }
 
@@ -105,9 +108,9 @@ module Branch =
         override this.OnPostActorMethodAsync(context) =
             let duration = getCurrentInstant().Minus(actorStartTime)
             if String.IsNullOrEmpty(currentCommand) then
-                log.LogInformation("{CurrentInstant}: Finished {ActorName}.{MethodName}; Id: {Id}; Duration: {duration}ms.", getCurrentInstantExtended(), actorName, context.MethodName, this.Id.GetId(), duration.TotalMilliseconds.ToString("F3"))
+                log.LogInformation("{CurrentInstant}: Finished {ActorName}.{MethodName}; Id: {Id}; Duration: {duration}ms.", $"{getCurrentInstantExtended(),-28}", actorName, context.MethodName, this.Id.GetId(), duration.TotalMilliseconds.ToString("F3"))
             else
-                log.LogInformation("{CurrentInstant}: Finished {ActorName}.{MethodName}; Command: {Command}; Id: {Id}; Duration: {duration}ms.", getCurrentInstantExtended(), actorName, context.MethodName, currentCommand, this.Id.GetId(), duration.TotalMilliseconds.ToString("F3"))
+                log.LogInformation("{CurrentInstant}: Finished {ActorName}.{MethodName}; Command: {Command}; Id: {Id}; Duration: {duration}ms.", $"{getCurrentInstantExtended(),-28}", actorName, context.MethodName, currentCommand, this.Id.GetId(), duration.TotalMilliseconds.ToString("F3"))
             logScope.Dispose()
             Task.CompletedTask
 
@@ -249,7 +252,9 @@ module Branch =
                                     | EnableSave enabled -> return EnabledSave enabled
                                     | EnableTag enabled -> return EnabledTag enabled
                                     | RemoveReference referenceId -> return ReferenceRemoved referenceId
-                                    | DeleteLogical -> return LogicalDeleted
+                                    | DeleteLogical ->
+                                        //do! this.UnregisterMaintenanceReminder()
+                                        return LogicalDeleted
                                     | DeletePhysical ->
                                         task {
                                             do! this.SchedulePhysicalDeletion()

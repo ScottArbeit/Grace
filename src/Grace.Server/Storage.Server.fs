@@ -130,6 +130,7 @@ module Storage =
                 context.GetLogger().LogWarning("{CurrentInstant} Deleting all rows from Cosmos DB.", getCurrentInstantExtended())
                 let! failed = Services.deleteAllFromCosmosDB()
                 if failed.Count = 0 then    
+                    context.GetLogger().LogWarning("{CurrentInstant} Deleted all rows from Cosmos DB.", getCurrentInstantExtended())
                     return! context |> result200Ok (GraceReturnValue.Create "Deleted all rows from Cosmos DB." (getCorrelationId context))
                 else
                     let sb = StringBuilder()

@@ -32,6 +32,7 @@ module Organization =
         let log = host.LoggerFactory.CreateLogger(actorName)
         let mutable actorStartTime = Instant.MinValue
         let mutable logScope: IDisposable = null
+        let mutable currentCommand = String.Empty
 
         let dtoStateName = "organizationDtoState"
         let eventsStateName = "organizationEventsState"
@@ -69,43 +70,54 @@ module Organization =
         member private this.SetMaintenanceReminder() =
             this.RegisterReminderAsync("MaintenanceReminder", Array.empty<byte>, TimeSpan.FromDays(7.0), TimeSpan.FromDays(7.0))
 
+        member private this.UnregisterMaintenanceReminder() =
+            this.UnregisterReminderAsync("MaintenanceReminder")
+
         member private this.OnFirstWrite() =
             task {
-                let! _ = DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> this.SetMaintenanceReminder())
+                //let! _ = DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> this.SetMaintenanceReminder())
                 ()
             }
 
         override this.OnPreActorMethodAsync(context) =
             actorStartTime <- getCurrentInstant()
             logScope <- log.BeginScope("Actor {actorName}", actorName)
+            currentCommand <- String.Empty
             //log.LogInformation("{CurrentInstant}: Started {ActorName}.{MethodName} Id: {Id}.", getCurrentInstantExtended(), actorName, context.MethodName, this.Id.GetId())
             Task.CompletedTask
             
         override this.OnPostActorMethodAsync(context) =
             let duration = getCurrentInstant().Minus(actorStartTime)
-            log.LogInformation("{CurrentInstant}: Finished {ActorName}.{MethodName} Id: {Id}; Duration: {duration}ms.", getCurrentInstantExtended(), actorName, context.MethodName, this.Id.GetId(), duration.TotalMilliseconds.ToString("F3"))
+            if String.IsNullOrEmpty(currentCommand) then
+                log.LogInformation("{CurrentInstant}: Finished {ActorName}.{MethodName}; Id: {Id}; Duration: {duration}ms.", $"{getCurrentInstantExtended(),-28}", actorName, context.MethodName, this.Id.GetId(), duration.TotalMilliseconds.ToString("F3"))
+            else
+                log.LogInformation("{CurrentInstant}: Finished {ActorName}.{MethodName}; Command: {Command}; Id: {Id}; Duration: {duration}ms.", $"{getCurrentInstantExtended(),-28}", actorName, context.MethodName, currentCommand, this.Id.GetId(), duration.TotalMilliseconds.ToString("F3"))
             logScope.Dispose()
             Task.CompletedTask
             
-        member private this.OrganizationEvents with get() = (
+        // This is essentially an object-oriented implementation of the Lazy<T> pattern. I was having issues with Lazy<T>, 
+        //   and after a solid day wrestling with it, I dropped it and did this. Works a treat.
+        member private this.OrganizationEvents() =
             let stateManager = this.StateManager
-            if organizationEvents = null then            
-                let retrievedEvents = (Storage.RetrieveState<List<OrganizationEvent>> stateManager eventsStateName).Result
-                organizationEvents <- match retrievedEvents with
-                                       | Some retrievedEvents -> retrievedEvents; 
-                                       | None -> List<OrganizationEvent>()
+            task {
+                if organizationEvents = null then            
+                    let! retrievedEvents = (Storage.RetrieveState<List<OrganizationEvent>> stateManager eventsStateName)
+                    organizationEvents <- match retrievedEvents with
+                                           | Some retrievedEvents -> retrievedEvents; 
+                                           | None -> List<OrganizationEvent>()
             
-            organizationEvents
-        )
+                return organizationEvents
+            }
 
         member private this.ApplyEvent organizationEvent =
             let stateManager = this.StateManager
             task {
                 try
-                    if this.OrganizationEvents.Count = 0 then
+                    let! organizationEvents = this.OrganizationEvents()
+                    if organizationEvents.Count = 0 then
                         do! this.OnFirstWrite()
 
-                    this.OrganizationEvents.Add(organizationEvent)
+                    organizationEvents.Add(organizationEvent)
                     do! DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> stateManager.SetStateAsync(eventsStateName, this.OrganizationEvents))
                 
                     // Publish the event to the rest of the world.
@@ -153,45 +165,53 @@ module Organization =
                 Task.FromResult(organizationDto.Repositories :> IReadOnlyDictionary<RepositoryId, RepositoryName>)
 
             member this.Handle (command: OrganizationCommand) metadata =
-                let isValid (command: OrganizationCommand) (metadata: EventMetadata)=
-                    if this.OrganizationEvents.Exists(fun ev -> ev.Metadata.CorrelationId = metadata.CorrelationId) then
-                        Error (GraceError.Create (OrganizationError.getErrorMessage DuplicateCorrelationId) metadata.CorrelationId)
-                    else
-                        match command with 
-                        | OrganizationCommand.Create (organizationId, organizationName, ownerId) ->
-                            match organizationDto.UpdatedAt with
-                            | Some _ -> Error (GraceError.Create (OrganizationError.getErrorMessage OrganizationAlreadyExists) metadata.CorrelationId) 
-                            | None -> Ok command
-                        | _ -> 
-                            match organizationDto.UpdatedAt with
-                            | Some _ -> Ok command
-                            | None -> Error (GraceError.Create (OrganizationError.getErrorMessage OrganizationIdDoesNotExist) metadata.CorrelationId) 
+                let isValid (command: OrganizationCommand) (metadata: EventMetadata) =
+                    task {
+                        let! organizationEvents = this.OrganizationEvents()
+                        if organizationEvents.Exists(fun ev -> ev.Metadata.CorrelationId = metadata.CorrelationId) then
+                            return Error (GraceError.Create (OrganizationError.getErrorMessage DuplicateCorrelationId) metadata.CorrelationId)
+                        else
+                            match command with 
+                            | OrganizationCommand.Create (organizationId, organizationName, ownerId) ->
+                                match organizationDto.UpdatedAt with
+                                | Some _ -> return Error (GraceError.Create (OrganizationError.getErrorMessage OrganizationAlreadyExists) metadata.CorrelationId) 
+                                | None -> return Ok command
+                            | _ -> 
+                                match organizationDto.UpdatedAt with
+                                | Some _ -> return Ok command
+                                | None -> return Error (GraceError.Create (OrganizationError.getErrorMessage OrganizationIdDoesNotExist) metadata.CorrelationId) 
+                    }
 
                 let processCommand (command: OrganizationCommand) metadata =
                     task {
                         try
-                            let event = 
-                                match command with
-                                | OrganizationCommand.Create (organizationId, organizationName, ownerId) -> OrganizationEventType.Created (organizationId, organizationName, ownerId)
-                                | OrganizationCommand.SetName (organizationName) -> OrganizationEventType.NameSet (organizationName)
-                                | OrganizationCommand.SetType (organizationType) -> OrganizationEventType.TypeSet (organizationType)
-                                | OrganizationCommand.SetSearchVisibility (searchVisibility) -> OrganizationEventType.SearchVisibilitySet (searchVisibility)
-                                | OrganizationCommand.SetDescription (description) -> OrganizationEventType.DescriptionSet (description)
-                                | OrganizationCommand.AddRepository (repositoryId, repositoryName) -> OrganizationEventType.RepositoryAdded (repositoryId, repositoryName)
-                                | OrganizationCommand.DeleteRepository repositoryId -> OrganizationEventType.RepositoryDeleted (repositoryId)
-                                | OrganizationCommand.DeleteLogical (force, deleteReason) -> OrganizationEventType.LogicalDeleted (force, deleteReason)
-                                | OrganizationCommand.DeletePhysical ->
-                                    task {
+                            let! event = 
+                                task {
+                                    match command with
+                                    | OrganizationCommand.Create (organizationId, organizationName, ownerId) -> return OrganizationEventType.Created (organizationId, organizationName, ownerId)
+                                    | OrganizationCommand.SetName (organizationName) -> return OrganizationEventType.NameSet (organizationName)
+                                    | OrganizationCommand.SetType (organizationType) -> return OrganizationEventType.TypeSet (organizationType)
+                                    | OrganizationCommand.SetSearchVisibility (searchVisibility) -> return OrganizationEventType.SearchVisibilitySet (searchVisibility)
+                                    | OrganizationCommand.SetDescription (description) -> return OrganizationEventType.DescriptionSet (description)
+                                    | OrganizationCommand.AddRepository (repositoryId, repositoryName) -> return OrganizationEventType.RepositoryAdded (repositoryId, repositoryName)
+                                    | OrganizationCommand.DeleteRepository repositoryId -> return OrganizationEventType.RepositoryDeleted (repositoryId)
+                                    | OrganizationCommand.DeleteLogical (force, deleteReason) ->
+                                        //do! this.UnregisterMaintenanceReminder()
+                                        return OrganizationEventType.LogicalDeleted (force, deleteReason)
+                                    | OrganizationCommand.DeletePhysical ->
                                         do! this.SchedulePhysicalDeletion()
-                                    } |> Async.AwaitTask |> ignore
-                                    OrganizationEventType.PhysicalDeleted
-                                | OrganizationCommand.Undelete -> OrganizationEventType.Undeleted
+                                        return OrganizationEventType.PhysicalDeleted
+                                    | OrganizationCommand.Undelete -> return OrganizationEventType.Undeleted
+                                }
                             
                             return! this.ApplyEvent {Event = event; Metadata = metadata}
                         with ex ->
                             return Error (GraceError.Create $"{createExceptionResponse ex}" metadata.CorrelationId)
                     }
 
-                match isValid command metadata with
-                | Ok command -> processCommand command metadata 
-                | Error error -> Task.FromResult(Error error)
+                task {
+                    currentCommand <- discriminatedUnionCaseNameToString command
+                    match! isValid command metadata with
+                    | Ok command -> return! processCommand command metadata 
+                    | Error error -> return Error error
+                }
