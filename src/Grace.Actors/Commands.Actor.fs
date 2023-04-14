@@ -9,7 +9,7 @@ module Commands =
     module Branch =
         [<KnownType("GetKnownTypes")>]
         type BranchCommand =
-            | Create of branchId: BranchId * branchName: BranchName * parentBranchId: BranchId * repositoryId: RepositoryId
+            | Create of branchId: BranchId * branchName: BranchName * parentBranchId: BranchId * basedOn: ReferenceId * repositoryId: RepositoryId
             | Rebase of basedOn: ReferenceId
             | SetName of newName: BranchName
             | Promote of directoryId: DirectoryId * sha256Hash: Sha256Hash * referenceText: ReferenceText

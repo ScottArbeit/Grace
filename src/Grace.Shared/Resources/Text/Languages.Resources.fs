@@ -30,6 +30,9 @@ module Text =
         | EitherOwnerIdOrOwnerNameIsRequired
         | EitherRepositoryIdOrRepositoryNameIsRequired
         | FailedCommunicatingWithObjectStorage
+        | FailedCreatingInitialBranch
+        | FailedRebasingInitialBranch
+        | FailedCreatingInitialPromotion
         | FailedToGetUploadUrls
         | FailedToRetrieveBranch
         | FailedUploadingFilesToObjectStorage
@@ -37,6 +40,7 @@ module Text =
         | FailedWhileSavingEvent
         | FilesMustNotBeEmpty
         | IndexFileNotFound
+        | InitialPromotionMessage
         | InvalidBranchId
         | InvalidBranchName
         | InvalidCheckpointDaysValue

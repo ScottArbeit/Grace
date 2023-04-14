@@ -10,7 +10,7 @@ module Events =
     module Branch =
         [<KnownType("GetKnownTypes")>]
         type BranchEventType =
-            | Created of branchId: BranchId * branchName: BranchName * parentBranchId: BranchId * repositoryId: RepositoryId
+            | Created of branchId: BranchId * branchName: BranchName * parentBranchId: BranchId * basedOn: ReferenceId * repositoryId: RepositoryId
             | Rebased of basedOn: ReferenceId
             | NameSet of newName: BranchName
             | Promoted of referenceId: ReferenceId * directoryId: DirectoryId * sha256Hash: Sha256Hash * referenceText: ReferenceText

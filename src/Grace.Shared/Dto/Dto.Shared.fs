@@ -75,9 +75,9 @@ module Dto =
                 Class = "DiffDto"
                 HasDifferences = false
                 DirectoryId1 = DirectoryId.Empty
-                Directory1CreatedAt = Instant.MinValue
+                Directory1CreatedAt = Instant.FromUnixTimeTicks 0L
                 DirectoryId2 = DirectoryId.Empty
-                Directory2CreatedAt = Instant.MinValue
+                Directory2CreatedAt = Instant.FromUnixTimeTicks 0L
                 Differences = List<FileSystemDifference>()
                 FileDiffs = List<FileDiff>()
             }

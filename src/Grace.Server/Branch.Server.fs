@@ -125,16 +125,21 @@ module Branch =
                     task {
                         match! (resolveBranchId parameters.RepositoryId parameters.ParentBranchId parameters.ParentBranchName) with
                         | Some parentBranchId -> 
+                            let parentBranchActorId = ActorId(parentBranchId)
+                            let parentBranchActorProxy = ApplicationContext.ActorProxyFactory().CreateActorProxy<IBranchActor>(parentBranchActorId, ActorName.Branch)
+                            let! parentBranch = parentBranchActorProxy.Get()
                             return Create(
                                 (Guid.Parse(parameters.BranchId)), 
                                 (BranchName parameters.BranchName),
                                 (Guid.Parse(parentBranchId)),
+                                parentBranch.BasedOn,
                                 Guid.Parse(parameters.RepositoryId))
                         | None ->
                             return Create(
                                 (Guid.Parse(parameters.BranchId)), 
                                 (BranchName parameters.BranchName),
                                 Constants.DefaultParentBranchId,
+                                ReferenceId.Empty,
                                 Guid.Parse(parameters.RepositoryId))
                     }
 

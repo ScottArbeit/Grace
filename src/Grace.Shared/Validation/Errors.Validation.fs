@@ -292,6 +292,9 @@ module Errors =
             | EitherOrganizationIdOrOrganizationNameRequired
             | EitherOwnerIdOrOwnerNameRequired
             | EitherRepositoryIdOrRepositoryNameRequired
+            | FailedCreatingInitialBranch
+            | FailedCreatingInitialPromotion
+            | FailedRebasingInitialBranch
             | FailedWhileSavingEvent
             | FailedWhileApplyingEvent
             | InvalidCheckpointDaysValue
@@ -328,6 +331,9 @@ module Errors =
                 | EitherOrganizationIdOrOrganizationNameRequired -> getLocalizedString StringResourceName.EitherOrganizationIdOrOrganizationNameIsRequired
                 | EitherOwnerIdOrOwnerNameRequired -> getLocalizedString StringResourceName.EitherOwnerIdOrOwnerNameIsRequired
                 | EitherRepositoryIdOrRepositoryNameRequired -> getLocalizedString StringResourceName.EitherRepositoryIdOrRepositoryNameIsRequired
+                | FailedCreatingInitialBranch -> getLocalizedString StringResourceName.FailedCreatingInitialBranch
+                | FailedCreatingInitialPromotion -> getLocalizedString StringResourceName.FailedCreatingInitialPromotion
+                | FailedRebasingInitialBranch -> getLocalizedString StringResourceName.FailedRebasingInitialBranch
                 | FailedWhileSavingEvent -> getLocalizedString StringResourceName.FailedWhileSavingEvent
                 | FailedWhileApplyingEvent -> getLocalizedString StringResourceName.FailedWhileApplyingEvent
                 | InvalidCheckpointDaysValue -> getLocalizedString StringResourceName.InvalidCheckpointDaysValue

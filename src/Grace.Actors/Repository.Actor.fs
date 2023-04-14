@@ -3,6 +3,7 @@
 open Dapr.Actors
 open Dapr.Actors.Runtime
 open FSharpPlus
+open Grace.Actors.Constants
 open Grace.Actors.Interfaces
 open Grace.Actors.Commands.Repository
 open Grace.Actors.Events.Repository
@@ -10,6 +11,7 @@ open Grace.Actors.Services
 open Grace.Shared
 open Grace.Shared.Constants
 open Grace.Shared.Dto.Repository
+open Grace.Shared.Resources.Text
 open Grace.Shared.Types
 open Grace.Shared.Utilities
 open Grace.Shared.Validation.Errors.Repository
@@ -21,6 +23,7 @@ open System.Linq
 open System.Text.Json
 open System.Threading.Tasks
 open System.Runtime.Serialization
+open Grace.Shared.Services
 
 module Repository =
         
@@ -130,18 +133,60 @@ module Repository =
                     repositoryDto <- repositoryDto |> this.updateDto repositoryEvent
                     do! DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> stateManager.SetStateAsync(dtoStateName, repositoryDto))
 
-                    // Publish the event to the rest of the world.
-                    let graceEvent = Events.GraceEvent.RepositoryEvent repositoryEvent
-                    let message = graceEvent |> serialize
-                    do! daprClient.PublishEventAsync(GracePubSubService, GraceEventStreamTopic, message)
+                    // If we're creating a repository, we need to create the default branch.
+                    let! handleCreate = 
+                        task {
+                            match repositoryEvent.Event with
+                            | Created (name, repositoryId, ownerId, organizationId) -> 
+                                let branchId = (Guid.NewGuid())
+                                let branchActorId = ActorId($"{branchId}")
+                                let branchActor = Services.ActorProxyFactory.CreateActorProxy<IBranchActor>(branchActorId, ActorName.Branch)
+                                let! result = branchActor.Handle (Commands.Branch.BranchCommand.Create (branchId, (BranchName Constants.InitialBranchName), Constants.DefaultParentBranchId, ReferenceId.Empty, repositoryId)) repositoryEvent.Metadata
+                                match result with
+                                | Ok branchGraceReturn -> 
+                                    // Create an initial promotion with completely empty contents
+                                    let emptyDirectoryId = DirectoryId.NewGuid()
+                                    let emptySha256Hash = computeSha256ForDirectory "/" (List<LocalDirectoryVersion>()) (List<LocalFileVersion>())
+                                    let! promotionResult = branchActor.Handle (Commands.Branch.BranchCommand.Promote(emptyDirectoryId, emptySha256Hash, (getLocalizedString StringResourceName.InitialPromotionMessage))) repositoryEvent.Metadata
+                                    match promotionResult with
+                                    | Ok promotionGraceReturn ->
+                                        let referenceId = Guid.Parse(promotionGraceReturn.Properties[nameof(ReferenceId)])
+                                        let! rebaseResult = branchActor.Handle (Commands.Branch.BranchCommand.Rebase(referenceId)) repositoryEvent.Metadata
+                                        match rebaseResult with
+                                        | Ok rebaseGraceReturn -> 
+                                            return Ok (branchId, referenceId)
+                                        | Error graceError -> 
+                                            let graceError = GraceError.Create $"{RepositoryError.getErrorMessage FailedRebasingInitialBranch}{Environment.NewLine}{graceError.Error}" repositoryEvent.Metadata.CorrelationId
+                                            return Error graceError
+                                    | Error graceError ->
+                                        let graceError = GraceError.Create $"{RepositoryError.getErrorMessage FailedCreatingInitialPromotion}{Environment.NewLine}{graceError.Error}" repositoryEvent.Metadata.CorrelationId
+                                        return Error graceError
+                                | Error graceError ->
+                                    let graceError = GraceError.Create $"{RepositoryError.getErrorMessage FailedCreatingInitialBranch}{Environment.NewLine}{graceError.Error}" repositoryEvent.Metadata.CorrelationId
+                                    return Error graceError
+                            | _ -> return Ok (BranchId.Empty, ReferenceId.Empty)
+                        }
 
-                    let returnValue = GraceReturnValue.Create $"Repository command succeeded." repositoryEvent.Metadata.CorrelationId
-                    returnValue.Properties.Add(nameof(OwnerId), $"{repositoryDto.OwnerId}")
-                    returnValue.Properties.Add(nameof(OrganizationId), $"{repositoryDto.OrganizationId}")
-                    returnValue.Properties.Add(nameof(RepositoryId), $"{repositoryDto.RepositoryId}")
-                    returnValue.Properties.Add(nameof(RepositoryName), $"{repositoryDto.RepositoryName}")
-                    returnValue.Properties.Add("EventType", $"{discriminatedUnionFullNameToString repositoryEvent.Event}")
-                    return Ok returnValue
+                    match handleCreate with
+                    | Ok (branchId, referenceId) ->                   
+                        // Publish the event to the rest of the world.
+                        let graceEvent = Events.GraceEvent.RepositoryEvent repositoryEvent
+                        let message = graceEvent |> serialize
+                        do! daprClient.PublishEventAsync(GracePubSubService, GraceEventStreamTopic, message)
+
+                        let returnValue = GraceReturnValue.Create $"Repository command succeeded." repositoryEvent.Metadata.CorrelationId
+                        returnValue.Properties.Add(nameof(OwnerId), $"{repositoryDto.OwnerId}")
+                        returnValue.Properties.Add(nameof(OrganizationId), $"{repositoryDto.OrganizationId}")
+                        returnValue.Properties.Add(nameof(RepositoryId), $"{repositoryDto.RepositoryId}")
+                        returnValue.Properties.Add(nameof(RepositoryName), $"{repositoryDto.RepositoryName}")
+                        if branchId <> BranchId.Empty then
+                            returnValue.Properties.Add(nameof(BranchId), $"{branchId}")
+                            returnValue.Properties.Add(nameof(BranchName), $"{Constants.InitialBranchName}")
+                            returnValue.Properties.Add(nameof(ReferenceId), $"{referenceId}")
+                        returnValue.Properties.Add("EventType", $"{discriminatedUnionFullNameToString repositoryEvent.Event}")
+                        return Ok returnValue
+                    | Error graceError ->
+                        return Error graceError
                 with ex -> 
                     let graceError = GraceError.Create (RepositoryError.getErrorMessage RepositoryError.FailedWhileApplyingEvent) repositoryEvent.Metadata.CorrelationId
                     return Error graceError
@@ -327,7 +372,7 @@ module Repository =
                             
                             return! this.ApplyEvent {Event = event; Metadata = metadata}
                         with ex ->
-                            return Error (GraceError.Create $"{createExceptionResponse ex}" metadata.CorrelationId)
+                            return Error (GraceError.Create $"{createExceptionResponse ex}{Environment.NewLine}{metadata}" metadata.CorrelationId)
                     }
 
                 task {

@@ -72,6 +72,11 @@
       "commandName": "Project",
       "commandLineArgs": "repository create --ownerName \"Owner0009\" --organizationName \"Organization0009\" --repositoryName \"Repository0009\" --repositoryId 042dc71e-e7d7-4f7f-bdac-f930b398fa8e",
       "workingDirectory": "C:\\Source\\GraceDemo\\Chris"
+    },
+    "grace rebase": {
+      "commandName": "Project",
+      "commandLineArgs": "rebase",
+      "workingDirectory": "C:\\Source\\GraceDemo\\Mika"
     }
   }
 }

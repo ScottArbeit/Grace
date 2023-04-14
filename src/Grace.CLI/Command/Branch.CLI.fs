@@ -1223,17 +1223,41 @@ module Branch =
                                 logToAnsiConsole Colors.Verbose $"latestReference: {serialize latestReference}"
                                 // Now we have all of the references we need, so we have DirectoryId's to do diffs with.
 
-                                // First diff: parent promotion that current branch is based on vs. parent's latest promotion.
-                                let diffParameters = Parameters.Diff.GetDiffParameters(DirectoryId1 = basedOn.DirectoryId, DirectoryId2 = parentLatestPromotion.DirectoryId, CorrelationId = parameters.CorrelationId)
-                                logToAnsiConsole Colors.Verbose $"First diff: {serialize diffParameters}"
-                                let! firstDiff = Diff.GetDiff(diffParameters)
+                                let! (diffs, errors) =
+                                    task {
+                                        if basedOn.DirectoryId <> DirectoryId.Empty then
+                                            // First diff: parent promotion that current branch is based on vs. parent's latest promotion.
+                                            let diffParameters = Parameters.Diff.GetDiffParameters(DirectoryId1 = basedOn.DirectoryId, DirectoryId2 = parentLatestPromotion.DirectoryId, CorrelationId = parameters.CorrelationId)
+                                            logToAnsiConsole Colors.Verbose $"First diff: {Markup.Escape(serialize diffParameters)}"
+                                            let! firstDiff = Diff.GetDiff(diffParameters)
 
-                                // Second diff: latest reference on current branch vs. parent promotion that current branch is based on.
-                                let diffParameters = Parameters.Diff.GetDiffParameters(DirectoryId1 = latestReference.DirectoryId, DirectoryId2 = basedOn.DirectoryId, CorrelationId = parameters.CorrelationId)
-                                logToAnsiConsole Colors.Verbose $"Second diff: {serialize diffParameters}"
-                                let! secondDiff = Diff.GetDiff(diffParameters)
+                                            match firstDiff with
+                                            | Ok returnValue ->
+                                                let diff = returnValue.ReturnValue
+                                                logToAnsiConsole Colors.Verbose $"diff: {Markup.Escape(serialize diff)}"
+                                            | Error error -> logToAnsiConsole Colors.Error (Markup.Escape($"{error}"))
 
-                                let (diffs, errors) = Result.partition [ firstDiff; secondDiff ]
+                                            // Second diff: latest reference on current branch vs. parent promotion that current branch is based on.
+                                            let diffParameters = Parameters.Diff.GetDiffParameters(DirectoryId1 = latestReference.DirectoryId, DirectoryId2 = basedOn.DirectoryId, CorrelationId = parameters.CorrelationId)
+                                            logToAnsiConsole Colors.Verbose $"Second diff: {Markup.Escape(serialize diffParameters)}"
+                                            let! secondDiff = Diff.GetDiff(diffParameters)
+
+                                            let returnValue = Result.partition [firstDiff; secondDiff]
+                                            return returnValue
+                                        else
+                                            // This should only happen when first creating a repository, when main has no promotions.
+                                            // Only one diff possible: latest reference on current branch vs. parent's latest promotion.
+                                            let diffParameters = Parameters.Diff.GetDiffParameters(DirectoryId1 = latestReference.DirectoryId, DirectoryId2 = parentLatestPromotion.DirectoryId, CorrelationId = parameters.CorrelationId)
+                                            logToAnsiConsole Colors.Verbose $"Initial diff: {Markup.Escape(serialize diffParameters)}"
+                                            let! diff = Diff.GetDiff(diffParameters)
+                                            let returnValue = Result.partition [diff]
+                                            return returnValue
+                                     }
+                                
+                                // So, right now, if repo just created, and BasedOn is empty, we'll have a single diff.
+                                // That fails a few lines below here.
+                                // Have to decide what to do in this case.
+
                                 if errors.Count() = 0 then
                                     // Yay! We have our two diffs.
                                     let diff1 = diffs[0].ReturnValue

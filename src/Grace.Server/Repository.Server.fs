@@ -75,22 +75,7 @@ module Repository =
                         let! result = actorProxy.Handle cmd (Services.createMetadata context)
                         match result with
                             | Ok graceReturn -> 
-                                match cmd with
-                                | Create _ ->
-                                    let branchId = (Guid.NewGuid())
-                                    let branchActorId = ActorId($"{branchId}")
-                                    let branchActor = actorProxyFactory.CreateActorProxy<IBranchActor>(branchActorId, ActorName.Branch)
-                                    let! result = branchActor.Handle (BranchCommand.Create (branchId, (BranchName Constants.InitialBranchName), 
-                                                    Constants.DefaultParentBranchId, (Guid.Parse(parameters.RepositoryId)))) (createMetadata context)
-                                    match result with
-                                    | Ok branchGraceReturn ->
-                                        do graceReturn.Properties.Add(nameof(BranchId), $"{branchId}")
-                                        do graceReturn.Properties.Add(nameof(BranchName), Constants.InitialBranchName)
-                                        return! context |> result200Ok graceReturn
-                                    | Error graceError -> 
-                                        return! context |> result400BadRequest {graceError with Properties = getPropertiesAsDictionary parameters}
-                                | _ ->
-                                    return! context |> result200Ok graceReturn
+                                return! context |> result200Ok graceReturn
                             | Error graceError -> 
                                 return! context |> result400BadRequest {graceError with Properties = getPropertiesAsDictionary parameters}
                     | None -> 
