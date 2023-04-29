@@ -24,13 +24,14 @@ module Reference =
     type ReferenceActor(host: ActorHost) =
         inherit Actor (host)
 
+        let actorName = ActorName.Reference
+        let log = host.LoggerFactory.CreateLogger(actorName)
         let dtoStateName = "ReferenceDtoState"
         let mutable referenceDto = None
-        let logger = host.LoggerFactory.CreateLogger(nameof(ReferenceActor))
-
+        
         override this.OnActivateAsync() =
             let stateManager = this.StateManager
-            logger.LogInformation($"{getCurrentInstantExtended()} Activated ReferenceActor {host.Id}.")
+            log.LogInformation($"{getCurrentInstantExtended()} Activated ReferenceActor {host.Id}.")
             task {
                 let! retrievedDto = Storage.RetrieveState<ReferenceDto> stateManager dtoStateName
                 match retrievedDto with

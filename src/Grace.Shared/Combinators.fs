@@ -3,8 +3,8 @@
 ///// ===========================================
 ///// Common types and functions shared across multiple projects
 ///// ===========================================
-module Combinators =
-    let kjsdf = 0
+module CombinatorExamples =
+    let x = 0
 
 //    // the two-track type
 //    type Result<'TSuccess,'TFailure> =

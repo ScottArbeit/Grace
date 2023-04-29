@@ -26,7 +26,8 @@ module Directory =
     type DirectoryVersionActor(host: ActorHost) =
         inherit Actor(host)
 
-        let actorName = Constants.ActorName.DirectoryVersion
+        let actorName = ActorName.DirectoryVersion
+        let log = host.LoggerFactory.CreateLogger(actorName)
         let dtoStateName = "DirectoryVersionState"
         let directoryVersionCacheStateName = "DirectoryVersionCacheState"
 
@@ -34,7 +35,6 @@ module Directory =
         let mutable directoryVersion = DirectoryVersion.Default
         let mutable actorStartTime = Instant.MinValue
         let mutable logScope: IDisposable = null
-        let log = host.LoggerFactory.CreateLogger(nameof(DirectoryVersionActor))
 
         override this.OnActivateAsync() =
             let stateManager = this.StateManager

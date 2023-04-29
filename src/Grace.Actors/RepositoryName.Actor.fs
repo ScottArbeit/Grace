@@ -11,7 +11,6 @@ open System.Threading.Tasks
 
 module RepositoryName =
 
-    let actorName = Constants.ActorName.RepositoryName
     let mutable actorStartTime = Instant.MinValue
     let mutable logScope: IDisposable = null
 
@@ -32,6 +31,8 @@ module RepositoryName =
     type RepositoryNameActor(host: ActorHost) =
         inherit Actor(host)
 
+        let actorName = Constants.ActorName.RepositoryName
+    
         let log = host.LoggerFactory.CreateLogger(actorName)
 
         let mutable cachedRepositoryId: string option = None

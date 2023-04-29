@@ -46,10 +46,9 @@ module Diff =
         let dtoStateName = "DiffDtoState"
         let mutable diffDto: DiffDto = DiffDto.Default
         let actorName = Constants.ActorName.Diff
+        let log = host.LoggerFactory.CreateLogger(actorName)
         let mutable actorStartTime = Instant.MinValue
         let mutable logScope: IDisposable = null
-
-        let log = host.LoggerFactory.CreateLogger(actorName)
 
         /// Gets a Dictionary for indexed lookups by relative path.
         let getLookupCache (graceIndex: ServerGraceIndex) =

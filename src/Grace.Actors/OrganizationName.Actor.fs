@@ -11,7 +11,6 @@ open System.Threading.Tasks
 
 module OrganizationName =
 
-    let actorName = Constants.ActorName.OrganizationName
     let mutable actorStartTime = Instant.MinValue
     let mutable logScope: IDisposable = null
 
@@ -32,8 +31,9 @@ module OrganizationName =
     type OrganizationNameActor(host: ActorHost) =
         inherit Actor(host)
 
-        let log = host.LoggerFactory.CreateLogger(ActorName.OwnerName)
-
+        let actorName = ActorName.OrganizationName
+        let log = host.LoggerFactory.CreateLogger(actorName)
+    
         let mutable cachedOrganizationId: string option = None
 
         override this.OnPreActorMethodAsync(context) =

@@ -9,6 +9,7 @@ open Grace.Actors.Commands.Repository
 open Grace.Actors.Events.Repository
 open Grace.Actors.Services
 open Grace.Shared
+open Grace.Shared.Combinators
 open Grace.Shared.Constants
 open Grace.Shared.Dto.Repository
 open Grace.Shared.Resources.Text
@@ -32,7 +33,7 @@ module Repository =
     type RepositoryActor(host: ActorHost) =
         inherit Actor(host)
 
-        let actorName = Constants.ActorName.Repository
+        let actorName = ActorName.Repository
         let log = host.LoggerFactory.CreateLogger(actorName)
         let mutable actorStartTime = Instant.MinValue
         let mutable logScope: IDisposable = null
@@ -133,8 +134,12 @@ module Repository =
                     repositoryDto <- repositoryDto |> this.updateDto repositoryEvent
                     do! DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> stateManager.SetStateAsync(dtoStateName, repositoryDto))
 
-                    // If we're creating a repository, we need to create the default branch.
-                    let! handleCreate = 
+                    let processGraceError (repositoryError: RepositoryError) repositoryEvent previousGraceError = 
+                        Error (GraceError.Create $"{RepositoryError.getErrorMessage repositoryError}{Environment.NewLine}{previousGraceError.Error}" repositoryEvent.Metadata.CorrelationId)
+
+                    // If we're creating a repository, we need to create the default branch, the initial promotion, and the initial directory.
+                    //   Otherwise, just pass the event through.
+                    let handleEvent = 
                         task {
                             match repositoryEvent.Event with
                             | Created (name, repositoryId, ownerId, organizationId) -> 
@@ -156,18 +161,15 @@ module Repository =
                                         | Ok rebaseGraceReturn -> 
                                             return Ok (branchId, referenceId)
                                         | Error graceError -> 
-                                            let graceError = GraceError.Create $"{RepositoryError.getErrorMessage FailedRebasingInitialBranch}{Environment.NewLine}{graceError.Error}" repositoryEvent.Metadata.CorrelationId
-                                            return Error graceError
+                                            return processGraceError FailedRebasingInitialBranch repositoryEvent graceError
                                     | Error graceError ->
-                                        let graceError = GraceError.Create $"{RepositoryError.getErrorMessage FailedCreatingInitialPromotion}{Environment.NewLine}{graceError.Error}" repositoryEvent.Metadata.CorrelationId
-                                        return Error graceError
+                                        return processGraceError FailedCreatingInitialPromotion repositoryEvent graceError
                                 | Error graceError ->
-                                    let graceError = GraceError.Create $"{RepositoryError.getErrorMessage FailedCreatingInitialBranch}{Environment.NewLine}{graceError.Error}" repositoryEvent.Metadata.CorrelationId
-                                    return Error graceError
+                                    return processGraceError FailedCreatingInitialBranch repositoryEvent graceError
                             | _ -> return Ok (BranchId.Empty, ReferenceId.Empty)
                         }
-
-                    match handleCreate with
+                    
+                    match! handleEvent with
                     | Ok (branchId, referenceId) ->                   
                         // Publish the event to the rest of the world.
                         let graceEvent = Events.GraceEvent.RepositoryEvent repositoryEvent

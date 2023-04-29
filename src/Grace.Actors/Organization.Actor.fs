@@ -28,7 +28,7 @@ module Organization =
     type OrganizationActor(host: ActorHost) = 
         inherit Actor(host)
 
-        let actorName = Constants.ActorName.Organization
+        let actorName = ActorName.Organization
         let log = host.LoggerFactory.CreateLogger(actorName)
         let mutable actorStartTime = Instant.MinValue
         let mutable logScope: IDisposable = null

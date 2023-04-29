@@ -28,10 +28,11 @@ module ContainerName =
         let mutable containerName: ContainerName = String.Empty
         let mutable azureContainerClient: BlobContainerClient = null
 
-        let logger = host.LoggerFactory.CreateLogger(nameof(ContainerNameActor))
+        let actorName = ActorName.ContainerName
+        let log = host.LoggerFactory.CreateLogger(actorName)
 
         override this.OnActivateAsync() =
-            logger.LogInformation("{CurrentInstant} Activated {ActorType} {ActorId}.", getCurrentInstantExtended(), this.GetType().Name, host.Id)
+            log.LogInformation("{CurrentInstant} Activated {ActorType} {ActorId}.", getCurrentInstantExtended(), this.GetType().Name, host.Id)
             Task.CompletedTask
 
         override this.OnPreActorMethodAsync context =

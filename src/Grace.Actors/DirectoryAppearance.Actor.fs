@@ -2,6 +2,7 @@
 
 open Dapr.Actors
 open Dapr.Actors.Runtime
+open Grace.Actors.Constants
 open Grace.Shared.Types
 open Grace.Shared
 open NodaTime
@@ -34,6 +35,9 @@ module DirectoryAppearance =
 
     type DirectoryAppearanceActor(host: ActorHost) =
         inherit Actor(host)
+
+        let actorName = ActorName.DirectoryAppearance
+        let log = host.LoggerFactory.CreateLogger(actorName)
 
         let dtoStateName = "directoryAppearancesDtoState"
         let mutable dto = DirectoryAppearanceDto()

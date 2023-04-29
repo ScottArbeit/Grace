@@ -32,7 +32,8 @@ module OwnerName =
     type OwnerNameActor(host: ActorHost) =
         inherit Actor(host)
 
-        let log = host.LoggerFactory.CreateLogger(ActorName.OwnerName)
+        let actorName = ActorName.OwnerName
+        let log = host.LoggerFactory.CreateLogger(actorName)
 
         let mutable cachedOwnerId: string option = None
 

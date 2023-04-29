@@ -24,19 +24,19 @@ open System.Net.Http.Json
 module Branch =
 
     // Branch should support logical deletes with physical deletes set using a Dapr Timer based on a repository-level setting.
-    // Branch Deletion should enumerate and delete each save, checkpoint, and commit in the branch.
+    // Branch Deletion should enumerate and delete each reference in the branch.
 
     type BranchActor(host: ActorHost) =
         inherit Actor(host)
 
+        let actorName = ActorName.Branch
+        let log = host.LoggerFactory.CreateLogger(actorName)
         let dtoStateName = "branchDtoState"
         let eventsStateName = "branchEventsState"
 
         let mutable branchDto: BranchDto = BranchDto.Default
         let mutable branchEvents: List<BranchEvent> = null
-        let log = host.LoggerFactory.CreateLogger(nameof(BranchActor))
 
-        let actorName = Constants.ActorName.Branch
         let mutable actorStartTime = Instant.MinValue
         let mutable logScope: IDisposable = null
         let mutable currentCommand = String.Empty

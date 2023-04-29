@@ -11,7 +11,6 @@ open System.Threading.Tasks
 
 module BranchName =
 
-    let actorName = Constants.ActorName.BranchName
     let mutable actorStartTime = Instant.MinValue
     let mutable logScope: IDisposable = null
 
@@ -32,6 +31,8 @@ module BranchName =
     type BranchNameActor(host: ActorHost) =
         inherit Actor(host)
 
+        let actorName = Constants.ActorName.BranchName
+    
         let log = host.LoggerFactory.CreateLogger(actorName)
 
         let mutable cachedBranchId: string option = None

@@ -21,14 +21,45 @@ open System
 
 #nowarn "9"
 
+module Combinators =
+    let either okFunc errorFunc graceResult =
+        match graceResult with
+        | Result.Ok s -> okFunc s
+        | Result.Error f -> errorFunc f
+
+    let ok x = Result.Ok x
+    let error x = Result.Error x
+
+    let bind f =
+        either f error
+
+    let (>>=) x f =
+        bind f x
+
+    let (>=>) s1 s2 =
+        s1 >> bind s2
+
+
 module Utilities =
+    /// Converts an Instant to local time, and produces a string in short date/time format, using the CurrentUICulture.
     let instantToLocalTime (instant: Instant) = instant.ToDateTimeUtc().ToLocalTime().ToString("g", CultureInfo.CurrentUICulture)
+
+    /// Gets the current instant.
     let getCurrentInstant() = SystemClock.Instance.GetCurrentInstant()
+
+    /// Gets the current instant as a string in ExtendedIso format. Example: "2009-06-15T13:45:30.0000000Z". 
     let getCurrentInstantExtended() = getCurrentInstant().ToString(InstantPattern.ExtendedIso.PatternText, CultureInfo.InvariantCulture)
+
+    /// Gets the current instant as a string in General format. Example: "2009-06-15T13:45:30Z".
     let getCurrentInstantGeneral() = getCurrentInstant().ToString(InstantPattern.General.PatternText, CultureInfo.InvariantCulture)
+
+    /// Gets the current instant in local time as a string in short date/time format, using the CurrentUICulture.
     let getCurrentInstantLocal() = getCurrentInstant() |> instantToLocalTime
+
+    /// Logs the message to the console, with the current instant, thread ID, and message.
     let logToConsole message = printfn $"{getCurrentInstantExtended(),-28} {Environment.CurrentManagedThreadId:X2} {message}"
 
+    /// Gets the first eight characters of a SHA256 hash.
     let getShortenedSha256Hash (sha256Hash: String) =
         if sha256Hash.Length >= 8 then
             sha256Hash.Substring(0, 8)
@@ -337,12 +368,13 @@ module Utilities =
             dict.Add(prop.Name, valueString)
         dict
 
-    // This construct is equivalent to using IHttpClientFactory in the ASP.NET Dependency Injection container, for code (like this) that isn't using GenericHost.
-    // See https://docs.microsoft.com/en-us/aspnet/core/fundamentals/http-requests?view=aspnetcore-7.0#alternatives-to-ihttpclientfactory for more information.
+    /// This construct is equivalent to using IHttpClientFactory in the ASP.NET Dependency Injection container, for code (like this) that isn't using GenericHost.
+    ///
+    /// See https://docs.microsoft.com/en-us/aspnet/core/fundamentals/http-requests?view=aspnetcore-7.0#alternatives-to-ihttpclientfactory for more information.
     let socketsHttpHandler = new SocketsHttpHandler(
         AllowAutoRedirect = true,                               // We expect to use Traffic Manager or equivalents, so there will be redirects.
         MaxAutomaticRedirections = 6,                           // Not sure of the exact right number, but definitely want a limit here.
-        SslOptions = SslClientAuthenticationOptions(EnabledSslProtocols = Security.Authentication.SslProtocols.Tls12),            
+        SslOptions = SslClientAuthenticationOptions(EnabledSslProtocols = Security.Authentication.SslProtocols.Tls12 + Security.Authentication.SslProtocols.Tls13),
         AutomaticDecompression = DecompressionMethods.All,      // We'll store blobs using GZip, and we'll enable Brotli on the server
         EnableMultipleHttp2Connections = true,                  // I doubt this will ever happen, but don't mind making it possible
         PooledConnectionLifetime = TimeSpan.FromMinutes(2.0),   // Default is 2m
