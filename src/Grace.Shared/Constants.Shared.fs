@@ -65,13 +65,13 @@ module Constants =
     let GraceObjectsStorage = "graceObjectsStorage"
 
     /// The name of the Dapr service for Grace event pub/sub.
-    let GracePubSubService = "graceEventStream"
+    let GracePubSubService = "graceeventstream"
 
     /// The name of the event topic to publish to.
     let GraceEventStreamTopic = "graceeventstream"
 
     /// The name of the Dapr service for retrieving application secrets.
-    let GraceSecretStoreName = "cloudSecretStore"
+    let GraceSecretStoreName = "cloudsecretstore"
 
     /// The name of the directory that holds Grace information in a repository.
     let GraceConfigDirectory = ".grace"

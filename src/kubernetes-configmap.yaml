@@ -1,0 +1,22 @@
+apiVersion: v1
+kind: Namespace
+metadata: 
+  name: grace-dev
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grace-environment
+  namespace: grace-dev
+data:
+  ASPNETCORE_ENVIRONMENT: Development
+  ASPNETCORE_URLS: https://+:5001;http://+:5000
+  ASPNETCORE_Kestrel__Certificates__Default__Path: /https/aspnetapp.pfx
+  ASPNETCORE_Kestrel__Certificates__Default__Password: CrypticPassword8=5
+  AZURE_MONITOR_CONNECTION_STRING: "InstrumentationKey=e0955eb4-1817-4a94-bf6e-d48f6ae54a8c;IngestionEndpoint=https://westus2-2.in.applicationinsights.azure.com/"
+  #Azure_CosmosDB_Connection_String: "AccountEndpoint=https://localhost:8081/;AccountKey=C2y6yDjf5/R+ob0N8A7Cgv30VRDJIWEHLM+4QDU5DE2nQ9nDuVTqobD4b8mGGyPMbIZnqyMsEcaGQy67XIw/Jw==" # This is a well-known default key.
+  DAPR_APP_PORT: "5000"
+  DAPR_HTTP_PORT: "3500"
+  DAPR_GRPC_PORT: "50001"
+  DAPR_SERVER_URI: http://daprd
+  TEMP: /tmp

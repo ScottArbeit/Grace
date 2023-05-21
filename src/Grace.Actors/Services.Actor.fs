@@ -32,13 +32,13 @@ module Services =
     let daprClient = DaprClientBuilder().UseJsonSerializationOptions(Constants.JsonSerializerOptions).UseHttpEndpoint(daprHttpEndpoint).UseGrpcEndpoint(daprGrpcEndpoint).Build()
     let azureStorageConnectionString =
         (task {
-            let! secret = daprClient.GetSecretAsync(Constants.GraceSecretStoreName, "AzureStorageConnectionString")
+            let! secret = daprClient.GetSecretAsync(Constants.GraceSecretStoreName, "azurestorageconnectionstring")
             return secret.First().Value
         }).Result
 
     let private storageKey = 
         (task {
-            let! secret = daprClient.GetSecretAsync(Constants.GraceSecretStoreName, "AzureStorageKey")
+            let! secret = daprClient.GetSecretAsync(Constants.GraceSecretStoreName, "azurestoragekey")
             return secret.First().Value
          }).Result
     let private sharedKeyCredential = StorageSharedKeyCredential(defaultObjectStorageAccount, storageKey)

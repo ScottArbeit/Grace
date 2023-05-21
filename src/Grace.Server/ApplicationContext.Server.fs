@@ -78,7 +78,7 @@ module ApplicationContext =
             cosmosClient
         else
             //let cosmosDbConnectionString = Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.AzureCosmosDBConnectionString)
-            let cosmosDbConnectionString = daprClient.GetSecretAsync(Constants.GraceSecretStoreName, "AzureCosmosDBConnectionString").Result.First().Value
+            let cosmosDbConnectionString = daprClient.GetSecretAsync(Constants.GraceSecretStoreName, "azurecosmosdbconnectionstring").Result.First().Value
             let cosmosClientOptions = CosmosClientOptions(
                 ApplicationName = Constants.GraceServerAppId, 
                 EnableContentResponseOnWrite = false, 
@@ -127,7 +127,7 @@ module ApplicationContext =
                 if tcpListeners.Any(fun tcpListener -> tcpListener.Port = gRPCPort) then
                     logToConsole $"gRPC port is ready."
                     isReady <- true
-            let! storageKey = daprClient.GetSecretAsync(Constants.GraceSecretStoreName, "AzureStorageKey")
+            let! storageKey = daprClient.GetSecretAsync(Constants.GraceSecretStoreName, "azurestoragekey")
             sharedKeyCredential <- StorageSharedKeyCredential(defaultObjectStorageAccount, storageKey.First().Value)
 
             //match actorStateStorageProvider with

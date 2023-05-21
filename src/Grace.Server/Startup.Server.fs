@@ -56,8 +56,11 @@ module Application =
 
         let endpoints = [
             GET [
-                route "/" (warbler (fun _ -> htmlString $"<h1>Hello From Grace!</h1><br/><p>{getCurrentInstantExtended()}.</p>"))
-                //route "/healthz" (warbler (fun _ -> htmlString $"<h1>Hello From Grace!</h1><br/><p>{GetCurrentInstantExtended()}.</p>"))
+                route "/" (warbler (fun _ ->
+                                       let fileVersion = FileVersionInfo.GetVersionInfo(Assembly.GetExecutingAssembly().Location).FileVersion
+                                       htmlString $"<h1>Hello From Grace Server {fileVersion}!</h1><br/><p>The current server time is: {getCurrentInstantExtended()}.</p>"
+                                   ))
+                route "/healthz" (warbler (fun _ -> htmlString $"<h1>Hello From Grace!</h1><br/><p>The current server time is: {getCurrentInstantExtended()}.</p>"))
             ]
             PUT [
             ]
@@ -65,30 +68,30 @@ module Application =
                 GET [
                 ]
                 POST [
-                    route "/create" Branch.Create
-                    route "/rebase" Branch.Rebase
-                    route "/get" Branch.Get
-                    route "/getParentBranch" Branch.GetParentBranch
-                    route "/promote" Branch.Promote
-                    route "/commit" Branch.Commit
                     route "/checkpoint" Branch.Checkpoint
-                    route "/save" Branch.Save
-                    route "/tag" Branch.Tag
-                    route "/enablePromotion" Branch.EnablePromotion
-                    route "/enableCommit" Branch.EnableCommit
+                    route "/commit" Branch.Commit
+                    route "/create" Branch.Create
+                    route "/delete" Branch.Delete
                     route "/enableCheckpoint" Branch.EnableCheckpoint
+                    route "/enableCommit" Branch.EnableCommit
+                    route "/enablePromotion" Branch.EnablePromotion
                     route "/enableSave" Branch.EnableSave
                     route "/enableTag" Branch.EnableTag
-                    route "/getPromotions" Branch.GetPromotions
-                    route "/getCommits" Branch.GetCommits
+                    route "/get" Branch.Get
                     route "/getCheckpoints" Branch.GetCheckpoints
+                    route "/getCommits" Branch.GetCommits
+                    route "/getDiffsForReferenceType" Branch.GetDiffsForReferenceType
+                    route "/getParentBranch" Branch.GetParentBranch
+                    route "/getPromotions" Branch.GetPromotions
                     route "/getReference" Branch.GetReference
                     route "/getReferences" Branch.GetReferences
-                    route "/getDiffsForReferenceType" Branch.GetDiffsForReferenceType
                     route "/getSaves" Branch.GetSaves
                     route "/getTags" (Branch.GetTags >=> mustBeLoggedIn)
                     route "/getVersion" Branch.GetVersion
-                    route "/delete" Branch.Delete
+                    route "/promote" Branch.Promote
+                    route "/rebase" Branch.Rebase
+                    route "/save" Branch.Save
+                    route "/tag" Branch.Tag
                 ]
             ]
             subRoute "/diff" [
@@ -122,24 +125,24 @@ module Application =
             subRoute "/organization" [
                 POST [
                     route "/create" Organization.Create
-                    route "/setName" Organization.SetName
-                    route "/setType" Organization.SetType
-                    route "/setSearchVisibility" Organization.SetSearchVisibility
-                    route "/setDescription" Organization.SetDescription
-                    route "/listRepositories" Organization.ListRepositories
                     route "/delete" Organization.Delete
+                    route "/listRepositories" Organization.ListRepositories
+                    route "/setDescription" Organization.SetDescription
+                    route "/setName" Organization.SetName
+                    route "/setSearchVisibility" Organization.SetSearchVisibility
+                    route "/setType" Organization.SetType
                     route "/undelete" Organization.Undelete
                 ]
             ]
             subRoute "/owner" [
                 POST [
                     route "/create" Owner.Create
-                    route "/setName" Owner.SetName                   
-                    route "/setType" Owner.SetType        
-                    route "/setSearchVisibility" Owner.SetSearchVisibility
-                    route "/setDescription" Owner.SetDescription
-                    route "/listOrganizations" Owner.ListOrganizations
                     route "/delete" Owner.Delete
+                    route "/listOrganizations" Owner.ListOrganizations
+                    route "/setDescription" Owner.SetDescription
+                    route "/setName" Owner.SetName                   
+                    route "/setSearchVisibility" Owner.SetSearchVisibility
+                    route "/setType" Owner.SetType        
                     route "/undelete" Owner.Undelete
                 ]
             ]

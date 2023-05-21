@@ -663,7 +663,7 @@ module Branch =
                 with ex ->
                     return! context |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
             }
-        
+
     let GetPromotions: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
@@ -735,7 +735,6 @@ module Branch =
                 with ex ->
                     return! context |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
             }
-
 
     let GetCheckpoints: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
