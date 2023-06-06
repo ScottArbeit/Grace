@@ -20,6 +20,7 @@ open System.CommandLine
 open System.CommandLine.NamingConventionBinder
 open System.CommandLine.Parsing
 open System.Linq
+open System.IO
 open System.Threading.Tasks
 
 module Repository =
@@ -59,7 +60,7 @@ module Repository =
         let graceConfig = new Option<String>("--graceConfig", IsRequired = false, Description = "The path of a Grace config file that you'd like to use instead of the default graceconfig.json.", Arity = ArgumentArity.ExactlyOne)
         let force = new Option<bool>("--force", IsRequired = false, Description = "Deletes repository even if there are links to other repositories.", Arity = ArgumentArity.ExactlyOne)
         let doNotSwitch = new Option<bool>("--doNotSwitch", IsRequired = false, Description = "Do not switch to the new repository as the current repository.", Arity = ArgumentArity.ExactlyOne)
-        let enabled = new Option<bool>("--enabled", IsRequired = true, Description = "True to enable the promotion type; false to disable it.", Arity = ArgumentArity.ExactlyOne)
+        let directory = new Option<String>("--directory", IsRequired = false, Description = "The directory to use when initializing the repository. [default: current directory]", Arity = ArgumentArity.ExactlyOne)
         //enabled.SetDefaultValue(false)
         let includeDeleted = new Option<bool>("--includeDeleted", IsRequired = false, Description = "True to include deleted branches; false to exclude them.", Arity = ArgumentArity.ZeroOrOne)
         //includeDeleted.SetDefaultValue(false)
@@ -201,26 +202,46 @@ module Repository =
     // Init subcommand
     type InitParameters() =
         inherit CommonParameters()
+        member val public Directory = String.Empty with get, set
         member val public GraceConfig = String.Empty with get, set
+
+    let ``Directory must be a valid path`` (parseResult: ParseResult, parameters: InitParameters) =
+        if parseResult.HasOption(Options.directory) && not <| Directory.Exists(parameters.Directory) then
+            Error (GraceError.Create (RepositoryError.getErrorMessage InvalidDirectory) (parameters.CorrelationId))
+        else
+            Ok (parseResult, parameters)
 
     let private initHandler (parseResult: ParseResult) (parameters: InitParameters) =
         task {
             try
                 if parseResult |> verbose then printParseResult parseResult
-                let validateIncomingParameters = CommonValidations (parseResult, parameters)
-                match validateIncomingParameters with
-                | Ok _ -> 
-                    let (ownerId, organizationId, repositoryId) = getIds parameters
-                    let enhancedParameters = Repository.InitParameters(
-                        OwnerId = ownerId,
-                        OwnerName = parameters.OwnerName,
-                        OrganizationId = organizationId,
-                        OrganizationName = parameters.OrganizationName,
-                        RepositoryId = repositoryId, 
-                        RepositoryName = parameters.RepositoryName, 
-                        CorrelationId = parameters.CorrelationId)
+                let directoryIsValid = (parseResult, parameters) |> ``Directory must be a valid path``
+                match directoryIsValid with
+                | Ok _ ->
+                    let validateIncomingParameters = (parseResult, parameters) |> CommonValidations 
+                    match validateIncomingParameters with
+                    | Ok _ -> 
+                        let (ownerId, organizationId, repositoryId) = getIds parameters
+                        let enhancedParameters = Repository.InitParameters(
+                            OwnerId = ownerId,
+                            OwnerName = parameters.OwnerName,
+                            OrganizationId = organizationId,
+                            OrganizationName = parameters.OrganizationName,
+                            RepositoryId = repositoryId, 
+                            RepositoryName = parameters.RepositoryName, 
+                            CorrelationId = parameters.CorrelationId)
 
-                    return Ok (GraceReturnValue.Create "Not yet implemented" (getCorrelationId parseResult))
+                        // Take functionality from grace maint update... most of it is already there.
+                        // We need to double-check that we have the correct owner/organization/repository because we're 
+                        //   going to be uploading files to object storage placed in containers named after the owner/organization/repository.
+                        // Test on small, medium, and large repositories.
+                        // Test on repositories with multiple branches - should fail.
+                        // Test on repositories with only initial branch and no references - should succeed.
+                        // Test on repositories with only initial branch and references - should fail.
+                        // Test on repositories with multiple branches and references - should fail.
+
+                        return Ok (GraceReturnValue.Create "Not yet implemented" (getCorrelationId parseResult))
+                    | Error error -> return Error error
                 | Error error -> return Error error
             with ex -> return Error (GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
         }
@@ -775,7 +796,7 @@ module Repository =
                     |> addOption Options.repositoryId
 
         let addCommonOptions (command: Command) =
-            command |> addOption Options.repositoryId |> addOption Options.repositoryName |> addCommonOptionsExceptForRepositoryInfo
+            command |> addOption Options.repositoryName |> addCommonOptionsExceptForRepositoryInfo
 
         // Create main command and aliases, if any.
         let repositoryCommand = new Command("repository", Description = "Create, change, or delete repository-level information.")
@@ -786,7 +807,7 @@ module Repository =
         repositoryCreateCommand.Handler <- Create
         repositoryCommand.AddCommand(repositoryCreateCommand)
 
-        let repositoryInitCommand = new Command("init", Description = "Initializes a new repository with the contents of a directory.") |> addOption Options.requiredRepositoryName |> addOption Options.graceConfig |> addCommonOptionsExceptForRepositoryInfo
+        let repositoryInitCommand = new Command("init", Description = "Initializes a new repository with the contents of a directory.") |> addOption Options.directory |> addOption Options.graceConfig |> addCommonOptions
         repositoryInitCommand.Handler <- Init
         repositoryCommand.AddCommand(repositoryInitCommand)
 

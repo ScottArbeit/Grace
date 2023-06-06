@@ -42,8 +42,13 @@ module Watch =
 
     /// Holds a list of the created or changed files that we need to process, as determined by the FileSystemWatcher.
     ///
-    /// NOTE: We're using ConcurrentDictionary because it's safe for multithreading, and it doesn't allow us to insert the same key twice. The value is meaningless.
-    let private filesToProcess = ConcurrentDictionary<string, string>()
+    /// NOTE: We're using ConcurrentDictionary because it's safe for multithreading, doesn't allow us to insert the same key twice, and for its algorithms. We're not using the values of the ConcurrentDictionary here, only the keys.
+    let private filesToProcess = ConcurrentDictionary<string, unit>()
+
+    /// Holds a list of the created or changed directories that we need to process, as determined by the FileSystemWatcher.
+    ///
+    /// NOTE: We're using ConcurrentDictionary because it's safe for multithreading, doesn't allow us to insert the same key twice, and for its algorithms. We're not using the values of the ConcurrentDictionary here, only the keys.
+    let private directoriesToProcess = ConcurrentDictionary<string, unit>()
 
     type WatchParameters() = 
         inherit ParameterBase()
@@ -56,7 +61,7 @@ module Watch =
     
     /// Generates a temporary file name within the ObjectDirectory, and returns the full file path.
     /// This file name will be used to copy modified files into before renaming them with their proper names and SHA256 values.
-    let getTemporaryFilePath =
+    let getTemporaryFilePath() =
         Path.GetFullPath(Path.Combine(Environment.GetEnvironmentVariable("TEMP"), $"{Path.GetRandomFileName()}.gracetmp"))
 
     let copyToObjectDirectory (filePath: FilePath) : Task<FileVersion option> =
@@ -65,7 +70,7 @@ module Watch =
                 if File.Exists($"{filePath}") then
                     let filePath = $"{filePath}"
                     // First, capture the file by copying it to a temp name
-                    let tempFilePath = getTemporaryFilePath
+                    let tempFilePath = getTemporaryFilePath()
                     //logToConsole $"filePath: {filePath}; tempFilePath: {tempFilePath}"
                     let mutable iteration = 0
                     Constants.DefaultFileCopyRetryPolicy.Execute(fun () -> 
@@ -81,11 +86,8 @@ module Watch =
                     fileStream.Dispose()
 
                     // Get the new name for this version of the file, including the SHA-256 hash.
-                    let originalFile = FileInfo(filePath)
                     let relativeDirectoryPath = getLocalRelativeDirectory filePath (Current().RootDirectory)
-                    // We're putting the SHA-256 hash just before the file extension; this allows us to open these versions using default file associations.
-                    // FileInfo.Extension includes the '.'.
-                    let objectFileName = $"{originalFile.Name.Replace(originalFile.Extension, String.Empty)}_{sha256Hash}{originalFile.Extension}"
+                    let objectFileName = getObjectFileName filePath sha256Hash
                     let objectDirectoryPath = Path.Combine(Current().ObjectDirectory, relativeDirectoryPath)
                     let objectFilePath = Path.Combine(objectDirectoryPath, objectFileName)
                     //logToConsole $"relativeDirectoryPath: {relativeDirectoryPath}; objectFileName: {objectFileName}; objectFilePath: {objectFilePath}"
@@ -134,7 +136,7 @@ module Watch =
 
             if not <| shouldIgnore then
                 logToAnsiConsole Colors.Added $"I saw that {args.FullPath} was created."
-                filesToProcess.TryAdd(args.FullPath, String.Empty) |> ignore
+                filesToProcess.TryAdd(args.FullPath, ()) |> ignore
 
     let OnChanged (args: FileSystemEventArgs) =
         if updateNotInProgress() && isNotDirectory args.FullPath then            
@@ -143,7 +145,7 @@ module Watch =
 
             if not <| shouldIgnore then
                 logToAnsiConsole Colors.Changed $"I saw that {args.FullPath} changed."
-                filesToProcess.TryAdd(args.FullPath, String.Empty) |> ignore
+                filesToProcess.TryAdd(args.FullPath, ()) |> ignore
 
             // Special handling for the Grace status file; if that is the changed file, we'll set this flag so we reload it in OnWatch() in the main loop
             if (args.FullPath = Current().GraceStatusFile) && (not <| graceStatusHasChanged) then
@@ -173,12 +175,13 @@ module Watch =
             if not <| shouldIgnoreNewFile then
                 logToAnsiConsole Colors.Changed $"I saw that {args.OldFullPath} was renamed to {args.FullPath}."
                 //logToConsole $"Should ignore {args.OldFullPath}: {shouldIgnoreOldFile}. Should ignore {args.FullPath}: {shouldIgnoreNewFile}."
-                filesToProcess.TryAdd(args.FullPath, String.Empty) |> ignore
+                filesToProcess.TryAdd(args.FullPath, ()) |> ignore
 
     let OnError (args: ErrorEventArgs) =
         let correlationId = Guid.NewGuid().ToString()
         logToAnsiConsole Colors.Error $"I saw that the FileSystemWatcher threw an exception: {args.GetException().Message}. grace watch should be restarted."
 
+    /// Creates a FileSystemWatcher for the given root directory.
     let createFileSystemWatcher rootDirectory =
         let fileSystemWatcher = new FileSystemWatcher(rootDirectory)
         fileSystemWatcher.InternalBufferSize <- (64 * 1024)   // Default is 4K, choosing maximum of 64K for safety.
@@ -191,6 +194,7 @@ module Watch =
         for difference in differences.OrderBy(fun diff -> diff.RelativePath) do
             logToAnsiConsole Colors.Verbose $"{discriminatedUnionCaseNameToString difference.DifferenceType} {discriminatedUnionCaseNameToString difference.FileSystemEntryType} {difference.RelativePath}"
 
+    /// Update the Grace Object Cache file with the new DirectoryVersions.
     let updateObjectCacheFile (newDirectoryVersions: List<LocalDirectoryVersion>) =
         task {
             let! objectCache = readGraceObjectCacheFile()
@@ -199,6 +203,7 @@ module Watch =
             do! writeGraceObjectCacheFile objectCache
         }
 
+    /// Updates the Grace Status file's Index with updates detected from the file system.
     let updateGraceStatus graceStatus correlationId =
         task {
             // Get the list of differences between what's in the working directory, and what Grace Index knows about.
@@ -231,7 +236,9 @@ module Watch =
                             | Delete -> sb.AppendLine($"Delete {fileDifference.RelativePath}") |> ignore
                         let saveMessage = sb.ToString()
                         saveMessage.Remove(saveMessage.LastIndexOf(Environment.NewLine), Environment.NewLine.Length)
-                if fileDifferences.Count > 0 then
+                
+                // If there are changes either to files or just to directories, create a save reference.
+                if (fileDifferences.Count > 0) || (newDirectoryVersions.Count > 0) then
                     let! saveReferenceResult = createSaveReference (getRootDirectoryVersion newGraceStatus) message correlationId
                     match saveReferenceResult with
                     | Ok returnValue ->
@@ -251,7 +258,8 @@ module Watch =
                 return None
         }
 
-    let fileChanged fullPath correlationId = 
+    /// Copies a file from the working directory to the object directory, with its SHA-256 hash, and then uploads it to storage.
+    let copyFileToObjectDirectoryAndUploadToStorage fullPath correlationId = 
         task {
             //logToConsole $"*In fileChanged for {fullPath}."
             let! fileVersionOption = copyToObjectDirectory fullPath
@@ -296,20 +304,23 @@ module Watch =
     let processChangedFiles() =
         task {
             // First, check if there's anything to process.
-            if not <| filesToProcess.IsEmpty then
+            if not (filesToProcess.IsEmpty && directoriesToProcess.IsEmpty) then
                 let correlationId = Guid.NewGuid().ToString()
                 let! graceStatusFromDisk = readGraceStatusFile()
                 graceStatus <- graceStatusFromDisk
                 
                 let mutable lastFileUploadInstant = graceStatus.LastSuccessfulFileUpload
-                let mutable meaninglessValue = String.Empty
 
-                // Loop through no more than 50 files. In the incredibly rare event that more than 50 files have changed,
-                //   we'll get 50-per-timer-tick, and clear the queue quickly without overwhelming the system.
+                /// This is just a way to throw away the unit value from the ConcurrentDictionary.
+                let mutable unitValue = ()
+
+                // Loop through no more than 50 files. Copy them to the objects directory, and upload them to storage.
+                //   In the incredibly rare event that more than 50 files have changed, we'll get 50-per-timer-tick,
+                //   and clear the queue quickly without overwhelming the system.
                 for fileName in filesToProcess.Keys.Take(50) do
-                    if filesToProcess.TryRemove(fileName, &meaninglessValue) then   
+                    if filesToProcess.TryRemove(fileName, &unitValue) then   
                         logToAnsiConsole Colors.Verbose $"Processing {fileName}. filesToProcess.Count: {filesToProcess.Count}."
-                        do! fileChanged (FilePath fileName) correlationId
+                        do! copyFileToObjectDirectoryAndUploadToStorage (FilePath fileName) correlationId
                         lastFileUploadInstant <- getCurrentInstant()
                 
                 graceStatus <- {graceStatus with LastSuccessfulFileUpload = lastFileUploadInstant}
@@ -322,17 +333,18 @@ module Watch =
                         graceStatus <- newGraceStatus
                     | None -> ()    // Something went wrong, don't update the in-memory Grace Status.
 
-                do! updateGraceWatchStatus graceStatus
+                do! updateGraceWatchInterprocessFile graceStatus
                 graceStatus <- GraceStatus.Default
                 
             // Refresh the file every (just under) 5 minutes to indicate that `grace watch` is still alive.
             elif graceWatchStatusUpdateTime < getCurrentInstant().Minus(Duration.FromMinutes(4.8)) then
                 let! graceStatusFromDisk = readGraceStatusFile()
                 graceStatus <- graceStatusFromDisk
-                do! updateGraceWatchStatus graceStatus
+                do! updateGraceWatchInterprocessFile graceStatus
                 graceStatus <- GraceStatus.Default
         }
 
+    /// This is the main loop for the `grace watch` command.
     let OnWatch =
         CommandHandler.Create(fun (parseResult: ParseResult) (cancellationToken: CancellationToken) (parameters: WatchParameters) ->
             task {
@@ -350,7 +362,7 @@ module Watch =
                     graceStatus <- status
 
                     // Create the inter-process communication file.
-                    do! updateGraceWatchStatus graceStatus
+                    do! updateGraceWatchInterprocessFile graceStatus
 
                     // Enable the FileSystemWatcher.
                     fileSystemWatcher.EnableRaisingEvents <- true
@@ -405,10 +417,14 @@ module Watch =
                     // Check for changes that occurred while not running.
                     logToAnsiConsole Colors.Verbose $"Scanning for differences."
                     let! differences = scanForDifferences graceStatus
+                    if differences.Count = 0 then
+                        logToAnsiConsole Colors.Verbose $"Already up-to-date."
+                    else
+                        logToAnsiConsole Colors.Verbose $"Found {differences.Count} differences."
                     for difference in differences do
                         match difference.FileSystemEntryType with
-                        | Directory -> ()
-                        | File -> filesToProcess.TryAdd(difference.RelativePath, String.Empty) |> ignore
+                        | Directory -> directoriesToProcess.TryAdd(difference.RelativePath, ()) |> ignore
+                        | File -> filesToProcess.TryAdd(difference.RelativePath, ()) |> ignore
 
                     // Process any changes that occurred while not running.
                     graceStatus <- GraceStatus.Default
@@ -427,7 +443,7 @@ module Watch =
                         if graceStatusHasChanged then
                             let! updatedGraceStatus = readGraceStatusFile()
                             graceStatus <- updatedGraceStatus
-                            do! updateGraceWatchStatus graceStatus
+                            do! updateGraceWatchInterprocessFile graceStatus
                             //logToAnsiConsole Colors.Important $"Setting graceStatusHasChanged to false in OnWatch(). Current value: {graceStatusHasChanged}."
                             graceStatusHasChanged <- false
                         do! processChangedFiles()

@@ -298,6 +298,7 @@ module Errors =
             | FailedWhileSavingEvent
             | FailedWhileApplyingEvent
             | InvalidCheckpointDaysValue
+            | InvalidDirectory
             | InvalidMaxCountValue
             | InvalidObjectStorageProvider
             | InvalidOrganizationId
@@ -337,6 +338,7 @@ module Errors =
                 | FailedWhileSavingEvent -> getLocalizedString StringResourceName.FailedWhileSavingEvent
                 | FailedWhileApplyingEvent -> getLocalizedString StringResourceName.FailedWhileApplyingEvent
                 | InvalidCheckpointDaysValue -> getLocalizedString StringResourceName.InvalidCheckpointDaysValue
+                | InvalidDirectory -> getLocalizedString StringResourceName.InvalidDirectory
                 | InvalidMaxCountValue -> getLocalizedString StringResourceName.InvalidMaxCountValue
                 | InvalidObjectStorageProvider -> getLocalizedString StringResourceName.InvalidObjectStorageProvider
                 | InvalidOwnerId -> getLocalizedString StringResourceName.InvalidOwnerId

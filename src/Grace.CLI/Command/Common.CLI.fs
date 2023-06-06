@@ -33,7 +33,7 @@ module Common =
         let correlationId = new Option<String>([|"--correlationId"; "-c"|], IsRequired = false, Description = "CorrelationId for end-to-end tracking <String>.", Arity = ArgumentArity.ExactlyOne)
         correlationId.SetDefaultValue(Guid.NewGuid().ToString())
 
-        let output = (new Option<String>("--output", IsRequired = false, Description = "The style of output.", Arity = ArgumentArity.ExactlyOne))
+        let output = (new Option<String>([|"--output"; "-o"|], IsRequired = false, Description = "The style of output.", Arity = ArgumentArity.ExactlyOne))
                             .FromAmong(listCases(typeof<OutputFormat>))
         output.SetDefaultValue("Normal")
 

@@ -130,14 +130,7 @@ module Types =
         member this.ToLocalFileVersion lastWriteTimeUtc = LocalFileVersion.Create this.RepositoryId this.RelativePath this.Sha256Hash this.IsBinary this.Size this.CreatedAt true lastWriteTimeUtc
 
         /// Get the object directory file name, which includes the SHA256 Hash value. Example: hello.js -> hello_04bef0a4b298de9c02930234.js
-        member this.GetObjectFileName =
-            // FileInfo.Extension includes the '.'.
-            let originalFile = FileInfo(this.RelativePath)
-            if not <| String.IsNullOrEmpty(originalFile.Extension) then
-                $"{originalFile.Name.Replace(originalFile.Extension, String.Empty)}_{this.Sha256Hash}{originalFile.Extension}"
-            else
-                $"{originalFile.Name}_{this.Sha256Hash}"
-
+        member this.GetObjectFileName = getObjectFileName this.RelativePath this.Sha256Hash
         /// Gets the relative directory path of the file. Example: "/dir/subdir/file.js" -> "/dir/subdir/".
         member this.RelativeDirectory = getRelativeDirectory $"{this.RelativePath}" ""
     
@@ -174,13 +167,7 @@ module Types =
         member this.ToFileVersion = FileVersion.Create this.RepositoryId this.RelativePath this.Sha256Hash String.Empty this.IsBinary this.Size
     
         /// Get the object directory file name, which includes the SHA256 Hash value. Example: hello.js -> hello_04bef0a4b298de9c02930234.js
-        member this.GetObjectFileName =
-            // FileInfo.Extension includes the '.'.
-            let originalFile = FileInfo($"{this.RelativePath}")
-            if not <| String.IsNullOrEmpty(originalFile.Extension) then
-                $"{originalFile.Name.Replace(originalFile.Extension, String.Empty)}_{this.Sha256Hash}{originalFile.Extension}"
-            else
-                $"{originalFile.Name}_{this.Sha256Hash}"
+        member this.GetObjectFileName = getObjectFileName this.RelativePath this.Sha256Hash
 
         /// Gets the relative directory path of the file. Example: "/dir/subdir/file.js" -> "/dir/subdir/".
         member this.RelativeDirectory = getRelativeDirectory $"{this.RelativePath}" ""

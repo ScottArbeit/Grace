@@ -404,3 +404,15 @@ module Utilities =
         httpClient.Timeout <- TimeSpan.FromSeconds(15.0)  // Fast fail for testing network connectivity.
 #endif
         httpClient
+
+    /// Gets the object file name for a given file path and SHA-256 hash.
+    /// We're putting the SHA-256 hash just before the file extension; this allows us to open these versions using default file associations.
+    ///
+    /// Example: "C:\Users\grace\Documents\demo.js" -> "demo_1234567890abcdef.js"
+    let getObjectFileName filePath sha256Hash =
+        // FileInfo.Extension includes the '.'.
+        let originalFile = FileInfo(filePath)
+        if not <| String.IsNullOrEmpty(originalFile.Extension) then
+            $"{originalFile.Name.Replace(originalFile.Extension, String.Empty)}_{sha256Hash}{originalFile.Extension}"
+        else
+            $"{originalFile.Name}_{sha256Hash}"

@@ -39,11 +39,6 @@
       "commandLineArgs": "owner create --ownerName GraceDemo",
       "workingDirectory": "C:\\Source\\gracedemo"
     },
-    "grace watch - Chris": {
-      "commandName": "Project",
-      "commandLineArgs": "watch",
-      "workingDirectory": "C:\\Source\\GraceDemo\\Chris"
-    },
     "grace refs -b main": {
       "commandName": "Project",
       "commandLineArgs": "refs -b main --output Verbose",
@@ -76,6 +71,16 @@
     "grace rebase": {
       "commandName": "Project",
       "commandLineArgs": "rebase",
+      "workingDirectory": "C:\\Source\\GraceDemo\\Filip"
+    },
+    "grace branches": {
+      "commandName": "Project",
+      "commandLineArgs": "branches --output Verbose",
+      "workingDirectory": "C:\\Source\\GraceDemo\\Filip"
+    },
+    "grace watch - Mika": {
+      "commandName": "Project",
+      "commandLineArgs": "watch",
       "workingDirectory": "C:\\Source\\GraceDemo\\Mika"
     }
   }

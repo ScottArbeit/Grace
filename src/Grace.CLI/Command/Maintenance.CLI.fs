@@ -140,7 +140,7 @@ module Maintenance =
 
                             // We'll segment the uploads by the number of segments in the path, 
                             //   so we process the deepest paths first, and the new children exist before the parent is created.
-                            // Within each segment group, we'll parallelize the processing for performance.
+                            //   Within each segment group, we'll parallelize the processing for performance.
                             let segmentGroups = graceStatus.Index.Values
                                                     .GroupBy(fun dv -> countSegments dv.RelativePath)
                                                     .OrderByDescending(fun group -> group.Key)

@@ -101,7 +101,12 @@ module Configuration =
     let private findGraceConfigurationFile =
         try
             let mutable currentDirectory = DirectoryInfo(Environment.CurrentDirectory)
-            //let mutable currentDirectory = DirectoryInfo(Process.GetCurrentProcess().StartInfo.WorkingDirectory)
+            if currentDirectory.FullName = Environment.SystemDirectory then
+                // This happens when this is running from a Windows app, and we want to know where it is
+                currentDirectory <- DirectoryInfo(Path.GetDirectoryName(Environment.ProcessPath))
+            // Other ways I've tried to get the current directory:
+            // let mutable currentDirectory = DirectoryInfo(Path.GetDirectoryName(Environment.ProcessPath))
+            // let mutable currentDirectory = DirectoryInfo(Process.GetCurrentProcess().StartInfo.WorkingDirectory)
             let mutable graceConfigPath = String.Empty
 
             while String.IsNullOrEmpty(graceConfigPath) && not (isNull currentDirectory) do

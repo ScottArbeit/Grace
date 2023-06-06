@@ -1345,6 +1345,8 @@ module Branch =
                                                     // ...
                                                     // For now, we're just going to show a message.
                                                     AnsiConsole.MarkupLine($"[{Colors.Important}]Potential promotion conflict: file {diff1Difference.RelativePath} has been changed in both the latest promotion, and in the current branch.[/]")
+                                                    AnsiConsole.MarkupLine($"[{Colors.Important}]fileVersion1.Sha256Hash: {fileVersion1.Value.Sha256Hash}; fileVersion1.LastWriteTimeUTC: {fileVersion1.Value.LastWriteTimeUtc}.[/]")
+                                                    AnsiConsole.MarkupLine($"[{Colors.Important}]fileVersion2.Sha256Hash: {fileVersion2.Value.Sha256Hash}; fileVersion2.LastWriteTimeUTC: {fileVersion2.Value.LastWriteTimeUtc}.[/]")
                                                     potentialPromotionConflicts <- true
 
                                         if not <| potentialPromotionConflicts then
@@ -1449,7 +1451,10 @@ module Branch =
                                     if referenceDto.ReferenceId = ReferenceId.Empty then
                                         $"  None"
                                     else
-                                        $"  {getShortenedSha256Hash referenceDto.Sha256Hash} - {ago referenceDto.CreatedAt} - {instantToLocalTime referenceDto.CreatedAt} [{Colors.Deemphasized}]- {referenceDto.ReferenceId}[/]"
+                                        if parseResult |> verbose then
+                                            $"  {getShortenedSha256Hash referenceDto.Sha256Hash} - {ago referenceDto.CreatedAt} - {instantToLocalTime referenceDto.CreatedAt} [{Colors.Deemphasized}]- {referenceDto.ReferenceId} - {referenceDto.DirectoryId}[/]"
+                                        else
+                                            $"  {getShortenedSha256Hash referenceDto.Sha256Hash} - {ago referenceDto.CreatedAt} - {instantToLocalTime referenceDto.CreatedAt} [{Colors.Deemphasized}]- {referenceDto.ReferenceId}[/]"
 
                                 let table = Table(Border = TableBorder.DoubleEdge)
                                 table.AddColumns(String.replicate (Current().OwnerName.Length) "_", String.replicate (Current().OwnerName.Length) "_")  // Using Current().OwnerName.Length is aesthetically pleasing, there's no deeper reason for it.

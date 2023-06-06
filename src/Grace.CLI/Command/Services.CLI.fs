@@ -282,6 +282,7 @@ module Services =
                             match fileSystemEntryType with
                             | FileSystemEntryType.Directory -> 
                                 // If it's a directory, just add it to the differences list.
+                                logToAnsiConsole Colors.Verbose $"scanForDifferences: Difference in directory: {relativePath}; lastWriteTimeUtc: {lastWriteTimeUtc}; knownLastWriteTimeUtc: {knownLastWriteTimeUtc}."
                                 differences.Push(FileSystemDifference.Create Change fileSystemEntryType relativePath)
                             | FileSystemEntryType.File -> 
                                 // If this is a file, then check that the contents have actually changed.
@@ -466,31 +467,6 @@ module Services =
             | GoogleCloudStorage -> return Error (GraceError.Create (StorageError.getErrorMessage StorageError.NotImplemented) correlationId)
         }
 
-    /// Uploads all new or changed files from a directory to object storage.
-    let uploadFilesToObjectStorageOld (localDirectoryVersion: LocalDirectoryVersion) (correlationId: string) =
-        task {
-            match Current().ObjectStorageProvider with
-            | ObjectStorageProvider.Unknown -> return Error (GraceError.Create (StorageError.getErrorMessage StorageError.NotImplemented) correlationId)
-            | AzureBlobStorage -> 
-                let! graceResult = Storage.FilesExistInObjectStorage (localDirectoryVersion.Files.Select(fun f -> f.ToFileVersion).ToList()) correlationId
-                match graceResult with
-                | Ok graceReturnValue ->
-                    let tasks =
-                        graceReturnValue.ReturnValue 
-                        |> Seq.map (fun uploadMetadata -> 
-                            let fileVersion = (localDirectoryVersion.Files.First(fun f -> f.Sha256Hash = uploadMetadata.Sha256Hash)).ToFileVersion
-                            Storage.SaveFileToObjectStorage fileVersion (uploadMetadata.BlobUriWithSasToken) correlationId)
-                    Task.WaitAll(tasks.Cast<Task>().ToArray())
-                    let anyErrors = tasks |> Seq.exists(fun t -> match t.Result with | Ok _ -> false | Error _ -> true)
-                    if not <| anyErrors then
-                        return Ok (GraceReturnValue.Create true correlationId)
-                    else
-                        return Error (GraceError.Create (StorageError.getErrorMessage StorageError.FailedUploadingFilesToObjectStorage) correlationId)
-                | Error error -> return Error error
-            | AWSS3 -> return Error (GraceError.Create (StorageError.getErrorMessage StorageError.NotImplemented) correlationId)
-            | GoogleCloudStorage -> return Error (GraceError.Create (StorageError.getErrorMessage StorageError.NotImplemented) correlationId)
-        }
-
     /// Uploads a new or changed file to object storage.
     let uploadToServerAsync (fileVersion: FileVersion) correlationId =
         task {
@@ -557,7 +533,8 @@ module Services =
             // First, process the directory changes.
             for difference in differences.Where(fun d -> isDirectoryChange d) do
                 match difference.DifferenceType with
-                | Add -> 
+                | Add  
+                | Change -> 
                     // Need to add an entry to changedDirectoryVersions.
                     let directoryInfo = DirectoryInfo(Path.Combine(Current().RootDirectory, difference.RelativePath))
                     let sha256Hash = computeSha256ForDirectory difference.RelativePath (List<LocalDirectoryVersion>()) (List<LocalFileVersion>())
@@ -566,12 +543,13 @@ module Services =
                     
                     // Add the newly-created LocalDirectoryVersion to the GraceIndex.
                     newGraceStatus.Index.AddOrUpdate(localDirectoryVersion.DirectoryId, (fun _ -> localDirectoryVersion), (fun _ _ -> localDirectoryVersion)) |> ignore
+                    logToAnsiConsole Colors.Verbose $"Added/updated directory {difference.RelativePath} in GraceIndex."
 
                     // Add this DirectoryVersion for further processing.
                     changedDirectoryVersions.AddOrUpdate(difference.RelativePath, (fun _ -> localDirectoryVersion), (fun _ _ -> localDirectoryVersion)) |> ignore
-                | Change -> 
+                //| Change -> 
                     // Do nothing because the file changes below will catch these.
-                    () 
+                //    () 
                 | Delete ->
                     let mutable directoryVersion = newGraceStatus.Index.Values.First(fun dv -> dv.RelativePath = difference.RelativePath)
                     newGraceStatus.Index.TryRemove(directoryVersion.DirectoryId, &directoryVersion) |> ignore
@@ -741,7 +719,7 @@ module Services =
     let IpcFileName() = Path.Combine(Path.GetTempPath(), $"{Current().RepositoryName}-{Current().BranchName}-{Constants.IpcFileName}")
 
     /// Updates the contents of the `grace watch` status inter-process communication file.
-    let updateGraceWatchStatus (graceStatus: GraceStatus) =
+    let updateGraceWatchInterprocessFile (graceStatus: GraceStatus) =
         task {
             try
                 let newGraceWatchStatus = { 
@@ -752,12 +730,12 @@ module Services =
                     LastDirectoryVersionInstant = graceStatus.LastSuccessfulDirectoryVersionUpload
                     DirectoryIds = HashSet<DirectoryId>(graceStatus.Index.Keys)
                 }
-                logToAnsiConsole Colors.Important $"In updateGraceWatchStatus. newGraceWatchStatus.UpdatedAt: {newGraceWatchStatus.UpdatedAt.ToString(InstantPattern.ExtendedIso.PatternText, CultureInfo.InvariantCulture)}."
+                //logToAnsiConsole Colors.Important $"In updateGraceWatchStatus. newGraceWatchStatus.UpdatedAt: {newGraceWatchStatus.UpdatedAt.ToString(InstantPattern.ExtendedIso.PatternText, CultureInfo.InvariantCulture)}."
                 //logToAnsiConsole Colors.Highlighted $"{Markup.Escape(EnhancedStackTrace.Current().ToString())}"
 
                 use fileStream = new FileStream(IpcFileName(), FileMode.Create, FileAccess.Write, FileShare.None)
                 do! serializeAsync fileStream newGraceWatchStatus
-                graceWatchStatusUpdateTime <- getCurrentInstant()
+                graceWatchStatusUpdateTime <- newGraceWatchStatus.UpdatedAt
                 logToAnsiConsole Colors.Important $"Wrote inter-process communication file."
             with ex -> 
                 logToAnsiConsole Colors.Error $"Exception in updateGraceWatchStatus."

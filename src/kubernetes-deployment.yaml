@@ -28,6 +28,8 @@ metadata:
     app: grace-server
 spec:
   type: LoadBalancer
+  #externalIPs:
+  #- 192.168.1.209
   ports:
   - name: http
     port: 5000

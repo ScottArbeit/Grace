@@ -270,8 +270,8 @@ module Application =
                     //.AddSwaggerGen(fun config -> config.SwaggerDoc("v0.1", openApiInfo))
                     .AddGiraffe()
                     .AddSingleton(Constants.JsonSerializerOptions)
+                    // Next line adds the Json serializer that Giraffe uses internally
                     .AddSingleton<Json.ISerializer>(SystemTextJson.Serializer(Constants.JsonSerializerOptions))
-                    //.AddSingleton<Json.ISerializer, SystemTextJson.Serializer>()
                     .AddW3CLogging(fun options -> options.FileName <- "Grace.Server.log-"
                                                   options.LogDirectory <- Path.Combine(Environment.GetEnvironmentVariable("TEMP"), "Grace.Server.Logs"))
                     .AddSingleton<ActorProxyOptions>(actorProxyOptions)
@@ -282,7 +282,7 @@ module Application =
                         config.AssumeDefaultVersionWhenUnspecified <- true
                     )
                     .AddVersionedApiExplorer(fun config -> 
-                        config.DefaultApiVersion <- ApiVersion(DateTime(2022, 10, 1))
+                        config.DefaultApiVersion <- ApiVersion(DateTime(2023, 6, 1))
                         config.AssumeDefaultVersionWhenUnspecified <- true
                         config.ApiVersionParameterSource <- HeaderApiVersionReader(Constants.ServerApiVersionHeaderKey))
                     .AddDaprClient(fun daprClientBuilder ->

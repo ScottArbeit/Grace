@@ -44,6 +44,7 @@ module Text =
         | InvalidBranchId
         | InvalidBranchName
         | InvalidCheckpointDaysValue
+        | InvalidDirectory
         | InvalidDirectoryId
         | InvalidMaxCountValue
         | InvalidObjectStorageProvider

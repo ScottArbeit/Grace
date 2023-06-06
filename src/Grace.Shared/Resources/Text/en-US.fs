@@ -45,6 +45,7 @@ module en_US =
             | InvalidBranchId -> "The provided BranchId is not a valid Guid."
             | InvalidBranchName -> "The BranchName is not a valid Grace name. A valid object name in Grace has between 2 and 64 characters, has a letter for the first character ([A-Za-z]), and letters, numbers, or - for the rest ([A-Za-z0-9\-]{1,63})."
             | InvalidCheckpointDaysValue -> "The provided value for CheckpointDays is invalid."
+            | InvalidDirectory -> "The provided directory is not a valid directory path."
             | InvalidDirectoryId -> "The provided DirectoryId is not a valid Guid."
             | InvalidMaxCountValue -> "The provided value for MaxCount is invalid."
             | InvalidObjectStorageProvider -> "The provided object storage provider is not valid."
