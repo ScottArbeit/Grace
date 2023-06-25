@@ -209,3 +209,5 @@ FakesAssemblies/
 .vscode/settings.json
 .fake
 .ionide
+/src/OpenAPI/Grace.OpenAPI.html
+/src/OpenAPI/GenerateOpenAPI.ps1
