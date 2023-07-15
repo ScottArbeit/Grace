@@ -1,0 +1,4203 @@
+openapi: 3.1.0
+info:
+  title: Grace Server API
+  description: |-
+    ## Grace Server API
+    This OpenAPI specification describes the Web API for Grace Server.
+    ---
+    ## Helpful hints
+    * In general, when the parameters ask for a _somethingId_ and a _somethingName_, like, OwnerId and OwnerName, or OrganizationId and OrganizationName, etc. you only need to give one or the other.
+    * If you have the Id's available just as readily as the names, you'll get better performance by using the Id's. It saves a lookup - whether in-memory cache, or database call - at the server.
+    * If you don't provide a CorrelationId, a Guid will be generated for you. (You're welcome.) CorrelationId's in Grace are just strings, and feel free to send any other kind of CorrelationId you prefer.
+    * A valid name in Grace has between 2 and 64 characters, has a letter for the first character `^[A-Za-z]`, and letters, numbers, or a dash (-) for the rest `[A-Za-z0-9\-_]{1,63}`.
+    * The full regex for valid Grace names is: `^[A-Za-z][A-Za-z0-9\-]{1,63}$`. The ChatGPT explanation of it can be found [here](https://chat.openai.com/share/1d18c634-45ed-4ef5-bd8e-93391f74b637).
+    * If you notice a difference between the OpenAPI spec and the actual API, please file an issue so we can fix it. It's absolutely our intention to keep the spec and the API in sync.
+    ---
+    Please let us know if you have any questions or comments @ [Discussions](https://github.com/scottarbeit/grace/discussions) in the [Grace repository](https://github.com/scottarbeit/grace).
+  contact:
+    name: Scott Arbeit
+    url: https://twitter.com/scottarbeit
+    email: scott.arbeit@outlook.com
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+  version: '0.1'
+servers:
+  - url: http://localhost:5000
+    description: Local development server
+security:
+  - bearerAuth: []
+paths:
+  /openApi:
+    get:
+      summary: Get the OpenAPI specification for the Grace Server API
+      description: This endpoint returns the OpenAPI specification for the Grace Server API. The specification is generated from the OpenAPI specification files in the src/OpenAPI folder.
+      operationId: GetOpenApi
+      responses:
+        '200':
+          description: OK
+        '400':
+          description: Bad Request
+  /branch/create:
+    post:
+      summary: Creates a new branch.
+      description: Creates a new branch with the specified name, based on the specified parent branch.
+      operationId: Create
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - allOf:
+                    - type: object
+                      properties:
+                        CorrelationId:
+                          type: string
+                          description: If you don't provide a CorrelationId, a Guid will be generated for you. (You're welcome.) CorrelationId's are just strings; feel free to send any kind of CorrelationId you prefer.
+                        Principal:
+                          type: string
+                    - type: object
+                      properties:
+                        BranchId:
+                          type: string
+                          format: uuid
+                          example: de7bf47d-23ae-4599-af68-68a317ea390d
+                        BranchName:
+                          type: string
+                          example: MyBranch
+                        OwnerId:
+                          type: string
+                          format: uuid
+                          example: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                        OwnerName:
+                          type: string
+                        OrganizationId:
+                          type: string
+                          format: uuid
+                          example: e35d64a9-b990-44f5-bf02-32ad7d15630c
+                        OrganizationName:
+                          type: string
+                        RepositoryId:
+                          type: string
+                          format: uuid
+                          example: ab6f35ef-6e01-440b-8f9b-c343a5272095
+                        RepositoryName:
+                          type: string
+                - type: object
+                  properties:
+                    ParentBranchId:
+                      type: string
+                      format: uuid
+                      example: de7bf47d-23ae-4599-af68-68a317ea390d
+                    ParentBranchName:
+                      type: string
+                      example: MyBranch
+      responses:
+        '200':
+          description: OK
+        '400':
+          description: Bad Request
+        '500':
+          description: Internal Server Error
+  /branch/rebase:
+    post:
+      summary: Rebases a branch on its parent branch.
+      description: Rebases a branch on its parent branch.
+      operationId: Rebase
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - allOf:
+                    - type: object
+                      properties:
+                        CorrelationId:
+                          type: string
+                          description: If you don't provide a CorrelationId, a Guid will be generated for you. (You're welcome.) CorrelationId's are just strings; feel free to send any kind of CorrelationId you prefer.
+                        Principal:
+                          type: string
+                    - type: object
+                      properties:
+                        BranchId:
+                          type: string
+                          format: uuid
+                          example: de7bf47d-23ae-4599-af68-68a317ea390d
+                        BranchName:
+                          type: string
+                          example: MyBranch
+                        OwnerId:
+                          type: string
+                          format: uuid
+                          example: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                        OwnerName:
+                          type: string
+                        OrganizationId:
+                          type: string
+                          format: uuid
+                          example: e35d64a9-b990-44f5-bf02-32ad7d15630c
+                        OrganizationName:
+                          type: string
+                        RepositoryId:
+                          type: string
+                          format: uuid
+                          example: ab6f35ef-6e01-440b-8f9b-c343a5272095
+                        RepositoryName:
+                          type: string
+                - type: object
+                  properties:
+                    BasedOn:
+                      type: string
+                      format: uuid
+                      example: c8f9bac8-d489-46c7-917f-b36b7d9efa9a
+      responses:
+        '200':
+          description: OK
+        '400':
+          description: Bad Request
+        '500':
+          description: Internal Server Error
+  /branch/promote:
+    post:
+      summary: Creates a promotion reference in the parent of the specified branch, based on the most-recent commit.
+      description: Creates a promotion reference in the parent of the specified branch, based on the most-recent commit.
+      operationId: Promote
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - allOf:
+                    - type: object
+                      properties:
+                        CorrelationId:
+                          type: string
+                          description: If you don't provide a CorrelationId, a Guid will be generated for you. (You're welcome.) CorrelationId's are just strings; feel free to send any kind of CorrelationId you prefer.
+                        Principal:
+                          type: string
+                    - type: object
+                      properties:
+                        BranchId:
+                          type: string
+                          format: uuid
+                          example: de7bf47d-23ae-4599-af68-68a317ea390d
+                        BranchName:
+                          type: string
+                          example: MyBranch
+                        OwnerId:
+                          type: string
+                          format: uuid
+                          example: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                        OwnerName:
+                          type: string
+                        OrganizationId:
+                          type: string
+                          format: uuid
+                          example: e35d64a9-b990-44f5-bf02-32ad7d15630c
+                        OrganizationName:
+                          type: string
+                        RepositoryId:
+                          type: string
+                          format: uuid
+                          example: ab6f35ef-6e01-440b-8f9b-c343a5272095
+                        RepositoryName:
+                          type: string
+                - type: object
+                  properties:
+                    DirectoryId:
+                      type: string
+                      format: uuid
+                      example: 33a4e36b-828f-4fae-9343-50b6560dc842
+                    Sha256Hash:
+                      type: string
+                      example: 805331A98813206270E35564769E8BB59EEA02AEB7B27C7D6C63E625E1857243
+                    Message:
+                      type: string
+      responses:
+        '200':
+          description: OK
+        '400':
+          description: Bad Request
+        '500':
+          description: Internal Server Error
+  /branch/commit:
+    post:
+      summary: Creates a commit reference pointing to the current root directory version in the branch.
+      description: Creates a commit reference pointing to the current root directory version in the branch.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              allOf:
+                - allOf:
+                    - type: object
+                      properties:
+                        CorrelationId:
+                          type: string
+                          description: If you don't provide a CorrelationId, a Guid will be generated for you. (You're welcome.) CorrelationId's are just strings; feel free to send any kind of CorrelationId you prefer.
+                        Principal:
+                          type: string
+                    - type: object
+                      properties:
+                        BranchId:
+                          type: string
+                          format: uuid
+                          example: de7bf47d-23ae-4599-af68-68a317ea390d
+                        BranchName:
+                          type: string
+                          example: MyBranch
+                        OwnerId:
+                          type: string
+                          format: uuid
+                          example: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                        OwnerName:
+                          type: string
+                        OrganizationId:
+                          type: string
+                          format: uuid
+                          example: e35d64a9-b990-44f5-bf02-32ad7d15630c
+                        OrganizationName:
+                          type: string
+                        RepositoryId:
+                          type: string
+                          format: uuid
+                          example: ab6f35ef-6e01-440b-8f9b-c343a5272095
+                        RepositoryName:
+                          type: string
+                - type: object
+                  properties:
+                    DirectoryId:
+                      type: string
+                      format: uuid
+                      example: 33a4e36b-828f-4fae-9343-50b6560dc842
+                    Sha256Hash:
+                      type: string
+                      example: 805331A98813206270E35564769E8BB59EEA02AEB7B27C7D6C63E625E1857243
+                    Message:
+                      type: string
+      responses:
+        '200':
+          description: Success
+        '400':
+          description: Bad Request
+        '500':
+          description: Server Error
+  /branch/checkpoint:
+    post:
+      summary: Creates a checkpoint reference pointing to the current root directory version in the branch.
+      description: Creates a checkpoint reference pointing to the current root directory version in the branch.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              allOf:
+                - allOf:
+                    - type: object
+                      properties:
+                        CorrelationId:
+                          type: string
+                          description: If you don't provide a CorrelationId, a Guid will be generated for you. (You're welcome.) CorrelationId's are just strings; feel free to send any kind of CorrelationId you prefer.
+                        Principal:
+                          type: string
+                    - type: object
+                      properties:
+                        BranchId:
+                          type: string
+                          format: uuid
+                          example: de7bf47d-23ae-4599-af68-68a317ea390d
+                        BranchName:
+                          type: string
+                          example: MyBranch
+                        OwnerId:
+                          type: string
+                          format: uuid
+                          example: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                        OwnerName:
+                          type: string
+                        OrganizationId:
+                          type: string
+                          format: uuid
+                          example: e35d64a9-b990-44f5-bf02-32ad7d15630c
+                        OrganizationName:
+                          type: string
+                        RepositoryId:
+                          type: string
+                          format: uuid
+                          example: ab6f35ef-6e01-440b-8f9b-c343a5272095
+                        RepositoryName:
+                          type: string
+                - type: object
+                  properties:
+                    DirectoryId:
+                      type: string
+                      format: uuid
+                      example: 33a4e36b-828f-4fae-9343-50b6560dc842
+                    Sha256Hash:
+                      type: string
+                      example: 805331A98813206270E35564769E8BB59EEA02AEB7B27C7D6C63E625E1857243
+                    Message:
+                      type: string
+      responses:
+        '200':
+          description: Success
+        '400':
+          description: Bad Request
+        '500':
+          description: Server Error
+  /branch/save:
+    post:
+      summary: Creates a save reference pointing to the current root directory version in the branch.
+      description: Creates a save reference pointing to the current root directory version in the branch.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              allOf:
+                - allOf:
+                    - type: object
+                      properties:
+                        CorrelationId:
+                          type: string
+                          description: If you don't provide a CorrelationId, a Guid will be generated for you. (You're welcome.) CorrelationId's are just strings; feel free to send any kind of CorrelationId you prefer.
+                        Principal:
+                          type: string
+                    - type: object
+                      properties:
+                        BranchId:
+                          type: string
+                          format: uuid
+                          example: de7bf47d-23ae-4599-af68-68a317ea390d
+                        BranchName:
+                          type: string
+                          example: MyBranch
+                        OwnerId:
+                          type: string
+                          format: uuid
+                          example: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                        OwnerName:
+                          type: string
+                        OrganizationId:
+                          type: string
+                          format: uuid
+                          example: e35d64a9-b990-44f5-bf02-32ad7d15630c
+                        OrganizationName:
+                          type: string
+                        RepositoryId:
+                          type: string
+                          format: uuid
+                          example: ab6f35ef-6e01-440b-8f9b-c343a5272095
+                        RepositoryName:
+                          type: string
+                - type: object
+                  properties:
+                    DirectoryId:
+                      type: string
+                      format: uuid
+                      example: 33a4e36b-828f-4fae-9343-50b6560dc842
+                    Sha256Hash:
+                      type: string
+                      example: 805331A98813206270E35564769E8BB59EEA02AEB7B27C7D6C63E625E1857243
+                    Message:
+                      type: string
+      responses:
+        '200':
+          description: Success
+        '400':
+          description: Bad Request
+        '500':
+          description: Server Error
+  /branch/tag:
+    post:
+      summary: Creates a tag reference pointing to the current root directory version in the branch.
+      description: Creates a tag reference pointing to the current root directory version in the branch.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              allOf:
+                - allOf:
+                    - type: object
+                      properties:
+                        CorrelationId:
+                          type: string
+                          description: If you don't provide a CorrelationId, a Guid will be generated for you. (You're welcome.) CorrelationId's are just strings; feel free to send any kind of CorrelationId you prefer.
+                        Principal:
+                          type: string
+                    - type: object
+                      properties:
+                        BranchId:
+                          type: string
+                          format: uuid
+                          example: de7bf47d-23ae-4599-af68-68a317ea390d
+                        BranchName:
+                          type: string
+                          example: MyBranch
+                        OwnerId:
+                          type: string
+                          format: uuid
+                          example: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                        OwnerName:
+                          type: string
+                        OrganizationId:
+                          type: string
+                          format: uuid
+                          example: e35d64a9-b990-44f5-bf02-32ad7d15630c
+                        OrganizationName:
+                          type: string
+                        RepositoryId:
+                          type: string
+                          format: uuid
+                          example: ab6f35ef-6e01-440b-8f9b-c343a5272095
+                        RepositoryName:
+                          type: string
+                - type: object
+                  properties:
+                    DirectoryId:
+                      type: string
+                      format: uuid
+                      example: 33a4e36b-828f-4fae-9343-50b6560dc842
+                    Sha256Hash:
+                      type: string
+                      example: 805331A98813206270E35564769E8BB59EEA02AEB7B27C7D6C63E625E1857243
+                    Message:
+                      type: string
+      responses:
+        '200':
+          description: Success
+        '400':
+          description: Bad Request
+        '500':
+          description: Server Error
+  /branch/enablePromotion:
+    post:
+      summary: Enables or disables promotion for the specified branch.
+      description: Enables or disables promotion for the specified branch.
+      operationId: EnablePromotion
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - allOf:
+                    - type: object
+                      properties:
+                        CorrelationId:
+                          type: string
+                          description: If you don't provide a CorrelationId, a Guid will be generated for you. (You're welcome.) CorrelationId's are just strings; feel free to send any kind of CorrelationId you prefer.
+                        Principal:
+                          type: string
+                    - type: object
+                      properties:
+                        BranchId:
+                          type: string
+                          format: uuid
+                          example: de7bf47d-23ae-4599-af68-68a317ea390d
+                        BranchName:
+                          type: string
+                          example: MyBranch
+                        OwnerId:
+                          type: string
+                          format: uuid
+                          example: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                        OwnerName:
+                          type: string
+                        OrganizationId:
+                          type: string
+                          format: uuid
+                          example: e35d64a9-b990-44f5-bf02-32ad7d15630c
+                        OrganizationName:
+                          type: string
+                        RepositoryId:
+                          type: string
+                          format: uuid
+                          example: ab6f35ef-6e01-440b-8f9b-c343a5272095
+                        RepositoryName:
+                          type: string
+                - type: object
+                  properties:
+                    Enabled:
+                      type: boolean
+      responses:
+        '200':
+          description: OK
+        '400':
+          description: Bad Request
+        '500':
+          description: Internal Server Error
+  /branch/enableCommit:
+    post:
+      summary: Enables or disables commit for the specified branch.
+      description: Enables or disables commit for the specified branch.
+      operationId: EnableCommit
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - allOf:
+                    - type: object
+                      properties:
+                        CorrelationId:
+                          type: string
+                          description: If you don't provide a CorrelationId, a Guid will be generated for you. (You're welcome.) CorrelationId's are just strings; feel free to send any kind of CorrelationId you prefer.
+                        Principal:
+                          type: string
+                    - type: object
+                      properties:
+                        BranchId:
+                          type: string
+                          format: uuid
+                          example: de7bf47d-23ae-4599-af68-68a317ea390d
+                        BranchName:
+                          type: string
+                          example: MyBranch
+                        OwnerId:
+                          type: string
+                          format: uuid
+                          example: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                        OwnerName:
+                          type: string
+                        OrganizationId:
+                          type: string
+                          format: uuid
+                          example: e35d64a9-b990-44f5-bf02-32ad7d15630c
+                        OrganizationName:
+                          type: string
+                        RepositoryId:
+                          type: string
+                          format: uuid
+                          example: ab6f35ef-6e01-440b-8f9b-c343a5272095
+                        RepositoryName:
+                          type: string
+                - type: object
+                  properties:
+                    Enabled:
+                      type: boolean
+      responses:
+        '200':
+          description: OK
+        '400':
+          description: Bad Request
+        '500':
+          description: Internal Server Error
+  /branch/enableCheckpoint:
+    post:
+      summary: Enables or disables checkpoint for the specified branch.
+      description: Enables or disables checkpoint for the specified branch.
+      operationId: EnableCheckpoint
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - allOf:
+                    - type: object
+                      properties:
+                        CorrelationId:
+                          type: string
+                          description: If you don't provide a CorrelationId, a Guid will be generated for you. (You're welcome.) CorrelationId's are just strings; feel free to send any kind of CorrelationId you prefer.
+                        Principal:
+                          type: string
+                    - type: object
+                      properties:
+                        BranchId:
+                          type: string
+                          format: uuid
+                          example: de7bf47d-23ae-4599-af68-68a317ea390d
+                        BranchName:
+                          type: string
+                          example: MyBranch
+                        OwnerId:
+                          type: string
+                          format: uuid
+                          example: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                        OwnerName:
+                          type: string
+                        OrganizationId:
+                          type: string
+                          format: uuid
+                          example: e35d64a9-b990-44f5-bf02-32ad7d15630c
+                        OrganizationName:
+                          type: string
+                        RepositoryId:
+                          type: string
+                          format: uuid
+                          example: ab6f35ef-6e01-440b-8f9b-c343a5272095
+                        RepositoryName:
+                          type: string
+                - type: object
+                  properties:
+                    Enabled:
+                      type: boolean
+      responses:
+        '200':
+          description: OK
+        '400':
+          description: Bad Request
+        '500':
+          description: Internal Server Error
+  /branch/enableSave:
+    post:
+      summary: Enables or disables save for the specified branch.
+      description: Enables or disables save for the specified branch.
+      operationId: EnableSave
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - allOf:
+                    - type: object
+                      properties:
+                        CorrelationId:
+                          type: string
+                          description: If you don't provide a CorrelationId, a Guid will be generated for you. (You're welcome.) CorrelationId's are just strings; feel free to send any kind of CorrelationId you prefer.
+                        Principal:
+                          type: string
+                    - type: object
+                      properties:
+                        BranchId:
+                          type: string
+                          format: uuid
+                          example: de7bf47d-23ae-4599-af68-68a317ea390d
+                        BranchName:
+                          type: string
+                          example: MyBranch
+                        OwnerId:
+                          type: string
+                          format: uuid
+                          example: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                        OwnerName:
+                          type: string
+                        OrganizationId:
+                          type: string
+                          format: uuid
+                          example: e35d64a9-b990-44f5-bf02-32ad7d15630c
+                        OrganizationName:
+                          type: string
+                        RepositoryId:
+                          type: string
+                          format: uuid
+                          example: ab6f35ef-6e01-440b-8f9b-c343a5272095
+                        RepositoryName:
+                          type: string
+                - type: object
+                  properties:
+                    Enabled:
+                      type: boolean
+      responses:
+        '200':
+          description: OK
+        '400':
+          description: Bad Request
+        '500':
+          description: Internal Server Error
+  /branch/enableTag:
+    post:
+      summary: Enables or disables tag for the specified branch.
+      description: Enables or disables tag for the specified branch.
+      operationId: EnableTag
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - allOf:
+                    - type: object
+                      properties:
+                        CorrelationId:
+                          type: string
+                          description: If you don't provide a CorrelationId, a Guid will be generated for you. (You're welcome.) CorrelationId's are just strings; feel free to send any kind of CorrelationId you prefer.
+                        Principal:
+                          type: string
+                    - type: object
+                      properties:
+                        BranchId:
+                          type: string
+                          format: uuid
+                          example: de7bf47d-23ae-4599-af68-68a317ea390d
+                        BranchName:
+                          type: string
+                          example: MyBranch
+                        OwnerId:
+                          type: string
+                          format: uuid
+                          example: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                        OwnerName:
+                          type: string
+                        OrganizationId:
+                          type: string
+                          format: uuid
+                          example: e35d64a9-b990-44f5-bf02-32ad7d15630c
+                        OrganizationName:
+                          type: string
+                        RepositoryId:
+                          type: string
+                          format: uuid
+                          example: ab6f35ef-6e01-440b-8f9b-c343a5272095
+                        RepositoryName:
+                          type: string
+                - type: object
+                  properties:
+                    Enabled:
+                      type: boolean
+      responses:
+        '200':
+          description: OK
+        '400':
+          description: Bad Request
+        '500':
+          description: Internal Server Error
+  /branch/delete:
+    post:
+      summary: Deletes the specified branch.
+      description: Deletes the specified branch.
+      operationId: Delete
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - allOf:
+                    - type: object
+                      properties:
+                        CorrelationId:
+                          type: string
+                          description: If you don't provide a CorrelationId, a Guid will be generated for you. (You're welcome.) CorrelationId's are just strings; feel free to send any kind of CorrelationId you prefer.
+                        Principal:
+                          type: string
+                    - type: object
+                      properties:
+                        BranchId:
+                          type: string
+                          format: uuid
+                          example: de7bf47d-23ae-4599-af68-68a317ea390d
+                        BranchName:
+                          type: string
+                          example: MyBranch
+                        OwnerId:
+                          type: string
+                          format: uuid
+                          example: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                        OwnerName:
+                          type: string
+                        OrganizationId:
+                          type: string
+                          format: uuid
+                          example: e35d64a9-b990-44f5-bf02-32ad7d15630c
+                        OrganizationName:
+                          type: string
+                        RepositoryId:
+                          type: string
+                          format: uuid
+                          example: ab6f35ef-6e01-440b-8f9b-c343a5272095
+                        RepositoryName:
+                          type: string
+      responses:
+        '200':
+          description: OK
+        '400':
+          description: Bad Request
+        '500':
+          description: Internal Server Error
+  /branch/get:
+    post:
+      summary: Gets the specified branch.
+      description: Gets the specified branch.
+      operationId: Get
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - allOf:
+                    - type: object
+                      properties:
+                        CorrelationId:
+                          type: string
+                          description: If you don't provide a CorrelationId, a Guid will be generated for you. (You're welcome.) CorrelationId's are just strings; feel free to send any kind of CorrelationId you prefer.
+                        Principal:
+                          type: string
+                    - type: object
+                      properties:
+                        BranchId:
+                          type: string
+                          format: uuid
+                          example: de7bf47d-23ae-4599-af68-68a317ea390d
+                        BranchName:
+                          type: string
+                          example: MyBranch
+                        OwnerId:
+                          type: string
+                          format: uuid
+                          example: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                        OwnerName:
+                          type: string
+                        OrganizationId:
+                          type: string
+                          format: uuid
+                          example: e35d64a9-b990-44f5-bf02-32ad7d15630c
+                        OrganizationName:
+                          type: string
+                        RepositoryId:
+                          type: string
+                          format: uuid
+                          example: ab6f35ef-6e01-440b-8f9b-c343a5272095
+                        RepositoryName:
+                          type: string
+                - type: object
+                  properties:
+                    Sha256Hash:
+                      type: string
+                      example: 805331A98813206270E35564769E8BB59EEA02AEB7B27C7D6C63E625E1857243
+                    ReferenceId:
+                      type: string
+                      format: uuid
+                      example: c8f9bac8-d489-46c7-917f-b36b7d9efa9a
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  Class:
+                    type: string
+                    example: BranchDto
+                  BranchId:
+                    type: string
+                    format: uuid
+                    example: de7bf47d-23ae-4599-af68-68a317ea390d
+                  BranchName:
+                    type: string
+                    example: MyBranch
+                  ParentBranchId:
+                    type: string
+                    format: uuid
+                    example: de7bf47d-23ae-4599-af68-68a317ea390d
+                  BasedOn:
+                    type: string
+                    format: uuid
+                    example: c8f9bac8-d489-46c7-917f-b36b7d9efa9a
+                  RepositoryId:
+                    type: string
+                    format: uuid
+                    example: ab6f35ef-6e01-440b-8f9b-c343a5272095
+                  UserId:
+                    type: string
+                  PromotionEnabled:
+                    type: boolean
+                  CommitEnabled:
+                    type: boolean
+                  CheckpointEnabled:
+                    type: boolean
+                  SaveEnabled:
+                    type: boolean
+                  TagEnabled:
+                    type: boolean
+                  LatestPromotion:
+                    type: string
+                    format: uuid
+                    example: c8f9bac8-d489-46c7-917f-b36b7d9efa9a
+                  LatestCommit:
+                    type: string
+                    format: uuid
+                    example: c8f9bac8-d489-46c7-917f-b36b7d9efa9a
+                  LatestCheckpoint:
+                    type: string
+                    format: uuid
+                    example: c8f9bac8-d489-46c7-917f-b36b7d9efa9a
+                  LatestSave:
+                    type: string
+                    format: uuid
+                    example: c8f9bac8-d489-46c7-917f-b36b7d9efa9a
+                  CreatedAt:
+                    type: string
+                    format: date-time
+                  UpdatedAt:
+                    type: string
+                    format: date-time
+                    nullable: true
+                  DeletedAt:
+                    type: string
+                    format: date-time
+                    nullable: true
+                required:
+                  - Class
+                  - BranchId
+                  - BranchName
+                  - ParentBranchId
+                  - BasedOn
+                  - RepositoryId
+                  - UserId
+                  - PromotionEnabled
+                  - CommitEnabled
+                  - CheckpointEnabled
+                  - SaveEnabled
+                  - TagEnabled
+                  - LatestPromotion
+                  - LatestCommit
+                  - LatestCheckpoint
+                  - LatestSave
+                  - CreatedAt
+        '400':
+          description: Bad Request
+        '500':
+          description: Internal Server Error
+  /branch/getParentBranch:
+    post:
+      summary: Gets the parent branch of the specified branch.
+      description: Gets the parent branch of the specified branch.
+      operationId: GetParentBranch
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - allOf:
+                    - type: object
+                      properties:
+                        CorrelationId:
+                          type: string
+                          description: If you don't provide a CorrelationId, a Guid will be generated for you. (You're welcome.) CorrelationId's are just strings; feel free to send any kind of CorrelationId you prefer.
+                        Principal:
+                          type: string
+                    - type: object
+                      properties:
+                        BranchId:
+                          type: string
+                          format: uuid
+                          example: de7bf47d-23ae-4599-af68-68a317ea390d
+                        BranchName:
+                          type: string
+                          example: MyBranch
+                        OwnerId:
+                          type: string
+                          format: uuid
+                          example: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                        OwnerName:
+                          type: string
+                        OrganizationId:
+                          type: string
+                          format: uuid
+                          example: e35d64a9-b990-44f5-bf02-32ad7d15630c
+                        OrganizationName:
+                          type: string
+                        RepositoryId:
+                          type: string
+                          format: uuid
+                          example: ab6f35ef-6e01-440b-8f9b-c343a5272095
+                        RepositoryName:
+                          type: string
+                - type: object
+                  properties:
+                    Sha256Hash:
+                      type: string
+                      example: 805331A98813206270E35564769E8BB59EEA02AEB7B27C7D6C63E625E1857243
+                    ReferenceId:
+                      type: string
+                      format: uuid
+                      example: c8f9bac8-d489-46c7-917f-b36b7d9efa9a
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  Class:
+                    type: string
+                    example: BranchDto
+                  BranchId:
+                    type: string
+                    format: uuid
+                    example: de7bf47d-23ae-4599-af68-68a317ea390d
+                  BranchName:
+                    type: string
+                    example: MyBranch
+                  ParentBranchId:
+                    type: string
+                    format: uuid
+                    example: de7bf47d-23ae-4599-af68-68a317ea390d
+                  BasedOn:
+                    type: string
+                    format: uuid
+                    example: c8f9bac8-d489-46c7-917f-b36b7d9efa9a
+                  RepositoryId:
+                    type: string
+                    format: uuid
+                    example: ab6f35ef-6e01-440b-8f9b-c343a5272095
+                  UserId:
+                    type: string
+                  PromotionEnabled:
+                    type: boolean
+                  CommitEnabled:
+                    type: boolean
+                  CheckpointEnabled:
+                    type: boolean
+                  SaveEnabled:
+                    type: boolean
+                  TagEnabled:
+                    type: boolean
+                  LatestPromotion:
+                    type: string
+                    format: uuid
+                    example: c8f9bac8-d489-46c7-917f-b36b7d9efa9a
+                  LatestCommit:
+                    type: string
+                    format: uuid
+                    example: c8f9bac8-d489-46c7-917f-b36b7d9efa9a
+                  LatestCheckpoint:
+                    type: string
+                    format: uuid
+                    example: c8f9bac8-d489-46c7-917f-b36b7d9efa9a
+                  LatestSave:
+                    type: string
+                    format: uuid
+                    example: c8f9bac8-d489-46c7-917f-b36b7d9efa9a
+                  CreatedAt:
+                    type: string
+                    format: date-time
+                  UpdatedAt:
+                    type: string
+                    format: date-time
+                    nullable: true
+                  DeletedAt:
+                    type: string
+                    format: date-time
+                    nullable: true
+                required:
+                  - Class
+                  - BranchId
+                  - BranchName
+                  - ParentBranchId
+                  - BasedOn
+                  - RepositoryId
+                  - UserId
+                  - PromotionEnabled
+                  - CommitEnabled
+                  - CheckpointEnabled
+                  - SaveEnabled
+                  - TagEnabled
+                  - LatestPromotion
+                  - LatestCommit
+                  - LatestCheckpoint
+                  - LatestSave
+                  - CreatedAt
+        '400':
+          description: Bad Request
+        '500':
+          description: Internal Server Error
+  /branch/getReference:
+    post:
+      summary: Gets the specified reference.
+      description: Gets the specified reference.
+      operationId: GetReference
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - allOf:
+                    - allOf:
+                        - type: object
+                          properties:
+                            CorrelationId:
+                              type: string
+                              description: If you don't provide a CorrelationId, a Guid will be generated for you. (You're welcome.) CorrelationId's are just strings; feel free to send any kind of CorrelationId you prefer.
+                            Principal:
+                              type: string
+                        - type: object
+                          properties:
+                            BranchId:
+                              type: string
+                              format: uuid
+                              example: de7bf47d-23ae-4599-af68-68a317ea390d
+                            BranchName:
+                              type: string
+                              example: MyBranch
+                            OwnerId:
+                              type: string
+                              format: uuid
+                              example: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                            OwnerName:
+                              type: string
+                            OrganizationId:
+                              type: string
+                              format: uuid
+                              example: e35d64a9-b990-44f5-bf02-32ad7d15630c
+                            OrganizationName:
+                              type: string
+                            RepositoryId:
+                              type: string
+                              format: uuid
+                              example: ab6f35ef-6e01-440b-8f9b-c343a5272095
+                            RepositoryName:
+                              type: string
+                    - type: object
+                      properties:
+                        Sha256Hash:
+                          type: string
+                          example: 805331A98813206270E35564769E8BB59EEA02AEB7B27C7D6C63E625E1857243
+                        ReferenceId:
+                          type: string
+                          format: uuid
+                          example: c8f9bac8-d489-46c7-917f-b36b7d9efa9a
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  Class:
+                    type: string
+                    example: ReferenceDto
+                  ReferenceId:
+                    type: string
+                    format: uuid
+                    example: c8f9bac8-d489-46c7-917f-b36b7d9efa9a
+                  BranchId:
+                    type: string
+                    format: uuid
+                    example: de7bf47d-23ae-4599-af68-68a317ea390d
+                  DirectoryId:
+                    type: string
+                    format: uuid
+                    example: 33a4e36b-828f-4fae-9343-50b6560dc842
+                  Sha256Hash:
+                    type: string
+                    example: 805331A98813206270E35564769E8BB59EEA02AEB7B27C7D6C63E625E1857243
+                  ReferenceType:
+                    type: string
+                    enum:
+                      - Promotion
+                      - Commit
+                      - Checkpoint
+                      - Save
+                      - Tag
+                    example: Commit
+                  ReferenceText:
+                    type: string
+                  CreatedAt:
+                    type: string
+                    format: date-time
+                required:
+                  - Class
+                  - ReferenceId
+                  - BranchId
+                  - DirectoryId
+                  - Sha256Hash
+                  - ReferenceType
+                  - ReferenceText
+                  - CreatedAt
+        '400':
+          description: Bad Request
+        '500':
+          description: Internal Server Error
+  /branch/getReferences:
+    post:
+      summary: Gets the references for the specified branch.
+      description: Gets the references for the specified branch.
+      operationId: GetReferences
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - allOf:
+                    - type: object
+                      properties:
+                        CorrelationId:
+                          type: string
+                          description: If you don't provide a CorrelationId, a Guid will be generated for you. (You're welcome.) CorrelationId's are just strings; feel free to send any kind of CorrelationId you prefer.
+                        Principal:
+                          type: string
+                    - type: object
+                      properties:
+                        BranchId:
+                          type: string
+                          format: uuid
+                          example: de7bf47d-23ae-4599-af68-68a317ea390d
+                        BranchName:
+                          type: string
+                          example: MyBranch
+                        OwnerId:
+                          type: string
+                          format: uuid
+                          example: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                        OwnerName:
+                          type: string
+                        OrganizationId:
+                          type: string
+                          format: uuid
+                          example: e35d64a9-b990-44f5-bf02-32ad7d15630c
+                        OrganizationName:
+                          type: string
+                        RepositoryId:
+                          type: string
+                          format: uuid
+                          example: ab6f35ef-6e01-440b-8f9b-c343a5272095
+                        RepositoryName:
+                          type: string
+                - type: object
+                  properties:
+                    FullSha:
+                      type: boolean
+                    MaxCount:
+                      type: integer
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    Class:
+                      type: string
+                      example: ReferenceDto
+                    ReferenceId:
+                      type: string
+                      format: uuid
+                      example: c8f9bac8-d489-46c7-917f-b36b7d9efa9a
+                    BranchId:
+                      type: string
+                      format: uuid
+                      example: de7bf47d-23ae-4599-af68-68a317ea390d
+                    DirectoryId:
+                      type: string
+                      format: uuid
+                      example: 33a4e36b-828f-4fae-9343-50b6560dc842
+                    Sha256Hash:
+                      type: string
+                      example: 805331A98813206270E35564769E8BB59EEA02AEB7B27C7D6C63E625E1857243
+                    ReferenceType:
+                      type: string
+                      enum:
+                        - Promotion
+                        - Commit
+                        - Checkpoint
+                        - Save
+                        - Tag
+                      example: Commit
+                    ReferenceText:
+                      type: string
+                    CreatedAt:
+                      type: string
+                      format: date-time
+                  required:
+                    - Class
+                    - ReferenceId
+                    - BranchId
+                    - DirectoryId
+                    - Sha256Hash
+                    - ReferenceType
+                    - ReferenceText
+                    - CreatedAt
+        '400':
+          description: Bad Request
+        '500':
+          description: Internal Server Error
+  /branch/getPromotions:
+    post:
+      summary: Gets the promotions for the specified branch.
+      description: Gets the promotions for the specified branch.
+      operationId: GetPromotions
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - allOf:
+                    - type: object
+                      properties:
+                        CorrelationId:
+                          type: string
+                          description: If you don't provide a CorrelationId, a Guid will be generated for you. (You're welcome.) CorrelationId's are just strings; feel free to send any kind of CorrelationId you prefer.
+                        Principal:
+                          type: string
+                    - type: object
+                      properties:
+                        BranchId:
+                          type: string
+                          format: uuid
+                          example: de7bf47d-23ae-4599-af68-68a317ea390d
+                        BranchName:
+                          type: string
+                          example: MyBranch
+                        OwnerId:
+                          type: string
+                          format: uuid
+                          example: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                        OwnerName:
+                          type: string
+                        OrganizationId:
+                          type: string
+                          format: uuid
+                          example: e35d64a9-b990-44f5-bf02-32ad7d15630c
+                        OrganizationName:
+                          type: string
+                        RepositoryId:
+                          type: string
+                          format: uuid
+                          example: ab6f35ef-6e01-440b-8f9b-c343a5272095
+                        RepositoryName:
+                          type: string
+                - type: object
+                  properties:
+                    FullSha:
+                      type: boolean
+                    MaxCount:
+                      type: integer
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    Class:
+                      type: string
+                      example: ReferenceDto
+                    ReferenceId:
+                      type: string
+                      format: uuid
+                      example: c8f9bac8-d489-46c7-917f-b36b7d9efa9a
+                    BranchId:
+                      type: string
+                      format: uuid
+                      example: de7bf47d-23ae-4599-af68-68a317ea390d
+                    DirectoryId:
+                      type: string
+                      format: uuid
+                      example: 33a4e36b-828f-4fae-9343-50b6560dc842
+                    Sha256Hash:
+                      type: string
+                      example: 805331A98813206270E35564769E8BB59EEA02AEB7B27C7D6C63E625E1857243
+                    ReferenceType:
+                      type: string
+                      enum:
+                        - Promotion
+                        - Commit
+                        - Checkpoint
+                        - Save
+                        - Tag
+                      example: Commit
+                    ReferenceText:
+                      type: string
+                    CreatedAt:
+                      type: string
+                      format: date-time
+                  required:
+                    - Class
+                    - ReferenceId
+                    - BranchId
+                    - DirectoryId
+                    - Sha256Hash
+                    - ReferenceType
+                    - ReferenceText
+                    - CreatedAt
+        '400':
+          description: Bad Request
+        '500':
+          description: Internal Server Error
+  /branch/getCommits:
+    post:
+      summary: Gets the commits for the specified branch.
+      description: Gets the commits for the specified branch.
+      operationId: GetCommits
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - allOf:
+                    - type: object
+                      properties:
+                        CorrelationId:
+                          type: string
+                          description: If you don't provide a CorrelationId, a Guid will be generated for you. (You're welcome.) CorrelationId's are just strings; feel free to send any kind of CorrelationId you prefer.
+                        Principal:
+                          type: string
+                    - type: object
+                      properties:
+                        BranchId:
+                          type: string
+                          format: uuid
+                          example: de7bf47d-23ae-4599-af68-68a317ea390d
+                        BranchName:
+                          type: string
+                          example: MyBranch
+                        OwnerId:
+                          type: string
+                          format: uuid
+                          example: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                        OwnerName:
+                          type: string
+                        OrganizationId:
+                          type: string
+                          format: uuid
+                          example: e35d64a9-b990-44f5-bf02-32ad7d15630c
+                        OrganizationName:
+                          type: string
+                        RepositoryId:
+                          type: string
+                          format: uuid
+                          example: ab6f35ef-6e01-440b-8f9b-c343a5272095
+                        RepositoryName:
+                          type: string
+                - type: object
+                  properties:
+                    FullSha:
+                      type: boolean
+                    MaxCount:
+                      type: integer
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    Class:
+                      type: string
+                      example: ReferenceDto
+                    ReferenceId:
+                      type: string
+                      format: uuid
+                      example: c8f9bac8-d489-46c7-917f-b36b7d9efa9a
+                    BranchId:
+                      type: string
+                      format: uuid
+                      example: de7bf47d-23ae-4599-af68-68a317ea390d
+                    DirectoryId:
+                      type: string
+                      format: uuid
+                      example: 33a4e36b-828f-4fae-9343-50b6560dc842
+                    Sha256Hash:
+                      type: string
+                      example: 805331A98813206270E35564769E8BB59EEA02AEB7B27C7D6C63E625E1857243
+                    ReferenceType:
+                      type: string
+                      enum:
+                        - Promotion
+                        - Commit
+                        - Checkpoint
+                        - Save
+                        - Tag
+                      example: Commit
+                    ReferenceText:
+                      type: string
+                    CreatedAt:
+                      type: string
+                      format: date-time
+                  required:
+                    - Class
+                    - ReferenceId
+                    - BranchId
+                    - DirectoryId
+                    - Sha256Hash
+                    - ReferenceType
+                    - ReferenceText
+                    - CreatedAt
+        '400':
+          description: Bad Request
+        '500':
+          description: Internal Server Error
+  /branch/getCheckpoints:
+    post:
+      summary: Gets the checkpoints for the specified branch.
+      description: Gets the checkpoints for the specified branch.
+      operationId: GetCheckpoints
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - allOf:
+                    - type: object
+                      properties:
+                        CorrelationId:
+                          type: string
+                          description: If you don't provide a CorrelationId, a Guid will be generated for you. (You're welcome.) CorrelationId's are just strings; feel free to send any kind of CorrelationId you prefer.
+                        Principal:
+                          type: string
+                    - type: object
+                      properties:
+                        BranchId:
+                          type: string
+                          format: uuid
+                          example: de7bf47d-23ae-4599-af68-68a317ea390d
+                        BranchName:
+                          type: string
+                          example: MyBranch
+                        OwnerId:
+                          type: string
+                          format: uuid
+                          example: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                        OwnerName:
+                          type: string
+                        OrganizationId:
+                          type: string
+                          format: uuid
+                          example: e35d64a9-b990-44f5-bf02-32ad7d15630c
+                        OrganizationName:
+                          type: string
+                        RepositoryId:
+                          type: string
+                          format: uuid
+                          example: ab6f35ef-6e01-440b-8f9b-c343a5272095
+                        RepositoryName:
+                          type: string
+                - type: object
+                  properties:
+                    FullSha:
+                      type: boolean
+                    MaxCount:
+                      type: integer
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    Class:
+                      type: string
+                      example: ReferenceDto
+                    ReferenceId:
+                      type: string
+                      format: uuid
+                      example: c8f9bac8-d489-46c7-917f-b36b7d9efa9a
+                    BranchId:
+                      type: string
+                      format: uuid
+                      example: de7bf47d-23ae-4599-af68-68a317ea390d
+                    DirectoryId:
+                      type: string
+                      format: uuid
+                      example: 33a4e36b-828f-4fae-9343-50b6560dc842
+                    Sha256Hash:
+                      type: string
+                      example: 805331A98813206270E35564769E8BB59EEA02AEB7B27C7D6C63E625E1857243
+                    ReferenceType:
+                      type: string
+                      enum:
+                        - Promotion
+                        - Commit
+                        - Checkpoint
+                        - Save
+                        - Tag
+                      example: Commit
+                    ReferenceText:
+                      type: string
+                    CreatedAt:
+                      type: string
+                      format: date-time
+                  required:
+                    - Class
+                    - ReferenceId
+                    - BranchId
+                    - DirectoryId
+                    - Sha256Hash
+                    - ReferenceType
+                    - ReferenceText
+                    - CreatedAt
+        '400':
+          description: Bad Request
+        '500':
+          description: Internal Server Error
+  /branch/getSaves:
+    post:
+      summary: Gets the saves for the specified branch.
+      description: Gets the saves for the specified branch.
+      operationId: GetSaves
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - allOf:
+                    - type: object
+                      properties:
+                        CorrelationId:
+                          type: string
+                          description: If you don't provide a CorrelationId, a Guid will be generated for you. (You're welcome.) CorrelationId's are just strings; feel free to send any kind of CorrelationId you prefer.
+                        Principal:
+                          type: string
+                    - type: object
+                      properties:
+                        BranchId:
+                          type: string
+                          format: uuid
+                          example: de7bf47d-23ae-4599-af68-68a317ea390d
+                        BranchName:
+                          type: string
+                          example: MyBranch
+                        OwnerId:
+                          type: string
+                          format: uuid
+                          example: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                        OwnerName:
+                          type: string
+                        OrganizationId:
+                          type: string
+                          format: uuid
+                          example: e35d64a9-b990-44f5-bf02-32ad7d15630c
+                        OrganizationName:
+                          type: string
+                        RepositoryId:
+                          type: string
+                          format: uuid
+                          example: ab6f35ef-6e01-440b-8f9b-c343a5272095
+                        RepositoryName:
+                          type: string
+                - type: object
+                  properties:
+                    FullSha:
+                      type: boolean
+                    MaxCount:
+                      type: integer
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    Class:
+                      type: string
+                      example: ReferenceDto
+                    ReferenceId:
+                      type: string
+                      format: uuid
+                      example: c8f9bac8-d489-46c7-917f-b36b7d9efa9a
+                    BranchId:
+                      type: string
+                      format: uuid
+                      example: de7bf47d-23ae-4599-af68-68a317ea390d
+                    DirectoryId:
+                      type: string
+                      format: uuid
+                      example: 33a4e36b-828f-4fae-9343-50b6560dc842
+                    Sha256Hash:
+                      type: string
+                      example: 805331A98813206270E35564769E8BB59EEA02AEB7B27C7D6C63E625E1857243
+                    ReferenceType:
+                      type: string
+                      enum:
+                        - Promotion
+                        - Commit
+                        - Checkpoint
+                        - Save
+                        - Tag
+                      example: Commit
+                    ReferenceText:
+                      type: string
+                    CreatedAt:
+                      type: string
+                      format: date-time
+                  required:
+                    - Class
+                    - ReferenceId
+                    - BranchId
+                    - DirectoryId
+                    - Sha256Hash
+                    - ReferenceType
+                    - ReferenceText
+                    - CreatedAt
+        '400':
+          description: Bad Request
+        '500':
+          description: Internal Server Error
+  /branch/getTags:
+    post:
+      summary: Gets the tags for the specified branch.
+      description: Gets the tags for the specified branch.
+      operationId: GetTags
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - allOf:
+                    - type: object
+                      properties:
+                        CorrelationId:
+                          type: string
+                          description: If you don't provide a CorrelationId, a Guid will be generated for you. (You're welcome.) CorrelationId's are just strings; feel free to send any kind of CorrelationId you prefer.
+                        Principal:
+                          type: string
+                    - type: object
+                      properties:
+                        BranchId:
+                          type: string
+                          format: uuid
+                          example: de7bf47d-23ae-4599-af68-68a317ea390d
+                        BranchName:
+                          type: string
+                          example: MyBranch
+                        OwnerId:
+                          type: string
+                          format: uuid
+                          example: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                        OwnerName:
+                          type: string
+                        OrganizationId:
+                          type: string
+                          format: uuid
+                          example: e35d64a9-b990-44f5-bf02-32ad7d15630c
+                        OrganizationName:
+                          type: string
+                        RepositoryId:
+                          type: string
+                          format: uuid
+                          example: ab6f35ef-6e01-440b-8f9b-c343a5272095
+                        RepositoryName:
+                          type: string
+                - type: object
+                  properties:
+                    FullSha:
+                      type: boolean
+                    MaxCount:
+                      type: integer
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    Class:
+                      type: string
+                      example: ReferenceDto
+                    ReferenceId:
+                      type: string
+                      format: uuid
+                      example: c8f9bac8-d489-46c7-917f-b36b7d9efa9a
+                    BranchId:
+                      type: string
+                      format: uuid
+                      example: de7bf47d-23ae-4599-af68-68a317ea390d
+                    DirectoryId:
+                      type: string
+                      format: uuid
+                      example: 33a4e36b-828f-4fae-9343-50b6560dc842
+                    Sha256Hash:
+                      type: string
+                      example: 805331A98813206270E35564769E8BB59EEA02AEB7B27C7D6C63E625E1857243
+                    ReferenceType:
+                      type: string
+                      enum:
+                        - Promotion
+                        - Commit
+                        - Checkpoint
+                        - Save
+                        - Tag
+                      example: Commit
+                    ReferenceText:
+                      type: string
+                    CreatedAt:
+                      type: string
+                      format: date-time
+                  required:
+                    - Class
+                    - ReferenceId
+                    - BranchId
+                    - DirectoryId
+                    - Sha256Hash
+                    - ReferenceType
+                    - ReferenceText
+                    - CreatedAt
+        '400':
+          description: Bad Request
+        '500':
+          description: Internal Server Error
+  /diff/populate:
+    post:
+      summary: Populates the diff actor without returning the diff.
+      description: |
+        Populates the diff actor without returning the diff. This endpoint is meant to be used when generating the diff through reacting to an event.
+        ### Errors and Problem Details
+        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PopulateParameters'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/200'
+        '400':
+          $ref: '#/components/responses/400'
+        '500':
+          $ref: '#/components/responses/500'
+  /diff/getDiff:
+    post:
+      summary: Retrieves the contents of the diff.
+      description: |
+        Retrieves the contents of the diff between two directories.
+        ### Errors and Problem Details
+        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GetDiffParameters'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/200'
+        '400':
+          $ref: '#/components/responses/400'
+        '500':
+          $ref: '#/components/responses/500'
+  /diff/getDiffBySha256Hash:
+    post:
+      summary: Retrieves a diff taken by comparing two DirectoryVersions by Sha256Hash.
+      description: |
+        Retrieves a diff taken by comparing two DirectoryVersions identified by their SHA-256 hash.
+        ### Errors and Problem Details
+        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GetDiffBySha256HashParameters'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/200'
+        '400':
+          $ref: '#/components/responses/400'
+        '500':
+          $ref: '#/components/responses/500'
+  /directory/create:
+    post:
+      summary: Create a new directory version.
+      description: |
+        ### Validation rules
+
+        - `DirectoryVersion.DirectoryId` should be a valid and non-empty GUID.
+        - `DirectoryVersion.RepositoryId` should be a valid and non-empty GUID.
+        - The repository specified by `DirectoryVersion.RepositoryId` should exist.
+
+        ### Errors and Problem Details
+
+        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateParameters'
+      responses:
+        '200':
+          $ref: '#/components/responses/200'
+        '400':
+          $ref: '#/components/responses/400'
+        '500':
+          $ref: '#/components/responses/500'
+  /directory/get:
+    post:
+      summary: Get a directory version.
+      description: |
+        ### Validation rules
+
+        - `RepositoryId` should be a valid and non-empty GUID.
+        - `DirectoryId` should be a valid and non-empty GUID.
+        - The repository specified by `RepositoryId` should exist.
+        - The directory specified by `DirectoryId` should exist.
+
+        ### Errors and Problem Details
+
+        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GetParameters'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DirectoryVersion'
+        '400':
+          $ref: '#/components/responses/400'
+        '500':
+          $ref: '#/components/responses/500'
+  /directory/getDirectoryVersionsRecursive:
+    post:
+      summary: Get a directory version and all of its children.
+      description: |
+        ### Validation rules
+
+        - `RepositoryId` should be a valid and non-empty GUID.
+        - `DirectoryId` should be a valid and non-empty GUID.
+        - The repository specified by `RepositoryId` should exist.
+        - The directory specified by `DirectoryId` should exist.
+
+        ### Errors and Problem Details
+
+        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GetParameters'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                $ref: '#/components/schemas/DirectoryVersion'
+        '400':
+          $ref: '#/components/responses/400'
+        '500':
+          $ref: '#/components/responses/500'
+  /directory/getByDirectoryIds:
+    post:
+      summary: Get a list of directory versions by directory IDs.
+      description: |
+        ### Validation rules
+
+        - `RepositoryId` should be a valid and non-empty GUID.
+        - The repository specified by `RepositoryId` should exist.
+        - The directories specified by `DirectoryIds` should exist.
+
+        ### Errors and Problem Details
+
+        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GetByDirectoryIdsParameters'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                $ref: '#/components/schemas/DirectoryVersion'
+        '400':
+          $ref: '#/components/responses/400'
+        '500':
+          $ref: '#/components/responses/500'
+  /directory/getBySha256Hash:
+    post:
+      summary: Get a directory version by its SHA256 hash.
+      description: |
+        ### Validation rules
+
+        - `DirectoryId` should be a valid and non-empty GUID.
+        - `RepositoryId` should be a valid and non-empty GUID.
+        - `Sha256Hash` should not be empty.
+        - The repository specified by `RepositoryId` should exist.
+
+        ### Errors and Problem Details
+
+        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GetBySha256HashParameters'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Sha256Hash'
+        '400':
+          $ref: '#/components/responses/400'
+        '500':
+          $ref: '#/components/responses/500'
+  /directory/saveDirectoryVersions:
+    post:
+      summary: Save a list of directory versions.
+      description: |
+        ### Validation rules
+
+        - Each `DirectoryVersion` in the `DirectoryVersions` list should have valid properties:
+          - `DirectoryVersion.DirectoryId` should be a valid and non-empty GUID.
+          - `DirectoryVersion.RepositoryId` should be a valid and non-empty GUID.
+          - `DirectoryVersion.Sha256Hash` should not be empty.
+          - `DirectoryVersion.RelativePath` must not be empty.
+          - The repository specified by `DirectoryVersion.RepositoryId` should exist.
+
+        ### Errors and Problem Details
+
+        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SaveDirectoryVersionsParameters'
+      responses:
+        '200':
+          $ref: '#/components/responses/200'
+        '400':
+          $ref: '#/components/responses/400'
+        '500':
+          $ref: '#/components/responses/500'
+  /organization/create:
+    post:
+      summary: Create an organization.
+      description: |
+        ### Validation rules
+        - `OwnerId` must be a valid non-empty `Guid`.
+        - `OwnerName` must be a valid Grace name.
+        - Either `OwnerId` or `OwnerName` must be provided.
+        - `OrganizationId` is required and must not be empty.
+        - `OrganizationId` must be a valid non-empty `Guid`.
+        - `OrganizationName` is required and must not be empty.
+        - `OrganizationName` must be a valid Grace name.
+        - The specified `OwnerId` or `OwnerName` must exist.
+        - The specified `OrganizationId` must not already exist.
+
+        ### Errors and Problem Details
+        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateOrganizationParameters'
+      responses:
+        '200':
+          $ref: '#/components/responses/200'
+        '400':
+          $ref: '#/components/responses/400'
+        '500':
+          $ref: '#/components/responses/500'
+  /organization/setName:
+    post:
+      summary: Set the name of an organization.
+      description: |
+        ### Validation rules
+        - `OrganizationId` is required and must not be empty.
+        - `OrganizationId` must be a valid non-empty `Guid`.
+        - `OrganizationName` must be a valid Grace name.
+        - `NewName` is required and must not be empty.
+        - `NewName` must be a valid Grace name.
+        - The specified `OrganizationId` must exist.
+        - The specified organization must not be deleted.
+
+        ### Errors and Problem Details
+        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetOrganizationNameParameters'
+      responses:
+        '200':
+          $ref: '#/components/responses/200'
+        '400':
+          $ref: '#/components/responses/400'
+        '500':
+          $ref: '#/components/responses/500'
+  /organization/setType:
+    post:
+      summary: Set the type of an organization (Public, Private).
+      description: |
+        ### Validation rules
+        - `OrganizationId` is required and must not be empty.
+        - `OrganizationId` must be a valid non-empty `Guid`.
+        - `OrganizationName` must be a valid Grace name.
+        - `OrganizationType` is required and must be a valid organization type.
+        - The specified `OrganizationId` must exist.
+        - The specified organization must not be deleted.
+
+        ### Errors and Problem Details
+        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetOrganizationTypeParameters'
+      responses:
+        '200':
+          $ref: '#/components/responses/200'
+        '400':
+          $ref: '#/components/responses/400'
+        '500':
+          $ref: '#/components/responses/500'
+  /organization/setSearchVisibility:
+    post:
+      summary: Set the search visibility of an organization (Visible, Hidden).
+      description: |
+        ### Validation rules
+        - `OrganizationId` is required and must not be empty.
+        - `OrganizationId` must be a valid non-empty `Guid`.
+        - `OrganizationName` must be a valid Grace name.
+        - `SearchVisibility` is required and must be a valid search visibility option.
+        - The specified `OrganizationId` must exist.
+        - The specified organization must not be deleted.
+
+        ### Errors and Problem Details
+        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetOrganizationSearchVisibilityParameters'
+      responses:
+        '200':
+          $ref: '#/components/responses/200'
+        '400':
+          $ref: '#/components/responses/400'
+        '500':
+          $ref: '#/components/responses/500'
+  /organization/setDescription:
+    post:
+      summary: Set the description of an organization.
+      description: |
+        ### Validation rules
+        - `OrganizationId` is required and must not be empty.
+        - `OrganizationId` must be a valid non-empty `Guid`.
+        - `Description` is required and must not be empty.
+        - The specified `OrganizationId` must exist.
+        - The specified organization must not be deleted.
+
+        ### Errors and Problem Details
+        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetOrganizationDescriptionParameters'
+      responses:
+        '200':
+          $ref: '#/components/responses/200'
+        '400':
+          $ref: '#/components/responses/400'
+        '500':
+          $ref: '#/components/responses/500'
+  /organization/listRepositories:
+    post:
+      summary: List the repositories of an organization.
+      description: |
+        ### Validation rules
+        - `OrganizationId` is required and must not be empty.
+        - `OrganizationId` must be a valid non-empty `Guid`.
+        - `OrganizationName` must be a valid Grace name.
+        - The specified `OrganizationId` must exist.
+        - The specified organization must not be deleted.
+
+        ### Errors and Problem Details
+        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ListRepositoriesParameters'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: array
+                  $ref: '#/components/schemas/RepositoryDto'
+        '400':
+          $ref: '#/components/responses/400'
+        '500':
+          $ref: '#/components/responses/500'
+  /organization/delete:
+    post:
+      summary: Delete an organization.
+      description: |
+        ### Validation rules
+        - `OrganizationId` is required and must not be empty.
+        - `OrganizationId` must be a valid non-empty `Guid`.
+        - `OrganizationName` must be a valid Grace name.
+        - `DeleteReason` is required and must not be empty.
+        - The specified `OrganizationId` must exist.
+        - The specified organization must not be deleted.
+
+        ### Errors and Problem Details
+        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeleteOrganizationParameters'
+      responses:
+        '200':
+          $ref: '#/components/responses/200'
+        '400':
+          $ref: '#/components/responses/400'
+        '500':
+          $ref: '#/components/responses/500'
+  /organization/undelete:
+    post:
+      summary: Undelete a previously deleted organization.
+      description: |
+        ### Validation rules
+        - `OrganizationId` is required and must not be empty.
+        - `OrganizationId` must be a valid non-empty `Guid`.
+        - `OrganizationName` must be a valid Grace name.
+        - Either `OrganizationId` or `OrganizationName` must be provided.
+        - The specified `OrganizationId` must exist.
+        - The specified organization must be deleted.
+
+        ### Errors and Problem Details
+        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OrganizationParameters'
+      responses:
+        '200':
+          $ref: '#/components/responses/200'
+        '400':
+          $ref: '#/components/responses/400'
+        '500':
+          $ref: '#/components/responses/500'
+  /organization/get:
+    post:
+      summary: Get an organization.
+      description: |
+        ### Validation rules
+        - `OrganizationId` is required and must not be empty.
+        - `OrganizationId` must be a valid non-empty `Guid`.
+        - `OrganizationName` must be a valid Grace name.
+        - The specified `OrganizationId` must exist.
+        - The specified organization must not be deleted.
+
+        ### Errors and Problem Details
+        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GetOrganizationParameters'
+      responses:
+        '200':
+          $ref: '#/components/responses/200'
+        '400':
+          $ref: '#/components/responses/400'
+        '500':
+          $ref: '#/components/responses/500'
+  /owner/create:
+    post:
+      summary: Create an owner.
+      description: |
+        ### Validation rules
+
+        - `OwnerId` must not be empty.
+        - `OwnerId` must be a valid GUID.
+        - `OwnerName` must not be empty.
+        - `OwnerName` must be a valid Grace name.
+        - Owner with the same `OwnerId` must not already exist.
+        - Owner with the same `OwnerName` must not already exist.
+
+        ### Errors and Problem Details
+        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateOwnerParameters'
+      responses:
+        '200':
+          $ref: '#/components/responses/200'
+        '400':
+          $ref: '#/components/responses/400'
+        '500':
+          $ref: '#/components/responses/500'
+  /owner/setName:
+    post:
+      summary: Set the name of an owner.
+      description: |
+        ### Validation rules
+
+        - `OwnerId` must be a valid GUID.
+        - `OwnerName` must be a valid Grace name.
+        - Either `OwnerId` or `OwnerName` must be provided.
+        - `NewName` must not be empty.
+        - `NewName` must be a valid Grace name.
+        - Owner with the specified `OwnerId` or `OwnerName` must exist and not be deleted.
+        - Owner with the specified `NewName` must not already exist.
+
+        ### Errors and Problem Details
+        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetOwnerNameParameters'
+      responses:
+        '200':
+          $ref: '#/components/responses/200'
+        '400':
+          $ref: '#/components/responses/400'
+        '500':
+          $ref: '#/components/responses/500'
+  /owner/setType:
+    post:
+      summary: Set the owner type (Public, Private).
+      description: |
+        ### Validation rules
+
+        - `OwnerId` must be a valid GUID.
+        - `OwnerName` must be a valid Grace name.
+        - Either `OwnerId` or `OwnerName` must be provided.
+        - `OwnerType` must not be empty.
+        - `OwnerType` must be a valid owner type.
+        - Owner with the specified `OwnerId` or `OwnerName` must exist and not be deleted.
+
+        ### Errors and Problem Details
+        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetOwnerTypeParameters'
+      responses:
+        '200':
+          $ref: '#/components/responses/200'
+        '400':
+          $ref: '#/components/responses/400'
+        '500':
+          $ref: '#/components/responses/500'
+  /owner/setSearchVisibility:
+    post:
+      summary: Set the owner search visibility (Visible, NotVisible).
+      description: |
+        ### Validation rules
+
+        - `OwnerId` must be a valid GUID.
+        - `OwnerName` must be a valid Grace name.
+        - Either `OwnerId` or `OwnerName` must be provided.
+        - `SearchVisibility` must be a valid search visibility.
+        - Owner with the specified `OwnerId` or `OwnerName` must exist and not be deleted.
+
+        ### Errors and Problem Details
+        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetOwnerSearchVisibilityParameters'
+      responses:
+        '200':
+          $ref: '#/components/responses/200'
+        '400':
+          $ref: '#/components/responses/400'
+        '500':
+          $ref: '#/components/responses/500'
+  /owner/setDescription:
+    post:
+      summary: Set the owner's description.
+      description: |
+        ### Validation rules
+
+        - `OwnerId` must be a valid GUID.
+        - `OwnerName` must be a valid Grace name.
+        - Either `OwnerId` or `OwnerName` must be provided.
+        - `Description` must not be empty.
+        - Owner with the specified `OwnerId` or `OwnerName` must exist and not be deleted.
+
+        ### Errors and Problem Details
+        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetOwnerDescriptionParameters'
+      responses:
+        '200':
+          $ref: '#/components/responses/200'
+        '400':
+          $ref: '#/components/responses/400'
+        '500':
+          $ref: '#/components/responses/500'
+  /owner/listOrganizations:
+    post:
+      summary: List the organizations for an owner.
+      description: |
+        ### Validation rules
+
+        - `OwnerId` must be a valid GUID.
+
+        ### Errors and Problem Details
+        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ListOrganizationsParameters'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                $ref: '#/components/schemas/OrganizationDto'
+        '400':
+          $ref: '#/components/responses/400'
+        '500':
+          $ref: '#/components/responses/500'
+  /owner/delete:
+    post:
+      summary: Delete an owner.
+      description: |
+        ### Validation rules
+
+        - `OwnerId` must be a valid GUID.
+        - `OwnerName` must be a valid Grace name.
+        - Either `OwnerId` or `OwnerName` must be provided.
+        - `DeleteReason` must not be empty.
+        - Owner with the specified `OwnerId` or `OwnerName` must exist and not be deleted.
+
+        ### Errors and Problem Details
+        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeleteOwnerParameters'
+      responses:
+        '200':
+          $ref: '#/components/responses/200'
+        '400':
+          $ref: '#/components/responses/400'
+        '500':
+          $ref: '#/components/responses/500'
+  /owner/undelete:
+    post:
+      summary: Undelete a previously-deleted owner.
+      description: |
+        ### Validation rules
+
+        - `OwnerId` must be a valid GUID.
+        - `OwnerName` must be a valid Grace name.
+        - Either `OwnerId` or `OwnerName` must be provided.
+        - Owner with the specified `OwnerId` or `OwnerName` must exist and be deleted.
+
+        ### Errors and Problem Details
+        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OwnerParameters'
+      responses:
+        '200':
+          $ref: '#/components/responses/200'
+        '400':
+          $ref: '#/components/responses/400'
+        '500':
+          $ref: '#/components/responses/500'
+  /owner/get:
+    post:
+      summary: Get an owner.
+      description: |
+        ### Validation rules
+
+        - `OwnerId` must be a valid GUID.
+
+        ### Errors and Problem Details
+        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GetOwnerParameters'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OwnerDto'
+        '400':
+          $ref: '#/components/responses/400'
+        '500':
+          $ref: '#/components/responses/500'
+  /repository/create:
+    post:
+      summary: Create a new repository.
+      description: |
+        This endpoint creates a new repository.
+
+        ### Validation rules
+        - The `OwnerId` must be a valid and non-empty GUID.
+        - The `OwnerName` must be a valid Grace name.
+        - Either `OwnerId` or `OwnerName` must be provided.
+        - The `OrganizationId` must be a valid and non-empty GUID.
+        - The `OrganizationName` must be a valid Grace name.
+        - Either `OrganizationId` or `OrganizationName` must be provided.
+        - The `RepositoryId` must not be empty.
+        - The `RepositoryId` must be a valid and non-empty GUID.
+        - The `RepositoryName` must not be empty.
+        - The `RepositoryName` must be a valid Grace name.
+        - The `OwnerId` must correspond to an existing owner.
+        - The `OrganizationId` must correspond to an existing organization.
+
+        ### Errors and Problem Details
+        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateRepositoryParameters'
+      responses:
+        '200':
+          $ref: '#/components/responses/200'
+        '400':
+          $ref: '#/components/responses/400'
+        '500':
+          $ref: '#/components/responses/500'
+  /repository/setVisibility:
+    post:
+      summary: Sets the search visibility of the repository.
+      description: |
+        This endpoint sets the search visibility of a repository.
+
+        ### Validation rules
+        - Either `RepositoryId` or `RepositoryName` must be provided.
+        - The `Visibility` value must be valid.
+        - The repository must exist.
+        - The repository must not be deleted.
+
+        ### Errors and Problem Details
+        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetRepositoryVisibilityParameters'
+      responses:
+        '200':
+          $ref: '#/components/responses/200'
+        '400':
+          $ref: '#/components/responses/400'
+        '500':
+          $ref: '#/components/responses/500'
+  /repository/setSaveDays:
+    post:
+      summary: Sets the number of days to keep saves in the repository.
+      description: |
+        This endpoint sets the number of days to keep saves in a repository.
+
+        ### Validation rules
+        - Either `RepositoryId` or `RepositoryName` must be provided.
+        - The `SaveDays` value must be valid.
+        - The repository must exist.
+        - The repository must not be deleted.
+
+        ### Errors and Problem Details
+        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetSaveDaysParameters'
+      responses:
+        '200':
+          $ref: '#/components/responses/200'
+        '400':
+          $ref: '#/components/responses/400'
+        '500':
+          $ref: '#/components/responses/500'
+  /repository/setCheckpointDays:
+    post:
+      summary: Sets the number of days to keep checkpoints in the repository.
+      description: |
+        This endpoint sets the number of days to keep checkpoints in a repository.
+
+        ### Validation rules
+        - Either `RepositoryId` or `RepositoryName` must be provided.
+        - The `CheckpointDays` value must be valid.
+        - The repository must exist.
+        - The repository must not be deleted.
+
+        ### Errors and Problem Details
+        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetCheckpointDaysParameters'
+      responses:
+        '200':
+          $ref: '#/components/responses/200'
+        '400':
+          $ref: '#/components/responses/400'
+        '500':
+          $ref: '#/components/responses/500'
+  /repository/setStatus:
+    post:
+      summary: Sets the status of the repository (Public, Private).
+      description: |
+        This endpoint sets the status of a repository.
+
+        ### Validation rules
+        - Either `RepositoryId` or `RepositoryName` must be provided.
+        - The `Status` value must be a valid repository status.
+        - The repository must exist.
+        - The repository must not be deleted.
+
+        ### Errors and Problem Details
+        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetRepositoryStatusParameters'
+      responses:
+        '200':
+          $ref: '#/components/responses/200'
+        '400':
+          $ref: '#/components/responses/400'
+        '500':
+          $ref: '#/components/responses/500'
+  /repository/setDefaultServerApiVersion:
+    post:
+      summary: Sets the default server API version for the repository.
+      description: |
+        This endpoint sets the default server API version for a repository.
+
+        ### Validation rules
+        - Either `RepositoryId` or `RepositoryName` must be provided.
+        - The `DefaultServerApiVersion` must not be empty.
+        - The repository must exist.
+        - The repository must not be deleted.
+
+        ### Errors and Problem Details
+        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetDefaultServerApiVersionParameters'
+      responses:
+        '200':
+          $ref: '#/components/responses/200'
+        '400':
+          $ref: '#/components/responses/400'
+        '500':
+          $ref: '#/components/responses/500'
+  /repository/setRecordSaves:
+    post:
+      summary: Sets whether or not to keep saves in the repository.
+      description: |
+        This endpoint sets whether or not to keep saves in a repository.
+
+        ### Validation rules
+        - Either `RepositoryId` or `RepositoryName` must be provided.
+        - The repository must exist.
+        - The repository must not be deleted.
+
+        ### Errors and Problem Details
+        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RecordSavesParameters'
+      responses:
+        '200':
+          $ref: '#/components/responses/200'
+        '400':
+          $ref: '#/components/responses/400'
+        '500':
+          $ref: '#/components/responses/500'
+  /repository/setDescription:
+    post:
+      summary: Sets the description of the repository.
+      description: |
+        This endpoint sets the description of a repository.
+
+        ### Validation rules
+        - Either `RepositoryId` or `RepositoryName` must be provided.
+        - The `Description` must not be empty.
+        - The repository must exist.
+        - The repository must not be deleted.
+
+        ### Errors and Problem Details
+        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetRepositoryDescriptionParameters'
+      responses:
+        '200':
+          $ref: '#/components/responses/200'
+        '400':
+          $ref: '#/components/responses/400'
+        '500':
+          $ref: '#/components/responses/500'
+  /repository/delete:
+    post:
+      summary: Deletes the repository.
+      description: |
+        This endpoint deletes a repository.
+
+        ### Validation rules
+        - Either `RepositoryId` or `RepositoryName` must be provided.
+        - The `DeleteReason` must not be empty.
+        - The repository must exist.
+        - The repository must not be deleted.
+
+        ### Errors and Problem Details
+        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeleteRepositoryParameters'
+      responses:
+        '200':
+          $ref: '#/components/responses/200'
+        '400':
+          $ref: '#/components/responses/400'
+        '500':
+          $ref: '#/components/responses/500'
+  /repository/undelete:
+    post:
+      summary: Undeletes a previously-deleted repository.
+      description: |
+        This endpoint undeletes a previously-deleted repository.
+
+        ### Validation rules
+        - Either `RepositoryId` or `RepositoryName` must be provided.
+        - The repository must exist.
+        - The repository must be deleted.
+
+        ### Errors and Problem Details
+        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RepositoryParameters'
+      responses:
+        '200':
+          $ref: '#/components/responses/200'
+        '400':
+          $ref: '#/components/responses/400'
+        '500':
+          $ref: '#/components/responses/500'
+  /repository/exists:
+    post:
+      summary: Checks if a repository exists with the given parameters.
+      description: |
+        This endpoint checks if a repository exists based on the provided parameters.
+
+        ### Validation rules
+        - Either `RepositoryId` or `RepositoryName` must be provided.
+        - The `OwnerId` must be a valid and non-empty GUID.
+        - The `OwnerName` must be a valid Grace name.
+        - Either `OwnerId` or `OwnerName` must be provided.
+        - The `OrganizationId` must be a valid and non-empty GUID.
+        - The `OrganizationName` must be a valid Grace name.
+        - Either `OrganizationId` or `OrganizationName` must be provided.
+        - The `RepositoryId` must be a valid and non-empty GUID.
+        - The repository ID must not exist.
+
+        ### Errors and Problem Details
+        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RepositoryParameters'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: boolean
+        '400':
+          $ref: '#/components/responses/400'
+        '500':
+          $ref: '#/components/responses/500'
+  /repository/isEmpty:
+    post:
+      summary: Checks if a repository is empty.
+      description: |
+        This endpoint checks if a repository is empty, meaning it has just been created and has no data.
+
+        ### Validation rules
+        - Either `RepositoryId` or `RepositoryName` must be provided.
+        - The `OwnerId` must be a valid and non-empty GUID.
+        - The `OwnerName` must be a valid Grace name.
+        - Either `OwnerId` or `OwnerName` must be provided.
+        - The `OrganizationId` must be a valid and non-empty GUID.
+        - The `OrganizationName` must be a valid Grace name.
+        - Either `OrganizationId` or `OrganizationName` must be provided.
+        - The `RepositoryId` must be a valid and non-empty GUID.
+        - The repository ID must not exist.
+
+        ### Errors and Problem Details
+        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RepositoryParameters'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: boolean
+        '400':
+          $ref: '#/components/responses/400'
+        '500':
+          $ref: '#/components/responses/500'
+  /repository/get:
+    post:
+      summary: Gets a repository.
+      description: |
+        This endpoint retrieves the details of a repository.
+
+        ### Validation rules
+        - Either `RepositoryId` or `RepositoryName` must be provided.
+        - The `OwnerId` must be a valid and non-empty GUID.
+        - The `OwnerName` must be a valid Grace name.
+        - Either `OwnerId` or `OwnerName` must be provided.
+        - The `OrganizationId` must be a valid and non-empty GUID.
+        - The `OrganizationName` must be a valid Grace name.
+        - Either `OrganizationId` or `OrganizationName` must be provided.
+        - The `RepositoryId` must be a valid and non-empty GUID.
+        - The `RepositoryName` must not be empty.
+        - The repository ID must not exist.
+
+        ### Errors and Problem Details
+        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RepositoryParameters'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RepositoryDto'
+        '400':
+          $ref: '#/components/responses/400'
+        '500':
+          $ref: '#/components/responses/500'
+  /repository/getBranches:
+    post:
+      summary: Gets a repository's branches.
+      description: |
+        This endpoint retrieves the branches of a repository.
+
+        ### Validation rules
+        - The `OwnerId` must be a valid and non-empty GUID.
+        - The `OwnerName` must be a valid Grace name.
+        - Either `OwnerId` or `OwnerName` must be provided.
+        - The `OrganizationId` must be a valid and non-empty GUID.
+        - The `OrganizationName` must be a valid Grace name.
+        - Either `OrganizationId` or `OrganizationName` must be provided.
+        - The `RepositoryId` must be a valid and non-empty GUID.
+        - Either `RepositoryId` or `RepositoryName` must be provided.
+        - The `MaxCount` must be a number between 1 and 1000 (inclusive).
+        - The repository ID must not exist.
+
+        ### Errors and Problem Details
+        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GetBranchesParameters'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                $ref: '#/components/schemas/BranchDto'
+        '400':
+          $ref: '#/components/responses/400'
+        '500':
+          $ref: '#/components/responses/500'
+  /repository/getReferencesByReferenceId:
+    post:
+      summary: Gets a list of references by reference IDs.
+      description: |
+        This endpoint retrieves a list of references based on the provided reference IDs.
+
+        ### Validation rules
+        - The `OwnerId` must be a valid and non-empty GUID.
+        - The `OwnerName` must be a valid Grace name.
+        - Either `OwnerId` or `OwnerName` must be provided.
+        - The `OrganizationId` must be a valid and non-empty GUID.
+        - The `OrganizationName` must be a valid Grace name.
+        - Either `OrganizationId` or `OrganizationName` must be provided.
+        - The `RepositoryId` must be a valid and non-empty GUID.
+        - Either `RepositoryId` or `RepositoryName` must be provided.
+        - The `ReferenceIds` must not be empty.
+        - The `MaxCount` must be a number between 1 and 1000 (inclusive).
+        - The repository ID must not exist.
+
+        ### Errors and Problem Details
+        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GetReferencesByReferenceIdParameters'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                $ref: '#/components/schemas/ReferenceDto'
+        '400':
+          $ref: '#/components/responses/400'
+        '500':
+          $ref: '#/components/responses/500'
+  /repository/getBranchesByBranchId:
+    post:
+      summary: Gets a list of branches by branch IDs.
+      description: |
+        This endpoint retrieves a list of branches based on the provided branch IDs.
+
+        ### Validation rules
+        - The `OwnerId` must be a valid and non-empty GUID.
+        - The `OwnerName` must be a valid Grace name.
+        - Either `OwnerId` or `OwnerName` must be provided.
+        - The `OrganizationId` must be a valid and non-empty GUID.
+        - The `OrganizationName` must be a valid Grace name.
+        - Either `OrganizationId` or `OrganizationName` must be provided.
+        - The `RepositoryId` must be a valid and non-empty GUID.
+        - Either `RepositoryId` or `RepositoryName` must be provided.
+        - The `BranchIds` must not be empty.
+        - The `MaxCount` must be a number between 1 and 1000 (inclusive).
+        - The repository ID must not exist.
+
+        ### Errors and Problem Details
+        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GetBranchesByBranchIdParameters'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                $ref: '#/components/schemas/BranchDto'
+        '400':
+          $ref: '#/components/responses/400'
+        '500':
+          $ref: '#/components/responses/500'
+components:
+  schemas:
+    '200':
+      description: OK
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/GraceReturnValue'
+    BranchParameters:
+      description: Parameters for many endpoints in the /branch path.
+      type: object
+      properties:
+        ownerId:
+          type: string
+        ownerName:
+          $ref: '#/components/schemas/OwnerName'
+        organizationId:
+          type: string
+        organizationName:
+          $ref: '#/components/schemas/OrganizationName'
+        repositoryId:
+          type: string
+        repositoryName:
+          $ref: '#/components/schemas/RepositoryName'
+        branchId:
+          type: string
+        branchName:
+          $ref: '#/components/schemas/BranchName'
+    BranchQueryParameters:
+      description: Base class for parameters for branch queries.
+      allOf:
+        - $ref: '#/components/schemas/BranchParameters'
+        - type: object
+          properties:
+            sha256Hash:
+              $ref: '#/components/schemas/Sha256Hash'
+            referenceId:
+              type: string
+    CreateBranchParameters:
+      description: Parameters for the /branch/create endpoint.
+      allOf:
+        - $ref: '#/components/schemas/BranchParameters'
+        - type: object
+          properties:
+            parentBranchId:
+              type: string
+            parentBranchName:
+              $ref: '#/components/schemas/BranchName'
+    RebaseParameters:
+      description: Parameters for the /branch/rebase endpoint.
+      allOf:
+        - $ref: '#/components/schemas/BranchParameters'
+        - type: object
+          properties:
+            basedOn:
+              $ref: '#/components/schemas/ReferenceId'
+    CreateReferenceParameters:
+      description: Parameters for the various /branch/create[reference] endpoints.
+      allOf:
+        - $ref: '#/components/schemas/BranchParameters'
+        - type: object
+          properties:
+            directoryId:
+              $ref: '#/components/schemas/DirectoryId'
+            sha256Hash:
+              $ref: '#/components/schemas/Sha256Hash'
+            message:
+              type: string
+    SetBranchNameParameters:
+      description: Parameters for the /branch/setName endpoint.
+      allOf:
+        - $ref: '#/components/schemas/BranchParameters'
+        - type: object
+          properties:
+            newName:
+              type: string
+    EnableFeatureParameters:
+      description: Parameters for the various /branch/enable[feature] endpoints.
+      allOf:
+        - $ref: '#/components/schemas/BranchParameters'
+        - type: object
+          properties:
+            enabled:
+              type: boolean
+    DeleteBranchParameters:
+      description: Parameters for the /branch/delete endpoint.
+      allOf:
+        - $ref: '#/components/schemas/BranchParameters'
+    GetReferenceParameters:
+      description: Parameters for the /branch/getReference endpoint.
+      allOf:
+        - $ref: '#/components/schemas/BranchQueryParameters'
+    GetReferencesParameters:
+      description: Parameters for the /branch/getReferences and /branch/get[reference] endpoints.
+      allOf:
+        - $ref: '#/components/schemas/BranchParameters'
+        - type: object
+          properties:
+            fullSha:
+              type: boolean
+            maxCount:
+              type: integer
+    GetDiffsForReferenceTypeParameters:
+      description: Parameters for the /branch/getDiffsForReferenceType endpoint.
+      allOf:
+        - $ref: '#/components/schemas/BranchParameters'
+        - type: object
+          properties:
+            referenceType:
+              type: string
+            maxCount:
+              type: integer
+    GetDiffsForReferencesParameters:
+      description: Parameters for the /branch/getDiffsForReferences endpoint.
+      allOf:
+        - $ref: '#/components/schemas/BranchParameters'
+        - type: object
+          properties:
+            references:
+              type: string
+            maxCount:
+              type: integer
+    GetBranchParameters:
+      description: Parameters for the /branch/get endpoint.
+      allOf:
+        - $ref: '#/components/schemas/BranchQueryParameters'
+    SwitchParameters:
+      description: Parameters for the /branch/switch endpoint.
+      allOf:
+        - $ref: '#/components/schemas/BranchQueryParameters'
+    GetBranchVersionParameters:
+      description: Parameters for the /branch/getVersion endpoint.
+      allOf:
+        - $ref: '#/components/schemas/BranchQueryParameters'
+    DiffParameters:
+      description: Parameters for diff endpoints.
+      allOf:
+        - $ref: '#/components/schemas/CommonParameters'
+      properties:
+        OwnerId:
+          type: string
+        OwnerName:
+          $ref: '#/components/schemas/OwnerName'
+        OrganizationId:
+          type: string
+        OrganizationName:
+          $ref: '#/components/schemas/OrganizationName'
+        RepositoryId:
+          type: string
+        RepositoryName:
+          $ref: '#/components/schemas/RepositoryName'
+        DirectoryId1:
+          $ref: '#/components/schemas/DirectoryId'
+        DirectoryId2:
+          $ref: '#/components/schemas/DirectoryId'
+    PopulateParameters:
+      description: Parameters for diff population.
+      allOf:
+        - $ref: '#/components/schemas/DiffParameters'
+    GetDiffParameters:
+      description: Parameters for retrieving a diff.
+      allOf:
+        - $ref: '#/components/schemas/DiffParameters'
+    GetDiffByReferenceTypeParameters:
+      description: Parameters for retrieving a diff by reference type.
+      allOf:
+        - $ref: '#/components/schemas/DiffParameters'
+      properties:
+        BranchId:
+          type: string
+        BranchName:
+          $ref: '#/components/schemas/BranchName'
+    GetDiffBySha256HashParameters:
+      description: Parameters for retrieving a diff by SHA256 hash.
+      allOf:
+        - $ref: '#/components/schemas/DiffParameters'
+      properties:
+        Sha256Hash1:
+          $ref: '#/components/schemas/Sha256Hash'
+        Sha256Hash2:
+          $ref: '#/components/schemas/Sha256Hash'
+    DirectoryParameters:
+      description: Parameters for many endpoints in the /directory path.
+      type: object
+      properties:
+        DirectoryId:
+          type: string
+          description: Unique identifier of the directory.
+      allOf:
+        - $ref: '#/components/schemas/CommonParameters'
+    CreateParameters:
+      description: Parameters for the /directory/create endpoint.
+      type: object
+      properties:
+        DirectoryVersion:
+          $ref: '#/components/schemas/DirectoryVersion'
+      allOf:
+        - $ref: '#/components/schemas/DirectoryParameters'
+    GetParameters:
+      description: Parameters for the /directory/get endpoint.
+      type: object
+      properties:
+        RepositoryId:
+          type: string
+          description: Unique identifier of the repository.
+      allOf:
+        - $ref: '#/components/schemas/DirectoryParameters'
+    GetByDirectoryIdsParameters:
+      description: Parameters for the /directory/getByDirectoryIds endpoint.
+      type: object
+      properties:
+        RepositoryId:
+          type: string
+          description: Unique identifier of the repository.
+        DirectoryIds:
+          type: array
+          items:
+            $ref: '#/components/schemas/DirectoryId'
+      allOf:
+        - $ref: '#/components/schemas/DirectoryParameters'
+    GetBySha256HashParameters:
+      description: Parameters for the /directory/getBySha256Hash endpoint.
+      type: object
+      properties:
+        RepositoryId:
+          type: string
+          description: Unique identifier of the repository.
+        Sha256Hash:
+          type: string
+          description: The SHA256 hash value.
+      allOf:
+        - $ref: '#/components/schemas/DirectoryParameters'
+    SaveDirectoryVersionsParameters:
+      description: Parameters for the /directory/saveDirectoryVersions endpoint.
+      type: object
+      properties:
+        DirectoryVersions:
+          type: array
+          items:
+            $ref: '#/components/schemas/DirectoryVersion'
+      allOf:
+        - $ref: '#/components/schemas/DirectoryParameters'
+    BranchDto:
+      description: (automatically generated)
+      type: object
+      properties:
+        Class:
+          type: string
+        BranchId:
+          $ref: '#/components/schemas/BranchId'
+        BranchName:
+          $ref: '#/components/schemas/BranchName'
+        ParentBranchId:
+          $ref: '#/components/schemas/BranchId'
+        BasedOn:
+          $ref: '#/components/schemas/ReferenceId'
+        RepositoryId:
+          $ref: '#/components/schemas/RepositoryId'
+        UserId:
+          $ref: '#/components/schemas/UserId'
+        PromotionEnabled:
+          type: boolean
+        CommitEnabled:
+          type: boolean
+        CheckpointEnabled:
+          type: boolean
+        SaveEnabled:
+          type: boolean
+        TagEnabled:
+          type: boolean
+        LatestPromotion:
+          $ref: '#/components/schemas/ReferenceId'
+        LatestCommit:
+          $ref: '#/components/schemas/ReferenceId'
+        LatestCheckpoint:
+          $ref: '#/components/schemas/ReferenceId'
+        LatestSave:
+          $ref: '#/components/schemas/ReferenceId'
+        CreatedAt:
+          $ref: '#/components/schemas/Instant'
+        UpdatedAt:
+          type: object
+          properties:
+            value:
+              $ref: '#/components/schemas/Instant'
+        DeletedAt:
+          type: object
+          properties:
+            value:
+              $ref: '#/components/schemas/Instant'
+    DiffDto:
+      description: (automatically generated)
+      type: object
+      properties:
+        Class:
+          type: string
+        HasDifferences:
+          type: boolean
+        DirectoryId1:
+          $ref: '#/components/schemas/DirectoryId'
+        Directory1CreatedAt:
+          $ref: '#/components/schemas/Instant'
+        DirectoryId2:
+          $ref: '#/components/schemas/DirectoryId'
+        Directory2CreatedAt:
+          $ref: '#/components/schemas/Instant'
+        Differences:
+          type: array
+          items:
+            $ref: '#/components/schemas/FileSystemDifference'
+        FileDiffs:
+          type: array
+          items:
+            $ref: '#/components/schemas/FileDiff'
+    OrganizationDto:
+      description: (automatically generated)
+      type: object
+      properties:
+        Class:
+          type: string
+        OrganizationId:
+          $ref: '#/components/schemas/OrganizationId'
+        OrganizationName:
+          $ref: '#/components/schemas/OrganizationName'
+        OwnerId:
+          $ref: '#/components/schemas/OwnerId'
+        OrganizationType:
+          $ref: '#/components/schemas/OrganizationType'
+        Description:
+          type: string
+        SearchVisibility:
+          $ref: '#/components/schemas/SearchVisibility'
+        Repositories:
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/RepositoryName'
+        CreatedAt:
+          $ref: '#/components/schemas/Instant'
+        UpdatedAt:
+          type: object
+          properties:
+            value:
+              $ref: '#/components/schemas/Instant'
+        DeletedAt:
+          type: object
+          properties:
+            value:
+              $ref: '#/components/schemas/Instant'
+        DeleteReason:
+          type: string
+    OwnerDto:
+      description: (automatically generated)
+      type: object
+      properties:
+        Class:
+          type: string
+        OwnerId:
+          $ref: '#/components/schemas/OwnerId'
+        OwnerName:
+          $ref: '#/components/schemas/OwnerName'
+        OwnerType:
+          $ref: '#/components/schemas/OwnerType'
+        Description:
+          type: string
+        SearchVisibility:
+          $ref: '#/components/schemas/SearchVisibility'
+        Organizations:
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/OrganizationName'
+        CreatedAt:
+          $ref: '#/components/schemas/Instant'
+        UpdatedAt:
+          type: object
+          properties:
+            value:
+              $ref: '#/components/schemas/Instant'
+        DeletedAt:
+          type: object
+          properties:
+            value:
+              $ref: '#/components/schemas/Instant'
+        DeleteReason:
+          type: string
+    ReferenceDto:
+      description: (automatically generated)
+      type: object
+      properties:
+        Class:
+          type: string
+        ReferenceId:
+          $ref: '#/components/schemas/ReferenceId'
+        BranchId:
+          $ref: '#/components/schemas/BranchId'
+        DirectoryId:
+          $ref: '#/components/schemas/DirectoryId'
+        Sha256Hash:
+          $ref: '#/components/schemas/Sha256Hash'
+        ReferenceType:
+          $ref: '#/components/schemas/ReferenceType'
+        ReferenceText:
+          $ref: '#/components/schemas/ReferenceText'
+        CreatedAt:
+          $ref: '#/components/schemas/Instant'
+    RepositoryDto:
+      description: (automatically generated)
+      type: object
+      properties:
+        Class:
+          type: string
+        RepositoryId:
+          $ref: '#/components/schemas/RepositoryId'
+        OwnerId:
+          $ref: '#/components/schemas/OwnerId'
+        OrganizationId:
+          $ref: '#/components/schemas/OrganizationId'
+        RepositoryName:
+          $ref: '#/components/schemas/RepositoryName'
+        ObjectStorageProvider:
+          $ref: '#/components/schemas/ObjectStorageProvider'
+        StorageAccountName:
+          type: string
+        StorageContainerName:
+          $ref: '#/components/schemas/StorageContainerName'
+        RepositoryVisibility:
+          $ref: '#/components/schemas/RepositoryVisibility'
+        RepositoryStatus:
+          $ref: '#/components/schemas/RepositoryStatus'
+        Branches:
+          type: array
+          items:
+            $ref: '#/components/schemas/BranchName'
+        DefaultServerApiVersion:
+          type: string
+        DefaultBranchName:
+          $ref: '#/components/schemas/BranchName'
+        SaveDays:
+          type: number
+          format: double
+        CheckpointDays:
+          type: number
+    OrganizationParameters:
+      description: Parameters for many endpoints in the /organization path.
+      allOf:
+        - $ref: '#/components/schemas/CommonParameters'
+      properties:
+        OwnerId:
+          type: string
+        OwnerName:
+          type: string
+        OrganizationId:
+          type: string
+        OrganizationName:
+          type: string
+    CreateOrganizationParameters:
+      description: Parameters for the /organization/create endpoint.
+      allOf:
+        - $ref: '#/components/schemas/OrganizationParameters'
+    SetOrganizationNameParameters:
+      description: Parameters for the /organization/setName endpoint.
+      allOf:
+        - $ref: '#/components/schemas/OrganizationParameters'
+      properties:
+        NewName:
+          type: string
+    SetOrganizationTypeParameters:
+      description: Parameters for the /organization/setType endpoint.
+      allOf:
+        - $ref: '#/components/schemas/OrganizationParameters'
+      properties:
+        OrganizationType:
+          type: string
+    SetOrganizationSearchVisibilityParameters:
+      description: Parameters for the /organization/setSearchVisibility endpoint.
+      allOf:
+        - $ref: '#/components/schemas/OrganizationParameters'
+      properties:
+        SearchVisibility:
+          type: string
+    SetOrganizationDescriptionParameters:
+      description: Parameters for the /organization/setDescription endpoint.
+      allOf:
+        - $ref: '#/components/schemas/OrganizationParameters'
+      properties:
+        Description:
+          type: string
+    DeleteOrganizationParameters:
+      description: Parameters for the /organization/delete endpoint.
+      allOf:
+        - $ref: '#/components/schemas/OrganizationParameters'
+      properties:
+        Force:
+          type: boolean
+        DeleteReason:
+          type: string
+    UndeleteOrganizationParameters:
+      description: Parameters for the /organization/undelete endpoint.
+      allOf:
+        - $ref: '#/components/schemas/OrganizationParameters'
+    GetOrganizationParameters:
+      description: Parameters for the /organization/get endpoint.
+      allOf:
+        - $ref: '#/components/schemas/OrganizationParameters'
+    ListRepositoriesParameters:
+      description: Parameters for the /organization/listRepositories endpoint.
+      allOf:
+        - $ref: '#/components/schemas/OrganizationParameters'
+    OwnerParameters:
+      description: Parameters for many endpoints in the /owner path.
+      allOf:
+        - $ref: '#/components/schemas/CommonParameters'
+      properties:
+        OwnerId:
+          type: string
+        OwnerName:
+          type: string
+    CreateOwnerParameters:
+      description: Parameters for the /owner/create endpoint.
+      allOf:
+        - $ref: '#/components/schemas/OwnerParameters'
+    SetOwnerNameParameters:
+      description: Parameters for the /owner/setName endpoint.
+      allOf:
+        - $ref: '#/components/schemas/OwnerParameters'
+      properties:
+        NewName:
+          type: string
+    SetOwnerTypeParameters:
+      description: Parameters for the /owner/setType endpoint.
+      allOf:
+        - $ref: '#/components/schemas/OwnerParameters'
+      properties:
+        OwnerType:
+          type: string
+    SetOwnerSearchVisibilityParameters:
+      description: Parameters for the /owner/setSearchVisibility endpoint.
+      allOf:
+        - $ref: '#/components/schemas/OwnerParameters'
+      properties:
+        SearchVisibility:
+          type: string
+    SetOwnerDescriptionParameters:
+      description: Parameters for the /owner/setDescription endpoint.
+      allOf:
+        - $ref: '#/components/schemas/OwnerParameters'
+      properties:
+        Description:
+          type: string
+    DeleteOwnerParameters:
+      description: Parameters for the /owner/delete endpoint.
+      allOf:
+        - $ref: '#/components/schemas/OwnerParameters'
+      properties:
+        Force:
+          type: boolean
+        DeleteReason:
+          type: string
+    UndeleteOwnerParameters:
+      description: Parameters for the /owner/undelete endpoint.
+      allOf:
+        - $ref: '#/components/schemas/OwnerParameters'
+    GetOwnerParameters:
+      description: Parameters for the /owner/get endpoint.
+      allOf:
+        - $ref: '#/components/schemas/OwnerParameters'
+    ListOrganizationsParameters:
+      description: Parameters for the /owner/listOrganizations endpoint.
+      allOf:
+        - $ref: '#/components/schemas/OwnerParameters'
+    ReferenceParameters:
+      description: Parameters for many endpoints in the /reference path.
+      type: object
+      properties:
+        ReferenceId:
+          type: string
+          description: Unique identifier of the reference.
+        ReferenceType:
+          type: string
+          description: Type of the reference.
+        RepositoryText:
+          type: string
+          description: Textual representation of the repository.
+        RepositoryName:
+          type: string
+          description: Name of the repository.
+      allOf:
+        - $ref: '#/components/schemas/CommonParameters'
+    RepositoryParameters:
+      description: Parameters for many endpoints in the /repository path.
+      type: object
+      properties:
+        OwnerId:
+          type: string
+        OwnerName:
+          type: string
+        OrganizationId:
+          type: string
+        OrganizationName:
+          type: string
+        RepositoryId:
+          type: string
+        RepositoryName:
+          type: string
+    CreateRepositoryParameters:
+      description: Parameters for the /repository/create endpoint.
+      allOf:
+        - $ref: '#/components/schemas/RepositoryParameters'
+    IsEmptyParameters:
+      description: Parameters for the /repository/isEmpty endpoint.
+      allOf:
+        - $ref: '#/components/schemas/RepositoryParameters'
+    InitParameters:
+      description: Parameters for the /repository/init endpoint.
+      allOf:
+        - $ref: '#/components/schemas/RepositoryParameters'
+      properties:
+        GraceConfig:
+          type: string
+    SetRepositoryVisibilityParameters:
+      description: Parameters for the /repository/setVisibility endpoint.
+      allOf:
+        - $ref: '#/components/schemas/RepositoryParameters'
+      properties:
+        Visibility:
+          type: string
+    SetRepositoryStatusParameters:
+      description: Parameters for the /repository/setStatus endpoint.
+      allOf:
+        - $ref: '#/components/schemas/RepositoryParameters'
+      properties:
+        Status:
+          type: string
+    RecordSavesParameters:
+      description: Parameters for the /repository/recordSaves endpoint.
+      allOf:
+        - $ref: '#/components/schemas/RepositoryParameters'
+      properties:
+        RecordSaves:
+          type: boolean
+    SetSaveDaysParameters:
+      description: Parameters for the /repository/setSaveDays endpoint.
+      allOf:
+        - $ref: '#/components/schemas/RepositoryParameters'
+      properties:
+        SaveDays:
+          type: number
+    SetCheckpointDaysParameters:
+      description: Parameters for the /repository/setCheckpointDays
+      allOf:
+        - $ref: '#/components/schemas/RepositoryParameters'
+      properties:
+        CheckpointDays:
+          type: number
+    SetRepositoryDescriptionParameters:
+      description: Parameters for the /repository/setDescription endpoint.
+      allOf:
+        - $ref: '#/components/schemas/RepositoryParameters'
+      properties:
+        Description:
+          type: string
+    SetDefaultServerApiVersionParameters:
+      description: Parameters for the /repository/setDefaultServerApiVersion endpoint.
+      allOf:
+        - $ref: '#/components/schemas/RepositoryParameters'
+      properties:
+        DefaultServerApiVersion:
+          type: string
+    SetRepositoryNameParameters:
+      description: Parameters for the /repository/setName endpoint.
+      allOf:
+        - $ref: '#/components/schemas/RepositoryParameters'
+      properties:
+        NewName:
+          type: string
+    DeleteRepositoryParameters:
+      description: Parameters for the /repository/delete endpoint.
+      allOf:
+        - $ref: '#/components/schemas/RepositoryParameters'
+      properties:
+        Force:
+          type: boolean
+        DeleteReason:
+          type: string
+    EnablePromotionTypeParameters:
+      description: Parameters for enabling promotion type.
+      allOf:
+        - $ref: '#/components/schemas/RepositoryParameters'
+      properties:
+        Enabled:
+          type: boolean
+    GetReferencesByReferenceIdParameters:
+      description: Parameters for the /repository/getReferencesByReferenceId endpoint.
+      allOf:
+        - $ref: '#/components/schemas/RepositoryParameters'
+      properties:
+        ReferenceIds:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReferenceId'
+        MaxCount:
+          type: integer
+    GetBranchesParameters:
+      description: Parameters for the /repository/getBranched endpoint.
+      allOf:
+        - $ref: '#/components/schemas/RepositoryParameters'
+      properties:
+        IncludeDeleted:
+          type: boolean
+        MaxCount:
+          type: integer
+    GetBranchesByBranchIdParameters:
+      description: Parameters for the /repository/getBranchesByBranchId endpoint.
+      allOf:
+        - $ref: '#/components/schemas/RepositoryParameters'
+      properties:
+        BranchIds:
+          type: array
+          items:
+            $ref: '#/components/schemas/BranchId'
+        MaxCount:
+          type: integer
+        IncludeDeleted:
+          type: boolean
+    UndeleteRepositoryParameters:
+      description: Parameters for the /repository/undelete endpoint.
+      allOf:
+        - $ref: '#/components/schemas/RepositoryParameters'
+    Instant:
+      type: string
+      format: date-time
+    ProblemDetails:
+      type: object
+      properties:
+        type:
+          type: string
+          description: A URI reference that identifies the problem type.
+        title:
+          type: string
+          description: A short, human-readable summary of the problem type.
+        status:
+          type: integer
+          description: The HTTP status code generated by the origin server for this occurrence of the problem.
+        detail:
+          type: string
+          description: A human-readable explanation specific to this occurrence of the problem.
+        instance:
+          type: string
+          description: A URI reference that identifies the specific occurrence of the problem.
+      required:
+        - type
+        - title
+        - status
+        - detail
+        - instance
+    BranchId:
+      type: string
+      format: uuid
+      example: de7bf47d-23ae-4599-af68-68a317ea390d
+    BranchName:
+      type: string
+      example: MyBranch
+    CorrelationId:
+      type: string
+      description: If you don't provide a CorrelationId, a Guid will be generated for you. (You're welcome.) CorrelationId's are just strings; feel free to send any kind of CorrelationId you prefer.
+    ContainerName:
+      type: string
+      description: The name of the container must be a valid Grace name. (See the Grace documentation for more information.)
+    DirectoryId:
+      type: string
+      format: uuid
+      example: 33a4e36b-828f-4fae-9343-50b6560dc842
+    FilePath:
+      type: string
+    GraceIgnoreEntry:
+      type: string
+    OrganizationId:
+      type: string
+      format: uuid
+      example: e35d64a9-b990-44f5-bf02-32ad7d15630c
+    OrganizationName:
+      type: string
+    OwnerId:
+      type: string
+      format: uuid
+      example: 9dd5f81f-dc43-4839-9173-85d09394f30f
+    OwnerName:
+      type: string
+    ReferenceId:
+      type: string
+      format: uuid
+      example: c8f9bac8-d489-46c7-917f-b36b7d9efa9a
+    ReferenceName:
+      type: string
+    ReferenceText:
+      type: string
+    RepositoryId:
+      type: string
+      format: uuid
+      example: ab6f35ef-6e01-440b-8f9b-c343a5272095
+    RepositoryName:
+      type: string
+    RelativePath:
+      type: string
+    Sha256Hash:
+      type: string
+      example: 805331A98813206270E35564769E8BB59EEA02AEB7B27C7D6C63E625E1857243
+    StorageAccountName:
+      type: string
+    StorageConnectionString:
+      type: string
+    StorageContainerName:
+      type: string
+    UriWithSharedAccessSignature:
+      type: string
+    UserId:
+      type: string
+    OwnerType:
+      type: string
+      enum:
+        - Public
+        - Private
+      example: Public
+    OrganizationType:
+      type: string
+      enum:
+        - Public
+        - Private
+      summary: The OrganizationType determines whether the Organization is visible to the public or not.
+      description: The OrganizationType determines whether the Organization is visible to the public or not.
+      example: Public
+    SearchVisibility:
+      type: string
+      enum:
+        - Visible
+        - NotVisible
+      example: NotVisible
+    ReferenceType:
+      type: string
+      enum:
+        - Promotion
+        - Commit
+        - Checkpoint
+        - Save
+        - Tag
+      example: Commit
+    CommonParameters:
+      description: Common parameters that are used across (almost) every endpoint in Grace.
+      type: object
+      properties:
+        CorrelationId:
+          type: string
+          description: A unique identifier for correlating logs and telemetry.
+        Principal:
+          type: string
+          description: The entity on whose behalf the action is being performed.
+    FileVersion:
+      type: object
+      properties:
+        Class:
+          type: string
+        RepositoryId:
+          - $ref: '#/components/schemas/RepositoryId'
+        RelativePath:
+          - $ref: '#/components/schemas/RelativePath'
+        Sha256Hash:
+          - $ref: '#/components/schemas/Sha256Hash'
+        IsBinary:
+          type: boolean
+        Size:
+          type: integer
+          format: int64
+        CreatedAt:
+          type: string
+          format: date-time
+        BlobUri:
+          type: string
+    DirectoryVersion:
+      type: object
+      properties:
+        Class:
+          type: string
+        DirectoryId:
+          - $ref: '#/components/schemas/DirectoryId'
+        RepositoryId:
+          - $ref: '#/components/schemas/RepositoryId'
+        RelativePath:
+          - $ref: '#/components/schemas/RelativePath'
+        Sha256Hash:
+          - $ref: '#/components/schemas/Sha256Hash'
+        Directories:
+          type: array
+          items:
+            - $ref: '#/components/schemas/DirectoryId'
+        Files:
+          type: array
+          items:
+            - $ref: '#/components/schemas/FileVersion'
+        Size:
+          type: integer
+          format: int64
+        RecursiveSize:
+          type: integer
+          format: int64
+        CreatedAt:
+          type: string
+          format: date-time
+    EventMetadata:
+      description: null
+      type: object
+      properties:
+        Timestamp:
+          type: string
+          format: date-time
+        CorrelationId:
+          type: string
+        Principal:
+          type: string
+        Properties:
+          type: object
+          additionalProperties:
+            type: string
+    GraceReturnValue:
+      type: object
+      properties:
+        ReturnValue:
+          type: object
+        EventTime:
+          type: string
+          format: date-time
+        CorrelationId:
+          type: string
+        Properties:
+          type: object
+          additionalProperties:
+            type: string
+    GraceError:
+      type: object
+      properties:
+        Error:
+          type: string
+        EventTime:
+          type: string
+          format: date-time
+        CorrelationId:
+          type: string
+        Properties:
+          type: object
+          additionalProperties:
+            type: string
+    GraceResult:
+      oneOf:
+        - - $ref: '#/components/schemas/GraceReturnValue'
+        - - $ref: '#/components/schemas/GraceError'
+    FileSystemEntryType:
+      type: string
+      enum:
+        - Directory
+        - File
+    DifferenceType:
+      type: string
+      enum:
+        - Add
+        - Change
+        - Delete
+    FileSystemDifference:
+      type: object
+      properties:
+        DifferenceType:
+          $ref: null
+        FileSystemEntryType:
+          $ref: null
+        RelativePath:
+          $ref: null
+      required:
+        - DifferenceType
+        - FileSystemEntryType
+        - RelativePath
+    FileDiff:
+      type: object
+      properties:
+        RelativePath:
+          $ref: null
+        FileSha1:
+          $ref: null
+        CreatedAt1:
+          $ref: null
+        FileSha2:
+          $ref: null
+        CreatedAt2:
+          $ref: null
+        IsBinary:
+          type: boolean
+        InlineDiff:
+          type: array
+          items:
+            type: array
+            items:
+              $ref: null
+        SideBySideOld:
+          type: array
+          items:
+            type: array
+            items:
+              $ref: null
+        SideBySideNew:
+          type: array
+          items:
+            type: array
+            items:
+              $ref: null
+      required:
+        - RelativePath
+        - FileSha1
+        - CreatedAt1
+        - FileSha2
+        - CreatedAt2
+        - IsBinary
+        - InlineDiff
+        - SideBySideOld
+        - SideBySideNew
+    DiffPiece:
+      type: object
+      properties:
+        Position:
+          type: integer
+          nullable: true
+        SubPieces:
+          type: array
+          items:
+            $ref: null
+        Text:
+          type: string
+        Type:
+          $ref: null
+      required:
+        - Text
+        - Type
+    ChangeType:
+      type: integer
+      enum:
+        - 0
+        - 1
+        - 2
+        - 3
+        - 4
+      enumNames:
+        - Unchanged
+        - Deleted
+        - Inserted
+        - Imaginary
+        - Modified
+    ObjectStorageProvider:
+      type: string
+      enum:
+        - AWSS3
+        - AzureBlobStorage
+        - GoogleCloudStorage
+        - Unknown
+    RepositoryVisibility:
+      type: string
+      enum:
+        - Private
+        - Public
+    RepositoryStatus:
+      type: string
+      enum:
+        - Active
+        - Suspended
+        - Closed
+        - Deleted
+  securitySchemes:
+    api_key:
+      type: apiKey
+      name: X-API-Key
+      in: header
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  responses:
+    '200':
+      description: OK
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/GraceReturnValue'
+    '400':
+      description: Bad Request
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+    '500':
+      description: Internal Server Error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'

@@ -96,10 +96,11 @@ module Branch =
                 return! context |> result500ServerError (GraceError.Create $"{Utilities.createExceptionResponse ex}" (getCorrelationId context))
         }
 
+    /// Creates a new branch.
     let Create: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
-                let validations (parameters: CreateParameters) (context: HttpContext) =
+                let validations (parameters: CreateBranchParameters) (context: HttpContext) =
                     [ Guid.isValidAndNotEmpty parameters.OwnerId InvalidOwnerId
                       String.isValidGraceName parameters.OwnerName InvalidOwnerName
                       Input.eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
@@ -121,7 +122,7 @@ module Branch =
                       Branch.branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.ParentBranchId parameters.ParentBranchName context ParentBranchDoesNotExist
                       Branch.branchNameDoesNotExist parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchName context BranchNameAlreadyExists ]
 
-                let command (parameters: CreateParameters) = 
+                let command (parameters: CreateBranchParameters) = 
                     task {
                         match! (resolveBranchId parameters.RepositoryId parameters.ParentBranchId parameters.ParentBranchName) with
                         | Some parentBranchId -> 
@@ -146,6 +147,7 @@ module Branch =
                 return! processCommand context validations command
             }
 
+    /// Rebases a branch on its parent branch.
     let Rebase: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
@@ -173,6 +175,7 @@ module Branch =
                 return! processCommand context validations command
             }
 
+    /// Creates a promotion reference in the parent of the specified branch, based on the most-recent commit.
     let Promote: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
@@ -200,7 +203,8 @@ module Branch =
 
                 return! processCommand context validations command
             }
-            
+
+    /// Creates a commit reference pointing to the current root directory version in the branch.            
     let Commit: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
@@ -229,6 +233,7 @@ module Branch =
                 return! processCommand context validations command
             }
             
+    /// Creates a checkpoint reference pointing to the current root directory version in the branch.
     let Checkpoint: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
@@ -256,7 +261,8 @@ module Branch =
 
                 return! processCommand context validations command
             }
-            
+
+    /// Creates a save reference pointing to the current root directory version in the branch.        
     let Save: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
@@ -284,7 +290,8 @@ module Branch =
 
                 return! processCommand context validations command
             }
-            
+
+    /// Creates a tag reference pointing to the specified root directory version in the branch.        
     let Tag: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
@@ -313,6 +320,7 @@ module Branch =
                 return! processCommand context validations command
             }
 
+    /// Enables and disables promotion references in the provided branch.
     let EnablePromotion: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
@@ -339,6 +347,7 @@ module Branch =
                 return! processCommand context validations command
             }
             
+    /// Enables and disables commit references in the provided branch.
     let EnableCommit: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
@@ -365,6 +374,7 @@ module Branch =
                 return! processCommand context validations command
             }
 
+    /// Enables and disables checkpoint references in the provided branch.
     let EnableCheckpoint: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
@@ -391,6 +401,7 @@ module Branch =
                 return! processCommand context validations command
             }
 
+    /// Enables and disables save references in the provided branch.
     let EnableSave: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
@@ -416,7 +427,8 @@ module Branch =
 
                 return! processCommand context validations command
             }
-            
+
+    /// Enables and disables tag references in the provided branch.
     let EnableTag: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
@@ -443,10 +455,11 @@ module Branch =
                 return! processCommand context validations command
             }
 
+    /// Deletes the provided branch.
     let Delete: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
-                let validations (parameters: DeleteParameters) (context: HttpContext) =
+                let validations (parameters: DeleteBranchParameters) (context: HttpContext) =
                     [ Guid.isValidAndNotEmpty parameters.OwnerId InvalidOwnerId
                       String.isValidGraceName parameters.OwnerName InvalidOwnerName
                       Input.eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
@@ -464,16 +477,17 @@ module Branch =
                       Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName context RepositoryDoesNotExist
                       Branch.branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName context BranchDoesNotExist ]
 
-                let command (parameters: DeleteParameters) = DeleteLogical |> returnTask
+                let command (parameters: DeleteBranchParameters) = DeleteLogical |> returnTask
 
                 return! processCommand context validations command
             }
             
+    /// Gets details about the provided branch.
     let Get: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 try
-                    let validations (parameters: GetParameters) (context: HttpContext) =
+                    let validations (parameters: GetBranchParameters) (context: HttpContext) =
                         [ Guid.isValidAndNotEmpty parameters.OwnerId InvalidOwnerId
                           String.isValidGraceName parameters.OwnerName InvalidOwnerName
                           Input.eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
@@ -497,12 +511,13 @@ module Branch =
                             return branchDto
                         }
 
-                    let! parameters = context |> parse<GetParameters>
+                    let! parameters = context |> parse<GetBranchParameters>
                     return! processQuery context parameters validations 1 query
                 with ex ->
                     return! context |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
             }
 
+    /// Gets details about the parent branch of the provided branch.
     let GetParentBranch: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
@@ -537,6 +552,7 @@ module Branch =
                     return! context |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
             }
 
+    /// Gets details about the reference with the provided ReferenceId.
     let GetReference: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
@@ -574,6 +590,7 @@ module Branch =
                     return! context |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
             }
 
+    /// Gets details about multiple references in one API call.
     let GetReferences: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
@@ -609,7 +626,8 @@ module Branch =
                 with ex ->
                     return! context |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
             }
-            
+
+    /// Retrieves the diffs between references in a branch by ReferenceType.
     let GetDiffsForReferenceType: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
@@ -664,6 +682,7 @@ module Branch =
                     return! context |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
             }
 
+    /// Gets the promotions in a branch.
     let GetPromotions: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
@@ -700,6 +719,7 @@ module Branch =
                     return! context |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
             }
 
+    /// Gets the commits in a branch.
     let GetCommits: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
@@ -736,6 +756,7 @@ module Branch =
                     return! context |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
             }
 
+    /// Gets the checkpoints in a branch.
     let GetCheckpoints: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
@@ -772,6 +793,7 @@ module Branch =
                     return! context |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
             }
 
+    /// Gets the saves in a branch.
     let GetSaves: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
@@ -809,6 +831,7 @@ module Branch =
                     return! context |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
             }
 
+    /// Gets the tags in a branch.
     let GetTags: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
@@ -849,7 +872,7 @@ module Branch =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 try
-                    let validations (parameters: GetVersionParameters) (context: HttpContext) =
+                    let validations (parameters: GetBranchVersionParameters) (context: HttpContext) =
                         [ Guid.isValidAndNotEmpty parameters.OwnerId InvalidOwnerId
                           String.isValidGraceName parameters.OwnerName InvalidOwnerName
                           Input.eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
@@ -871,7 +894,7 @@ module Branch =
 
                     let query (context: HttpContext) maxCount (actorProxy: IBranchActor) =
                         task {
-                            let parameters = context.Items["GetVersionParameters"] :?> GetVersionParameters
+                            let parameters = context.Items["GetVersionParameters"] :?> GetBranchVersionParameters
                             let repositoryId = Guid.Parse(parameters.RepositoryId)
                             let! rootDirectoryVersion =
                                 task {
@@ -899,7 +922,7 @@ module Branch =
                                 return List<DirectoryId>()
                         }
 
-                    let! parameters = context |> parse<GetVersionParameters>
+                    let! parameters = context |> parse<GetBranchVersionParameters>
                     let! repositoryId = resolveRepositoryId parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName
                     match repositoryId with
                     | Some repositoryId ->

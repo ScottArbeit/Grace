@@ -403,7 +403,7 @@ module Watch =
                     do! signalRConnection.StartAsync(cancellationToken)
                     
                     // Get the parent BranchId so we can tell SignalR what to notify us about.
-                    let branchGetParameters = GetParameters(OwnerId = $"{Current().OwnerId}", OrganizationId = $"{Current().OrganizationId}",
+                    let branchGetParameters = GetBranchParameters(OwnerId = $"{Current().OwnerId}", OrganizationId = $"{Current().OrganizationId}",
                                             RepositoryId = $"{Current().RepositoryId}", BranchId = $"{Current().BranchId}")
                     match! Branch.GetParentBranch branchGetParameters with
                     | Ok returnValue ->

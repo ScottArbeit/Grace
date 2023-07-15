@@ -114,6 +114,7 @@ module Diff =
                 return! context |> result500ServerError (GraceError.Create $"{Utilities.createExceptionResponse ex}" (getCorrelationId context))
         }
 
+    /// Populates the diff actor, without returning the diff. This is meant to be used when generating the diff through reacting to an event.
     let Populate: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
@@ -136,6 +137,7 @@ module Diff =
                     return! context |> result500ServerError (GraceError.Create $"{Utilities.createExceptionResponse ex}" (getCorrelationId context))
         }
 
+    /// Retrieves the contents of the diff.
     let GetDiff: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
@@ -159,6 +161,7 @@ module Diff =
                     return! context |> result500ServerError (GraceError.Create $"{Utilities.createExceptionResponse ex}" (getCorrelationId context))
         }
 
+    /// Retrieves a diff taken by comparing two DirectoryVersions by Sha256Hash.
     let GetDiffBySha256Hash: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {

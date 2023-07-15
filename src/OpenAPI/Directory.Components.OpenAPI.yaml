@@ -1,0 +1,66 @@
+    DirectoryParameters:
+      description: Parameters for many endpoints in the /directory path.
+      type: object
+      properties:
+        DirectoryId:
+          type: string
+          description: Unique identifier of the directory.
+      allOf:
+        - $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/CommonParameters'
+    
+    CreateParameters:
+      description: Parameters for the /directory/create endpoint.
+      type: object
+      properties:
+        DirectoryVersion:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/DirectoryVersion'
+      allOf:
+        - $ref: './Directory.Components.OpenAPI.yaml#/DirectoryParameters'
+    
+    GetParameters:
+      description: Parameters for the /directory/get endpoint.
+      type: object
+      properties:
+        RepositoryId:
+          type: string
+          description: Unique identifier of the repository.
+      allOf:
+        - $ref: './Directory.Components.OpenAPI.yaml#/DirectoryParameters'
+    
+    GetByDirectoryIdsParameters:
+      description: Parameters for the /directory/getByDirectoryIds endpoint.
+      type: object
+      properties:
+        RepositoryId:
+          type: string
+          description: Unique identifier of the repository.
+        DirectoryIds:
+          type: array
+          items:
+            $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/DirectoryId'
+      allOf:
+        - $ref: './Directory.Components.OpenAPI.yaml#/DirectoryParameters'
+    
+    GetBySha256HashParameters:
+      description: Parameters for the /directory/getBySha256Hash endpoint.
+      type: object
+      properties:
+        RepositoryId:
+          type: string
+          description: Unique identifier of the repository.
+        Sha256Hash:
+          type: string
+          description: The SHA256 hash value.
+      allOf:
+        - $ref: './Directory.Components.OpenAPI.yaml#/DirectoryParameters'
+    
+    SaveDirectoryVersionsParameters:
+      description: Parameters for the /directory/saveDirectoryVersions endpoint.
+      type: object
+      properties:
+        DirectoryVersions:
+          type: array
+          items:
+            $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/DirectoryVersion'
+      allOf:
+        - $ref: './Directory.Components.OpenAPI.yaml#/DirectoryParameters'

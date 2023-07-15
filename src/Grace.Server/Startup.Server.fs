@@ -160,6 +160,7 @@ module Application =
                     route "/getBranches" Repository.GetBranches
                     route "/getBranchesByBranchId" Repository.GetBranchesByBranchId
                     route "/getReferencesByReferenceId" Repository.GetReferencesByReferenceId
+                    route "/isEmpty" Repository.IsEmpty
                     route "/setCheckpointDays" Repository.SetCheckpointDays
                     route "/setDefaultServerApiVersion" Repository.SetDefaultServerApiVersion
                     route "/setDescription" Repository.SetDescription

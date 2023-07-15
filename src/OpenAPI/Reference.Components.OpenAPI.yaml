@@ -1,0 +1,18 @@
+    ReferenceParameters:
+      description: Parameters for many endpoints in the /reference path.
+      type: object
+      properties:
+        ReferenceId:
+          type: string
+          description: Unique identifier of the reference.
+        ReferenceType:
+          type: string
+          description: Type of the reference.
+        RepositoryText:
+          type: string
+          description: Textual representation of the repository.
+        RepositoryName:
+          type: string
+          description: Name of the repository.
+      allOf:
+        - $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/CommonParameters'

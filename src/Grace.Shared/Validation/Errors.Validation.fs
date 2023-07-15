@@ -92,9 +92,22 @@ module Errors =
                 | TagIsDisabled -> getLocalizedString StringResourceName.TagIsDisabled
                 | ValueMustBePositive -> getLocalizedString StringResourceName.ValueMustBePositive
 
-            static member getErrorMessage (ownerError: BranchError option): string =
-                match ownerError with
+            static member getErrorMessage (branchError: BranchError option): string =
+                match branchError with
                 | Some error -> BranchError.getErrorMessage error
+                | None -> String.Empty
+
+    module Config =
+        type ConfigError =
+            | InvalidDirectoryPath
+
+            static member getErrorMessage (configError: ConfigError): string =
+                match configError with
+                | InvalidDirectoryPath -> getLocalizedString StringResourceName.InvalidDirectoryPath
+
+            static member getErrorMessage (configError: ConfigError option): string =
+                match configError with
+                | Some error -> ConfigError.getErrorMessage error
                 | None -> String.Empty
 
     module Connect =
@@ -322,6 +335,7 @@ module Errors =
             | RepositoryIdIsRequired
             | RepositoryIsDeleted
             | RepositoryIsNotDeleted
+            | RepositoryIsNotEmpty
         
             static member getErrorMessage (repositoryError: RepositoryError): string =
                 match repositoryError with
@@ -338,7 +352,7 @@ module Errors =
                 | FailedWhileSavingEvent -> getLocalizedString StringResourceName.FailedWhileSavingEvent
                 | FailedWhileApplyingEvent -> getLocalizedString StringResourceName.FailedWhileApplyingEvent
                 | InvalidCheckpointDaysValue -> getLocalizedString StringResourceName.InvalidCheckpointDaysValue
-                | InvalidDirectory -> getLocalizedString StringResourceName.InvalidDirectory
+                | InvalidDirectory -> getLocalizedString StringResourceName.InvalidDirectoryPath
                 | InvalidMaxCountValue -> getLocalizedString StringResourceName.InvalidMaxCountValue
                 | InvalidObjectStorageProvider -> getLocalizedString StringResourceName.InvalidObjectStorageProvider
                 | InvalidOwnerId -> getLocalizedString StringResourceName.InvalidOwnerId
@@ -361,6 +375,7 @@ module Errors =
                 | RepositoryIdIsRequired -> getLocalizedString StringResourceName.RepositoryIdIsRequired
                 | RepositoryIsDeleted -> getLocalizedString StringResourceName.RepositoryIsDeleted
                 | RepositoryIsNotDeleted -> getLocalizedString StringResourceName.RepositoryIsNotDeleted
+                | RepositoryIsNotEmpty -> getLocalizedString StringResourceName.RepositoryIsNotEmpty
                 | RepositoryNameIsRequired -> getLocalizedString StringResourceName.RepositoryNameIsRequired
             
 

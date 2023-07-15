@@ -716,7 +716,7 @@ module Services =
     //    }
 
     /// The full path of the inter-process communication file that grace watch uses to communicate with other invocations of Grace.
-    let IpcFileName() = Path.Combine(Path.GetTempPath(), $"{Current().RepositoryName}-{Current().BranchName}-{Constants.IpcFileName}")
+    let IpcFileName() = Path.Combine(Path.GetTempPath(), Constants.IpcFileName)
 
     /// Updates the contents of the `grace watch` status inter-process communication file.
     let updateGraceWatchInterprocessFile (graceStatus: GraceStatus) =

@@ -85,10 +85,11 @@ module Organization =
                 return! context |> result500ServerError (GraceError.Create $"{Utilities.createExceptionResponse ex}" (getCorrelationId context))
         }
 
+    /// Create an organization.
     let Create: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
-                let validations (parameters: CreateParameters) (context: HttpContext) =
+                let validations (parameters: CreateOrganizationParameters) (context: HttpContext) =
                     [ Guid.isValidAndNotEmpty parameters.OwnerId InvalidOwnerId
                       String.isValidGraceName parameters.OwnerName InvalidOwnerName
                       Input.eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
@@ -99,7 +100,7 @@ module Organization =
                       Owner.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
                       Organization.organizationIdDoesNotExist parameters.OrganizationId context OrganizationAlreadyExists ]
 
-                let command (parameters: CreateParameters) = 
+                let command (parameters: CreateOrganizationParameters) = 
                     task {
                         let! ownerId = resolveOwnerId parameters.OwnerId parameters.OwnerName
                         let ownerIdGuid = Guid.Parse(ownerId.Value)
@@ -110,10 +111,11 @@ module Organization =
                 return! processCommand context validations command
             }
 
+    /// Set the name of an organization.
     let SetName: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
-                let validations (parameters: NameParameters) (context: HttpContext) =
+                let validations (parameters: SetOrganizationNameParameters) (context: HttpContext) =
                     [ String.isNotEmpty parameters.OrganizationId OrganizationIdIsRequired
                       Guid.isValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId
                       String.isValidGraceName parameters.OrganizationName InvalidOrganizationName
@@ -122,16 +124,17 @@ module Organization =
                       Organization.organizationIdExists parameters.OrganizationId context OrganizationIdDoesNotExist
                       Organization.organizationIsNotDeleted parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName context OrganizationIsDeleted ]
 
-                let command (parameters: NameParameters) = 
+                let command (parameters: SetOrganizationNameParameters) = 
                     OrganizationCommand.SetName (OrganizationName parameters.NewName) |> returnTask
 
                 return! processCommand context validations command
             }
 
+    /// Set the type of an organization (Public, Private).
     let SetType: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
-                let validations (parameters: TypeParameters) (context: HttpContext) =
+                let validations (parameters: SetOrganizationTypeParameters) (context: HttpContext) =
                     [ String.isNotEmpty parameters.OrganizationId OrganizationIdIsRequired
                       Guid.isValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId
                       String.isValidGraceName parameters.OrganizationName InvalidOrganizationName
@@ -140,15 +143,16 @@ module Organization =
                       Organization.organizationIdExists parameters.OrganizationId context OrganizationIdDoesNotExist
                       Organization.organizationIsNotDeleted parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName context OrganizationIsDeleted ]
 
-                let command (parameters: TypeParameters) = OrganizationCommand.SetType (Utilities.discriminatedUnionFromString<OrganizationType>(parameters.OrganizationType).Value) |> returnTask
+                let command (parameters: SetOrganizationTypeParameters) = OrganizationCommand.SetType (Utilities.discriminatedUnionFromString<OrganizationType>(parameters.OrganizationType).Value) |> returnTask
                 
                 return! processCommand context validations command
             }
 
+    /// Set the search visibility of an organization (Visible, Hidden).
     let SetSearchVisibility: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
-                let validations (parameters: SearchVisibilityParameters) (context: HttpContext) =
+                let validations (parameters: SetOrganizationSearchVisibilityParameters) (context: HttpContext) =
                     [ String.isNotEmpty parameters.OrganizationId OrganizationIdIsRequired
                       Guid.isValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId
                       String.isValidGraceName parameters.OrganizationName InvalidOrganizationName
@@ -157,27 +161,29 @@ module Organization =
                       Organization.organizationIdExists parameters.OrganizationId context OrganizationIdDoesNotExist
                       Organization.organizationIsNotDeleted parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName context OrganizationIsDeleted ]
 
-                let command (parameters: SearchVisibilityParameters) =
+                let command (parameters: SetOrganizationSearchVisibilityParameters) =
                     OrganizationCommand.SetSearchVisibility (Utilities.discriminatedUnionFromString<SearchVisibility>(parameters.SearchVisibility).Value) |> returnTask
                 
                 return! processCommand context validations command
             }
             
+    /// Set the description of an organization.
     let SetDescription: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
-                let validations (parameters: DescriptionParameters) (context: HttpContext) =
+                let validations (parameters: SetOrganizationDescriptionParameters) (context: HttpContext) =
                     [ String.isNotEmpty parameters.OrganizationId OrganizationIdIsRequired
                       Guid.isValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId
                       String.isNotEmpty parameters.Description OrganizationDescriptionIsRequired
                       Organization.organizationIdExists parameters.OrganizationId context OrganizationIdDoesNotExist
                       Organization.organizationIsNotDeleted parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName context OrganizationIsDeleted ]
 
-                let command (parameters: DescriptionParameters) = OrganizationCommand.SetDescription(parameters.Description) |> returnTask
+                let command (parameters: SetOrganizationDescriptionParameters) = OrganizationCommand.SetDescription(parameters.Description) |> returnTask
 
                 return! processCommand context validations command
             }
 
+    /// List the repositories of an organization.
     let ListRepositories: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
@@ -201,10 +207,11 @@ module Organization =
                     return! context |> result500ServerError (GraceError.Create $"{Utilities.createExceptionResponse ex}" (getCorrelationId context))
             }
 
+    /// Delete an organization.
     let Delete: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
-                let validations (parameters: DeleteParameters) (context: HttpContext) =
+                let validations (parameters: DeleteOrganizationParameters) (context: HttpContext) =
                     [ String.isNotEmpty parameters.OrganizationId OrganizationIdIsRequired
                       Guid.isValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId
                       String.isValidGraceName parameters.OrganizationName InvalidOrganizationName
@@ -212,11 +219,12 @@ module Organization =
                       Organization.organizationIdExists parameters.OrganizationId context OrganizationIdDoesNotExist
                       Organization.organizationIsNotDeleted parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName context OrganizationIsDeleted ]
 
-                let command (parameters: DeleteParameters) = OrganizationCommand.DeleteLogical (parameters.Force, parameters.DeleteReason) |> returnTask
+                let command (parameters: DeleteOrganizationParameters) = OrganizationCommand.DeleteLogical (parameters.Force, parameters.DeleteReason) |> returnTask
 
                 return! processCommand context validations command
             }
 
+    /// Undelete a previous-deleted organization.
     let Undelete: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
@@ -233,11 +241,12 @@ module Organization =
                 return! processCommand context validations command
             }
 
+    /// Get an organization.
     let Get: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 try
-                    let validations (parameters: GetParameters) (context: HttpContext) =
+                    let validations (parameters: GetOrganizationParameters) (context: HttpContext) =
                         [ String.isNotEmpty parameters.OrganizationId OrganizationIdIsRequired
                           Guid.isValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId
                           String.isValidGraceName parameters.OrganizationName InvalidOrganizationName
@@ -250,7 +259,7 @@ module Organization =
                             return! context.WriteJsonAsync(dto)
                         }
 
-                    let! parameters = context |> parse<GetParameters>
+                    let! parameters = context |> parse<GetOrganizationParameters>
                     return! processQuery context parameters validations 1 query
                 with ex ->
                     return! context |> result500ServerError (GraceError.Create $"{Utilities.createExceptionResponse ex}" (getCorrelationId context))

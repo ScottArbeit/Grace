@@ -95,6 +95,8 @@ module Types =
         static member GetKnownTypes() = GetKnownTypes<ReferenceType>()
 
     // Records
+
+    /// EventMetadata is included in the recording of every event that occurs in Grace.
     type EventMetadata =
         {
             Timestamp: Instant
@@ -110,6 +112,9 @@ module Types =
             Properties = Dictionary<string, string>()
         }
 
+    /// A FileVersion represents a version of a file in a repository with unique contents, and therefore with a unique SHA-256 hash. It is immutable.
+    ///
+    /// It is the server-side representation of the LocalFileVersion type, used for the local object cache.
     [<CLIMutable>]
     type FileVersion = 
         {
@@ -133,7 +138,10 @@ module Types =
         member this.GetObjectFileName = getObjectFileName this.RelativePath this.Sha256Hash
         /// Gets the relative directory path of the file. Example: "/dir/subdir/file.js" -> "/dir/subdir/".
         member this.RelativeDirectory = getRelativeDirectory $"{this.RelativePath}" ""
-    
+
+    /// A LocalFileVersion represents a version of a file in a repository with unique contents, and therefore with a unique SHA-256 hash. It is immutable.
+    ///
+    /// It is the local representation of the FileVersion type, used on the server.
     and [<KnownType("GetKnownTypes")>]
         [<CLIMutable>]
         LocalFileVersion = 
@@ -172,6 +180,9 @@ module Types =
         /// Gets the relative directory path of the file. Example: "/dir/subdir/file.js" -> "/dir/subdir/".
         member this.RelativeDirectory = getRelativeDirectory $"{this.RelativePath}" ""
 
+    /// A DirectoryVersion represents a version of a directory in a repository with unique contents, and therefore with a unique SHA-256 hash.
+    ///
+    /// It is the server-side representation of the LocalDirectoryVersion type, used for the local object cache.
     [<KnownType("GetKnownTypes")>]
     type DirectoryVersion = 
         {
@@ -204,6 +215,9 @@ module Types =
             LocalDirectoryVersion.Create this.DirectoryId this.RepositoryId this.RelativePath this.Sha256Hash this.Directories
                 (this.Files.Select(fun f -> f.ToLocalFileVersion lastWriteTimeUtc).ToList()) this.Size lastWriteTimeUtc        
         
+    /// A LocalDirectoryVersion represents a version of a directory in a repository with unique contents, and therefore with a unique SHA-256 hash.
+    ///
+    /// It is the local representation of the DirectoryVersion type, used on the server.
     and [<KnownType("GetKnownTypes")>]
         [<CLIMutable>]
         LocalDirectoryVersion = 
@@ -236,6 +250,7 @@ module Types =
             DirectoryVersion.Create this.DirectoryId this.RepositoryId this.RelativePath this.Sha256Hash this.Directories
                 (this.Files.Select(fun f -> f.ToFileVersion).ToList()) this.Size
 
+        /// Specifies whether a specific entry in a directory is a DirectoryVersion or a FileVersion.
     and [<KnownType("GetKnownTypes")>]
         DirectoryEntry =
         | Directory of DirectoryVersion
@@ -248,6 +263,7 @@ module Types =
             | DirectoryEntry.Directory d -> LocalDirectory (d.ToLocalDirectoryVersion lastWriteTimeUtc)
             | DirectoryEntry.File f -> LocalFile (f.ToLocalFileVersion lastWriteTimeUtc)    
         
+        /// Specifies whether a specific entry in a local directory is a LocalDirectoryVersion or a LocalFileVersion.
     and [<KnownType("GetKnownTypes")>]
         LocalDirectoryEntry =
         | LocalDirectory of LocalDirectoryVersion
@@ -260,12 +276,14 @@ module Types =
             | LocalDirectory d -> DirectoryEntry.Directory d.ToDirectoryVersion
             | LocalFile f -> DirectoryEntry.File f.ToFileVersion
 
+    /// Specifies whether a repository is public or private.
     [<KnownType("GetKnownTypes")>]
     type RepositoryVisibility =
         | Private
         | Public
         static member GetKnownTypes() = GetKnownTypes<RepositoryVisibility>()
 
+    /// Specifies the current operational status of a repository.
     [<KnownType("GetKnownTypes")>]
     type RepositoryStatus =
         | Active
@@ -274,8 +292,10 @@ module Types =
         | Deleted
         static member GetKnownTypes() = GetKnownTypes<RepositoryStatus>()
 
-    type Validations<'T, 'U> = 'T -> Result<bool, 'U> list
+    /// Defines the type of the list of validations used in server endpoints.
+    //type Validations<'T, 'U> = 'T -> Result<bool, 'U> list
 
+    /// Defines the specific permissions that can be granted to a user or group on a directory.
     [<KnownType("GetKnownTypes")>]
     type DirectoryPermission =
         | FullControl
@@ -302,6 +322,7 @@ module Types =
     let cleanJson (s: string) =
         s.Replace("\\\\\\\\", @"\").Replace("\\\\", @"\").Replace(@"\r\n", Environment.NewLine)
 
+    /// The primary type used in Grace to represent successful results.
     type GraceReturnValue<'T> = 
         {
             ReturnValue: 'T
@@ -316,6 +337,7 @@ module Types =
             this
         override this.ToString() = serialize this
 
+    /// The primary type used in Grace to represent error results.
     type GraceError =
         {
             Error: string
@@ -332,8 +354,10 @@ module Types =
             this
         override this.ToString() = serialize this
 
+    /// The primary type used to represent Grace operations results.
     type GraceResult<'T> = Result<GraceReturnValue<'T>, GraceError>
 
+    /// Specifies whether a file system entry is a directory or a file.
     [<KnownType("GetKnownTypes")>]
     type FileSystemEntryType =
         | Directory
@@ -341,6 +365,7 @@ module Types =
         static member GetKnownTypes() = GetKnownTypes<FileSystemEntryType>()
         override this.ToString() = Utilities.discriminatedUnionFullNameToString this
 
+    /// Specifies whether a change detected in a diff is an add, change, or delete.
     [<KnownType("GetKnownTypes")>]
     type DifferenceType =
         | Add 
@@ -349,6 +374,7 @@ module Types =
         static member GetKnownTypes() = GetKnownTypes<DifferenceType>()
         override this.ToString() = Utilities.discriminatedUnionFullNameToString this
 
+    /// A file system difference is a change detected (at a file level) in a diff. It specifies the type of change (add, change, or delete), the type of file system entry (directory or file), and the relative path of the entry.
     type FileSystemDifference =
         {
             DifferenceType: DifferenceType
@@ -364,10 +390,20 @@ module Types =
             Sha256Hash: Sha256Hash
         }
 
+    /// GraceIndex is Grace's representation of the contents of the local object cache. It is an index from the DirectoryId of a LocalDirectoryVersion to the LocalDirectoryVersion itself.
     type GraceIndex = ConcurrentDictionary<Guid, LocalDirectoryVersion>
-    type ObjectCache = ConcurrentDictionary<Guid, LocalDirectoryVersion>
+
+    //type ObjectCache = ConcurrentDictionary<Guid, LocalDirectoryVersion>
+
+    /// ObjectIndex is an index from the SHA-256 hash of a LocalDirectoryVersion to the LocalDirectoryVersion itself.
     type ObjectIndex = ConcurrentDictionary<Sha256Hash, LocalDirectoryVersion>
     
+    /// GraceStatus is a snapshot of the status that `grace watch` holds about the repository and branch while running.
+    ///
+    /// It is serialized and written by `grace watch` in the inter-process cache file that Grace CLI uses to know that `grace watch` is running.
+    /// It gets deserialized by Grace CLI, and is used to speed up the CLI by holding pre-computed results when running certain commands.
+    ///
+    /// If the interprocess cache file is missing or corrupt, Grace CLI assumes that `grace watch` is not running, and runs all commands from scratch.
     type GraceStatus = 
         {
             Index: GraceIndex
@@ -385,6 +421,7 @@ module Types =
                 LastSuccessfulDirectoryVersionUpload = getCurrentInstant()
             }
 
+    /// GraceObjectCache is a snapshot of the contents of the local object cache.
     type GraceObjectCache =
         {
             Index: GraceIndex
@@ -394,6 +431,7 @@ module Types =
                 Index = GraceIndex()
             }
 
+    /// Holds the results of a diff between two versions of a file.
     type FileDiff =
         {
             RelativePath: RelativePath

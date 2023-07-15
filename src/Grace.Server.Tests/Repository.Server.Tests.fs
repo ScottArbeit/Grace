@@ -20,7 +20,7 @@ type Repository() =
     [<OneTimeSetUp>]
     member public this.Setup() =
         task {
-            let ownerParameters = Parameters.Owner.CreateParameters()
+            let ownerParameters = Parameters.Owner.CreateOwnerParameters()
             ownerParameters.OwnerId <- ownerId
             ownerParameters.OwnerName <- $"TestOwner{rnd.Next(1000)}"
             let! response = Services.Client.PostAsync("/owner/create", jsonContent ownerParameters)
@@ -28,7 +28,7 @@ type Repository() =
             //Console.WriteLine($"{content}");
             response.EnsureSuccessStatusCode() |> ignore
 
-            let organizationParameters = Parameters.Organization.CreateParameters()
+            let organizationParameters = Parameters.Organization.CreateOrganizationParameters()
             organizationParameters.OwnerId <- ownerId
             organizationParameters.OrganizationId <- organizationId
             organizationParameters.OrganizationName <- $"TestOrganization{rnd.Next(1000)}"
@@ -39,7 +39,7 @@ type Repository() =
 
             do! Parallel.ForEachAsync(repositoryIds, Constants.ParallelOptions, (fun repositoryId ct ->
                 ValueTask(task {
-                    let repositoryParameters = Parameters.Repository.CreateParameters()
+                    let repositoryParameters = Parameters.Repository.CreateRepositoryParameters()
                     repositoryParameters.OwnerId <- ownerId
                     repositoryParameters.OrganizationId <- organizationId
                     repositoryParameters.RepositoryId <- repositoryId
@@ -58,7 +58,7 @@ type Repository() =
         task {
             do! Parallel.ForEachAsync(repositoryIds, Constants.ParallelOptions, (fun repositoryId ct ->
                 ValueTask(task {
-                    let repositoryDeleteParameters = Parameters.Repository.DeleteParameters()
+                    let repositoryDeleteParameters = Parameters.Repository.DeleteRepositoryParameters()
                     repositoryDeleteParameters.OwnerId <- ownerId 
                     repositoryDeleteParameters.OrganizationId <- organizationId
                     repositoryDeleteParameters.RepositoryId <- repositoryId
@@ -70,13 +70,13 @@ type Repository() =
                     Assert.That(content.Length, Is.GreaterThan(0))
                 })))
             
-            let organizationDeleteParameters = Parameters.Organization.DeleteParameters()
+            let organizationDeleteParameters = Parameters.Organization.DeleteOrganizationParameters()
             organizationDeleteParameters.OwnerId <- ownerId
             organizationDeleteParameters.OrganizationId <- organizationId
             organizationDeleteParameters.DeleteReason <- "Deleting test organization"
             let! response = Services.Client.PostAsync("/organization/delete", jsonContent organizationDeleteParameters)
 
-            let ownerDeleteParameters = Parameters.Owner.DeleteParameters()
+            let ownerDeleteParameters = Parameters.Owner.DeleteOwnerParameters()
             ownerDeleteParameters.OwnerId <- ownerId
             ownerDeleteParameters.DeleteReason <- "Deleting test owner"
             let! response = Services.Client.PostAsync("/owner/delete", jsonContent ownerDeleteParameters)
@@ -91,7 +91,7 @@ type Repository() =
     [<Repeat(1)>]
     member public this.SetDescriptionWithValidValues() =
         task {
-            let parameters = Grace.Shared.Parameters.Repository.DescriptionParameters()
+            let parameters = Grace.Shared.Parameters.Repository.SetRepositoryDescriptionParameters()
             parameters.Description <- $"Description set at {getCurrentInstantGeneral()}."
             parameters.OwnerId <- ownerId
             parameters.OrganizationId <- organizationId
@@ -108,7 +108,7 @@ type Repository() =
     [<Repeat(1)>]
     member public this.SetDescriptionWithInvalidValues() =
         task {
-            let parameters = Parameters.Repository.DescriptionParameters()
+            let parameters = Parameters.Repository.SetRepositoryDescriptionParameters()
             parameters.Description <- $"Description set at {getCurrentInstantGeneral()}."
             parameters.OwnerId <- ownerId
             parameters.OrganizationId <- organizationId
@@ -125,7 +125,7 @@ type Repository() =
     [<Repeat(1)>]
     member public this.SetSaveDaysWithValidValues() =
         task {
-            let parameters = Grace.Shared.Parameters.Repository.SaveDaysParameters()
+            let parameters = Grace.Shared.Parameters.Repository.SetSaveDaysParameters()
             parameters.SaveDays <- 17.5
             parameters.OwnerId <- ownerId
             parameters.OrganizationId <- organizationId
@@ -142,7 +142,7 @@ type Repository() =
     [<Repeat(1)>]
     member public this.SetSaveDaysWithInvalidValues() =
         task {
-            let parameters = Grace.Shared.Parameters.Repository.SaveDaysParameters()
+            let parameters = Grace.Shared.Parameters.Repository.SetSaveDaysParameters()
             parameters.SaveDays <- -1
             parameters.OwnerId <- ownerId
             parameters.OrganizationId <- organizationId
@@ -159,7 +159,7 @@ type Repository() =
     [<Repeat(1)>]
     member public this.SetCheckpointDaysWithValidValues() =
         task {
-            let parameters = Grace.Shared.Parameters.Repository.CheckpointDaysParameters()
+            let parameters = Grace.Shared.Parameters.Repository.SetCheckpointDaysParameters()
             parameters.CheckpointDays <- 17.5
             parameters.OwnerId <- ownerId
             parameters.OrganizationId <- organizationId
@@ -176,7 +176,7 @@ type Repository() =
     [<Repeat(1)>]
     member public this.SetCheckpointDaysWithInvalidValues() =
         task {
-            let parameters = Grace.Shared.Parameters.Repository.CheckpointDaysParameters()
+            let parameters = Grace.Shared.Parameters.Repository.SetCheckpointDaysParameters()
             parameters.CheckpointDays <- -1
             parameters.OwnerId <- ownerId
             parameters.OrganizationId <- organizationId
@@ -225,7 +225,7 @@ type Repository() =
     [<Repeat(1)>]
     member public this.SetStatusWithValidValues() =
         task {
-            let parameters = Grace.Shared.Parameters.Repository.StatusParameters()
+            let parameters = Grace.Shared.Parameters.Repository.SetRepositoryStatusParameters()
             parameters.OwnerId <- ownerId
             parameters.OrganizationId <- organizationId
             parameters.RepositoryId <- repositoryIds[(rnd.Next(0, numberOfRepositories))]
@@ -242,7 +242,7 @@ type Repository() =
     [<Repeat(1)>]
     member public this.SetStatusWithInvalidValues() =
         task {
-            let parameters = Grace.Shared.Parameters.Repository.StatusParameters()
+            let parameters = Grace.Shared.Parameters.Repository.SetRepositoryStatusParameters()
             parameters.OwnerId <- ownerId
             parameters.OrganizationId <- "not a Guid"
             parameters.RepositoryId <- repositoryIds[(rnd.Next(0, numberOfRepositories))]
@@ -259,7 +259,7 @@ type Repository() =
     [<Repeat(1)>]
     member public this.SetVisibilityWithValidValues() =
         task {
-            let parameters = Grace.Shared.Parameters.Repository.VisibilityParameters()
+            let parameters = Grace.Shared.Parameters.Repository.SetRepositoryVisibilityParameters()
             parameters.OwnerId <- ownerId
             parameters.OrganizationId <- organizationId
             parameters.RepositoryId <- repositoryIds[(rnd.Next(0, numberOfRepositories))]
@@ -276,7 +276,7 @@ type Repository() =
     [<Repeat(1)>]
     member public this.SetVisibilityWithInvalidValues() =
         task {
-            let parameters = Grace.Shared.Parameters.Repository.VisibilityParameters()
+            let parameters = Grace.Shared.Parameters.Repository.SetRepositoryVisibilityParameters()
             parameters.OwnerId <- ownerId
             parameters.OrganizationId <- organizationId
             parameters.RepositoryId <- repositoryIds[(rnd.Next(0, numberOfRepositories))]

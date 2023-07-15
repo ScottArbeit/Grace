@@ -1,0 +1,140 @@
+    RepositoryParameters:
+      description: Parameters for many endpoints in the /repository path.
+      type: object
+      properties:
+        OwnerId:
+          type: string
+        OwnerName:
+          type: string
+        OrganizationId:
+          type: string
+        OrganizationName:
+          type: string
+        RepositoryId:
+          type: string
+        RepositoryName:
+          type: string
+    CreateRepositoryParameters:
+      description: Parameters for the /repository/create endpoint.
+      allOf:
+        - $ref: 'Repository.Components.OpenAPI.yaml#/RepositoryParameters'
+    IsEmptyParameters:
+      description: Parameters for the /repository/isEmpty endpoint.
+      allOf:
+        - $ref: 'Repository.Components.OpenAPI.yaml#/RepositoryParameters'
+    InitParameters:
+      description: Parameters for the /repository/init endpoint.
+      allOf:
+        - $ref: 'Repository.Components.OpenAPI.yaml#/RepositoryParameters'
+      properties:
+        GraceConfig:
+          type: string
+    SetRepositoryVisibilityParameters:
+      description: Parameters for the /repository/setVisibility endpoint.
+      allOf:
+        - $ref: 'Repository.Components.OpenAPI.yaml#/RepositoryParameters'
+      properties:
+        Visibility:
+          type: string
+    SetRepositoryStatusParameters:
+      description: Parameters for the /repository/setStatus endpoint.
+      allOf:
+        - $ref: 'Repository.Components.OpenAPI.yaml#/RepositoryParameters'
+      properties:
+        Status:
+          type: string
+    RecordSavesParameters:
+      description: Parameters for the /repository/recordSaves endpoint.
+      allOf:
+        - $ref: 'Repository.Components.OpenAPI.yaml#/RepositoryParameters'
+      properties:
+        RecordSaves:
+          type: boolean
+    SetSaveDaysParameters:
+      description: Parameters for the /repository/setSaveDays endpoint.
+      allOf:
+        - $ref: 'Repository.Components.OpenAPI.yaml#/RepositoryParameters'
+      properties:
+        SaveDays:
+          type: number
+    SetCheckpointDaysParameters:
+      description: Parameters for the /repository/setCheckpointDays
+      allOf:
+        - $ref: 'Repository.Components.OpenAPI.yaml#/RepositoryParameters'
+      properties:
+        CheckpointDays:
+          type: number
+    SetRepositoryDescriptionParameters:
+      description: Parameters for the /repository/setDescription endpoint.
+      allOf:
+        - $ref: 'Repository.Components.OpenAPI.yaml#/RepositoryParameters'
+      properties:
+        Description:
+          type: string
+    SetDefaultServerApiVersionParameters:
+      description: Parameters for the /repository/setDefaultServerApiVersion endpoint.
+      allOf:
+        - $ref: 'Repository.Components.OpenAPI.yaml#/RepositoryParameters'
+      properties:
+        DefaultServerApiVersion:
+          type: string
+    SetRepositoryNameParameters:
+      description: Parameters for the /repository/setName endpoint.
+      allOf:
+        - $ref: 'Repository.Components.OpenAPI.yaml#/RepositoryParameters'
+      properties:
+        NewName:
+          type: string
+    DeleteRepositoryParameters:
+      description: Parameters for the /repository/delete endpoint.
+      allOf:
+        - $ref: 'Repository.Components.OpenAPI.yaml#/RepositoryParameters'
+      properties:
+        Force:
+          type: boolean
+        DeleteReason:
+          type: string
+    EnablePromotionTypeParameters:
+      description: Parameters for enabling promotion type.
+      allOf:
+        - $ref: 'Repository.Components.OpenAPI.yaml#/RepositoryParameters'
+      properties:
+        Enabled:
+          type: boolean
+    GetReferencesByReferenceIdParameters:
+      description: Parameters for the /repository/getReferencesByReferenceId endpoint.
+      allOf:
+        - $ref: 'Repository.Components.OpenAPI.yaml#/RepositoryParameters'
+      properties:
+        ReferenceIds:
+          type: array
+          items:
+            $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/ReferenceId'
+        MaxCount:
+          type: integer
+    GetBranchesParameters:
+      description: Parameters for the /repository/getBranched endpoint.
+      allOf:
+        - $ref: 'Repository.Components.OpenAPI.yaml#/RepositoryParameters'
+      properties:
+        IncludeDeleted:
+          type: boolean
+        MaxCount:
+          type: integer
+    GetBranchesByBranchIdParameters:
+      description: Parameters for the /repository/getBranchesByBranchId endpoint.
+      allOf:
+        - $ref: 'Repository.Components.OpenAPI.yaml#/RepositoryParameters'
+      properties:
+        BranchIds:
+          type: array
+          items:
+            $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/BranchId'
+        MaxCount:
+          type: integer
+        IncludeDeleted:
+          type: boolean
+    UndeleteRepositoryParameters:
+      description: Parameters for the /repository/undelete endpoint.
+      allOf:
+        - $ref: 'Repository.Components.OpenAPI.yaml#/RepositoryParameters'

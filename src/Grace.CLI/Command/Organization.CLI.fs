@@ -27,11 +27,9 @@ module Organization =
         member val public OrganizationName: string = String.Empty with get, set
 
     module private Options =
-        let ownerId = new Option<String>("--ownerId", IsRequired = false, Description = "The organization's owner ID <Guid>.", Arity = ArgumentArity.ExactlyOne)
-        ownerId.SetDefaultValue($"{Current().OwnerId}")
+        let ownerId = new Option<String>("--ownerId", IsRequired = false, Description = "The organization's owner ID <Guid>.", Arity = ArgumentArity.ExactlyOne, getDefaultValue = (fun _ -> $"{Current().OwnerId}"))
         let ownerName = new Option<String>("--ownerName", IsRequired = false, Description = "The organization's owner name. [default: current owner]", Arity = ArgumentArity.ExactlyOne)
-        let organizationId = new Option<String>("--organizationId", IsRequired = false, Description = "The organization ID <Guid>.", Arity = ArgumentArity.ExactlyOne)
-        organizationId.SetDefaultValue($"{Current().OrganizationId}")
+        let organizationId = new Option<String>("--organizationId", IsRequired = false, Description = "The organization ID <Guid>.", Arity = ArgumentArity.ExactlyOne, getDefaultValue = (fun _ -> $"{Current().OrganizationId}"))
         let organizationName = new Option<String>("--organizationName", IsRequired = false, Description = "The name of the organization. [default: current organization]", Arity = ArgumentArity.ExactlyOne)
         let organizationNameRequired = new Option<String>("--organizationName", IsRequired = true, Description = "The name of the organization.", Arity = ArgumentArity.ExactlyOne)
         let organizationType = (new Option<String>("--organizationType", IsRequired = true, Description = "The type of the organization. [default: Public]", Arity = ArgumentArity.ExactlyOne))
@@ -103,7 +101,7 @@ module Organization =
                 match validateIncomingParameters with
                 | Ok _ -> 
                     let organizationId = if parseResult.FindResultFor(Options.organizationId).IsImplicit then Guid.NewGuid().ToString() else createParameters.OrganizationId
-                    let parameters = Parameters.Organization.CreateParameters(OwnerId = createParameters.OwnerId, OwnerName = createParameters.OwnerName, OrganizationId = organizationId, OrganizationName = createParameters.OrganizationName, CorrelationId = createParameters.CorrelationId)
+                    let parameters = Parameters.Organization.CreateOrganizationParameters(OwnerId = createParameters.OwnerId, OwnerName = createParameters.OwnerName, OrganizationId = organizationId, OrganizationName = createParameters.OrganizationName, CorrelationId = createParameters.CorrelationId)
                     if parseResult |> showOutput then
                         return! progress.Columns(progressColumns)
                                 .StartAsync(fun progressContext ->
@@ -146,7 +144,7 @@ module Organization =
                 let validateIncomingParameters = CommonValidations (parseResult, setNameParameters)
                 match validateIncomingParameters with
                 | Ok _ -> 
-                    let parameters = Parameters.Organization.NameParameters(OrganizationId = setNameParameters.OrganizationId, OrganizationName = setNameParameters.OrganizationName, NewName = setNameParameters.NewName, CorrelationId = setNameParameters.CorrelationId)
+                    let parameters = Parameters.Organization.SetOrganizationNameParameters(OrganizationId = setNameParameters.OrganizationId, OrganizationName = setNameParameters.OrganizationName, NewName = setNameParameters.NewName, CorrelationId = setNameParameters.CorrelationId)
                     if parseResult |> showOutput then
                         return! progress.Columns(progressColumns)
                                 .StartAsync(fun progressContext ->
@@ -180,7 +178,7 @@ module Organization =
                 let validateIncomingParameters = CommonValidations (parseResult, setTypeParameters)
                 match validateIncomingParameters with
                 | Ok _ -> 
-                    let parameters = Parameters.Organization.TypeParameters(
+                    let parameters = Parameters.Organization.SetOrganizationTypeParameters(
                                         OwnerId = setTypeParameters.OwnerId, 
                                         OwnerName = setTypeParameters.OwnerName, 
                                         OrganizationId = setTypeParameters.OrganizationId, 
@@ -221,7 +219,7 @@ module Organization =
                 match validateIncomingParameters with
                 | Ok _ ->
                     let organizationId = if not <| String.IsNullOrEmpty(setSearchVisibilityParameters.OrganizationId) then setSearchVisibilityParameters.OrganizationId else $"{Current().OrganizationId}"
-                    let parameters = Parameters.Organization.SearchVisibilityParameters(
+                    let parameters = Parameters.Organization.SetOrganizationSearchVisibilityParameters(
                                         OwnerId = setSearchVisibilityParameters.OwnerId, 
                                         OwnerName = setSearchVisibilityParameters.OwnerName, 
                                         OrganizationId = organizationId, 
@@ -261,7 +259,7 @@ module Organization =
                 let validateIncomingParameters = CommonValidations (parseResult, descriptionParameters)
                 match validateIncomingParameters with
                 | Ok _ -> 
-                    let parameters = Parameters.Organization.DescriptionParameters(
+                    let parameters = Parameters.Organization.SetOrganizationDescriptionParameters(
                                         OwnerId = descriptionParameters.OwnerId,
                                         OwnerName = descriptionParameters.OwnerName,
                                         OrganizationId = descriptionParameters.OrganizationId, 
@@ -302,7 +300,7 @@ module Organization =
                 let validateIncomingParameters = CommonValidations (parseResult, deleteParameters)
                 match validateIncomingParameters with
                 | Ok _ -> 
-                    let parameters = Parameters.Organization.DeleteParameters(
+                    let parameters = Parameters.Organization.DeleteOrganizationParameters(
                                         OwnerId = deleteParameters.OwnerId,
                                         OwnerName = deleteParameters.OwnerName,
                                         OrganizationId = deleteParameters.OrganizationId, 
@@ -342,7 +340,7 @@ module Organization =
                 let validateIncomingParameters = CommonValidations (parseResult, undeleteParameters)
                 match validateIncomingParameters with
                 | Ok _ -> 
-                    let parameters = Parameters.Organization.DeleteParameters(
+                    let parameters = Parameters.Organization.DeleteOrganizationParameters(
                                         OwnerId = undeleteParameters.OwnerId,
                                         OwnerName = undeleteParameters.OwnerName,
                                         OrganizationId = undeleteParameters.OrganizationId, 

@@ -14,8 +14,8 @@ type Repository() =
     /// Creates a new repository.
     /// </summary>
     /// <param name="parameters">Values to use when creating the new repository.</param>
-    static member public Create(parameters: CreateParameters) =
-        postServer<CreateParameters, String>(parameters |> ensureCorrelationIdIsSet, $"repository/{nameof(Repository.Create)}")
+    static member public Create(parameters: CreateRepositoryParameters) =
+        postServer<CreateRepositoryParameters, String>(parameters |> ensureCorrelationIdIsSet, $"repository/{nameof(Repository.Create)}")
     
     /// <summary>
     /// Creates a new repository.
@@ -24,33 +24,37 @@ type Repository() =
     static member public Init(parameters: InitParameters) =
         postServer<InitParameters, String>(parameters |> ensureCorrelationIdIsSet, $"repository/{nameof(Repository.Init)}")
 
+    /// Checks to see if a repository is empty and ready for initialization.
+    static member public IsEmpty(parameters: IsEmptyParameters) =
+        postServer<IsEmptyParameters, bool>(parameters |> ensureCorrelationIdIsSet, $"repository/{nameof(Repository.IsEmpty)}")
+
     /// <summary>
     /// Sets the name of the repository.
     /// </summary>
     /// <param name="parameters">Values to use when setting the status of the repository.</param>
-    static member public SetName(parameters: SetNameParameters) =
-        postServer<SetNameParameters, String>(parameters |> ensureCorrelationIdIsSet, $"repository/{nameof(Repository.SetName)}")
+    static member public SetName(parameters: SetRepositoryNameParameters) =
+        postServer<SetRepositoryNameParameters, String>(parameters |> ensureCorrelationIdIsSet, $"repository/{nameof(Repository.SetName)}")
 
     /// <summary>
     /// Sets the status of the repository.
     /// </summary>
     /// <param name="parameters">Values to use when setting the status of the repository.</param>
-    static member public SetStatus(parameters: StatusParameters) =
-        postServer<StatusParameters, String>(parameters |> ensureCorrelationIdIsSet, $"repository/{nameof(Repository.SetStatus)}")
+    static member public SetStatus(parameters: SetRepositoryStatusParameters) =
+        postServer<SetRepositoryStatusParameters, String>(parameters |> ensureCorrelationIdIsSet, $"repository/{nameof(Repository.SetStatus)}")
     
     /// <summary>
     /// Sets whether the repository is public or private.
     /// </summary>
     /// <param name="parameters">Values to use when setting the repository visibility.</param>
-    static member public SetVisibility(parameters: VisibilityParameters) =
-        postServer<VisibilityParameters, String>(parameters |> ensureCorrelationIdIsSet, $"repository/{nameof(Repository.SetVisibility)}")
+    static member public SetVisibility(parameters: SetRepositoryVisibilityParameters) =
+        postServer<SetRepositoryVisibilityParameters, String>(parameters |> ensureCorrelationIdIsSet, $"repository/{nameof(Repository.SetVisibility)}")
 
     /// <summary>
     /// Sets the repository's description.
     /// </summary>
     /// <param name="parameters">Values to use when setting the repository description.</param>
-    static member public SetDescription(parameters: DescriptionParameters) =
-        postServer<DescriptionParameters, String>(parameters |> ensureCorrelationIdIsSet, $"repository/{nameof(Repository.SetDescription)}")
+    static member public SetDescription(parameters: SetRepositoryDescriptionParameters) =
+        postServer<SetRepositoryDescriptionParameters, String>(parameters |> ensureCorrelationIdIsSet, $"repository/{nameof(Repository.SetDescription)}")
     
     /// <summary>
     /// Sets the repository default for whether saves should be kept.
@@ -63,15 +67,15 @@ type Repository() =
     /// Sets the default number of days to keep saves.
     /// </summary>
     /// <param name="parameters">Values to use when setting the default save days.</param>
-    static member public SetSaveDays(parameters: SaveDaysParameters) =
-        postServer<SaveDaysParameters, String>(parameters |> ensureCorrelationIdIsSet, $"repository/{nameof(Repository.SetSaveDays)}")
+    static member public SetSaveDays(parameters: SetSaveDaysParameters) =
+        postServer<SetSaveDaysParameters, String>(parameters |> ensureCorrelationIdIsSet, $"repository/{nameof(Repository.SetSaveDays)}")
 
     /// <summary>
     /// Sets the default number of days to keep checkpoints.
     /// </summary>
     /// <param name="parameters">Values to use when setting the default checkpoint retention time.</param>
-    static member public SetCheckpointDays(parameters: CheckpointDaysParameters) =
-        postServer<CheckpointDaysParameters, String>(parameters |> ensureCorrelationIdIsSet, $"repository/{nameof(Repository.SetCheckpointDays)}")
+    static member public SetCheckpointDays(parameters: SetCheckpointDaysParameters) =
+        postServer<SetCheckpointDaysParameters, String>(parameters |> ensureCorrelationIdIsSet, $"repository/{nameof(Repository.SetCheckpointDays)}")
 
     // /// Enables or disables single-step promotion.
     //static member public EnableSingleStepPromotion (parameters: EnablePromotionTypeParameters) =
@@ -85,22 +89,22 @@ type Repository() =
     /// Sets the default number of days to keep checkpoints.
     /// </summary>
     /// <param name="parameters">Values to use when setting the default checkpoint retention time.</param>
-    static member public SetDefaultServerApiVersion(parameters: DefaultServerApiVersionParameters) =
-        postServer<DefaultServerApiVersionParameters, String>(parameters |> ensureCorrelationIdIsSet, $"repository/{nameof(Repository.SetDefaultServerApiVersion)}")
+    static member public SetDefaultServerApiVersion(parameters: SetDefaultServerApiVersionParameters) =
+        postServer<SetDefaultServerApiVersionParameters, String>(parameters |> ensureCorrelationIdIsSet, $"repository/{nameof(Repository.SetDefaultServerApiVersion)}")
 
     /// <summary>
     /// Deletes the repository.
     /// </summary>
     /// <param name="parameters">Values to use when deleting the repository.</param>
-    static member public Delete(parameters: DeleteParameters) =
-        postServer<DeleteParameters, String>(parameters |> ensureCorrelationIdIsSet, $"repository/{nameof(Repository.Delete)}")
+    static member public Delete(parameters: DeleteRepositoryParameters) =
+        postServer<DeleteRepositoryParameters, String>(parameters |> ensureCorrelationIdIsSet, $"repository/{nameof(Repository.Delete)}")
 
     /// <summary>
     /// Undeletes the repository.
     /// </summary>
     /// <param name="parameters">Values to use when deleting the owner.</param>
-    static member public Undelete(parameters: UndeleteParameters) =
-        postServer<UndeleteParameters, String>(parameters |> ensureCorrelationIdIsSet, $"repository/{nameof(Repository.Undelete)}")
+    static member public Undelete(parameters: UndeleteRepositoryParameters) =
+        postServer<UndeleteRepositoryParameters, String>(parameters |> ensureCorrelationIdIsSet, $"repository/{nameof(Repository.Undelete)}")
 
     /// Gets the metadata for the repository.
     static member public Get(parameters: RepositoryParameters) =

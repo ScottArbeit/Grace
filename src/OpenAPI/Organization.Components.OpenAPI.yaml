@@ -1,0 +1,66 @@
+    OrganizationParameters:
+      description: Parameters for many endpoints in the /organization path.
+      allOf:
+        - $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/CommonParameters'
+      properties:
+        OwnerId:
+          type: string
+        OwnerName:
+          type: string
+        OrganizationId:
+          type: string
+        OrganizationName:
+          type: string
+    CreateOrganizationParameters:
+      description: Parameters for the /organization/create endpoint.
+      allOf:
+        - $ref: 'Organization.Components.OpenAPI.yaml#/OrganizationParameters'
+    SetOrganizationNameParameters:
+      description: Parameters for the /organization/setName endpoint.
+      allOf:
+        - $ref: 'Organization.Components.OpenAPI.yaml#/OrganizationParameters'
+      properties:
+        NewName:
+          type: string
+    SetOrganizationTypeParameters:
+      description: Parameters for the /organization/setType endpoint.
+      allOf:
+        - $ref: 'Organization.Components.OpenAPI.yaml#/OrganizationParameters'
+      properties:
+        OrganizationType:
+          type: string
+    SetOrganizationSearchVisibilityParameters:
+      description: Parameters for the /organization/setSearchVisibility endpoint.
+      allOf:
+        - $ref: 'Organization.Components.OpenAPI.yaml#/OrganizationParameters'
+      properties:
+        SearchVisibility:
+          type: string
+    SetOrganizationDescriptionParameters:
+      description: Parameters for the /organization/setDescription endpoint.
+      allOf:
+        - $ref: 'Organization.Components.OpenAPI.yaml#/OrganizationParameters'
+      properties:
+        Description:
+          type: string
+    DeleteOrganizationParameters:
+      description: Parameters for the /organization/delete endpoint.
+      allOf:
+        - $ref: 'Organization.Components.OpenAPI.yaml#/OrganizationParameters'
+      properties:
+        Force:
+          type: boolean
+        DeleteReason:
+          type: string
+    UndeleteOrganizationParameters:
+      description: Parameters for the /organization/undelete endpoint.
+      allOf:
+        - $ref: 'Organization.Components.OpenAPI.yaml#/OrganizationParameters'
+    GetOrganizationParameters:
+      description: Parameters for the /organization/get endpoint.
+      allOf:
+        - $ref: 'Organization.Components.OpenAPI.yaml#/OrganizationParameters'
+    ListRepositoriesParameters:
+      description: Parameters for the /organization/listRepositories endpoint.
+      allOf:
+        - $ref: 'Organization.Components.OpenAPI.yaml#/OrganizationParameters'

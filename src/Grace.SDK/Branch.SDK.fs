@@ -16,8 +16,8 @@ type Branch() =
     /// Creates a new branch.
     /// </summary>
     /// <param name="parameters">Values to use when creating the new branch.</param>
-    static member public Create(parameters: CreateParameters) =
-        postServer<CreateParameters, string>(parameters |> ensureCorrelationIdIsSet, $"branch/{nameof(Branch.Create)}")
+    static member public Create(parameters: CreateBranchParameters) =
+        postServer<CreateBranchParameters, string>(parameters |> ensureCorrelationIdIsSet, $"branch/{nameof(Branch.Create)}")
 
     /// Rebases a branch on a promotion from the parent branch.
     static member public Rebase(parameters: RebaseParameters) =
@@ -132,21 +132,21 @@ type Branch() =
     /// Sets the name of a branch.
     /// </summary>
     /// <param name="parameters">Values to use when setting the name of the branch.</param>
-    static member public SetName(parameters: SetNameParameters) =
-        postServer<SetNameParameters, string>(parameters |> ensureCorrelationIdIsSet, $"branch/{nameof(Branch.SetName)}")
+    static member public SetName(parameters: SetBranchNameParameters) =
+        postServer<SetBranchNameParameters, string>(parameters |> ensureCorrelationIdIsSet, $"branch/{nameof(Branch.SetName)}")
 
     /// Gets the metadata for a branch.
-    static member public Get(parameters: GetParameters) =
-        postServer<GetParameters, BranchDto>(parameters |> ensureCorrelationIdIsSet, $"branch/{nameof(Branch.Get)}")
+    static member public Get(parameters: GetBranchParameters) =
+        postServer<GetBranchParameters, BranchDto>(parameters |> ensureCorrelationIdIsSet, $"branch/{nameof(Branch.Get)}")
 
     /// Gets the metadata for the parent branch.
     static member public GetParentBranch(parameters: BranchParameters) =
         postServer<BranchParameters, BranchDto>(parameters |> ensureCorrelationIdIsSet, $"branch/{nameof(Branch.GetParentBranch)}")
 
     /// Gets a specific version of a branch from the server.
-    static member public GetVersion(parameters: GetVersionParameters) =
-        postServer<GetVersionParameters, IEnumerable<DirectoryId>>(parameters |> ensureCorrelationIdIsSet, $"branch/{nameof(Branch.GetVersion)}")
+    static member public GetVersion(parameters: GetBranchVersionParameters) =
+        postServer<GetBranchVersionParameters, IEnumerable<DirectoryId>>(parameters |> ensureCorrelationIdIsSet, $"branch/{nameof(Branch.GetVersion)}")
 
     /// Delete the branch.
-    static member public Delete(parameters: DeleteParameters) =
-        postServer<DeleteParameters, string>(parameters |> ensureCorrelationIdIsSet, $"branch/{nameof(Branch.Delete)}")
+    static member public Delete(parameters: DeleteBranchParameters) =
+        postServer<DeleteBranchParameters, string>(parameters |> ensureCorrelationIdIsSet, $"branch/{nameof(Branch.Delete)}")

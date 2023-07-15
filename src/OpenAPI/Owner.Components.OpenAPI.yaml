@@ -1,0 +1,62 @@
+    OwnerParameters:
+      description: Parameters for many endpoints in the /owner path.
+      allOf:
+        - $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/CommonParameters'
+      properties:
+        OwnerId:
+          type: string
+        OwnerName:
+          type: string
+    CreateOwnerParameters:
+      description: Parameters for the /owner/create endpoint.
+      allOf:
+        - $ref: 'Owner.Components.OpenAPI.yaml#/OwnerParameters'
+    SetOwnerNameParameters:
+      description: Parameters for the /owner/setName endpoint.
+      allOf:
+        - $ref: 'Owner.Components.OpenAPI.yaml#/OwnerParameters'
+      properties:
+        NewName:
+          type: string
+    SetOwnerTypeParameters:
+      description: Parameters for the /owner/setType endpoint.
+      allOf:
+        - $ref: 'Owner.Components.OpenAPI.yaml#/OwnerParameters'
+      properties:
+        OwnerType:
+          type: string
+    SetOwnerSearchVisibilityParameters:
+      description: Parameters for the /owner/setSearchVisibility endpoint.
+      allOf:
+        - $ref: 'Owner.Components.OpenAPI.yaml#/OwnerParameters'
+      properties:
+        SearchVisibility:
+          type: string
+    SetOwnerDescriptionParameters:
+      description: Parameters for the /owner/setDescription endpoint.
+      allOf:
+        - $ref: 'Owner.Components.OpenAPI.yaml#/OwnerParameters'
+      properties:
+        Description:
+          type: string
+    GetOwnerParameters:
+      description: Parameters for the /owner/get endpoint.
+      allOf:
+        - $ref: 'Owner.Components.OpenAPI.yaml#/OwnerParameters'
+    DeleteOwnerParameters:
+      description: Parameters for the /owner/delete endpoint.
+      allOf:
+        - $ref: 'Owner.Components.OpenAPI.yaml#/OwnerParameters'
+      properties:
+        Force:
+          type: boolean
+        DeleteReason:
+          type: string
+    UndeleteOwnerParameters:
+      description: Parameters for the /owner/undelete endpoint.
+      allOf:
+        - $ref: 'Owner.Components.OpenAPI.yaml#/OwnerParameters'
+    ListOrganizationsParameters:
+      description: Parameters for the /owner/listOrganizations endpoint.
+      allOf:
+        - $ref: 'Owner.Components.OpenAPI.yaml#/OwnerParameters'

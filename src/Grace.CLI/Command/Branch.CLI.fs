@@ -51,22 +51,17 @@ module Branch =
             if Guid.TryParse(validate.GetValueOrDefault<String>(), &guid) = false then
                 validate.ErrorMessage <- BranchError.getErrorMessage InvalidBranchId
 
-        let branchId = new Option<String>([|"--branchId"; "-i"|], IsRequired = false, Description = "The branch's ID <Guid>.", Arity = ArgumentArity.ExactlyOne)
-        branchId.SetDefaultValue($"{Current().BranchId}")
+        let branchId = new Option<String>([|"--branchId"; "-i"|], IsRequired = false, Description = "The branch's ID <Guid>.", Arity = ArgumentArity.ExactlyOne, getDefaultValue = (fun _ -> $"{Current().BranchId}"))
         let branchName = new Option<String>([|"--branchName"; "-b"|], IsRequired = false, Description = "The name of the branch. [default: current branch]", Arity = ArgumentArity.ExactlyOne)
         let branchNameRequired = new Option<String>([|"--branchName"; "-b"|], IsRequired = true, Description = "The name of the branch.", Arity = ArgumentArity.ExactlyOne)
-        let ownerId = new Option<String>("--ownerId", IsRequired = false, Description = "The repository's owner ID <Guid>.", Arity = ArgumentArity.ZeroOrOne)
-        ownerId.SetDefaultValue($"{Current().OwnerId}")
+        let ownerId = new Option<String>("--ownerId", IsRequired = false, Description = "The repository's owner ID <Guid>.", Arity = ArgumentArity.ZeroOrOne, getDefaultValue = (fun _ -> $"{Current().OwnerId}"))
         let ownerName = new Option<String>("--ownerName", IsRequired = false, Description = "The repository's owner name. [default: current owner]", Arity = ArgumentArity.ExactlyOne)
-        let organizationId = new Option<String>("--organizationId", IsRequired = false, Description = "The repository's organization ID <Guid>.", Arity = ArgumentArity.ZeroOrOne)
-        organizationId.SetDefaultValue($"{Current().OrganizationId}")
+        let organizationId = new Option<String>("--organizationId", IsRequired = false, Description = "The repository's organization ID <Guid>.", Arity = ArgumentArity.ExactlyOne, getDefaultValue = (fun _ -> $"{Current().OrganizationId}"))
         let organizationName = new Option<String>("--organizationName", IsRequired = false, Description = "The repository's organization name. [default: current organization]", Arity = ArgumentArity.ZeroOrOne)
-        let repositoryId = new Option<String>([|"--repositoryId"; "-r"|], IsRequired = false, Description = "The repository's ID <Guid>.", Arity = ArgumentArity.ExactlyOne)
-        repositoryId.SetDefaultValue($"{Current().RepositoryId}")
+        let repositoryId = new Option<String>([|"--repositoryId"; "-r"|], IsRequired = false, Description = "The repository's ID <Guid>.", Arity = ArgumentArity.ExactlyOne, getDefaultValue = (fun _ -> $"{Current().RepositoryId}"))
         let repositoryName = new Option<String>([|"--repositoryName"; "-n"|], IsRequired = false, Description = "The name of the repository. [default: current repository]", Arity = ArgumentArity.ExactlyOne)
         let parentBranchId = new Option<String>([|"--parentBranchId"|], IsRequired = false, Description = "The parent branch's ID <Guid>.", Arity = ArgumentArity.ExactlyOne)
-        let parentBranchName = new Option<String>([|"--parentBranchName"|], IsRequired = false, Description = "The name of the parent branch. [default: current branch]", Arity = ArgumentArity.ExactlyOne)
-        parentBranchName.SetDefaultValue($"{Current().BranchName}")
+        let parentBranchName = new Option<String>([|"--parentBranchName"|], IsRequired = false, Description = "The name of the parent branch. [default: current branch]", Arity = ArgumentArity.ExactlyOne, getDefaultValue = (fun _ -> $"{Current().BranchName}"))
         let newName = new Option<String>("--newName", IsRequired = true, Description = "The new name of the branch.", Arity = ArgumentArity.ExactlyOne)
         let message = new Option<String>([|"--message"; "-m"|], IsRequired = false, Description = "The text to store with this reference.", Arity = ArgumentArity.ExactlyOne)
         let messageRequired = new Option<String>([|"--message"; "-m"|], IsRequired = true, Description = "The text to store with this reference.", Arity = ArgumentArity.ExactlyOne)
@@ -194,7 +189,7 @@ module Branch =
                 match validateIncomingParameters with
                 | Ok _ -> 
                     let branchId = if parseResult.FindResultFor(Options.branchId).IsImplicit then Guid.NewGuid().ToString() else createParameters.BranchId
-                    let parameters = Parameters.Branch.CreateParameters(
+                    let parameters = Parameters.Branch.CreateBranchParameters(
                         RepositoryId = createParameters.RepositoryId,
                         RepositoryName = createParameters.RepositoryName,
                         OwnerId = createParameters.OwnerId,
@@ -247,7 +242,7 @@ module Branch =
                 let validateIncomingParameters = CommonValidations parseResult setNameParameters
                 match validateIncomingParameters with
                 | Ok _ -> 
-                    let parameters = Parameters.Branch.SetNameParameters(BranchId = setNameParameters.BranchId, BranchName = setNameParameters.BranchName, 
+                    let parameters = Parameters.Branch.SetBranchNameParameters(BranchId = setNameParameters.BranchId, BranchName = setNameParameters.BranchName, 
                         NewName= setNameParameters.NewName, CorrelationId = setNameParameters.CorrelationId)
                     if parseResult |> showOutput then
                         return! progress.Columns(progressColumns)
@@ -432,7 +427,7 @@ module Branch =
 
                                     // Get the Dto for the current branch. That will have its latest commit.
                                     let branchGetParameters = 
-                                        Parameters.Branch.GetParameters(BranchId = parameters.BranchId, BranchName = parameters.BranchName, 
+                                        Parameters.Branch.GetBranchParameters(BranchId = parameters.BranchId, BranchName = parameters.BranchName, 
                                             OwnerId = parameters.OwnerId, OwnerName = parameters.OwnerName,
                                             OrganizationId = parameters.OrganizationId, OrganizationName = parameters.OrganizationName,
                                             RepositoryId = parameters.RepositoryId, RepositoryName = parameters.RepositoryName,
@@ -939,7 +934,7 @@ module Branch =
                                             //if not <| parseResult.FindResultFor(Options.branchId).IsImplicit 
                                                 // Get branch information based on Id and name.
                                             //logToAnsiConsole Colors.Verbose "Get branch information based on Id and name."
-                                            let getParameters = Parameters.Branch.GetParameters( 
+                                            let getParameters = Parameters.Branch.GetBranchParameters( 
                                                 OwnerId = parameters.OwnerId, OwnerName = parameters.OwnerName,
                                                 OrganizationId = parameters.OrganizationId, OrganizationName = parameters.OrganizationName,
                                                 RepositoryId = parameters.RepositoryId, RepositoryName = parameters.RepositoryName,
@@ -952,7 +947,7 @@ module Branch =
                                                 //logToAnsiConsole Colors.Verbose "Found branch information."
                                                 let branchDto = returnValue.ReturnValue
                                                 let getVersionParameters = 
-                                                    Parameters.Branch.GetVersionParameters(BranchId = $"{branchDto.BranchId}",
+                                                    Parameters.Branch.GetBranchVersionParameters(BranchId = $"{branchDto.BranchId}",
                                                         OwnerId = parameters.OwnerId, OwnerName = parameters.OwnerName,
                                                         OrganizationId = parameters.OrganizationId, OrganizationName = parameters.OrganizationName,
                                                         RepositoryId = $"{branchDto.RepositoryId}",
@@ -1080,7 +1075,7 @@ module Branch =
                                 //if not <| parseResult.FindResultFor(Options.branchId).IsImplicit 
                                     // Get branch information based on Id and name.
                                 //logToAnsiConsole Colors.Verbose "Get branch information based on Id and name."
-                                let getParameters = Parameters.Branch.GetParameters( 
+                                let getParameters = Parameters.Branch.GetBranchParameters( 
                                     OwnerId = parameters.OwnerId, OwnerName = parameters.OwnerName,
                                     OrganizationId = parameters.OrganizationId, OrganizationName = parameters.OrganizationName,
                                     RepositoryId = parameters.RepositoryId, RepositoryName = parameters.RepositoryName,
@@ -1093,7 +1088,7 @@ module Branch =
                                     //logToAnsiConsole Colors.Verbose "Found branch information."
                                     let branchDto = returnValue.ReturnValue
                                     let getVersionParameters = 
-                                        Parameters.Branch.GetVersionParameters(BranchId = $"{branchDto.BranchId}",
+                                        Parameters.Branch.GetBranchVersionParameters(BranchId = $"{branchDto.BranchId}",
                                             OwnerId = parameters.OwnerId, OwnerName = parameters.OwnerName,
                                             OrganizationId = parameters.OrganizationId, OrganizationName = parameters.OrganizationName,
                                             RepositoryId = $"{branchDto.RepositoryId}",
@@ -1184,7 +1179,7 @@ module Branch =
             // --------------------------------------------------------------------------------------------------------------------------------------
             
             // First, get the current branchDto so we have the latest promotion that it's based on.
-            let branchGetParameters = Parameters.Branch.GetParameters(OwnerId = $"{Current().OwnerId}", 
+            let branchGetParameters = Parameters.Branch.GetBranchParameters(OwnerId = $"{Current().OwnerId}", 
                 OrganizationId = $"{Current().OrganizationId}", RepositoryId = $"{Current().RepositoryId}", BranchId = $"{Current().BranchId}",
                 CorrelationId = parameters.CorrelationId)
             match! Branch.Get(branchGetParameters) with
@@ -1365,7 +1360,7 @@ module Branch =
                                                 return -1
                                         else 
                                             AnsiConsole.MarkupLine($"[{Colors.Highlighted}]A potential promotion conflict was detected. Rebase not successful.[/]")
-                                            return -1 
+                                            return -1
                                     else
                                         logToAnsiConsole Colors.Error (Markup.Escape($"{errors.First()}"))
                                         return -1
@@ -1410,7 +1405,7 @@ module Branch =
             try
                 if parseResult |> verbose then printParseResult parseResult
                 // Show repo and branch names.
-                let getParameters = Parameters.Branch.GetParameters( 
+                let getParameters = Parameters.Branch.GetBranchParameters( 
                     OwnerId = parameters.OwnerId, OwnerName = parameters.OwnerName,
                     OrganizationId = parameters.OrganizationId, OrganizationName = parameters.OrganizationName,
                     RepositoryId = parameters.RepositoryId, RepositoryName = parameters.RepositoryName,
@@ -1523,7 +1518,7 @@ module Branch =
                 match validateIncomingParameters with
                 | Ok _ ->
                     let parameters = parameters |> normalizeIdsAndNames parseResult
-                    let deleteParameters = Parameters.Branch.DeleteParameters(BranchId = parameters.BranchId, BranchName = parameters.BranchName, 
+                    let deleteParameters = Parameters.Branch.DeleteBranchParameters(BranchId = parameters.BranchId, BranchName = parameters.BranchName, 
                         OwnerId = parameters.OwnerId, OwnerName = parameters.OwnerName,
                         OrganizationId = parameters.OrganizationId, OrganizationName = parameters.OrganizationName,
                         RepositoryId = parameters.RepositoryId, RepositoryName = parameters.RepositoryName,

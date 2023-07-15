@@ -36,14 +36,11 @@ module Repository =
         member val public RepositoryName: RepositoryName = String.Empty with get, set
 
     module private Options =
-        let ownerId = new Option<String>("--ownerId", IsRequired = false, Description = "The repository's owner ID <Guid>.", Arity = ArgumentArity.ZeroOrOne)
-        ownerId.SetDefaultValue($"{Current().OwnerId}")
+        let ownerId = new Option<String>("--ownerId", IsRequired = false, Description = "The repository's owner ID <Guid>.", Arity = ArgumentArity.ZeroOrOne, getDefaultValue = (fun _ -> $"{Current().OwnerId}"))
         let ownerName = new Option<String>("--ownerName", IsRequired = false, Description = "The repository's owner name. [default: current owner]", Arity = ArgumentArity.ExactlyOne)
-        let organizationId = new Option<String>("--organizationId", IsRequired = false, Description = "The repository's organization ID <Guid>.", Arity = ArgumentArity.ZeroOrOne)
-        organizationId.SetDefaultValue($"{Current().OrganizationId}")
+        let organizationId = new Option<String>("--organizationId", IsRequired = false, Description = "The repository's organization ID <Guid>.", Arity = ArgumentArity.ZeroOrOne, getDefaultValue = (fun _ -> $"{Current().OrganizationId}"))
         let organizationName = new Option<String>("--organizationName", IsRequired = false, Description = "The repository's organization name. [default: current organization]", Arity = ArgumentArity.ZeroOrOne)
-        let repositoryId = new Option<String>([|"--repositoryId"; "-r"|], IsRequired = false, Description = "The repository's ID <Guid>.", Arity = ArgumentArity.ExactlyOne)
-        repositoryId.SetDefaultValue($"{Current().RepositoryId}")
+        let repositoryId = new Option<String>([|"--repositoryId"; "-r"|], IsRequired = false, Description = "The repository's ID <Guid>.", Arity = ArgumentArity.ExactlyOne, getDefaultValue = (fun _ -> $"{Current().RepositoryId}"))
         let repositoryName = new Option<String>([|"--repositoryName"; "-n"|], IsRequired = false, Description = "The name of the repository. [default: current repository]", Arity = ArgumentArity.ExactlyOne)
         let requiredRepositoryName = new Option<String>([|"--repositoryName"; "-n"|], IsRequired = true, Description = "The name of the repository.", Arity = ArgumentArity.ExactlyOne)
         let visibility = (new Option<RepositoryVisibility>("--visibility", IsRequired = true, Description = "The visibility of the repository.", Arity = ArgumentArity.ExactlyOne))
@@ -157,7 +154,7 @@ module Repository =
                     let organizationId = if not <| String.IsNullOrEmpty(createParameters.OrganizationId) || not <| String.IsNullOrEmpty(createParameters.OrganizationName)
                                          then createParameters.OrganizationId
                                          else $"{Current().OrganizationId}"
-                    let enhancedParameters = Repository.CreateParameters(RepositoryId = repositoryId, 
+                    let enhancedParameters = Repository.CreateRepositoryParameters(RepositoryId = repositoryId, 
                         RepositoryName = createParameters.RepositoryName, 
                         OwnerId = ownerId, 
                         OwnerName = createParameters.OwnerName,
@@ -222,7 +219,7 @@ module Repository =
                     match validateIncomingParameters with
                     | Ok _ -> 
                         let (ownerId, organizationId, repositoryId) = getIds parameters
-                        let enhancedParameters = Repository.InitParameters(
+                        let isEmptyParameters = Repository.IsEmptyParameters(
                             OwnerId = ownerId,
                             OwnerName = parameters.OwnerName,
                             OrganizationId = organizationId,
@@ -231,6 +228,14 @@ module Repository =
                             RepositoryName = parameters.RepositoryName, 
                             CorrelationId = parameters.CorrelationId)
 
+                        let! repositoryIsEmpty = Repository.IsEmpty isEmptyParameters
+                        match repositoryIsEmpty with
+                        | Ok isEmpty ->
+                            if isEmpty.ReturnValue = true then
+                                return Ok (GraceReturnValue.Create "Not yet implemented" (getCorrelationId parseResult))
+                            else
+                                return Error (GraceError.Create (RepositoryError.getErrorMessage RepositoryError.RepositoryIsNotEmpty) parameters.CorrelationId)
+                        | Error error -> return Error error
                         // Take functionality from grace maint update... most of it is already there.
                         // We need to double-check that we have the correct owner/organization/repository because we're 
                         //   going to be uploading files to object storage placed in containers named after the owner/organization/repository.
@@ -239,8 +244,6 @@ module Repository =
                         // Test on repositories with only initial branch and no references - should succeed.
                         // Test on repositories with only initial branch and references - should fail.
                         // Test on repositories with multiple branches and references - should fail.
-
-                        return Ok (GraceReturnValue.Create "Not yet implemented" (getCorrelationId parseResult))
                     | Error error -> return Error error
                 | Error error -> return Error error
             with ex -> return Error (GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
@@ -333,7 +336,7 @@ module Repository =
                 match validateIncomingParameters with
                 | Ok _ -> 
                     let normalizedParameters = parameters |> normalizeIdsAndNames parseResult
-                    let visibilityParameters = Repository.VisibilityParameters(
+                    let visibilityParameters = Repository.SetRepositoryVisibilityParameters(
                         OwnerId = normalizedParameters.OwnerId,
                         OwnerName = normalizedParameters.OwnerName,
                         OrganizationId = normalizedParameters.OrganizationId,
@@ -377,7 +380,7 @@ module Repository =
                 match validateIncomingParameters with
                 | Ok _ -> 
                     let normalizedParameters = parameters |> normalizeIdsAndNames parseResult
-                    let statusParameters = Repository.StatusParameters(
+                    let statusParameters = Repository.SetRepositoryStatusParameters(
                         OwnerId = normalizedParameters.OwnerId,
                         OwnerName = normalizedParameters.OwnerName,
                         OrganizationId = normalizedParameters.OrganizationId,
@@ -465,7 +468,7 @@ module Repository =
                 match validateIncomingParameters with
                 | Ok _ -> 
                     let normalizedParameters = parameters |> normalizeIdsAndNames parseResult
-                    let setSaveDaysParameters = Repository.SaveDaysParameters(
+                    let setSaveDaysParameters = Repository.SetSaveDaysParameters(
                         OwnerId = normalizedParameters.OwnerId,
                         OwnerName = normalizedParameters.OwnerName,
                         OrganizationId = normalizedParameters.OrganizationId,
@@ -509,7 +512,7 @@ module Repository =
                 match validateIncomingParameters with
                 | Ok _ -> 
                     let normalizedParameters = parameters |> normalizeIdsAndNames parseResult
-                    let checkpointDaysParameters = Repository.CheckpointDaysParameters(
+                    let checkpointDaysParameters = Repository.SetCheckpointDaysParameters(
                         OwnerId = normalizedParameters.OwnerId,
                         OwnerName = normalizedParameters.OwnerName,
                         OrganizationId = normalizedParameters.OrganizationId,
@@ -622,7 +625,7 @@ module Repository =
                 match validateIncomingParameters with
                 | Ok _ -> 
                     let normalizedParameters = parameters |> normalizeIdsAndNames parseResult
-                    let defaultServerApiVersionParameters = Repository.DefaultServerApiVersionParameters(
+                    let defaultServerApiVersionParameters = Repository.SetDefaultServerApiVersionParameters(
                         OwnerId = normalizedParameters.OwnerId,
                         OwnerName = normalizedParameters.OwnerName,
                         OrganizationId = normalizedParameters.OrganizationId,
@@ -666,7 +669,7 @@ module Repository =
                 match validateIncomingParameters with
                 | Ok _ -> 
                     let normalizedParameters = parameters |> normalizeIdsAndNames parseResult
-                    let setNameParameters = Repository.SetNameParameters(
+                    let setNameParameters = Repository.SetRepositoryNameParameters(
                         OwnerId = normalizedParameters.OwnerId,
                         OwnerName = normalizedParameters.OwnerName,
                         OrganizationId = normalizedParameters.OrganizationId,
@@ -711,7 +714,7 @@ module Repository =
                 match validateIncomingParameters with
                 | Ok _ -> 
                     let normalizedParameters = parameters |> normalizeIdsAndNames parseResult
-                    let enhancedParameters = Repository.DeleteParameters(
+                    let enhancedParameters = Repository.DeleteRepositoryParameters(
                         OwnerId = normalizedParameters.OwnerId,
                         OwnerName = normalizedParameters.OwnerName,
                         OrganizationId = normalizedParameters.OrganizationId,
@@ -755,7 +758,7 @@ module Repository =
                 match validateIncomingParameters with
                 | Ok _ -> 
                     let normalizedParameters = parameters |> normalizeIdsAndNames parseResult
-                    let undeleteParameters = Repository.UndeleteParameters(
+                    let undeleteParameters = Repository.UndeleteRepositoryParameters(
                         OwnerId = normalizedParameters.OwnerId,
                         OwnerName = normalizedParameters.OwnerName,
                         OrganizationId = normalizedParameters.OrganizationId,

@@ -146,6 +146,8 @@ module Interfaces =
         inherit IActor
         /// Returns true if this actor already exists in the database, otherwise false.
         abstract member Exists: unit -> Task<bool>
+        /// Returns true if the repository has been created but is empty; otherwise false.
+        abstract member IsEmpty: unit -> Task<bool>
         /// Returns true if this repository has been deleted.
         abstract member IsDeleted: unit -> Task<bool>
         /// Returns a record with the current state of the repository.

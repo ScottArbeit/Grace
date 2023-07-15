@@ -143,6 +143,7 @@ module Repository =
                         task {
                             match repositoryEvent.Event with
                             | Created (name, repositoryId, ownerId, organizationId) -> 
+                                // Create the default branch.
                                 let branchId = (Guid.NewGuid())
                                 let branchActorId = ActorId($"{branchId}")
                                 let branchActor = Services.ActorProxyFactory.CreateActorProxy<IBranchActor>(branchActorId, ActorName.Branch)
@@ -155,6 +156,7 @@ module Repository =
                                     let! promotionResult = branchActor.Handle (Commands.Branch.BranchCommand.Promote(emptyDirectoryId, emptySha256Hash, (getLocalizedString StringResourceName.InitialPromotionMessage))) repositoryEvent.Metadata
                                     match promotionResult with
                                     | Ok promotionGraceReturn ->
+                                        // Set current, empty directory as the based-on reference.
                                         let referenceId = Guid.Parse(promotionGraceReturn.Properties[nameof(ReferenceId)])
                                         let! rebaseResult = branchActor.Handle (Commands.Branch.BranchCommand.Rebase(referenceId)) repositoryEvent.Metadata
                                         match rebaseResult with
@@ -319,6 +321,9 @@ module Repository =
 
             member this.Exists() =
                 Task.FromResult(if repositoryDto.UpdatedAt.IsSome then true else false)
+
+            member this.IsEmpty() =
+                Task.FromResult(if repositoryDto.UpdatedAt.IsSome then false else true)
 
             member this.IsDeleted() =
                 Task.FromResult(if repositoryDto.DeletedAt.IsSome then true else false)

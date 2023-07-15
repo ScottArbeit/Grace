@@ -6,6 +6,7 @@ open System
 
 module Diff =
     
+    /// Parameters used by multiple endpoints in the /diff path.
     type DiffParameters() = 
         inherit CommonParameters()
         member val public OwnerId = String.Empty with get, set
@@ -17,9 +18,11 @@ module Diff =
         member val public DirectoryId1: DirectoryId = DirectoryId.Empty with get, set
         member val public DirectoryId2: DirectoryId = DirectoryId.Empty with get, set
 
+    /// Parameters used by the /diff/populate endpoint.
     type PopulateParameters() =
         inherit DiffParameters()
 
+    /// Parameters used by the /diff/get endpoint.
     type GetDiffParameters() =
         inherit DiffParameters()
 
@@ -28,6 +31,7 @@ module Diff =
         member val public BranchId = String.Empty with get, set
         member val public BranchName = BranchName String.Empty with get, set
 
+    /// Parameters used by the /diff/getDiffBySha256Hash endpoint.
     type GetDiffBySha256HashParameters() =
         inherit DiffParameters()
         member val public Sha256Hash1 = Sha256Hash String.Empty with get, set

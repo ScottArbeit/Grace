@@ -1,0 +1,126 @@
+    BranchParameters:
+      description: Parameters for many endpoints in the /branch path.
+      type: object
+      properties:
+        ownerId:
+          type: string
+        ownerName:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/OwnerName'
+        organizationId:
+          type: string
+        organizationName:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/OrganizationName'
+        repositoryId:
+          type: string
+        repositoryName:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/RepositoryName'
+        branchId:
+          type: string
+        branchName:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/BranchName'
+    BranchQueryParameters:
+      description: Base class for parameters for branch queries.
+      allOf:
+        - $ref: '#/BranchParameters'
+        - type: object
+          properties:
+            sha256Hash:
+              $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Sha256Hash'
+            referenceId:
+              type: string
+    CreateBranchParameters:
+      description: Parameters for the /branch/create endpoint.
+      allOf:
+        - $ref: '#/BranchParameters'
+        - type: object
+          properties:
+            parentBranchId:
+              type: string
+            parentBranchName:
+              $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/BranchName'
+    RebaseParameters:
+      description: Parameters for the /branch/rebase endpoint.
+      allOf:
+        - $ref: '#/BranchParameters'
+        - type: object
+          properties:
+            basedOn:
+              $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/ReferenceId'
+    CreateReferenceParameters:
+      description: Parameters for the various /branch/create[reference] endpoints.
+      allOf:
+        - $ref: '#/BranchParameters'
+        - type: object
+          properties:
+            directoryId:
+              $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/DirectoryId'
+            sha256Hash:
+              $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Sha256Hash'
+            message:
+              type: string
+    SetBranchNameParameters:
+      description: Parameters for the /branch/setName endpoint.
+      allOf:
+        - $ref: '#/BranchParameters'
+        - type: object
+          properties:
+            newName:
+              type: string
+    EnableFeatureParameters:
+      description: Parameters for the various /branch/enable[feature] endpoints.
+      allOf:
+        - $ref: '#/BranchParameters'
+        - type: object
+          properties:
+            enabled:
+              type: boolean
+    DeleteBranchParameters:
+      description: Parameters for the /branch/delete endpoint.
+      allOf:
+        - $ref: '#/BranchParameters'
+    GetReferenceParameters:
+      description: Parameters for the /branch/getReference endpoint.
+      allOf:
+        - $ref: '#/BranchQueryParameters'
+    GetReferencesParameters:
+      description: Parameters for the /branch/getReferences and /branch/get[reference] endpoints.
+      allOf:
+        - $ref: '#/BranchParameters'
+        - type: object
+          properties:
+            fullSha:
+              type: boolean
+            maxCount:
+              type: integer
+    GetDiffsForReferenceTypeParameters:
+      description: Parameters for the /branch/getDiffsForReferenceType endpoint.
+      allOf:
+        - $ref: '#/BranchParameters'
+        - type: object
+          properties:
+            referenceType:
+              type: string
+            maxCount:
+              type: integer
+    GetDiffsForReferencesParameters:
+      description: Parameters for the /branch/getDiffsForReferences endpoint.
+      allOf:
+        - $ref: '#/BranchParameters'
+        - type: object
+          properties:
+            references:
+              type: string
+            maxCount:
+              type: integer
+    GetBranchParameters:
+      description: Parameters for the /branch/get endpoint.
+      allOf:
+        - $ref: '#/BranchQueryParameters'
+    SwitchParameters:
+      description: Parameters for the /branch/switch endpoint.
+      allOf:
+        - $ref: '#/BranchQueryParameters'
+    GetBranchVersionParameters:
+      description: Parameters for the /branch/getVersion endpoint.
+      allOf:
+        - $ref: '#/BranchQueryParameters'

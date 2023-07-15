@@ -1,0 +1,74 @@
+  /diff/populate:
+    post:
+      summary: Populates the diff actor without returning the diff.
+      description: |
+        Populates the diff actor without returning the diff. This endpoint is meant to be used when generating the diff through reacting to an event.
+        ### Errors and Problem Details
+        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: Diff.Components.OpenAPI.yaml#/PopulateParameters
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: './Responses.OpenAPI.yaml#/200'
+        '400':
+          $ref: './Responses.OpenAPI.yaml#/400'
+        '500':
+          $ref: './Responses.OpenAPI.yaml#/500'
+
+  /diff/getDiff:
+    post:
+      summary: Retrieves the contents of the diff.
+      description: |
+        Retrieves the contents of the diff between two directories.
+        ### Errors and Problem Details
+        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: Diff.Components.OpenAPI.yaml#/GetDiffParameters
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: './Responses.OpenAPI.yaml#/200'
+        '400':
+          $ref: './Responses.OpenAPI.yaml#/400'
+        '500':
+          $ref: './Responses.OpenAPI.yaml#/500'
+
+  /diff/getDiffBySha256Hash:
+    post:
+      summary: Retrieves a diff taken by comparing two DirectoryVersions by Sha256Hash.
+      description: |
+        Retrieves a diff taken by comparing two DirectoryVersions identified by their SHA-256 hash.
+        ### Errors and Problem Details
+        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: Diff.Components.OpenAPI.yaml#/GetDiffBySha256HashParameters
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: './Responses.OpenAPI.yaml#/200'
+        '400':
+          $ref: './Responses.OpenAPI.yaml#/400'
+        '500':
+          $ref: './Responses.OpenAPI.yaml#/500'

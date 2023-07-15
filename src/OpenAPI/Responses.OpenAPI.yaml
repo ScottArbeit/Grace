@@ -1,0 +1,26 @@
+    # This is the default response for all endpoints returning a 200 status code.
+    # Endpoints returning a specific type will define that in the OpenAPI specification for that path.
+    '200':
+      description: OK
+      content:
+        application/json:
+          schema:
+            $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/GraceReturnValue'
+    '400':
+      description: Bad Request
+      content:
+        application/json:
+          schema:
+            $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/ProblemDetails'
+    '500':
+      description: Internal Server Error
+      content:
+        application/json:
+          schema:
+            $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/ProblemDetails'
+    'OK':
+      description: OK
+      content:
+        application/json:
+          schema:
+            $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/GraceReturnValue'

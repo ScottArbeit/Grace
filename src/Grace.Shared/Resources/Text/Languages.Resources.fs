@@ -44,7 +44,7 @@ module Text =
         | InvalidBranchId
         | InvalidBranchName
         | InvalidCheckpointDaysValue
-        | InvalidDirectory
+        | InvalidDirectoryPath
         | InvalidDirectoryId
         | InvalidMaxCountValue
         | InvalidObjectStorageProvider
@@ -98,6 +98,7 @@ module Text =
         | RepositoryIdIsRequired
         | RepositoryIsDeleted
         | RepositoryIsNotDeleted
+        | RepositoryIsNotEmpty
         | RepositoryNameIsRequired
         | SaveIsDisabled
         | SearchVisibilityIsRequired

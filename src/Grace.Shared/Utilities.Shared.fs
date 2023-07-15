@@ -41,9 +41,6 @@ module Combinators =
 
 
 module Utilities =
-    /// Converts an Instant to local time, and produces a string in short date/time format, using the CurrentUICulture.
-    let instantToLocalTime (instant: Instant) = instant.ToDateTimeUtc().ToLocalTime().ToString("g", CultureInfo.CurrentUICulture)
-
     /// Gets the current instant.
     let getCurrentInstant() = SystemClock.Instance.GetCurrentInstant()
 
@@ -52,6 +49,9 @@ module Utilities =
 
     /// Gets the current instant as a string in General format. Example: "2009-06-15T13:45:30Z".
     let getCurrentInstantGeneral() = getCurrentInstant().ToString(InstantPattern.General.PatternText, CultureInfo.InvariantCulture)
+
+    /// Converts an Instant to local time, and produces a string in short date/time format, using the CurrentUICulture.
+    let instantToLocalTime (instant: Instant) = instant.ToDateTimeUtc().ToLocalTime().ToString("g", CultureInfo.CurrentUICulture)
 
     /// Gets the current instant in local time as a string in short date/time format, using the CurrentUICulture.
     let getCurrentInstantLocal() = getCurrentInstant() |> instantToLocalTime
@@ -279,21 +279,27 @@ module Utilities =
     /// Alias for calling Task.FromResult() with the provided value.
     let returnTask<'T> value = Task.FromResult<'T>(value)
 
-    /// Computes text for the time between two instants
+    /// Computes text for the time between two instants. You can pass the two instants in any order.
     let elapsedBetween (instant1: Instant) (instant2: Instant) =
         let since = if instant2 > instant1 then instant2.Minus(instant1) else instant1.Minus(instant2)
-        if since.TotalSeconds < 2 then $"1 second"
-        elif since.TotalSeconds < 60 then $"{Math.Floor(since.TotalSeconds):F0} seconds"
-        elif since.TotalMinutes < 2 then $"1 minute"
-        elif since.TotalMinutes < 60 then $"{Math.Floor(since.TotalMinutes):F0} minutes"
-        elif since.TotalHours < 2 then $"1 hour"
-        elif since.TotalHours < 24 then $"{Math.Floor(since.TotalHours):F0} hours"
-        elif since.TotalDays < 2 then $"1 day"
-        elif since.TotalDays < 30 then $"{Math.Floor(since.TotalDays):F0} days"
-        elif since.TotalDays < 60 then $"1 month"
-        elif since.TotalDays < 365.25 then $"{Math.Floor(since.TotalDays / 30.0):F0} months"
-        elif since.TotalDays < 730.5 then $"1 year"
-        else $"{Math.Floor(since.TotalDays / 365.25):F0} years"
+        
+        let totalSeconds = since.TotalSeconds
+        let totalMinutes = since.TotalMinutes
+        let totalHours = since.TotalHours
+        let totalDays = since.TotalDays
+
+        if totalSeconds < 2 then $"1 second"
+        elif totalSeconds < 60 then $"{Math.Floor(totalSeconds):F0} seconds"
+        elif totalMinutes < 2 then $"1 minute"
+        elif totalMinutes < 60 then $"{Math.Floor(totalMinutes):F0} minutes"
+        elif totalHours < 2 then $"1 hour"
+        elif totalHours < 24 then $"{Math.Floor(totalHours):F0} hours"
+        elif totalDays < 2 then $"1 day"
+        elif totalDays < 30 then $"{Math.Floor(totalDays):F0} days"
+        elif totalDays < 60 then $"1 month"
+        elif totalDays < 365.25 then $"{Math.Floor(totalDays / 30.0):F0} months"
+        elif totalDays < 730.5 then $"1 year"
+        else $"{Math.Floor(totalDays / 365.25):F0} years"
 
     /// Computes text for how long ago an instant was.
     let ago (instant: Instant) = $"{elapsedBetween (getCurrentInstant()) instant} ago"
@@ -381,7 +387,7 @@ module Utilities =
         PooledConnectionIdleTimeout = TimeSpan.FromMinutes(2.0) // Default is 2m
     )
 
-    /// Gets an HttpClient instance from a custom HttpClientFactory.
+    /// Gets an HttpClient instance from an enhanced, custom HttpClientFactory.
     let getHttpClient (correlationId: string) =
         let traceIdBytes = stackalloc<byte> 16
         let parentIdBytes = stackalloc<byte> 8
@@ -405,14 +411,8 @@ module Utilities =
 #endif
         httpClient
 
-    /// Gets the object file name for a given file path and SHA-256 hash.
-    /// We're putting the SHA-256 hash just before the file extension; this allows us to open these versions using default file associations.
-    ///
-    /// Example: "C:\Users\grace\Documents\demo.js" -> "demo_1234567890abcdef.js"
-    let getObjectFileName filePath sha256Hash =
-        // FileInfo.Extension includes the '.'.
-        let originalFile = FileInfo(filePath)
-        if not <| String.IsNullOrEmpty(originalFile.Extension) then
-            $"{originalFile.Name.Replace(originalFile.Extension, String.Empty)}_{sha256Hash}{originalFile.Extension}"
-        else
-            $"{originalFile.Name}_{sha256Hash}"
+    /// Returns the object file name for a given relative path, including the SHA-256 hash.
+    /// Example: foo.txt with a SHA-256 hash of "8e798...980c" -> "foo_8e798...980c.txt".
+    let getObjectFileName (relativePath: string) (sha256Hash: string) = 
+        let file = FileInfo(relativePath)
+        $"{file.Name.Replace(file.Extension, String.Empty)}_{sha256Hash}{file.Extension}"

@@ -46,7 +46,7 @@ module Load =
                 ValueTask(task {
                     let ownerId = Guid.NewGuid()
                     let ownerName = $"Owner{suffixes[i]}"
-                    let! r = Owner.Create(Owner.CreateParameters(OwnerId = $"{ownerId}", OwnerName = ownerName, CorrelationId = g()))
+                    let! r = Owner.Create(Owner.CreateOwnerParameters(OwnerId = $"{ownerId}", OwnerName = ownerName, CorrelationId = g()))
                     ownerIds.AddOrUpdate(i, ownerId, (fun _ _ -> ownerId)) |> ignore
                     showResult r
                 })
@@ -56,7 +56,7 @@ module Load =
                 ValueTask(task {
                     let organizationId = Guid.NewGuid()
                     let organizationName = $"Organization{suffixes[i]}"
-                    let! r = Organization.Create(Organization.CreateParameters(OwnerId = $"{ownerIds[i]}", OrganizationId = $"{organizationId}", OrganizationName = organizationName, CorrelationId = g()))
+                    let! r = Organization.Create(Organization.CreateOrganizationParameters(OwnerId = $"{ownerIds[i]}", OrganizationId = $"{organizationId}", OrganizationName = organizationName, CorrelationId = g()))
                     organizationIds.AddOrUpdate(i, organizationId, (fun _ _ -> organizationId)) |> ignore
                     showResult r
                 })
@@ -66,7 +66,7 @@ module Load =
                 ValueTask(task {
                     let repositoryId = Guid.NewGuid()
                     let repositoryName = $"Repository{suffixes[i]}"
-                    let! repo = Repository.Create(Repository.CreateParameters(OwnerId = $"{ownerIds[i]}", OrganizationId = $"{organizationIds[i]}", RepositoryId = $"{repositoryId}", RepositoryName = repositoryName, CorrelationId = g()))
+                    let! repo = Repository.Create(Repository.CreateRepositoryParameters(OwnerId = $"{ownerIds[i]}", OrganizationId = $"{organizationIds[i]}", RepositoryId = $"{repositoryId}", RepositoryName = repositoryName, CorrelationId = g()))
                     repositoryIds.AddOrUpdate(i, repositoryId, (fun _ _ -> repositoryId)) |> ignore
                     match repo with
                     | Ok r ->
@@ -80,7 +80,7 @@ module Load =
                 ValueTask(task {
                     let branchId = Guid.NewGuid()
                     let branchName = $"Branch{suffixes[i]}"
-                    let! r = Branch.Create(Branch.CreateParameters(OwnerId = $"{ownerIds[i]}", OrganizationId = $"{organizationIds[i]}", RepositoryId = $"{repositoryIds[i]}", BranchId = $"{branchId}", BranchName = branchName, ParentBranchId = $"{parentBranchIds[i]}", CorrelationId = g()))
+                    let! r = Branch.Create(Branch.CreateBranchParameters(OwnerId = $"{ownerIds[i]}", OrganizationId = $"{organizationIds[i]}", RepositoryId = $"{repositoryIds[i]}", BranchId = $"{branchId}", BranchName = branchName, ParentBranchId = $"{parentBranchIds[i]}", CorrelationId = g()))
                     showResult r
                     match r with
                     | Ok r ->
@@ -124,16 +124,16 @@ module Load =
                 ValueTask(task {
                     let (ownerId, organizationId, repositoryId, branchId) = ids[i]
 
-                    let! r = Branch.Delete(Branch.DeleteParameters(OwnerId = $"{ownerId}", OrganizationId = $"{organizationId}", RepositoryId = $"{repositoryId}", BranchId = $"{branchId}", CorrelationId = g()))
+                    let! r = Branch.Delete(Branch.DeleteBranchParameters(OwnerId = $"{ownerId}", OrganizationId = $"{organizationId}", RepositoryId = $"{repositoryId}", BranchId = $"{branchId}", CorrelationId = g()))
                     showResult r
 
-                    let! result = Repository.Delete(Repository.DeleteParameters(OwnerId = $"{ownerId}", OrganizationId = $"{organizationId}", RepositoryId = $"{repositoryId}", DeleteReason = "performance test", CorrelationId = g()))
+                    let! result = Repository.Delete(Repository.DeleteRepositoryParameters(OwnerId = $"{ownerId}", OrganizationId = $"{organizationId}", RepositoryId = $"{repositoryId}", DeleteReason = "performance test", CorrelationId = g()))
                     showResult result
 
-                    let! r = Organization.Delete(Organization.DeleteParameters(OwnerId = $"{ownerId}", OrganizationId = $"{organizationId}", DeleteReason = "performance test", CorrelationId = g()))
+                    let! r = Organization.Delete(Organization.DeleteOrganizationParameters(OwnerId = $"{ownerId}", OrganizationId = $"{organizationId}", DeleteReason = "performance test", CorrelationId = g()))
                     showResult r
 
-                    let! r = Owner.Delete(Owner.DeleteParameters(OwnerId = $"{ownerId}", DeleteReason = "performance test", CorrelationId = g()))
+                    let! r = Owner.Delete(Owner.DeleteOwnerParameters(OwnerId = $"{ownerId}", DeleteReason = "performance test", CorrelationId = g()))
                     showResult r
                 })
             ))

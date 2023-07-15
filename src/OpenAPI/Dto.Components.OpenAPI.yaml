@@ -1,0 +1,205 @@
+    BranchDto:
+      description: (automatically generated)
+      type: object
+      properties:
+        Class:
+          type: string
+        BranchId:
+          $ref: Shared.Components.OpenAPI.yaml#/components/schemas/BranchId
+        BranchName:
+          $ref: Shared.Components.OpenAPI.yaml#/components/schemas/BranchName
+        ParentBranchId:
+          $ref: Shared.Components.OpenAPI.yaml#/components/schemas/BranchId
+        BasedOn:
+          $ref: Shared.Components.OpenAPI.yaml#/components/schemas/ReferenceId
+        RepositoryId:
+          $ref: Shared.Components.OpenAPI.yaml#/components/schemas/RepositoryId
+        UserId:
+          $ref: Shared.Components.OpenAPI.yaml#/components/schemas/UserId
+        PromotionEnabled:
+          type: boolean
+        CommitEnabled:
+          type: boolean
+        CheckpointEnabled:
+          type: boolean
+        SaveEnabled:
+          type: boolean
+        TagEnabled:
+          type: boolean
+        LatestPromotion:
+          $ref: Shared.Components.OpenAPI.yaml#/components/schemas/ReferenceId
+        LatestCommit:
+          $ref: Shared.Components.OpenAPI.yaml#/components/schemas/ReferenceId
+        LatestCheckpoint:
+          $ref: Shared.Components.OpenAPI.yaml#/components/schemas/ReferenceId
+        LatestSave:
+          $ref: Shared.Components.OpenAPI.yaml#/components/schemas/ReferenceId
+        CreatedAt:
+          $ref: Shared.Components.OpenAPI.yaml#/components/schemas/Instant
+        UpdatedAt:
+          type: object
+          properties:
+            value:
+              $ref: Shared.Components.OpenAPI.yaml#/components/schemas/Instant
+        DeletedAt:
+          type: object
+          properties:
+            value:
+              $ref: Shared.Components.OpenAPI.yaml#/components/schemas/Instant
+
+    DiffDto:
+      description: (automatically generated)
+      type: object
+      properties:
+        Class:
+          type: string
+        HasDifferences:
+          type: boolean
+        DirectoryId1:
+          $ref: Shared.Components.OpenAPI.yaml#/components/schemas/DirectoryId
+        Directory1CreatedAt:
+          $ref: Shared.Components.OpenAPI.yaml#/components/schemas/Instant
+        DirectoryId2:
+          $ref: Shared.Components.OpenAPI.yaml#/components/schemas/DirectoryId
+        Directory2CreatedAt:
+          $ref: Shared.Components.OpenAPI.yaml#/components/schemas/Instant
+        Differences:
+          type: array
+          items:
+            $ref: Shared.Components.OpenAPI.yaml#/components/schemas/FileSystemDifference
+        FileDiffs:
+          type: array
+          items:
+            $ref: Shared.Components.OpenAPI.yaml#/components/schemas/FileDiff
+
+    OrganizationDto:
+      description: (automatically generated)
+      type: object
+      properties:
+        Class:
+          type: string
+        OrganizationId:
+          $ref: Shared.Components.OpenAPI.yaml#/components/schemas/OrganizationId
+        OrganizationName:
+          $ref: Shared.Components.OpenAPI.yaml#/components/schemas/OrganizationName
+        OwnerId:
+          $ref: Shared.Components.OpenAPI.yaml#/components/schemas/OwnerId
+        OrganizationType:
+          $ref: Shared.Components.OpenAPI.yaml#/components/schemas/OrganizationType
+        Description:
+          type: string
+        SearchVisibility:
+          $ref: Shared.Components.OpenAPI.yaml#/components/schemas/SearchVisibility
+        Repositories:
+          type: object
+          additionalProperties:
+            $ref: Shared.Components.OpenAPI.yaml#/components/schemas/RepositoryName
+        CreatedAt:
+          $ref: Shared.Components.OpenAPI.yaml#/components/schemas/Instant
+        UpdatedAt:
+          type: object
+          properties:
+            value:
+              $ref: Shared.Components.OpenAPI.yaml#/components/schemas/Instant
+        DeletedAt:
+          type: object
+          properties:
+            value:
+              $ref: Shared.Components.OpenAPI.yaml#/components/schemas/Instant
+        DeleteReason:
+          type: string
+
+    OwnerDto:
+      description: (automatically generated)
+      type: object
+      properties:
+        Class:
+          type: string
+        OwnerId:
+          $ref: Shared.Components.OpenAPI.yaml#/components/schemas/OwnerId
+        OwnerName:
+          $ref: Shared.Components.OpenAPI.yaml#/components/schemas/OwnerName
+        OwnerType:
+          $ref: Shared.Components.OpenAPI.yaml#/components/schemas/OwnerType
+        Description:
+          type: string
+        SearchVisibility:
+          $ref: Shared.Components.OpenAPI.yaml#/components/schemas/SearchVisibility
+        Organizations:
+          type: object
+          additionalProperties:
+            $ref: Shared.Components.OpenAPI.yaml#/components/schemas/OrganizationName
+        CreatedAt:
+          $ref: Shared.Components.OpenAPI.yaml#/components/schemas/Instant
+        UpdatedAt:
+          type: object
+          properties:
+            value:
+              $ref: Shared.Components.OpenAPI.yaml#/components/schemas/Instant
+        DeletedAt:
+          type: object
+          properties:
+            value:
+              $ref: Shared.Components.OpenAPI.yaml#/components/schemas/Instant
+        DeleteReason:
+          type: string
+
+    ReferenceDto:
+      description: (automatically generated)
+      type: object
+      properties:
+        Class:
+          type: string
+        ReferenceId:
+          $ref: Shared.Components.OpenAPI.yaml#/components/schemas/ReferenceId
+        BranchId:
+          $ref: Shared.Components.OpenAPI.yaml#/components/schemas/BranchId
+        DirectoryId:
+          $ref: Shared.Components.OpenAPI.yaml#/components/schemas/DirectoryId
+        Sha256Hash:
+          $ref: Shared.Components.OpenAPI.yaml#/components/schemas/Sha256Hash
+        ReferenceType:
+          $ref: Shared.Components.OpenAPI.yaml#/components/schemas/ReferenceType
+        ReferenceText:
+          $ref: Shared.Components.OpenAPI.yaml#/components/schemas/ReferenceText
+        CreatedAt:
+          $ref: Shared.Components.OpenAPI.yaml#/components/schemas/Instant
+
+    RepositoryDto:
+      description: (automatically generated)
+      type: object
+      properties:
+        Class:
+          type: string
+        RepositoryId:
+          $ref: Shared.Components.OpenAPI.yaml#/components/schemas/RepositoryId
+        OwnerId:
+          $ref: Shared.Components.OpenAPI.yaml#/components/schemas/OwnerId
+        OrganizationId:
+          $ref: Shared.Components.OpenAPI.yaml#/components/schemas/OrganizationId
+        RepositoryName:
+          $ref: Shared.Components.OpenAPI.yaml#/components/schemas/RepositoryName
+        ObjectStorageProvider:
+          $ref: Shared.Components.OpenAPI.yaml#/components/schemas/ObjectStorageProvider
+        StorageAccountName:
+          type: string
+        StorageContainerName:
+          $ref: Shared.Components.OpenAPI.yaml#/components/schemas/StorageContainerName
+        RepositoryVisibility:
+          $ref: Shared.Components.OpenAPI.yaml#/components/schemas/RepositoryVisibility
+        RepositoryStatus:
+          $ref: Shared.Components.OpenAPI.yaml#/components/schemas/RepositoryStatus
+        Branches:
+          type: array
+          items:
+            $ref: Shared.Components.OpenAPI.yaml#/components/schemas/BranchName
+        DefaultServerApiVersion:
+          type: string
+        DefaultBranchName:
+          $ref: Shared.Components.OpenAPI.yaml#/components/schemas/BranchName
+        SaveDays:
+          type: number
+          format: double
+        CheckpointDays:
+          type: number
+         

@@ -1,0 +1,659 @@
+  /branch/create:
+    post:
+      summary: Creates a new branch.
+      description: Creates a new branch with the specified name, based on the specified parent branch.
+      operationId: Create
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf: &ref_13
+                - allOf: &ref_0
+                    - type: object
+                      properties: &ref_10
+                        CorrelationId:
+                          type: string
+                          description: If you don't provide a CorrelationId, a Guid will be generated for you. (You're welcome.) CorrelationId's are just strings; feel free to send any kind of CorrelationId you prefer.
+                        Principal:
+                          type: string
+                    - type: object
+                      properties:
+                        BranchId:
+                          type: string
+                          format: uuid
+                          example: de7bf47d-23ae-4599-af68-68a317ea390d
+                        BranchName:
+                          type: string
+                          example: MyBranch
+                        OwnerId:
+                          type: string
+                          format: uuid
+                          example: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                        OwnerName:
+                          type: string
+                        OrganizationId:
+                          type: string
+                          format: uuid
+                          example: e35d64a9-b990-44f5-bf02-32ad7d15630c
+                        OrganizationName:
+                          type: string
+                        RepositoryId:
+                          type: string
+                          format: uuid
+                          example: ab6f35ef-6e01-440b-8f9b-c343a5272095
+                        RepositoryName:
+                          type: string
+                - type: object
+                  properties:
+                    ParentBranchId:
+                      type: string
+                      format: uuid
+                      example: de7bf47d-23ae-4599-af68-68a317ea390d
+                    ParentBranchName:
+                      type: string
+                      example: MyBranch
+      responses:
+        '200':
+          description: OK
+        '400':
+          description: Bad Request
+        '500':
+          description: Internal Server Error
+  /branch/rebase:
+    post:
+      summary: Rebases a branch on its parent branch.
+      description: Rebases a branch on its parent branch.
+      operationId: Rebase
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf: &ref_14
+                - allOf: *ref_0
+                - type: object
+                  properties:
+                    BasedOn:
+                      type: string
+                      format: uuid
+                      example: c8f9bac8-d489-46c7-917f-b36b7d9efa9a
+      responses:
+        '200':
+          description: OK
+        '400':
+          description: Bad Request
+        '500':
+          description: Internal Server Error
+  /branch/promote:
+    post:
+      summary: Creates a promotion reference in the parent of the specified branch, based on the most-recent commit.
+      description: Creates a promotion reference in the parent of the specified branch, based on the most-recent commit.
+      operationId: Promote
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf: &ref_1
+                - allOf: *ref_0
+                - type: object
+                  properties:
+                    DirectoryId:
+                      type: string
+                      format: uuid
+                      example: 33a4e36b-828f-4fae-9343-50b6560dc842
+                    Sha256Hash:
+                      type: string
+                      example: 805331A98813206270E35564769E8BB59EEA02AEB7B27C7D6C63E625E1857243
+                    Message:
+                      type: string
+      responses:
+        '200':
+          description: OK
+        '400':
+          description: Bad Request
+        '500':
+          description: Internal Server Error
+  /branch/commit:
+    post:
+      summary: Creates a commit reference pointing to the current root directory version in the branch.
+      description: Creates a commit reference pointing to the current root directory version in the branch.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              allOf: *ref_1
+      responses:
+        '200':
+          description: Success
+        '400':
+          description: Bad Request
+        '500':
+          description: Server Error
+  /branch/checkpoint:
+    post:
+      summary: Creates a checkpoint reference pointing to the current root directory version in the branch.
+      description: Creates a checkpoint reference pointing to the current root directory version in the branch.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              allOf: *ref_1
+      responses:
+        '200':
+          description: Success
+        '400':
+          description: Bad Request
+        '500':
+          description: Server Error
+  /branch/save:
+    post:
+      summary: Creates a save reference pointing to the current root directory version in the branch.
+      description: Creates a save reference pointing to the current root directory version in the branch.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              allOf: *ref_1
+      responses:
+        '200':
+          description: Success
+        '400':
+          description: Bad Request
+        '500':
+          description: Server Error
+  /branch/tag:
+    post:
+      summary: Creates a tag reference pointing to the current root directory version in the branch.
+      description: Creates a tag reference pointing to the current root directory version in the branch.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              allOf: *ref_1
+      responses:
+        '200':
+          description: Success
+        '400':
+          description: Bad Request
+        '500':
+          description: Server Error
+  /branch/enablePromotion:
+    post:
+      summary: Enables or disables promotion for the specified branch.
+      description: Enables or disables promotion for the specified branch.
+      operationId: EnablePromotion
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf: &ref_2
+                - allOf: *ref_0
+                - type: object
+                  properties:
+                    Enabled:
+                      type: boolean
+      responses:
+        '200':
+          description: OK
+        '400':
+          description: Bad Request
+        '500':
+          description: Internal Server Error
+  /branch/enableCommit:
+    post:
+      summary: Enables or disables commit for the specified branch.
+      description: Enables or disables commit for the specified branch.
+      operationId: EnableCommit
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf: *ref_2
+      responses:
+        '200':
+          description: OK
+        '400':
+          description: Bad Request
+        '500':
+          description: Internal Server Error
+  /branch/enableCheckpoint:
+    post:
+      summary: Enables or disables checkpoint for the specified branch.
+      description: Enables or disables checkpoint for the specified branch.
+      operationId: EnableCheckpoint
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf: *ref_2
+      responses:
+        '200':
+          description: OK
+        '400':
+          description: Bad Request
+        '500':
+          description: Internal Server Error
+  /branch/enableSave:
+    post:
+      summary: Enables or disables save for the specified branch.
+      description: Enables or disables save for the specified branch.
+      operationId: EnableSave
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf: *ref_2
+      responses:
+        '200':
+          description: OK
+        '400':
+          description: Bad Request
+        '500':
+          description: Internal Server Error
+  /branch/enableTag:
+    post:
+      summary: Enables or disables tag for the specified branch.
+      description: Enables or disables tag for the specified branch.
+      operationId: EnableTag
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf: *ref_2
+      responses:
+        '200':
+          description: OK
+        '400':
+          description: Bad Request
+        '500':
+          description: Internal Server Error
+  /branch/delete:
+    post:
+      summary: Deletes the specified branch.
+      description: Deletes the specified branch.
+      operationId: Delete
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf: &ref_15
+                - allOf: *ref_0
+      responses:
+        '200':
+          description: OK
+        '400':
+          description: Bad Request
+        '500':
+          description: Internal Server Error
+  /branch/get:
+    post:
+      summary: Gets the specified branch.
+      description: Gets the specified branch.
+      operationId: Get
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf: &ref_3
+                - allOf: *ref_0
+                - type: object
+                  properties:
+                    Sha256Hash:
+                      type: string
+                      example: 805331A98813206270E35564769E8BB59EEA02AEB7B27C7D6C63E625E1857243
+                    ReferenceId:
+                      type: string
+                      format: uuid
+                      example: c8f9bac8-d489-46c7-917f-b36b7d9efa9a
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: &ref_4
+                  Class:
+                    type: string
+                    example: BranchDto
+                  BranchId:
+                    type: string
+                    format: uuid
+                    example: de7bf47d-23ae-4599-af68-68a317ea390d
+                  BranchName:
+                    type: string
+                    example: MyBranch
+                  ParentBranchId:
+                    type: string
+                    format: uuid
+                    example: de7bf47d-23ae-4599-af68-68a317ea390d
+                  BasedOn:
+                    type: string
+                    format: uuid
+                    example: c8f9bac8-d489-46c7-917f-b36b7d9efa9a
+                  RepositoryId:
+                    type: string
+                    format: uuid
+                    example: ab6f35ef-6e01-440b-8f9b-c343a5272095
+                  UserId:
+                    type: string
+                  PromotionEnabled:
+                    type: boolean
+                  CommitEnabled:
+                    type: boolean
+                  CheckpointEnabled:
+                    type: boolean
+                  SaveEnabled:
+                    type: boolean
+                  TagEnabled:
+                    type: boolean
+                  LatestPromotion:
+                    type: string
+                    format: uuid
+                    example: c8f9bac8-d489-46c7-917f-b36b7d9efa9a
+                  LatestCommit:
+                    type: string
+                    format: uuid
+                    example: c8f9bac8-d489-46c7-917f-b36b7d9efa9a
+                  LatestCheckpoint:
+                    type: string
+                    format: uuid
+                    example: c8f9bac8-d489-46c7-917f-b36b7d9efa9a
+                  LatestSave:
+                    type: string
+                    format: uuid
+                    example: c8f9bac8-d489-46c7-917f-b36b7d9efa9a
+                  CreatedAt:
+                    type: string
+                    format: date-time
+                  UpdatedAt:
+                    type: string
+                    format: date-time
+                    nullable: true
+                  DeletedAt:
+                    type: string
+                    format: date-time
+                    nullable: true
+                required: &ref_5
+                  - Class
+                  - BranchId
+                  - BranchName
+                  - ParentBranchId
+                  - BasedOn
+                  - RepositoryId
+                  - UserId
+                  - PromotionEnabled
+                  - CommitEnabled
+                  - CheckpointEnabled
+                  - SaveEnabled
+                  - TagEnabled
+                  - LatestPromotion
+                  - LatestCommit
+                  - LatestCheckpoint
+                  - LatestSave
+                  - CreatedAt
+        '400':
+          description: Bad Request
+        '500':
+          description: Internal Server Error
+  /branch/getParentBranch:
+    post:
+      summary: Gets the parent branch of the specified branch.
+      description: Gets the parent branch of the specified branch.
+      operationId: GetParentBranch
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf: *ref_3
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: *ref_4
+                required: *ref_5
+        '400':
+          description: Bad Request
+        '500':
+          description: Internal Server Error
+  /branch/getReference:
+    post:
+      summary: Gets the specified reference.
+      description: Gets the specified reference.
+      operationId: GetReference
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf: &ref_17
+                - allOf: *ref_3
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: &ref_6
+                  Class:
+                    type: string
+                    example: ReferenceDto
+                  ReferenceId:
+                    type: string
+                    format: uuid
+                    example: c8f9bac8-d489-46c7-917f-b36b7d9efa9a
+                  BranchId:
+                    type: string
+                    format: uuid
+                    example: de7bf47d-23ae-4599-af68-68a317ea390d
+                  DirectoryId:
+                    type: string
+                    format: uuid
+                    example: 33a4e36b-828f-4fae-9343-50b6560dc842
+                  Sha256Hash:
+                    type: string
+                    example: 805331A98813206270E35564769E8BB59EEA02AEB7B27C7D6C63E625E1857243
+                  ReferenceType:
+                    type: string
+                    enum: &ref_9
+                      - Promotion
+                      - Commit
+                      - Checkpoint
+                      - Save
+                      - Tag
+                    example: Commit
+                  ReferenceText:
+                    type: string
+                  CreatedAt:
+                    type: string
+                    format: date-time
+                required: &ref_7
+                  - Class
+                  - ReferenceId
+                  - BranchId
+                  - DirectoryId
+                  - Sha256Hash
+                  - ReferenceType
+                  - ReferenceText
+                  - CreatedAt
+        '400':
+          description: Bad Request
+        '500':
+          description: Internal Server Error
+  /branch/getReferences:
+    post:
+      summary: Gets the references for the specified branch.
+      description: Gets the references for the specified branch.
+      operationId: GetReferences
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf: &ref_8
+                - allOf: *ref_0
+                - type: object
+                  properties:
+                    FullSha:
+                      type: boolean
+                    MaxCount:
+                      type: integer
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties: *ref_6
+                  required: *ref_7
+        '400':
+          description: Bad Request
+        '500':
+          description: Internal Server Error
+  /branch/getPromotions:
+    post:
+      summary: Gets the promotions for the specified branch.
+      description: Gets the promotions for the specified branch.
+      operationId: GetPromotions
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf: *ref_8
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties: *ref_6
+                  required: *ref_7
+        '400':
+          description: Bad Request
+        '500':
+          description: Internal Server Error
+  /branch/getCommits:
+    post:
+      summary: Gets the commits for the specified branch.
+      description: Gets the commits for the specified branch.
+      operationId: GetCommits
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf: *ref_8
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties: *ref_6
+                  required: *ref_7
+        '400':
+          description: Bad Request
+        '500':
+          description: Internal Server Error
+  /branch/getCheckpoints:
+    post:
+      summary: Gets the checkpoints for the specified branch.
+      description: Gets the checkpoints for the specified branch.
+      operationId: GetCheckpoints
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf: *ref_8
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties: *ref_6
+                  required: *ref_7
+        '400':
+          description: Bad Request
+        '500':
+          description: Internal Server Error
+  /branch/getSaves:
+    post:
+      summary: Gets the saves for the specified branch.
+      description: Gets the saves for the specified branch.
+      operationId: GetSaves
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf: *ref_8
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties: *ref_6
+                  required: *ref_7
+        '400':
+          description: Bad Request
+        '500':
+          description: Internal Server Error
+  /branch/getTags:
+    post:
+      summary: Gets the tags for the specified branch.
+      description: Gets the tags for the specified branch.
+      operationId: GetTags
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf: *ref_8
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties: *ref_6
+                  required: *ref_7
+        '400':
+          description: Bad Request
+        '500':
+          description: Internal Server Error

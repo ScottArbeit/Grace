@@ -28,8 +28,7 @@ module Owner =
         member val public OwnerName: string = String.Empty with get, set
 
     module private Options =
-        let ownerId = new Option<String>("--ownerId", IsRequired = false, Description = "The Id of the owner <Guid>.", Arity = ArgumentArity.ExactlyOne)
-        ownerId.SetDefaultValue($"{Current().OwnerId}")
+        let ownerId = new Option<String>("--ownerId", IsRequired = false, Description = "The Id of the owner <Guid>.", Arity = ArgumentArity.ExactlyOne, getDefaultValue = (fun _ -> $"{Current().OwnerId}"))
         let ownerName = new Option<String>("--ownerName", IsRequired = false, Description = "The name of the owner. [default: current owner]", Arity = ArgumentArity.ExactlyOne)
         let ownerNameRequired = new Option<String>("--ownerName", IsRequired = true, Description = "The name of the owner.", Arity = ArgumentArity.ExactlyOne)
         let ownerTypeRequired = (new Option<String>("--ownerType", IsRequired = true, Description = "The type of owner. [default: Public]", Arity = ArgumentArity.ExactlyOne))
@@ -87,7 +86,7 @@ module Owner =
                 match validateIncomingParameters with
                 | Ok _ -> 
                     let ownerId = if parseResult.FindResultFor(Options.ownerId).IsImplicit then Guid.NewGuid().ToString() else createParameters.OwnerId
-                    let parameters = Parameters.Owner.CreateParameters(OwnerId = ownerId, OwnerName = createParameters.OwnerName, CorrelationId = createParameters.CorrelationId)
+                    let parameters = Parameters.Owner.CreateOwnerParameters(OwnerId = ownerId, OwnerName = createParameters.OwnerName, CorrelationId = createParameters.CorrelationId)
                     if parseResult |> showOutput then
                         return! progress.Columns(progressColumns)
                                 .StartAsync(fun progressContext ->
@@ -129,7 +128,7 @@ module Owner =
                 let validateIncomingParameters = CommonValidations (parseResult, setNameParameters)
                 match validateIncomingParameters with
                 | Ok _ -> 
-                    let parameters = Parameters.Owner.SetNameParameters(OwnerId = setNameParameters.OwnerId, OwnerName = setNameParameters.OwnerName, NewName= setNameParameters.NewName, CorrelationId = setNameParameters.CorrelationId)
+                    let parameters = Parameters.Owner.SetOwnerNameParameters(OwnerId = setNameParameters.OwnerId, OwnerName = setNameParameters.OwnerName, NewName= setNameParameters.NewName, CorrelationId = setNameParameters.CorrelationId)
                     if parseResult |> showOutput then
                         return! progress.Columns(progressColumns)
                                 .StartAsync(fun progressContext ->
@@ -162,7 +161,7 @@ module Owner =
                 let validateIncomingParameters = CommonValidations (parseResult, setTypeParameters)
                 match validateIncomingParameters with
                 | Ok _ -> 
-                    let parameters = Parameters.Owner.SetTypeParameters(OwnerId = setTypeParameters.OwnerId, OwnerName = setTypeParameters.OwnerName, OwnerType = setTypeParameters.OwnerType, CorrelationId = setTypeParameters.CorrelationId)
+                    let parameters = Parameters.Owner.SetOwnerTypeParameters(OwnerId = setTypeParameters.OwnerId, OwnerName = setTypeParameters.OwnerName, OwnerType = setTypeParameters.OwnerType, CorrelationId = setTypeParameters.CorrelationId)
                     if parseResult |> showOutput then
                         return! progress.Columns(progressColumns)
                                 .StartAsync(fun progressContext ->
@@ -195,7 +194,7 @@ module Owner =
                 let validateIncomingParameters = CommonValidations (parseResult, setSearchVisibilityParameters)
                 match validateIncomingParameters with
                 | Ok _ -> 
-                    let parameters = Parameters.Owner.SetSearchVisibilityParameters(OwnerId = setSearchVisibilityParameters.OwnerId, OwnerName = setSearchVisibilityParameters.OwnerName, SearchVisibility = setSearchVisibilityParameters.SearchVisibility, CorrelationId = setSearchVisibilityParameters.CorrelationId)
+                    let parameters = Parameters.Owner.SetOwnerSearchVisibilityParameters(OwnerId = setSearchVisibilityParameters.OwnerId, OwnerName = setSearchVisibilityParameters.OwnerName, SearchVisibility = setSearchVisibilityParameters.SearchVisibility, CorrelationId = setSearchVisibilityParameters.CorrelationId)
                     if parseResult |> showOutput then
                         return! progress.Columns(progressColumns)
                                 .StartAsync(fun progressContext ->
@@ -228,7 +227,7 @@ module Owner =
                     let validateIncomingParameters = CommonValidations (parseResult, setDescriptionParameters)
                     match validateIncomingParameters with
                     | Ok _ -> 
-                        let parameters = Parameters.Owner.SetDescriptionParameters(OwnerId = setDescriptionParameters.OwnerId, OwnerName = setDescriptionParameters.OwnerName, Description = setDescriptionParameters.Description, CorrelationId = setDescriptionParameters.CorrelationId)
+                        let parameters = Parameters.Owner.SetOwnerDescriptionParameters(OwnerId = setDescriptionParameters.OwnerId, OwnerName = setDescriptionParameters.OwnerName, Description = setDescriptionParameters.Description, CorrelationId = setDescriptionParameters.CorrelationId)
                         if parseResult |> showOutput then
                             return! progress.Columns(progressColumns)
                                     .StartAsync(fun progressContext ->
@@ -262,7 +261,7 @@ module Owner =
                 let validateIncomingParameters = CommonValidations (parseResult, deleteParameters)
                 match validateIncomingParameters with
                 | Ok _ -> 
-                    let parameters = Parameters.Owner.DeleteParameters(OwnerId = deleteParameters.OwnerId, OwnerName = deleteParameters.OwnerName, Force = deleteParameters.Force, DeleteReason = deleteParameters.DeleteReason, CorrelationId = deleteParameters.CorrelationId)
+                    let parameters = Parameters.Owner.DeleteOwnerParameters(OwnerId = deleteParameters.OwnerId, OwnerName = deleteParameters.OwnerName, Force = deleteParameters.Force, DeleteReason = deleteParameters.DeleteReason, CorrelationId = deleteParameters.CorrelationId)
                     if parseResult |> showOutput then
                         return! progress.Columns(progressColumns)
                                 .StartAsync(fun progressContext ->
@@ -294,7 +293,7 @@ module Owner =
                 let validateIncomingParameters = CommonValidations (parseResult, undeleteParameters)
                 match validateIncomingParameters with
                 | Ok _ -> 
-                    let parameters = Parameters.Owner.UndeleteParameters(OwnerId = undeleteParameters.OwnerId, OwnerName = undeleteParameters.OwnerName, CorrelationId = undeleteParameters.CorrelationId)
+                    let parameters = Parameters.Owner.UndeleteOwnerParameters(OwnerId = undeleteParameters.OwnerId, OwnerName = undeleteParameters.OwnerName, CorrelationId = undeleteParameters.CorrelationId)
                     if parseResult |> showOutput then
                         return! progress.Columns(progressColumns)
                                 .StartAsync(fun progressContext ->

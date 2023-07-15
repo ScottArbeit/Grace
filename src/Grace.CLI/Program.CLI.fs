@@ -63,6 +63,9 @@ module GraceCommand =
         aliases.Add("tags", ["branch"; "get-tags"])
         //aliases.Add("", [""; ""])
         aliases
+
+    /// The character sequences that Grace will recognize as a request for help.
+    let helpOptions = [| "-h"; "/h"; "--help"; "-?"; "/?" |]
         
     let Build =
         // Create the root of the command tree.
@@ -83,6 +86,7 @@ module GraceCommand =
         rootCommand.AddCommand(Repository.Build)
         rootCommand.AddCommand(Organization.Build)
         rootCommand.AddCommand(Owner.Build)
+        rootCommand.AddCommand(Config.Build)
         rootCommand.AddCommand(Maintenance.Build)
 
         /// The feedback section is printed at the end of any CLI request for help.
@@ -106,18 +110,11 @@ module GraceCommand =
         // Build the whole thing into a command system.        
         let commandLineBuilder = CommandLineBuilder(rootCommand)
         commandLineBuilder
-            .UseDefaults()
-            .RegisterWithDotnetSuggest()
-            .AddMiddleware(aliasHandler, MiddlewareOrder.ExceptionHandler)
-            .UseParseErrorReporting()
             .UseHelp(fun helpContext ->
                 // This is where we configure how help is displayed by Grace.
 
-                // These are the character sequences that Grace will recognize as a request for help.
-                let helpOptions = [| "-h"; "/h"; "--help"; "-?"; "/?" |]
-
                 // This checks to see if help was requested at the parent `grace` level, or if no commands or parameters were specified.
-                // If so, we'll show the Figlet text and top-level commands and options, and skip the 
+                // If so, we'll show the Figlet text and top-level commands and options.
                 if helpContext.ParseResult.Tokens.Count = 0 || 
                         (helpContext.ParseResult.Tokens.Count = 1 && helpOptions.Contains(helpContext.ParseResult.Tokens[0].Value)) then
                     let graceFiglet = FigletText("Grace Version Control System")
@@ -170,16 +167,27 @@ module GraceCommand =
                     HelpBuilder.Default.GetLayout().Append(feedbackSection)
                 )
             )
+            .UseDefaults()
+            .RegisterWithDotnetSuggest()
+            .AddMiddleware(aliasHandler, MiddlewareOrder.ExceptionHandler)
+            .UseParseErrorReporting()
             .Build()
 
-    let isGraceWatch(parseResult: ParseResult) =
+    let isGraceWatch (parseResult: ParseResult) =
         if (parseResult.CommandResult.Command.Name = "watch") then true else false
+
+    let isGraceConfig (parseResult: ParseResult) =
+        if not <| isNull parseResult.CommandResult.Parent then
+            if (parseResult.CommandResult.Parent.Symbol.Name = "config") then true else false
+        else
+            false
 
     [<EntryPoint>]
     let main args =
         let startTime = getCurrentInstant()
         (task {
             let mutable parseResult: ParseResult = null
+            let mutable returnValue: int = 0
             try
                 try
                     //use logListener = new TextWriterTraceListener(Path.Combine(Current().ConfigurationDirectory, "grace.log"))
@@ -190,43 +198,58 @@ module GraceCommand =
                     //Constants.JsonSerializerOptions.Converters.Add(BranchDtoConverter())
                     //logToAnsiConsole Colors.Important $"Was {n}, now {Constants.JsonSerializerOptions.Converters.Count}."
 
-                    parseResult <- command.Parse(args)
-                    if parseResult |> showOutput then
-                        if parseResult |> verbose then
-                            AnsiConsole.Write((new Rule($"[{Colors.Important}]Started: {startTime.ToString(InstantPattern.ExtendedIso.PatternText, CultureInfo.InvariantCulture)}.[/]")).RightJustified())
+                    if configurationFileExists() then
+                        parseResult <- command.Parse(args)
+                        if parseResult |> showOutput then
+                            if parseResult |> verbose then
+                                AnsiConsole.Write((new Rule($"[{Colors.Important}]Started: {startTime.ToString(InstantPattern.ExtendedIso.PatternText, CultureInfo.InvariantCulture)}.[/]")).RightJustified())
+                            else
+                                AnsiConsole.Write(new Rule())
+
+                        if not <| (parseResult |> isGraceWatch) then
+                            let! graceWatchStatus = getGraceWatchStatus()
+                            match graceWatchStatus with
+                            | Some status ->
+                                //logToAnsiConsole Colors.Verbose $"Opened IPC file."
+                                Configuration.updateConfiguration {GraceWatchStatus = status}
+                            | None ->
+                                    //logToAnsiConsole Colors.Verbose $"Couldn't open IPC file."
+                                    ()
+
+                        logToConsole (parseResult |> isGraceConfig)
+                        let! returnValue = command.InvokeAsync(args)
+                        ()
+
+                        // We'll tell the user now, before the Rule(), but we actually delete the inter-process communication file in the finally clause.
+                        if parseResult |> isGraceWatch then
+                            logToAnsiConsole Colors.Important $"Inter-process communication file deleted."
+
+                        if parseResult |> showOutput then
+                            let finishTime = getCurrentInstant()
+                            let elapsed = finishTime - startTime
+                            if parseResult |> verbose then
+                                AnsiConsole.Write((new Rule($"[{Colors.Important}]Elapsed: {elapsed.TotalSeconds:F3}s. Exit code: {returnValue}. Finished: {finishTime.ToString(InstantPattern.ExtendedIso.PatternText, CultureInfo.InvariantCulture)}[/]")).RightJustified())
+                            else
+                                AnsiConsole.Write((new Rule($"[{Colors.Important}]Elapsed: {elapsed.TotalSeconds:F3}s. Exit code: {returnValue}.[/]")).RightJustified())
+
+                            AnsiConsole.WriteLine()
+                    else
+                        AnsiConsole.Write(new Rule())
+
+                        if args.Any(fun arg -> arg = "config") then
+                            let! returnValue = command.InvokeAsync(args)
+                            ()
                         else
-                            AnsiConsole.Write(new Rule())
-
-                    if not <| (parseResult |> isGraceWatch) then
-                        let! graceWatchStatus = getGraceWatchStatus()
-                        match graceWatchStatus with
-                        | Some status ->
-                            //logToAnsiConsole Colors.Verbose $"Opened IPC file."
-                            Configuration.updateConfiguration {GraceWatchStatus = status}
-                        | None ->
-                                //logToAnsiConsole Colors.Verbose $"Couldn't open IPC file."
-
-                                ()
-
-                    let! returnValue = command.InvokeAsync(args)
-
-                    // We'll tell the user now, before the Rule(), but we actually delete the inter-process communication file in the finally clause.
-                    if parseResult |> isGraceWatch then
-                        logToAnsiConsole Colors.Important $"Inter-process communication file deleted."
-
-                    if parseResult |> showOutput then
+                            printfn $"No {Constants.GraceConfigFileName} file found along current path. Please run `grace config write` to create one."
+                        printParseResult parseResult
                         let finishTime = getCurrentInstant()
                         let elapsed = finishTime - startTime
-                        if parseResult |> verbose then
-                            AnsiConsole.Write((new Rule($"[{Colors.Important}]Elapsed: {elapsed.TotalSeconds:F3}s. Exit code: {returnValue}. Finished: {finishTime.ToString(InstantPattern.ExtendedIso.PatternText, CultureInfo.InvariantCulture)}[/]")).RightJustified())
-                        else
-                            AnsiConsole.Write((new Rule($"[{Colors.Important}]Elapsed: {elapsed.TotalSeconds:F3}s. Exit code: {returnValue}.[/]")).RightJustified())
-
-                        AnsiConsole.WriteLine()
+                        AnsiConsole.Write((new Rule($"[{Colors.Important}]Elapsed: {elapsed.TotalSeconds:F3}s. Exit code: {returnValue}.[/]")).RightJustified())
 
                     return returnValue
                 with ex ->
-                    logToAnsiConsole Colors.Error $"{ex.Message}."
+                    logToAnsiConsole Colors.Error $"ex.Message: {ex.Message}"
+                    logToAnsiConsole Colors.Error $"{ex.StackTrace}"
                     return -1
             finally
                 // If this was grace watch, delete the inter-process communication file.

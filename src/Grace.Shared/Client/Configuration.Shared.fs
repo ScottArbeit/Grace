@@ -91,7 +91,7 @@ module Configuration =
             
     let mutable private graceConfiguration = GraceConfiguration()
 
-    let private saveConfigFile graceConfigurationFilePath (graceConfiguration: GraceConfiguration) =
+    let saveConfigFile graceConfigurationFilePath (graceConfiguration: GraceConfiguration) =
         try
             let json = serialize graceConfiguration
             File.WriteAllText(graceConfigurationFilePath, json)
@@ -119,26 +119,32 @@ module Configuration =
                     currentDirectory <- currentDirectory.Parent
             
             if not (String.IsNullOrEmpty(graceConfigPath)) then 
-                Result.Ok graceConfigPath
+                Ok graceConfigPath
             else
                 //let graceConfigPath = Path.Combine(Environment.CurrentDirectory, Constants.GraceConfigDirectory, Constants.GraceConfigFileName)
                 //Directory.CreateDirectory(FileInfo(graceConfigPath).DirectoryName) |> ignore
                 //saveDefaultConfig graceConfigPath
                 //Result.Ok graceConfigPath
-                Result.Error $"No {Constants.GraceConfigFileName} file found along current path."
+                Error $"No {Constants.GraceConfigFileName} file found along current path. Please run `grace config write` to create one."
+
         with
         | :? System.IO.IOException as ex ->
-            Result.Error $"Exception while parsing directory paths: {ex.Message}"
+            Error $"Exception while parsing directory paths: {ex.Message}"
         | ex ->
-            Result.Error $"Exception: {ex.Message}"
+            Error $"Exception: {ex.Message}"
+
+    let configurationFileExists() =
+        match findGraceConfigurationFile with
+        | Ok _ -> true
+        | Error _ -> false
 
     let private parseConfigurationFile graceConfigurationFilePath =
         try
             let configurationContents = File.ReadAllText(graceConfigurationFilePath)
             let graceConfiguration = JsonSerializer.Deserialize<GraceConfiguration>(configurationContents, Constants.JsonSerializerOptions)
-            Result.Ok graceConfiguration
+            Ok graceConfiguration
         with ex -> 
-            Result.Error $"Exception: {ex.Message}{Environment.NewLine}Stack trace: {ex.StackTrace}"
+            Error $"Exception: {ex.Message}{Environment.NewLine}Stack trace: {ex.StackTrace}"
 
     let private getGraceIgnoreEntries graceIgnorePath =
         if File.Exists(graceIgnorePath) then
@@ -160,37 +166,42 @@ module Configuration =
             graceConfiguration
         else
             match findGraceConfigurationFile with
-                | Ok graceConfigurationFilePath ->
+            | Ok graceConfigurationFilePath ->
 #if DEBUG
-                    if writeNewConfiguration then GraceConfiguration() |> saveConfigFile graceConfigurationFilePath
+                if writeNewConfiguration then GraceConfiguration() |> saveConfigFile graceConfigurationFilePath
 #endif
-                    let graceConfigurationDirectory = Path.GetDirectoryName(graceConfigurationFilePath)
-                    match (parseConfigurationFile graceConfigurationFilePath) with
-                        | Ok graceConfigurationFromFile ->
-                            let graceIgnoreFullPath = (Path.Combine(graceConfigurationDirectory, Constants.GraceIgnoreFileName))
-                            let graceIgnoreEntries = getGraceIgnoreEntries graceIgnoreFullPath
+                let graceConfigurationDirectory = Path.GetDirectoryName(graceConfigurationFilePath)
+                match (parseConfigurationFile graceConfigurationFilePath) with
+                | Ok graceConfigurationFromFile ->
+                    let graceIgnoreFullPath = (Path.Combine(graceConfigurationDirectory, Constants.GraceIgnoreFileName))
+                    let graceIgnoreEntries = getGraceIgnoreEntries graceIgnoreFullPath
                             
-                            graceConfiguration <- graceConfigurationFromFile
-                            graceConfiguration.RootDirectory <- Path.GetFullPath(Path.Combine(graceConfigurationDirectory, ".."))
-                            graceConfiguration.GraceDirectory <- Path.GetFullPath(graceConfigurationDirectory)
-                            graceConfiguration.ObjectDirectory <- Path.GetFullPath(Path.Combine(graceConfigurationDirectory, Constants.GraceObjectsDirectory))
-                            graceConfiguration.GraceObjectCacheFile <- Path.Combine(graceConfiguration.ObjectDirectory, Constants.GraceObjectCacheFile)
-                            graceConfiguration.GraceStatusFile <- Path.Combine(graceConfiguration.GraceDirectory, Constants.GraceStatusFileName)
-                            graceConfiguration.DirectoryVersionCache <- Path.GetFullPath(Path.Combine(graceConfigurationDirectory, Constants.GraceDirectoryVersionCacheName))
-                            graceConfiguration.ConfigurationDirectory <- FileInfo(graceConfigurationFilePath).DirectoryName
-                            graceConfiguration.ActivitySource <- new ActivitySource("Grace", "0.1")
-                            graceConfiguration.GraceIgnoreEntries <- graceIgnoreEntries
-                            graceConfiguration.GraceFileIgnoreEntries <- graceIgnoreEntries |> Array.where(fun graceIgnoreLine -> not <| pathContainsSeparator graceIgnoreLine)
-                            graceConfiguration.GraceDirectoryIgnoreEntries <- graceIgnoreEntries |> Array.where(fun graceIgnoreLine -> pathContainsSeparator graceIgnoreLine)
-                            //graceConfiguration.Aliases <- aliases
-                            graceConfiguration.IsPopulated <- true
-                            graceConfiguration
-                        | Result.Error errorMessage ->
-                            printfn $"{errorMessage}"
-                            exit Results.InvalidConfigurationFile
+                    graceConfiguration <- graceConfigurationFromFile
+                    graceConfiguration.RootDirectory <- Path.GetFullPath(Path.Combine(graceConfigurationDirectory, ".."))
+                    graceConfiguration.GraceDirectory <- Path.GetFullPath(graceConfigurationDirectory)
+                    graceConfiguration.ObjectDirectory <- Path.GetFullPath(Path.Combine(graceConfigurationDirectory, Constants.GraceObjectsDirectory))
+                    graceConfiguration.GraceObjectCacheFile <- Path.Combine(graceConfiguration.ObjectDirectory, Constants.GraceObjectCacheFile)
+                    graceConfiguration.GraceStatusFile <- Path.Combine(graceConfiguration.GraceDirectory, Constants.GraceStatusFileName)
+                    graceConfiguration.DirectoryVersionCache <- Path.GetFullPath(Path.Combine(graceConfigurationDirectory, Constants.GraceDirectoryVersionCacheName))
+                    graceConfiguration.ConfigurationDirectory <- FileInfo(graceConfigurationFilePath).DirectoryName
+                    graceConfiguration.ActivitySource <- new ActivitySource("Grace", "0.1")
+                    graceConfiguration.GraceIgnoreEntries <- graceIgnoreEntries
+                    graceConfiguration.GraceFileIgnoreEntries <- graceIgnoreEntries |> Array.where(fun graceIgnoreLine -> not <| pathContainsSeparator graceIgnoreLine)
+                    graceConfiguration.GraceDirectoryIgnoreEntries <- graceIgnoreEntries |> Array.where(fun graceIgnoreLine -> pathContainsSeparator graceIgnoreLine)
+                    //graceConfiguration.Aliases <- aliases
+                    graceConfiguration.IsPopulated <- true
+                    graceConfiguration
                 | Result.Error errorMessage ->
                     printfn $"{errorMessage}"
-                    exit Results.ConfigurationFileNotFound
+                    exit Results.InvalidConfigurationFile
+            | Result.Error errorMessage ->
+                // We didn't find a graceconfig.json file, so we'll create a default one in-memory just to finish the command.
+                printfn $"{errorMessage}"
+                logToConsole $"{Environment.StackTrace}"
+                exit Results.ConfigurationFileNotFound
+                // graceConfiguration <- GraceConfiguration()
+                // graceConfiguration.IsPopulated <- true
+                // graceConfiguration
 
     /// The current configuration of Grace in this repository.
     let Current() = getGraceConfiguration()
@@ -204,7 +215,11 @@ module Configuration =
         graceConfiguration <- newConfiguration
 
     module Colors =
-        let themes = Current().Themes
+        let themes = 
+            if configurationFileExists() then 
+                Current().Themes
+            else
+                [| Theme.DefaultTheme |]
         let theme = themes[0]
         let Added = theme.DisplayColorOptions[DisplayColor.Added]
         let Deemphasized = theme.DisplayColorOptions[DisplayColor.Deemphasized]

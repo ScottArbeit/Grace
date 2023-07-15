@@ -115,12 +115,13 @@ module Repository =
                 return! context |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context)) 
         }
 
+    /// Create a new repository.
     let Create: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 //let! parameters = context |> parse<CreateParameters>
                 //logToConsole $"parameters.ObjectStorageProvider: {parameters.ObjectStorageProvider}"
-                let validations (parameters: CreateParameters) (context: HttpContext) =
+                let validations (parameters: CreateRepositoryParameters) (context: HttpContext) =
                     [ Guid.isValidAndNotEmpty parameters.OwnerId InvalidOwnerId
                       String.isValidGraceName parameters.OwnerName InvalidOwnerName
                       Input.eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
@@ -134,7 +135,7 @@ module Repository =
                       Owner.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
                       Organization.organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName context OrganizationDoesNotExist ]
                 
-                let command (parameters: CreateParameters) = 
+                let command (parameters: CreateRepositoryParameters) = 
                     task {
                         let! ownerId = resolveOwnerId parameters.OwnerId parameters.OwnerName
                         let! organizationId = resolveOrganizationId ownerId.Value parameters.OwnerName parameters.OrganizationId parameters.OrganizationName
@@ -145,54 +146,53 @@ module Repository =
                 return! processCommand context validations command
             }
 
-    /// <summary>
     /// Sets the search visibility of the repository.
-    /// </summary>
-    /// <param name="next">The next middleware to call in the pipeline.</param>
-    /// <param name="context">The current HttpContext.</param>
     let SetVisibility: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
-                let validations (parameters: VisibilityParameters) (context: HttpContext) =
+                let validations (parameters: SetRepositoryVisibilityParameters) (context: HttpContext) =
                     [ Input.eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherRepositoryIdOrRepositoryNameRequired
                       Repository.visibilityIsValid parameters.Visibility InvalidVisibilityValue
                       Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName context RepositoryDoesNotExist
                       Repository.repositoryIsNotDeleted parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName context RepositoryIsDeleted ]
   
-                let command (parameters: VisibilityParameters) = 
+                let command (parameters: SetRepositoryVisibilityParameters) = 
                     SetVisibility(discriminatedUnionFromString<RepositoryVisibility>(parameters.Visibility).Value) |> returnTask
                 
                 return! processCommand context validations command
             }
 
+    /// Sets the number of days to keep saves in the repository.
     let SetSaveDays: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) -> 
             task {
-                let validations (parameters: SaveDaysParameters) (context: HttpContext) =
+                let validations (parameters: SetSaveDaysParameters) (context: HttpContext) =
                     [ Input.eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherRepositoryIdOrRepositoryNameRequired
                       Repository.daysIsValid parameters.SaveDays InvalidSaveDaysValue
                       Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName context RepositoryDoesNotExist
                       Repository.repositoryIsNotDeleted parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName context RepositoryIsDeleted ]
                 
-                let command (parameters: SaveDaysParameters) = SetSaveDays(parameters.SaveDays) |> returnTask
+                let command (parameters: SetSaveDaysParameters) = SetSaveDays(parameters.SaveDays) |> returnTask
                 
                 return! processCommand context validations command
             }
 
+    /// Sets the number of days to keep checkpoints in the repository.
     let SetCheckpointDays: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
-                let validations (parameters: CheckpointDaysParameters) (context: HttpContext) =
+                let validations (parameters: SetCheckpointDaysParameters) (context: HttpContext) =
                     [ Input.eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherRepositoryIdOrRepositoryNameRequired
                       Repository.daysIsValid parameters.CheckpointDays InvalidCheckpointDaysValue
                       Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName context RepositoryDoesNotExist
                       Repository.repositoryIsNotDeleted parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName context RepositoryIsDeleted ]
                 
-                let command (parameters: CheckpointDaysParameters) = SetCheckpointDays(parameters.CheckpointDays) |> returnTask
+                let command (parameters: SetCheckpointDaysParameters) = SetCheckpointDays(parameters.CheckpointDays) |> returnTask
                 
                 return! processCommand context validations command
             }
 
+    /// Enables single-step promotion for the repository. (Currently unused, the only branching model is single-step.)
     let EnableSingleStepPromotion: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) -> 
             task {
@@ -206,6 +206,7 @@ module Repository =
                 return! processCommand context validations command
             }
 
+    /// Enables complex promotion for the repository. (Currently unused.)
     let EnableComplexPromotion: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) -> 
             task {
@@ -219,35 +220,38 @@ module Repository =
                 return! processCommand context validations command
             }
 
+    /// Sets the status of the repository (Public, Private).
     let SetStatus: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) -> 
             task {
-                let validations (parameters: StatusParameters) (context: HttpContext) =
+                let validations (parameters: SetRepositoryStatusParameters) (context: HttpContext) =
                     [ Input.eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherRepositoryIdOrRepositoryNameRequired
                       DiscriminatedUnion.isMemberOf<RepositoryStatus, RepositoryError> parameters.Status InvalidRepositoryStatus
                       Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName context RepositoryDoesNotExist
                       Repository.repositoryIsNotDeleted parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName context RepositoryIsDeleted ]
                 
-                let command (parameters: StatusParameters) =
+                let command (parameters: SetRepositoryStatusParameters) =
                     SetRepositoryStatus(discriminatedUnionFromString<RepositoryStatus>(parameters.Status).Value) |> returnTask
                 
                 return! processCommand context validations command
             }
 
+    /// Sets the default server API version for the repository.
     let SetDefaultServerApiVersion: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) -> 
             task {
-                let validations (parameters: DefaultServerApiVersionParameters) (context: HttpContext) =
+                let validations (parameters: SetDefaultServerApiVersionParameters) (context: HttpContext) =
                     [ Input.eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherRepositoryIdOrRepositoryNameRequired
                       String.isNotEmpty parameters.DefaultServerApiVersion InvalidServerApiVersion
                       Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName context RepositoryDoesNotExist
                       Repository.repositoryIsNotDeleted parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName context RepositoryIsDeleted ]
                 
-                let command (parameters: DefaultServerApiVersionParameters) = SetDefaultServerApiVersion(parameters.DefaultServerApiVersion) |> returnTask
+                let command (parameters: SetDefaultServerApiVersionParameters) = SetDefaultServerApiVersion(parameters.DefaultServerApiVersion) |> returnTask
                 
                 return! processCommand context validations command
             }
 
+    /// Sets whether or not to keep saves in the repository.
     let SetRecordSaves: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
@@ -261,34 +265,37 @@ module Repository =
                 return! processCommand context validations command
             }
 
+    /// Sets the description of the repository.
     let SetDescription: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
-                let validations (parameters: DescriptionParameters) (context: HttpContext) =
+                let validations (parameters: SetRepositoryDescriptionParameters) (context: HttpContext) =
                     [ Input.eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherRepositoryIdOrRepositoryNameRequired
                       String.isNotEmpty parameters.Description DescriptionIsRequired
                       Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName context RepositoryDoesNotExist
                       Repository.repositoryIsNotDeleted parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName context RepositoryIsDeleted ]
 
-                let command (parameters: DescriptionParameters) = SetDescription (parameters.Description) |> returnTask
+                let command (parameters: SetRepositoryDescriptionParameters) = SetDescription (parameters.Description) |> returnTask
 
                 return! processCommand context validations command
             }
             
+    /// Deletes the repository.
     let Delete: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
-                let validations (parameters: DeleteParameters) (context: HttpContext) =
+                let validations (parameters: DeleteRepositoryParameters) (context: HttpContext) =
                     [ Input.eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherRepositoryIdOrRepositoryNameRequired
                       String.isNotEmpty parameters.DeleteReason DeleteReasonIsRequired
                       Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName context RepositoryDoesNotExist
                       Repository.repositoryIsNotDeleted parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName context RepositoryIsDeleted ]
 
-                let command (parameters: DeleteParameters) = DeleteLogical (parameters.Force, parameters.DeleteReason) |> returnTask
+                let command (parameters: DeleteRepositoryParameters) = DeleteLogical (parameters.Force, parameters.DeleteReason) |> returnTask
 
                 return! processCommand context validations command
             }
 
+    /// Undeletes a previously-deleted repository.
     let Undelete: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
@@ -302,6 +309,7 @@ module Repository =
                 return! processCommand context validations command
             }
 
+    /// Checks if a repository exists with the given parameters.
     let Exists: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
@@ -327,6 +335,33 @@ module Repository =
                     return! context |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
         }
 
+    /// Checks if a repository is empty - that is, just created - or not.
+    let IsEmpty: HttpHandler =
+        fun (next: HttpFunc) (context: HttpContext) ->
+            task {
+                try
+                    let validations (parameters: RepositoryParameters) (context: HttpContext) =
+                        [ Guid.isValidAndNotEmpty parameters.OwnerId InvalidOwnerId
+                          String.isValidGraceName parameters.OwnerName InvalidOwnerName
+                          Input.eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
+                          Guid.isValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId
+                          String.isValidGraceName parameters.OrganizationName InvalidOrganizationName
+                          Input.eitherIdOrNameMustBeProvided parameters.OrganizationId parameters.OrganizationName EitherOrganizationIdOrOrganizationNameRequired
+                          Guid.isValidAndNotEmpty parameters.RepositoryId InvalidRepositoryId
+                          Repository.repositoryIdExists parameters.RepositoryId context RepositoryIdDoesNotExist ]
+
+                    let query (context: HttpContext) (maxCount: int) (actorProxy: IRepositoryActor) =
+                        task {
+                            return! actorProxy.IsEmpty()
+                        }
+
+                    let! parameters = context |> parse<RepositoryParameters>
+                    return! processQuery context parameters validations 1 query
+                with ex ->
+                    return! context |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
+        }
+
+    /// Gets a repository.
     let Get: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
@@ -353,6 +388,7 @@ module Repository =
                     return! context |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
             }
 
+    /// Gets a repository's branches.
     let GetBranches: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
@@ -383,6 +419,7 @@ module Repository =
                     return! context |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
             }
 
+    /// Gets a list of references, given a list of reference IDs.
     let GetReferencesByReferenceId: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
@@ -413,6 +450,7 @@ module Repository =
                     return! context |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
             }
 
+    /// Gets a list of branches, given a list of branch IDs.
     let GetBranchesByBranchId: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {

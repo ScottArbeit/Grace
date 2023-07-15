@@ -46,17 +46,13 @@ module Diff =
         member val public DirectoryId2: string = String.Empty with get, set
 
     module private Options = 
-        let ownerId = new Option<string>("--ownerId", IsRequired = false, Description = "The repository's owner ID <Guid>.", Arity = ArgumentArity.ZeroOrOne)
-        ownerId.SetDefaultValue($"{Current().OwnerId}")
+        let ownerId = new Option<string>("--ownerId", IsRequired = false, Description = "The repository's owner ID <Guid>.", Arity = ArgumentArity.ZeroOrOne, getDefaultValue = (fun _ -> $"{Current().OwnerId}"))
         let ownerName = new Option<string>("--ownerName", IsRequired = false, Description = "The repository's owner name. [default: current owner]", Arity = ArgumentArity.ExactlyOne)
-        let organizationId = new Option<string>("--organizationId", IsRequired = false, Description = "The repository's organization ID <Guid>.", Arity = ArgumentArity.ZeroOrOne)
-        organizationId.SetDefaultValue($"{Current().OrganizationId}")
+        let organizationId = new Option<string>("--organizationId", IsRequired = false, Description = "The repository's organization ID <Guid>.", Arity = ArgumentArity.ZeroOrOne, getDefaultValue = (fun _ -> $"{Current().OrganizationId}"))
         let organizationName = new Option<string>("--organizationName", IsRequired = false, Description = "The repository's organization name. [default: current organization]", Arity = ArgumentArity.ZeroOrOne)
-        let repositoryId = new Option<string>([|"--repositoryId"; "-r"|], IsRequired = false, Description = "The repository's Id <Guid>.", Arity = ArgumentArity.ExactlyOne)
-        repositoryId.SetDefaultValue($"{Current().RepositoryId}")
+        let repositoryId = new Option<string>([|"--repositoryId"; "-r"|], IsRequired = false, Description = "The repository's Id <Guid>.", Arity = ArgumentArity.ExactlyOne, getDefaultValue = (fun _ -> $"{Current().RepositoryId}"))
         let repositoryName = new Option<string>([|"--repositoryName"; "-n"|], IsRequired = false, Description = "The name of the repository. [default: current repository]", Arity = ArgumentArity.ExactlyOne)
-        let branchId = new Option<string>([|"--branchId"; "-i"|], IsRequired = false, Description = "The branch's ID <Guid>.", Arity = ArgumentArity.ExactlyOne)
-        branchId.SetDefaultValue($"{Current().BranchId}")
+        let branchId = new Option<string>([|"--branchId"; "-i"|], IsRequired = false, Description = "The branch's ID <Guid>.", Arity = ArgumentArity.ExactlyOne, getDefaultValue = (fun _ -> $"{Current().BranchId}"))
         let branchName = new Option<string>([|"--branchName"; "-b"|], IsRequired = false, Description = "The name of the branch. [default: current branch]", Arity = ArgumentArity.ExactlyOne)
         let directoryId1 = new Option<string>([|"--directoryId1"; "--d1"|], IsRequired = true, Description = "The first DirectoryId to compare in the diff.", Arity = ArgumentArity.ExactlyOne)
         let directoryId2 = new Option<string>([|"--directoryId2"; "--d2"|], IsRequired = false, Description = "The second DirectoryId to compare in the diff.", Arity = ArgumentArity.ExactlyOne)
@@ -251,7 +247,7 @@ module Diff =
                                     // Promotions are different, because we actually want the promotion from the parent branch that this branch is based on.
                                     | Promotion -> 
                                         let promotions = List<ReferenceDto>()
-                                        let branchParameters = Parameters.Branch.GetParameters(
+                                        let branchParameters = Parameters.Branch.GetBranchParameters(
                                             OwnerId = parameters.OwnerId,
                                             OwnerName = parameters.OwnerName,
                                             OrganizationId = parameters.OrganizationId,

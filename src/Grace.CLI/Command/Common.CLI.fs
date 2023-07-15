@@ -9,6 +9,7 @@ open System
 open System.CommandLine
 open System.CommandLine.Parsing
 open System.Text.Json
+open System.Threading.Tasks
 open Spectre.Console.Rendering
 
 module Common =
@@ -24,6 +25,10 @@ module Common =
         | Minimal
         | Silent
         | Verbose
+
+    type CommandLineInstruction<'a, 'b> =
+        | UpdateProgress of ProgressTask * float
+        | Command of (ParseResult * 'a -> Task<'b>)
 
     let addOption (option: Option) (command: Command) =
         command.AddOption(option)
@@ -52,15 +57,16 @@ module Common =
     let showOutput parseResult = parseResult |> normal || parseResult |> verbose
 
     /// Gets the correlationId parameter from the command line.
-    let getCorrelationId(parseResult: ParseResult) = parseResult.FindResultFor(Options.correlationId).GetValueOrDefault<String>()
+    let getCorrelationId (parseResult: ParseResult) = parseResult.FindResultFor(Options.correlationId).GetValueOrDefault<String>()
 
     /// Rewrites "[" to "[[" and "]" to "]]".
     let escapeBrackets s  = s.ToString().Replace("[", "[[").Replace("]", "]]")
 
     /// Prints the ParseResult with markup.
     let printParseResult (parseResult: ParseResult) =
-        AnsiConsole.MarkupLine($"[{Colors.Verbose}]{escapeBrackets parseResult}[/]")
-        AnsiConsole.WriteLine()
+        if not <| isNull parseResult then
+            AnsiConsole.MarkupLine($"[{Colors.Verbose}]{escapeBrackets parseResult}[/]")
+            AnsiConsole.WriteLine()
 
     let writeMarkup (markup: IRenderable) =
         AnsiConsole.Write(markup)

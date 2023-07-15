@@ -1,0 +1,47 @@
+    DiffParameters:
+      description: Parameters for diff endpoints.
+      allOf:
+        - $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/CommonParameters'
+      properties:
+        OwnerId:
+          type: string
+        OwnerName:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/OwnerName'
+        OrganizationId:
+          type: string
+        OrganizationName:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/OrganizationName'
+        RepositoryId:
+          type: string
+        RepositoryName:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/RepositoryName'
+        DirectoryId1:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/DirectoryId'
+        DirectoryId2:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/DirectoryId'
+    PopulateParameters:
+      description: Parameters for diff population.
+      allOf:
+        - $ref: './Diff.Components.OpenAPI.yaml#/DiffParameters'
+    GetDiffParameters:
+      description: Parameters for retrieving a diff.
+      allOf:
+        - $ref: './Diff.Components.OpenAPI.yaml#/DiffParameters'
+    GetDiffByReferenceTypeParameters:
+      description: Parameters for retrieving a diff by reference type.
+      allOf:
+        - $ref: './Diff.Components.OpenAPI.yaml#/DiffParameters'
+      properties:
+        BranchId:
+          type: string
+        BranchName:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/BranchName'
+    GetDiffBySha256HashParameters:
+      description: Parameters for retrieving a diff by SHA256 hash.
+      allOf:
+        - $ref: './Diff.Components.OpenAPI.yaml#/DiffParameters'
+      properties:
+        Sha256Hash1:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Sha256Hash'
+        Sha256Hash2:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Sha256Hash'

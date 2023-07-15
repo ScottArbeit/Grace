@@ -82,6 +82,7 @@ module Directory =
                 return! context |> result500ServerError (GraceError.Create $"{Utilities.createExceptionResponse ex}" (getCorrelationId context))
         }
 
+    /// Create a new directory version.
     let Create: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
@@ -101,6 +102,7 @@ module Directory =
                 return! processCommand context validations command
             }
 
+    /// Get a directory version.
     let Get: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
@@ -120,6 +122,7 @@ module Directory =
                 return! processQuery context parameters validations 1 query
             }
 
+    /// Get a directory version and all of its children.
     let GetDirectoryVersionsRecursive: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
@@ -139,6 +142,7 @@ module Directory =
                 return! processQuery context parameters validations 1 query
             }
 
+    /// Get a list of directory versions by directory ids.
     let GetByDirectoryIds: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
@@ -162,7 +166,7 @@ module Directory =
                 context.Items[nameof(GetByDirectoryIdsParameters)] <- parameters.DirectoryIds
                 return! processQuery context parameters validations 1 query
             }
-
+    /// Get a directory version by its SHA256 hash.
     let GetBySha256Hash: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
@@ -184,6 +188,7 @@ module Directory =
                 return! processQuery context parameters validations 1 query
             }
 
+    /// Save a list of directory versions.
     let SaveDirectoryVersions: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {

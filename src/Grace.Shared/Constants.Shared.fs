@@ -150,7 +150,7 @@ module Constants =
     /// <summary>
     /// Validates that a string is a valid Grace object name.
     ///
-    /// Regex: [A-Za-z][A-Za-z0-9\-]{1,63}$
+    /// Regex: ^[A-Za-z][A-Za-z0-9\-]{1,63}$
     ///
     /// A valid object name in Grace has between 2 and 64 characters, has a letter for the first character ([A-Za-z]), and letters, numbers, or a dash (-) for the rest ([A-Za-z0-9\-_]{1,63}).
     /// 
@@ -161,7 +161,7 @@ module Constants =
     /// <summary>
     /// Validates that a string is a valid Grace object name.
     ///
-    /// Regex: [A-Za-z][A-Za-z0-9\-]{1,63}$
+    /// Regex: ^[A-Za-z][A-Za-z0-9\-]{1,63}$
     ///
     /// A valid object name in Grace has between 2 and 64 characters, has a letter for the first character ([A-Za-z]), and letters, numbers, or a dash (-) for the rest ([A-Za-z0-9\-_]{1,63}).
     /// 
@@ -202,7 +202,7 @@ module Constants =
     let DefaultParentBranchId = Guid("38EC9A98-00B0-4FA3-8CC5-ACFB04E445A7") // There's nothing special about this Guid.
 
     /// The name of the inter-process communication file used by grace watch to share status with other invocations of Grace.
-    let IpcFileName = "GraceWatchStatus.json"
+    let IpcFileName = "graceWatchStatus.json"
 
 module Results =
     let Ok = 0

@@ -1,0 +1,441 @@
+openapi: 3.1.0
+info:
+  title: Grace Server API
+  description: >-
+    ## Grace Server API
+
+    This OpenAPI specification describes the Web API for Grace Server.
+
+    ---
+
+    ## Helpful hints
+
+    * In general, when the parameters ask for a _somethingId_ and a _somethingName_, like, OwnerId and OwnerName, or OrganizationId and OrganizationName, etc. you only need to give one or the other.
+
+    * If you have the Id's available just as readily as the names, you'll get better performance by using the Id's. It saves a lookup - whether in-memory cache, or database call - at the server.
+
+    * If you don't provide a CorrelationId, a Guid will be generated for you. (You're welcome.) CorrelationId's in Grace are just strings, and feel free to send any other kind of CorrelationId you prefer.
+
+    * A valid name in Grace has between 2 and 64 characters, has a letter for the first character `^[A-Za-z]`, and letters, numbers, or a dash (-) for the rest `[A-Za-z0-9\-_]{1,63}`.
+
+    * The full regex for valid Grace names is: `^[A-Za-z][A-Za-z0-9\-]{1,63}$`. The ChatGPT explanation of it can be found [here](https://chat.openai.com/share/1d18c634-45ed-4ef5-bd8e-93391f74b637).
+
+    * If you notice a difference between the OpenAPI spec and the actual API, please file an issue so we can fix it. It's absolutely our intention to keep the spec and the API in sync.
+
+    ---
+
+    Please let us know if you have any questions or comments @ [Discussions](https://github.com/scottarbeit/grace/discussions) in the [Grace repository](https://github.com/scottarbeit/grace).
+  contact:
+    name: Scott Arbeit
+    url: https://twitter.com/scottarbeit
+    email: scott.arbeit@outlook.com
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+  version: "0.1"
+servers:
+  - url: "http://localhost:5000"
+    description: "Local development server"
+security:
+  - bearerAuth: []
+paths:
+  /openApi:
+    get: 
+      summary: Get the OpenAPI specification for the Grace Server API
+      description: This endpoint returns the OpenAPI specification for the Grace Server API. The specification is generated from the OpenAPI specification files in the src/OpenAPI folder.
+      operationId: GetOpenApi
+      responses: 
+        '200':
+          description: OK
+        '400':
+          description: Bad Request
+  /branch/create:
+    $ref: './Branch.Paths.OpenAPI.yaml#/~1branch~1create'
+  /branch/rebase:
+    $ref: './Branch.Paths.OpenAPI.yaml#/~1branch~1rebase'
+  /branch/promote:
+    $ref: './Branch.Paths.OpenAPI.yaml#/~1branch~1promote'
+  /branch/commit:
+    $ref: './Branch.Paths.OpenAPI.yaml#/~1branch~1commit'
+  /branch/checkpoint:
+    $ref: './Branch.Paths.OpenAPI.yaml#/~1branch~1checkpoint'
+  /branch/save:
+    $ref: './Branch.Paths.OpenAPI.yaml#/~1branch~1save'
+  /branch/tag:
+    $ref: './Branch.Paths.OpenAPI.yaml#/~1branch~1tag'
+  /branch/enablePromotion:
+    $ref: './Branch.Paths.OpenAPI.yaml#/~1branch~1enablePromotion'
+  /branch/enableCommit:
+    $ref: './Branch.Paths.OpenAPI.yaml#/~1branch~1enableCommit'
+  /branch/enableCheckpoint:
+    $ref: './Branch.Paths.OpenAPI.yaml#/~1branch~1enableCheckpoint'
+  /branch/enableSave:
+    $ref: './Branch.Paths.OpenAPI.yaml#/~1branch~1enableSave'
+  /branch/enableTag:
+    $ref: './Branch.Paths.OpenAPI.yaml#/~1branch~1enableTag'
+  /branch/delete:
+    $ref: './Branch.Paths.OpenAPI.yaml#/~1branch~1delete'
+  /branch/get:
+    $ref: './Branch.Paths.OpenAPI.yaml#/~1branch~1get'
+  /branch/getParentBranch:
+    $ref: './Branch.Paths.OpenAPI.yaml#/~1branch~1getParentBranch'
+  /branch/getReference:
+    $ref: './Branch.Paths.OpenAPI.yaml#/~1branch~1getReference'
+  /branch/getReferences:
+    $ref: './Branch.Paths.OpenAPI.yaml#/~1branch~1getReferences'
+  /branch/getPromotions:
+    $ref: './Branch.Paths.OpenAPI.yaml#/~1branch~1getPromotions'
+  /branch/getCommits:
+    $ref: './Branch.Paths.OpenAPI.yaml#/~1branch~1getCommits'
+  /branch/getCheckpoints:
+    $ref: './Branch.Paths.OpenAPI.yaml#/~1branch~1getCheckpoints'
+  /branch/getSaves:
+    $ref: './Branch.Paths.OpenAPI.yaml#/~1branch~1getSaves'
+  /branch/getTags:
+    $ref: './Branch.Paths.OpenAPI.yaml#/~1branch~1getTags'
+
+
+  /diff/populate:
+    $ref: './Diff.Paths.OpenAPI.yaml#/~1diff~1populate'
+  /diff/getDiff:
+    $ref: './Diff.Paths.OpenAPI.yaml#/~1diff~1getDiff'
+  /diff/getDiffBySha256Hash:
+    $ref: './Diff.Paths.OpenAPI.yaml#/~1diff~1getDiffBySha256Hash'
+  
+  /directory/create:
+    $ref: './Directory.Paths.OpenAPI.yaml#/~1directory~1create'
+  /directory/get:
+    $ref: './Directory.Paths.OpenAPI.yaml#/~1directory~1get'
+  /directory/getDirectoryVersionsRecursive:
+    $ref: './Directory.Paths.OpenAPI.yaml#/~1directory~1getDirectoryVersionsRecursive'
+  /directory/getByDirectoryIds:
+    $ref: './Directory.Paths.OpenAPI.yaml#/~1directory~1getByDirectoryIds'
+  /directory/getBySha256Hash:
+    $ref: './Directory.Paths.OpenAPI.yaml#/~1directory~1getBySha256Hash'
+  /directory/saveDirectoryVersions:
+    $ref: './Directory.Paths.OpenAPI.yaml#/~1directory~1saveDirectoryVersions'
+      
+  /organization/create:
+    $ref: './Organization.Paths.OpenAPI.yaml#/~1organization~1create'
+  /organization/setName:
+    $ref: './Organization.Paths.OpenAPI.yaml#/~1organization~1setName'
+  /organization/setType:
+    $ref: './Organization.Paths.OpenAPI.yaml#/~1organization~1setType'
+  /organization/setSearchVisibility:
+    $ref: './Organization.Paths.OpenAPI.yaml#/~1organization~1setSearchVisibility'
+  /organization/setDescription:
+    $ref: './Organization.Paths.OpenAPI.yaml#/~1organization~1setDescription'
+  /organization/listRepositories:
+    $ref: './Organization.Paths.OpenAPI.yaml#/~1organization~1listRepositories'
+  /organization/delete:
+    $ref: './Organization.Paths.OpenAPI.yaml#/~1organization~1delete'
+  /organization/undelete:
+    $ref: './Organization.Paths.OpenAPI.yaml#/~1organization~1undelete'
+  /organization/get:
+    $ref: './Organization.Paths.OpenAPI.yaml#/~1organization~1get'
+  
+  /owner/create:
+    $ref: './Owner.Paths.OpenAPI.yaml#/~1owner~1create'
+  /owner/setName:
+    $ref: './Owner.Paths.OpenAPI.yaml#/~1owner~1setName'
+  /owner/setType:
+    $ref: './Owner.Paths.OpenAPI.yaml#/~1owner~1setType'
+  /owner/setSearchVisibility:
+    $ref: './Owner.Paths.OpenAPI.yaml#/~1owner~1setSearchVisibility'
+  /owner/setDescription:
+    $ref: './Owner.Paths.OpenAPI.yaml#/~1owner~1setDescription'
+  /owner/listOrganizations:
+    $ref: './Owner.Paths.OpenAPI.yaml#/~1owner~1listOrganizations'
+  /owner/delete:
+    $ref: './Owner.Paths.OpenAPI.yaml#/~1owner~1delete'
+  /owner/undelete:
+    $ref: './Owner.Paths.OpenAPI.yaml#/~1owner~1undelete'
+  /owner/get:
+    $ref: './Owner.Paths.OpenAPI.yaml#/~1owner~1get'
+
+  /repository/create:
+    $ref: './Repository.Paths.OpenAPI.yaml#/~1repository~1create'
+  /repository/setVisibility:
+    $ref: './Repository.Paths.OpenAPI.yaml#/~1repository~1setVisibility'
+  /repository/setSaveDays:
+    $ref: './Repository.Paths.OpenAPI.yaml#/~1repository~1setSaveDays'
+  /repository/setCheckpointDays:
+    $ref: './Repository.Paths.OpenAPI.yaml#/~1repository~1setCheckpointDays'
+  /repository/setStatus:
+    $ref: './Repository.Paths.OpenAPI.yaml#/~1repository~1setStatus'
+  /repository/setDefaultServerApiVersion:
+    $ref: './Repository.Paths.OpenAPI.yaml#/~1repository~1setDefaultServerApiVersion'
+  /repository/setRecordSaves:
+    $ref: './Repository.Paths.OpenAPI.yaml#/~1repository~1setRecordSaves'
+  /repository/setDescription:
+    $ref: './Repository.Paths.OpenAPI.yaml#/~1repository~1setDescription'
+  /repository/delete:
+    $ref: './Repository.Paths.OpenAPI.yaml#/~1repository~1delete'
+  /repository/undelete:
+    $ref: './Repository.Paths.OpenAPI.yaml#/~1repository~1undelete'
+  /repository/exists:
+    $ref: './Repository.Paths.OpenAPI.yaml#/~1repository~1exists'
+  /repository/isEmpty:
+    $ref: './Repository.Paths.OpenAPI.yaml#/~1repository~1isEmpty'
+  /repository/get:
+    $ref: './Repository.Paths.OpenAPI.yaml#/~1repository~1get'
+  /repository/getBranches:
+    $ref: './Repository.Paths.OpenAPI.yaml#/~1repository~1getBranches'
+  /repository/getReferencesByReferenceId:
+    $ref: './Repository.Paths.OpenAPI.yaml#/~1repository~1getReferencesByReferenceId'
+  /repository/getBranchesByBranchId:
+    $ref: './Repository.Paths.OpenAPI.yaml#/~1repository~1getBranchesByBranchId'
+
+components:
+  schemas:
+    BranchParameters:
+      $ref: 'Branch.Components.OpenAPI.yaml#/BranchParameters'
+    BranchQueryParameters:
+      $ref: 'Branch.Components.OpenAPI.yaml#/BranchQueryParameters'
+    CreateBranchParameters:
+      $ref: 'Branch.Components.OpenAPI.yaml#/CreateBranchParameters'
+    RebaseParameters:
+      $ref: 'Branch.Components.OpenAPI.yaml#/RebaseParameters'
+    CreateReferenceParameters:
+      $ref: 'Branch.Components.OpenAPI.yaml#/CreateReferenceParameters'
+    SetBranchNameParameters:
+      $ref: 'Branch.Components.OpenAPI.yaml#/SetBranchNameParameters'
+    EnableFeatureParameters:
+      $ref: 'Branch.Components.OpenAPI.yaml#/EnableFeatureParameters'
+    DeleteBranchParameters:
+      $ref: 'Branch.Components.OpenAPI.yaml#/DeleteBranchParameters'
+    GetReferenceParameters:
+      $ref: 'Branch.Components.OpenAPI.yaml#/GetReferenceParameters'
+    GetReferencesParameters:
+      $ref: 'Branch.Components.OpenAPI.yaml#/GetReferencesParameters'
+    GetDiffsForReferenceTypeParameters:
+      $ref: 'Branch.Components.OpenAPI.yaml#/GetDiffsForReferenceTypeParameters'
+    GetDiffsForReferencesParameters:
+      $ref: 'Branch.Components.OpenAPI.yaml#/GetDiffsForReferencesParameters'
+    GetBranchParameters:
+      $ref: 'Branch.Components.OpenAPI.yaml#/GetBranchParameters'
+    SwitchParameters:
+      $ref: 'Branch.Components.OpenAPI.yaml#/SwitchParameters'
+    GetBranchVersionParameters:
+      $ref: 'Branch.Components.OpenAPI.yaml#/GetBranchVersionParameters'
+
+    DiffParameters:
+      $ref: 'Diff.Components.OpenAPI.yaml#/DiffParameters'
+    PopulateParameters:
+      $ref: 'Diff.Components.OpenAPI.yaml#/PopulateParameters'
+    GetDiffParameters:
+      $ref: 'Diff.Components.OpenAPI.yaml#/GetDiffParameters'
+    GetDiffByReferenceTypeParameters:
+      $ref: 'Diff.Components.OpenAPI.yaml#/GetDiffByReferenceTypeParameters'
+    GetDiffBySha256HashParameters:
+      $ref: 'Diff.Components.OpenAPI.yaml#/GetDiffBySha256HashParameters'
+    
+    DirectoryParameters:
+      $ref: 'Directory.Components.OpenAPI.yaml#/DirectoryParameters'
+    CreateParameters:
+      $ref: 'Directory.Components.OpenAPI.yaml#/CreateParameters'
+    GetParameters:
+      $ref: 'Directory.Components.OpenAPI.yaml#/GetParameters'
+    GetByDirectoryIdsParameters:
+      $ref: 'Directory.Components.OpenAPI.yaml#/GetByDirectoryIdsParameters'
+    GetBySha256HashParameters:
+      $ref: 'Directory.Components.OpenAPI.yaml#/GetBySha256HashParameters'
+    SaveDirectoryVersionsParameters:
+      $ref: 'Directory.Components.OpenAPI.yaml#/SaveDirectoryVersionsParameters'
+
+    BranchDto:
+      $ref: 'Dto.Components.OpenAPI.yaml#/BranchDto'
+    DiffDto:
+      $ref: 'Dto.Components.OpenAPI.yaml#/DiffDto'
+    OrganizationDto:
+      $ref: 'Dto.Components.OpenAPI.yaml#/OrganizationDto'
+    OwnerDto:
+      $ref: 'Dto.Components.OpenAPI.yaml#/OwnerDto'
+    ReferenceDto:
+      $ref: 'Dto.Components.OpenAPI.yaml#/ReferenceDto'
+    RepositoryDto:
+      $ref: 'Dto.Components.OpenAPI.yaml#/RepositoryDto'
+
+    OrganizationParameters:
+      $ref: 'Organization.Components.OpenAPI.yaml#/OrganizationParameters'
+    CreateOrganizationParameters:
+      $ref: 'Organization.Components.OpenAPI.yaml#/CreateOrganizationParameters'
+    SetOrganizationNameParameters:
+      $ref: 'Organization.Components.OpenAPI.yaml#/SetOrganizationNameParameters'
+    SetOrganizationTypeParameters:
+      $ref: 'Organization.Components.OpenAPI.yaml#/SetOrganizationTypeParameters'
+    SetOrganizationSearchVisibilityParameters:
+      $ref: 'Organization.Components.OpenAPI.yaml#/SetOrganizationSearchVisibilityParameters'
+    SetOrganizationDescriptionParameters:
+      $ref: 'Organization.Components.OpenAPI.yaml#/SetOrganizationDescriptionParameters'
+    DeleteOrganizationParameters:
+      $ref: 'Organization.Components.OpenAPI.yaml#/DeleteOrganizationParameters'
+    UndeleteOrganizationParameters:
+      $ref: 'Organization.Components.OpenAPI.yaml#/UndeleteOrganizationParameters'
+    GetOrganizationParameters:
+      $ref: 'Organization.Components.OpenAPI.yaml#/GetOrganizationParameters'
+    ListRepositoriesParameters:
+      $ref: 'Organization.Components.OpenAPI.yaml#/ListRepositoriesParameters'
+
+
+    OwnerParameters:
+      $ref: 'Owner.Components.OpenAPI.yaml#/OwnerParameters'
+    CreateOwnerParameters:
+      $ref: 'Owner.Components.OpenAPI.yaml#/CreateOwnerParameters'
+    SetOwnerNameParameters:
+      $ref: 'Owner.Components.OpenAPI.yaml#/SetOwnerNameParameters'
+    SetOwnerTypeParameters:
+      $ref: 'Owner.Components.OpenAPI.yaml#/SetOwnerTypeParameters'
+    SetOwnerSearchVisibilityParameters:
+      $ref: 'Owner.Components.OpenAPI.yaml#/SetOwnerSearchVisibilityParameters'
+    SetOwnerDescriptionParameters:
+      $ref: 'Owner.Components.OpenAPI.yaml#/SetOwnerDescriptionParameters'
+    DeleteOwnerParameters:
+      $ref: 'Owner.Components.OpenAPI.yaml#/DeleteOwnerParameters'
+    UndeleteOwnerParameters:
+      $ref: 'Owner.Components.OpenAPI.yaml#/UndeleteOwnerParameters'
+    GetOwnerParameters:
+      $ref: 'Owner.Components.OpenAPI.yaml#/GetOwnerParameters'
+    ListOrganizationsParameters:
+      $ref: 'Owner.Components.OpenAPI.yaml#/ListOrganizationsParameters'
+
+    ReferenceParameters:
+      $ref: 'Reference.Components.OpenAPI.yaml#/ReferenceParameters'
+    
+    RepositoryParameters:
+      $ref: 'Repository.Components.OpenAPI.yaml#/RepositoryParameters'
+    CreateRepositoryParameters:
+      $ref: 'Repository.Components.OpenAPI.yaml#/CreateRepositoryParameters'
+    IsEmptyParameters:
+      $ref: 'Repository.Components.OpenAPI.yaml#/IsEmptyParameters'
+    InitParameters:
+      $ref: 'Repository.Components.OpenAPI.yaml#/InitParameters'
+    SetRepositoryVisibilityParameters:
+      $ref: 'Repository.Components.OpenAPI.yaml#/SetRepositoryVisibilityParameters'
+    SetRepositoryStatusParameters:
+      $ref: 'Repository.Components.OpenAPI.yaml#/SetRepositoryStatusParameters'
+    RecordSavesParameters:
+      $ref: 'Repository.Components.OpenAPI.yaml#/RecordSavesParameters'
+    SetSaveDaysParameters:
+      $ref: 'Repository.Components.OpenAPI.yaml#/SetSaveDaysParameters'
+    SetCheckpointDaysParameters:
+      $ref: 'Repository.Components.OpenAPI.yaml#/SetCheckpointDaysParameters'
+    SetRepositoryDescriptionParameters:
+      $ref: 'Repository.Components.OpenAPI.yaml#/SetRepositoryDescriptionParameters'
+    SetDefaultServerApiVersionParameters:
+      $ref: 'Repository.Components.OpenAPI.yaml#/SetDefaultServerApiVersionParameters'
+    SetRepositoryNameParameters:
+      $ref: 'Repository.Components.OpenAPI.yaml#/SetRepositoryNameParameters'
+    DeleteRepositoryParameters:
+      $ref: 'Repository.Components.OpenAPI.yaml#/DeleteRepositoryParameters'
+    EnablePromotionTypeParameters:
+      $ref: 'Repository.Components.OpenAPI.yaml#/EnablePromotionTypeParameters'
+    GetReferencesByReferenceIdParameters:
+      $ref: 'Repository.Components.OpenAPI.yaml#/GetReferencesByReferenceIdParameters'
+    GetBranchesParameters:
+      $ref: 'Repository.Components.OpenAPI.yaml#/GetBranchesParameters'
+    GetBranchesByBranchIdParameters:
+      $ref: 'Repository.Components.OpenAPI.yaml#/GetBranchesByBranchIdParameters'
+    UndeleteRepositoryParameters:
+      $ref: 'Repository.Components.OpenAPI.yaml#/UndeleteRepositoryParameters'
+
+    Instant:
+      $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Instant'
+    ProblemDetails:
+      $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/ProblemDetails'
+    BranchId:
+      $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/BranchId'
+    BranchName:
+      $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/BranchName'
+    CorrelationId:
+      $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/CorrelationId'
+    ContainerName:
+      $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/ContainerName'
+    DirectoryId:
+      $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/DirectoryId'
+    FilePath:
+      $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/FilePath'
+    GraceIgnoreEntry:
+      $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/GraceIgnoreEntry'
+    OrganizationId:
+      $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/OrganizationId'
+    OrganizationName:
+      $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/OrganizationName'
+    OwnerId:
+      $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/OwnerId'
+    OwnerName:
+      $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/OwnerName'
+    ReferenceId:
+      $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/ReferenceId'
+    ReferenceName:
+      $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/ReferenceName'
+    ReferenceText:
+      $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/ReferenceText'
+    RepositoryId:
+      $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/RepositoryId'
+    RepositoryName:
+      $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/RepositoryName'
+    RelativePath:
+      $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/RelativePath'
+    Sha256Hash:
+      $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Sha256Hash'
+    StorageAccountName:
+      $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/StorageAccountName'
+    StorageConnectionString:
+      $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/StorageConnectionString'
+    StorageContainerName:
+      $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/StorageContainerName'
+    UriWithSharedAccessSignature:
+      $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/UriWithSharedAccessSignature'
+    UserId:
+      $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/UserId'
+    OwnerType:
+      $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/OwnerType'
+    OrganizationType:
+      $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/OrganizationType'
+    SearchVisibility:
+      $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/SearchVisibility'
+    ReferenceType:
+      $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/ReferenceType'
+    CommonParameters:
+      $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/CommonParameters'
+    FileVersion:
+      $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/FileVersion'
+    DirectoryVersion:
+      $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/DirectoryVersion'
+    EventMetadata:
+      $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/EventMetadata'
+    GraceReturnValue:
+      $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/GraceReturnValue'
+    GraceError:
+      $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/GraceError'
+    GraceResult:
+      $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/GraceResult'
+    FileSystemEntryType:
+      $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/FileSystemEntryType'
+    DifferenceType:
+      $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/DifferenceType'
+    FileSystemDifference:
+      $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/FileSystemDifference'
+    FileDiff:
+      $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/FileDiff'
+    DiffPiece:
+      $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/DiffPiece'
+    ChangeType:
+      $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/ChangeType'
+    ObjectStorageProvider:
+      $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/ObjectStorageProvider'
+    RepositoryVisibility:
+      $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/RepositoryVisibility'
+    RepositoryStatus:
+      $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/RepositoryStatus'
+
+  securitySchemes:
+    api_key:
+      type: apiKey
+      name: X-API-Key
+      in: header
+    bearerAuth: # arbitrary name for the security scheme
+      type: http
+      scheme: bearer
+      bearerFormat: JWT # optional, arbitrary value for documentation purposes

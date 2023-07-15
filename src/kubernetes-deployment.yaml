@@ -73,6 +73,7 @@ spec:
       containers:
       - name: grace-server
         image: scottarbeit/grace-server:latest 
+        imagePullPolicy: IfNotPresent
         # volumeMounts:
         #   - name: dapr-config
         #     mountPath: /dapr/

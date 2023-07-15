@@ -76,12 +76,22 @@
     "grace branches": {
       "commandName": "Project",
       "commandLineArgs": "branches --output Verbose",
-      "workingDirectory": "C:\\Source\\GraceDemo\\Filip"
+      "workingDirectory": "C:\\Temp"
     },
     "grace watch - Mika": {
       "commandName": "Project",
       "commandLineArgs": "watch",
       "workingDirectory": "C:\\Source\\GraceDemo\\Mika"
+    },
+    "grace /?": {
+      "commandName": "Project",
+      "commandLineArgs": "/?",
+      "workingDirectory": "C:\\Temp"
+    },
+    "grace config write": {
+      "commandName": "Project",
+      "commandLineArgs": "config write",
+      "workingDirectory": "C:\\Temp"
     }
   }
 }

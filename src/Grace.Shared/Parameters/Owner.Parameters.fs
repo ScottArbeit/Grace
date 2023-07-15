@@ -6,40 +6,50 @@ open System
 
 module Owner =
 
+    /// Parameters for many endpoints in the /owner path.
     type OwnerParameters() = 
         inherit CommonParameters()
         member val public OwnerId: string = String.Empty with get, set
         member val public OwnerName: string = String.Empty with get, set
 
-    type CreateParameters() = 
+    /// Parameters for the /owner/create endpoint.
+    type CreateOwnerParameters() = 
         inherit OwnerParameters()
 
-    type SetNameParameters() =
+    /// Parameters for the /owner/setName endpoint.
+    type SetOwnerNameParameters() =
         inherit OwnerParameters()
         member val public NewName: string = String.Empty with get, set
 
-    type SetTypeParameters() =
+    /// Parameters for the /owner/setType endpoint.
+    type SetOwnerTypeParameters() =
         inherit OwnerParameters()
         member val public OwnerType: string = String.Empty with get, set
 
-    type SetSearchVisibilityParameters() =
+    /// Parameters for the /owner/setSearchVisibility endpoint.
+    type SetOwnerSearchVisibilityParameters() =
         inherit OwnerParameters()
         member val public SearchVisibility: string = String.Empty with get, set
         
-    type SetDescriptionParameters() =
+    /// Parameters for the /owner/setDescription endpoint.
+    type SetOwnerDescriptionParameters() =
         inherit OwnerParameters()
         member val public Description: string = String.Empty with get, set
         
-    type GetParameters() =
+    /// Parameters for the /owner/get endpoint.
+    type GetOwnerParameters() =
         inherit OwnerParameters()
 
-    type DeleteParameters() =
+    /// Parameters for the /owner/delete endpoint.
+    type DeleteOwnerParameters() =
         inherit OwnerParameters()
         member val public Force: bool = false with get, set
         member val public DeleteReason: string = String.Empty with get, set
 
-    type UndeleteParameters() =
+    /// Parameters for the /owner/undelete endpoint.
+    type UndeleteOwnerParameters() =
         inherit OwnerParameters()
 
+    /// Parameters for the /owner/listOrganizations endpoint.
     type ListOrganizationsParameters() =
         inherit OwnerParameters()
