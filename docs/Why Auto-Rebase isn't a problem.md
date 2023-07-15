@@ -55,3 +55,5 @@ Please give it a chance before you do, though. You might like it more than you e
 ## This is stupid, and you're stupid, and nobody wants this.
 
 Paraphrasing some actual feedback I've gotten... well, 🤷‍♂️ I believe this is right design, and time will tell.
+
+![](https://gracevcsdevelopment.blob.core.windows.net/static/Orange3.svg)
