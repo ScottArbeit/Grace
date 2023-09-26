@@ -54,10 +54,11 @@ module Types =
         | Unknown   // Not calling it None because that really belongs to Option.
         static member GetKnownTypes() = GetKnownTypes<ObjectStorageProvider>()
 
+    /// Indicates what database is being used for Actor state storage.
     [<KnownType("GetKnownTypes")>]
     type ActorStateStorageProvider =
         | AzureCosmosDb
-        | Cassandra
+        | MongoDB
         | Unknown   // Not calling it None because that really belongs to Option.
         // etc.
         static member GetKnownTypes() = GetKnownTypes<ActorStateStorageProvider>()
@@ -306,12 +307,20 @@ module Types =
         | NotSet
         static member GetKnownTypes() = GetKnownTypes<DirectoryPermission>()
 
+    /// Defines the permissions granted to a group defined by a claim.
+    /// 
+    /// This is combined with a RelativePath to define a PathPermission.
+    [<KnownType("GetKnownTypes")>]
     type ClaimPermission =
         {
             Claim: string
             DirectoryPermission: DirectoryPermission
         }
 
+    /// Defines a set of claims and their permissions that should be applied to a relative path in the repository.
+    ///
+    /// NOTE: This type is being used only at the directory level for now, but I intend to implement it at the file level as well.
+    [<KnownType("GetKnownTypes")>]
     type PathPermission =
         {
             Path: RelativePath

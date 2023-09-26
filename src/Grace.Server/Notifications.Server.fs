@@ -7,6 +7,7 @@ open Grace.Actors
 open Grace.Actors.Constants
 open Grace.Actors.Events
 open Grace.Actors.Interfaces
+open Grace.Actors.Services
 open Grace.Shared
 open Grace.Shared.Dto
 open Grace.Shared.Types

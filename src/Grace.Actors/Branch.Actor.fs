@@ -40,11 +40,24 @@ module Branch =
         let mutable actorStartTime = Instant.MinValue
         let mutable logScope: IDisposable = null
         let mutable currentCommand = String.Empty
+
+        /// Indicates that the actor is in an undefined state, and should be reset.
+        let mutable isDisposed = false
         
         let updateDto branchEventType currentBranchDto =
             let newOrganizationDto = 
                 match branchEventType with
-                | Created (branchId, branchName, parentBranchId, basedOn, repositoryId) -> {BranchDto.Default with BranchId = branchId; BranchName = branchName; ParentBranchId = parentBranchId; BasedOn = basedOn; RepositoryId = repositoryId}
+                | Created (branchId, branchName, parentBranchId, basedOn, repositoryId, initialPermissions) -> 
+                    let mutable branchDto = {BranchDto.Default with BranchId = branchId; BranchName = branchName; ParentBranchId = parentBranchId; BasedOn = basedOn; RepositoryId = repositoryId}
+                    for referenceType in initialPermissions do
+                        branchDto <- match referenceType with
+                                        | ReferenceType.Promotion -> {branchDto with PromotionEnabled = true}
+                                        | ReferenceType.Commit -> {branchDto with CommitEnabled = true}
+                                        | ReferenceType.Checkpoint -> {branchDto with CheckpointEnabled = true}
+                                        | ReferenceType.Save -> {branchDto with SaveEnabled = true}
+                                        | ReferenceType.Tag -> {branchDto with TagEnabled = true}
+                    branchDto
+
                 | Rebased referenceId -> {currentBranchDto with BasedOn = referenceId}
                 | NameSet branchName -> {currentBranchDto with BranchName = branchName}
                 | Promoted (referenceId, directoryVersion, sha256Hash, referenceText) -> {currentBranchDto with LatestPromotion = referenceId}
@@ -58,9 +71,9 @@ module Branch =
                 | EnabledSave enabled -> {currentBranchDto with SaveEnabled = enabled}
                 | EnabledTag enabled -> {currentBranchDto with TagEnabled = enabled}
                 | ReferenceRemoved _ -> currentBranchDto
-                | LogicalDeleted  -> {currentBranchDto with DeletedAt = Some (getCurrentInstant())}
+                | LogicalDeleted (force, deleteReason) -> {currentBranchDto with DeletedAt = Some (getCurrentInstant()); DeleteReason = deleteReason}
                 | PhysicalDeleted -> currentBranchDto // Do nothing because it's about to be deleted anyway.
-                | Undeleted -> {currentBranchDto with DeletedAt = None}
+                | Undeleted -> {currentBranchDto with DeletedAt = None; DeleteReason = String.Empty}
 
             {newOrganizationDto with UpdatedAt = Some (getCurrentInstant())}
 
@@ -103,6 +116,13 @@ module Branch =
             logScope <- log.BeginScope("Actor {actorName}", actorName)
             currentCommand <- String.Empty
             //log.LogInformation("{CurrentInstant}: Started {ActorName}.{MethodName} Id: {Id}.", getCurrentInstantExtended(), actorName, context.MethodName, this.Id.GetId())
+            
+            // This checks if the actor is still active, but in an undefined state, which will _almost_ never happen.
+            // isDisposed is set when the actor is deleted, or if an error occurs where we're not sure of the state and want to reload from the database.
+            if isDisposed then
+                this.OnActivateAsync().Wait()
+                isDisposed <- false
+            
             Task.CompletedTask
 
         override this.OnPostActorMethodAsync(context) =
@@ -154,12 +174,8 @@ module Branch =
                     return Error graceError
             }
 
-        member private this.SchedulePhysicalDeletion() =
-            // Send pub/sub message to kick off branch deletion
-            // Will include: enumerating and deleting each save, checkpoint, commit, and tag.
-            task {
-                return ()
-            }
+        member private this.SchedulePhysicalDeletion(deleteReason) =
+            this.RegisterReminderAsync(ReminderType.PhysicalDeletion, convertToByteArray deleteReason, Constants.DefaultPhysicalDeletionReminderTime, TimeSpan.FromMilliseconds(-1)).Wait()
 
         interface IBranchActor with
             member this.Exists() =
@@ -177,7 +193,7 @@ module Branch =
                             return Error (GraceError.Create (BranchError.getErrorMessage DuplicateCorrelationId) metadata.CorrelationId)
                         else
                             match command with 
-                            | BranchCommand.Create (branchId, branchName, parentBranchId, basedOn, repositoryId) ->
+                            | BranchCommand.Create (branchId, branchName, parentBranchId, basedOn, repositoryId, branchPermissions) ->
                                 match branchDto.UpdatedAt with
                                 | Some _ -> return Error (GraceError.Create (BranchError.getErrorMessage BranchAlreadyExists) metadata.CorrelationId) 
                                 | None -> return Ok command
@@ -203,8 +219,8 @@ module Branch =
                             let! event = 
                                 task {
                                     match command with
-                                    | Create (branchId, branchName, parentBranchId, basedOn, repositoryId) ->
-                                        return Created(branchId, branchName, parentBranchId, basedOn, repositoryId)
+                                    | Create (branchId, branchName, parentBranchId, basedOn, repositoryId, branchPermissions) ->
+                                        return Created(branchId, branchName, parentBranchId, basedOn, repositoryId, branchPermissions)
                                     | Rebase referenceId -> return Rebased referenceId
                                     | SetName organizationName -> return NameSet (organizationName)
                                     | BranchCommand.Promote (directoryId, sha256Hash, referenceText) ->
@@ -253,13 +269,11 @@ module Branch =
                                     | EnableSave enabled -> return EnabledSave enabled
                                     | EnableTag enabled -> return EnabledTag enabled
                                     | RemoveReference referenceId -> return ReferenceRemoved referenceId
-                                    | DeleteLogical ->
-                                        //do! this.UnregisterMaintenanceReminder()
-                                        return LogicalDeleted
+                                    | DeleteLogical (force, deleteReason) ->
+                                        this.SchedulePhysicalDeletion(deleteReason)
+                                        return LogicalDeleted (force, deleteReason)
                                     | DeletePhysical ->
-                                        task {
-                                            do! this.SchedulePhysicalDeletion()
-                                        } |> Async.AwaitTask |> ignore
+                                        isDisposed <- true
                                         return PhysicalDeleted
                                     | Undelete -> return Undeleted
                                 }
@@ -287,3 +301,22 @@ module Branch =
             member this.GetLatestCommit() = branchDto.LatestCommit |> returnTask
 
             member this.GetLatestPromotion() = branchDto.LatestPromotion |> returnTask
+
+        interface IRemindable with
+            override this.ReceiveReminderAsync(reminderName, state, dueTime, period) =
+                let stateManager = this.StateManager
+                match reminderName with
+                | ReminderType.Maintenance ->
+                    task {
+                        // Do some maintenance
+                        ()
+                    } :> Task
+                | ReminderType.PhysicalDeletion ->
+                    task {
+                        let! deletedDtoState = stateManager.TryRemoveStateAsync(dtoStateName)
+                        let! deletedEventsState = stateManager.TryRemoveStateAsync(eventsStateName)
+                        isDisposed <- true
+                        // TODO: Log these results.
+                        return ()
+                    } :> Task
+                | _ -> failwith "Unknown reminder type."

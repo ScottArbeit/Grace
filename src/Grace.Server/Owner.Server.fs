@@ -6,6 +6,7 @@ open Giraffe
 open Grace.Actors.Commands.Owner
 open Grace.Actors.Constants
 open Grace.Actors.Interfaces
+open Grace.Actors.Services
 open Grace.Server.ApplicationContext
 open Grace.Server.Services
 open Grace.Server.Validations

@@ -2,7 +2,9 @@ apiVersion: v1
 kind: Namespace
 metadata: 
   name: grace-dev
+
 ---
+
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -19,7 +21,9 @@ data:
   DAPR_GRPC_PORT: "50001"
   DAPR_SERVER_URI: http://127.0.0.1
   TEMP: /tmp
+
 ---
+
 apiVersion: v1
 kind: Service
 metadata:
@@ -39,7 +43,9 @@ spec:
     targetPort: 5001
   selector:
     app: grace-server
+
 ---
+
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -59,6 +65,7 @@ spec:
         dapr.io/enabled: "true"
         dapr.io/app-id: "grace-server"
         dapr.io/app-port: "5000"
+        dapr.io/log-level: "debug"
         #dapr.io/placement-host-address: "127.0.0.1:50005"
         dapr.io/sidecar-cpu-limit: "0.5"
         dapr.io/sidecar-memory-limit: "512Mi"
@@ -70,10 +77,17 @@ spec:
         hostPath:
           path: /mnt/c/Users/Scott/.dapr/
           type: Directory
+      - name: secret-volume
+        secret:
+          secretName: gracedevcert
       containers:
       - name: grace-server
         image: scottarbeit/grace-server:latest 
         imagePullPolicy: IfNotPresent
+        volumeMounts:
+        - name: secret-volume
+          mountPath: /etc/certificates
+          readOnly: true
         # volumeMounts:
         #   - name: dapr-config
         #     mountPath: /dapr/
@@ -88,6 +102,32 @@ spec:
         envFrom:
         - configMapRef:
             name: grace-environment
+        env:
+        - name: azurestorageconnectionstring
+          valueFrom:
+            secretKeyRef:
+              name: azurestorageconnectionstring
+              key: azurestorageconnectionstring
+        - name: azurestoragekey
+          valueFrom:
+            secretKeyRef:
+              name: azurestoragekey
+              key: azurestoragekey
+        - name: azurecosmosdbconnectionstring
+          valueFrom:
+            secretKeyRef:
+              name: azurecosmosdbconnectionstring
+              key: azurecosmosdbconnectionstring
+        - name: cosmosdatabasename
+          valueFrom:
+            secretKeyRef:
+              name: cosmosdatabasename
+              key: cosmosdatabasename
+        - name: cosmoscontainername
+          valueFrom:
+            secretKeyRef:
+              name: cosmoscontainername
+              key: cosmoscontainername
         ports:
         - containerPort: 5000
         - containerPort: 5001

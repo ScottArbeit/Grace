@@ -20,16 +20,21 @@ open System.Collections.Generic
 open System.Runtime.Serialization
 open System.Text.Json
 open System.Threading.Tasks
+open Constants.ReminderType
+open Commands.Owner
+open System.Collections.Concurrent
+open Grace.Shared.Dto.Repository
+open Constants.ActorName
 
 module Organization =
 
     let GetActorId (organizationId: OrganizationId) = ActorId($"{organizationId}")
 
-    type OrganizationActor(host: ActorHost) = 
+    type OrganizationActor(host: ActorHost) as this = 
         inherit Actor(host)
 
         let actorName = ActorName.Organization
-        let log = host.LoggerFactory.CreateLogger(actorName)
+        let log = this.Logger
         let mutable actorStartTime = Instant.MinValue
         let mutable logScope: IDisposable = null
         let mutable currentCommand = String.Empty
@@ -39,7 +44,9 @@ module Organization =
 
         let mutable organizationDto = OrganizationDto.Default
         let mutable organizationEvents: List<OrganizationEvent> = null
-        let logger = host.LoggerFactory.CreateLogger(nameof(OrganizationActor))
+
+        /// Indicates that the actor is in an undefined state, and should be reset.
+        let mutable isDisposed = false
 
         let updateDto (organizationEventType: OrganizationEventType) currentOrganizationDto =
             let newOrganizationDto = 
@@ -49,17 +56,15 @@ module Organization =
                 | TypeSet (organizationType) -> {currentOrganizationDto with OrganizationType = organizationType}
                 | SearchVisibilitySet (searchVisibility) -> {currentOrganizationDto with SearchVisibility = searchVisibility}
                 | DescriptionSet (description) -> {currentOrganizationDto with Description = description}
-                | RepositoryAdded (repositoryId, repositoryName) -> currentOrganizationDto.Repositories.Add(repositoryId, repositoryName); currentOrganizationDto
-                | RepositoryDeleted (repositoryId) -> currentOrganizationDto.Repositories.Remove(repositoryId) |> ignore; currentOrganizationDto
                 | LogicalDeleted (_, deleteReason) -> {currentOrganizationDto with DeleteReason = deleteReason; DeletedAt = Some (getCurrentInstant())}
-                | PhysicalDeleted _ -> currentOrganizationDto // Do nothing because it's about to be deleted anyway.
+                | PhysicalDeleted -> currentOrganizationDto // Do nothing because it's about to be deleted anyway.
                 | Undeleted -> {currentOrganizationDto with DeletedAt = None; DeleteReason = String.Empty}
 
             {newOrganizationDto with UpdatedAt = Some (getCurrentInstant())}
 
         override this.OnActivateAsync() =
             let stateManager = this.StateManager
-            logger.LogInformation("{CurrentInstant} Activated {ActorType} {ActorId}.", getCurrentInstantExtended(), this.GetType().Name, host.Id)
+            log.LogInformation("{CurrentInstant} Activated {ActorType} {ActorId}.", getCurrentInstantExtended(), this.GetType().Name, host.Id)
             task {
                 let! retrievedDto = Storage.RetrieveState<OrganizationDto> stateManager dtoStateName
                 match retrievedDto with
@@ -68,10 +73,10 @@ module Organization =
             } :> Task
 
         member private this.SetMaintenanceReminder() =
-            this.RegisterReminderAsync("MaintenanceReminder", Array.empty<byte>, TimeSpan.FromDays(7.0), TimeSpan.FromDays(7.0))
+            this.RegisterReminderAsync(ReminderType.Maintenance, Array.empty<byte>, TimeSpan.FromDays(7.0), TimeSpan.FromDays(7.0))
 
         member private this.UnregisterMaintenanceReminder() =
-            this.UnregisterReminderAsync("MaintenanceReminder")
+            this.UnregisterReminderAsync(ReminderType.Maintenance)
 
         member private this.OnFirstWrite() =
             task {
@@ -84,6 +89,13 @@ module Organization =
             logScope <- log.BeginScope("Actor {actorName}", actorName)
             currentCommand <- String.Empty
             //log.LogInformation("{CurrentInstant}: Started {ActorName}.{MethodName} Id: {Id}.", getCurrentInstantExtended(), actorName, context.MethodName, this.Id.GetId())
+
+            // This checks if the actor is still active, but in an undefined state, which will _almost_ never happen.
+            // isDisposed is set when the actor is deleted, or if an error occurs where we're not sure of the state and want to reload from the database.
+            if isDisposed then
+                this.OnActivateAsync().Wait()
+                isDisposed <- false
+
             Task.CompletedTask
             
         override this.OnPostActorMethodAsync(context) =
@@ -125,8 +137,10 @@ module Organization =
                     let message = graceEvent |> serialize
                     do! daprClient.PublishEventAsync(GracePubSubService, GraceEventStreamTopic, message)
 
+                    // Update the Dto based on the current event.
                     organizationDto <- organizationDto |> updateDto organizationEvent.Event
                     do! DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> stateManager.SetStateAsync(dtoStateName, organizationDto))
+
                     let returnValue = GraceReturnValue.Create "Organization command succeeded." organizationEvent.Metadata.CorrelationId
                     returnValue.Properties.Add(nameof(OwnerId), $"{organizationDto.OwnerId}")
                     returnValue.Properties.Add(nameof(OrganizationId), $"{organizationDto.OrganizationId}")
@@ -138,14 +152,29 @@ module Organization =
                     return Error graceError
             }
 
-        member private this.SchedulePhysicalDeletion() =
-            // Send pub/sub message to kick off repository deletion
-            // Will include: enumerating and deleting each branch, which should catch each save, checkpoint, commit, and
-            // I *think* that should cascade down to every Directory and File being removed from Appearances lists,
-            // and therefore should see the deletion of all of the Actor instances, but need to make sure that's true.
+        /// Deletes all of the repositories provided, by sending a DeleteLogical command to each one.
+        member private this.LogicalDeleteRepositories (repositories: List<RepositoryDto>, metadata: EventMetadata, deleteReason: string) =
             task {
-                return ()
+                let results = ConcurrentQueue<GraceResult<string>>()
+
+                // Loop through each repository and send a DeleteLogical command to it.
+                do! Parallel.ForEachAsync(repositories, Constants.ParallelOptions, (fun repository ct ->
+                    ValueTask(task {
+                        let repositoryActor = this.ProxyFactory.CreateActorProxy<IRepositoryActor> (ActorId($"{repository.RepositoryId}"), Constants.ActorName.Repository)
+                        let! result = repositoryActor.Handle (Commands.Repository.DeleteLogical (true, $"Cascaded from deleting organization. ownerId: {organizationDto.OwnerId}; organizationId: {organizationDto.OrganizationId}; organizationName: {organizationDto.OrganizationName}; deleteReason: {deleteReason}")) metadata
+                        results.Enqueue(result)
+                    })))
+
+                // Check if any of the commands failed, and if so, return the first error.
+                let overallResult = results |> Seq.tryPick (fun result -> match result with | Ok _ -> None | Error error -> Some(error))
+
+                match overallResult with
+                | None -> return Ok ()
+                | Some error -> return Error error
             }
+
+        member private this.SchedulePhysicalDeletion(deleteReason) =
+            this.RegisterReminderAsync(ReminderType.PhysicalDeletion, convertToByteArray deleteReason, Constants.DefaultPhysicalDeletionReminderTime, TimeSpan.FromMilliseconds(-1)).Wait()
 
         interface IOrganizationActor with
             member this.Exists() =
@@ -158,7 +187,7 @@ module Organization =
                 Task.FromResult(organizationDto)
 
             member this.RepositoryExists repositoryName = 
-                this.Logger.LogInformation("Inside F(x)")
+                log.LogInformation("Inside F(x)")
                 Task.FromResult(false)
 
             member this.ListRepositories() =
@@ -182,31 +211,43 @@ module Organization =
                                 | None -> return Error (GraceError.Create (OrganizationError.getErrorMessage OrganizationIdDoesNotExist) metadata.CorrelationId) 
                     }
 
-                let processCommand (command: OrganizationCommand) metadata =
+                let processCommand (command: OrganizationCommand) (metadata: EventMetadata) =
                     task {
                         try
-                            let! event = 
+                            let! eventResult = 
                                 task {
                                     match command with
-                                    | OrganizationCommand.Create (organizationId, organizationName, ownerId) -> return OrganizationEventType.Created (organizationId, organizationName, ownerId)
-                                    | OrganizationCommand.SetName (organizationName) -> return OrganizationEventType.NameSet (organizationName)
-                                    | OrganizationCommand.SetType (organizationType) -> return OrganizationEventType.TypeSet (organizationType)
-                                    | OrganizationCommand.SetSearchVisibility (searchVisibility) -> return OrganizationEventType.SearchVisibilitySet (searchVisibility)
-                                    | OrganizationCommand.SetDescription (description) -> return OrganizationEventType.DescriptionSet (description)
-                                    | OrganizationCommand.AddRepository (repositoryId, repositoryName) -> return OrganizationEventType.RepositoryAdded (repositoryId, repositoryName)
-                                    | OrganizationCommand.DeleteRepository repositoryId -> return OrganizationEventType.RepositoryDeleted (repositoryId)
+                                    | OrganizationCommand.Create (organizationId, organizationName, ownerId) -> 
+                                        return Ok (OrganizationEventType.Created (organizationId, organizationName, ownerId))
+                                    | OrganizationCommand.SetName (organizationName) -> return Ok (OrganizationEventType.NameSet (organizationName))
+                                    | OrganizationCommand.SetType (organizationType) -> return Ok (OrganizationEventType.TypeSet (organizationType))
+                                    | OrganizationCommand.SetSearchVisibility (searchVisibility) -> return Ok (OrganizationEventType.SearchVisibilitySet (searchVisibility))
+                                    | OrganizationCommand.SetDescription (description) -> return Ok (OrganizationEventType.DescriptionSet (description))
                                     | OrganizationCommand.DeleteLogical (force, deleteReason) ->
-                                        //do! this.UnregisterMaintenanceReminder()
-                                        return OrganizationEventType.LogicalDeleted (force, deleteReason)
+                                        // Get the list of branches that aren't already deleted.
+                                        let! repositories = getRepositories organizationDto.OrganizationId Int32.MaxValue false
+
+                                        // If the organization contains repositories, and the force flag is not set, return an error.
+                                        if not <| force && repositories.Count > 0 then
+                                            return Error (GraceError.CreateWithMetadata (OrganizationError.getErrorMessage OrganizationContainsRepositories) metadata.CorrelationId metadata.Properties)
+                                        else
+                                            // Delete the repositories.
+                                            match! this.LogicalDeleteRepositories(repositories, metadata, deleteReason) with
+                                            | Ok _ -> 
+                                                this.SchedulePhysicalDeletion(deleteReason)
+                                                return Ok (LogicalDeleted (force, deleteReason))
+                                            | Error error -> return Error error
                                     | OrganizationCommand.DeletePhysical ->
-                                        do! this.SchedulePhysicalDeletion()
-                                        return OrganizationEventType.PhysicalDeleted
-                                    | OrganizationCommand.Undelete -> return OrganizationEventType.Undeleted
+                                        isDisposed <- true
+                                        return Ok OrganizationEventType.PhysicalDeleted
+                                    | OrganizationCommand.Undelete -> return Ok OrganizationEventType.Undeleted
                                 }
-                            
-                            return! this.ApplyEvent {Event = event; Metadata = metadata}
+
+                            match eventResult with
+                            | Ok event -> return! this.ApplyEvent {Event = event; Metadata = metadata}
+                            | Error error -> return Error error
                         with ex ->
-                            return Error (GraceError.Create $"{createExceptionResponse ex}" metadata.CorrelationId)
+                            return Error (GraceError.CreateWithMetadata $"{createExceptionResponse ex}" metadata.CorrelationId metadata.Properties)
                     }
 
                 task {
@@ -215,3 +256,27 @@ module Organization =
                     | Ok command -> return! processCommand command metadata 
                     | Error error -> return Error error
                 }
+
+        interface IRemindable with
+            override this.ReceiveReminderAsync(reminderName, state, dueTime, period) =
+                let stateManager = this.StateManager
+                match reminderName with
+                | ReminderType.Maintenance ->
+                    task {
+                        // Do some maintenance
+                        ()
+                    } :> Task
+                | ReminderType.PhysicalDeletion ->
+                    task {
+                        log.LogInformation("Received PhysicalDeletion reminder for organization; OrganizationId: {organizationId}; OrganizationName: {organizationName}; OwnerId: {ownerId}.", organizationDto.OrganizationId, organizationDto.OrganizationName, organizationDto.OwnerId)
+
+                        // Physically delete the actor state.
+                        let! deletedDtoState = stateManager.TryRemoveStateAsync(dtoStateName)
+                        let! deletedEventsState = stateManager.TryRemoveStateAsync(eventsStateName)
+
+                        // Mark the actor as disposed, in case someone tries to use it before Dapr GC's it.
+                        isDisposed <- true
+
+                        log.LogInformation("Physically deleted state for organization; OrganizationId: {organizationId}; OrganizationName: {organizationName}; OwnerId: {ownerId}.", organizationDto.OrganizationId, organizationDto.OrganizationName, organizationDto.OwnerId)
+                    } :> Task
+                | _ -> failwith "Unknown reminder type."

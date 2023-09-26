@@ -7,7 +7,7 @@ open Grace.Actors
 open Grace.Actors.Commands
 open Grace.Actors.Constants
 open Grace.Actors.Interfaces
-open Grace.Server.Services
+open Grace.Actors.Services
 open Grace.Shared.Constants
 open Grace.Shared.Types
 open Grace.Shared.Utilities

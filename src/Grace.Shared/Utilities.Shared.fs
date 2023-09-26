@@ -233,6 +233,10 @@ module Utilities =
           sb.Append($"{b:x2}") |> ignore
         sb.ToString()
 
+    let convertToByteArray<'T> (value: 'T) =
+        let json = serialize value
+        Encoding.UTF8.GetBytes json
+
     /// Converts a string of hexadecimal numbers to a byte array. For example, "ab1503" -> [0xab, 0x15, 0x03]
     ///
     /// The hex string must have an even number of digits; for this function, "1a8" will throw an ArgumentException, but "01a8" will be converted to a byte array.

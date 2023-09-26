@@ -190,6 +190,7 @@ module Errors =
             | InvalidOwnerName
             | InvalidOwnerType
             | InvalidSearchVisibility
+            | OwnerContainsOrganizations
             | OwnerDoesNotExist
             | OwnerIdAlreadyExists
             | OwnerIdDoesNotExist
@@ -213,6 +214,7 @@ module Errors =
                 | InvalidOwnerName -> getLocalizedString StringResourceName.InvalidOwnerName
                 | InvalidOwnerType -> getLocalizedString StringResourceName.InvalidOwnerType
                 | InvalidSearchVisibility -> getLocalizedString StringResourceName.InvalidSearchVisibility
+                | OwnerContainsOrganizations -> getLocalizedString StringResourceName.OwnerContainsOrganizations
                 | OwnerDoesNotExist -> getLocalizedString StringResourceName.OwnerDoesNotExist
                 | OwnerIdAlreadyExists -> getLocalizedString StringResourceName.OwnerIdAlreadyExists
                 | OwnerIdDoesNotExist -> getLocalizedString StringResourceName.OwnerIdDoesNotExist
@@ -247,6 +249,7 @@ module Errors =
             | InvalidRepositoryName
             | InvalidSearchVisibility
             | OrganizationAlreadyExists
+            | OrganizationContainsRepositories
             | OrganizationDescriptionIsRequired
             | OrganizationDoesNotExist
             | OrganizationIdDoesNotExist
@@ -277,14 +280,15 @@ module Errors =
                 | InvalidRepositoryId -> getLocalizedString StringResourceName.InvalidRepositoryId
                 | InvalidRepositoryName -> getLocalizedString StringResourceName.InvalidRepositoryName
                 | InvalidSearchVisibility -> getLocalizedString StringResourceName.InvalidSearchVisibility
-                | OrganizationNameIsRequired -> getLocalizedString StringResourceName.OrganizationNameIsRequired
-                | OrganizationIdIsRequired -> getLocalizedString StringResourceName.OrganizationIdIsRequired
                 | OrganizationAlreadyExists -> getLocalizedString StringResourceName.OrganizationAlreadyExists
+                | OrganizationContainsRepositories -> getLocalizedString StringResourceName.OrganizationContainsRepositories
                 | OrganizationDescriptionIsRequired -> getLocalizedString StringResourceName.DescriptionIsRequired
                 | OrganizationDoesNotExist -> getLocalizedString StringResourceName.OrganizationDoesNotExist
+                | OrganizationIdIsRequired -> getLocalizedString StringResourceName.OrganizationIdIsRequired
                 | OrganizationIdDoesNotExist -> getLocalizedString StringResourceName.OrganizationIdDoesNotExist
                 | OrganizationIsDeleted -> getLocalizedString StringResourceName.OrganizationIsDeleted
                 | OrganizationIsNotDeleted -> getLocalizedString StringResourceName.OrganizationIsNotDeleted
+                | OrganizationNameIsRequired -> getLocalizedString StringResourceName.OrganizationNameIsRequired
                 | OrganizationTypeIsRequired -> getLocalizedString StringResourceName.OrganizationTypeIsRequired
                 | OwnerDoesNotExist -> getLocalizedString StringResourceName.OwnerDoesNotExist
                 | OwnerIdIsRequired -> getLocalizedString StringResourceName.OwnerIdIsRequired
@@ -328,11 +332,13 @@ module Errors =
             | OrganizationDoesNotExist
             | OwnerDoesNotExist
             | ReferenceIdsAreRequired
+            | RepositoryContainsBranches
             | RepositoryDoesNotExist
             | RepositoryNameIsRequired
             | RepositoryIdDoesNotExist
             | RepositoryIdAlreadyExists
             | RepositoryIdIsRequired
+            | RepositoryIsAlreadyInitialized
             | RepositoryIsDeleted
             | RepositoryIsNotDeleted
             | RepositoryIsNotEmpty
@@ -369,10 +375,12 @@ module Errors =
                 | OrganizationDoesNotExist -> getLocalizedString StringResourceName.OrganizationDoesNotExist
                 | OwnerDoesNotExist -> getLocalizedString StringResourceName.OwnerDoesNotExist
                 | ReferenceIdsAreRequired -> getLocalizedString StringResourceName.ReferenceIdsAreRequired
+                | RepositoryContainsBranches -> getLocalizedString StringResourceName.RepositoryContainsBranches
                 | RepositoryDoesNotExist  -> getLocalizedString StringResourceName.RepositoryDoesNotExist
                 | RepositoryIdAlreadyExists -> getLocalizedString StringResourceName.RepositoryIdAlreadyExists
                 | RepositoryIdDoesNotExist -> getLocalizedString StringResourceName.RepositoryIdDoesNotExist
                 | RepositoryIdIsRequired -> getLocalizedString StringResourceName.RepositoryIdIsRequired
+                | RepositoryIsAlreadyInitialized -> getLocalizedString StringResourceName.RepositoryIsAlreadyInitialized
                 | RepositoryIsDeleted -> getLocalizedString StringResourceName.RepositoryIsDeleted
                 | RepositoryIsNotDeleted -> getLocalizedString StringResourceName.RepositoryIsNotDeleted
                 | RepositoryIsNotEmpty -> getLocalizedString StringResourceName.RepositoryIsNotEmpty

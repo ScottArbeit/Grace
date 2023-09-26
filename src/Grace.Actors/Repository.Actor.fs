@@ -11,6 +11,7 @@ open Grace.Actors.Services
 open Grace.Shared
 open Grace.Shared.Combinators
 open Grace.Shared.Constants
+open Grace.Shared.Dto.Branch
 open Grace.Shared.Dto.Repository
 open Grace.Shared.Resources.Text
 open Grace.Shared.Types
@@ -25,6 +26,9 @@ open System.Text.Json
 open System.Threading.Tasks
 open System.Runtime.Serialization
 open Grace.Shared.Services
+open System.Text
+open FSharp.Control
+open System.Collections.Concurrent
 
 module Repository =
         
@@ -41,6 +45,9 @@ module Repository =
 
         let dtoStateName = "repositoryDtoState"
         let eventsStateName = "repositoryEventsState"
+
+        /// Indicates that the actor is in an undefined state, and should be reset.
+        let mutable isDisposed = false
 
         let mutable repositoryDto = RepositoryDto.Default
         let mutable repositoryEvents: List<RepositoryEvent> = null
@@ -61,10 +68,10 @@ module Repository =
             } :> Task
 
         member private this.SetMaintenanceReminder() =
-            this.RegisterReminderAsync("MaintenanceReminder", Array.empty<byte>, TimeSpan.FromDays(7.0), TimeSpan.FromDays(7.0))
+            this.RegisterReminderAsync(ReminderType.Maintenance, Array.empty<byte>, TimeSpan.FromDays(7.0), TimeSpan.FromDays(7.0))
 
         member private this.UnregisterMaintenanceReminder() =
-            this.UnregisterReminderAsync("MaintenanceReminder")
+            this.UnregisterReminderAsync(ReminderType.Maintenance)
 
         member private this.OnFirstWrite() =
             task {
@@ -80,18 +87,15 @@ module Repository =
                                                 RepositoryId = repositoryId; 
                                                 OwnerId = ownerId; 
                                                 OrganizationId = organizationId; 
-                                                ObjectStorageProvider = Constants.defaultObjectStorageProvider;
-                                                StorageAccountName = Constants.defaultObjectStorageAccount;
-                                                StorageContainerName = StorageContainerName Constants.defaultObjectStorageContainerName}
+                                                ObjectStorageProvider = Constants.DefaultObjectStorageProvider;
+                                                StorageAccountName = Constants.DefaultObjectStorageAccount;
+                                                StorageContainerName = StorageContainerName Constants.DefaultObjectStorageContainerName}
+                | Initialized -> {currentRepositoryDto with InitializedAt = Some (getCurrentInstant())}
                 | ObjectStorageProviderSet objectStorageProvider -> {currentRepositoryDto with ObjectStorageProvider = objectStorageProvider}
                 | StorageAccountNameSet storageAccountName ->  {currentRepositoryDto with StorageAccountName = storageAccountName}
                 | StorageContainerNameSet containerName -> {currentRepositoryDto with StorageContainerName = containerName}
                 | RepositoryStatusSet repositoryStatus -> {currentRepositoryDto with RepositoryStatus = repositoryStatus}
                 | RepositoryVisibilitySet repositoryVisibility -> {currentRepositoryDto with RepositoryVisibility = repositoryVisibility}
-                | BranchAdded branchName -> currentRepositoryDto.Branches.Add branchName |> ignore
-                                            currentRepositoryDto
-                | BranchDeleted branchName -> currentRepositoryDto.Branches.Remove branchName |> ignore
-                                              currentRepositoryDto
                 | RecordSavesSet recordSaves -> {currentRepositoryDto with RecordSaves = recordSaves}
                 | DefaultServerApiVersionSet version -> {currentRepositoryDto with DefaultServerApiVersion = version}
                 | DefaultBranchNameSet defaultBranchName -> {currentRepositoryDto with DefaultBranchName = defaultBranchName}
@@ -101,7 +105,7 @@ module Repository =
                 | EnabledComplexPromotion enabled -> {currentRepositoryDto with EnabledComplexPromotion = enabled}
                 | DescriptionSet description -> {currentRepositoryDto with Description = description}
                 | LogicalDeleted _ -> {currentRepositoryDto with DeletedAt = Some (getCurrentInstant())}
-                | PhysicalDeleted _ -> currentRepositoryDto // Do nothing because it's about to be deleted anyway.
+                | PhysicalDeleted -> currentRepositoryDto // Do nothing because it's about to be deleted anyway.
                 | Undeleted -> {currentRepositoryDto with DeletedAt = None; DeleteReason = String.Empty}
 
             {newRepositoryDto with UpdatedAt = Some (getCurrentInstant())}
@@ -114,7 +118,7 @@ module Repository =
                 if repositoryEvents = null then            
                     let! retrievedEvents = Storage.RetrieveState<List<RepositoryEvent>> stateManager eventsStateName
                     repositoryEvents <- match retrievedEvents with
-                                           | Some retrievedEvents -> retrievedEvents; 
+                                           | Some retrievedEvents -> retrievedEvents;
                                            | None -> List<RepositoryEvent>()
             
                 return repositoryEvents
@@ -146,8 +150,12 @@ module Repository =
                                 // Create the default branch.
                                 let branchId = (Guid.NewGuid())
                                 let branchActorId = ActorId($"{branchId}")
-                                let branchActor = Services.ActorProxyFactory.CreateActorProxy<IBranchActor>(branchActorId, ActorName.Branch)
-                                let! result = branchActor.Handle (Commands.Branch.BranchCommand.Create (branchId, (BranchName Constants.InitialBranchName), Constants.DefaultParentBranchId, ReferenceId.Empty, repositoryId)) repositoryEvent.Metadata
+                                let branchActor = Services.actorProxyFactory.CreateActorProxy<IBranchActor>(branchActorId, ActorName.Branch)
+
+                                // Only allow promotions and tags on the initial branch.
+                                let initialBranchPermissions = [|ReferenceType.Promotion; ReferenceType.Tag|]
+                                let createCommand = Commands.Branch.BranchCommand.Create (branchId, (BranchName Constants.InitialBranchName), Constants.DefaultParentBranchId, ReferenceId.Empty, repositoryId, initialBranchPermissions)
+                                let! result = branchActor.Handle createCommand repositoryEvent.Metadata
                                 match result with
                                 | Ok branchGraceReturn -> 
                                     // Create an initial promotion with completely empty contents
@@ -196,20 +204,43 @@ module Repository =
                     return Error graceError
             }
 
-        member private this.SchedulePhysicalDeletion() =
-            // Send pub/sub message to kick off repository deletion
-            // Will include: enumerating and deleting each branch, which should catch each save, checkpoint, commit, and
-            // I *think* that should cascade down to every Directory and File being removed from Appearances lists,
-            // and therefore should see the deletion of all of the Actor instances, but need to make sure that's true.
+        /// Deletes all of the branches provided, by sending a DeleteLogical command to each branch.
+        member private this.LogicalDeleteBranches (branches: List<BranchDto>, metadata: EventMetadata, deleteReason: string) =
             task {
-                return ()
+                let results = ConcurrentQueue<GraceResult<string>>()
+
+                // Loop through each branch and send a DeleteLogical command to it.
+                do! Parallel.ForEachAsync(branches, Constants.ParallelOptions, (fun branch ct ->
+                    ValueTask(task {
+                        let branchActor = this.ProxyFactory.CreateActorProxy<IBranchActor> (ActorId($"{branch.BranchId}"), Constants.ActorName.Branch)
+                        let! result = branchActor.Handle (Commands.Branch.DeleteLogical (true, $"Cascaded from deleting repository. ownerId: {repositoryDto.OwnerId}; organizationId: {repositoryDto.OrganizationId}; repositoryId: {repositoryDto.RepositoryId}; repositoryName: {repositoryDto.RepositoryName}; deleteReason: {deleteReason}")) metadata
+                        results.Enqueue(result)
+                    })))
+
+                // Check if any of the results were errors, and take the first one if so.
+                let overallResult = results |> Seq.tryPick (fun result -> match result with | Ok _ -> None | Error error -> Some(error))
+
+                match overallResult with
+                | None -> return Ok ()
+                | Some error -> return Error error
             }
+
+        /// Schedule an actor reminder to delete the repository from the database.
+        member private this.SchedulePhysicalDeletion(deleteReason) =
+            this.RegisterReminderAsync(ReminderType.PhysicalDeletion, convertToByteArray deleteReason, Constants.DefaultPhysicalDeletionReminderTime, TimeSpan.FromMilliseconds(-1)).Wait()
 
         override this.OnPreActorMethodAsync(context) =
             actorStartTime <- getCurrentInstant()
             logScope <- log.BeginScope("Actor {actorName}", actorName)
             currentCommand <- String.Empty
             //log.LogInformation("{CurrentInstant}: Started {ActorName}.{MethodName}, Id: {Id}.", getCurrentInstantExtended(), actorName, context.MethodName, this.Id.GetId())
+
+            // This checks if the actor is still active, but in an undefined state, which will _almost_ never happen.
+            // isDisposed is set when the actor is deleted, or if an error occurs where we're not sure of the state and want to reload from the database.
+            if isDisposed then
+                this.OnActivateAsync().Wait()
+                isDisposed <- false
+
             Task.CompletedTask
             
         override this.OnPostActorMethodAsync(context) =
@@ -323,7 +354,7 @@ module Repository =
                 Task.FromResult(if repositoryDto.UpdatedAt.IsSome then true else false)
 
             member this.IsEmpty() =
-                Task.FromResult(if repositoryDto.UpdatedAt.IsSome then false else true)
+                Task.FromResult(if repositoryDto.InitializedAt.IsSome then false else true)
 
             member this.IsDeleted() =
                 Task.FromResult(if repositoryDto.DeletedAt.IsSome then true else false)
@@ -353,13 +384,12 @@ module Repository =
                                 task {
                                     match command with
                                     | Create (repositoryName, repositoryId, ownerId, organizationId) -> return Created (repositoryName, repositoryId, ownerId, organizationId)
+                                    | Initialize -> return Initialized
                                     | SetObjectStorageProvider objectStorageProvider -> return ObjectStorageProviderSet objectStorageProvider
                                     | SetStorageAccountName storageAccountName -> return StorageAccountNameSet storageAccountName
                                     | SetStorageContainerName containerName -> return StorageContainerNameSet containerName
                                     | SetRepositoryStatus repositoryStatus -> return RepositoryStatusSet repositoryStatus
                                     | SetVisibility repositoryVisibility -> return RepositoryVisibilitySet repositoryVisibility
-                                    | AddBranch branchName -> return BranchAdded branchName
-                                    | DeleteBranch branchName -> return BranchDeleted branchName
                                     | SetRecordSaves recordSaves -> return RecordSavesSet recordSaves
                                     | SetDefaultServerApiVersion version -> return DefaultServerApiVersionSet version
                                     | SetDefaultBranchName defaultBranchName -> return DefaultBranchNameSet defaultBranchName
@@ -368,11 +398,20 @@ module Repository =
                                     | EnableSingleStepPromotion enabled -> return EnabledSingleStepPromotion enabled
                                     | EnableComplexPromotion enabled -> return EnabledComplexPromotion enabled
                                     | SetDescription description -> return DescriptionSet description
-                                    | DeleteLogical (force, deleteReason) -> 
-                                        //do! this.UnregisterMaintenanceReminder()
-                                        return LogicalDeleted (force, deleteReason)
+                                    | DeleteLogical (force, deleteReason) ->
+                                        // Get the list of branches that aren't already deleted.
+                                        let! branches = getBranches repositoryDto.RepositoryId Int32.MaxValue false
+                                        if not <| force && branches.Count > 0 then
+                                            raise (ApplicationException($"{error}"))
+                                            return LogicalDeleted (force, deleteReason)
+                                        else
+                                            // Delete the branches.
+                                            match! this.LogicalDeleteBranches(branches, metadata, deleteReason) with
+                                            | Ok _ -> this.SchedulePhysicalDeletion(deleteReason)
+                                            | Error error -> raise (ApplicationException($"{error}"))
+                                            return LogicalDeleted (force, deleteReason)
                                     | DeletePhysical ->
-                                        do! this.SchedulePhysicalDeletion()
+                                        isDisposed <- true
                                         return PhysicalDeleted
                                     | RepositoryCommand.Undelete -> return Undeleted
                                 }
@@ -390,11 +429,23 @@ module Repository =
                 }
 
         interface IRemindable with
-            member this.ReceiveReminderAsync(reminderName, state, dueTime, period) =
+            override this.ReceiveReminderAsync(reminderName, state, dueTime, period) =
+                let stateManager = this.StateManager
                 match reminderName with
-                | "MaintenanceReminder" ->
+                | ReminderType.Maintenance ->
                     task {
                         // Do some maintenance
                         ()
                     } :> Task
-                | _ -> Task.CompletedTask
+                | ReminderType.PhysicalDeletion ->
+                    task {
+                        // Physically delete the actor state.
+                        let! deletedDtoState = stateManager.TryRemoveStateAsync(dtoStateName)
+                        let! deletedEventsState = stateManager.TryRemoveStateAsync(eventsStateName)
+
+                        // Mark the actor as disposed, in case someone tries to use it before Dapr GC's it.
+                        isDisposed <- true
+
+                        log.LogInformation("Physical deleted state for repository; RepositoryId: {}; RepositoryName: {}; OrganizationId: {organizationId}; OwnerId: {ownerId}.", repositoryDto.RepositoryId, repositoryDto.RepositoryName, repositoryDto.OrganizationId, repositoryDto.OwnerId)
+                    } :> Task
+                | _ -> failwith "Unknown reminder type."

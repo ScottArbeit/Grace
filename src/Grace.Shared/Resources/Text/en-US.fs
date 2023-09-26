@@ -1,5 +1,6 @@
 ﻿namespace Grace.Shared.Resources
 
+open Grace.Shared
 open Grace.Shared.Resources.Text
 open System
 open System.Collections.Generic
@@ -40,8 +41,10 @@ module en_US =
             | FailedWhileApplyingEvent -> "A server error occurred while attempting to update the data transfer object."
             | FailedWhileSavingEvent -> "A server error occurred while attempting to save the event."
             | FilesMustNotBeEmpty -> "A non-empty list of files must be provided."
+            | GraceConfigFileNotFound -> $"No {Constants.GraceConfigFileName} file found along current path. Please run `grace config write` if you'd like to create one."
             | IndexFileNotFound -> "The Grace index file was not found. Please run grace maintenance update-index to re-create it."
             | InitialPromotionMessage -> "Initial, empty promotion."
+            | InterprocessFileDeleted -> "Inter-process communication file deleted."
             | InvalidBranchId -> "The provided BranchId is not a valid Guid."
             | InvalidBranchName -> "The BranchName is not a valid Grace name. A valid object name in Grace has between 2 and 64 characters, has a letter for the first character ([A-Za-z]), and letters, numbers, or - for the rest ([A-Za-z0-9\-]{1,63})."
             | InvalidCheckpointDaysValue -> "The provided value for CheckpointDays is invalid."
@@ -72,6 +75,7 @@ module en_US =
             | ObjectCacheFileNotFound -> "The Grace object cache file was not found. Please run grace maintenance scan to recreate it."
             | ObjectStorageException -> "An exception occurred when communicating with the object storage provider."
             | OrganizationAlreadyExists -> "An Organization with the provided OrganizationId already exists."
+            | OrganizationContainsRepositories -> "The organization cannot be deleted because it contains active repositories. Specify --force if you'd like to recursively delete all repositories."
             | OrganizationDoesNotExist -> "The organization was not found."
             | OrganizationIdDoesNotExist -> "An Organization with the provided OrganizationId does not exist."
             | OrganizationIdIsRequired -> "The OrganizationId must be provided."
@@ -79,6 +83,7 @@ module en_US =
             | OrganizationIsNotDeleted -> "The organization is not deleted."
             | OrganizationNameIsRequired -> "The OrganizationName must be provided."
             | OrganizationTypeIsRequired -> "The OrganizationType must be provided."
+            | OwnerContainsOrganizations -> "The owner cannot be deleted because it contains active organizations. Specify --force if you'd like to recursively delete all organizations, and their repositories."
             | OwnerDoesNotExist -> "The owner was not found."
             | OwnerIdAlreadyExists -> "An Owner with the provided OwnerId already exists."
             | OwnerIdDoesNotExist -> "An Owner with the provided OwnerId does not exist."
@@ -93,10 +98,12 @@ module en_US =
             | ReferenceIdsAreRequired -> "The list of ReferenceIds must not be empty."
             | ReferenceTypeMustBeProvided -> "The reference type cannot be an empty string."
             | RelativePathMustNotBeEmpty -> "The relative path of the directory cannot be an empty string."
+            | RepositoryContainsBranches -> "The repository cannot be deleted because it contains active branches. Specify --force if you'd like to recursively delete all branches."
             | RepositoryDoesNotExist -> "The repository was not found."
             | RepositoryIdAlreadyExists -> "A repository with the provided RepositoryId already exists."
             | RepositoryIdDoesNotExist -> "A repository with the provided RepositoryId does not exist."
             | RepositoryIdIsRequired -> "The RepositoryId must be provided."
+            | RepositoryIsAlreadyInitialized -> "The repository is already initialized."
             | RepositoryIsDeleted -> "The repository is deleted."
             | RepositoryIsNotDeleted -> "The repository is not deleted."
             | RepositoryIsNotEmpty -> "The repository is not empty. Only empty repositories can be initialized."

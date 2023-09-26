@@ -72,7 +72,7 @@ module DirectoryAppearance =
                         if dto.Appearances.Count = 0 then
                             let! deleteSucceeded = Storage.DeleteState stateManager dtoStateName
                             if deleteSucceeded then
-                                let directoryVersionActorProxy = Services.ActorProxyFactory.CreateActorProxy<IDirectoryVersionActor>(this.Id, Constants.ActorName.DirectoryVersion)
+                                let directoryVersionActorProxy = Services.actorProxyFactory.CreateActorProxy<IDirectoryVersionActor>(this.Id, Constants.ActorName.DirectoryVersion)
                                 let! result = directoryVersionActorProxy.Delete(correlationId)
                                 match result with
                                 | Ok returnValue ->

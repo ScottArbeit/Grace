@@ -1,6 +1,8 @@
 # The potential for misusing Grace
 
-Something I've thought about since the beginning of designing Grace is: how do we prevent ignorant and/or malicious management from using eventing data from Grace in the wrong way?
+Something I've thought about since the beginning of designing Grace is: how do we prevent ignorant and/or malicious management from using event data from Grace in the wrong way?
+
+So, to start, and just to be clear:
 
 ![](https://gracevcsdevelopment.blob.core.windows.net/static/Orange3.svg)
 
@@ -10,11 +12,11 @@ I'm aware of the potential to use things like "how often did this person do a sa
 
 And, because I've been a programmer for several decades, I, like you, am also aware of how fucking stupid and shortsighted it would be to do so.
 
-It's not my intention for Grace to become a monitoring platform. And there are features that Grace is meant to enable that simply can't happen without a normal, modern, cloud-native event-driven architecture.
+It's not my intention for Grace to become a monitoring platform. And yet, there are features that Grace enables that simply can't happen without a modern, cloud-native event-driven architecture.
 
 ![](https://gracevcsdevelopment.blob.core.windows.net/static/Orange3.svg)
 
-## Even Git has timestamps
+## Git has timestamps, too
 
 Sure, Git is distributed, and there's no way for the server to reach into your local repo and get status. If you use the feature-branch-gets-deleted method of using Git, then you're still pushing your feature branch and its commits up to the server before the merge-and-delete, and so you have that opportunity in Git to get some similar information that we're worried about in Grace. We haven't, as an industry, weaponized this data yet, so I'm hopeful we won't with any future version control system.
 

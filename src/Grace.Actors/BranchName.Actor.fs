@@ -3,6 +3,7 @@
 open Dapr.Actors
 open Dapr.Actors.Runtime
 open Grace.Actors.Constants
+open Grace.Actors.Interfaces
 open Grace.Shared.Utilities
 open Microsoft.Extensions.Logging
 open NodaTime
@@ -13,20 +14,6 @@ module BranchName =
 
     let mutable actorStartTime = Instant.MinValue
     let mutable logScope: IDisposable = null
-
-    let GetActorId repositoryId branchName = ActorId($"{repositoryId}-{branchName}")
-
-    type IBranchNameActor =
-        inherit IActor
-        /// <summary>
-        /// Sets the BranchId that matches the BranchName.
-        /// </summary>
-        abstract member SetBranchId: branchName: string -> Task
-
-        /// <summary>
-        /// Returns the BranchId for the given BranchName.
-        /// </summary>
-        abstract member GetBranchId: unit -> Task<String option>
 
     type BranchNameActor(host: ActorHost) =
         inherit Actor(host)

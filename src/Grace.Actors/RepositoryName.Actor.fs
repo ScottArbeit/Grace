@@ -3,6 +3,7 @@
 open Dapr.Actors
 open Dapr.Actors.Runtime
 open Grace.Actors.Constants
+open Grace.Actors.Interfaces
 open Grace.Shared.Utilities
 open Microsoft.Extensions.Logging
 open NodaTime
@@ -15,18 +16,6 @@ module RepositoryName =
     let mutable logScope: IDisposable = null
 
     let GetActorId (repositoryName: string) = ActorId(repositoryName)
-
-    type IRepositoryNameActor =
-        inherit IActor
-        /// <summary>
-        /// Sets the RepositoryId that matches the RepositoryName.
-        /// </summary>
-        abstract member SetRepositoryId: repositoryName: string -> Task
-
-        /// <summary>
-        /// Returns the RepositoryId for the given RepositoryName.
-        /// </summary>
-        abstract member GetRepositoryId: unit -> Task<String option>
 
     type RepositoryNameActor(host: ActorHost) =
         inherit Actor(host)

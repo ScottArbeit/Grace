@@ -10,7 +10,7 @@ module Events =
     module Branch =
         [<KnownType("GetKnownTypes")>]
         type BranchEventType =
-            | Created of branchId: BranchId * branchName: BranchName * parentBranchId: BranchId * basedOn: ReferenceId * repositoryId: RepositoryId
+            | Created of branchId: BranchId * branchName: BranchName * parentBranchId: BranchId * basedOn: ReferenceId * repositoryId: RepositoryId * initialPermissions: ReferenceType[]
             | Rebased of basedOn: ReferenceId
             | NameSet of newName: BranchName
             | Promoted of referenceId: ReferenceId * directoryId: DirectoryId * sha256Hash: Sha256Hash * referenceText: ReferenceText
@@ -24,7 +24,7 @@ module Events =
             | EnabledSave of allowed: bool
             | EnabledTag of allowed: bool
             | ReferenceRemoved of referenceId: ReferenceId
-            | LogicalDeleted
+            | LogicalDeleted of force: bool * deleteReason: string
             | PhysicalDeleted
             | Undeleted
             static member GetKnownTypes() = GetKnownTypes<BranchEventType>()
@@ -42,8 +42,6 @@ module Events =
             | TypeSet of organizationType: OrganizationType 
             | SearchVisibilitySet of searchVisibility: SearchVisibility 
             | DescriptionSet of organizationDescription: string 
-            | RepositoryAdded of repositoryId: RepositoryId * RepositoryName: RepositoryName 
-            | RepositoryDeleted of repositoryId: RepositoryId 
             | LogicalDeleted of force: bool * deleteReason: string
             | PhysicalDeleted
             | Undeleted
@@ -63,8 +61,6 @@ module Events =
             | TypeSet of ownerType: OwnerType
             | SearchVisibilitySet of searchVisibility: SearchVisibility
             | DescriptionSet of description: string
-            | OrganizationAdded of organizationId: OrganizationId * organizationName: OrganizationName
-            | OrganizationDeleted of organizationId: OrganizationId
             | LogicalDeleted of force: bool * deleteReason: string
             | PhysicalDeleted 
             | Undeleted
@@ -80,13 +76,12 @@ module Events =
         [<KnownType("GetKnownTypes")>]
         type RepositoryEventType =
             | Created of repositoryName: RepositoryName * repositoryId: RepositoryId * ownerId: OwnerId * organizationId: OrganizationId
+            | Initialized
             | ObjectStorageProviderSet of objectStorageProvider: ObjectStorageProvider
             | StorageAccountNameSet of storageAccountName: StorageAccountName
             | StorageContainerNameSet of storageContainerName: StorageContainerName
             | RepositoryVisibilitySet of repositoryVisibility: RepositoryVisibility
             | RepositoryStatusSet of repositoryStatus: RepositoryStatus
-            | BranchAdded of branchName: BranchName
-            | BranchDeleted of branchName: BranchName
             | RecordSavesSet of recordSaves: bool
             | DefaultServerApiVersionSet of defaultServerApiVersion: string
             | DefaultBranchNameSet of defaultBranchName: BranchName

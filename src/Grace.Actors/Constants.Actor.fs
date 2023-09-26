@@ -28,6 +28,15 @@ module Constants =
         let Tag = "TagActor"
         let User = "UserActor"
 
-    let defaultObjectStorageProvider = ObjectStorageProvider.AzureBlobStorage
-    let defaultObjectStorageAccount = "gracevcsdevelopment"
-    let defaultObjectStorageContainerName = "grace-objects"
+    module ReminderType =
+        [<Literal>]
+        let Maintenance = "Maintenance"
+        [<Literal>]
+        let PhysicalDeletion = "PhysicalDeletion"
+
+    let DefaultObjectStorageProvider = ObjectStorageProvider.AzureBlobStorage
+    let DefaultObjectStorageAccount = "gracevcsdevelopment"
+    let DefaultObjectStorageContainerName = "grace-objects"
+
+    // This will be TimeSpan.FromDays(7.0) in production, but for development purposes we'll use 30 seconds
+    let DefaultPhysicalDeletionReminderTime = TimeSpan.FromSeconds(30.0)

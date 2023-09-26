@@ -33,8 +33,8 @@ module Config =
         member val public Overwrite: bool = false with get, set
 
     module private Options = 
-        let directory = new Option<string>("--directory", IsRequired = false, Description = "The root path of the repository to initialize Grace in", Arity = ArgumentArity.ExactlyOne)
-        let overwrite = new Option<bool>("--overwrite", IsRequired = false, Description = "Overwrites the existing graceconfig.json file with default values", Arity = ArgumentArity.ZeroOrOne)
+        let directory = new Option<string>("--directory", IsRequired = false, Description = "The root path of the repository to initialize Grace in [default: current directory]", Arity = ArgumentArity.ExactlyOne)
+        let overwrite = new Option<bool>("--overwrite", IsRequired = false, Description = "Allows Grace to overwrite an existing graceconfig.json file with default values", Arity = ArgumentArity.ZeroOrOne, getDefaultValue = (fun _ -> false))
 
     let private CommonValidations (parseResult, parameters) =
         let ``Directory must be a valid path`` (parseResult: ParseResult, parameters: CommonParameters) =
@@ -67,7 +67,7 @@ module Config =
                 if parseResult |> verbose then printParseResult parseResult
                 let validateIncomingParameters = (parseResult, parameters) |> CommonValidations
                 match validateIncomingParameters with
-                | Ok _ ->                    
+                | Ok _ ->
                     // Search for existing .grace directory and existing graceconfig.json
                     // If I find them, and parameters.Overwrite is true, then I can empty out the .grace directory and write a default graceconfig.json.
                     // If I don't find them, I should create the .grace directory and write a default graceconfig.json.

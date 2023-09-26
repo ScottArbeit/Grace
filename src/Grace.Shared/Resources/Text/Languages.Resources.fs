@@ -39,8 +39,10 @@ module Text =
         | FailedWhileApplyingEvent
         | FailedWhileSavingEvent
         | FilesMustNotBeEmpty
+        | GraceConfigFileNotFound
         | IndexFileNotFound
         | InitialPromotionMessage
+        | InterprocessFileDeleted
         | InvalidBranchId
         | InvalidBranchName
         | InvalidCheckpointDaysValue
@@ -71,6 +73,7 @@ module Text =
         | ObjectCacheFileNotFound
         | ObjectStorageException
         | OrganizationAlreadyExists
+        | OrganizationContainsRepositories
         | OrganizationDoesNotExist
         | OrganizationIdDoesNotExist
         | OrganizationIdIsRequired
@@ -78,6 +81,7 @@ module Text =
         | OrganizationIsNotDeleted
         | OrganizationNameIsRequired
         | OrganizationTypeIsRequired
+        | OwnerContainsOrganizations
         | OwnerDoesNotExist
         | OwnerIdDoesNotExist
         | OwnerIdAlreadyExists
@@ -92,10 +96,12 @@ module Text =
         | ReferenceIdsAreRequired
         | ReferenceTypeMustBeProvided
         | RelativePathMustNotBeEmpty
+        | RepositoryContainsBranches
         | RepositoryDoesNotExist
         | RepositoryIdAlreadyExists
         | RepositoryIdDoesNotExist
         | RepositoryIdIsRequired
+        | RepositoryIsAlreadyInitialized
         | RepositoryIsDeleted
         | RepositoryIsNotDeleted
         | RepositoryIsNotEmpty

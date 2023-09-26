@@ -21,6 +21,7 @@ open System.Linq
 open System.Threading.Tasks
 open NodaTime.Text
 open System.Net.Http
+open System
 
 module ApplicationContext =
 
@@ -28,20 +29,27 @@ module ApplicationContext =
     let Configuration(): IConfiguration = configuration
 
     let mutable private actorProxyFactory: IActorProxyFactory = null
+    let mutable private actorStateStorageProvider: ActorStateStorageProvider = ActorStateStorageProvider.Unknown
+
     let ActorProxyFactory() = actorProxyFactory
+    let ActorStateStorageProvider() = actorStateStorageProvider
 
     /// <summary>
     /// Sets the Application global configuration.
     /// </summary>
     /// <param name="config">The configuration to set.</param>
     let setConfiguration (config: IConfiguration) =
-        let time = getCurrentInstant().ToString(InstantPattern.ExtendedIso.PatternText, CultureInfo.InvariantCulture)
-        printfn $"In setConfiguration at {time}."
+        logToConsole $"In setConfiguration at {getCurrentInstantExtended}. isNull(config): {isNull(config)}."
         configuration <- config
+        //configuration.AsEnumerable() |> Seq.iter (fun kvp -> logToConsole $"{kvp.Key}: {kvp.Value}")
 
     let setActorProxyFactory proxyFactory =
         actorProxyFactory <- proxyFactory
         Grace.Actors.Services.setActorProxyFactory proxyFactory
+
+    let setActorStateStorageProvider actorStateStorage =
+        actorStateStorageProvider <- actorStateStorage
+        Grace.Actors.Services.setActorStateStorageProvider actorStateStorageProvider
 
     type StorageAccount =
         {
@@ -52,69 +60,17 @@ module ApplicationContext =
     let daprHttpEndpoint = $"{Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.DaprServerUri)}:{Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.DaprHttpPort)}"
     let daprGrpcEndpoint = $"{Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.DaprServerUri)}:{Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.DaprGrpcPort)}"
     logToConsole $"daprHttpEndpoint: {daprHttpEndpoint}; daprGrpcEndpoint: {daprGrpcEndpoint}"
-    //let daprClient = DaprClientBuilder().UseJsonSerializationOptions(Constants.JsonSerializerOptions).Build()
     let daprClient = DaprClientBuilder().UseJsonSerializationOptions(Constants.JsonSerializerOptions).UseHttpEndpoint(daprHttpEndpoint).UseGrpcEndpoint(daprGrpcEndpoint).Build()
     
     let mutable sharedKeyCredential: StorageSharedKeyCredential = null
     
-    //let StorageAccounts = ConcurrentDictionary<String, String>()
-    //let storageAccountNames = Configuration.Item "StorageAccountNames"
-    //let storageAccountNames = (Configuration.Item "StorageAccountNames").Split(";")
-    //storageAccountNames |> 
-    //    Seq.iter(fun storageAccountName -> 
-    //                let secretName = $"{storageAccountName}ConnectionString"
-    //                let storageAccountConnectionString = daprClient.GetSecretAsync(Constants.GraceSecretStoreName, secretName).GetAwaiter().GetResult()
-    //                StorageAccounts.TryAdd(storageAccountName, storageAccountConnectionString.First().Value) |> ignore
-    //            )
-
-    let actorStateStorageProvider = ActorStateStorageProvider.AzureCosmosDb
     let defaultObjectStorageProvider = ObjectStorageProvider.AzureBlobStorage
-
-    let mutable private cosmosClient: CosmosClient = null
-    let mutable private cosmosContainer: Container = null
-
-    let CosmosClient() = 
-        if not <| isNull cosmosClient then
-            cosmosClient
-        else
-            //let cosmosDbConnectionString = Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.AzureCosmosDBConnectionString)
-            let cosmosDbConnectionString = daprClient.GetSecretAsync(Constants.GraceSecretStoreName, "azurecosmosdbconnectionstring").Result.First().Value
-            let cosmosClientOptions = CosmosClientOptions(
-                ApplicationName = Constants.GraceServerAppId, 
-                EnableContentResponseOnWrite = false, 
-                LimitToEndpoint = true, 
-                Serializer = new CosmosJsonSerializer(Constants.JsonSerializerOptions))
-#if DEBUG
-            // The CosmosDB emulator uses a self-signed certificate, and, by default, HttpClient will refuse
-            //   to connect over https: if the certificate can't be traced back to a root.
-            // These settings allow Grace Server to access the CosmosDB Emulator by bypassing TLS.
-            // And none of this matters if Dapr won't bypass TLS as well. 🤷
-            let httpClientFactory = fun () ->
-                let httpMessageHandler: HttpMessageHandler = new HttpClientHandler(
-                    ServerCertificateCustomValidationCallback = (fun _ _ _ _ -> true))
-                new HttpClient(httpMessageHandler)
-            cosmosClientOptions.HttpClientFactory <- httpClientFactory
-            cosmosClientOptions.ConnectionMode <- ConnectionMode.Direct
-#endif
-            cosmosClient <- new CosmosClient(cosmosDbConnectionString, cosmosClientOptions)
-            cosmosClient
-
-    let CosmosContainer() = 
-        if not <| isNull cosmosContainer then
-            cosmosContainer
-        else
-            (task {
-                let! databaseResponse = CosmosClient().CreateDatabaseIfNotExistsAsync(configuration["CosmosDatabaseName"])
-                let database = databaseResponse.Database
-                let containerProperties = ContainerProperties(Id = configuration["CosmosContainerName"], PartitionKeyPath = "/partitionKey", DefaultTimeToLive = 3600)
-                let! containerResponse = database.CreateContainerIfNotExistsAsync(containerProperties)
-                cosmosContainer <- containerResponse.Container
-                return cosmosContainer
-            }).Result
 
     let Set = 
         task {
-            let mutable isReady = true
+            let mutable isReady = false
+
+            // Wait for the Dapr gRPC port to be ready.
             let mutable gRPCPort: int = 50001
             let grpcPortString = Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.DaprGrpcPort)
             Int32.TryParse(grpcPortString, &gRPCPort) |> ignore
@@ -127,21 +83,42 @@ module ApplicationContext =
                 if tcpListeners.Any(fun tcpListener -> tcpListener.Port = gRPCPort) then
                     logToConsole $"gRPC port is ready."
                     isReady <- true
-            let! storageKey = daprClient.GetSecretAsync(Constants.GraceSecretStoreName, "azurestoragekey")
-            sharedKeyCredential <- StorageSharedKeyCredential(defaultObjectStorageAccount, storageKey.First().Value)
+            
+            let storageKey = Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.AzureStorageKey)
+            sharedKeyCredential <- StorageSharedKeyCredential(DefaultObjectStorageAccount, storageKey)
 
-            //match actorStateStorageProvider with
-            //| AzureCosmosDb ->
-            //    let! secrets = daprClient.GetSecretAsync(Constants.GraceSecretStoreName, "AzureCosmosDBConnectionString")
-            //    let cosmosDbConnectionString = secrets.First().Value
-            //    let cosmosClientOptions = CosmosClientOptions(ApplicationName = Constants.GraceServerAppId, EnableContentResponseOnWrite = false, LimitToEndpoint = true)
-            //    cosmosClient <- new CosmosClient(cosmosDbConnectionString, cosmosClientOptions)
-            //    let! databaseResponse = cosmosClient.CreateDatabaseIfNotExistsAsync(configuration["CosmosDatabaseName"])
-            //    let database = databaseResponse.Database
-            //    let containerProperties = ContainerProperties(Id = configuration["CosmosContainerName"], PartitionKeyPath = "/partitionKey")
-            //    let! containerResponse = database.CreateContainerIfNotExistsAsync(containerProperties)
-            //    container <- containerResponse.Container
-            //    ()
-            //| DynamoDb -> ()
-            //| Nul -> ()
+            let cosmosDbConnectionString = Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.AzureCosmosDBConnectionString)
+            let cosmosDatabaseName = Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.CosmosDatabaseName)
+            let cosmosContainerName = Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.CosmosContainerName)
+
+            // Get a reference to the CosmosDB database.
+            let cosmosClientOptions = CosmosClientOptions(
+                ApplicationName = Constants.GraceServerAppId, 
+                EnableContentResponseOnWrite = false, 
+                LimitToEndpoint = true, 
+                Serializer = new CosmosJsonSerializer(Constants.JsonSerializerOptions))
+#if DEBUG
+            // The CosmosDB emulator uses a self-signed certificate, and, by default, HttpClient will refuse
+            //   to connect over https: if the certificate can't be traced back to a root.
+            // These settings allow Grace Server to access the CosmosDB Emulator by bypassing TLS.
+            // And none of this matters if Dapr won't bypass TLS as well. 🤷
+            //let httpClientFactory = fun () ->
+            //    let httpMessageHandler: HttpMessageHandler = new HttpClientHandler(
+            //        ServerCertificateCustomValidationCallback = (fun _ _ _ _ -> true))
+            //    new HttpClient(httpMessageHandler)
+            //cosmosClientOptions.HttpClientFactory <- httpClientFactory
+            //cosmosClientOptions.ConnectionMode <- ConnectionMode.Direct
+#endif
+            let cosmosClient = new CosmosClient(cosmosDbConnectionString, cosmosClientOptions)            
+            let! databaseResponse = cosmosClient.CreateDatabaseIfNotExistsAsync(cosmosDatabaseName)
+            let database = databaseResponse.Database
+
+            // Get a reference to the CosmosDB container.
+            let containerProperties = ContainerProperties(Id = cosmosContainerName, PartitionKeyPath = "/partitionKey", DefaultTimeToLive = 3600)
+            let! containerResponse = database.CreateContainerIfNotExistsAsync(containerProperties)
+            let cosmosContainer = containerResponse.Container
+
+            // Inject the CosmosClient and CosmosContainer into Actor Services.
+            Grace.Actors.Services.setCosmosClient (cosmosClient)
+            Grace.Actors.Services.setCosmosContainer (cosmosContainer)
         } :> Task

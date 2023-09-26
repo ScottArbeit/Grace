@@ -6,6 +6,7 @@ open Grace.Cli.Services
 open Grace.Shared
 open Grace.Shared.Client.Configuration
 open Grace.Shared.Converters
+open Grace.Shared.Resources.Text
 open Grace.Shared.Types
 open Grace.Shared.Utilities
 open Microsoft.Extensions.Logging
@@ -26,6 +27,7 @@ open System.IO
 open System.Linq
 open System.Threading.Tasks
 open Grace.Shared.Validation
+open Grace.Shared.Resources.Text
 
 module Configuration =
     
@@ -173,15 +175,18 @@ module GraceCommand =
             .UseParseErrorReporting()
             .Build()
 
+    /// Checks if the command is a `grace watch` command.
     let isGraceWatch (parseResult: ParseResult) =
         if (parseResult.CommandResult.Command.Name = "watch") then true else false
 
+    /// Checks if the command is a `grace config` command.
     let isGraceConfig (parseResult: ParseResult) =
         if not <| isNull parseResult.CommandResult.Parent then
             if (parseResult.CommandResult.Parent.Symbol.Name = "config") then true else false
         else
             false
 
+    /// This is the main entry point for Grace CLI.
     [<EntryPoint>]
     let main args =
         let startTime = getCurrentInstant()
@@ -194,10 +199,12 @@ module GraceCommand =
                     //Threading.ThreadPool.SetMinThreads(Constants.ParallelOptions.MaxDegreeOfParallelism, Constants.ParallelOptions.MaxDegreeOfParallelism) |> ignore
                     let command = Build
 
-                    //let n = Constants.JsonSerializerOptions.Converters.Count
-                    //Constants.JsonSerializerOptions.Converters.Add(BranchDtoConverter())
-                    //logToAnsiConsole Colors.Important $"Was {n}, now {Constants.JsonSerializerOptions.Converters.Count}."
-
+                    // Right now, in order to handle default values, we need to read the Grace configuration file as the commands are being built, and before they're executed.
+                    // For instance, when the command is `grace repo create...`, the `repo` command is built by System.CommandLine in-memory, and that causes `graceconfig.json` to be read
+                    //    to get default values for things like OwnerId, OrganizationId, etc.
+                    // If grace is being run in a directory where there's no config, that obviously won't work, so, first, we check if we have a config file.
+                    // If we do have a config file, great! we can parse it and use it.
+                    // If we don't, we're just going to print an error message and exit.
                     if configurationFileExists() then
                         parseResult <- command.Parse(args)
                         if parseResult |> showOutput then
@@ -206,23 +213,22 @@ module GraceCommand =
                             else
                                 AnsiConsole.Write(new Rule())
 
+                        // If this instance isn't `grace watch`, we want to check if `grace watch` is running by trying to read the IPC file.
                         if not <| (parseResult |> isGraceWatch) then
                             let! graceWatchStatus = getGraceWatchStatus()
                             match graceWatchStatus with
                             | Some status ->
-                                //logToAnsiConsole Colors.Verbose $"Opened IPC file."
                                 Configuration.updateConfiguration {GraceWatchStatus = status}
                             | None ->
-                                    //logToAnsiConsole Colors.Verbose $"Couldn't open IPC file."
-                                    ()
+                                ()
 
-                        logToConsole (parseResult |> isGraceConfig)
+                        // Now we can invoke the command!
                         let! returnValue = command.InvokeAsync(args)
-                        ()
 
-                        // We'll tell the user now, before the Rule(), but we actually delete the inter-process communication file in the finally clause.
+                        // If this instance is `grace watch`, we'll delete the IPC file in the finally clause.
+                        // We'll write that to the log, before the last Rule() is written.
                         if parseResult |> isGraceWatch then
-                            logToAnsiConsole Colors.Important $"Inter-process communication file deleted."
+                            logToAnsiConsole Colors.Important (getLocalizedString StringResourceName.InterprocessFileDeleted)
 
                         if parseResult |> showOutput then
                             let finishTime = getCurrentInstant()
@@ -234,13 +240,14 @@ module GraceCommand =
 
                             AnsiConsole.WriteLine()
                     else
+                        // We don't have a config file, so write an error message and exit.
                         AnsiConsole.Write(new Rule())
 
                         if args.Any(fun arg -> arg = "config") then
                             let! returnValue = command.InvokeAsync(args)
                             ()
                         else
-                            printfn $"No {Constants.GraceConfigFileName} file found along current path. Please run `grace config write` to create one."
+                            AnsiConsole.MarkupLine($"[{Colors.Important}]{getLocalizedString StringResourceName.GraceConfigFileNotFound}[/]")
                         printParseResult parseResult
                         let finishTime = getCurrentInstant()
                         let elapsed = finishTime - startTime

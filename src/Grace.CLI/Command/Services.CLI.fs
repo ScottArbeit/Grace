@@ -357,7 +357,7 @@ module Services =
         }
 
     /// Creates the Grace index file by scanning the repository's working directory.
-    let createGraceStatusFile (previousGraceStatus: GraceStatus) = 
+    let createNewGraceStatusFile (previousGraceStatus: GraceStatus) = 
         task {
             let newGraceStatus = GraceStatus.Default
             
@@ -578,10 +578,10 @@ module Services =
                     // Add this directoryVersion for further processing.
                     changedDirectoryVersions.AddOrUpdate(directoryVersion.RelativePath, (fun _ -> updatedWithNewSize), (fun _ _ -> updatedWithNewSize)) |> ignore
                 | Change -> 
-                    //logToConsole $"Change file {relativePath}."
+                    logToConsole $"Change file {difference.RelativePath}."
                     let fileInfo = FileInfo(Path.Combine(Current().RootDirectory, difference.RelativePath))
                     let relativeDirectoryPath = normalizeFilePath (getLocalRelativeDirectory fileInfo.DirectoryName (Current().RootDirectory))
-                    //logToConsole $"{fileInfo.FullName}; {fileInfo.DirectoryName}; relativeDirectoryPath: {relativeDirectoryPath}"
+                    logToConsole $"{fileInfo.FullName}; {fileInfo.DirectoryName}; relativeDirectoryPath: {relativeDirectoryPath}"
 
                     let directoryVersion = 
                         let alreadyChanged = changedDirectoryVersions.Values.FirstOrDefault((fun dv -> dv.RelativePath = relativeDirectoryPath), LocalDirectoryVersion.Default)
@@ -597,7 +597,7 @@ module Services =
                     //        logToConsole $"{dv.RelativePath} = {relativeDirectoryPath}: {dv.RelativePath = relativeDirectoryPath}"
                     
                     //for file in directoryVersion.Files do
-                    //    logToConsole $"{file.RelativePath} = {relativePath}: {file.RelativePath = relativePath}"
+                    //    logToConsole $"{difference.DifferenceType}: {file.RelativePath} = {difference.RelativePath}: {file.RelativePath = difference.RelativePath}"
 
                     // Get a fileVersion for this file, including Sha256Hash, and see if it matches with the previous value.
                     // If it's changed, we have a new file version; if Sha256Hash matches, then the file was updated but then changed back to the same contents.
@@ -890,11 +890,6 @@ module Services =
                     //logToAnsiConsole Colors.Verbose $"Deleting file {fileInfo.FullName}."
                     fileInfo.Delete()
                     ()
-
-    let updateObjectCache (graceStatus: GraceStatus) (newDirectoryVersions: List<DirectoryVersion>) =
-        for newDirectoryVersion in newDirectoryVersions do
-            for fileVersion in newDirectoryVersion.Files.Select(fun file -> file.ToLocalFileVersion DateTime.UtcNow) do
-                File.Copy(fileVersion.FullObjectPath, fileVersion.FullName)
 
     /// Creates a save reference with the given message.
     let createSaveReference rootDirectoryVersion message correlationId =

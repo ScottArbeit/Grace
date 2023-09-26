@@ -39,6 +39,7 @@ open System.Text
 open System.IO
 open Microsoft.Extensions.Configuration
 open Grace.Shared.Converters
+open Grace.Shared.Types
 
 module Application =
 
@@ -60,7 +61,7 @@ module Application =
                                        let fileVersion = FileVersionInfo.GetVersionInfo(Assembly.GetExecutingAssembly().Location).FileVersion
                                        htmlString $"<h1>Hello From Grace Server {fileVersion}!</h1><br/><p>The current server time is: {getCurrentInstantExtended()}.</p>"
                                    ))
-                route "/healthz" (warbler (fun _ -> htmlString $"<h1>Hello From Grace!</h1><br/><p>The current server time is: {getCurrentInstantExtended()}.</p>"))
+                route "/healthz" (warbler (fun _ -> htmlString $"<h1>Grace server seems healthy!</h1><br/><p>The current server time is: {getCurrentInstantExtended()}.</p>"))
             ]
             PUT [
             ]
@@ -238,12 +239,13 @@ module Application =
             globalOpenTelemetryAttributes.Add("process.executable.name", Process.GetCurrentProcess().ProcessName)
             globalOpenTelemetryAttributes.Add("process.runtime.version", System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription)
             
-            //let actorProxyOptions = ActorProxyOptions(JsonSerializerOptions = Constants.JsonSerializerOptions, DaprApiToken = Environment.GetEnvironmentVariable("DAPR_API_TOKEN"))
-            let actorProxyOptions = ActorProxyOptions(JsonSerializerOptions = Constants.JsonSerializerOptions)
+            // Set up the ActorProxyFactory for the application.
+            let actorProxyOptions = ActorProxyOptions(JsonSerializerOptions = Constants.JsonSerializerOptions)  // DaprApiToken = Environment.GetEnvironmentVariable("DAPR_API_TOKEN")) (when we actually implement auth)
             actorProxyOptions.HttpEndpoint <- $"{Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.DaprServerUri)}:{Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.DaprHttpPort)}"
             logToConsole $"actorProxyOptions.HttpEndpoint: {actorProxyOptions.HttpEndpoint}"
             let actorProxyFactory = ActorProxyFactory(actorProxyOptions)
             ApplicationContext.setActorProxyFactory actorProxyFactory
+            ApplicationContext.setActorStateStorageProvider ActorStateStorageProvider.AzureCosmosDb
 
             let openApiInfo = new OpenApiInfo()
             openApiInfo.Description <- "Grace is a version control system. Code and documentation can be found at https://gracevcs.com."
@@ -292,10 +294,12 @@ module Application =
                                          .Build() |> ignore
                     )
             
-            // When you create a new actor type, add it here.
+            // Configures the Dapr Actor subsystem.            
             services.AddActors(fun options ->
                 options.JsonSerializerOptions <- Constants.JsonSerializerOptions
                 options.HttpEndpoint <- actorProxyOptions.HttpEndpoint
+            
+                // When you create a new actor type, register it here.
                 options.Actors.RegisterActor<Branch.BranchActor>()
                 options.Actors.RegisterActor<BranchName.BranchNameActor>()
                 options.Actors.RegisterActor<ContainerName.ContainerNameActor>()

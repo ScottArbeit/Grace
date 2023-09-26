@@ -19,16 +19,20 @@ open System.Collections.Generic
 open System.Runtime.Serialization
 open System.Text.Json
 open System.Threading.Tasks
+open FSharp.Control
+open Constants
+open System.Collections.Concurrent
+open Grace.Shared.Dto.Organization
 
 module Owner =
 
     let GetActorId (ownerId: OwnerId) = ActorId($"{ownerId}")
 
-    type OwnerActor(host: ActorHost) = 
+    type OwnerActor(host: ActorHost) as this =
         inherit Actor(host)
 
         let actorName = Constants.ActorName.Owner
-        let log = host.LoggerFactory.CreateLogger(actorName)
+        let log = this.Logger
         let mutable actorStartTime = Instant.MinValue
         let mutable logScope: IDisposable = null
         let mutable currentCommand = String.Empty
@@ -38,6 +42,9 @@ module Owner =
 
         let mutable ownerDto = OwnerDto.Default
         let mutable ownerEvents: List<OwnerEvent> = null
+        
+        /// Indicates that the actor is in an undefined state, and should be reset.
+        let mutable isDisposed = false
 
         let updateDto ownerEvent currentOwnerDto =
             let newOwnerDto =
@@ -47,10 +54,8 @@ module Owner =
                 | TypeSet (ownerType) -> {currentOwnerDto with OwnerType = ownerType}
                 | SearchVisibilitySet (searchVisibility) -> {currentOwnerDto with SearchVisibility = searchVisibility}
                 | DescriptionSet (description) -> {currentOwnerDto with Description = description}
-                | OrganizationAdded (organizationId, organizationName) -> currentOwnerDto.Organizations.TryAdd(organizationId, organizationName) |> ignore; currentOwnerDto
-                | OrganizationDeleted (organizationId) -> currentOwnerDto.Organizations.Remove(organizationId) |> ignore; currentOwnerDto
                 | LogicalDeleted (_, deleteReason) -> {currentOwnerDto with DeletedAt = Some (getCurrentInstant()); DeleteReason = deleteReason}
-                | PhysicalDeleted _ -> currentOwnerDto // Do nothing because it's about to be deleted anyway.
+                | PhysicalDeleted -> currentOwnerDto // Do nothing because it's about to be deleted anyway.
                 | Undeleted -> {currentOwnerDto with DeletedAt = None; DeleteReason = String.Empty}
 
             {newOwnerDto with UpdatedAt = Some (getCurrentInstant())}
@@ -66,10 +71,10 @@ module Owner =
             } :> Task
 
         member private this.SetMaintenanceReminder() =
-            this.RegisterReminderAsync("MaintenanceReminder", Array.empty<byte>, TimeSpan.FromDays(7.0), TimeSpan.FromDays(7.0))
+            this.RegisterReminderAsync(ReminderType.Maintenance, Array.empty<byte>, TimeSpan.FromDays(7.0), TimeSpan.FromDays(7.0))
 
         member private this.UnregisterMaintenanceReminder() =
-            this.UnregisterReminderAsync("MaintenanceReminder")
+            this.UnregisterReminderAsync(ReminderType.Maintenance)
 
         member private this.OnFirstWrite() =
             task {
@@ -78,9 +83,18 @@ module Owner =
             }
 
         override this.OnPreActorMethodAsync(context) =
+            if context.CallType = ActorCallType.ReminderMethod then
+                log.LogInformation("{CurrentInstant}: Reminder {ActorName}.{MethodName} Id: {Id}.", getCurrentInstantExtended(), actorName, context.MethodName, this.Id.GetId())
             actorStartTime <- getCurrentInstant()
             logScope <- log.BeginScope("Actor {actorName}", actorName)
             currentCommand <- String.Empty
+
+            // This checks if the actor is still active, but in an undefined state, which will _almost_ never happen.
+            // isDisposed is set when the actor is deleted, or if an error occurs where we're not sure of the state and want to reload from the database.
+            if isDisposed then
+                this.OnActivateAsync().Wait()
+                isDisposed <- false
+    
             //log.LogInformation("{CurrentInstant}: Started {ActorName}.{MethodName} Id: {Id}.", getCurrentInstantExtended(), actorName, context.MethodName, this.Id.GetId())
             Task.CompletedTask
             
@@ -137,14 +151,31 @@ module Owner =
                     return Error graceError
             }
 
-        member private this.SchedulePhysicalDeletion() =
-            // Send pub/sub message to kick off repository deletion
-            // Will include: enumerating and deleting each branch, which should catch each save, checkpoint, commit, and
-            // I *think* that should cascade down to every Directory and File being removed from Appearances lists,
-            // and therefore should see the deletion of all of the Actor instances, but need to make sure that's true.
+        /// Sends a DeleteLogical command to each organization provided.
+        member private this.LogicalDeleteOrganizations(organizations: List<OrganizationDto>, metadata: EventMetadata, deleteReason: string) =
+            // Loop through the orgs, sending a DeleteLogical command to each. If any of them fail, return the first error.
             task {
-                return ()
+                let results = ConcurrentQueue<GraceResult<string>>()
+
+                // Loop through each organization and send a DeleteLogical command to it.
+                do! Parallel.ForEachAsync(organizations, Constants.ParallelOptions, (fun organization ct ->
+                    ValueTask(task {
+                        let organizationActor = this.ProxyFactory.CreateActorProxy<IOrganizationActor> (ActorId($"{organization.OrganizationId}"), Constants.ActorName.Organization)
+                        let! result = organizationActor.Handle (Commands.Organization.DeleteLogical (true, $"Cascaded from deleting owner. ownerId: {ownerDto.OwnerId}; ownerName: {ownerDto.OwnerName}; deleteReason: {deleteReason}")) metadata
+                        results.Enqueue(result)
+                    })))
+
+                // Check if any of the results were errors. If so, return the first one.
+                let overallResult = results |> Seq.tryPick (fun result -> match result with | Ok _ -> None | Error error -> Some(error))
+
+                match overallResult with
+                | None -> return Ok ()
+                | Some error -> return Error error
             }
+
+        /// Sets a Dapr Actor reminder to perform a physical deletion of this owner.
+        member private this.SchedulePhysicalDeletion(deleteReason) =
+            this.RegisterReminderAsync(ReminderType.PhysicalDeletion, convertToByteArray deleteReason, Constants.DefaultPhysicalDeletionReminderTime, TimeSpan.FromMilliseconds(-1)).Wait()
 
         interface IOwnerActor with
             member this.Exists() =
@@ -180,30 +211,42 @@ module Owner =
                                 | None -> return Error (GraceError.Create (OwnerError.getErrorMessage OwnerIdDoesNotExist) metadata.CorrelationId)
                     }
 
-                let processCommand (command: OwnerCommand) metadata =
+                let processCommand (command: OwnerCommand) (metadata: EventMetadata) =
                     task {
                         try
-                            let! event = 
+                            let! eventResult = 
                                 task {
                                     match command with
-                                    | OwnerCommand.Create (ownerId, ownerName) -> return OwnerEventType.Created (ownerId, ownerName)
-                                    | OwnerCommand.SetName ownerName -> return OwnerEventType.NameSet ownerName
-                                    | OwnerCommand.SetType ownerType -> return OwnerEventType.TypeSet ownerType
-                                    | OwnerCommand.SetSearchVisibility searchVisibility -> return OwnerEventType.SearchVisibilitySet searchVisibility
-                                    | OwnerCommand.SetDescription description -> return OwnerEventType.DescriptionSet description
-                                    | OwnerCommand.AddOrganization (repositoryId, repositoryName) -> return OwnerEventType.OrganizationAdded (repositoryId, repositoryName)
-                                    | OwnerCommand.DeleteOrganization repositoryId -> return OwnerEventType.OrganizationDeleted repositoryId
+                                    | OwnerCommand.Create (ownerId, ownerName) -> return Ok (OwnerEventType.Created (ownerId, ownerName))
+                                    | OwnerCommand.SetName ownerName -> return Ok (OwnerEventType.NameSet ownerName)
+                                    | OwnerCommand.SetType ownerType -> return Ok (OwnerEventType.TypeSet ownerType)
+                                    | OwnerCommand.SetSearchVisibility searchVisibility -> return Ok (OwnerEventType.SearchVisibilitySet searchVisibility)
+                                    | OwnerCommand.SetDescription description -> return Ok (OwnerEventType.DescriptionSet description)
                                     | OwnerCommand.DeleteLogical (force, deleteReason) ->
-                                        //do! this.UnregisterMaintenanceReminder()
-                                        return OwnerEventType.LogicalDeleted (force, deleteReason)
+                                        // Get the list of organizations that aren't already deleted.
+                                        let! organizations = getOrganizations ownerDto.OwnerId Int32.MaxValue false
+
+                                        // If the owner contains active organizations, and the force flag is not set, return an error.
+                                        if not <| force && organizations.Count > 0 then
+                                            return Error (GraceError.CreateWithMetadata (OwnerError.getErrorMessage OwnerContainsOrganizations) metadata.CorrelationId metadata.Properties)
+                                        else
+                                            // Delete the organizations.
+                                            match! this.LogicalDeleteOrganizations(organizations, metadata, deleteReason) with
+                                            | Ok _ -> 
+                                                this.SchedulePhysicalDeletion(deleteReason)
+                                                return Ok (LogicalDeleted (force, deleteReason))
+                                            | Error error -> return Error error                                    
                                     | OwnerCommand.DeletePhysical ->
-                                        do! this.SchedulePhysicalDeletion()
-                                        return OwnerEventType.PhysicalDeleted
-                                    | OwnerCommand.Undelete -> return OwnerEventType.Undeleted
+                                        isDisposed <- true
+                                        return Ok (OwnerEventType.PhysicalDeleted)
+                                    | OwnerCommand.Undelete -> return Ok (OwnerEventType.Undeleted)
                                 }
-                            return! this.ApplyEvent {Event = event; Metadata = metadata}
+
+                            match eventResult with
+                            | Ok event -> return! this.ApplyEvent {Event = event; Metadata = metadata}
+                            | Error error -> return Error error
                         with ex ->
-                            return Error (GraceError.Create $"{createExceptionResponse ex}" metadata.CorrelationId)
+                            return Error (GraceError.CreateWithMetadata $"{createExceptionResponse ex}" metadata.CorrelationId metadata.Properties)
                     }
 
                 task {
@@ -212,3 +255,25 @@ module Owner =
                     | Ok command -> return! processCommand command metadata
                     | Error error -> return Error error
                 }
+
+        interface IRemindable with
+            override this.ReceiveReminderAsync(reminderName, state, dueTime, period) =
+                let stateManager = this.StateManager
+                match reminderName with
+                | ReminderType.Maintenance ->
+                    task {
+                        // Do some maintenance
+                        ()
+                    } :> Task
+                | ReminderType.PhysicalDeletion ->
+                    task {
+                        // Delete saved state for this actor.
+                        let! deletedDtoState = stateManager.TryRemoveStateAsync(dtoStateName)
+                        let! deletedEventsState = stateManager.TryRemoveStateAsync(eventsStateName)
+
+                        // Mark the actor as disposed, in case someone tries to use it before Dapr GC's it.
+                        isDisposed <- true
+
+                        log.LogInformation("Physical deleted state for owner; OwnerId: {ownerId}; OwnerName: {ownerName}.", ownerDto.OwnerId, ownerDto.OwnerName)
+                    } :> Task
+                | _ -> failwith "Unknown reminder type."

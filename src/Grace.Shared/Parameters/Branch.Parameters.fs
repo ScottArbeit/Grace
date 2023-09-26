@@ -29,6 +29,7 @@ module Branch =
         inherit BranchParameters()
         member val public ParentBranchId = String.Empty with get, set
         member val public ParentBranchName: BranchName = String.Empty with get, set
+        member val public InitialPermissions: ReferenceType array = [| Commit; Checkpoint; Save; Tag |] with get, set
 
     /// Parameters for the /branch/rebase endpoint.
     type RebaseParameters() =
@@ -55,6 +56,8 @@ module Branch =
     /// Parameters for the /branch/delete endpoint.
     type DeleteBranchParameters() =
         inherit BranchParameters()
+        member val public Force: bool = false with get, set
+        member val public DeleteReason: string = String.Empty with get, set
         
     /// Parameters for the /branch/getReference endpoint.
     type GetReferenceParameters() =

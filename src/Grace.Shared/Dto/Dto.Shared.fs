@@ -33,6 +33,7 @@ module Dto =
                 CreatedAt: Instant
                 UpdatedAt: Instant option
                 DeletedAt: Instant option
+                DeleteReason: string
             }
             static member Default = {
                 Class = "BranchDto"
@@ -43,11 +44,11 @@ module Dto =
                 RepositoryId = RepositoryId.Empty
                 UserId = UserId String.Empty
                 //References = SortedList<Instant, ReferenceDto>()
-                PromotionEnabled = true
-                CommitEnabled = true
-                CheckpointEnabled = true
-                SaveEnabled = true
-                TagEnabled = true
+                PromotionEnabled = false
+                CommitEnabled = false
+                CheckpointEnabled = false
+                SaveEnabled = false
+                TagEnabled = false
                 LatestPromotion = ReferenceId.Empty
                 LatestCommit = ReferenceId.Empty
                 LatestCheckpoint = ReferenceId.Empty
@@ -55,6 +56,7 @@ module Dto =
                 CreatedAt = getCurrentInstant()
                 UpdatedAt = None
                 DeletedAt = None
+                DeleteReason = String.Empty
             }
 
     module Diff =
@@ -183,7 +185,6 @@ module Dto =
                 RepositoryVisibility: RepositoryVisibility
                 RepositoryStatus: RepositoryStatus
                 Branches: SortedSet<BranchName>
-                //Tags: SortedSet<TagName>
                 DefaultServerApiVersion: string
                 DefaultBranchName: BranchName
                 SaveDays: double
@@ -193,6 +194,7 @@ module Dto =
                 Description: string
                 RecordSaves: bool
                 CreatedAt: Instant
+                InitializedAt: Instant option
                 UpdatedAt: Instant option
                 DeletedAt: Instant option
                 DeleteReason: string
@@ -209,8 +211,7 @@ module Dto =
                 StorageContainerName = "grace-objects"
                 RepositoryVisibility = RepositoryVisibility.Private 
                 RepositoryStatus = RepositoryStatus.Active 
-                Branches = SortedSet<BranchName>() 
-                //Tags = SortedSet<TagName>() 
+                Branches = SortedSet<BranchName>()
                 DefaultServerApiVersion = "latest"
                 DefaultBranchName = BranchName Constants.InitialBranchName
                 SaveDays = 7.0
@@ -220,6 +221,7 @@ module Dto =
                 Description = String.Empty
                 RecordSaves = true
                 CreatedAt = getCurrentInstant()
+                InitializedAt = None
                 UpdatedAt = None
                 DeletedAt = None
                 DeleteReason = String.Empty

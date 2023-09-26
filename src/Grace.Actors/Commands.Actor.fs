@@ -9,7 +9,7 @@ module Commands =
     module Branch =
         [<KnownType("GetKnownTypes")>]
         type BranchCommand =
-            | Create of branchId: BranchId * branchName: BranchName * parentBranchId: BranchId * basedOn: ReferenceId * repositoryId: RepositoryId
+            | Create of branchId: BranchId * branchName: BranchName * parentBranchId: BranchId * basedOn: ReferenceId * repositoryId: RepositoryId * initialPermissions: ReferenceType[]
             | Rebase of basedOn: ReferenceId
             | SetName of newName: BranchName
             | Promote of directoryId: DirectoryId * sha256Hash: Sha256Hash * referenceText: ReferenceText
@@ -23,7 +23,7 @@ module Commands =
             | EnableSave of enabled: bool
             | EnableTag of enabled: bool
             | RemoveReference of referenceId: ReferenceId
-            | DeleteLogical
+            | DeleteLogical of force: bool * deleteReason: string
             | DeletePhysical
             | Undelete
             static member GetKnownTypes() = GetKnownTypes<BranchCommand>()
@@ -36,8 +36,6 @@ module Commands =
             | SetType of organizationType: OrganizationType
             | SetSearchVisibility of searchVisibility: SearchVisibility
             | SetDescription of description: string
-            | AddRepository of repositoryId: RepositoryId * repositoryName: RepositoryName
-            | DeleteRepository of repositoryId: RepositoryId
             | DeleteLogical of force: bool * deleteReason: string
             | DeletePhysical
             | Undelete
@@ -51,8 +49,6 @@ module Commands =
             | SetType of ownerType: OwnerType
             | SetSearchVisibility of searchVisibility: SearchVisibility
             | SetDescription of description: string
-            | AddOrganization of organizationId: OrganizationId * organizationName: OrganizationName
-            | DeleteOrganization of organizationId: OrganizationId
             | DeleteLogical of force: bool * deleteReason: string
             | DeletePhysical
             | Undelete
@@ -62,6 +58,7 @@ module Commands =
         [<KnownType("GetKnownTypes")>]
         type RepositoryCommand =
             | Create of repositoryName: RepositoryName * repositoryId: RepositoryId * ownerId: OwnerId * organizationId: OrganizationId
+            | Initialize
             | SetObjectStorageProvider of objectStorageProvider: ObjectStorageProvider
             | SetStorageAccountName of storageAccountName: StorageAccountName
             | SetStorageContainerName of storageContainerName: StorageContainerName
@@ -75,8 +72,6 @@ module Commands =
             | SetDescription of description: string
             | EnableSingleStepPromotion of enabled: bool
             | EnableComplexPromotion of enabled: bool
-            | AddBranch of branchName: BranchName
-            | DeleteBranch of branchName: BranchName
             | DeleteLogical of force: bool * deleteReason: string
             | DeletePhysical
             | Undelete

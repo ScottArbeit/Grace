@@ -7,6 +7,7 @@ open Grace.Actors
 open Grace.Actors.Commands.Branch
 open Grace.Actors.Constants
 open Grace.Actors.Interfaces
+open Grace.Actors.Services
 open Grace.Server.Services
 open Grace.Server.Validations
 open Grace.Shared
@@ -134,14 +135,16 @@ module Branch =
                                 (BranchName parameters.BranchName),
                                 (Guid.Parse(parentBranchId)),
                                 parentBranch.BasedOn,
-                                Guid.Parse(parameters.RepositoryId))
+                                Guid.Parse(parameters.RepositoryId),
+                                parameters.InitialPermissions)
                         | None ->
                             return Create(
                                 (Guid.Parse(parameters.BranchId)), 
                                 (BranchName parameters.BranchName),
                                 Constants.DefaultParentBranchId,
                                 ReferenceId.Empty,
-                                Guid.Parse(parameters.RepositoryId))
+                                Guid.Parse(parameters.RepositoryId),
+                                parameters.InitialPermissions)
                     }
 
                 return! processCommand context validations command
@@ -477,7 +480,7 @@ module Branch =
                       Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName context RepositoryDoesNotExist
                       Branch.branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName context BranchDoesNotExist ]
 
-                let command (parameters: DeleteBranchParameters) = DeleteLogical |> returnTask
+                let command (parameters: DeleteBranchParameters) = DeleteLogical (parameters.Force, parameters.DeleteReason) |> returnTask
 
                 return! processCommand context validations command
             }

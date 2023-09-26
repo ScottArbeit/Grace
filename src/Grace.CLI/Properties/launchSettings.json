@@ -7,71 +7,71 @@
     "grace branch get-references": {
       "commandName": "Project",
       "commandLineArgs": "branch get-references",
-      "workingDirectory": "C:\\Source\\github\\github"
+      "workingDirectory": "D:\\Source\\github\\github"
     },
     "grace diff commit": {
       "commandName": "Project",
       "commandLineArgs": "diff commit",
-      "workingDirectory": "C:\\Source\\grace\\src"
+      "workingDirectory": "D:\\Source\\grace\\src"
     },
     "grace diff checkpoint": {
       "commandName": "Project",
       "commandLineArgs": "diff checkpoint",
-      "workingDirectory": "C:\\Source\\PlayWithFlexbox"
+      "workingDirectory": "D:\\Source\\PlayWithFlexbox"
     },
     "grace switch -b scottarbeit": {
       "commandName": "Project",
       "commandLineArgs": "switch -b scottarbeit",
-      "workingDirectory": "C:\\Source\\grace\\src"
+      "workingDirectory": "D:\\Source\\grace\\src"
     },
     "grace merge - PlayWithFlexbox": {
       "commandName": "Project",
       "commandLineArgs": "merge -m \"Merge from Debug\"",
-      "workingDirectory": "C:\\Source\\PlayWithFlexbox"
+      "workingDirectory": "D:\\Source\\PlayWithFlexbox"
     },
     "grace diff merge": {
       "commandName": "Project",
       "commandLineArgs": "diff merge",
-      "workingDirectory": "C:\\Source\\PlayWithFlexbox"
+      "workingDirectory": "D:\\Source\\PlayWithFlexbox"
     },
     "grace owner create": {
       "commandName": "Project",
       "commandLineArgs": "owner create --ownerName GraceDemo",
-      "workingDirectory": "C:\\Source\\gracedemo"
+      "workingDirectory": "D:\\Source\\gracedemo"
     },
     "grace refs -b main": {
       "commandName": "Project",
       "commandLineArgs": "refs -b main --output Verbose",
-      "workingDirectory": "C:\\Source\\GraceDemo\\Chris"
+      "workingDirectory": "D:\\Source\\GraceDemo\\Chris"
     },
     "grace (no parameters)": {
       "commandName": "Project",
-      "workingDirectory": "C:\\Source\\grace\\src"
+      "workingDirectory": "D:\\Source\\grace\\src"
     },
     "grace organization create": {
       "commandName": "Project",
       "commandLineArgs": "org create --organizationName SomeOrganizationName",
-      "workingDirectory": "C:\\Source\\gracedemo\\Chris"
+      "workingDirectory": "D:\\Source\\gracedemo\\Chris"
     },
     "grace maint update-index": {
       "commandName": "Project",
       "commandLineArgs": "maint update-index",
-      "workingDirectory": "C:\\Source\\gracedemo\\Chris"
+      "workingDirectory": "D:\\Source\\gracedemo\\Chris"
     },
     "grace repo set-checkpointdays": {
       "commandName": "Project",
       "commandLineArgs": "repo set-checkpointdays --checkpointDays 5.1 --output Verbose",
-      "workingDirectory": "C:\\Source\\GraceDemo\\Chris"
+      "workingDirectory": "D:\\Source\\GraceDemo\\Chris"
     },
     "grace repo create": {
       "commandName": "Project",
       "commandLineArgs": "repository create --ownerName \"Owner0009\" --organizationName \"Organization0009\" --repositoryName \"Repository0009\" --repositoryId 042dc71e-e7d7-4f7f-bdac-f930b398fa8e",
-      "workingDirectory": "C:\\Source\\GraceDemo\\Chris"
+      "workingDirectory": "D:\\Source\\GraceDemo\\Chris"
     },
     "grace rebase": {
       "commandName": "Project",
       "commandLineArgs": "rebase",
-      "workingDirectory": "C:\\Source\\GraceDemo\\Filip"
+      "workingDirectory": "D:\\Source\\GraceDemo\\Filip"
     },
     "grace branches": {
       "commandName": "Project",
@@ -81,7 +81,7 @@
     "grace watch - Mika": {
       "commandName": "Project",
       "commandLineArgs": "watch",
-      "workingDirectory": "C:\\Source\\GraceDemo\\Mika"
+      "workingDirectory": "D:\\Source\\GraceDemo\\Mika"
     },
     "grace /?": {
       "commandName": "Project",

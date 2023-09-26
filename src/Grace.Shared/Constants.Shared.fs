@@ -62,7 +62,10 @@ module Constants =
     let GraceServerAppId = "grace-server"
 
     /// The name of the Dapr service for Grace object storage.
-    let GraceObjectsStorage = "graceObjectsStorage"
+    let GraceObjectStorage = "graceobjectstorage"
+
+    /// The name of the Dapr service for Actor storage. This should be a document database.
+    let GraceActorStorage = "actorstorage"
 
     /// The name of the Dapr service for Grace event pub/sub.
     let GracePubSubService = "graceeventstream"
@@ -71,7 +74,7 @@ module Constants =
     let GraceEventStreamTopic = "graceeventstream"
 
     /// The name of the Dapr service for retrieving application secrets.
-    let GraceSecretStoreName = "cloudsecretstore"
+    let GraceSecretStoreName = "kubernetessecretstore"
 
     /// The name of the directory that holds Grace information in a repository.
     let GraceConfigDirectory = ".grace"
@@ -124,7 +127,20 @@ module Constants =
         /// The environment variable that contains the Dapr gRPC port.
         let DaprGrpcPort = "DAPR_GRPC_PORT"
 
-        let AzureCosmosDBConnectionString = "Azure_CosmosDB_Connection_String"
+        /// The environment variable that contains the Azure Cosmos DB Connection String.
+        let AzureCosmosDBConnectionString = "azurecosmosdbconnectionstring"
+
+        /// The environment variable that contains the Azure Storage Connection String.
+        let AzureStorageConnectionString = "azurestorageconnectionstring"
+
+        /// The environment variable that contains the Azure Storage Key.
+        let AzureStorageKey = "azurestoragekey"
+
+        /// The environment variable that contains the name of the CosmosDB database to use for Grace.
+        let CosmosDatabaseName = "cosmosdatabasename"
+
+        /// The environment variable that contains the name of the CosmosDB container to use for Grace.
+        let CosmosContainerName = "cosmoscontainername"
 
     /// The default CacheControl header for object storage.
     let BlobCacheControl = "public,max-age=86400,no-transform"
@@ -190,8 +206,8 @@ module Constants =
     // we get an IOException when we try to compute the Sha256Hash and copy it to the object directory. This policy allows us to wait until the file is complete.
     let DefaultFileCopyRetryPolicy = Policy.Handle<IOException>(fun ex -> ex.GetType() <> typeof<KeyNotFoundException>).WaitAndRetry(fileCopyBackoff)
 
-    /// Global settings for Parallel.ForEach statements; sets MaxDegreeofParallelism to maximize performance.
-    // I'm choosing a high number here because these parallel loops are used where most of the time is spent on network 
+    /// Grace's global settings for Parallel.ForEach/ForEachAsync expressions; sets MaxDegreeofParallelism to maximize performance.
+    // I'm choosing a high number here because these parallel loops are used in code where most of the time is spent on network 
     //   and disk traffic - and therefore Task<'T> - and we can run lots of them simultaneously.
     let ParallelOptions = ParallelOptions(MaxDegreeOfParallelism = Environment.ProcessorCount * 8)
 

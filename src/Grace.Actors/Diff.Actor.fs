@@ -248,8 +248,8 @@ module Diff =
                                                 FileDiff.Create fileVersion1.RelativePath fileVersion2.Sha256Hash fileVersion1.CreatedAt fileVersion1.Sha256Hash fileVersion2.CreatedAt
                                                     (fileVersion1.IsBinary || fileVersion2.IsBinary) diffResults.InlineDiff diffResults.SideBySideOld diffResults.SideBySideNew
                                         fileDiffs.Add(fileDiff)
-                                | Add _ -> ()
-                                | Delete _ -> ()
+                                | Add -> ()
+                                | Delete -> ()
                             })))
 
 

@@ -59,6 +59,13 @@ module Interfaces =
         /// Retrieves the parent branch for a given branch.
         abstract member GetParentBranch: unit -> Task<BranchDto>
 
+    type IBranchNameActor =
+        inherit IActor
+        /// Sets the BranchId that matches the BranchName.
+        abstract member SetBranchId: branchName: string -> Task
+        /// Returns the BranchId for the given BranchName.
+        abstract member GetBranchId: unit -> Task<string option>
+
     type IContainerNameActor =
         inherit IActor
         /// Retrieves the container name for the RepositoryId specified for the actor.
@@ -113,6 +120,13 @@ module Interfaces =
         /// Validates incoming commands and converts them to events that are stored in the database.
         abstract member Handle: command: Organization.OrganizationCommand -> eventMetadata: EventMetadata -> Task<GraceResult<string>>
 
+    type IOrganizationNameActor =
+        inherit IActor
+        /// Returns true if an organization with this organization name already exists in the database.
+        abstract member SetOrganizationId: organizationName: string -> Task
+        /// Returns the OrganizationId for the given OrganizationName.
+        abstract member GetOrganizationId: unit -> Task<string option>
+
     type IOwnerActor =
         inherit IActor
         /// Returns true if an owner with this ActorId already exists in the database.
@@ -127,6 +141,13 @@ module Interfaces =
         abstract member ListOrganizations: unit -> Task<IReadOnlyDictionary<OrganizationId, OrganizationName>>
         /// Validates incoming commands and converts them to events that are stored in the database.
         abstract member Handle : command: Owner.OwnerCommand -> eventMetadata: EventMetadata -> Task<GraceResult<string>>
+
+    type IOwnerNameActor =
+        inherit IActor
+        /// Sets the OwnerId for a given OwnerName.
+        abstract member SetOwnerId: ownerName: string -> Task
+        /// Returns the OwnerId for the given OwnerName.
+        abstract member GetOwnerId: unit -> Task<string option>
 
     type IReferenceActor =
         inherit IActor
@@ -156,3 +177,10 @@ module Interfaces =
         abstract member GetObjectStorageProvider: unit -> Task<ObjectStorageProvider>
         /// Processes commands by checking that they're valid, and then converting them into events.
         abstract member Handle : command: Repository.RepositoryCommand -> eventMetadata: EventMetadata -> Task<GraceResult<string>>
+
+    type IRepositoryNameActor =
+        inherit IActor
+        /// Sets the RepositoryId that matches the RepositoryName.
+        abstract member SetRepositoryId: repositoryName: string -> Task
+        /// Returns the RepositoryId for the given RepositoryName.
+        abstract member GetRepositoryId: unit -> Task<string option>

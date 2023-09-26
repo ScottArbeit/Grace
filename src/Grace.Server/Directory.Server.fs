@@ -6,6 +6,7 @@ open Giraffe
 open Grace.Actors.Constants
 open Grace.Actors.Directory
 open Grace.Actors.Interfaces
+open Grace.Actors.Services
 open Grace.Server.Services
 open Grace.Server.Validations
 open Grace.Shared

@@ -3,6 +3,7 @@
 open Dapr.Actors
 open Dapr.Actors.Runtime
 open Grace.Actors.Constants
+open Grace.Actors.Interfaces
 open Grace.Shared.Utilities
 open Microsoft.Extensions.Logging
 open NodaTime
@@ -14,20 +15,8 @@ module OwnerName =
     let actorName = Constants.ActorName.OwnerName
     let mutable actorStartTime = Instant.MinValue
     let mutable logScope: IDisposable = null
-
+    
     let GetActorId (ownerName: string) = ActorId(ownerName)
-
-    type IOwnerNameActor =
-        inherit IActor
-        /// <summary>
-        /// Sets the OwnerId for a given OwnerName.
-        /// </summary>
-        abstract member SetOwnerId: ownerName: string -> Task
-
-        /// <summary>
-        /// Returns the OwnerId for the given OwnerName.
-        /// </summary>
-        abstract member GetOwnerId: unit -> Task<String option>
 
     type OwnerNameActor(host: ActorHost) =
         inherit Actor(host)

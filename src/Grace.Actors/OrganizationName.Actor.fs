@@ -3,6 +3,7 @@
 open Dapr.Actors
 open Dapr.Actors.Runtime
 open Grace.Actors.Constants
+open Grace.Actors.Interfaces
 open Grace.Shared.Utilities
 open Microsoft.Extensions.Logging
 open NodaTime
@@ -15,18 +16,6 @@ module OrganizationName =
     let mutable logScope: IDisposable = null
 
     let GetActorId (organizationName: string) = ActorId(organizationName)
-
-    type IOrganizationNameActor =
-        inherit IActor
-        /// <summary>
-        /// Returns true if an organization with this organization name already exists in the database.
-        /// </summary>
-        abstract member SetOrganizationId: organizationName: string -> Task
-
-        /// <summary>
-        /// Returns the OrganizationId for the given OrganizationName.
-        /// </summary>
-        abstract member GetOrganizationId: unit -> Task<String option>
 
     type OrganizationNameActor(host: ActorHost) =
         inherit Actor(host)
