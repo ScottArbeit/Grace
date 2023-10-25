@@ -1,6 +1,7 @@
 ﻿namespace Grace.SDK
 
 open Grace.SDK.Common
+open Grace.Shared.Dto.Organization
 open Grace.Shared.Parameters.Organization
 open System
 
@@ -12,6 +13,13 @@ type Organization() =
     /// <param name="parameters">Values to use when creating the new organization.</param>
     static member public Create(parameters: CreateOrganizationParameters) =
         postServer<CreateOrganizationParameters, String>(parameters |> ensureCorrelationIdIsSet, $"organization/{nameof(Organization.Create)}")
+
+    /// <summary>
+    /// Sets the organization's name.
+    /// </summary>
+    /// <param name="parameters">Values to use when setting the organization name.</param>
+    static member public Get(parameters: GetOrganizationParameters) =
+        postServer<GetOrganizationParameters, OrganizationDto>(parameters |> ensureCorrelationIdIsSet, $"organization/{nameof(Organization.Get)}")
 
     /// <summary>
     /// Sets the organization's name.

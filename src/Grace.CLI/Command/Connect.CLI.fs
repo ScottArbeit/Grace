@@ -1,7 +1,7 @@
-﻿namespace Grace.Cli.Command
+﻿namespace Grace.CLI.Command
 
 open FSharpPlus
-open Grace.Cli.Common
+open Grace.CLI.Common
 open Grace.Shared
 open Grace.Shared.Types
 open Grace.Shared.Validation.Common
@@ -106,7 +106,7 @@ module Connect =
                 let validateIncomingParameters = ValidateIncomingParameters parseResult commonParameters
                 match validateIncomingParameters with
                 | Result.Ok r -> printfn("ok")
-                | Result.Error error -> printfn($"error: {Utilities.discriminatedUnionFullNameToString(error)}")
+                | Result.Error error -> printfn($"error: {Utilities.getDiscriminatedUnionFullName(error)}")
                 printfn($"Fake result: {parseResult}")
             with | :? OperationCanceledException as ex ->
                 printfn($"Operation cancelled: {ex.Message}")

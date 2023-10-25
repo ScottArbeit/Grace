@@ -1,10 +1,10 @@
-﻿namespace Grace.Cli.Command
+﻿namespace Grace.CLI.Command
 
 open DiffPlex
 open DiffPlex.DiffBuilder.Model
 open FSharpPlus
-open Grace.Cli.Common
-open Grace.Cli.Services
+open Grace.CLI.Common
+open Grace.CLI.Services
 open Grace.SDK
 open Grace.Shared
 open Grace.Shared.Client.Configuration
@@ -158,7 +158,7 @@ module Diff =
             let validateIncomingParameters = (parseResult, parameters) |> CommonValidations
             match validateIncomingParameters with
             | Ok _ ->
-                if parseResult |> showOutput then
+                if parseResult |> hasOutput then
                     let markupList = List<IRenderable>()
                     do! progress.Columns(progressColumns).StartAsync(fun progressContext ->
                         task {
@@ -167,7 +167,7 @@ module Diff =
                             let t2 = progressContext.AddTask($"[{Color.DodgerBlue1}]Creating new directory verions.[/]", autoStart = false)
                             let t3 = progressContext.AddTask($"[{Color.DodgerBlue1}]Uploading changed files to object storage.[/]", autoStart = false)
                             let t4 = progressContext.AddTask($"[{Color.DodgerBlue1}]Uploading new directory versions.[/]", autoStart = false)
-                            let t5 = progressContext.AddTask($"[{Color.DodgerBlue1}]Getting {(discriminatedUnionCaseNameToString referenceType).ToLowerInvariant()}.[/]", autoStart = false)
+                            let t5 = progressContext.AddTask($"[{Color.DodgerBlue1}]Getting {(getDistributedUnionCaseName referenceType).ToLowerInvariant()}.[/]", autoStart = false)
                             let t6 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending diff request to server.[/]", autoStart = false)
 
                             let mutable rootDirectoryId = DirectoryId.Empty
@@ -328,10 +328,10 @@ module Diff =
                                     for diff in diffDto.Differences do
                                         match diff.FileSystemEntryType with
                                         | FileSystemEntryType.File ->
-                                            addToOutput(Markup($"[{Colors.Important}]{discriminatedUnionCaseNameToString diff.DifferenceType}[/] [{Colors.Highlighted}]{diff.RelativePath}[/]"))
+                                            addToOutput(Markup($"[{Colors.Important}]{getDistributedUnionCaseName diff.DifferenceType}[/] [{Colors.Highlighted}]{diff.RelativePath}[/]"))
                                         | FileSystemEntryType.Directory ->
                                             if diff.DifferenceType <> DifferenceType.Change then
-                                                addToOutput(Markup($"[{Colors.Important}]{discriminatedUnionCaseNameToString diff.DifferenceType}[/] [{Colors.Highlighted}]{diff.RelativePath}[/]"))
+                                                addToOutput(Markup($"[{Colors.Important}]{getDistributedUnionCaseName diff.DifferenceType}[/] [{Colors.Highlighted}]{diff.RelativePath}[/]"))
                                     for fileDiff in diffDto.FileDiffs.OrderBy(fun fileDiff -> fileDiff.RelativePath) do
                                         //addToOutput ((new Rule($"[{Colors.Important}]{fileDiff.RelativePath}[/]")).LeftAligned())
                                         if fileDiff.CreatedAt1 > fileDiff.CreatedAt2 then
@@ -428,7 +428,7 @@ module Diff =
                 let validateIncomingParameters = (parseResult, parameters) |> CommonValidations
                 match validateIncomingParameters with
                 | Ok _ ->
-                    if parseResult |> showOutput then
+                    if parseResult |> hasOutput then
                         let markupList = List<IRenderable>()
                         do! progress.Columns(progressColumns).StartAsync(fun progressContext ->
                             task {

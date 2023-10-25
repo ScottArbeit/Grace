@@ -7,7 +7,9 @@ open System.Runtime.Serialization
 
 module Events =
 
+    /// Defines the events for the Branch actor.
     module Branch =
+        /// Defines the events for the Branch actor.
         [<KnownType("GetKnownTypes")>]
         type BranchEventType =
             | Created of branchId: BranchId * branchName: BranchName * parentBranchId: BranchId * basedOn: ReferenceId * repositoryId: RepositoryId * initialPermissions: ReferenceType[]
@@ -29,12 +31,17 @@ module Events =
             | Undeleted
             static member GetKnownTypes() = GetKnownTypes<BranchEventType>()
 
+        /// Record that holds the event type and metadata for a Branch event.
         type BranchEvent = {
+            /// The BranchEventType case that describes the event.
             Event: BranchEventType
+            /// The EventMetadata for the event. EventMetadata includes the Timestamp, CorrelationId, Principal, and a Properties dictionary.
             Metadata: EventMetadata
         }
 
+    /// Defines the events for the Organization actor.
     module Organization =
+        /// Defines the events for the Organization actor.
         [<KnownType("GetKnownTypes")>]
         type OrganizationEventType =
             | Created of organizationId: OrganizationId * organizationName: OrganizationName * ownerId: OwnerId
@@ -47,13 +54,18 @@ module Events =
             | Undeleted
             static member GetKnownTypes() = GetKnownTypes<OrganizationEventType>()
 
+        /// Record that holds the event type and metadata for an Organization event.
         type OrganizationEvent =
             {
+                /// The OrganizationEventType case that describes the event.
                 Event: OrganizationEventType
+                /// The EventMetadata for the event. EventMetadata includes the Timestamp, CorrelationId, Principal, and a Properties dictionary.
                 Metadata: EventMetadata
             }
 
+    /// Defines the events for the Owner actor.
     module Owner =
+        /// Defines the events for the Owner actor.
         [<KnownType("GetKnownTypes")>]
         type OwnerEventType =
             | Created of ownerId: OwnerId * ownerName: OwnerName
@@ -66,13 +78,18 @@ module Events =
             | Undeleted
             static member GetKnownTypes() = GetKnownTypes<OwnerEventType>()
 
+        /// Record that holds the event type and metadata for an Owner event.
         type OwnerEvent =
             {
+                /// The OwnerEventType case that describes the event.
                 Event: OwnerEventType
+                /// The EventMetadata for the event. EventMetadata includes the Timestamp, CorrelationId, Principal, and a Properties dictionary.
                 Metadata: EventMetadata
             }
 
+    /// Defines the events for the Repository actor.
     module Repository =
+        /// Defines the events for the Repository actor.
         [<KnownType("GetKnownTypes")>]
         type RepositoryEventType =
             | Created of repositoryName: RepositoryName * repositoryId: RepositoryId * ownerId: OwnerId * organizationId: OrganizationId
@@ -95,12 +112,16 @@ module Events =
             | Undeleted
             static member GetKnownTypes() = GetKnownTypes<RepositoryEventType>()
         
+        /// Record that holds the event type and metadata for a Repository event.
         type RepositoryEvent =
             {
+                /// The RepositoryEventType case that describes the event.
                 Event: RepositoryEventType
+                /// The EventMetadata for the event. EventMetadata includes the Timestamp, CorrelationId, Principal, and a Properties dictionary.
                 Metadata: EventMetadata
             }
 
+    /// A discriminated union that holds all of the possible events for Grace. Used for publishing events to graceEventStream.
     [<KnownType("GetKnownTypes")>]
     type GraceEvent =
         | BranchEvent of Branch.BranchEvent

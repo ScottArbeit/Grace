@@ -248,7 +248,8 @@ module Errors =
             | InvalidRepositoryId
             | InvalidRepositoryName
             | InvalidSearchVisibility
-            | OrganizationAlreadyExists
+            | OrganizationIdAlreadyExists
+            | OrganizationNameAlreadyExists
             | OrganizationContainsRepositories
             | OrganizationDescriptionIsRequired
             | OrganizationDoesNotExist
@@ -280,7 +281,8 @@ module Errors =
                 | InvalidRepositoryId -> getLocalizedString StringResourceName.InvalidRepositoryId
                 | InvalidRepositoryName -> getLocalizedString StringResourceName.InvalidRepositoryName
                 | InvalidSearchVisibility -> getLocalizedString StringResourceName.InvalidSearchVisibility
-                | OrganizationAlreadyExists -> getLocalizedString StringResourceName.OrganizationAlreadyExists
+                | OrganizationIdAlreadyExists -> getLocalizedString StringResourceName.OrganizationIdAlreadyExists
+                | OrganizationNameAlreadyExists -> getLocalizedString StringResourceName.OrganizationNameAlreadyExists
                 | OrganizationContainsRepositories -> getLocalizedString StringResourceName.OrganizationContainsRepositories
                 | OrganizationDescriptionIsRequired -> getLocalizedString StringResourceName.DescriptionIsRequired
                 | OrganizationDoesNotExist -> getLocalizedString StringResourceName.OrganizationDoesNotExist

@@ -1,10 +1,10 @@
-﻿namespace Grace.Cli.Command
+﻿namespace Grace.CLI.Command
 
 open DiffPlex
 open DiffPlex.DiffBuilder.Model
 open FSharpPlus
-open Grace.Cli.Common
-open Grace.Cli.Services
+open Grace.CLI.Common
+open Grace.CLI.Services
 open Grace.SDK
 open Grace.Shared
 open Grace.Shared.Client.Configuration
@@ -79,14 +79,14 @@ module Config =
 
                     if overwriteExisting then
                         // Clear out everything in the .grace directory.
-                        if parseResult |> showOutput then printfn "Deleting contents of existing .grace directory."
+                        if parseResult |> hasOutput then printfn "Deleting contents of existing .grace directory."
                         Directory.Delete(graceDirPath, recursive = true)
 
                     if File.Exists(graceConfigPath) && not parameters.Overwrite then
-                        if parseResult |> showOutput then printfn $"Found existing Grace configuration file at {graceConfigPath}. Specify --overwrite if you'd like to overwrite it.{Environment.NewLine}"
+                        if parseResult |> hasOutput then printfn $"Found existing Grace configuration file at {graceConfigPath}. Specify --overwrite if you'd like to overwrite it.{Environment.NewLine}"
                     else
                         let directoryInfo = Directory.CreateDirectory(graceDirPath)
-                        if parseResult |> showOutput then printfn $"Writing new Grace configuration file at {graceConfigPath}.{Environment.NewLine}"
+                        if parseResult |> hasOutput then printfn $"Writing new Grace configuration file at {graceConfigPath}.{Environment.NewLine}"
                         GraceConfiguration() |> saveConfigFile graceConfigPath
                     return 0
                 | Error error ->

@@ -111,7 +111,7 @@ module Notifications =
             
                 match graceEvent with
                 | BranchEvent branchEvent ->
-                    logToConsole $"Received BranchEvent: {discriminatedUnionFullNameToString branchEvent.Event} {Environment.NewLine}{branchEvent.Metadata}"
+                    logToConsole $"Received BranchEvent: {getDiscriminatedUnionFullName branchEvent.Event} {Environment.NewLine}{branchEvent.Metadata}"
                     match branchEvent.Event with
                     | Branch.Promoted (referenceId, directoryId, sha256Hash, referenceText) -> 
                         let referenceActorId = Reference.GetActorId referenceId
@@ -209,9 +209,9 @@ module Notifications =
                             ()
                     | Branch.Tagged (referenceId, directoryId, sha256Hash, referenceText) -> ()
                     | _ -> ()
-                | OrganizationEvent organizationEvent -> logToConsole $"Received OrganizationEvent: {discriminatedUnionFullNameToString organizationEvent.Event} {Environment.NewLine}{organizationEvent.Metadata}"
-                | OwnerEvent ownerEvent -> logToConsole $"Received OwnerEvent: {discriminatedUnionFullNameToString ownerEvent.Event} {Environment.NewLine}{ownerEvent.Metadata}"
-                | RepositoryEvent repositoryEvent -> logToConsole $"Received RepositoryEvent: {discriminatedUnionFullNameToString repositoryEvent.Event} {Environment.NewLine}{repositoryEvent.Metadata}"
+                | OrganizationEvent organizationEvent -> logToConsole $"Received OrganizationEvent: {getDiscriminatedUnionFullName organizationEvent.Event} {Environment.NewLine}{organizationEvent.Metadata}"
+                | OwnerEvent ownerEvent -> logToConsole $"Received OwnerEvent: {getDiscriminatedUnionFullName ownerEvent.Event} {Environment.NewLine}{ownerEvent.Metadata}"
+                | RepositoryEvent repositoryEvent -> logToConsole $"Received RepositoryEvent: {getDiscriminatedUnionFullName repositoryEvent.Event} {Environment.NewLine}{repositoryEvent.Metadata}"
 
                 return! setStatusCode StatusCodes.Status204NoContent next context
             }

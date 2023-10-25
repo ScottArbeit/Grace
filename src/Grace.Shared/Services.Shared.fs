@@ -86,3 +86,9 @@ module Services =
     /// Gets the total size of the files contained within this specific directory. This does not include the size of any subdirectories.
     let getLocalDirectorySize (files: IList<LocalFileVersion>) =
         files |> Seq.fold(fun (size: uint64) file -> size + file.Size) 0UL
+
+    let getLongestRelativePath (graceStatus: GraceStatus) =
+        if graceStatus.Index.Values |> Seq.isEmpty then
+            0
+        else
+            graceStatus.Index.Values.Max(fun localDirectoryVersion -> localDirectoryVersion.RelativePath.Length)

@@ -95,7 +95,7 @@ module Diff =
         member private this.buildGraceIndex (directoryId: DirectoryId) =
             task {
                 let graceIndex = ServerGraceIndex()
-                let directory = this.ProxyFactory.CreateActorProxy<IDirectoryVersionActor>(Directory.GetActorId(directoryId), ActorName.DirectoryVersion)
+                let directory = this.ProxyFactory.CreateActorProxy<IDirectoryVersionActor>(DirectoryVersion.GetActorId(directoryId), ActorName.DirectoryVersion)
                 let! directoryCreatedAt = directory.GetCreatedAt()
                 let! directoryContents = directory.GetDirectoryVersionsRecursive()
                 //logToConsole $"In DiffActor.buildGraceIndex(): directoryContents.Count: {directoryContents.Count}"

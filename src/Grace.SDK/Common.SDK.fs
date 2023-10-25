@@ -74,7 +74,14 @@ module Common =
 #endif
         httpClient
 
+    /// <summary>
     /// Sends GET commands to Grace Server.        
+    /// </summary>
+    /// <param name="parameters">Values to use when sending the GET command.</param>
+    /// <param name="route">The route to use when sending the GET command.</param>
+    /// <returns>A Task containing the result of the GET command.</returns>
+    /// <typeparam name="'T">The type of the parameters to use when sending the GET command.</typeparam>
+    /// <typeparam name="'U">The type of the result of the command.</typeparam>
     let getServer<'T, 'U when 'T :> CommonParameters>(parameters: 'T, route: string) =
         task {
             try
@@ -96,7 +103,14 @@ module Common =
                 return Error (GraceError.Create (serialize exceptionResponse) parameters.CorrelationId)
         }
 
+    /// <summary>
     /// Sends POST commands to Grace Server.
+    /// </summary>
+    /// <param name="parameters">Values to use when sending the POST command.</param>
+    /// <param name="route">The route to use when sending the POST command.</param>
+    /// <returns>A Task containing the result of the POST command.</returns>
+    /// <typeparam name="'T">The type of the parameters to use when sending the POST command.</typeparam>
+    /// <typeparam name="'U">The type of the result of the command.</typeparam>
     let postServer<'T, 'U when 'T :> CommonParameters>(parameters: 'T, route: string) =
         task {
             try
@@ -128,6 +142,7 @@ module Common =
         parameters
 
     /// Returns the object file name for a given file version, including the SHA-256 hash.
+    ///
     /// Example: foo.txt with a SHA-256 hash of "8e798...980c" -> "foo_8e798...980c.txt".
     let getObjectFileName (fileVersion: FileVersion) = 
         let file = FileInfo(Path.Combine(Current().RootDirectory, $"{fileVersion.RelativePath}"))

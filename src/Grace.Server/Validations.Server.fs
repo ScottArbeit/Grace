@@ -23,7 +23,7 @@ module Validations =
     module Owner =
 
         /// Validates that the given ownerId exists in the database.
-        let ownerIdExists<'T> (ownerId: string) (context: HttpContext) (error: 'T) =
+        let ownerIdExists<'T> (ownerId: string) (error: 'T) =
             task {
                 let mutable ownerGuid = Guid.Empty
                 if (not <| String.IsNullOrEmpty(ownerId)) && Guid.TryParse(ownerId, &ownerGuid) then
@@ -39,7 +39,7 @@ module Validations =
             }
 
         /// Validates that the given ownerId does not already exist in the database.
-        let ownerIdDoesNotExist<'T> (ownerId: string) (context: HttpContext) (error: 'T) =
+        let ownerIdDoesNotExist<'T> (ownerId: string) (error: 'T) =
             task {
                 let mutable ownerGuid = Guid.Empty
                 if (not <| String.IsNullOrEmpty(ownerId)) && Guid.TryParse(ownerId, &ownerGuid) then
@@ -55,7 +55,7 @@ module Validations =
             }
 
         /// Validates that the owner exists in the database.
-        let ownerExists<'T> ownerId ownerName (context: HttpContext) (error: 'T) =
+        let ownerExists<'T> ownerId ownerName (error: 'T) =
             task {
                 let mutable ownerGuid = Guid.Empty
                 match! resolveOwnerId ownerId ownerName with
@@ -74,7 +74,7 @@ module Validations =
             }
 
         /// Validates that the given ownerName does not already exist in the database.
-        let ownerNameDoesNotExist<'T> (ownerName: string) (context: HttpContext) (error: 'T) =
+        let ownerNameDoesNotExist<'T> (ownerName: string) (error: 'T) =
             task {
                 match! resolveOwnerId String.Empty ownerName with
                 | Some ownerId -> return Error error
@@ -82,7 +82,7 @@ module Validations =
             }
 
         /// Validates that the owner is deleted.
-        let ownerIsDeleted<'T> ownerId ownerName (context: HttpContext) (error: 'T) =
+        let ownerIsDeleted<'T> ownerId ownerName (error: 'T) =
             task {
                 let mutable ownerGuid = Guid.Empty
                 match! resolveOwnerId ownerId ownerName with
@@ -101,7 +101,7 @@ module Validations =
             }
 
         /// Validates that the owner is not deleted.
-        let ownerIsNotDeleted<'T> ownerId ownerName (context: HttpContext) (error: 'T) =
+        let ownerIsNotDeleted<'T> ownerId ownerName (error: 'T) =
             task {
                 let mutable ownerGuid = Guid.Empty
                 match! resolveOwnerId ownerId ownerName with
@@ -120,10 +120,10 @@ module Validations =
             }
 
         /// Validates that the given ownerId does not already exist in the database.
-        let ownerDoesNotExist<'T> ownerId ownerName (context: HttpContext) (error: 'T) =
+        let ownerDoesNotExist<'T> ownerId ownerName (error: 'T) =
             task {
                 if not <| String.IsNullOrEmpty(ownerId) && not <| String.IsNullOrEmpty(ownerName) then
-                    match! ownerExists ownerId ownerName context error with 
+                    match! ownerExists ownerId ownerName error with 
                     | Ok _ -> return Error error
                     | Error _ -> return Ok ()
                 else
@@ -133,7 +133,7 @@ module Validations =
     module Organization =
 
         /// Validates that the given organizationId exists in the database.
-        let organizationIdExists<'T> (organizationId: string) (context: HttpContext) (error: 'T) =
+        let organizationIdExists<'T> (organizationId: string) (error: 'T) =
             task {
                 let mutable organizationGuid = Guid.Empty
                 if (not <| String.IsNullOrEmpty(organizationId)) && Guid.TryParse(organizationId, &organizationGuid) then
@@ -149,18 +149,35 @@ module Validations =
             }
 
         /// Validates that the given organizationId does not already exist in the database.
-        let organizationIdDoesNotExist<'T> (organizationId: string) (context: HttpContext) (error: 'T) =
+        let organizationIdDoesNotExist<'T> (organizationId: string) (error: 'T) =
             task {
                 if not <| String.IsNullOrEmpty(organizationId) then
-                    match! organizationIdExists organizationId context error with 
+                    match! organizationIdExists organizationId error with 
                     | Ok _ -> return Error error
                     | Error _ -> return Ok ()
                 else
                     return Ok ()
             }
 
+        /// Validates that the given organizationName does not already exist for this owner.
+        let organizationNameIsUnique<'T> (ownerId: string) (ownerName: string) (organizationName: string) (error: 'T) =
+            task {
+                if not <| String.IsNullOrEmpty(organizationName) then
+                    match! organizationNameIsUnique ownerId ownerName organizationName with 
+                    | Ok isUnique -> 
+                        if isUnique then 
+                            return Ok () 
+                        else
+                            return Error error
+                    | Error internalError ->
+                        logToConsole internalError
+                        return Error error
+                else
+                    return Ok ()
+            }
+
         /// Validates that the organization exists.
-        let organizationExists<'T> ownerId ownerName organizationId organizationName (context: HttpContext) (error: 'T) =
+        let organizationExists<'T> ownerId ownerName organizationId organizationName (error: 'T) =
             task {
                 let mutable organizationGuid = Guid.Empty
                 match! resolveOrganizationId ownerId ownerName organizationId organizationName with
@@ -179,7 +196,7 @@ module Validations =
             }
 
         /// Validates that the organization does not exist.
-        let organizationDoesNotExist<'T> ownerId ownerName organizationId organizationName (context: HttpContext) (error: 'T) =
+        let organizationDoesNotExist<'T> ownerId ownerName organizationId organizationName (error: 'T) =
             task {
                 let mutable organizationGuid = Guid.Empty
                 match! resolveOrganizationId ownerId ownerName organizationId organizationName with
@@ -189,7 +206,7 @@ module Validations =
             }
 
         /// Validates that the organization is deleted.
-        let organizationIsDeleted<'T> ownerId ownerName organizationId organizationName (context: HttpContext) (error: 'T) =
+        let organizationIsDeleted<'T> ownerId ownerName organizationId organizationName (error: 'T) =
             task {
                 match! resolveOrganizationId ownerId ownerName organizationId organizationName with
                 | Some organizationId ->
@@ -204,7 +221,7 @@ module Validations =
             }
 
         /// Validates that the organization is not deleted.
-        let organizationIsNotDeleted<'T> ownerId ownerName organizationId organizationName (context: HttpContext) (error: 'T) =
+        let organizationIsNotDeleted<'T> ownerId ownerName organizationId organizationName (error: 'T) =
             task {
                 match! resolveOrganizationId ownerId ownerName organizationId organizationName with
                 | Some organizationId ->
@@ -221,7 +238,7 @@ module Validations =
     module Repository =
 
         /// Validates that the given RepositoryId exists in the database.
-        let repositoryIdExists<'T> (repositoryId: string) (context: HttpContext) (error: 'T) =
+        let repositoryIdExists<'T> (repositoryId: string) (error: 'T) =
             task {
                 let mutable guid = Guid.Empty
                 if (not <| String.IsNullOrEmpty(repositoryId)) && Guid.TryParse(repositoryId, &guid) then
@@ -237,10 +254,10 @@ module Validations =
             }
 
         /// Validates that the given repositoryId does not already exist in the database.
-        let repositoryIdDoesNotExist<'T> (repositoryId: string) (context: HttpContext) (error: 'T) =
+        let repositoryIdDoesNotExist<'T> (repositoryId: string) (error: 'T) =
             task {
                 if not <| String.IsNullOrEmpty(repositoryId) then
-                    match! repositoryIdExists repositoryId context error with 
+                    match! repositoryIdExists repositoryId error with 
                     | Ok _ -> return Error error
                     | Error _ -> return Ok ()
                 else
@@ -248,7 +265,7 @@ module Validations =
             }
 
         /// Validates that the repository exists.
-        let repositoryExists<'T> ownerId ownerName organizationId organizationName repositoryId repositoryName (context: HttpContext) (error: 'T) =
+        let repositoryExists<'T> ownerId ownerName organizationId organizationName repositoryId repositoryName (error: 'T) =
             task {
                 let mutable guid = Guid.Empty
                 match! resolveRepositoryId ownerId ownerName organizationId organizationName repositoryId repositoryName with
@@ -267,7 +284,7 @@ module Validations =
             }
 
         /// Validates that the repository is deleted.
-        let repositoryIsDeleted<'T> ownerId ownerName organizationId organizationName repositoryId repositoryName (context: HttpContext) (error: 'T) =
+        let repositoryIsDeleted<'T> ownerId ownerName organizationId organizationName repositoryId repositoryName (error: 'T) =
             task {
                 let mutable guid = Guid.Empty
                 match! resolveRepositoryId ownerId ownerName organizationId organizationName repositoryId repositoryName with
@@ -286,7 +303,7 @@ module Validations =
             }
 
         /// Validates that the repository is not deleted.
-        let repositoryIsNotDeleted<'T> ownerId ownerName organizationId organizationName repositoryId repositoryName (context: HttpContext) (error: 'T) =
+        let repositoryIsNotDeleted<'T> ownerId ownerName organizationId organizationName repositoryId repositoryName (error: 'T) =
             task {
                 let mutable guid = Guid.Empty
                 match! resolveRepositoryId ownerId ownerName organizationId organizationName repositoryId repositoryName with
@@ -307,7 +324,7 @@ module Validations =
     module Branch =
 
         /// Validates that the given branchId exists in the database.
-        let branchIdExists<'T> (branchId: string) (context: HttpContext) (error: 'T) =
+        let branchIdExists<'T> (branchId: string) (error: 'T) =
             task {
                 let mutable guid = Guid.Empty
                 if (not <| String.IsNullOrEmpty(branchId)) && Guid.TryParse(branchId, &guid) then
@@ -324,7 +341,7 @@ module Validations =
 
 
         /// Validates that the given branchId does not exist in the database.
-        let branchIdDoesNotExist<'T> (branchId: string) (context: HttpContext) (error: 'T) =
+        let branchIdDoesNotExist<'T> (branchId: string) (error: 'T) =
             task {
                 let mutable guid = Guid.Empty
                 if (not <| String.IsNullOrEmpty(branchId)) && Guid.TryParse(branchId, &guid) then
@@ -340,7 +357,7 @@ module Validations =
             }
 
         /// Validates that the branch exists in the database.
-        let branchExists<'T> ownerId ownerName organizationId organizationName repositoryId repositoryName branchId branchName (context: HttpContext) (error: 'T) =
+        let branchExists<'T> ownerId ownerName organizationId organizationName repositoryId repositoryName branchId branchName (error: 'T) =
             task {
                 let mutable guid = Guid.Empty
                 match! resolveRepositoryId ownerId ownerName organizationId organizationName repositoryId repositoryName with
@@ -362,7 +379,7 @@ module Validations =
             }
 
         /// Validates that a branch allows a specific reference type.
-        let branchAllowsReferenceType<'T> ownerId ownerName organizationId organizationName repositoryId repositoryName branchId branchName (referenceType: ReferenceType) (context: HttpContext) (error: 'T) =
+        let branchAllowsReferenceType<'T> ownerId ownerName organizationId organizationName repositoryId repositoryName branchId branchName (referenceType: ReferenceType) (error: 'T) =
             task {
                 let mutable guid = Guid.Empty
                 match! resolveRepositoryId ownerId ownerName organizationId organizationName repositoryId repositoryName with
@@ -388,7 +405,7 @@ module Validations =
             }
 
         /// Validates that the given branchName does not exist in the database.
-        let branchNameDoesNotExist<'T> ownerId ownerName organizationId organizationName repositoryId repositoryName branchName (context: HttpContext) (error: 'T) =
+        let branchNameDoesNotExist<'T> ownerId ownerName organizationId organizationName repositoryId repositoryName branchName (error: 'T) =
             task {
                 match! resolveRepositoryId ownerId ownerName organizationId organizationName repositoryId repositoryName with
                 | Some repositoryId ->
@@ -399,7 +416,7 @@ module Validations =
             }
 
         /// Validates that the given ReferenceId exists in the database.
-        let referenceIdExists<'T> (referenceId: ReferenceId) (context: HttpContext) (error: 'T) =
+        let referenceIdExists<'T> (referenceId: ReferenceId) (error: 'T) =
             task {
                 if not <| (referenceId = Guid.Empty) then
                     let actorId = ActorId($"{referenceId}")
@@ -415,9 +432,9 @@ module Validations =
 
     module Directory =
         /// Validates that the given DirectoryId exists in the database.
-        let directoryIdExists<'T> (directoryId: Guid) (context: HttpContext) (error: 'T) =
+        let directoryIdExists<'T> (directoryId: Guid) (error: 'T) =
             task {
-                let actorId = Directory.GetActorId(directoryId)
+                let actorId = DirectoryVersion.GetActorId(directoryId)
                 let directoryVersionActorProxy = ApplicationContext.ActorProxyFactory().CreateActorProxy<IDirectoryVersionActor>(actorId, ActorName.DirectoryVersion)
                 let! exists = directoryVersionActorProxy.Exists()
                 if exists then
@@ -427,13 +444,13 @@ module Validations =
             }
 
         /// Validates that all of the given DirectoryIds exist in the database.
-        let directoryIdsExist<'T> (directoryIds: List<DirectoryId>) (context: HttpContext) (error: 'T) =
+        let directoryIdsExist<'T> (directoryIds: List<DirectoryId>) (error: 'T) =
             task {
                 let mutable allExist = true
                 let directoryIdStack = Queue<DirectoryId>(directoryIds)
                 while directoryIdStack.Count > 0 && allExist do
                     let directoryId = directoryIdStack.Dequeue()
-                    let actorId = Directory.GetActorId(directoryId)
+                    let actorId = DirectoryVersion.GetActorId(directoryId)
                     let directoryVersionActorProxy = actorProxyFactory.CreateActorProxy<IDirectoryVersionActor>(actorId, ActorName.DirectoryVersion)
                     let! exists = directoryVersionActorProxy.Exists()
                     allExist <- exists
@@ -444,7 +461,7 @@ module Validations =
             }
 
         /// Validates that the branch exists in the database.
-        let sha256HashExists<'T> repositoryId branchId branchName sha256Hash (context: HttpContext) (error: 'T) =
+        let sha256HashExists<'T> repositoryId branchId branchName sha256Hash (error: 'T) =
             task {
                 let mutable guid = Guid.Empty
                 match! resolveBranchId repositoryId branchId branchName with

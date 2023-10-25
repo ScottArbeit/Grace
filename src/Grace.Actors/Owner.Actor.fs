@@ -142,7 +142,7 @@ module Owner =
                     let returnValue = GraceReturnValue.Create "Owner command succeeded." ownerEvent.Metadata.CorrelationId
                     returnValue.Properties.Add(nameof(OwnerId), $"{ownerDto.OwnerId}")
                     returnValue.Properties.Add(nameof(OwnerName), $"{ownerDto.OwnerName}")
-                    returnValue.Properties.Add("EventType", $"{discriminatedUnionFullNameToString ownerEvent.Event}")
+                    returnValue.Properties.Add("EventType", $"{getDiscriminatedUnionFullName ownerEvent.Event}")
                     return Ok returnValue
                 with ex ->
                     let graceError = GraceError.Create (OwnerError.getErrorMessage OwnerError.FailedWhileApplyingEvent) ownerEvent.Metadata.CorrelationId
@@ -184,7 +184,7 @@ module Owner =
             member this.IsDeleted() =
                 Task.FromResult(if ownerDto.DeletedAt.IsSome then true else false)
 
-            member this.GetDto() =
+            member this.Get() =
                 Task.FromResult(ownerDto)
 
             member this.OrganizationExists organizationName = 
@@ -250,7 +250,7 @@ module Owner =
                     }
 
                 task {
-                    currentCommand <- discriminatedUnionCaseNameToString command
+                    currentCommand <- getDistributedUnionCaseName command
                     match! isValid command metadata with
                     | Ok command -> return! processCommand command metadata
                     | Error error -> return Error error

@@ -19,7 +19,7 @@ open System.Threading.Tasks
 open System.Collections.Concurrent
 open System.Diagnostics
 
-module Directory =
+module DirectoryVersion =
 
     let GetActorId (directoryId: DirectoryId) = ActorId($"{directoryId}")
  

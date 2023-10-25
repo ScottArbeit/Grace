@@ -195,7 +195,7 @@ module Repository =
                             returnValue.Properties.Add(nameof(BranchId), $"{branchId}")
                             returnValue.Properties.Add(nameof(BranchName), $"{Constants.InitialBranchName}")
                             returnValue.Properties.Add(nameof(ReferenceId), $"{referenceId}")
-                        returnValue.Properties.Add("EventType", $"{discriminatedUnionFullNameToString repositoryEvent.Event}")
+                        returnValue.Properties.Add("EventType", $"{getDiscriminatedUnionFullName repositoryEvent.Event}")
                         return Ok returnValue
                     | Error graceError ->
                         return Error graceError
@@ -422,7 +422,7 @@ module Repository =
                     }
 
                 task {
-                    currentCommand <- discriminatedUnionCaseNameToString command
+                    currentCommand <- getDistributedUnionCaseName command
                     match! isValid command metadata with
                     | Ok command -> return! processCommand command metadata
                     | Error error -> return Error error

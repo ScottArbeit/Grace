@@ -84,23 +84,27 @@ module Storage =
     let FilesExistInObjectStorage (fileVersions: List<FileVersion>) correlationId =
         task {
             try
-                match Current().ObjectStorageProvider with
-                | AzureBlobStorage ->
-                    let httpClient = getHttpClient correlationId
-                    let serviceUrl = $"{Current().ServerUri}/storage/filesExistInObjectStorage"
-                    let jsonContent = jsonContent fileVersions
-                    let! response = httpClient.PostAsync(serviceUrl, jsonContent)
-                    if response.IsSuccessStatusCode then
-                        let! returnValue = response.Content.ReadFromJsonAsync<GraceReturnValue<List<UploadMetadata>>>(Constants.JsonSerializerOptions)
-                        return Ok returnValue
-                    else
-                        let graceError = (GraceError.Create (StorageError.getErrorMessage FailedToGetUploadUrls) correlationId)
-                        let fileVersionList = StringBuilder()
-                        for fileVersion in fileVersions do fileVersionList.Append($"{fileVersion.RelativePath}; ") |> ignore
-                        return Error graceError |> enhance ("fileVersions", fileVersionList.ToString())
-                | AWSS3 -> return Error (GraceError.Create (StorageError.getErrorMessage NotImplemented) correlationId)
-                | GoogleCloudStorage -> return Error (GraceError.Create (StorageError.getErrorMessage NotImplemented) correlationId)
-                | ObjectStorageProvider.Unknown -> return Error (GraceError.Create (StorageError.getErrorMessage NotImplemented) correlationId)
+                if fileVersions.Count > 0 then
+                    match Current().ObjectStorageProvider with
+                    | AzureBlobStorage ->
+                        let httpClient = getHttpClient correlationId
+                        let serviceUrl = $"{Current().ServerUri}/storage/filesExistInObjectStorage"
+                        let jsonContent = jsonContent fileVersions
+                        let! response = httpClient.PostAsync(serviceUrl, jsonContent)
+                        if response.IsSuccessStatusCode then
+                            let! uploadMetadata = response.Content.ReadFromJsonAsync<GraceReturnValue<List<UploadMetadata>>>(Constants.JsonSerializerOptions)
+                            return Ok uploadMetadata
+                        else
+                            let! errorMessage = response.Content.ReadAsStringAsync()
+                            let graceError = (GraceError.Create $"{StorageError.getErrorMessage FailedToGetUploadUrls}; {errorMessage}" correlationId)
+                            let fileVersionList = StringBuilder()
+                            for fileVersion in fileVersions do fileVersionList.Append($"{fileVersion.RelativePath}; ") |> ignore
+                            return Error graceError |> enhance ("fileVersions", fileVersionList.ToString())
+                    | AWSS3 -> return Error (GraceError.Create (StorageError.getErrorMessage NotImplemented) correlationId)
+                    | GoogleCloudStorage -> return Error (GraceError.Create (StorageError.getErrorMessage NotImplemented) correlationId)
+                    | ObjectStorageProvider.Unknown -> return Error (GraceError.Create (StorageError.getErrorMessage NotImplemented) correlationId)
+                else
+                    return Error (GraceError.Create (StorageError.getErrorMessage FilesMustNotBeEmpty) correlationId)
             with ex ->
                 let exceptionResponse = createExceptionResponse ex
                 return Error (GraceError.Create (exceptionResponse.ToString()) correlationId)

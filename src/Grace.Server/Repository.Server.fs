@@ -22,7 +22,6 @@ open Grace.Shared.Validation
 open Grace.Shared.Validation.Utilities
 open Microsoft.AspNetCore.Http
 open Microsoft.AspNetCore.Mvc
-open Microsoft.Extensions.Logging
 open NodaTime
 open OpenTelemetry.Trace
 open System
@@ -133,8 +132,8 @@ module Repository =
                       Guid.isValidAndNotEmpty parameters.RepositoryId InvalidRepositoryId
                       String.isNotEmpty parameters.RepositoryName RepositoryNameIsRequired
                       String.isValidGraceName parameters.RepositoryName InvalidRepositoryName
-                      Owner.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
-                      Organization.organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName context OrganizationDoesNotExist ]
+                      Owner.ownerExists parameters.OwnerId parameters.OwnerName OwnerDoesNotExist
+                      Organization.organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName OrganizationDoesNotExist ]
                 
                 let command (parameters: CreateRepositoryParameters) = 
                     task {
@@ -154,8 +153,8 @@ module Repository =
                 let validations (parameters: SetRepositoryVisibilityParameters) (context: HttpContext) =
                     [ Input.eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherRepositoryIdOrRepositoryNameRequired
                       Repository.visibilityIsValid parameters.Visibility InvalidVisibilityValue
-                      Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName context RepositoryDoesNotExist
-                      Repository.repositoryIsNotDeleted parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName context RepositoryIsDeleted ]
+                      Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName RepositoryDoesNotExist
+                      Repository.repositoryIsNotDeleted parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName RepositoryIsDeleted ]
   
                 let command (parameters: SetRepositoryVisibilityParameters) = 
                     SetVisibility(discriminatedUnionFromString<RepositoryVisibility>(parameters.Visibility).Value) |> returnTask
@@ -170,8 +169,8 @@ module Repository =
                 let validations (parameters: SetSaveDaysParameters) (context: HttpContext) =
                     [ Input.eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherRepositoryIdOrRepositoryNameRequired
                       Repository.daysIsValid parameters.SaveDays InvalidSaveDaysValue
-                      Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName context RepositoryDoesNotExist
-                      Repository.repositoryIsNotDeleted parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName context RepositoryIsDeleted ]
+                      Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName RepositoryDoesNotExist
+                      Repository.repositoryIsNotDeleted parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName RepositoryIsDeleted ]
                 
                 let command (parameters: SetSaveDaysParameters) = SetSaveDays(parameters.SaveDays) |> returnTask
                 
@@ -185,8 +184,8 @@ module Repository =
                 let validations (parameters: SetCheckpointDaysParameters) (context: HttpContext) =
                     [ Input.eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherRepositoryIdOrRepositoryNameRequired
                       Repository.daysIsValid parameters.CheckpointDays InvalidCheckpointDaysValue
-                      Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName context RepositoryDoesNotExist
-                      Repository.repositoryIsNotDeleted parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName context RepositoryIsDeleted ]
+                      Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName RepositoryDoesNotExist
+                      Repository.repositoryIsNotDeleted parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName RepositoryIsDeleted ]
                 
                 let command (parameters: SetCheckpointDaysParameters) = SetCheckpointDays(parameters.CheckpointDays) |> returnTask
                 
@@ -199,8 +198,8 @@ module Repository =
             task {
                 let validations (parameters: EnablePromotionTypeParameters) (context: HttpContext) =
                     [ Input.eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherRepositoryIdOrRepositoryNameRequired
-                      Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName context RepositoryDoesNotExist
-                      Repository.repositoryIsNotDeleted parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName context RepositoryIsDeleted ]
+                      Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName RepositoryDoesNotExist
+                      Repository.repositoryIsNotDeleted parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName RepositoryIsDeleted ]
                 
                 let command (parameters: EnablePromotionTypeParameters) = EnableSingleStepPromotion (parameters.Enabled) |> returnTask
                 
@@ -213,8 +212,8 @@ module Repository =
             task {
                 let validations (parameters: EnablePromotionTypeParameters) (context: HttpContext) =
                     [ Input.eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherRepositoryIdOrRepositoryNameRequired
-                      Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName context RepositoryDoesNotExist
-                      Repository.repositoryIsNotDeleted parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName context RepositoryIsDeleted ]
+                      Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName RepositoryDoesNotExist
+                      Repository.repositoryIsNotDeleted parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName RepositoryIsDeleted ]
                 
                 let command (parameters: EnablePromotionTypeParameters) = EnableComplexPromotion (parameters.Enabled) |> returnTask
                 
@@ -228,8 +227,8 @@ module Repository =
                 let validations (parameters: SetRepositoryStatusParameters) (context: HttpContext) =
                     [ Input.eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherRepositoryIdOrRepositoryNameRequired
                       DiscriminatedUnion.isMemberOf<RepositoryStatus, RepositoryError> parameters.Status InvalidRepositoryStatus
-                      Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName context RepositoryDoesNotExist
-                      Repository.repositoryIsNotDeleted parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName context RepositoryIsDeleted ]
+                      Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName RepositoryDoesNotExist
+                      Repository.repositoryIsNotDeleted parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName RepositoryIsDeleted ]
                 
                 let command (parameters: SetRepositoryStatusParameters) =
                     SetRepositoryStatus(discriminatedUnionFromString<RepositoryStatus>(parameters.Status).Value) |> returnTask
@@ -244,8 +243,8 @@ module Repository =
                 let validations (parameters: SetDefaultServerApiVersionParameters) (context: HttpContext) =
                     [ Input.eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherRepositoryIdOrRepositoryNameRequired
                       String.isNotEmpty parameters.DefaultServerApiVersion InvalidServerApiVersion
-                      Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName context RepositoryDoesNotExist
-                      Repository.repositoryIsNotDeleted parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName context RepositoryIsDeleted ]
+                      Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName RepositoryDoesNotExist
+                      Repository.repositoryIsNotDeleted parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName RepositoryIsDeleted ]
                 
                 let command (parameters: SetDefaultServerApiVersionParameters) = SetDefaultServerApiVersion(parameters.DefaultServerApiVersion) |> returnTask
                 
@@ -258,8 +257,8 @@ module Repository =
             task {
                 let validations (parameters: RecordSavesParameters) (context: HttpContext) =
                     [ Input.eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherRepositoryIdOrRepositoryNameRequired
-                      Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName context RepositoryDoesNotExist
-                      Repository.repositoryIsNotDeleted parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName context RepositoryIsDeleted ]
+                      Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName RepositoryDoesNotExist
+                      Repository.repositoryIsNotDeleted parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName RepositoryIsDeleted ]
                 
                 let command (parameters: RecordSavesParameters) = SetRecordSaves (parameters.RecordSaves) |> returnTask
                 
@@ -273,8 +272,8 @@ module Repository =
                 let validations (parameters: SetRepositoryDescriptionParameters) (context: HttpContext) =
                     [ Input.eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherRepositoryIdOrRepositoryNameRequired
                       String.isNotEmpty parameters.Description DescriptionIsRequired
-                      Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName context RepositoryDoesNotExist
-                      Repository.repositoryIsNotDeleted parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName context RepositoryIsDeleted ]
+                      Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName RepositoryDoesNotExist
+                      Repository.repositoryIsNotDeleted parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName RepositoryIsDeleted ]
 
                 let command (parameters: SetRepositoryDescriptionParameters) = SetDescription (parameters.Description) |> returnTask
 
@@ -288,8 +287,8 @@ module Repository =
                 let validations (parameters: DeleteRepositoryParameters) (context: HttpContext) =
                     [ Input.eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherRepositoryIdOrRepositoryNameRequired
                       String.isNotEmpty parameters.DeleteReason DeleteReasonIsRequired
-                      Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName context RepositoryDoesNotExist
-                      Repository.repositoryIsNotDeleted parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName context RepositoryIsDeleted ]
+                      Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName RepositoryDoesNotExist
+                      Repository.repositoryIsNotDeleted parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName RepositoryIsDeleted ]
 
                 let command (parameters: DeleteRepositoryParameters) = DeleteLogical (parameters.Force, parameters.DeleteReason) |> returnTask
 
@@ -302,8 +301,8 @@ module Repository =
             task {
                 let validations (parameters: RepositoryParameters) (context: HttpContext) =
                     [ Input.eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherRepositoryIdOrRepositoryNameRequired
-                      Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName context RepositoryDoesNotExist
-                      Repository.repositoryIsDeleted parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName context RepositoryIsNotDeleted ]
+                      Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName RepositoryDoesNotExist
+                      Repository.repositoryIsDeleted parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName RepositoryIsNotDeleted ]
 
                 let command (parameters: RepositoryParameters) = Undelete |> returnTask
 
@@ -323,7 +322,7 @@ module Repository =
                           String.isValidGraceName parameters.OrganizationName InvalidOrganizationName
                           Input.eitherIdOrNameMustBeProvided parameters.OrganizationId parameters.OrganizationName EitherOrganizationIdOrOrganizationNameRequired
                           Guid.isValidAndNotEmpty parameters.RepositoryId InvalidRepositoryId
-                          Repository.repositoryIdExists parameters.RepositoryId context RepositoryIdDoesNotExist ]
+                          Repository.repositoryIdExists parameters.RepositoryId RepositoryIdDoesNotExist ]
 
                     let query (context: HttpContext) (maxCount: int) (actorProxy: IRepositoryActor) =
                         task {
@@ -349,7 +348,7 @@ module Repository =
                           String.isValidGraceName parameters.OrganizationName InvalidOrganizationName
                           Input.eitherIdOrNameMustBeProvided parameters.OrganizationId parameters.OrganizationName EitherOrganizationIdOrOrganizationNameRequired
                           Guid.isValidAndNotEmpty parameters.RepositoryId InvalidRepositoryId
-                          Repository.repositoryIdExists parameters.RepositoryId context RepositoryIdDoesNotExist ]
+                          Repository.repositoryIdExists parameters.RepositoryId RepositoryIdDoesNotExist ]
 
                     let query (context: HttpContext) (maxCount: int) (actorProxy: IRepositoryActor) =
                         task {
@@ -376,7 +375,7 @@ module Repository =
                           Input.eitherIdOrNameMustBeProvided parameters.OrganizationId parameters.OrganizationName EitherOrganizationIdOrOrganizationNameRequired
                           Guid.isValidAndNotEmpty parameters.RepositoryId InvalidRepositoryId
                           String.isNotEmpty parameters.RepositoryName RepositoryNameIsRequired
-                          Repository.repositoryIdExists parameters.RepositoryId context RepositoryIdDoesNotExist ]
+                          Repository.repositoryIdExists parameters.RepositoryId RepositoryIdDoesNotExist ]
 
                     let query (context: HttpContext) (maxCount: int) (actorProxy: IRepositoryActor) =
                         task {
@@ -404,7 +403,7 @@ module Repository =
                           Guid.isValidAndNotEmpty parameters.RepositoryId InvalidRepositoryId
                           Input.eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherRepositoryIdOrRepositoryNameRequired
                           Number.isWithinRange parameters.MaxCount 1 1000 InvalidMaxCountValue
-                          Repository.repositoryIdExists parameters.RepositoryId context RepositoryIdDoesNotExist ]
+                          Repository.repositoryIdExists parameters.RepositoryId RepositoryIdDoesNotExist ]
 
                     let query (context: HttpContext) (maxCount: int) (actorProxy: IRepositoryActor) =
                         task {
@@ -436,7 +435,7 @@ module Repository =
                           Input.eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherRepositoryIdOrRepositoryNameRequired
                           Input.listIsNonEmpty parameters.ReferenceIds ReferenceIdsAreRequired
                           Number.isWithinRange parameters.MaxCount 1 1000 InvalidMaxCountValue
-                          Repository.repositoryIdExists parameters.RepositoryId context RepositoryIdDoesNotExist ]
+                          Repository.repositoryIdExists parameters.RepositoryId RepositoryIdDoesNotExist ]
 
                     let query (context: HttpContext) (maxCount: int) (actorProxy: IRepositoryActor) =
                         task {
@@ -467,7 +466,7 @@ module Repository =
                           Input.eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherRepositoryIdOrRepositoryNameRequired
                           Input.listIsNonEmpty parameters.BranchIds BranchIdsAreRequired
                           Number.isWithinRange parameters.MaxCount 1 1000 InvalidMaxCountValue
-                          Repository.repositoryIdExists parameters.RepositoryId context RepositoryIdDoesNotExist ]
+                          Repository.repositoryIdExists parameters.RepositoryId RepositoryIdDoesNotExist ]
 
                     let query (context: HttpContext) (maxCount: int) (actorProxy: IRepositoryActor) =
                         task {

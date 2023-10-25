@@ -130,7 +130,7 @@ module Organization =
                         do! this.OnFirstWrite()
 
                     organizationEvents.Add(organizationEvent)
-                    do! DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> stateManager.SetStateAsync(eventsStateName, this.OrganizationEvents))
+                    do! DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> stateManager.SetStateAsync(eventsStateName, organizationEvents))
                 
                     // Publish the event to the rest of the world.
                     let graceEvent = Events.GraceEvent.OrganizationEvent organizationEvent
@@ -145,7 +145,7 @@ module Organization =
                     returnValue.Properties.Add(nameof(OwnerId), $"{organizationDto.OwnerId}")
                     returnValue.Properties.Add(nameof(OrganizationId), $"{organizationDto.OrganizationId}")
                     returnValue.Properties.Add(nameof(OrganizationName), $"{organizationDto.OrganizationName}")
-                    returnValue.Properties.Add("EventType", $"{discriminatedUnionFullNameToString organizationEvent.Event}")
+                    returnValue.Properties.Add("EventType", $"{getDiscriminatedUnionFullName organizationEvent.Event}")
                     return Ok returnValue
                 with ex -> 
                     let graceError = GraceError.Create (OrganizationError.getErrorMessage OrganizationError.FailedWhileApplyingEvent) organizationEvent.Metadata.CorrelationId
@@ -183,7 +183,7 @@ module Organization =
             member this.IsDeleted() =
                 Task.FromResult(if organizationDto.DeletedAt.IsSome then true else false)
 
-            member this.GetDto() =
+            member this.Get() =
                 Task.FromResult(organizationDto)
 
             member this.RepositoryExists repositoryName = 
@@ -203,7 +203,7 @@ module Organization =
                             match command with 
                             | OrganizationCommand.Create (organizationId, organizationName, ownerId) ->
                                 match organizationDto.UpdatedAt with
-                                | Some _ -> return Error (GraceError.Create (OrganizationError.getErrorMessage OrganizationAlreadyExists) metadata.CorrelationId) 
+                                | Some _ -> return Error (GraceError.Create (OrganizationError.getErrorMessage OrganizationIdAlreadyExists) metadata.CorrelationId) 
                                 | None -> return Ok command
                             | _ -> 
                                 match organizationDto.UpdatedAt with
@@ -251,7 +251,7 @@ module Organization =
                     }
 
                 task {
-                    currentCommand <- discriminatedUnionCaseNameToString command
+                    currentCommand <- getDistributedUnionCaseName command
                     match! isValid command metadata with
                     | Ok command -> return! processCommand command metadata 
                     | Error error -> return Error error

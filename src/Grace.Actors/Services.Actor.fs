@@ -69,6 +69,8 @@ module Services =
         cosmosContainer <- container
 
     let linqSerializerOptions = CosmosLinqSerializerOptions(PropertyNamingPolicy = CosmosPropertyNamingPolicy.CamelCase)
+
+    /// Custom QueryRequestOptions that requests Index Metrics only in DEBUG build.
     let queryRequestOptions = QueryRequestOptions()
 #if DEBUG
     queryRequestOptions.PopulateIndexMetrics <- true
@@ -432,6 +434,37 @@ module Services =
             return repositories
         }
 
+    let organizationNameIsUnique<'T> (ownerId: string) (ownerName: string) (organizationName: string) =
+        task {
+            match actorStateStorageProvider with
+            | Unknown -> return Ok false
+            | AzureCosmosDb -> 
+                try
+                    match! resolveOwnerId ownerId ownerName with
+                    | Some ownerId ->
+                        let queryDefinition = QueryDefinition("""SELECT c["value"].OrganizationId FROM c WHERE c["value"].OwnerId = @ownerId AND c["value"].OrganizationName = @organizationName AND c["value"].Class = @class""")
+                                                .WithParameter("@ownerId", ownerId)
+                                                .WithParameter("@organizationName", organizationName)
+                                                .WithParameter("@class", "OrganizationDto")
+                        //logToConsole (queryDefinition.QueryText.Replace("@ownerId", $"\"{ownerId}\"").Replace("@organizationName", $"\"{organizationName}\"").Replace("@class", "\"OrganizationDto\""))
+                        let iterator = cosmosContainer.GetItemQueryIterator<organizationIdRecord>(queryDefinition, requestOptions = queryRequestOptions)
+                        if iterator.HasMoreResults then
+                            let! currentResultSet = iterator.ReadNextAsync()
+                            // If a row is returned, and organizationId gets a value, then the organization name is not unique.
+                            let organizationId = currentResultSet.FirstOrDefault({organizationId = String.Empty}).organizationId
+                            if String.IsNullOrEmpty(organizationId) then
+                                // The organization name is unique.
+                                return Ok true
+                            else
+                                // The organization name is not unique.
+                                return Ok false
+                        else return Ok true     // This else should never be hit.
+                    | None -> return Ok false
+                with ex ->
+                    return Error $"{createExceptionResponse ex}"
+            | MongoDB -> return Ok false
+        }
+
     /// Gets a list of repositories for the specified organization.
     let getRepositories (organizationId: OrganizationId) (maxCount: int) includeDeleted = 
         task {
@@ -635,7 +668,7 @@ module Services =
                 let queryDefinition = QueryDefinition("""SELECT TOP @maxCount c["value"].Class, c["value"].ReferenceId, c["value"].BranchId, c["value"].DirectoryId, c["value"].Sha256Hash, c["value"].ReferenceType, c["value"].ReferenceText, c["value"].CreatedAt FROM c WHERE c["value"].BranchId = @branchId AND STRINGEQUALS(c["value"].ReferenceType, @referenceType, true) AND c["value"].Class = @class ORDER BY c["value"].CreatedAt DESC""")
                                         .WithParameter("@maxCount", maxCount)
                                         .WithParameter("@branchId", $"{branchId}")
-                                        .WithParameter("@referenceType", discriminatedUnionCaseNameToString referenceType)
+                                        .WithParameter("@referenceType", getDistributedUnionCaseName referenceType)
                                         .WithParameter("@class", "ReferenceDto")
                 let iterator = cosmosContainer.GetItemQueryIterator<ReferenceDto>(queryDefinition, requestOptions = queryRequestOptions)
                 while iterator.HasMoreResults do
@@ -693,7 +726,7 @@ module Services =
                 let requestCharge = StringBuilder()
                 let queryDefinition = QueryDefinition("""SELECT TOP 1 c["value"] FROM c WHERE c["value"].BranchId = @branchId AND c["value"].Class = @class AND STRINGEQUALS(c["value"].ReferenceType, @referenceType, true) ORDER BY c["value"].CreatedAt DESC""")
                                         .WithParameter("@branchId", $"{branchId}")
-                                        .WithParameter("@referenceType", discriminatedUnionCaseNameToString referenceType)
+                                        .WithParameter("@referenceType", getDistributedUnionCaseName referenceType)
                                         .WithParameter("@class", "ReferenceDto")
                 let iterator = cosmosContainer.GetItemQueryIterator<ReferenceDtoValue>(queryDefinition, requestOptions = queryRequestOptions)
                 let mutable referenceDto = ReferenceDto.Default

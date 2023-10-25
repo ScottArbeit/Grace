@@ -114,7 +114,7 @@ module Interfaces =
         /// Returns true if an repository with this name exists for this owner.
         abstract member RepositoryExists: repositoryName: string -> Task<bool>
         /// Returns the current state of the organization.
-        abstract member GetDto: unit -> Task<OrganizationDto>
+        abstract member Get: unit -> Task<OrganizationDto>
         /// Returns a list of the repositories under this organization.
         abstract member ListRepositories: unit -> Task<IReadOnlyDictionary<RepositoryId, RepositoryName>>
         /// Validates incoming commands and converts them to events that are stored in the database.
@@ -136,7 +136,7 @@ module Interfaces =
         /// Returns true if an organization with this name exists for this owner.
         abstract member OrganizationExists: organizationName: string -> Task<bool>
         /// Returns the current state of the owner.
-        abstract member GetDto: unit -> Task<OwnerDto>
+        abstract member Get: unit -> Task<OwnerDto>
         /// Returns a list of the organizations under this owner.
         abstract member ListOrganizations: unit -> Task<IReadOnlyDictionary<OrganizationId, OrganizationName>>
         /// Validates incoming commands and converts them to events that are stored in the database.

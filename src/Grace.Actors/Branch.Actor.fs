@@ -164,7 +164,9 @@ module Branch =
                     returnValue.Properties.Add(nameof(BranchId), $"{branchDto.BranchId}")
                     returnValue.Properties.Add(nameof(BranchName), $"{branchDto.BranchName}")
                     returnValue.Properties.Add("ParentBranchId", $"{branchDto.ParentBranchId}")
-                    returnValue.Properties.Add("EventType", $"{discriminatedUnionFullNameToString branchEvent.Event}")
+                    returnValue.Properties.Add("EventType", $"{getDiscriminatedUnionFullName branchEvent.Event}")
+
+                    // If the event has a referenceId, add it to the return properties.
                     if branchEvent.Metadata.Properties.ContainsKey(nameof(ReferenceId)) then  
                         returnValue.Properties.Add(nameof(ReferenceId), branchEvent.Metadata.Properties[nameof(ReferenceId)])
                     return Ok returnValue
@@ -283,7 +285,7 @@ module Branch =
                     }
 
                 task {
-                    currentCommand <- discriminatedUnionCaseNameToString command
+                    currentCommand <- getDistributedUnionCaseName command
                     match! isValid command metadata with
                     | Ok command -> return! processCommand command metadata 
                     | Error error -> return Error error

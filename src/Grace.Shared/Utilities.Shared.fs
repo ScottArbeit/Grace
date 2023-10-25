@@ -39,7 +39,6 @@ module Combinators =
     let (>=>) s1 s2 =
         s1 >> bind s2
 
-
 module Utilities =
     /// Gets the current instant.
     let getCurrentInstant() = SystemClock.Instance.GetCurrentInstant()
@@ -69,7 +68,7 @@ module Utilities =
     /// Converts the type name and case name of a discriminated union to a string.
     ///
     /// Example: Animal.Dog -> "Animal.Dog"
-    let discriminatedUnionFullNameToString (x:'T) = 
+    let getDiscriminatedUnionFullName (x:'T) = 
         let discriminatedUnionType = typeof<'T>
         let (case, _ ) = FSharpValue.GetUnionFields(x, discriminatedUnionType)
         $"{discriminatedUnionType.Name}.{case.Name}"
@@ -77,7 +76,7 @@ module Utilities =
     /// Converts the case name of a discriminated union to a string.
     ///
     /// Example: Animal.Dog -> "Dog"
-    let discriminatedUnionCaseNameToString (x:'T) = 
+    let getDistributedUnionCaseName (x:'T) = 
         let discriminatedUnionType = typeof<'T>
         let (case, _ ) = FSharpValue.GetUnionFields(x, discriminatedUnionType)
         $"{case.Name}"
@@ -97,21 +96,21 @@ module Utilities =
     /// Gets the cases of discriminated union for serialization.
     let GetKnownTypes<'T>() = typeof<'T>.GetNestedTypes(BindingFlags.Public ||| BindingFlags.NonPublic) |> Array.filter FSharpType.IsUnion
 
-    /// Serializes an object to JSON, using the Grace JsonSerializerOptions.
+    /// Serializes an object to JSON, using Grace's custom JsonSerializerOptions.
     let serialize<'T> item =
         JsonSerializer.Serialize<'T>(item, Constants.JsonSerializerOptions)
 
-    /// Serializes a stream to JSON, using the Grace JsonSerializerOptions.
+    /// Serializes a stream to JSON, using Grace's custom JsonSerializerOptions.
     let serializeAsync<'T> stream item =
         task {
             return! JsonSerializer.SerializeAsync<'T>(stream, item, Constants.JsonSerializerOptions)
         }
 
-    /// Deserializes a JSON string to a provided type, using the Grace JsonSerializerOptions.
+    /// Deserializes a JSON string to a provided type, using Grace's custom JsonSerializerOptions.
     let deserialize<'T> (s: string) =
         JsonSerializer.Deserialize<'T>(s, Constants.JsonSerializerOptions)
 
-    /// Deserializes a stream to a provided type, using the Grace JsonSerializerOptions.
+    /// Deserializes a stream to a provided type, using Grace's custom JsonSerializerOptions.
     let deserializeAsync<'T> stream =
         task {
             return! JsonSerializer.DeserializeAsync<'T>(stream, Constants.JsonSerializerOptions)
@@ -282,6 +281,18 @@ module Utilities =
 
     /// Alias for calling Task.FromResult() with the provided value.
     let returnTask<'T> value = Task.FromResult<'T>(value)
+
+    /// Monadic bind for the nested monad Task<Result<'T, 'TError>>.
+    let bindTaskResult (result: Task<Result<'T, 'TError>>) (f: 'T -> Task<Result<'U, 'TError>>) =
+        (task {
+            match! result with
+            | Ok returnValue -> return (f returnValue)
+            | Error error -> return Error error |> returnTask
+        }).Unwrap()
+
+    /// Custom monadic bind operator for the nested monad Task<Result<'T, 'TError>>.
+    let inline (>>=!) (result: Task<Result<'T, 'TError>>) (f: 'T -> Task<Result<'U, 'TError>>) =
+        bindTaskResult result f
 
     /// Computes text for the time between two instants. You can pass the two instants in any order.
     let elapsedBetween (instant1: Instant) (instant2: Instant) =

@@ -79,10 +79,17 @@ module Services =
     /// <param name="context">The current HttpContext.</param>
     let returnResult<'T> (statusCode: int) (result: 'T) (context: HttpContext) =
         task {
-            Activity.Current.AddTag("correlation_id", getCorrelationId context)
-                            .AddTag("http.status_code", statusCode) |> ignore
-            context.SetStatusCode(statusCode)
-            return! context.WriteJsonAsync(result)
+            try
+                Activity.Current.AddTag("correlation_id", getCorrelationId context)
+                                .AddTag("http.status_code", statusCode) |> ignore
+                context.SetStatusCode(statusCode)
+
+                // .WriteJsonAsync() uses Grace's Constants.JsonSerializerOptions through DI.e
+                return! context.WriteJsonAsync(result)
+            with ex ->
+                let exceptionResponse = Utilities.createExceptionResponse ex
+                return! context.WriteJsonAsync(GraceError.Create (serialize exceptionResponse) (getCorrelationId context))
+
         }
 
     /// <summary>

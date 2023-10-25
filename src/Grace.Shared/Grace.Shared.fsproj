@@ -1,6 +1,6 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 	<PropertyGroup>
-		<TargetFramework>net7.0</TargetFramework>
+		<TargetFramework>net8.0</TargetFramework>
 		<Version>0.1</Version>
 		<Description>The shared core module for Grace.</Description>
 		<LangVersion>preview</LangVersion>
@@ -47,21 +47,21 @@
 		<PackageReference Include="Ben.Demystifier" Version="0.4.1" />
 		<PackageReference Include="DiffPlex" Version="1.7.1" />
 		<PackageReference Include="FSharp.Control.TaskSeq" Version="0.3.0" />
-		<PackageReference Include="FSharp.SystemTextJson" Version="1.1.23" />
-		<PackageReference Include="FSharpPlus" Version="1.4.0" />
+		<PackageReference Include="FSharp.SystemTextJson" Version="1.2.42" />
+		<PackageReference Include="FSharpPlus" Version="1.5.0" />
 		<PackageReference Include="MimeTypeMapOfficial" Version="1.0.17" />
 		<PackageReference Include="MimeTypes" Version="2.4.1">
 			<PrivateAssets>all</PrivateAssets>
 			<IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
 		</PackageReference>
 		<PackageReference Include="NodaTime" Version="3.1.9" />
-		<PackageReference Include="NodaTime.Serialization.SystemTextJson" Version="1.1.0" />
-		<PackageReference Include="Polly" Version="7.2.3" />
+		<PackageReference Include="NodaTime.Serialization.SystemTextJson" Version="1.1.2" />
+		<PackageReference Include="Polly" Version="8.0.0" />
 		<PackageReference Include="Polly.Contrib.WaitAndRetry" Version="1.1.1" />
 	</ItemGroup>
 
 	<ItemGroup>
-		<PackageReference Update="FSharp.Core" Version="7.0.200" />
+		<PackageReference Update="FSharp.Core" Version="8.0.100-beta.23475.2" />
 	</ItemGroup>
 
 </Project>
