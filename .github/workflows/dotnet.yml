@@ -16,8 +16,8 @@ jobs:
       uses: actions/setup-dotnet@v3
       with:
         dotnet-version: 8.0.x
-        #include-prerelease: true
-        dotnet-quality: 'preview'
+        include-prerelease: true
+        #dotnet-quality: 'preview'
     - name: Restore dependencies
       run: dotnet restore Grace.sln
       working-directory: src
