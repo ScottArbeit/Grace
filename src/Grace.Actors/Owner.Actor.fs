@@ -98,8 +98,6 @@ module Owner =
             if isDisposed then
                 this.OnActivateAsync().Wait()
                 isDisposed <- false
-    
-            //log.LogInformation("{CurrentInstant}: Started {ActorName}.{MethodName} Id: {Id}.", getCurrentInstantExtended(), actorName, context.MethodName, this.Id)
             Task.CompletedTask
             
         override this.OnPostActorMethodAsync(context) =

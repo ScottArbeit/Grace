@@ -118,14 +118,13 @@ module Branch =
             actorStartTime <- getCurrentInstant()
             logScope <- log.BeginScope("Actor {actorName}", actorName)
             currentCommand <- String.Empty
-            //log.LogInformation("{CurrentInstant}: Started {ActorName}.{MethodName} Id: {Id}.", getCurrentInstantExtended(), actorName, context.MethodName, this.Id)
+            log.LogTrace("{CurrentInstant}: Started {ActorName}.{MethodName} Id: {Id}.", getCurrentInstantExtended(), actorName, context.MethodName, this.Id)
             
             // This checks if the actor is still active, but in an undefined state, which will _almost_ never happen.
             // isDisposed is set when the actor is deleted, or if an error occurs where we're not sure of the state and want to reload from the database.
             if isDisposed then
                 this.OnActivateAsync().Wait()
                 isDisposed <- false
-            
             Task.CompletedTask
 
         override this.OnPostActorMethodAsync(context) =
