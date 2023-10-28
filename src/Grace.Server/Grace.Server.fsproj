@@ -11,7 +11,7 @@
 		<GenerateDocumentationFile>false</GenerateDocumentationFile>
 		<NoWarn>NETSDK1057</NoWarn>
 		<Platforms>AnyCPU;x64</Platforms>
-		<PublishReadyToRun>true</PublishReadyToRun>
+		<PublishReadyToRun>false</PublishReadyToRun>
 		<LangVersion>preview</LangVersion>
 		<UseAppHost>true</UseAppHost>
 		<PackageProjectUrl>https://github.com/ScottArbeit/Grace</PackageProjectUrl>

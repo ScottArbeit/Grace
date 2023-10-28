@@ -37,8 +37,8 @@ module DirectoryVersion =
         let mutable logScope: IDisposable = null
 
         override this.OnActivateAsync() =
+            let activateStartTime = getCurrentInstant()
             let stateManager = this.StateManager
-            log.LogInformation("{CurrentInstant} Activated {ActorType} {ActorId}.", getCurrentInstantExtended(), this.GetType().Name, host.Id)
             task {
                 try
                     let! retrievedDto = Storage.RetrieveState<DirectoryVersion> stateManager dtoStateName
@@ -49,17 +49,20 @@ module DirectoryVersion =
                     let exc = createExceptionResponse ex
                     log.LogError("{CurrentInstant} Error in {ActorType} {ActorId}.", getCurrentInstantExtended(), this.GetType().Name, host.Id)
                     log.LogError("{CurrentInstant} {ExceptionDetails}", getCurrentInstantExtended(), exc.ToString())
+
+                let duration = getCurrentInstant().Minus(activateStartTime)
+                log.LogInformation("{CurrentInstant}: Activated {ActorType} {ActorId}. Retrieved from storage in {duration}ms.", getCurrentInstantExtended(), actorName, host.Id, duration.TotalMilliseconds.ToString("F3"))
             } :> Task
 
         override this.OnPreActorMethodAsync(context) =
             actorStartTime <- getCurrentInstant()
             logScope <- log.BeginScope("Actor {actorName}", actorName)
-            //log.LogInformation("{CurrentInstant}: Started {ActorName}.{MethodName} Id: {Id}.", getCurrentInstantExtended(), actorName, context.MethodName, this.Id.GetId())
+            log.LogTrace("{CurrentInstant}: Started {ActorName}.{MethodName} Id: {Id}.", getCurrentInstantExtended(), actorName, context.MethodName, this.Id)
             Task.CompletedTask
 
         override this.OnPostActorMethodAsync(context) =
-            let duration = getCurrentInstant().Minus(actorStartTime)
-            log.LogInformation("{CurrentInstant}: Finished {ActorName}.{MethodName} Id: {Id}; Duration: {duration}ms.", getCurrentInstantExtended(), actorName, context.MethodName, this.Id.GetId(), duration.TotalMilliseconds.ToString("F3"))
+            let durationμs = (getCurrentInstant().Minus(actorStartTime).TotalMilliseconds * 1000.0).ToString("F0")
+            log.LogInformation("{CurrentInstant}: Finished {ActorName}.{MethodName}; Id: {Id}; Duration: {duration}μs.", getCurrentInstantExtended(), actorName, context.MethodName, this.Id, durationμs)
             logScope.Dispose()
             Task.CompletedTask
 
@@ -136,10 +139,10 @@ module DirectoryVersion =
                         //let cachedSubdirectoryVersions = None
                         match cachedSubdirectoryVersions with
                         | Some subdirectoryVersions -> 
-                            logToConsole $"In DirectoryVersionActor.GetDirectoryVersionsRecursive({this.Id.GetId()}). SubdirectoryVersions already cached."
+                            logToConsole $"In DirectoryVersionActor.GetDirectoryVersionsRecursive({this.Id}). SubdirectoryVersions already cached."
                             return subdirectoryVersions
                         | None ->
-                            logToConsole $"In DirectoryVersionActor.GetDirectoryVersionsRecursive({this.Id.GetId()}). SubdirectoryVersions not cached; generating the list."
+                            logToConsole $"In DirectoryVersionActor.GetDirectoryVersionsRecursive({this.Id}). SubdirectoryVersions not cached; generating the list."
                             let subdirectoryVersions = ConcurrentQueue<DirectoryVersion>()
                             subdirectoryVersions.Enqueue(directoryVersion)
                             do! Parallel.ForEachAsync(directoryVersion.Directories, Constants.ParallelOptions, (fun directoryId ct ->

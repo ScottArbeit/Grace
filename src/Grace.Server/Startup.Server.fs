@@ -337,6 +337,9 @@ module Application =
             services.AddSignalR(fun options -> options.EnableDetailedErrors <- true)
                     .AddJsonProtocol(fun options -> options.PayloadSerializerOptions <- Constants.JsonSerializerOptions) |> ignore
 
+            // List all services to the log.
+            //services |> Seq.iter (fun service -> logToConsole $"Service: {service.ServiceType}.")
+
         member _.Configure(app: IApplicationBuilder, env: IWebHostEnvironment) =
             if env.IsDevelopment() then
                 app//.UseSwagger()

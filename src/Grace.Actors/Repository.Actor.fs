@@ -53,19 +53,40 @@ module Repository =
         let mutable repositoryEvents: List<RepositoryEvent> = null
 
         override this.OnActivateAsync() =
+            let activateStartTime = getCurrentInstant()
             let stateManager = this.StateManager
-            log.LogInformation("{CurrentInstant}: Activated {ActorType} {ActorId}.", getCurrentInstantExtended(), this.GetType().Name, host.Id)
             task {
                 let! retrievedDto = Storage.RetrieveState<RepositoryDto> stateManager dtoStateName
                 match retrievedDto with
                     | Some retrievedDto -> repositoryDto <- retrievedDto
                     | None -> repositoryDto <- RepositoryDto.Default
 
-                //let! retrievedEvents = Storage.RetrieveState<List<RepositoryEvent>> stateManager eventsStateName
-                //match retrievedEvents with
-                //    | Some retrievedEvents -> repositoryEvents.AddRange(retrievedEvents)
-                //    | None -> this.onFirstActivation()
+                let duration = getCurrentInstant().Minus(activateStartTime)
+                log.LogInformation("{CurrentInstant}: Activated {ActorType} {ActorId}. Retrieved from storage in {duration}ms.", getCurrentInstantExtended(), actorName, host.Id, duration.TotalMilliseconds.ToString("F3"))
             } :> Task
+
+        override this.OnPreActorMethodAsync(context) =
+            actorStartTime <- getCurrentInstant()
+            logScope <- log.BeginScope("Actor {actorName}", actorName)
+            currentCommand <- String.Empty
+            log.LogTrace("{CurrentInstant}: Started {ActorName}.{MethodName}, Id: {Id}.", getCurrentInstantExtended(), actorName, context.MethodName, this.Id)
+
+            // This checks if the actor is still active, but in an undefined state, which will _almost_ never happen.
+            // isDisposed is set when the actor is deleted, or if an error occurs where we're not sure of the state and want to reload from the database.
+            if isDisposed then
+                this.OnActivateAsync().Wait()
+                isDisposed <- false
+
+            Task.CompletedTask
+            
+        override this.OnPostActorMethodAsync(context) =
+            let durationμs = (getCurrentInstant().Minus(actorStartTime).TotalMilliseconds * 1000.0).ToString("F0")
+            if String.IsNullOrEmpty(currentCommand) then
+                log.LogInformation("{CurrentInstant}: Finished {ActorName}.{MethodName}; Id: {Id}; Duration: {duration}μs.", getCurrentInstantExtended(), actorName, context.MethodName, this.Id, durationμs)
+            else
+                log.LogInformation("{CurrentInstant}: Finished {ActorName}.{MethodName}; Command: {Command}; Id: {Id}; Duration: {duration}μs.", getCurrentInstantExtended(), actorName, context.MethodName, currentCommand, this.Id, durationμs)
+            logScope.Dispose()
+            Task.CompletedTask
 
         member private this.SetMaintenanceReminder() =
             this.RegisterReminderAsync(ReminderType.Maintenance, Array.empty<byte>, TimeSpan.FromDays(7.0), TimeSpan.FromDays(7.0))
@@ -228,29 +249,6 @@ module Repository =
         /// Schedule an actor reminder to delete the repository from the database.
         member private this.SchedulePhysicalDeletion(deleteReason) =
             this.RegisterReminderAsync(ReminderType.PhysicalDeletion, convertToByteArray deleteReason, Constants.DefaultPhysicalDeletionReminderTime, TimeSpan.FromMilliseconds(-1)).Wait()
-
-        override this.OnPreActorMethodAsync(context) =
-            actorStartTime <- getCurrentInstant()
-            logScope <- log.BeginScope("Actor {actorName}", actorName)
-            currentCommand <- String.Empty
-            //log.LogInformation("{CurrentInstant}: Started {ActorName}.{MethodName}, Id: {Id}.", getCurrentInstantExtended(), actorName, context.MethodName, this.Id.GetId())
-
-            // This checks if the actor is still active, but in an undefined state, which will _almost_ never happen.
-            // isDisposed is set when the actor is deleted, or if an error occurs where we're not sure of the state and want to reload from the database.
-            if isDisposed then
-                this.OnActivateAsync().Wait()
-                isDisposed <- false
-
-            Task.CompletedTask
-            
-        override this.OnPostActorMethodAsync(context) =
-            let duration = getCurrentInstant().Minus(actorStartTime)
-            if String.IsNullOrEmpty(currentCommand) then
-                log.LogInformation("{CurrentInstant}: Finished {ActorName}.{MethodName}; Id: {Id}; Duration: {duration}ms.", $"{getCurrentInstantExtended(),-28}", actorName, context.MethodName, this.Id.GetId(), duration.TotalMilliseconds.ToString("F3"))
-            else
-                log.LogInformation("{CurrentInstant}: Finished {ActorName}.{MethodName}; Command: {Command}; Id: {Id}; Duration: {duration}ms.", $"{getCurrentInstantExtended(),-28}", actorName, context.MethodName, currentCommand, this.Id.GetId(), duration.TotalMilliseconds.ToString("F3"))
-            logScope.Dispose()
-            Task.CompletedTask
 
         interface IExportable<RepositoryEvent> with
             member this.Export() = 

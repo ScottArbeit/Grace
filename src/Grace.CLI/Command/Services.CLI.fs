@@ -31,7 +31,7 @@ open System.Threading.Tasks
 module Services =
 
     /// Utility method to write to the console using color.
-    let logToAnsiConsole color message = AnsiConsole.MarkupLine $"[{color}]{getCurrentInstantExtended(),-28} {Environment.CurrentManagedThreadId:X2} {Markup.Escape(message)}[/]"
+    let logToAnsiConsole color message = AnsiConsole.MarkupLine $"[{color}]{getCurrentInstantExtended()} {Environment.CurrentManagedThreadId:X2} {Markup.Escape(message)}[/]"
 
     /// A cache of paths that we've already decided to ignore or not.
     let private shouldIgnoreCache = ConcurrentDictionary<FilePath, bool>()

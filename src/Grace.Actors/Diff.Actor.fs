@@ -133,24 +133,27 @@ module Diff =
             task.Wait()
 
         override this.OnActivateAsync() =
+            let activateStartTime = getCurrentInstant()
             let stateManager = this.StateManager
-            log.LogInformation("{CurrentInstant}: Activated {ActorType} {ActorId}.", getCurrentInstantExtended(), this.GetType().Name, host.Id)
             task {
                 let! retrievedDto = Storage.RetrieveState<DiffDto> stateManager dtoStateName
                 match retrievedDto with
                     | Some retrievedDto -> diffDto <- retrievedDto
                     | None -> diffDto <- DiffDto.Default
+
+                let duration = getCurrentInstant().Minus(activateStartTime)
+                log.LogInformation("{CurrentInstant}: Activated {ActorType} {ActorId}. Retrieved from storage in {duration}ms.", getCurrentInstantExtended(), actorName, host.Id, duration.TotalMilliseconds.ToString("F3"))
             } :> Task
 
         override this.OnPreActorMethodAsync(context) =
             actorStartTime <- getCurrentInstant()
             logScope <- log.BeginScope("Actor {actorName}", actorName)
-            //log.LogInformation("{CurrentInstant}: Started {ActorName}.{MethodName} Id: {Id}.", getCurrentInstantExtended(), actorName, context.MethodName, this.Id.GetId())
+            //log.LogInformation("{CurrentInstant}: Started {ActorName}.{MethodName} Id: {Id}.", getCurrentInstantExtended(), actorName, context.MethodName, this.Id)
             Task.CompletedTask
 
         override this.OnPostActorMethodAsync(context) =
-            let duration = getCurrentInstant().Minus(actorStartTime)
-            log.LogInformation("{CurrentInstant}: Finished {ActorName}.{MethodName} Id: {Id}; Duration: {duration}ms.", getCurrentInstantExtended(), actorName, context.MethodName, this.Id.GetId(), duration.TotalMilliseconds.ToString("F3"))
+            let durationμs = (getCurrentInstant().Minus(actorStartTime).TotalMilliseconds * 1000.0).ToString("F0")
+            log.LogInformation("{CurrentInstant}: Finished {ActorName}.{MethodName}; Id: {Id}; Duration: {duration}μs.", getCurrentInstantExtended(), actorName, context.MethodName, this.Id, durationμs)
             logScope.Dispose()
             Task.CompletedTask
 

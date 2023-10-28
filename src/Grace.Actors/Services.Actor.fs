@@ -10,24 +10,24 @@ open Grace.Actors.Constants
 open Grace.Actors.Interfaces
 open Grace.Shared
 open Grace.Shared.Constants
+open Grace.Shared.Dto.Branch
+open Grace.Shared.Dto.Organization
+open Grace.Shared.Dto.Reference
 open Grace.Shared.Dto.Repository
 open Grace.Shared.Types
 open Grace.Shared.Utilities
 open Microsoft.Azure.Cosmos
 open Microsoft.Azure.Cosmos.Linq
+open Microsoft.Extensions.Logging
 open System
 open System.Collections.Concurrent
 open System.Collections.Generic
+open System.Diagnostics
 open System.IO
 open System.Linq
-open System.Threading.Tasks
-open System.Text
-open Services
-open Grace.Shared.Dto.Branch
-open Grace.Shared.Dto.Reference
-open System.Diagnostics
 open System.Net
-open Grace.Shared.Dto.Organization
+open System.Text
+open System.Threading.Tasks
 
 module Services =
 
@@ -67,6 +67,10 @@ module Services =
     let mutable private cosmosContainer: Container = null
     let setCosmosContainer (container: Container) =
         cosmosContainer <- container
+
+    let mutable internal loggerFactory: ILoggerFactory = null
+    let setLoggerFactory (factory: ILoggerFactory) =
+        loggerFactory <- factory
 
     let linqSerializerOptions = CosmosLinqSerializerOptions(PropertyNamingPolicy = CosmosPropertyNamingPolicy.CamelCase)
 

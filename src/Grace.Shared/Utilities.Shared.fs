@@ -43,11 +43,17 @@ module Utilities =
     /// Gets the current instant.
     let getCurrentInstant() = SystemClock.Instance.GetCurrentInstant()
 
-    /// Gets the current instant as a string in ExtendedIso format. Example: "2009-06-15T13:45:30.0000000Z". 
-    let getCurrentInstantExtended() = getCurrentInstant().ToString(InstantPattern.ExtendedIso.PatternText, CultureInfo.InvariantCulture)
+    /// Formats an instant as a string in ExtendedIso format. Example: "2009-06-15T13:45:30.0000000Z".
+    let formatInstantExtended (instant: Instant) = $"{instant.ToString(InstantPattern.ExtendedIso.PatternText, CultureInfo.InvariantCulture),-28}"
+
+    /// Gets the current instant as a string in ExtendedIso format. Example: "2009-06-15T13:45:30.0000000Z".
+    let getCurrentInstantExtended() = getCurrentInstant() |> formatInstantExtended
 
     /// Gets the current instant as a string in General format. Example: "2009-06-15T13:45:30Z".
-    let getCurrentInstantGeneral() = getCurrentInstant().ToString(InstantPattern.General.PatternText, CultureInfo.InvariantCulture)
+    let formatInstantGeneral (instant: Instant) = instant.ToString(InstantPattern.General.PatternText, CultureInfo.InvariantCulture)
+
+    /// Gets the current instant as a string in General format. Example: "2009-06-15T13:45:30Z".
+    let getCurrentInstantGeneral() = getCurrentInstant() |> formatInstantGeneral
 
     /// Converts an Instant to local time, and produces a string in short date/time format, using the CurrentUICulture.
     let instantToLocalTime (instant: Instant) = instant.ToDateTimeUtc().ToLocalTime().ToString("g", CultureInfo.CurrentUICulture)
@@ -56,7 +62,7 @@ module Utilities =
     let getCurrentInstantLocal() = getCurrentInstant() |> instantToLocalTime
 
     /// Logs the message to the console, with the current instant, thread ID, and message.
-    let logToConsole message = printfn $"{getCurrentInstantExtended(),-28} {Environment.CurrentManagedThreadId:X2} {message}"
+    let logToConsole message = printfn $"{getCurrentInstantExtended()} {Environment.CurrentManagedThreadId:X2} {message}"
 
     /// Gets the first eight characters of a SHA256 hash.
     let getShortenedSha256Hash (sha256Hash: String) =

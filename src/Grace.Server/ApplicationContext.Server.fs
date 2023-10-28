@@ -12,14 +12,13 @@ open Grace.Shared.Utilities
 open Microsoft.Azure.Cosmos
 open Microsoft.Extensions.Configuration
 open Microsoft.Extensions.DependencyInjection
-open NodaTime
+open Microsoft.Extensions.Logging
 open System
 open System.Collections.Concurrent
 open System.Collections.Generic
 open System.Globalization
 open System.Linq
 open System.Threading.Tasks
-open NodaTime.Text
 open System.Net.Http
 open System
 
@@ -30,6 +29,7 @@ module ApplicationContext =
 
     let mutable private actorProxyFactory: IActorProxyFactory = null
     let mutable private actorStateStorageProvider: ActorStateStorageProvider = ActorStateStorageProvider.Unknown
+    let mutable loggerFactory: ILoggerFactory = null
 
     let ActorProxyFactory() = actorProxyFactory
     let ActorStateStorageProvider() = actorStateStorageProvider
@@ -50,6 +50,10 @@ module ApplicationContext =
     let setActorStateStorageProvider actorStateStorage =
         actorStateStorageProvider <- actorStateStorage
         Grace.Actors.Services.setActorStateStorageProvider actorStateStorageProvider
+
+    let setLoggerFactory logFactory =
+        loggerFactory <- logFactory
+        Grace.Actors.Services.setLoggerFactory loggerFactory
 
     type StorageAccount =
         {
