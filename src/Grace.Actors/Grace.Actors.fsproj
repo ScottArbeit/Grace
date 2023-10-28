@@ -6,6 +6,7 @@
 		<WarningsAsErrors>FS0025</WarningsAsErrors>
 		<NoWarn>1057</NoWarn>
 		<Platforms>AnyCPU;x64</Platforms>
+		<PublishReadyToRun>true</PublishReadyToRun>
 	</PropertyGroup>
 
 	<ItemGroup>

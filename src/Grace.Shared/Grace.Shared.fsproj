@@ -6,6 +6,7 @@
 		<LangVersion>preview</LangVersion>
 		<GenerateDocumentationFile>true</GenerateDocumentationFile>
 		<NoWarn>67;1057</NoWarn>
+		<PublishReadyToRun>true</PublishReadyToRun>
 		<WarningsAsErrors>FS0025</WarningsAsErrors>
 		<Platforms>AnyCPU;x64</Platforms>
 	</PropertyGroup>
