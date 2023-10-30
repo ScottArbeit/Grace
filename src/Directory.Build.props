@@ -1,6 +1,8 @@
 <Project>
-  <PropertyGroup>
-    <AccelerateBuildsInVisualStudio>true</AccelerateBuildsInVisualStudio>
-    <ProduceReferenceAssembly>true</ProduceReferenceAssembly>
-  </PropertyGroup>
+	<PropertyGroup>
+		<AccelerateBuildsInVisualStudio>true</AccelerateBuildsInVisualStudio>
+		<ProduceReferenceAssembly>true</ProduceReferenceAssembly>
+		<RuntimeIdentifier>linux-x64</RuntimeIdentifier>
+		<PublishProfile>DefaultContainer</PublishProfile>
+	</PropertyGroup>
 </Project>

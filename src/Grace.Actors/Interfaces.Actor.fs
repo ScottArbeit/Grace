@@ -33,6 +33,7 @@ module Interfaces =
         | OutOfRange
         | Exception of ExceptionResponse
 
+    /// This is an experimental interface to explore how to back up and rehydrate actor instances.
     [<Interface>]
     type IExportable<'T> =
         //abstract member Export: unit -> Task<Result<IList<RepositoryEvent>, ExportError>>
@@ -40,12 +41,14 @@ module Interfaces =
         abstract member Export: unit -> Task<Result<List<'T>, ExportError>>
         abstract member Import: IList<'T> -> Task<Result<int, ImportError>>
     
+    /// This is an experimental interface to explore how to implement important management functions for actors.
     [<Interface>]
     type IRevertable<'T> =
         abstract member EventCount: unit -> Task<int>
         abstract member RevertToInstant: Instant -> PersistAction -> Task<Result<'T, RevertError>>
         abstract member RevertBack: int -> PersistAction -> Task<Result<'T, RevertError>>
 
+    /// Defines the operations for the Branch actor.
     [<Interface>]
     type IBranchActor =
         inherit IActor
@@ -62,6 +65,7 @@ module Interfaces =
         /// Retrieves the parent branch for a given branch.
         abstract member GetParentBranch: unit -> Task<BranchDto>
 
+    /// Defines the operations for the BranchName actor.
     [<Interface>]
     type IBranchNameActor =
         inherit IActor
@@ -70,6 +74,7 @@ module Interfaces =
         /// Returns the BranchId for the given BranchName.
         abstract member GetBranchId: unit -> Task<string option>
 
+    /// Defines the operations for the Commit actor.
     [<Interface>]
     type IContainerNameActor =
         inherit IActor
@@ -78,6 +83,7 @@ module Interfaces =
         /// The container name is $"{ownerName}-{organizationName}-{repositoryName}".
         abstract member GetContainerName: unit -> Task<Result<ContainerName, string>>
     
+    /// Defines the operations for the Diff actor.
     [<Interface>]
     type IDiffActor = 
         inherit IActor
@@ -86,6 +92,7 @@ module Interfaces =
         /// Gets the results of the diff.
         abstract member GetDiff: unit -> Task<DiffDto>
 
+    ///Defines the operations for the DirectoryVersion actor.
     [<Interface>]
     type IDirectoryVersionActor =
         inherit IActor
@@ -112,6 +119,7 @@ module Interfaces =
         /// Delete the DirectoryVersion and all subdirectories and files.
         abstract member Delete: correlationId: string -> Task<GraceResult<string>>
 
+    ///Defines the operations for the Organization actor.
     [<Interface>]
     type IOrganizationActor =
         inherit IActor
@@ -128,6 +136,7 @@ module Interfaces =
         /// Validates incoming commands and converts them to events that are stored in the database.
         abstract member Handle: command: Organization.OrganizationCommand -> eventMetadata: EventMetadata -> Task<GraceResult<string>>
 
+    /// Defines the operations for the OrganizationName actor.
     [<Interface>]
     type IOrganizationNameActor =
         inherit IActor
@@ -136,6 +145,7 @@ module Interfaces =
         /// Returns the OrganizationId for the given OrganizationName.
         abstract member GetOrganizationId: unit -> Task<string option>
 
+    /// Defines the operations for the Owner actor.
     [<Interface>]
     type IOwnerActor =
         inherit IActor
@@ -152,6 +162,7 @@ module Interfaces =
         /// Validates incoming commands and converts them to events that are stored in the database.
         abstract member Handle : command: Owner.OwnerCommand -> eventMetadata: EventMetadata -> Task<GraceResult<string>>
 
+    /// Defines the operations fpr the OwnerName actor.
     [<Interface>]
     type IOwnerNameActor =
         inherit IActor
@@ -160,6 +171,7 @@ module Interfaces =
         /// Returns the OwnerId for the given OwnerName.
         abstract member GetOwnerId: unit -> Task<string option>
 
+    /// Defines the operations for the Reference actor.
     [<Interface>]
     type IReferenceActor =
         inherit IActor
@@ -175,6 +187,7 @@ module Interfaces =
                                 -> Task<ReferenceDto>
         abstract member Delete: correlationId: string -> Task<GraceResult<string>>
 
+    /// Defines the operations for the Repository actor.
     [<Interface>]
     type IRepositoryActor =
         inherit IActor
@@ -191,6 +204,7 @@ module Interfaces =
         /// Processes commands by checking that they're valid, and then converting them into events.
         abstract member Handle : command: Repository.RepositoryCommand -> eventMetadata: EventMetadata -> Task<GraceResult<string>>
 
+    /// Defines the operations for the RepositoryName actor.
     [<Interface>]
     type IRepositoryNameActor =
         inherit IActor
