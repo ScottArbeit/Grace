@@ -7,6 +7,7 @@
 		<Description>The server module for Grace Version Control System.</Description>
 		<UserSecretsId>f1167a88-7f15-49c3-8ea1-30c2608081c9</UserSecretsId>
 		<ContainerBaseImage>mcr.microsoft.com/dotnet/aspnet:8.0</ContainerBaseImage>
+		<ContainerImageTag>latest</ContainerImageTag>
 		<ContainerRepository>scottarbeit/grace-server</ContainerRepository>
 		<DockerDefaultTargetOS>Linux</DockerDefaultTargetOS>
 		<DockerfileTag>scottarbeit/grace-server</DockerfileTag>

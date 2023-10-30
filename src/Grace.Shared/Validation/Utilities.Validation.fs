@@ -15,8 +15,8 @@ module Utilities =
                               |> TaskSeq.ofTaskList
                               |> TaskSeq.tryFind(fun validation -> Result.isError validation)
             return match firstError with
-                    | Some result -> match result with | Ok _ -> None | Error error -> Some error   // This line will always return Some error
-                    | None -> None
+                   | Some result -> match result with | Ok _ -> None | Error error -> Some error   // This line can't return None, because we'll always have an error if we get here.
+                   | None -> None
         }
 
     /// <summary>

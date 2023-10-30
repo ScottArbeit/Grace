@@ -43,16 +43,34 @@ module Utilities =
     /// Gets the current instant.
     let getCurrentInstant() = SystemClock.Instance.GetCurrentInstant()
 
-    /// Formats an instant as a string in ExtendedIso format. Example: "2009-06-15T13:45:30.0000000Z".
-    let formatInstantExtended (instant: Instant) = $"{instant.ToString(InstantPattern.ExtendedIso.PatternText, CultureInfo.InvariantCulture),-28}"
+    /// Formats an instant as a string in ExtendedIso format.
+    ///
+    /// Example: "2019-06-15T13:45:30.9040833Z".
+    let formatInstantExtended (instant: Instant) = 
+        let instantString = instant.ToString(InstantPattern.ExtendedIso.PatternText, CultureInfo.InvariantCulture)
+        if instantString.Length = 28 then
+            instantString
+        else
+            // Pad the fractional seconds with zeros.
+            let zerosToAdd = 28 - instantString.Length
+            let extraZeros = String.replicate zerosToAdd "0"
+            $"{instantString.Substring(0, instantString.Length - 1)}{extraZeros}Z"
+            
+        //$"{instant.ToString(InstantPattern.ExtendedIso.PatternText, CultureInfo.InvariantCulture),-28}"
 
-    /// Gets the current instant as a string in ExtendedIso format. Example: "2009-06-15T13:45:30.0000000Z".
+    /// Gets the current instant as a string in ExtendedIso format.
+    ///
+    /// Example: "2019-06-15T13:45:30.9040833Z".
     let getCurrentInstantExtended() = getCurrentInstant() |> formatInstantExtended
 
-    /// Gets the current instant as a string in General format. Example: "2009-06-15T13:45:30Z".
+    /// Formats an instant as a string in General format.
+    ///
+    /// Example: "2019-06-15T13:45:30Z".
     let formatInstantGeneral (instant: Instant) = instant.ToString(InstantPattern.General.PatternText, CultureInfo.InvariantCulture)
 
-    /// Gets the current instant as a string in General format. Example: "2009-06-15T13:45:30Z".
+    /// Gets the current instant as a string in General format.
+    ///
+    /// Example: "2019-06-15T13:45:30Z".
     let getCurrentInstantGeneral() = getCurrentInstant() |> formatInstantGeneral
 
     /// Converts an Instant to local time, and produces a string in short date/time format, using the CurrentUICulture.
@@ -71,7 +89,7 @@ module Utilities =
         else
             String.Empty
 
-    /// Converts the type name and case name of a discriminated union to a string.
+    /// Converts both the type name and case name of a discriminated union to a string.
     ///
     /// Example: Animal.Dog -> "Animal.Dog"
     let getDiscriminatedUnionFullName (x:'T) = 
@@ -79,7 +97,7 @@ module Utilities =
         let (case, _ ) = FSharpValue.GetUnionFields(x, discriminatedUnionType)
         $"{discriminatedUnionType.Name}.{case.Name}"
 
-    /// Converts the case name of a discriminated union to a string.
+    /// Converts just the case name of a discriminated union to a string.
     ///
     /// Example: Animal.Dog -> "Dog"
     let getDistributedUnionCaseName (x:'T) = 
@@ -126,11 +144,9 @@ module Utilities =
     let jsonContent<'T> item =
         JsonContent.Create(item, options = Constants.JsonSerializerOptions)
 
-    /// <summary>
     /// Retrieves the localized version of a system resource string.
     ///
     /// Note: For now, it's hardcoded to return en_US. I'll fix this when we really implement localization.
-    /// </summary>
     let getLocalizedString stringName = 
         en_US.getString stringName
 
@@ -158,7 +174,7 @@ module Utilities =
         | PlatformID.Other -> true
         | _ -> false
 
-    /// Returns the given path, replacing any Windows-style backslash characters (\) with forward-slash (/).
+    /// Returns the given path, replacing any Windows-style backslash characters (\) with forward-slash characters (/).
     let normalizeFilePath (filePath: string) = filePath.Replace(@"\", "/")
 
     /// Switches "/" to "\" when we're running on Windows.
@@ -169,17 +185,24 @@ module Utilities =
             filePath
 
     /// Checks if a file is a binary file by scanning the first 8K for a 0x00 character; if it finds one, we assume the file is binary.
+    ///
+    /// This is the same algorithm used by Git.
     let isBinaryFile (stream: Stream) =
         task {
             let defaultBytesToCheck = 8 * 1024
             let nulChar = char(0)
             
+            // If the file is smaller than 8K, we'll check the whole file.
             let bytesToCheck = if stream.Length > defaultBytesToCheck then defaultBytesToCheck else int(stream.Length)
             
+            // Create a buffer to hold the part of the file we're going to check.
             let startingBytes = Array.zeroCreate<byte> bytesToCheck
+
+            // Read the file into the buffer.
             let! bytesRead = stream.ReadAsync(startingBytes, 0, bytesToCheck)
 
-            match startingBytes |> Seq.tryFind (fun b -> char(b) = nulChar) with
+            // Search for a 0x00 character.
+            match startingBytes |> Array.tryFind (fun b -> char(b) = nulChar) with
                 | Some nul -> return true
                 | None -> return false
         }
