@@ -2,11 +2,12 @@
 
 	<PropertyGroup>
 		<TargetFramework>net8.0</TargetFramework>
+		<LangVersion>preview</LangVersion>
+		<PublishReadyToRun>false</PublishReadyToRun>
 		<GenerateDocumentationFile>true</GenerateDocumentationFile>
 		<WarningsAsErrors>FS0025</WarningsAsErrors>
 		<NoWarn>1057</NoWarn>
 		<Platforms>AnyCPU;x64</Platforms>
-		<PublishReadyToRun>false</PublishReadyToRun>
 	</PropertyGroup>
 
 	<ItemGroup>

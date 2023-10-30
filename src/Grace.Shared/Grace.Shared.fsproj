@@ -1,12 +1,12 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 	<PropertyGroup>
 		<TargetFramework>net8.0</TargetFramework>
+		<LangVersion>preview</LangVersion>
+		<PublishReadyToRun>true</PublishReadyToRun>
 		<Version>0.1</Version>
 		<Description>The shared core module for Grace.</Description>
-		<LangVersion>preview</LangVersion>
 		<GenerateDocumentationFile>true</GenerateDocumentationFile>
 		<NoWarn>67;1057</NoWarn>
-		<PublishReadyToRun>true</PublishReadyToRun>
 		<WarningsAsErrors>FS0025</WarningsAsErrors>
 		<Platforms>AnyCPU;x64</Platforms>
 	</PropertyGroup>

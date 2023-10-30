@@ -72,6 +72,13 @@ module Maintenance =
                                 for fileVersion in ldv.Files do
                                     fileVersions.TryAdd(fileVersion.RelativePath, fileVersion) |> ignore
                             ))
+
+                            // New F# 8.0 way to do this.
+                            //graceStatus.Index.Values |> Seq.toArray |> Array.Parallel.iter (fun ldv ->
+                            //    for fileVersion in ldv.Files do
+                            //        fileVersions.TryAdd(fileVersion.RelativePath, fileVersion) |> ignore
+                            //)
+
                             let incrementAmount = 100.0 / double fileVersions.Count
 
                             // Loop through the files, and copy them to the object cache if they don't already exist.

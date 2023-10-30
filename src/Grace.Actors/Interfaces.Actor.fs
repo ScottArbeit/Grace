@@ -33,17 +33,20 @@ module Interfaces =
         | OutOfRange
         | Exception of ExceptionResponse
 
+    [<Interface>]
     type IExportable<'T> =
         //abstract member Export: unit -> Task<Result<IList<RepositoryEvent>, ExportError>>
         //abstract member Import: IList<RepositoryEvent> -> Task<Result<bool, ImportError>>
         abstract member Export: unit -> Task<Result<List<'T>, ExportError>>
         abstract member Import: IList<'T> -> Task<Result<int, ImportError>>
-
+    
+    [<Interface>]
     type IRevertable<'T> =
         abstract member EventCount: unit -> Task<int>
         abstract member RevertToInstant: Instant -> PersistAction -> Task<Result<'T, RevertError>>
         abstract member RevertBack: int -> PersistAction -> Task<Result<'T, RevertError>>
 
+    [<Interface>]
     type IBranchActor =
         inherit IActor
         /// Validates incoming commands and converts them to events that are stored in the database.
@@ -59,6 +62,7 @@ module Interfaces =
         /// Retrieves the parent branch for a given branch.
         abstract member GetParentBranch: unit -> Task<BranchDto>
 
+    [<Interface>]
     type IBranchNameActor =
         inherit IActor
         /// Sets the BranchId that matches the BranchName.
@@ -66,6 +70,7 @@ module Interfaces =
         /// Returns the BranchId for the given BranchName.
         abstract member GetBranchId: unit -> Task<string option>
 
+    [<Interface>]
     type IContainerNameActor =
         inherit IActor
         /// Retrieves the container name for the RepositoryId specified for the actor.
@@ -73,6 +78,7 @@ module Interfaces =
         /// The container name is $"{ownerName}-{organizationName}-{repositoryName}".
         abstract member GetContainerName: unit -> Task<Result<ContainerName, string>>
     
+    [<Interface>]
     type IDiffActor = 
         inherit IActor
         /// Populates the contents of the diff.
@@ -80,6 +86,7 @@ module Interfaces =
         /// Gets the results of the diff.
         abstract member GetDiff: unit -> Task<DiffDto>
 
+    [<Interface>]
     type IDirectoryVersionActor =
         inherit IActor
         /// Returns true if the actor instance already exists.
@@ -105,6 +112,7 @@ module Interfaces =
         /// Delete the DirectoryVersion and all subdirectories and files.
         abstract member Delete: correlationId: string -> Task<GraceResult<string>>
 
+    [<Interface>]
     type IOrganizationActor =
         inherit IActor
         /// Returns true if an organization with this ActorId already exists in the database.
@@ -120,6 +128,7 @@ module Interfaces =
         /// Validates incoming commands and converts them to events that are stored in the database.
         abstract member Handle: command: Organization.OrganizationCommand -> eventMetadata: EventMetadata -> Task<GraceResult<string>>
 
+    [<Interface>]
     type IOrganizationNameActor =
         inherit IActor
         /// Returns true if an organization with this organization name already exists in the database.
@@ -127,6 +136,7 @@ module Interfaces =
         /// Returns the OrganizationId for the given OrganizationName.
         abstract member GetOrganizationId: unit -> Task<string option>
 
+    [<Interface>]
     type IOwnerActor =
         inherit IActor
         /// Returns true if an owner with this ActorId already exists in the database.
@@ -142,6 +152,7 @@ module Interfaces =
         /// Validates incoming commands and converts them to events that are stored in the database.
         abstract member Handle : command: Owner.OwnerCommand -> eventMetadata: EventMetadata -> Task<GraceResult<string>>
 
+    [<Interface>]
     type IOwnerNameActor =
         inherit IActor
         /// Sets the OwnerId for a given OwnerName.
@@ -149,6 +160,7 @@ module Interfaces =
         /// Returns the OwnerId for the given OwnerName.
         abstract member GetOwnerId: unit -> Task<string option>
 
+    [<Interface>]
     type IReferenceActor =
         inherit IActor
         abstract member Exists: unit -> Task<bool>
@@ -163,6 +175,7 @@ module Interfaces =
                                 -> Task<ReferenceDto>
         abstract member Delete: correlationId: string -> Task<GraceResult<string>>
 
+    [<Interface>]
     type IRepositoryActor =
         inherit IActor
         /// Returns true if this actor already exists in the database, otherwise false.
@@ -178,6 +191,7 @@ module Interfaces =
         /// Processes commands by checking that they're valid, and then converting them into events.
         abstract member Handle : command: Repository.RepositoryCommand -> eventMetadata: EventMetadata -> Task<GraceResult<string>>
 
+    [<Interface>]
     type IRepositoryNameActor =
         inherit IActor
         /// Sets the RepositoryId that matches the RepositoryName.

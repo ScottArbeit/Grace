@@ -3,6 +3,7 @@
 	<PropertyGroup>
 		<OutputType>Exe</OutputType>
 		<TargetFramework>net8.0</TargetFramework>
+		<LangVersion>preview</LangVersion>
 		<NoWarn>1057</NoWarn>
 	</PropertyGroup>
 
