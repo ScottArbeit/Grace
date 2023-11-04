@@ -35,8 +35,8 @@ module DirectoryVersion =
 
     let actorProxyFactory = ApplicationContext.ActorProxyFactory()
 
-    let getActorProxy (context: HttpContext) (directoryId: DirectoryId) =
-        let actorId = GetActorId directoryId
+    let getActorProxy (context: HttpContext) (directoryId: string) =
+        let actorId = ActorId(directoryId)
         actorProxyFactory.CreateActorProxy<IDirectoryVersionActor>(actorId, ActorName.DirectoryVersion)
 
     let processCommand<'T when 'T :> DirectoryParameters> (context: HttpContext) (validations: Validations<'T>) (command: 'T -> HttpContext -> Task<GraceResult<string>>) =
@@ -70,7 +70,7 @@ module DirectoryVersion =
                 let validationResults = validations parameters context
                 let! validationsPassed = validationResults |> allPass
                 if validationsPassed then
-                    let actorProxy = getActorProxy context (Guid.Parse(parameters.DirectoryId))
+                    let actorProxy = getActorProxy context parameters.DirectoryId
                     let! queryResult = query context maxCount actorProxy
                     let! returnValue = context |> result200Ok (GraceReturnValue.Create queryResult (getCorrelationId context))
                     return returnValue

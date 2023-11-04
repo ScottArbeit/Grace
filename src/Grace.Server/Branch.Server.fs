@@ -35,7 +35,7 @@ module Branch =
 
     let actorProxyFactory = ApplicationContext.ActorProxyFactory()
 
-    let getActorProxy (context: HttpContext) (branchId: BranchId) =
+    let getActorProxy (context: HttpContext) (branchId: string) =
         let actorId = ActorId($"{branchId}")
         actorProxyFactory.CreateActorProxy<IBranchActor>(actorId, ActorName.Branch)
 
@@ -53,7 +53,7 @@ module Branch =
                         parameters.RepositoryId <- repositoryId
                         match! resolveBranchId repositoryId parameters.BranchId parameters.BranchName with
                         | Some branchId ->
-                            let actorProxy = getActorProxy context (Guid.Parse(branchId))
+                            let actorProxy = getActorProxy context branchId
                             let! cmd = command parameters
                             match! actorProxy.Handle cmd (Services.createMetadata context) with
                                 | Ok graceReturn -> return! context |> result200Ok graceReturn
@@ -83,11 +83,12 @@ module Branch =
                 if validationsPassed then
                     match! resolveBranchId parameters.RepositoryId parameters.BranchId parameters.BranchName with
                     | Some branchId ->
-                        let actorProxy = getActorProxy context (Guid.Parse(branchId))
+                        let actorProxy = getActorProxy context branchId
                         let! queryResult = query context maxCount actorProxy
                         let! returnValue = context |> result200Ok (GraceReturnValue.Create queryResult (getCorrelationId context))
                         return returnValue
-                    | None -> return! context |> result400BadRequest (GraceError.Create (BranchError.getErrorMessage BranchDoesNotExist) (getCorrelationId context))
+                    | None ->
+                        return! context |> result400BadRequest (GraceError.Create (BranchError.getErrorMessage BranchDoesNotExist) (getCorrelationId context))
                 else
                     let! error = validationResults |> getFirstError
                     let graceError = GraceError.Create (BranchError.getErrorMessage error) (getCorrelationId context)

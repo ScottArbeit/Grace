@@ -44,7 +44,7 @@ module Repository =
 
     let actorProxyFactory = ApplicationContext.ActorProxyFactory()
 
-    let getActorProxy (repositoryId: string) (context: HttpContext) =
+    let getActorProxy (context: HttpContext) (repositoryId: string) =
         let actorId = ActorId(repositoryId)
         actorProxyFactory.CreateActorProxy<IRepositoryActor>(actorId, ActorName.Repository)
 
@@ -70,7 +70,7 @@ module Repository =
                     match repositoryId with
                     | Some repositoryId ->
                         if String.IsNullOrEmpty(parameters.RepositoryId) then parameters.RepositoryId <- repositoryId
-                        let actorProxy = getActorProxy repositoryId context
+                        let actorProxy = getActorProxy context repositoryId
                         let! cmd = command parameters
                         let! result = actorProxy.Handle cmd (Services.createMetadata context)
                         match result with
@@ -98,13 +98,13 @@ module Repository =
                 //let validationResults = validations parameters context
                 let! validationsPassed = validationResults |> allPass
                 if validationsPassed then
-                    context.Items.Add(nameof(RepositoryId), RepositoryId parameters.RepositoryId)
-                    let actorProxy = getActorProxy parameters.RepositoryId context
-                    let! exists = actorProxy.Exists()
-                    if exists then
+                    match! resolveRepositoryId parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName with
+                    | Some repositoryId ->
+                        context.Items.Add(nameof(RepositoryId), RepositoryId repositoryId)
+                        let actorProxy = getActorProxy context repositoryId
                         let! queryResult = query context maxCount actorProxy
                         return! context |> result200Ok (GraceReturnValue.Create queryResult (getCorrelationId context))
-                    else
+                    | None ->
                         return! context |> result400BadRequest (GraceError.Create (RepositoryError.getErrorMessage RepositoryIdDoesNotExist) (getCorrelationId context))
                 else
                     let! error = validationResults |> getFirstError

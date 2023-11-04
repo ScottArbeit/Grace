@@ -10,6 +10,7 @@ open Grace.Shared
 open Grace.Shared.Types
 open Grace.Shared.Utilities
 open Microsoft.Azure.Cosmos
+open Microsoft.Extensions.Caching.Memory
 open Microsoft.Extensions.Configuration
 open Microsoft.Extensions.DependencyInjection
 open Microsoft.Extensions.Logging
@@ -31,6 +32,7 @@ module ApplicationContext =
     let mutable private actorProxyFactory: IActorProxyFactory = null
     let mutable private actorStateStorageProvider: ActorStateStorageProvider = ActorStateStorageProvider.Unknown
     let mutable loggerFactory: ILoggerFactory = null
+    let mutable memoryCache: IMemoryCache = null
 
     let ActorProxyFactory() = actorProxyFactory
     let ActorStateStorageProvider() = actorStateStorageProvider
@@ -131,7 +133,11 @@ module ApplicationContext =
             let! containerResponse = database.CreateContainerIfNotExistsAsync(containerProperties)
             let cosmosContainer = containerResponse.Container
 
+            // Create a MemoryCache instance.
+            memoryCache <- new MemoryCache(MemoryCacheOptions(), loggerFactory)
+
             // Inject the CosmosClient and CosmosContainer into Actor Services.
-            Grace.Actors.Services.setCosmosClient (cosmosClient)
-            Grace.Actors.Services.setCosmosContainer (cosmosContainer)
+            Grace.Actors.Services.setCosmosClient cosmosClient
+            Grace.Actors.Services.setCosmosContainer cosmosContainer
+            Grace.Actors.Services.setMemoryCache memoryCache
         } :> Task

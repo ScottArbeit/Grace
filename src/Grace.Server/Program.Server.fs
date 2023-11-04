@@ -15,6 +15,8 @@ open System.Threading.Tasks
 open System.Net
 open Grace.Shared.Utilities
 open Microsoft.Extensions.Logging
+open ApplicationContext
+open Microsoft.Extensions.Caching.Memory
 
 module Program =
     let createHostBuilder (args: string[]) : IHostBuilder =
@@ -50,8 +52,11 @@ module Program =
         files |> Seq.iter (fun file -> logToConsole $"{file.Name}: {file.Length} bytes")
         logToConsole "-----------------------------------------------------------"
         let host = createHostBuilder(args).Build()
+        
+        // Just placing some much-used services into the ApplicationContext where they're easy to find.
         let loggerFactory = host.Services.GetService(typeof<ILoggerFactory>) :?> ILoggerFactory
         ApplicationContext.setLoggerFactory(loggerFactory)
+
         host.Run()
 
         0 // Exit code

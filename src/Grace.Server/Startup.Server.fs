@@ -40,7 +40,6 @@ open System.IO
 open Microsoft.Extensions.Configuration
 open Grace.Shared.Converters
 open Grace.Shared.Types
-open Giraffe.ViewEngine.HtmlElements
 
 module Application =
     type FunctionThat_AddsOrUpdatesFile = DirectoryVersion -> FileVersion -> DirectoryVersion
@@ -249,7 +248,7 @@ module Application =
             let actorProxyOptions = ActorProxyOptions(JsonSerializerOptions = Constants.JsonSerializerOptions)  // DaprApiToken = Environment.GetEnvironmentVariable("DAPR_API_TOKEN")) (when we actually implement auth)
             actorProxyOptions.HttpEndpoint <- $"{Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.DaprServerUri)}:{Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.DaprHttpPort)}"
             logToConsole $"actorProxyOptions.HttpEndpoint: {actorProxyOptions.HttpEndpoint}"
-            let actorProxyFactory = ActorProxyFactory(actorProxyOptions)
+            let actorProxyFactory = new ActorProxyFactory(actorProxyOptions)
             ApplicationContext.setActorProxyFactory actorProxyFactory
             ApplicationContext.setActorStateStorageProvider ActorStateStorageProvider.AzureCosmosDb
 

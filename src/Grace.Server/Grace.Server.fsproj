@@ -21,10 +21,10 @@
 		<PackageProjectUrl>https://github.com/ScottArbeit/Grace</PackageProjectUrl>
 	</PropertyGroup>
 	<ItemGroup>
-		<ContainerPort Include="5000" Type="tcp"/>
-		<ContainerPort Include="5001" Type="tcp"/>
-		<ContainerPort Include="50001" Type="tcp"/>
-		<ContainerPort Include="57256" Type="tcp"/>
+		<ContainerPort Include="5000" Type="tcp" />
+		<ContainerPort Include="5001" Type="tcp" />
+		<ContainerPort Include="50001" Type="tcp" />
+		<ContainerPort Include="57256" Type="tcp" />
 	</ItemGroup>
 	<ItemGroup>
 		<Compile Include="CosmosSystemTextJsonSerializer.Server.fs" />
@@ -63,6 +63,7 @@
 		<PackageReference Include="Dapr.Actors.AspNetCore" Version="1.12.0" />
 		<PackageReference Include="Dapr.Extensions.Configuration" Version="1.12.0" />
 		<PackageReference Include="Microsoft.Azure.Cosmos" Version="3.36.0" />
+		<PackageReference Include="Microsoft.Extensions.Caching.Memory" Version="8.0.0-rc.2.23479.6" />
 		<!--<PackageReference Include="Microsoft.Extensions.ApiDescription.Server" Version="7.0.1">
 		  <PrivateAssets>all</PrivateAssets>
 		  <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>

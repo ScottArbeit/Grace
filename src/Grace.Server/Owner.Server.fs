@@ -74,16 +74,12 @@ module Owner =
                 let validationResults = validations parameters context
                 let! validationsPassed = validationResults |> allPass
                 if validationsPassed then
-                    let! ownerId = resolveOwnerId parameters.OwnerId parameters.OwnerName
-                    match ownerId with
+                    match! resolveOwnerId parameters.OwnerId parameters.OwnerName with
                     | Some ownerId ->
+                        context.Items.Add(nameof(OwnerId), OwnerId ownerId)
                         let actorProxy = getActorProxy context ownerId
-                        let! exists = actorProxy.Exists()
-                        if exists then
-                            let! queryResult = query context maxCount actorProxy
-                            return! context |> result200Ok (GraceReturnValue.Create queryResult (getCorrelationId context))
-                        else
-                            return! context |> result400BadRequest (GraceError.Create (OwnerError.getErrorMessage OwnerIdDoesNotExist) (getCorrelationId context))
+                        let! queryResult = query context maxCount actorProxy
+                        return! context |> result200Ok (GraceReturnValue.Create queryResult (getCorrelationId context))
                     | None -> 
                         return! context |> result400BadRequest (GraceError.Create (OwnerError.getErrorMessage OwnerDoesNotExist) (getCorrelationId context))
                 else

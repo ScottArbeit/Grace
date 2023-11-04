@@ -18,6 +18,7 @@ open Grace.Shared.Types
 open Grace.Shared.Utilities
 open Microsoft.Azure.Cosmos
 open Microsoft.Azure.Cosmos.Linq
+open Microsoft.Extensions.Caching.Memory
 open Microsoft.Extensions.Logging
 open System
 open System.Collections.Concurrent
@@ -71,6 +72,10 @@ module Services =
     let mutable internal loggerFactory: ILoggerFactory = null
     let setLoggerFactory (factory: ILoggerFactory) =
         loggerFactory <- factory
+
+    let mutable internal memoryCache: IMemoryCache = null
+    let setMemoryCache (cache: IMemoryCache) =
+        memoryCache <- cache
 
     let linqSerializerOptions = CosmosLinqSerializerOptions(PropertyNamingPolicy = CosmosPropertyNamingPolicy.CamelCase)
 

@@ -70,13 +70,14 @@ module Organization =
                 let validationResults = validations parameters context
                 let! validationsPassed = validationResults |> allPass
                 if validationsPassed then
-                    let actorProxy = getActorProxy context parameters.OrganizationId
-                    let! exists = actorProxy.Exists()
-                    if exists then
+                    match! resolveOrganizationId parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName with
+                    | Some organizationId ->
+                        context.Items.Add(nameof(OrganizationId), OrganizationId organizationId)
+                        let actorProxy = getActorProxy context organizationId
                         let! queryResult = query context maxCount actorProxy
                         return! context |> result200Ok (GraceReturnValue.Create queryResult (getCorrelationId context))
-                    else
-                        return! context |> result400BadRequest (GraceError.Create (OrganizationError.getErrorMessage OrganizationIdDoesNotExist) (getCorrelationId context))
+                    | None ->
+                        return! context |> result400BadRequest (GraceError.Create (OrganizationError.getErrorMessage OrganizationDoesNotExist) (getCorrelationId context))
                 else
                     let! error = validationResults |> getFirstError
                     let graceError = GraceError.Create (OrganizationError.getErrorMessage error) (getCorrelationId context)
@@ -99,7 +100,7 @@ module Organization =
                       String.isNotEmpty parameters.OrganizationName OrganizationNameIsRequired
                       String.isValidGraceName parameters.OrganizationName InvalidOrganizationName
                       Owner.ownerExists parameters.OwnerId parameters.OwnerName OwnerDoesNotExist
-                      Organization.organizationIdDoesNotExist parameters.OrganizationId OrganizationIdAlreadyExists
+                      Organization.organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName OrganizationDoesNotExist
                       Organization.organizationNameIsUnique parameters.OwnerId parameters.OwnerName parameters.OrganizationName OrganizationNameAlreadyExists ]
 
                 let command (parameters: CreateOrganizationParameters) = 
@@ -123,7 +124,7 @@ module Organization =
                       String.isValidGraceName parameters.OrganizationName InvalidOrganizationName
                       String.isNotEmpty parameters.NewName OrganizationNameIsRequired
                       String.isValidGraceName parameters.NewName InvalidOrganizationName
-                      Organization.organizationIdExists parameters.OrganizationId OrganizationIdDoesNotExist
+                      Organization.organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName OrganizationDoesNotExist
                       Organization.organizationIsNotDeleted parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName OrganizationIsDeleted ]
 
                 let command (parameters: SetOrganizationNameParameters) = 
@@ -142,7 +143,7 @@ module Organization =
                       String.isValidGraceName parameters.OrganizationName InvalidOrganizationName
                       String.isNotEmpty parameters.OrganizationType OrganizationTypeIsRequired
                       DiscriminatedUnion.isMemberOf<OrganizationType, OrganizationError> parameters.OrganizationType InvalidOrganizationType
-                      Organization.organizationIdExists parameters.OrganizationId OrganizationIdDoesNotExist
+                      Organization.organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName OrganizationDoesNotExist
                       Organization.organizationIsNotDeleted parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName OrganizationIsDeleted ]
 
                 let command (parameters: SetOrganizationTypeParameters) = OrganizationCommand.SetType (Utilities.discriminatedUnionFromString<OrganizationType>(parameters.OrganizationType).Value) |> returnTask
@@ -160,7 +161,7 @@ module Organization =
                       String.isValidGraceName parameters.OrganizationName InvalidOrganizationName
                       String.isNotEmpty parameters.SearchVisibility SearchVisibilityIsRequired
                       DiscriminatedUnion.isMemberOf<SearchVisibility, OrganizationError> parameters.SearchVisibility InvalidSearchVisibility
-                      Organization.organizationIdExists parameters.OrganizationId OrganizationIdDoesNotExist
+                      Organization.organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName OrganizationDoesNotExist
                       Organization.organizationIsNotDeleted parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName OrganizationIsDeleted ]
 
                 let command (parameters: SetOrganizationSearchVisibilityParameters) =
@@ -177,7 +178,7 @@ module Organization =
                     [ String.isNotEmpty parameters.OrganizationId OrganizationIdIsRequired
                       Guid.isValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId
                       String.isNotEmpty parameters.Description OrganizationDescriptionIsRequired
-                      Organization.organizationIdExists parameters.OrganizationId OrganizationIdDoesNotExist
+                      Organization.organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName OrganizationDoesNotExist
                       Organization.organizationIsNotDeleted parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName OrganizationIsDeleted ]
 
                 let command (parameters: SetOrganizationDescriptionParameters) = OrganizationCommand.SetDescription(parameters.Description) |> returnTask
@@ -194,7 +195,7 @@ module Organization =
                         [ String.isNotEmpty parameters.OrganizationId OrganizationIdIsRequired
                           Guid.isValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId
                           String.isValidGraceName parameters.OrganizationName InvalidOrganizationName
-                          Organization.organizationIdExists parameters.OrganizationId OrganizationIdDoesNotExist
+                          Organization.organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName OrganizationDoesNotExist
                           Organization.organizationIsNotDeleted parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName OrganizationIsDeleted ]
 
                     let query (context: HttpContext) (maxCount: int) (actorProxy: IOrganizationActor) =
@@ -218,7 +219,7 @@ module Organization =
                       Guid.isValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId
                       String.isValidGraceName parameters.OrganizationName InvalidOrganizationName
                       String.isNotEmpty parameters.DeleteReason DeleteReasonIsRequired
-                      Organization.organizationIdExists parameters.OrganizationId OrganizationIdDoesNotExist
+                      Organization.organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName OrganizationDoesNotExist
                       Organization.organizationIsNotDeleted parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName OrganizationIsDeleted ]
 
                 let command (parameters: DeleteOrganizationParameters) = OrganizationCommand.DeleteLogical (parameters.Force, parameters.DeleteReason) |> returnTask
@@ -235,7 +236,7 @@ module Organization =
                       Guid.isValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId
                       String.isValidGraceName parameters.OrganizationName InvalidOrganizationName
                       Input.eitherIdOrNameMustBeProvided parameters.OrganizationId parameters.OrganizationName EitherOrganizationIdOrOrganizationNameRequired
-                      Organization.organizationIdExists parameters.OrganizationId OrganizationIdDoesNotExist
+                      Organization.organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName OrganizationDoesNotExist
                       Organization.organizationIsDeleted parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName OrganizationIsNotDeleted ]
 
                 let command (parameters: OrganizationParameters) = OrganizationCommand.Undelete |> returnTask
@@ -256,7 +257,7 @@ module Organization =
                           String.isNotEmpty parameters.OrganizationId OrganizationIdIsRequired
                           Guid.isValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId
                           String.isValidGraceName parameters.OrganizationName InvalidOrganizationName
-                          Organization.organizationIdExists parameters.OrganizationId OrganizationIdDoesNotExist
+                          Organization.organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName OrganizationDoesNotExist
                           Organization.organizationIsNotDeleted parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName OrganizationIsDeleted ]
 
                     let query (context: HttpContext) (maxCount: int) (actorProxy: IOrganizationActor) =
