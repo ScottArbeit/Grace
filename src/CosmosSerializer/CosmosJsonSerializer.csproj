@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
 	<PropertyGroup>
 		<TargetFramework>net8.0</TargetFramework>
@@ -9,7 +9,7 @@
 	</PropertyGroup>
 	<ItemGroup>
 		<PackageReference Include="Azure.Core" Version="1.35.0" />
-		<PackageReference Include="Microsoft.Azure.Cosmos" Version="3.35.4" />
+		<PackageReference Include="Microsoft.Azure.Cosmos" Version="3.36.0" />
 	</ItemGroup>
 
 </Project>

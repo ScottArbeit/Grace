@@ -79,7 +79,7 @@ module Utilities =
     /// Gets the current instant in local time as a string in short date/time format, using the CurrentUICulture.
     let getCurrentInstantLocal() = getCurrentInstant() |> instantToLocalTime
 
-    /// Logs the message to the console, with the current instant, thread ID, and message.
+    /// Logs the message to the console, with the current instant and thread ID.
     let logToConsole message = printfn $"{getCurrentInstantExtended()} {Environment.CurrentManagedThreadId:X2} {message}"
 
     /// Gets the first eight characters of a SHA256 hash.

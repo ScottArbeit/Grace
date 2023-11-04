@@ -14,7 +14,8 @@ open Microsoft.AspNetCore.Builder
 open Microsoft.AspNetCore.Hosting
 open Microsoft.AspNetCore.Http
 open Microsoft.AspNetCore.Mvc
-open Microsoft.AspNetCore.Mvc.Versioning
+open Asp.Versioning
+open Asp.Versioning.ApiExplorer
 open Microsoft.Extensions.DependencyInjection
 open Microsoft.Extensions.Hosting
 open Microsoft.Extensions.Hosting.Internal
@@ -39,6 +40,7 @@ open System.IO
 open Microsoft.Extensions.Configuration
 open Grace.Shared.Converters
 open Grace.Shared.Types
+open Giraffe.ViewEngine.HtmlElements
 
 module Application =
     type FunctionThat_AddsOrUpdatesFile = DirectoryVersion -> FileVersion -> DirectoryVersion
@@ -289,20 +291,34 @@ module Application =
                                                   options.LogDirectory <- Path.Combine(Environment.GetEnvironmentVariable("TEMP"), "Grace.Server.Logs"))
                     .AddSingleton<ActorProxyOptions>(actorProxyOptions)
                     .AddSingleton<IActorProxyFactory>(actorProxyFactory)
-                    .AddApiVersioning(fun config ->
-                        config.DefaultApiVersion <- ApiVersion(DateTime(2023, 10, 1))
-                        config.ApiVersionReader <- HeaderApiVersionReader(Constants.ServerApiVersionHeaderKey)
-                        config.AssumeDefaultVersionWhenUnspecified <- true
-                    )
-                    .AddVersionedApiExplorer(fun config -> 
-                        config.DefaultApiVersion <- ApiVersion(DateTime(2023, 10, 1))
-                        config.AssumeDefaultVersionWhenUnspecified <- true
-                        config.ApiVersionParameterSource <- HeaderApiVersionReader(Constants.ServerApiVersionHeaderKey))
                     .AddDaprClient(fun daprClientBuilder ->
                         daprClientBuilder.UseJsonSerializationOptions(Constants.JsonSerializerOptions)
                                          //.UseDaprApiToken(Environment.GetEnvironmentVariable("DAPR_API_TOKEN"))
-                                         .Build() |> ignore
+                                         .Build() // This builds the DaprClient.
+                                         |> ignore
                     )
+
+            let apiVersioningBuilder = services.AddApiVersioning(fun options ->
+                options.ReportApiVersions <- true
+                options.DefaultApiVersion <- new ApiVersion(1, 0)
+                options.AssumeDefaultVersionWhenUnspecified <- true
+                // Use whatever reader you want
+                options.ApiVersionReader <- ApiVersionReader.Combine(new UrlSegmentApiVersionReader(),
+                                                new HeaderApiVersionReader("x-api-version"),
+                                                new MediaTypeApiVersionReader("x-api-version"));
+            )
+            
+            apiVersioningBuilder.AddApiExplorer(fun options ->
+                // add the versioned api explorer, which also adds IApiVersionDescriptionProvider service
+                // note: the specified format code will format the version as "'v'major[.minor][-status]"
+                options.GroupNameFormat <- "'v'VVV"
+                options.DefaultApiVersion <- ApiVersion(DateOnly(2023, 10, 1))
+                options.AssumeDefaultVersionWhenUnspecified <- true
+                options.ApiVersionParameterSource <- HeaderApiVersionReader(Constants.ServerApiVersionHeaderKey)
+            
+                // note: this option is only necessary when versioning by url segment. the SubstitutionFormat
+                // can also be used to control the format of the API version in route templates
+                options.SubstituteApiVersionInUrl <- true) |> ignore
             
             // Configures the Dapr Actor subsystem.            
             services.AddActors(fun options ->

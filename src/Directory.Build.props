@@ -2,7 +2,8 @@
 	<PropertyGroup>
 		<AccelerateBuildsInVisualStudio>true</AccelerateBuildsInVisualStudio>
 		<ProduceReferenceAssembly>true</ProduceReferenceAssembly>
-		<RuntimeIdentifier>linux-x64</RuntimeIdentifier>
+		<!--<RuntimeIdentifier>linux-x64</RuntimeIdentifier>-->
 		<PublishProfile>DefaultContainer</PublishProfile>
+		<OtherFlags>$(OtherFlags) --test:GraphBasedChecking</OtherFlags>
 	</PropertyGroup>
 </Project>
