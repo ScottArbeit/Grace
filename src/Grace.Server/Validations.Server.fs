@@ -16,6 +16,7 @@ open System
 open System.Collections.Concurrent
 open System.Collections.Generic
 open System.Threading.Tasks
+open ApplicationContext
 
 module Validations =
 
@@ -39,7 +40,6 @@ module Validations =
                         let! exists = ownerActorProxy.Exists()
                         if exists then
                             use newCacheEntry = memoryCache.CreateEntry(ownerGuid, Value = null, SlidingExpiration = DefaultSlidingExpiration)
-                            newCacheEntry.Dispose()
                             return Ok ()
                         else
                             return Error error
@@ -80,7 +80,6 @@ module Validations =
                             let! exists = ownerActorProxy.Exists()
                             if exists then
                                 use newCacheEntry = memoryCache.CreateEntry(ownerGuid, Value = null, SlidingExpiration = DefaultSlidingExpiration)
-                                newCacheEntry.Dispose()
                                 return Ok ()
                             else
                                 return Error error
@@ -163,7 +162,6 @@ module Validations =
                         let! exists = organizationActorProxy.Exists()
                         if exists then
                             use newCacheEntry = memoryCache.CreateEntry(organizationGuid, Value = null, SlidingExpiration = DefaultSlidingExpiration)
-                            newCacheEntry.Dispose()
                             return Ok ()
                         else
                             return Error error
@@ -216,7 +214,6 @@ module Validations =
                             let! exists = organizationActorProxy.Exists()
                             if exists then
                                 use newCacheEntry = memoryCache.CreateEntry(organizationGuid, Value = null, SlidingExpiration = DefaultSlidingExpiration)
-                                newCacheEntry.Dispose()
                                 return Ok ()
                             else
                                 return Error error
@@ -282,7 +279,6 @@ module Validations =
                         let! exists = repositoryActorProxy.Exists()
                         if exists then
                             use newCacheEntry = memoryCache.CreateEntry(repositoryGuid, Value = null, SlidingExpiration = DefaultSlidingExpiration)
-                            newCacheEntry.Dispose()
                             return Ok ()
                         else
                             return Error error
@@ -318,7 +314,6 @@ module Validations =
                             let! exists = repositoryActorProxy.Exists()
                             if exists then
                                 use newCacheEntry = memoryCache.CreateEntry(repositoryGuid, Value = null, SlidingExpiration = DefaultSlidingExpiration)
-                                newCacheEntry.Dispose()
                                 return Ok ()
                             else
                                 return Error error
@@ -382,7 +377,6 @@ module Validations =
                         let! exists = branchActorProxy.Exists()
                         if exists then
                             use newCacheEntry = memoryCache.CreateEntry(branchGuid, Value = null, SlidingExpiration = DefaultSlidingExpiration)
-                            newCacheEntry.Dispose()
                             return Ok ()
                         else
                             return Error error
@@ -426,7 +420,6 @@ module Validations =
                                 let! exists = branchActorProxy.Exists()
                                 if exists then
                                     use newCacheEntry = memoryCache.CreateEntry(branchGuid, Value = null, SlidingExpiration = DefaultSlidingExpiration)
-                                    newCacheEntry.Dispose()
                                     return Ok ()
                                 else
                                     return Error error
@@ -502,7 +495,6 @@ module Validations =
                     let! exists = directoryVersionActorProxy.Exists()
                     if exists then
                         use newCacheEntry = memoryCache.CreateEntry(directoryId, Value = null, SlidingExpiration = DefaultSlidingExpiration)
-                        newCacheEntry.Dispose()
                         return Ok ()
                     else
                         return Error error

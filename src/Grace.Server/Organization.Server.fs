@@ -23,7 +23,7 @@ open System.Diagnostics
 
 module Organization =
 
-    type Validations<'T when 'T :> OrganizationParameters> = 'T -> HttpContext -> Task<Result<unit, OrganizationError>> list
+    type Validations<'T when 'T :> OrganizationParameters> = 'T -> HttpContext -> Task<Result<unit, OrganizationError>> array
 
     let activitySource = new ActivitySource("Organization")
 
@@ -92,16 +92,16 @@ module Organization =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let validations (parameters: CreateOrganizationParameters) (context: HttpContext) =
-                    [ Guid.isValidAndNotEmpty parameters.OwnerId InvalidOwnerId
-                      String.isValidGraceName parameters.OwnerName InvalidOwnerName
-                      Input.eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
-                      String.isNotEmpty parameters.OrganizationId OrganizationIdIsRequired
-                      Guid.isValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId
-                      String.isNotEmpty parameters.OrganizationName OrganizationNameIsRequired
-                      String.isValidGraceName parameters.OrganizationName InvalidOrganizationName
-                      Owner.ownerExists parameters.OwnerId parameters.OwnerName OwnerDoesNotExist
-                      Organization.organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName OrganizationDoesNotExist
-                      Organization.organizationNameIsUnique parameters.OwnerId parameters.OwnerName parameters.OrganizationName OrganizationNameAlreadyExists ]
+                    [| Guid.isValidAndNotEmpty parameters.OwnerId InvalidOwnerId
+                       String.isValidGraceName parameters.OwnerName InvalidOwnerName
+                       Input.eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
+                       String.isNotEmpty parameters.OrganizationId OrganizationIdIsRequired
+                       Guid.isValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId
+                       String.isNotEmpty parameters.OrganizationName OrganizationNameIsRequired
+                       String.isValidGraceName parameters.OrganizationName InvalidOrganizationName
+                       Owner.ownerExists parameters.OwnerId parameters.OwnerName OwnerDoesNotExist
+                       Organization.organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName OrganizationDoesNotExist
+                       Organization.organizationNameIsUnique parameters.OwnerId parameters.OwnerName parameters.OrganizationName OrganizationNameAlreadyExists |]
 
                 let command (parameters: CreateOrganizationParameters) = 
                     task {
@@ -119,13 +119,13 @@ module Organization =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let validations (parameters: SetOrganizationNameParameters) (context: HttpContext) =
-                    [ String.isNotEmpty parameters.OrganizationId OrganizationIdIsRequired
-                      Guid.isValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId
-                      String.isValidGraceName parameters.OrganizationName InvalidOrganizationName
-                      String.isNotEmpty parameters.NewName OrganizationNameIsRequired
-                      String.isValidGraceName parameters.NewName InvalidOrganizationName
-                      Organization.organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName OrganizationDoesNotExist
-                      Organization.organizationIsNotDeleted parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName OrganizationIsDeleted ]
+                    [| String.isNotEmpty parameters.OrganizationId OrganizationIdIsRequired
+                       Guid.isValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId
+                       String.isValidGraceName parameters.OrganizationName InvalidOrganizationName
+                       String.isNotEmpty parameters.NewName OrganizationNameIsRequired
+                       String.isValidGraceName parameters.NewName InvalidOrganizationName
+                       Organization.organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName OrganizationDoesNotExist
+                       Organization.organizationIsNotDeleted parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName OrganizationIsDeleted |]
 
                 let command (parameters: SetOrganizationNameParameters) = 
                     OrganizationCommand.SetName (OrganizationName parameters.NewName) |> returnTask
@@ -138,13 +138,13 @@ module Organization =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let validations (parameters: SetOrganizationTypeParameters) (context: HttpContext) =
-                    [ String.isNotEmpty parameters.OrganizationId OrganizationIdIsRequired
-                      Guid.isValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId
-                      String.isValidGraceName parameters.OrganizationName InvalidOrganizationName
-                      String.isNotEmpty parameters.OrganizationType OrganizationTypeIsRequired
-                      DiscriminatedUnion.isMemberOf<OrganizationType, OrganizationError> parameters.OrganizationType InvalidOrganizationType
-                      Organization.organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName OrganizationDoesNotExist
-                      Organization.organizationIsNotDeleted parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName OrganizationIsDeleted ]
+                    [| String.isNotEmpty parameters.OrganizationId OrganizationIdIsRequired
+                       Guid.isValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId
+                       String.isValidGraceName parameters.OrganizationName InvalidOrganizationName
+                       String.isNotEmpty parameters.OrganizationType OrganizationTypeIsRequired
+                       DiscriminatedUnion.isMemberOf<OrganizationType, OrganizationError> parameters.OrganizationType InvalidOrganizationType
+                       Organization.organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName OrganizationDoesNotExist
+                       Organization.organizationIsNotDeleted parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName OrganizationIsDeleted |]
 
                 let command (parameters: SetOrganizationTypeParameters) = OrganizationCommand.SetType (Utilities.discriminatedUnionFromString<OrganizationType>(parameters.OrganizationType).Value) |> returnTask
                 
@@ -156,13 +156,13 @@ module Organization =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let validations (parameters: SetOrganizationSearchVisibilityParameters) (context: HttpContext) =
-                    [ String.isNotEmpty parameters.OrganizationId OrganizationIdIsRequired
-                      Guid.isValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId
-                      String.isValidGraceName parameters.OrganizationName InvalidOrganizationName
-                      String.isNotEmpty parameters.SearchVisibility SearchVisibilityIsRequired
-                      DiscriminatedUnion.isMemberOf<SearchVisibility, OrganizationError> parameters.SearchVisibility InvalidSearchVisibility
-                      Organization.organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName OrganizationDoesNotExist
-                      Organization.organizationIsNotDeleted parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName OrganizationIsDeleted ]
+                    [| String.isNotEmpty parameters.OrganizationId OrganizationIdIsRequired
+                       Guid.isValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId
+                       String.isValidGraceName parameters.OrganizationName InvalidOrganizationName
+                       String.isNotEmpty parameters.SearchVisibility SearchVisibilityIsRequired
+                       DiscriminatedUnion.isMemberOf<SearchVisibility, OrganizationError> parameters.SearchVisibility InvalidSearchVisibility
+                       Organization.organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName OrganizationDoesNotExist
+                       Organization.organizationIsNotDeleted parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName OrganizationIsDeleted |]
 
                 let command (parameters: SetOrganizationSearchVisibilityParameters) =
                     OrganizationCommand.SetSearchVisibility (Utilities.discriminatedUnionFromString<SearchVisibility>(parameters.SearchVisibility).Value) |> returnTask
@@ -175,11 +175,11 @@ module Organization =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let validations (parameters: SetOrganizationDescriptionParameters) (context: HttpContext) =
-                    [ String.isNotEmpty parameters.OrganizationId OrganizationIdIsRequired
-                      Guid.isValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId
-                      String.isNotEmpty parameters.Description OrganizationDescriptionIsRequired
-                      Organization.organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName OrganizationDoesNotExist
-                      Organization.organizationIsNotDeleted parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName OrganizationIsDeleted ]
+                    [| String.isNotEmpty parameters.OrganizationId OrganizationIdIsRequired
+                       Guid.isValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId
+                       String.isNotEmpty parameters.Description OrganizationDescriptionIsRequired
+                       Organization.organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName OrganizationDoesNotExist
+                       Organization.organizationIsNotDeleted parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName OrganizationIsDeleted |]
 
                 let command (parameters: SetOrganizationDescriptionParameters) = OrganizationCommand.SetDescription(parameters.Description) |> returnTask
 
@@ -192,11 +192,11 @@ module Organization =
             task {
                 try
                     let validations (parameters: ListRepositoriesParameters) (context: HttpContext) =
-                        [ String.isNotEmpty parameters.OrganizationId OrganizationIdIsRequired
-                          Guid.isValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId
-                          String.isValidGraceName parameters.OrganizationName InvalidOrganizationName
-                          Organization.organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName OrganizationDoesNotExist
-                          Organization.organizationIsNotDeleted parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName OrganizationIsDeleted ]
+                        [| String.isNotEmpty parameters.OrganizationId OrganizationIdIsRequired
+                           Guid.isValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId
+                           String.isValidGraceName parameters.OrganizationName InvalidOrganizationName
+                           Organization.organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName OrganizationDoesNotExist
+                           Organization.organizationIsNotDeleted parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName OrganizationIsDeleted |]
 
                     let query (context: HttpContext) (maxCount: int) (actorProxy: IOrganizationActor) =
                         task {
@@ -215,12 +215,12 @@ module Organization =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let validations (parameters: DeleteOrganizationParameters) (context: HttpContext) =
-                    [ String.isNotEmpty parameters.OrganizationId OrganizationIdIsRequired
-                      Guid.isValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId
-                      String.isValidGraceName parameters.OrganizationName InvalidOrganizationName
-                      String.isNotEmpty parameters.DeleteReason DeleteReasonIsRequired
-                      Organization.organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName OrganizationDoesNotExist
-                      Organization.organizationIsNotDeleted parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName OrganizationIsDeleted ]
+                    [| String.isNotEmpty parameters.OrganizationId OrganizationIdIsRequired
+                       Guid.isValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId
+                       String.isValidGraceName parameters.OrganizationName InvalidOrganizationName
+                       String.isNotEmpty parameters.DeleteReason DeleteReasonIsRequired
+                       Organization.organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName OrganizationDoesNotExist
+                       Organization.organizationIsNotDeleted parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName OrganizationIsDeleted |]
 
                 let command (parameters: DeleteOrganizationParameters) = OrganizationCommand.DeleteLogical (parameters.Force, parameters.DeleteReason) |> returnTask
 
@@ -232,12 +232,12 @@ module Organization =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let validations (parameters: OrganizationParameters) (context: HttpContext) =
-                    [ String.isNotEmpty parameters.OrganizationId OrganizationIdIsRequired
-                      Guid.isValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId
-                      String.isValidGraceName parameters.OrganizationName InvalidOrganizationName
-                      Input.eitherIdOrNameMustBeProvided parameters.OrganizationId parameters.OrganizationName EitherOrganizationIdOrOrganizationNameRequired
-                      Organization.organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName OrganizationDoesNotExist
-                      Organization.organizationIsDeleted parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName OrganizationIsNotDeleted ]
+                    [| String.isNotEmpty parameters.OrganizationId OrganizationIdIsRequired
+                       Guid.isValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId
+                       String.isValidGraceName parameters.OrganizationName InvalidOrganizationName
+                       Input.eitherIdOrNameMustBeProvided parameters.OrganizationId parameters.OrganizationName EitherOrganizationIdOrOrganizationNameRequired
+                       Organization.organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName OrganizationDoesNotExist
+                       Organization.organizationIsDeleted parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName OrganizationIsNotDeleted |]
 
                 let command (parameters: OrganizationParameters) = OrganizationCommand.Undelete |> returnTask
 
@@ -250,15 +250,15 @@ module Organization =
             task {
                 try
                     let validations (parameters: GetOrganizationParameters) (context: HttpContext) =
-                        [ Guid.isValidAndNotEmpty parameters.OwnerId InvalidOwnerId
-                          String.isValidGraceName parameters.OwnerName InvalidOwnerName
-                          Input.eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
-                          Owner.ownerExists parameters.OwnerId parameters.OwnerName OwnerDoesNotExist
-                          String.isNotEmpty parameters.OrganizationId OrganizationIdIsRequired
-                          Guid.isValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId
-                          String.isValidGraceName parameters.OrganizationName InvalidOrganizationName
-                          Organization.organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName OrganizationDoesNotExist
-                          Organization.organizationIsNotDeleted parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName OrganizationIsDeleted ]
+                        [| Guid.isValidAndNotEmpty parameters.OwnerId InvalidOwnerId
+                           String.isValidGraceName parameters.OwnerName InvalidOwnerName
+                           Input.eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
+                           Owner.ownerExists parameters.OwnerId parameters.OwnerName OwnerDoesNotExist
+                           String.isNotEmpty parameters.OrganizationId OrganizationIdIsRequired
+                           Guid.isValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId
+                           String.isValidGraceName parameters.OrganizationName InvalidOrganizationName
+                           Organization.organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName OrganizationDoesNotExist
+                           Organization.organizationIsNotDeleted parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName OrganizationIsDeleted |]
 
                     let query (context: HttpContext) (maxCount: int) (actorProxy: IOrganizationActor) =
                         task {

@@ -9,10 +9,10 @@ module Utilities =
     /// Retrieves the first error from a list of validations.
     /// </summary>
     /// <param name="validations">A list of Result values.</param>
-    let getFirstError (validations: Task<Result<'T, 'TError>> list) =
+    let getFirstError (validations: Task<Result<'T, 'TError>> array) =
         task {
             let! firstError = validations
-                              |> TaskSeq.ofTaskList
+                              |> TaskSeq.ofTaskArray
                               |> TaskSeq.tryFind(fun validation -> Result.isError validation)
             return match firstError with
                    | Some result -> match result with | Ok _ -> None | Error error -> Some error   // This line can't return None, because we'll always have an error if we get here.
@@ -26,7 +26,7 @@ module Utilities =
     let anyFail validations =
         task {
             return! validations
-                    |> TaskSeq.ofTaskList
+                    |> TaskSeq.ofTaskArray
                     |> TaskSeq.exists(fun validation -> Result.isError validation)
         }
 
