@@ -39,7 +39,7 @@ module Branch =
         let actorId = ActorId($"{branchId}")
         actorProxyFactory.CreateActorProxy<IBranchActor>(actorId, ActorName.Branch)
 
-    let commonValidations (parameters: BranchParameters) =
+    let commonValidations<'T when 'T :> BranchParameters> (parameters: 'T) (context: HttpContext) =
         [| Guid.isValidAndNotEmpty parameters.OwnerId InvalidOwnerId
            String.isValidGraceName parameters.OwnerName InvalidOwnerName
            Input.eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
@@ -58,7 +58,7 @@ module Branch =
             try
                 use activity = activitySource.StartActivity("processCommand", ActivityKind.Server)
                 let! parameters = context |> parse<'T>
-                let validationResults = validations parameters context
+                let validationResults = Array.append (commonValidations parameters context) (validations parameters context)
                 let! validationsPassed = validationResults |> allPass
                 if validationsPassed then
                     let! repositoryId = resolveRepositoryId parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName
@@ -91,8 +91,7 @@ module Branch =
         task {
             use activity = activitySource.StartActivity("processQuery", ActivityKind.Server)
             try
-                //let! parameters = context |> parse<'T>
-                let validationResults = validations parameters context
+                let validationResults = Array.append (commonValidations parameters context) (validations parameters context)
                 let! validationsPassed = validationResults |> allPass
                 if validationsPassed then
                     match! resolveBranchId parameters.RepositoryId parameters.BranchId parameters.BranchName with
@@ -117,16 +116,7 @@ module Branch =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let validations (parameters: CreateBranchParameters) (context: HttpContext) =
-                    [| Guid.isValidAndNotEmpty parameters.OwnerId InvalidOwnerId
-                       String.isValidGraceName parameters.OwnerName InvalidOwnerName
-                       Input.eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
-                       Guid.isValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId
-                       String.isValidGraceName parameters.OrganizationName InvalidOrganizationName
-                       Input.eitherIdOrNameMustBeProvided parameters.OrganizationId parameters.OrganizationName EitherOrganizationIdOrOrganizationNameRequired
-                       Guid.isValidAndNotEmpty parameters.RepositoryId InvalidRepositoryId
-                       String.isValidGraceName parameters.RepositoryName InvalidRepositoryName
-                       Input.eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherBranchIdOrBranchNameRequired
-                       String.isNotEmpty parameters.BranchId BranchIdIsRequired
+                    [| String.isNotEmpty parameters.BranchId BranchIdIsRequired
                        Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
                        String.isNotEmpty parameters.BranchName BranchNameIsRequired
                        String.isValidGraceName parameters.BranchName InvalidBranchName
@@ -170,16 +160,7 @@ module Branch =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let validations (parameters: RebaseParameters) (context: HttpContext) =
-                    [| Guid.isValidAndNotEmpty parameters.OwnerId InvalidOwnerId
-                       String.isValidGraceName parameters.OwnerName InvalidOwnerName
-                       Input.eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
-                       Guid.isValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId
-                       String.isValidGraceName parameters.OrganizationName InvalidOrganizationName
-                       Input.eitherIdOrNameMustBeProvided parameters.OrganizationId parameters.OrganizationName EitherOrganizationIdOrOrganizationNameRequired
-                       Guid.isValidAndNotEmpty parameters.RepositoryId InvalidRepositoryId
-                       String.isValidGraceName parameters.RepositoryName InvalidRepositoryName
-                       Input.eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherBranchIdOrBranchNameRequired
-                       Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
+                    [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
                        String.isValidGraceName parameters.BranchName InvalidBranchName
                        Branch.referenceIdExists parameters.BasedOn ReferenceIdDoesNotExist
                        Owner.ownerExists parameters.OwnerId parameters.OwnerName OwnerDoesNotExist
@@ -198,16 +179,7 @@ module Branch =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let validations (parameters: CreateReferenceParameters) (context: HttpContext) =
-                    [| Guid.isValidAndNotEmpty parameters.OwnerId InvalidOwnerId
-                       String.isValidGraceName parameters.OwnerName InvalidOwnerName
-                       Input.eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
-                       Guid.isValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId
-                       String.isValidGraceName parameters.OrganizationName InvalidOrganizationName
-                       Input.eitherIdOrNameMustBeProvided parameters.OrganizationId parameters.OrganizationName EitherOrganizationIdOrOrganizationNameRequired
-                       Guid.isValidAndNotEmpty parameters.RepositoryId InvalidRepositoryId
-                       String.isValidGraceName parameters.RepositoryName InvalidRepositoryName
-                       Input.eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherBranchIdOrBranchNameRequired
-                       Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
+                    [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
                        String.isValidGraceName parameters.BranchName InvalidBranchName
                        String.isNotEmpty parameters.Message MessageIsRequired
                        String.maxLength parameters.Message 2048 StringIsTooLong
@@ -227,16 +199,7 @@ module Branch =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let validations (parameters: CreateReferenceParameters) (context: HttpContext) =
-                    [| Guid.isValidAndNotEmpty parameters.OwnerId InvalidOwnerId
-                       String.isValidGraceName parameters.OwnerName InvalidOwnerName
-                       Input.eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
-                       Guid.isValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId
-                       String.isValidGraceName parameters.OrganizationName InvalidOrganizationName
-                       Input.eitherIdOrNameMustBeProvided parameters.OrganizationId parameters.OrganizationName EitherOrganizationIdOrOrganizationNameRequired
-                       Guid.isValidAndNotEmpty parameters.RepositoryId InvalidRepositoryId
-                       String.isValidGraceName parameters.RepositoryName InvalidRepositoryName
-                       Input.eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherBranchIdOrBranchNameRequired
-                       Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
+                    [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
                        String.isValidGraceName parameters.BranchName InvalidBranchName
                        String.isNotEmpty parameters.Message MessageIsRequired
                        String.maxLength parameters.Message 2048 StringIsTooLong
@@ -256,16 +219,7 @@ module Branch =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let validations (parameters: CreateReferenceParameters) (context: HttpContext) =
-                    [| Guid.isValidAndNotEmpty parameters.OwnerId InvalidOwnerId
-                       String.isValidGraceName parameters.OwnerName InvalidOwnerName
-                       Input.eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
-                       Guid.isValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId
-                       String.isValidGraceName parameters.OrganizationName InvalidOrganizationName
-                       Input.eitherIdOrNameMustBeProvided parameters.OrganizationId parameters.OrganizationName EitherOrganizationIdOrOrganizationNameRequired
-                       Guid.isValidAndNotEmpty parameters.RepositoryId InvalidRepositoryId
-                       String.isValidGraceName parameters.RepositoryName InvalidRepositoryName
-                       Input.eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherRepositoryIdOrRepositoryNameIsRequired
-                       Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
+                    [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
                        String.isValidGraceName parameters.BranchName InvalidBranchName
                        Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
                        String.maxLength parameters.Message 2048 StringIsTooLong
@@ -285,16 +239,7 @@ module Branch =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let validations (parameters: CreateReferenceParameters) (context: HttpContext) =
-                    [| Guid.isValidAndNotEmpty parameters.OwnerId InvalidOwnerId
-                       String.isValidGraceName parameters.OwnerName InvalidOwnerName
-                       Input.eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
-                       Guid.isValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId
-                       String.isValidGraceName parameters.OrganizationName InvalidOrganizationName
-                       Input.eitherIdOrNameMustBeProvided parameters.OrganizationId parameters.OrganizationName EitherOrganizationIdOrOrganizationNameRequired
-                       Guid.isValidAndNotEmpty parameters.RepositoryId InvalidRepositoryId
-                       String.isValidGraceName parameters.RepositoryName InvalidRepositoryName
-                       Input.eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherRepositoryIdOrRepositoryNameIsRequired
-                       Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
+                    [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
                        String.isValidGraceName parameters.BranchName InvalidBranchName
                        Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
                        String.maxLength parameters.Message 4096 StringIsTooLong
@@ -314,16 +259,7 @@ module Branch =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let validations (parameters: CreateReferenceParameters) (context: HttpContext) =
-                    [| Guid.isValidAndNotEmpty parameters.OwnerId InvalidOwnerId
-                       String.isValidGraceName parameters.OwnerName InvalidOwnerName
-                       Input.eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
-                       Guid.isValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId
-                       String.isValidGraceName parameters.OrganizationName InvalidOrganizationName
-                       Input.eitherIdOrNameMustBeProvided parameters.OrganizationId parameters.OrganizationName EitherOrganizationIdOrOrganizationNameRequired
-                       Guid.isValidAndNotEmpty parameters.RepositoryId InvalidRepositoryId
-                       String.isValidGraceName parameters.RepositoryName InvalidRepositoryName
-                       Input.eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherRepositoryIdOrRepositoryNameIsRequired
-                       Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
+                    [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
                        String.isValidGraceName parameters.BranchName InvalidBranchName
                        Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
                        String.maxLength parameters.Message 2048 StringIsTooLong
@@ -343,16 +279,7 @@ module Branch =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let validations (parameters: EnableFeatureParameters) (context: HttpContext) =
-                    [| Guid.isValidAndNotEmpty parameters.OwnerId InvalidOwnerId
-                       String.isValidGraceName parameters.OwnerName InvalidOwnerName
-                       Input.eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
-                       Guid.isValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId
-                       String.isValidGraceName parameters.OrganizationName InvalidOrganizationName
-                       Input.eitherIdOrNameMustBeProvided parameters.OrganizationId parameters.OrganizationName EitherOrganizationIdOrOrganizationNameRequired
-                       Guid.isValidAndNotEmpty parameters.RepositoryId InvalidRepositoryId
-                       String.isValidGraceName parameters.RepositoryName InvalidRepositoryName
-                       Input.eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherRepositoryIdOrRepositoryNameIsRequired
-                       Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
+                    [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
                        String.isValidGraceName parameters.BranchName InvalidBranchName
                        Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
                        Owner.ownerExists parameters.OwnerId parameters.OwnerName OwnerDoesNotExist
@@ -370,16 +297,7 @@ module Branch =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let validations (parameters: EnableFeatureParameters) (context: HttpContext) =
-                    [| Guid.isValidAndNotEmpty parameters.OwnerId InvalidOwnerId
-                       String.isValidGraceName parameters.OwnerName InvalidOwnerName
-                       Input.eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
-                       Guid.isValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId
-                       String.isValidGraceName parameters.OrganizationName InvalidOrganizationName
-                       Input.eitherIdOrNameMustBeProvided parameters.OrganizationId parameters.OrganizationName EitherOrganizationIdOrOrganizationNameRequired
-                       Guid.isValidAndNotEmpty parameters.RepositoryId InvalidRepositoryId
-                       String.isValidGraceName parameters.RepositoryName InvalidRepositoryName
-                       Input.eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherRepositoryIdOrRepositoryNameIsRequired
-                       Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
+                    [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
                        String.isValidGraceName parameters.BranchName InvalidBranchName
                        Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
                        Owner.ownerExists parameters.OwnerId parameters.OwnerName OwnerDoesNotExist
@@ -397,16 +315,7 @@ module Branch =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let validations (parameters: EnableFeatureParameters) (context: HttpContext) =
-                    [| Guid.isValidAndNotEmpty parameters.OwnerId InvalidOwnerId
-                       String.isValidGraceName parameters.OwnerName InvalidOwnerName
-                       Input.eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
-                       Guid.isValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId
-                       String.isValidGraceName parameters.OrganizationName InvalidOrganizationName
-                       Input.eitherIdOrNameMustBeProvided parameters.OrganizationId parameters.OrganizationName EitherOrganizationIdOrOrganizationNameRequired
-                       Guid.isValidAndNotEmpty parameters.RepositoryId InvalidRepositoryId
-                       String.isValidGraceName parameters.RepositoryName InvalidRepositoryName
-                       Input.eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherRepositoryIdOrRepositoryNameIsRequired
-                       Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
+                    [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
                        String.isValidGraceName parameters.BranchName InvalidBranchName
                        Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
                        Owner.ownerExists parameters.OwnerId parameters.OwnerName OwnerDoesNotExist
@@ -424,16 +333,7 @@ module Branch =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let validations (parameters: EnableFeatureParameters) (context: HttpContext) =
-                    [| Guid.isValidAndNotEmpty parameters.OwnerId InvalidOwnerId
-                       String.isValidGraceName parameters.OwnerName InvalidOwnerName
-                       Input.eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
-                       Guid.isValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId
-                       String.isValidGraceName parameters.OrganizationName InvalidOrganizationName
-                       Input.eitherIdOrNameMustBeProvided parameters.OrganizationId parameters.OrganizationName EitherOrganizationIdOrOrganizationNameRequired
-                       Guid.isValidAndNotEmpty parameters.RepositoryId InvalidRepositoryId
-                       String.isValidGraceName parameters.RepositoryName InvalidRepositoryName
-                       Input.eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherRepositoryIdOrRepositoryNameIsRequired
-                       Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
+                    [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
                        String.isValidGraceName parameters.BranchName InvalidBranchName
                        Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
                        Owner.ownerExists parameters.OwnerId parameters.OwnerName OwnerDoesNotExist
@@ -451,16 +351,7 @@ module Branch =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let validations (parameters: EnableFeatureParameters) (context: HttpContext) =
-                    [| Guid.isValidAndNotEmpty parameters.OwnerId InvalidOwnerId
-                       String.isValidGraceName parameters.OwnerName InvalidOwnerName
-                       Input.eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
-                       Guid.isValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId
-                       String.isValidGraceName parameters.OrganizationName InvalidOrganizationName
-                       Input.eitherIdOrNameMustBeProvided parameters.OrganizationId parameters.OrganizationName EitherOrganizationIdOrOrganizationNameRequired
-                       Guid.isValidAndNotEmpty parameters.RepositoryId InvalidRepositoryId
-                       String.isValidGraceName parameters.RepositoryName InvalidRepositoryName
-                       Input.eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherRepositoryIdOrRepositoryNameIsRequired
-                       Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
+                    [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
                        String.isValidGraceName parameters.BranchName InvalidBranchName
                        Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
                        Owner.ownerExists parameters.OwnerId parameters.OwnerName OwnerDoesNotExist
@@ -478,16 +369,7 @@ module Branch =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let validations (parameters: DeleteBranchParameters) (context: HttpContext) =
-                    [| Guid.isValidAndNotEmpty parameters.OwnerId InvalidOwnerId
-                       String.isValidGraceName parameters.OwnerName InvalidOwnerName
-                       Input.eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
-                       Guid.isValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId
-                       String.isValidGraceName parameters.OrganizationName InvalidOrganizationName
-                       Input.eitherIdOrNameMustBeProvided parameters.OrganizationId parameters.OrganizationName EitherOrganizationIdOrOrganizationNameRequired
-                       Guid.isValidAndNotEmpty parameters.RepositoryId InvalidRepositoryId
-                       String.isValidGraceName parameters.RepositoryName InvalidRepositoryName
-                       Input.eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherRepositoryIdOrRepositoryNameIsRequired
-                       Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
+                    [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
                        String.isValidGraceName parameters.BranchName InvalidBranchName
                        Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
                        Owner.ownerExists parameters.OwnerId parameters.OwnerName OwnerDoesNotExist
@@ -506,16 +388,7 @@ module Branch =
             task {
                 try
                     let validations (parameters: GetBranchParameters) (context: HttpContext) =
-                        [| Guid.isValidAndNotEmpty parameters.OwnerId InvalidOwnerId
-                           String.isValidGraceName parameters.OwnerName InvalidOwnerName
-                           Input.eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
-                           Guid.isValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId
-                           String.isValidGraceName parameters.OrganizationName InvalidOrganizationName
-                           Input.eitherIdOrNameMustBeProvided parameters.OrganizationId parameters.OrganizationName EitherOrganizationIdOrOrganizationNameRequired
-                           Guid.isValidAndNotEmpty parameters.RepositoryId InvalidRepositoryId
-                           String.isValidGraceName parameters.RepositoryName InvalidRepositoryName
-                           Input.eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherRepositoryIdOrRepositoryNameIsRequired
-                           Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
+                        [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
                            String.isValidGraceName parameters.BranchName InvalidBranchName
                            Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
                            Owner.ownerExists parameters.OwnerId parameters.OwnerName OwnerDoesNotExist
@@ -541,16 +414,7 @@ module Branch =
             task {
                 try
                     let validations (parameters: BranchParameters) (context: HttpContext) =
-                        [| Guid.isValidAndNotEmpty parameters.OwnerId InvalidOwnerId
-                           String.isValidGraceName parameters.OwnerName InvalidOwnerName
-                           Input.eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
-                           Guid.isValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId
-                           String.isValidGraceName parameters.OrganizationName InvalidOrganizationName
-                           Input.eitherIdOrNameMustBeProvided parameters.OrganizationId parameters.OrganizationName EitherOrganizationIdOrOrganizationNameRequired
-                           Guid.isValidAndNotEmpty parameters.RepositoryId InvalidRepositoryId
-                           String.isValidGraceName parameters.RepositoryName InvalidRepositoryName
-                           Input.eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherRepositoryIdOrRepositoryNameIsRequired
-                           Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
+                        [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
                            String.isValidGraceName parameters.BranchName InvalidBranchName
                            Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
                            Owner.ownerExists parameters.OwnerId parameters.OwnerName OwnerDoesNotExist
@@ -576,16 +440,7 @@ module Branch =
             task {
                 try
                     let validations (parameters: GetReferenceParameters) (context: HttpContext) =
-                        [| Guid.isValidAndNotEmpty parameters.OwnerId InvalidOwnerId
-                           String.isValidGraceName parameters.OwnerName InvalidOwnerName
-                           Input.eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
-                           Guid.isValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId
-                           String.isValidGraceName parameters.OrganizationName InvalidOrganizationName
-                           Input.eitherIdOrNameMustBeProvided parameters.OrganizationId parameters.OrganizationName EitherOrganizationIdOrOrganizationNameRequired
-                           Guid.isValidAndNotEmpty parameters.RepositoryId InvalidRepositoryId
-                           String.isValidGraceName parameters.RepositoryName InvalidRepositoryName
-                           Input.eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherRepositoryIdOrRepositoryNameIsRequired
-                           Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
+                        [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
                            String.isValidGraceName parameters.BranchName InvalidBranchName
                            Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
                            Owner.ownerExists parameters.OwnerId parameters.OwnerName OwnerDoesNotExist
@@ -614,16 +469,7 @@ module Branch =
             task {
                 try
                     let validations (parameters: GetReferencesParameters) (context: HttpContext) =
-                        [| Guid.isValidAndNotEmpty parameters.OwnerId InvalidOwnerId
-                           String.isValidGraceName parameters.OwnerName InvalidOwnerName
-                           Input.eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
-                           Guid.isValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId
-                           String.isValidGraceName parameters.OrganizationName InvalidOrganizationName
-                           Input.eitherIdOrNameMustBeProvided parameters.OrganizationId parameters.OrganizationName EitherOrganizationIdOrOrganizationNameRequired
-                           Guid.isValidAndNotEmpty parameters.RepositoryId InvalidRepositoryId
-                           String.isValidGraceName parameters.RepositoryName InvalidRepositoryName
-                           Input.eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherRepositoryIdOrRepositoryNameIsRequired
-                           Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
+                        [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
                            String.isValidGraceName parameters.BranchName InvalidBranchName
                            Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
                            Number.isPositiveOrZero parameters.MaxCount ValueMustBePositive
@@ -651,16 +497,7 @@ module Branch =
             task {
                 try
                     let validations (parameters: GetDiffsForReferenceTypeParameters) (context: HttpContext) =
-                        [| Guid.isValidAndNotEmpty parameters.OwnerId InvalidOwnerId
-                           String.isValidGraceName parameters.OwnerName InvalidOwnerName
-                           Input.eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
-                           Guid.isValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId
-                           String.isValidGraceName parameters.OrganizationName InvalidOrganizationName
-                           Input.eitherIdOrNameMustBeProvided parameters.OrganizationId parameters.OrganizationName EitherOrganizationIdOrOrganizationNameRequired
-                           Guid.isValidAndNotEmpty parameters.RepositoryId InvalidRepositoryId
-                           String.isValidGraceName parameters.RepositoryName InvalidRepositoryName
-                           Input.eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherRepositoryIdOrRepositoryNameIsRequired
-                           Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
+                        [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
                            String.isValidGraceName parameters.BranchName InvalidBranchName
                            Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
                            Number.isPositiveOrZero parameters.MaxCount ValueMustBePositive
@@ -706,16 +543,7 @@ module Branch =
             task {
                 try
                     let validations (parameters: GetReferencesParameters) (context: HttpContext) =
-                        [| Guid.isValidAndNotEmpty parameters.OwnerId InvalidOwnerId
-                           String.isValidGraceName parameters.OwnerName InvalidOwnerName
-                           Input.eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
-                           Guid.isValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId
-                           String.isValidGraceName parameters.OrganizationName InvalidOrganizationName
-                           Input.eitherIdOrNameMustBeProvided parameters.OrganizationId parameters.OrganizationName EitherOrganizationIdOrOrganizationNameRequired
-                           Guid.isValidAndNotEmpty parameters.RepositoryId InvalidRepositoryId
-                           String.isValidGraceName parameters.RepositoryName InvalidRepositoryName
-                           Input.eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherRepositoryIdOrRepositoryNameIsRequired
-                           Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
+                        [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
                            String.isValidGraceName parameters.BranchName InvalidBranchName
                            Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
                            Number.isPositiveOrZero parameters.MaxCount ValueMustBePositive
@@ -743,16 +571,7 @@ module Branch =
             task {
                 try
                     let validations (parameters: GetReferencesParameters) (context: HttpContext) =
-                        [| Guid.isValidAndNotEmpty parameters.OwnerId InvalidOwnerId
-                           String.isValidGraceName parameters.OwnerName InvalidOwnerName
-                           Input.eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
-                           Guid.isValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId
-                           String.isValidGraceName parameters.OrganizationName InvalidOrganizationName
-                           Input.eitherIdOrNameMustBeProvided parameters.OrganizationId parameters.OrganizationName EitherOrganizationIdOrOrganizationNameRequired
-                           Guid.isValidAndNotEmpty parameters.RepositoryId InvalidRepositoryId
-                           String.isValidGraceName parameters.RepositoryName InvalidRepositoryName
-                           Input.eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherRepositoryIdOrRepositoryNameIsRequired
-                           Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
+                        [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
                            String.isValidGraceName parameters.BranchName InvalidBranchName
                            Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
                            Number.isPositiveOrZero parameters.MaxCount ValueMustBePositive
@@ -780,16 +599,7 @@ module Branch =
             task {
                 try
                     let validations (parameters: GetReferencesParameters) (context: HttpContext) =
-                        [| Guid.isValidAndNotEmpty parameters.OwnerId InvalidOwnerId
-                           String.isValidGraceName parameters.OwnerName InvalidOwnerName
-                           Input.eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
-                           Guid.isValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId
-                           String.isValidGraceName parameters.OrganizationName InvalidOrganizationName
-                           Input.eitherIdOrNameMustBeProvided parameters.OrganizationId parameters.OrganizationName EitherOrganizationIdOrOrganizationNameRequired
-                           Guid.isValidAndNotEmpty parameters.RepositoryId InvalidRepositoryId
-                           String.isValidGraceName parameters.RepositoryName InvalidRepositoryName
-                           Input.eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherRepositoryIdOrRepositoryNameIsRequired
-                           Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
+                        [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
                            String.isValidGraceName parameters.BranchName InvalidBranchName
                            Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
                            Number.isPositiveOrZero parameters.MaxCount ValueMustBePositive
@@ -817,16 +627,7 @@ module Branch =
             task {
                 try
                     let validations (parameters: GetReferencesParameters) (context: HttpContext) =
-                        [| Guid.isValidAndNotEmpty parameters.OwnerId InvalidOwnerId
-                           String.isValidGraceName parameters.OwnerName InvalidOwnerName
-                           Input.eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
-                           Guid.isValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId
-                           String.isValidGraceName parameters.OrganizationName InvalidOrganizationName
-                           Input.eitherIdOrNameMustBeProvided parameters.OrganizationId parameters.OrganizationName EitherOrganizationIdOrOrganizationNameRequired
-                           Guid.isValidAndNotEmpty parameters.RepositoryId InvalidRepositoryId
-                           String.isValidGraceName parameters.RepositoryName InvalidRepositoryName
-                           Input.eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherRepositoryIdOrRepositoryNameIsRequired
-                           Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
+                        [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
                            String.isValidGraceName parameters.BranchName InvalidBranchName
                            Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
                            Number.isPositiveOrZero parameters.MaxCount ValueMustBePositive
@@ -855,16 +656,7 @@ module Branch =
             task {
                 try
                     let validations (parameters: GetReferencesParameters) (context: HttpContext) =
-                        [| Guid.isValidAndNotEmpty parameters.OwnerId InvalidOwnerId
-                           String.isValidGraceName parameters.OwnerName InvalidOwnerName
-                           Input.eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
-                           Guid.isValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId
-                           String.isValidGraceName parameters.OrganizationName InvalidOrganizationName
-                           Input.eitherIdOrNameMustBeProvided parameters.OrganizationId parameters.OrganizationName EitherOrganizationIdOrOrganizationNameRequired
-                           Guid.isValidAndNotEmpty parameters.RepositoryId InvalidRepositoryId
-                           String.isValidGraceName parameters.RepositoryName InvalidRepositoryName
-                           Input.eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherRepositoryIdOrRepositoryNameIsRequired
-                           Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
+                        [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
                            String.isValidGraceName parameters.BranchName InvalidBranchName
                            Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
                            Number.isPositiveOrZero parameters.MaxCount ValueMustBePositive
@@ -891,16 +683,7 @@ module Branch =
             task {
                 try
                     let validations (parameters: GetBranchVersionParameters) (context: HttpContext) =
-                        [| Guid.isValidAndNotEmpty parameters.OwnerId InvalidOwnerId
-                           String.isValidGraceName parameters.OwnerName InvalidOwnerName
-                           Input.eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
-                           Guid.isValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId
-                           String.isValidGraceName parameters.OrganizationName InvalidOrganizationName
-                           Input.eitherIdOrNameMustBeProvided parameters.OrganizationId parameters.OrganizationName EitherOrganizationIdOrOrganizationNameRequired
-                           Guid.isValidAndNotEmpty parameters.RepositoryId InvalidRepositoryId
-                           String.isValidGraceName parameters.RepositoryName InvalidRepositoryName
-                           Input.eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherRepositoryIdOrRepositoryNameIsRequired
-                           Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
+                        [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
                            String.isValidGraceName parameters.BranchName InvalidBranchName
                            Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
                            String.isEmptyOrValidSha256Hash parameters.Sha256Hash Sha256HashDoesNotExist

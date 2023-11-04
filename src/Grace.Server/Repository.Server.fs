@@ -56,7 +56,8 @@ module Repository =
            String.isValidGraceName parameters.OrganizationName InvalidOrganizationName
            Input.eitherIdOrNameMustBeProvided parameters.OrganizationId parameters.OrganizationName EitherOrganizationIdOrOrganizationNameRequired
            Guid.isValidAndNotEmpty parameters.RepositoryId InvalidRepositoryId
-           String.isValidGraceName parameters.RepositoryName InvalidRepositoryName |]
+           String.isValidGraceName parameters.RepositoryName InvalidRepositoryName
+           Input.eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName RepositoryError.EitherRepositoryIdOrRepositoryNameRequired |]
 
     let processCommand<'T when 'T :> RepositoryParameters> (context: HttpContext) (validations: Validations<'T>) (command: 'T -> Task<RepositoryCommand>) = 
         task {
