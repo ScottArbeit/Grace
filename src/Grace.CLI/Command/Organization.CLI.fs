@@ -1,14 +1,16 @@
-﻿namespace Grace.Cli.Command
+﻿namespace Grace.CLI.Command
 
 open FSharpPlus
-open Grace.Cli.Common
+open Grace.CLI.Common
 open Grace.SDK
 open Grace.Shared
 open Grace.Shared.Client.Configuration
 open Grace.Shared.Types
+open Grace.Shared.Utilities
 open Grace.Shared.Validation.Errors.Organization
 open NodaTime
 open Spectre.Console
+open Spectre.Console.Json
 open System
 open System.Collections.Generic
 open System.CommandLine
@@ -39,6 +41,7 @@ module Organization =
         let description = new Option<String>("--description", IsRequired = true, Description = "Description of the owner.", Arity = ArgumentArity.ExactlyOne)
         let newName = new Option<String>("--newName", IsRequired = true, Description = "The new name of the organization.", Arity = ArgumentArity.ExactlyOne)
         let force = new Option<bool>("--force", IsRequired = false, Description = "Delete even if there is data under this organization. [default: false]")
+        let includeDeleted = new Option<bool>([|"--include-deleted"; "-d"|], IsRequired = false, Description = "Include deleted organizations in the result. [default: false]")
         let deleteReason = new Option<String>("--deleteReason", IsRequired = true, Description = "The reason for deleting the organization.", Arity = ArgumentArity.ExactlyOne)
         let doNotSwitch = new Option<bool>("--doNotSwitch", IsRequired = false, Description = "Do not switch to the new organization as the current organization.", Arity = ArgumentArity.ExactlyOne)
 
@@ -89,6 +92,15 @@ module Organization =
             Ok (parseResult, parameters)
         else
             Error (GraceError.Create (OrganizationError.getErrorMessage EitherOwnerIdOrOwnerNameRequired) (parameters.CorrelationId))
+
+    /// Adjusts parameters to account for whether Id's or Name's were specified by the user.
+    let normalizeIdsAndNames<'T when 'T :> CommonParameters> (parseResult: ParseResult) (parameters: 'T) =
+        // If the name was specified on the command line, but the id wasn't, drop the default assignment of the id.
+        if parseResult.CommandResult.FindResultFor(Options.ownerId).IsImplicit && not <| isNull(parseResult.CommandResult.FindResultFor(Options.ownerName)) && not <| parseResult.CommandResult.FindResultFor(Options.ownerName).IsImplicit then
+            parameters.OwnerId <- String.Empty
+        if parseResult.CommandResult.FindResultFor(Options.organizationId).IsImplicit && not <| isNull(parseResult.CommandResult.FindResultFor(Options.organizationName)) && not <| parseResult.CommandResult.FindResultFor(Options.organizationName).IsImplicit then
+            parameters.OrganizationId <- String.Empty
+        parameters
             
     // Create subcommand.
     type CreateParameters() = 
@@ -102,7 +114,7 @@ module Organization =
                 | Ok _ -> 
                     let organizationId = if parseResult.FindResultFor(Options.organizationId).IsImplicit then Guid.NewGuid().ToString() else createParameters.OrganizationId
                     let parameters = Parameters.Organization.CreateOrganizationParameters(OwnerId = createParameters.OwnerId, OwnerName = createParameters.OwnerName, OrganizationId = organizationId, OrganizationName = createParameters.OrganizationName, CorrelationId = createParameters.CorrelationId)
-                    if parseResult |> showOutput then
+                    if parseResult |> hasOutput then
                         return! progress.Columns(progressColumns)
                                 .StartAsync(fun progressContext ->
                                 task {
@@ -133,6 +145,48 @@ module Organization =
                 return result |> renderOutput parseResult
             })
 
+    // Get subcommand
+    type GetParameters() =
+        inherit CommonParameters()
+        member val public IncludeDeleted: bool = false with get, set
+    let private getHandler (parseResult: ParseResult) (getParameters: GetParameters) =
+        task {
+            try
+                if parseResult |> verbose then printParseResult parseResult
+                let validateIncomingParameters = CommonValidations (parseResult, getParameters)
+                match validateIncomingParameters with
+                | Ok _ -> 
+                    let parameters = Parameters.Organization.GetOrganizationParameters(OwnerId = getParameters.OwnerId, OwnerName = getParameters.OwnerName, OrganizationId = getParameters.OrganizationId, OrganizationName = getParameters.OrganizationName, IncludeDeleted = getParameters.IncludeDeleted, CorrelationId = getParameters.CorrelationId)
+                    if parseResult |> hasOutput then
+                        return! progress.Columns(progressColumns)
+                                .StartAsync(fun progressContext ->
+                                task {
+                                    let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")                                    
+                                    let! result = Organization.Get(parameters)
+                                    t0.Increment(100.0)
+                                    return result
+                                })
+                    else
+                        return! Organization.Get(parameters)
+                | Error error -> return Error error
+            with
+                | ex -> return Error (GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
+        }
+    let private Get =
+        CommandHandler.Create(fun (parseResult: ParseResult) (getParameters: GetParameters) ->
+            task {                
+                let! result = getHandler parseResult (getParameters |> normalizeIdsAndNames parseResult)
+                //return result |> renderOutput parseResult
+                match result with
+                | Ok graceReturnValue ->
+                    let jsonText = JsonText(serialize graceReturnValue.ReturnValue)
+                    AnsiConsole.Write(jsonText)
+                    AnsiConsole.WriteLine()
+                    return 0
+                | Error graceError ->
+                    return Error graceError |> renderOutput parseResult
+            })
+
     // SetName subcommand
     type NameParameters() =
         inherit CommonParameters()
@@ -145,7 +199,7 @@ module Organization =
                 match validateIncomingParameters with
                 | Ok _ -> 
                     let parameters = Parameters.Organization.SetOrganizationNameParameters(OrganizationId = setNameParameters.OrganizationId, OrganizationName = setNameParameters.OrganizationName, NewName = setNameParameters.NewName, CorrelationId = setNameParameters.CorrelationId)
-                    if parseResult |> showOutput then
+                    if parseResult |> hasOutput then
                         return! progress.Columns(progressColumns)
                                 .StartAsync(fun progressContext ->
                                 task {
@@ -163,7 +217,7 @@ module Organization =
     let private SetName =
         CommandHandler.Create(fun (parseResult: ParseResult) (setNameParameters: NameParameters) ->
             task {                
-                let! result = setNameHandler parseResult setNameParameters
+                let! result = setNameHandler parseResult (setNameParameters |> normalizeIdsAndNames parseResult)
                 return result |> renderOutput parseResult
             })
 
@@ -185,7 +239,7 @@ module Organization =
                                         OrganizationName = setTypeParameters.OrganizationName, 
                                         OrganizationType = setTypeParameters.OrganizationType,
                                         CorrelationId = setTypeParameters.CorrelationId)
-                    if parseResult |> showOutput then
+                    if parseResult |> hasOutput then
                         return! progress.Columns(progressColumns)
                                 .StartAsync(fun progressContext ->
                                 task {
@@ -203,7 +257,7 @@ module Organization =
     let private SetType =
         CommandHandler.Create(fun (parseResult: ParseResult) (setTypeParameters: TypeParameters) ->
             task {                
-                let! result = setTypeHandler parseResult setTypeParameters
+                let! result = setTypeHandler parseResult (setTypeParameters |> normalizeIdsAndNames parseResult)
                 return result |> renderOutput parseResult
             })
 
@@ -226,7 +280,7 @@ module Organization =
                                         OrganizationName = setSearchVisibilityParameters.OrganizationName, 
                                         SearchVisibility = setSearchVisibilityParameters.SearchVisibility, 
                                         CorrelationId = setSearchVisibilityParameters.CorrelationId)
-                    if parseResult |> showOutput then
+                    if parseResult |> hasOutput then
                         return! progress.Columns(progressColumns)
                                 .StartAsync(fun progressContext ->
                                 task {
@@ -244,7 +298,7 @@ module Organization =
     let private SetSearchVisibility =
         CommandHandler.Create(fun (parseResult: ParseResult) (setSearchVisibilityParameters: SearchVisibilityParameters) ->
             task {
-                let! result = setSearchVisibilityHandler parseResult setSearchVisibilityParameters
+                let! result = setSearchVisibilityHandler parseResult (setSearchVisibilityParameters |> normalizeIdsAndNames parseResult)
                 return result |> renderOutput parseResult
             })
 
@@ -266,7 +320,7 @@ module Organization =
                                         OrganizationName = descriptionParameters.OrganizationName, 
                                         Description = descriptionParameters.Description, 
                                         CorrelationId = descriptionParameters.CorrelationId)
-                    if parseResult |> showOutput then
+                    if parseResult |> hasOutput then
                         return! progress.Columns(progressColumns)
                                 .StartAsync(fun progressContext ->
                                 task {
@@ -284,7 +338,7 @@ module Organization =
     let private SetDescription =
         CommandHandler.Create(fun (parseResult: ParseResult) (descriptionParameters: DescriptionParameters) ->
             task {                
-                let! result = setDescriptionHandler parseResult descriptionParameters
+                let! result = setDescriptionHandler parseResult (descriptionParameters |> normalizeIdsAndNames parseResult)
                 return result |> renderOutput parseResult
             })
         
@@ -308,7 +362,7 @@ module Organization =
                                         Force = deleteParameters.Force, 
                                         DeleteReason = deleteParameters.DeleteReason, 
                                         CorrelationId = deleteParameters.CorrelationId)
-                    if parseResult |> showOutput then
+                    if parseResult |> hasOutput then
                         return! progress.Columns(progressColumns)
                                 .StartAsync(fun progressContext ->
                                 task {
@@ -326,7 +380,7 @@ module Organization =
     let private Delete =
         CommandHandler.Create(fun (parseResult: ParseResult) (deleteParameters: DeleteParameters) ->
             task {                
-                let! result = deleteHandler parseResult deleteParameters
+                let! result = deleteHandler parseResult (deleteParameters |> normalizeIdsAndNames parseResult)
                 return result |> renderOutput parseResult
             })
 
@@ -346,7 +400,7 @@ module Organization =
                                         OrganizationId = undeleteParameters.OrganizationId, 
                                         OrganizationName = undeleteParameters.OrganizationName, 
                                         CorrelationId = undeleteParameters.CorrelationId)
-                    if parseResult |> showOutput then
+                    if parseResult |> hasOutput then
                         return! progress.Columns(progressColumns)
                                 .StartAsync(fun progressContext ->
                                 task {
@@ -364,7 +418,7 @@ module Organization =
     let private Undelete =
         CommandHandler.Create(fun (parseResult: ParseResult) (undeleteParameters: UndeleteParameters) ->
             task {                
-                let! result = undeleteHandler parseResult undeleteParameters
+                let! result = undeleteHandler parseResult (undeleteParameters |> normalizeIdsAndNames parseResult)
                 return result |> renderOutput parseResult
             })
 
@@ -386,10 +440,14 @@ module Organization =
         organizationCreateCommand.Handler <- Create
         organizationCommand.AddCommand(organizationCreateCommand)
 
+        let getCommand = new Command("get", Description = "Gets details for the organization.") |> addOption Options.includeDeleted |> addCommonOptions
+        getCommand.Handler <- Get
+        organizationCommand.AddCommand(getCommand)
+        
         let setNameCommand = new Command("set-name", Description = "Change the name of the organization.") |> addOption Options.newName |> addCommonOptions
         setNameCommand.Handler <- SetName
         organizationCommand.AddCommand(setNameCommand)
-        
+
         let setTypeCommand = new Command("set-type", Description = "Change the type of the organization.") |> addOption Options.organizationType |> addCommonOptions
         setTypeCommand.Handler <- SetType
         organizationCommand.AddCommand(setTypeCommand)

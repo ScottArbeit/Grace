@@ -1,8 +1,8 @@
-﻿namespace Grace.Cli.Command
+﻿namespace Grace.CLI.Command
 
 open FSharpPlus
-open Grace.Cli.Common
-open Grace.Cli.Services
+open Grace.CLI.Common
+open Grace.CLI.Services
 open Grace.SDK
 open Grace.Shared
 open Grace.Shared.Dto
@@ -165,7 +165,7 @@ module Repository =
                         OrganizationName = createParameters.OrganizationName,
                         CorrelationId = createParameters.CorrelationId)
 
-                    if parseResult |> showOutput then
+                    if parseResult |> hasOutput then
                         return! progress.Columns(progressColumns)
                                 .StartAsync(fun progressContext ->
                                 task {
@@ -237,7 +237,7 @@ module Repository =
                         match repositoryIsEmpty with
                         | Ok isEmpty ->
                             if isEmpty.ReturnValue = true then
-                                if parseResult |> showOutput then
+                                if parseResult |> hasOutput then
                                     let! graceStatus = progress.Columns(progressColumns).StartAsync(fun progressContext ->
                                         task {
                                             let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Reading existing Grace index file.[/]")
@@ -446,7 +446,7 @@ module Repository =
                         IncludeDeleted = normalizedParameters.IncludeDeleted,
                         CorrelationId = normalizedParameters.CorrelationId)
 
-                    if parseResult |> showOutput then
+                    if parseResult |> hasOutput then
                         return! progress.Columns(progressColumns)
                                 .StartAsync(fun progressContext ->
                                 task {
@@ -468,7 +468,7 @@ module Repository =
                 match result with
                 | Ok returnValue ->
                     let intResult = result |> renderOutput parseResult
-                    if parseResult |> showOutput then
+                    if parseResult |> hasOutput then
                         let table = Table(Border = TableBorder.DoubleEdge)
                         table.AddColumn(TableColumn(Markup($"[{Colors.Important}]Branch[/]")))
                              .AddColumn(TableColumn(Markup($"[{Colors.Important}]Updated at[/]")))
@@ -515,7 +515,7 @@ module Repository =
                         Visibility = normalizedParameters.Visibility,
                         CorrelationId = normalizedParameters.CorrelationId)
 
-                    if parseResult |> showOutput then
+                    if parseResult |> hasOutput then
                         return! progress.Columns(progressColumns)
                                 .StartAsync(fun progressContext ->
                                 task {
@@ -559,7 +559,7 @@ module Repository =
                         Status = normalizedParameters.Status,
                         CorrelationId = normalizedParameters.CorrelationId)
 
-                    if parseResult |> showOutput then
+                    if parseResult |> hasOutput then
                         return! progress.Columns(progressColumns)
                                 .StartAsync(fun progressContext ->
                                 task {
@@ -603,7 +603,7 @@ module Repository =
                         RecordSaves = normalizedParameters.RecordSaves,
                         CorrelationId = normalizedParameters.CorrelationId)
 
-                    if parseResult |> showOutput then
+                    if parseResult |> hasOutput then
                         return! progress.Columns(progressColumns)
                                 .StartAsync(fun progressContext ->
                                 task {
@@ -647,7 +647,7 @@ module Repository =
                         CorrelationId = normalizedParameters.CorrelationId,
                         SaveDays = normalizedParameters.SaveDays)
 
-                    if parseResult |> showOutput then
+                    if parseResult |> hasOutput then
                         return! progress.Columns(progressColumns)
                                 .StartAsync(fun progressContext ->
                                 task {
@@ -691,7 +691,7 @@ module Repository =
                         CorrelationId = normalizedParameters.CorrelationId,
                         CheckpointDays = normalizedParameters.CheckpointDays)
 
-                    if parseResult |> showOutput then
+                    if parseResult |> hasOutput then
                         return! progress.Columns(progressColumns)
                                 .StartAsync(fun progressContext ->
                                 task {
@@ -736,7 +736,7 @@ module Repository =
                         CorrelationId = normalizedParameters.CorrelationId,
                         Enabled = normalizedParameters.Enabled)
 
-                    if parseResult |> showOutput then
+                    if parseResult |> hasOutput then
                         return! progress.Columns(progressColumns)
                                 .StartAsync(fun progressContext ->
                                 task {
@@ -804,7 +804,7 @@ module Repository =
                         CorrelationId = normalizedParameters.CorrelationId,
                         DefaultServerApiVersion = normalizedParameters.DefaultServerApiVersion)
 
-                    if parseResult |> showOutput then
+                    if parseResult |> hasOutput then
                         return! progress.Columns(progressColumns)
                                 .StartAsync(fun progressContext ->
                                 task {
@@ -848,7 +848,7 @@ module Repository =
                         CorrelationId = normalizedParameters.CorrelationId,
                         NewName = normalizedParameters.NewName)
 
-                    if parseResult |> showOutput then
+                    if parseResult |> hasOutput then
                         return! progress.Columns(progressColumns)
                                 .StartAsync(fun progressContext ->
                                 task {
@@ -894,7 +894,7 @@ module Repository =
                         Force = normalizedParameters.Force,
                         DeleteReason = normalizedParameters.DeleteReason)
 
-                    if parseResult |> showOutput then
+                    if parseResult |> hasOutput then
                         return! progress.Columns(progressColumns)
                                 .StartAsync(fun progressContext ->
                                 task {
@@ -936,7 +936,7 @@ module Repository =
                         RepositoryName = normalizedParameters.RepositoryName,
                         CorrelationId = normalizedParameters.CorrelationId)
 
-                    if parseResult |> showOutput then
+                    if parseResult |> hasOutput then
                         return! progress.Columns(progressColumns)
                                 .StartAsync(fun progressContext ->
                                 task {

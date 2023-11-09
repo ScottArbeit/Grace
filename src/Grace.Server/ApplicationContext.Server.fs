@@ -10,18 +10,19 @@ open Grace.Shared
 open Grace.Shared.Types
 open Grace.Shared.Utilities
 open Microsoft.Azure.Cosmos
+open Microsoft.Extensions.Caching.Memory
 open Microsoft.Extensions.Configuration
 open Microsoft.Extensions.DependencyInjection
-open NodaTime
+open Microsoft.Extensions.Logging
 open System
 open System.Collections.Concurrent
 open System.Collections.Generic
 open System.Globalization
 open System.Linq
 open System.Threading.Tasks
-open NodaTime.Text
 open System.Net.Http
 open System
+open System.Net.Sockets
 
 module ApplicationContext =
 
@@ -30,6 +31,8 @@ module ApplicationContext =
 
     let mutable private actorProxyFactory: IActorProxyFactory = null
     let mutable private actorStateStorageProvider: ActorStateStorageProvider = ActorStateStorageProvider.Unknown
+    let mutable loggerFactory: ILoggerFactory = null
+    let mutable memoryCache: IMemoryCache = null
 
     let ActorProxyFactory() = actorProxyFactory
     let ActorStateStorageProvider() = actorStateStorageProvider
@@ -39,7 +42,7 @@ module ApplicationContext =
     /// </summary>
     /// <param name="config">The configuration to set.</param>
     let setConfiguration (config: IConfiguration) =
-        logToConsole $"In setConfiguration at {getCurrentInstantExtended}. isNull(config): {isNull(config)}."
+        logToConsole $"In setConfiguration: isNull(config): {isNull(config)}."
         configuration <- config
         //configuration.AsEnumerable() |> Seq.iter (fun kvp -> logToConsole $"{kvp.Key}: {kvp.Value}")
 
@@ -50,6 +53,10 @@ module ApplicationContext =
     let setActorStateStorageProvider actorStateStorage =
         actorStateStorageProvider <- actorStateStorage
         Grace.Actors.Services.setActorStateStorageProvider actorStateStorageProvider
+
+    let setLoggerFactory logFactory =
+        loggerFactory <- logFactory
+        Grace.Actors.Services.setLoggerFactory loggerFactory
 
     type StorageAccount =
         {
@@ -63,6 +70,7 @@ module ApplicationContext =
     let daprClient = DaprClientBuilder().UseJsonSerializationOptions(Constants.JsonSerializerOptions).UseHttpEndpoint(daprHttpEndpoint).UseGrpcEndpoint(daprGrpcEndpoint).Build()
     
     let mutable sharedKeyCredential: StorageSharedKeyCredential = null
+    let mutable grpcPortListener: TcpListener = null
     
     let defaultObjectStorageProvider = ObjectStorageProvider.AzureBlobStorage
 
@@ -74,15 +82,22 @@ module ApplicationContext =
             let mutable gRPCPort: int = 50001
             let grpcPortString = Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.DaprGrpcPort)
             Int32.TryParse(grpcPortString, &gRPCPort) |> ignore
+            let mutable counter = 0
             while not <| isReady do
-                do! Task.Delay(TimeSpan.FromSeconds(1.0))
+                do! Task.Delay(TimeSpan.FromSeconds(2.0))
                 logToConsole $"Checking if gRPC port {gRPCPort} is ready."
                 let tcpListeners = Net.NetworkInformation.IPGlobalProperties.GetIPGlobalProperties().GetActiveTcpListeners()
-                //for t in tcpListeners do
-                //    logToConsole $"{t.Address}:{t.Port} {t.AddressFamily}"
+                if tcpListeners.Length > 0 then logToConsole "Active TCP listeners:"
+                for t in tcpListeners do
+                    logToConsole $"{t.Address}:{t.Port} {t.AddressFamily}."
                 if tcpListeners.Any(fun tcpListener -> tcpListener.Port = gRPCPort) then
                     logToConsole $"gRPC port is ready."
                     isReady <- true
+                else
+                    counter <- counter + 1
+                    if counter > 1800 then
+                        logToConsole $"gRPC port is not ready after {counter} seconds. Exiting."
+                        Environment.Exit(1)
             
             let storageKey = Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.AzureStorageKey)
             sharedKeyCredential <- StorageSharedKeyCredential(DefaultObjectStorageAccount, storageKey)
@@ -93,9 +108,9 @@ module ApplicationContext =
 
             // Get a reference to the CosmosDB database.
             let cosmosClientOptions = CosmosClientOptions(
-                ApplicationName = Constants.GraceServerAppId, 
-                EnableContentResponseOnWrite = false, 
-                LimitToEndpoint = true, 
+                ApplicationName = Constants.GraceServerAppId,
+                EnableContentResponseOnWrite = false,
+                LimitToEndpoint = true,
                 Serializer = new CosmosJsonSerializer(Constants.JsonSerializerOptions))
 #if DEBUG
             // The CosmosDB emulator uses a self-signed certificate, and, by default, HttpClient will refuse
@@ -118,7 +133,11 @@ module ApplicationContext =
             let! containerResponse = database.CreateContainerIfNotExistsAsync(containerProperties)
             let cosmosContainer = containerResponse.Container
 
+            // Create a MemoryCache instance.
+            memoryCache <- new MemoryCache(MemoryCacheOptions(), loggerFactory)
+
             // Inject the CosmosClient and CosmosContainer into Actor Services.
-            Grace.Actors.Services.setCosmosClient (cosmosClient)
-            Grace.Actors.Services.setCosmosContainer (cosmosContainer)
+            Grace.Actors.Services.setCosmosClient cosmosClient
+            Grace.Actors.Services.setCosmosContainer cosmosContainer
+            Grace.Actors.Services.setMemoryCache memoryCache
         } :> Task

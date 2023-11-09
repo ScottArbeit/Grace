@@ -19,11 +19,6 @@
       "commandLineArgs": "diff checkpoint",
       "workingDirectory": "D:\\Source\\PlayWithFlexbox"
     },
-    "grace switch -b scottarbeit": {
-      "commandName": "Project",
-      "commandLineArgs": "switch -b scottarbeit",
-      "workingDirectory": "D:\\Source\\grace\\src"
-    },
     "grace merge - PlayWithFlexbox": {
       "commandName": "Project",
       "commandLineArgs": "merge -m \"Merge from Debug\"",
@@ -37,7 +32,7 @@
     "grace owner create": {
       "commandName": "Project",
       "commandLineArgs": "owner create --ownerName GraceDemo",
-      "workingDirectory": "D:\\Source\\gracedemo"
+      "workingDirectory": "D:\\Source\\gracedemo\\Mika"
     },
     "grace refs -b main": {
       "commandName": "Project",
@@ -76,21 +71,31 @@
     "grace branches": {
       "commandName": "Project",
       "commandLineArgs": "branches --output Verbose",
-      "workingDirectory": "C:\\Temp"
+      "workingDirectory": "D:\\Source\\GraceDemo\\Mika"
     },
     "grace watch - Mika": {
       "commandName": "Project",
       "commandLineArgs": "watch",
       "workingDirectory": "D:\\Source\\GraceDemo\\Mika"
     },
-    "grace /?": {
-      "commandName": "Project",
-      "commandLineArgs": "/?",
-      "workingDirectory": "C:\\Temp"
-    },
     "grace config write": {
       "commandName": "Project",
       "commandLineArgs": "config write",
+      "workingDirectory": "C:\\Temp"
+    },
+    "grace switch -c Mika2": {
+      "commandName": "Project",
+      "commandLineArgs": "switch -c Mika2",
+      "workingDirectory": "D:\\Source\\GraceDemo\\Mika"
+    },
+    "grace owner get": {
+      "commandName": "Project",
+      "commandLineArgs": "owner get --ownerName Owner4",
+      "workingDirectory": "D:\\Source\\GraceDemo\\Mika"
+    },
+    "grace org create /?": {
+      "commandName": "Project",
+      "commandLineArgs": "org create /?",
       "workingDirectory": "C:\\Temp"
     }
   }

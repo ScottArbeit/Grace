@@ -14,11 +14,11 @@ open Microsoft.AspNetCore.Builder
 open Microsoft.AspNetCore.Hosting
 open Microsoft.AspNetCore.Http
 open Microsoft.AspNetCore.Mvc
-open Microsoft.AspNetCore.Mvc.Versioning
+open Asp.Versioning
+open Asp.Versioning.ApiExplorer
 open Microsoft.Extensions.DependencyInjection
 open Microsoft.Extensions.Hosting
 open Microsoft.Extensions.Hosting.Internal
-open Microsoft.Extensions.Logging
 open Swashbuckle.AspNetCore.Swagger
 open Swashbuckle.AspNetCore.SwaggerGen
 open Microsoft.OpenApi.Models
@@ -42,6 +42,9 @@ open Grace.Shared.Converters
 open Grace.Shared.Types
 
 module Application =
+    type FunctionThat_AddsOrUpdatesFile = DirectoryVersion -> FileVersion -> DirectoryVersion
+    
+    type FunctionThat_ChecksIfAFileIsInAnyOfTheseDirectories = DirectoryVersion array -> (FileVersion -> DirectoryVersion -> bool) -> DirectoryVersion array
 
     type Startup(configuration: IConfiguration) =
 
@@ -108,12 +111,12 @@ module Application =
                 GET [
                 ]
                 POST [
-                    route "/create" Directory.Create
-                    route "/get" Directory.Get
-                    route "/getByDirectoryIds" Directory.GetByDirectoryIds
-                    route "/getBySha256Hash" Directory.GetBySha256Hash
-                    route "/getDirectoryVersionsRecursive" Directory.GetDirectoryVersionsRecursive
-                    route "/saveDirectoryVersions" Directory.SaveDirectoryVersions
+                    route "/create" DirectoryVersion.Create
+                    route "/get" DirectoryVersion.Get
+                    route "/getByDirectoryIds" DirectoryVersion.GetByDirectoryIds
+                    route "/getBySha256Hash" DirectoryVersion.GetBySha256Hash
+                    route "/getDirectoryVersionsRecursive" DirectoryVersion.GetDirectoryVersionsRecursive
+                    route "/saveDirectoryVersions" DirectoryVersion.SaveDirectoryVersions
                 ]
             ]
             subRoute "/notifications" [
@@ -127,6 +130,7 @@ module Application =
                 POST [
                     route "/create" Organization.Create
                     route "/delete" Organization.Delete
+                    route "/get" Organization.Get
                     route "/listRepositories" Organization.ListRepositories
                     route "/setDescription" Organization.SetDescription
                     route "/setName" Organization.SetName
@@ -139,6 +143,7 @@ module Application =
                 POST [
                     route "/create" Owner.Create
                     route "/delete" Owner.Delete
+                    route "/get" Owner.Get
                     route "/listOrganizations" Owner.ListOrganizations
                     route "/setDescription" Owner.SetDescription
                     route "/setName" Owner.SetName                   
@@ -243,13 +248,19 @@ module Application =
             let actorProxyOptions = ActorProxyOptions(JsonSerializerOptions = Constants.JsonSerializerOptions)  // DaprApiToken = Environment.GetEnvironmentVariable("DAPR_API_TOKEN")) (when we actually implement auth)
             actorProxyOptions.HttpEndpoint <- $"{Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.DaprServerUri)}:{Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.DaprHttpPort)}"
             logToConsole $"actorProxyOptions.HttpEndpoint: {actorProxyOptions.HttpEndpoint}"
-            let actorProxyFactory = ActorProxyFactory(actorProxyOptions)
+            let actorProxyFactory = new ActorProxyFactory(actorProxyOptions)
             ApplicationContext.setActorProxyFactory actorProxyFactory
             ApplicationContext.setActorStateStorageProvider ActorStateStorageProvider.AzureCosmosDb
 
             let openApiInfo = new OpenApiInfo()
             openApiInfo.Description <- "Grace is a version control system. Code and documentation can be found at https://gracevcs.com."
             openApiInfo.Title <- "Grace Server API"
+            openApiInfo.Version <- "v0.1"
+            openApiInfo.Contact <- new OpenApiContact()
+            openApiInfo.Contact.Name <- "Scott Arbeit"
+            openApiInfo.Contact.Email <- "scott@scottarbeit.com"
+            openApiInfo.Contact.Url <- Uri("https://gracevcs.com")
+
             services.AddOpenTelemetry()
                 .WithTracing(fun config -> 
                     //if env.IsDevelopment() then
@@ -272,27 +283,41 @@ module Application =
                     .AddLogging()
                     //.AddSwaggerGen(fun config -> config.SwaggerDoc("v0.1", openApiInfo))
                     .AddGiraffe()
-                    .AddSingleton(Constants.JsonSerializerOptions)
+                    //.AddSingleton(Constants.JsonSerializerOptions)
                     // Next line adds the Json serializer that Giraffe uses internally
                     .AddSingleton<Json.ISerializer>(SystemTextJson.Serializer(Constants.JsonSerializerOptions))
                     .AddW3CLogging(fun options -> options.FileName <- "Grace.Server.log-"
                                                   options.LogDirectory <- Path.Combine(Environment.GetEnvironmentVariable("TEMP"), "Grace.Server.Logs"))
                     .AddSingleton<ActorProxyOptions>(actorProxyOptions)
                     .AddSingleton<IActorProxyFactory>(actorProxyFactory)
-                    .AddApiVersioning(fun config ->
-                        config.DefaultApiVersion <- ApiVersion(DateTime(2022, 10, 1))
-                        config.ApiVersionReader <- HeaderApiVersionReader(Constants.ServerApiVersionHeaderKey)
-                        config.AssumeDefaultVersionWhenUnspecified <- true
-                    )
-                    .AddVersionedApiExplorer(fun config -> 
-                        config.DefaultApiVersion <- ApiVersion(DateTime(2023, 6, 1))
-                        config.AssumeDefaultVersionWhenUnspecified <- true
-                        config.ApiVersionParameterSource <- HeaderApiVersionReader(Constants.ServerApiVersionHeaderKey))
                     .AddDaprClient(fun daprClientBuilder ->
                         daprClientBuilder.UseJsonSerializationOptions(Constants.JsonSerializerOptions)
                                          //.UseDaprApiToken(Environment.GetEnvironmentVariable("DAPR_API_TOKEN"))
-                                         .Build() |> ignore
+                                         .Build() // This builds the DaprClient.
+                                         |> ignore
                     )
+
+            let apiVersioningBuilder = services.AddApiVersioning(fun options ->
+                options.ReportApiVersions <- true
+                options.DefaultApiVersion <- new ApiVersion(1, 0)
+                options.AssumeDefaultVersionWhenUnspecified <- true
+                // Use whatever reader you want
+                options.ApiVersionReader <- ApiVersionReader.Combine(new UrlSegmentApiVersionReader(),
+                                                new HeaderApiVersionReader("x-api-version"),
+                                                new MediaTypeApiVersionReader("x-api-version"));
+            )
+            
+            apiVersioningBuilder.AddApiExplorer(fun options ->
+                // add the versioned api explorer, which also adds IApiVersionDescriptionProvider service
+                // note: the specified format code will format the version as "'v'major[.minor][-status]"
+                options.GroupNameFormat <- "'v'VVV"
+                options.DefaultApiVersion <- ApiVersion(DateOnly(2023, 10, 1))
+                options.AssumeDefaultVersionWhenUnspecified <- true
+                options.ApiVersionParameterSource <- HeaderApiVersionReader(Constants.ServerApiVersionHeaderKey)
+            
+                // note: this option is only necessary when versioning by url segment. the SubstitutionFormat
+                // can also be used to control the format of the API version in route templates
+                options.SubstituteApiVersionInUrl <- true) |> ignore
             
             // Configures the Dapr Actor subsystem.            
             services.AddActors(fun options ->
@@ -300,20 +325,21 @@ module Application =
                 options.HttpEndpoint <- actorProxyOptions.HttpEndpoint
             
                 // When you create a new actor type, register it here.
-                options.Actors.RegisterActor<Branch.BranchActor>()
-                options.Actors.RegisterActor<BranchName.BranchNameActor>()
-                options.Actors.RegisterActor<ContainerName.ContainerNameActor>()
-                options.Actors.RegisterActor<Diff.DiffActor>()
-                options.Actors.RegisterActor<Directory.DirectoryVersionActor>()
-                options.Actors.RegisterActor<DirectoryAppearance.DirectoryAppearanceActor>()
-                options.Actors.RegisterActor<FileAppearance.FileAppearanceActor>()
-                options.Actors.RegisterActor<Organization.OrganizationActor>()
-                options.Actors.RegisterActor<OrganizationName.OrganizationNameActor>()
-                options.Actors.RegisterActor<Owner.OwnerActor>()
-                options.Actors.RegisterActor<OwnerName.OwnerNameActor>()
-                options.Actors.RegisterActor<Reference.ReferenceActor>()
-                options.Actors.RegisterActor<Repository.RepositoryActor>()
-                options.Actors.RegisterActor<RepositoryName.RepositoryNameActor>()
+                let actors = options.Actors
+                actors.RegisterActor<Branch.BranchActor>()
+                actors.RegisterActor<BranchName.BranchNameActor>()
+                actors.RegisterActor<ContainerName.ContainerNameActor>()
+                actors.RegisterActor<Diff.DiffActor>()
+                actors.RegisterActor<DirectoryVersion.DirectoryVersionActor>()
+                actors.RegisterActor<DirectoryAppearance.DirectoryAppearanceActor>()
+                actors.RegisterActor<FileAppearance.FileAppearanceActor>()
+                actors.RegisterActor<Organization.OrganizationActor>()
+                actors.RegisterActor<OrganizationName.OrganizationNameActor>()
+                actors.RegisterActor<Owner.OwnerActor>()
+                actors.RegisterActor<OwnerName.OwnerNameActor>()
+                actors.RegisterActor<Reference.ReferenceActor>()
+                actors.RegisterActor<Repository.RepositoryActor>()
+                actors.RegisterActor<RepositoryName.RepositoryNameActor>()
 
                 // Default values for these options can be found at https://github.com/dapr/dapr/blob/master/pkg/actors/config.go.
                 options.ActorIdleTimeout <- TimeSpan.FromMinutes(10.0)          // Default is 60m
@@ -325,6 +351,9 @@ module Application =
 
             services.AddSignalR(fun options -> options.EnableDetailedErrors <- true)
                     .AddJsonProtocol(fun options -> options.PayloadSerializerOptions <- Constants.JsonSerializerOptions) |> ignore
+
+            // List all services to the log.
+            //services |> Seq.iter (fun service -> logToConsole $"Service: {service.ServiceType}.")
 
         member _.Configure(app: IApplicationBuilder, env: IWebHostEnvironment) =
             if env.IsDevelopment() then
@@ -344,9 +373,16 @@ module Application =
                .UseRouting()
                .UseStaticFiles()
                .UseEndpoints(fun endpointBuilder ->
+                   // Add Dapr actor endpoints
                    endpointBuilder.MapActorsHandlers() |> ignore
+
+                   // Add Dapr pub/sub endpoints
                    endpointBuilder.MapSubscribeHandler() |> ignore
+
+                   // Add Giraffe (Web API) endpoints
                    endpointBuilder.MapGiraffeEndpoints(endpoints)
+
+                   // Add SignalR hub endpoints
                    endpointBuilder.MapHub<Notifications.NotificationHub>("/notifications") |> ignore)
                .UseGiraffe(notFoundHandler)
 

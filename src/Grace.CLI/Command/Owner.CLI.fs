@@ -1,7 +1,7 @@
-﻿namespace Grace.Cli.Command
+﻿namespace Grace.CLI.Command
 
 open FSharpPlus
-open Grace.Cli.Common
+open Grace.CLI.Common
 open Grace.SDK
 open Grace.Shared
 open Grace.Shared.Client.Configuration
@@ -15,10 +15,11 @@ open System.Collections.Generic
 open System.CommandLine.NamingConventionBinder
 open System.CommandLine.Parsing
 open System.Linq
-open System.Threading
+open System.Threading.Tasks
 open System.CommandLine
 open Spectre.Console
-open Grace.Shared.Client
+open Spectre.Console.Json
+open Grace.Shared.Utilities
 
 module Owner =
 
@@ -38,6 +39,7 @@ module Owner =
         let descriptionRequired = new Option<String>("--description", IsRequired = true, Description = "Description of the owner.", Arity = ArgumentArity.ExactlyOne)
         let newName = new Option<String>("--newName", IsRequired = true, Description = "The new name of the organization.", Arity = ArgumentArity.ExactlyOne)
         let force = new Option<bool>("--force", IsRequired = false, Description = "Delete even if there is data under this owner. [default: false]")
+        let includeDeleted = new Option<bool>([|"--include-deleted"; "-d"|], IsRequired = false, Description = "Include deleted owners in the result. [default: false]")
         let deleteReason = new Option<String>("--deleteReason", IsRequired = true, Description = "The reason for deleting the owner.", Arity = ArgumentArity.ExactlyOne)
         let doNotSwitch = new Option<bool>("--doNotSwitch", IsRequired = false, Description = "Do not switch to the new owner as the current owner.", Arity = ArgumentArity.ZeroOrOne)
 
@@ -75,6 +77,13 @@ module Owner =
         else
             Error (GraceError.Create (OwnerError.getErrorMessage OwnerNameIsRequired) (commonParameters.CorrelationId))
 
+    /// Adjusts parameters to account for whether Id's or Name's were specified by the user.
+    let normalizeIdsAndNames<'T when 'T :> CommonParameters> (parseResult: ParseResult) (parameters: 'T) =
+        // If the name was specified on the command line, but the id wasn't, drop the default assignment of the id.
+        if parseResult.CommandResult.FindResultFor(Options.ownerId).IsImplicit && not <| isNull(parseResult.CommandResult.FindResultFor(Options.ownerName)) && not <| parseResult.CommandResult.FindResultFor(Options.ownerName).IsImplicit then
+            parameters.OwnerId <- String.Empty
+        parameters
+
     // Create subcommand.
     type CreateParameters() = 
         inherit CommonParameters()
@@ -87,7 +96,7 @@ module Owner =
                 | Ok _ -> 
                     let ownerId = if parseResult.FindResultFor(Options.ownerId).IsImplicit then Guid.NewGuid().ToString() else createParameters.OwnerId
                     let parameters = Parameters.Owner.CreateOwnerParameters(OwnerId = ownerId, OwnerName = createParameters.OwnerName, CorrelationId = createParameters.CorrelationId)
-                    if parseResult |> showOutput then
+                    if parseResult |> hasOutput then
                         return! progress.Columns(progressColumns)
                                 .StartAsync(fun progressContext ->
                                 task {
@@ -105,7 +114,7 @@ module Owner =
     let private Create =
         CommandHandler.Create(fun (parseResult: ParseResult) (createParameters: CreateParameters) ->
             task {                
-                let! result = createHandler parseResult createParameters
+                let! result = createHandler parseResult (createParameters |> normalizeIdsAndNames parseResult)
                 match result with
                 | Ok returnValue ->
                     // Update the Grace configuration file with the newly-created repository.
@@ -116,6 +125,47 @@ module Owner =
                         updateConfiguration newConfig
                 | Error _ -> ()
                 return result |> renderOutput parseResult
+            })
+
+    type GetParameters() =
+        inherit CommonParameters()
+        member val public IncludeDeleted: bool = false with get, set
+    let private getHandler (parseResult: ParseResult) (getParameters: GetParameters) =
+        task {
+            try
+                if parseResult |> verbose then printParseResult parseResult
+                let validateIncomingParameters = CommonValidations (parseResult, getParameters)
+                match validateIncomingParameters with
+                | Ok _ -> 
+                    let parameters = Parameters.Owner.GetOwnerParameters(OwnerId = getParameters.OwnerId, OwnerName = getParameters.OwnerName, IncludeDeleted = getParameters.IncludeDeleted, CorrelationId = getParameters.CorrelationId)
+                    if parseResult |> hasOutput then
+                        return! progress.Columns(progressColumns)
+                                .StartAsync(fun progressContext ->
+                                task {
+                                    let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")                                    
+                                    let! result = Owner.Get(parameters)
+                                    t0.Increment(100.0)
+                                    return result
+                                })
+                    else
+                        return! Owner.Get(parameters)
+                | Error error -> return Error error
+            with
+                | ex -> return Error (GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
+        }
+    let private Get =
+        CommandHandler.Create(fun (parseResult: ParseResult) (getParameters: GetParameters) ->
+            task {                
+                let! result = getHandler parseResult (getParameters |> normalizeIdsAndNames parseResult)
+                //return result |> renderOutput parseResult
+                match result with
+                | Ok graceReturnValue ->
+                    let jsonText = JsonText(serialize graceReturnValue.ReturnValue)
+                    AnsiConsole.Write(jsonText)
+                    AnsiConsole.WriteLine()
+                    return 0
+                | Error graceError ->
+                    return Error graceError |> renderOutput parseResult
             })
 
     type SetNameParameters() =
@@ -129,7 +179,7 @@ module Owner =
                 match validateIncomingParameters with
                 | Ok _ -> 
                     let parameters = Parameters.Owner.SetOwnerNameParameters(OwnerId = setNameParameters.OwnerId, OwnerName = setNameParameters.OwnerName, NewName= setNameParameters.NewName, CorrelationId = setNameParameters.CorrelationId)
-                    if parseResult |> showOutput then
+                    if parseResult |> hasOutput then
                         return! progress.Columns(progressColumns)
                                 .StartAsync(fun progressContext ->
                                 task {
@@ -147,7 +197,7 @@ module Owner =
     let private SetName =
         CommandHandler.Create(fun (parseResult: ParseResult) (setNameParameters: SetNameParameters) ->
             task {                
-                let! result = setNameHandler parseResult setNameParameters
+                let! result = setNameHandler parseResult (setNameParameters |> normalizeIdsAndNames parseResult)
                 return result |> renderOutput parseResult
             })
 
@@ -162,7 +212,7 @@ module Owner =
                 match validateIncomingParameters with
                 | Ok _ -> 
                     let parameters = Parameters.Owner.SetOwnerTypeParameters(OwnerId = setTypeParameters.OwnerId, OwnerName = setTypeParameters.OwnerName, OwnerType = setTypeParameters.OwnerType, CorrelationId = setTypeParameters.CorrelationId)
-                    if parseResult |> showOutput then
+                    if parseResult |> hasOutput then
                         return! progress.Columns(progressColumns)
                                 .StartAsync(fun progressContext ->
                                 task {
@@ -180,7 +230,7 @@ module Owner =
     let private SetType =
         CommandHandler.Create(fun (parseResult: ParseResult) (setTypeParameters: SetTypeParameters) ->
             task {                
-                let! result = setTypeHandler parseResult setTypeParameters
+                let! result = setTypeHandler parseResult (setTypeParameters |> normalizeIdsAndNames parseResult)
                 return result |> renderOutput parseResult
             })
 
@@ -195,7 +245,7 @@ module Owner =
                 match validateIncomingParameters with
                 | Ok _ -> 
                     let parameters = Parameters.Owner.SetOwnerSearchVisibilityParameters(OwnerId = setSearchVisibilityParameters.OwnerId, OwnerName = setSearchVisibilityParameters.OwnerName, SearchVisibility = setSearchVisibilityParameters.SearchVisibility, CorrelationId = setSearchVisibilityParameters.CorrelationId)
-                    if parseResult |> showOutput then
+                    if parseResult |> hasOutput then
                         return! progress.Columns(progressColumns)
                                 .StartAsync(fun progressContext ->
                                 task {
@@ -213,7 +263,7 @@ module Owner =
     let private SetSearchVisibility =
         CommandHandler.Create(fun (parseResult: ParseResult) (setSearchVisibilityParameters: SetSearchVisibilityParameters) ->
             task {                
-                let! result = searchVisibilityHandler parseResult setSearchVisibilityParameters
+                let! result = searchVisibilityHandler parseResult (setSearchVisibilityParameters |> normalizeIdsAndNames parseResult)
                 return result |> renderOutput parseResult
             })
         
@@ -228,7 +278,7 @@ module Owner =
                     match validateIncomingParameters with
                     | Ok _ -> 
                         let parameters = Parameters.Owner.SetOwnerDescriptionParameters(OwnerId = setDescriptionParameters.OwnerId, OwnerName = setDescriptionParameters.OwnerName, Description = setDescriptionParameters.Description, CorrelationId = setDescriptionParameters.CorrelationId)
-                        if parseResult |> showOutput then
+                        if parseResult |> hasOutput then
                             return! progress.Columns(progressColumns)
                                     .StartAsync(fun progressContext ->
                                     task {
@@ -246,7 +296,7 @@ module Owner =
     let private SetDescription =
         CommandHandler.Create(fun (parseResult: ParseResult) (setDescriptionParameters: SetDescriptionParameters) ->
                 task {                
-                    let! result = descriptionHandler parseResult setDescriptionParameters
+                    let! result = descriptionHandler parseResult (setDescriptionParameters |> normalizeIdsAndNames parseResult)
                     return result |> renderOutput parseResult
                 })
 
@@ -262,7 +312,7 @@ module Owner =
                 match validateIncomingParameters with
                 | Ok _ -> 
                     let parameters = Parameters.Owner.DeleteOwnerParameters(OwnerId = deleteParameters.OwnerId, OwnerName = deleteParameters.OwnerName, Force = deleteParameters.Force, DeleteReason = deleteParameters.DeleteReason, CorrelationId = deleteParameters.CorrelationId)
-                    if parseResult |> showOutput then
+                    if parseResult |> hasOutput then
                         return! progress.Columns(progressColumns)
                                 .StartAsync(fun progressContext ->
                                 task {
@@ -280,7 +330,7 @@ module Owner =
     let private Delete =
         CommandHandler.Create(fun (parseResult: ParseResult) (deleteParameters: DeleteParameters) ->
             task {                
-                let! result = deleteHandler parseResult deleteParameters
+                let! result = deleteHandler parseResult (deleteParameters |> normalizeIdsAndNames parseResult)
                 return result |> renderOutput parseResult
             })
 
@@ -294,7 +344,7 @@ module Owner =
                 match validateIncomingParameters with
                 | Ok _ -> 
                     let parameters = Parameters.Owner.UndeleteOwnerParameters(OwnerId = undeleteParameters.OwnerId, OwnerName = undeleteParameters.OwnerName, CorrelationId = undeleteParameters.CorrelationId)
-                    if parseResult |> showOutput then
+                    if parseResult |> hasOutput then
                         return! progress.Columns(progressColumns)
                                 .StartAsync(fun progressContext ->
                                 task {
@@ -312,7 +362,7 @@ module Owner =
     let private Undelete =
         CommandHandler.Create(fun (parseResult: ParseResult) (undeleteParameters: UndeleteParameters) ->
             task {                
-                let! result = undeleteHandler parseResult undeleteParameters
+                let! result = undeleteHandler parseResult (undeleteParameters |> normalizeIdsAndNames parseResult)
                 return result |> renderOutput parseResult
             })
 
@@ -327,6 +377,10 @@ module Owner =
         let ownerCreateCommand = new Command("create", Description = "Create a new owner.") |> addOption Options.ownerNameRequired |> addOption Options.ownerId
         ownerCreateCommand.Handler <- Create
         ownerCommand.AddCommand(ownerCreateCommand)
+
+        let getCommand = new Command("get", Description = "Gets details for the owner.") |> addOption Options.includeDeleted |> addCommonOptions
+        getCommand.Handler <- Get
+        ownerCommand.AddCommand(getCommand)
 
         let setNameCommand = new Command("set-name", Description = "Change the name of the owner.") |> addOption Options.newName |> addCommonOptions
         setNameCommand.Handler <- SetName

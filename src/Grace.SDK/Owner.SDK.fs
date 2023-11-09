@@ -1,6 +1,7 @@
 ﻿namespace Grace.SDK
 
 open Grace.SDK.Common
+open Grace.Shared.Dto.Owner
 open Grace.Shared.Parameters.Owner
 open Grace.Shared.Types
 open System
@@ -14,6 +15,13 @@ type Owner() =
     /// <param name="parameters">Values to use when creating the new owner.</param>
     static member public Create(parameters: CreateOwnerParameters) =
         postServer<CreateOwnerParameters, String>(parameters |> ensureCorrelationIdIsSet, $"owner/{nameof(Owner.Create)}")
+
+    /// <summary>
+    /// Sets the owner's name.
+    /// </summary>
+    /// <param name="parameters">Values to use when setting the owner name.</param>
+    static member public Get(parameters: GetOwnerParameters) =
+        postServer<GetOwnerParameters, OwnerDto>(parameters |> ensureCorrelationIdIsSet, $"owner/{nameof(Owner.Get)}")
 
     /// <summary>
     /// Sets the owner's name.

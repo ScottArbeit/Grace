@@ -60,11 +60,11 @@ module ContainerName =
 
                             let organizationActorId = ActorId($"{repositoryDto.OrganizationId}")
                             let organizationActorProxy = this.ProxyFactory.CreateActorProxy<IOrganizationActor>(organizationActorId, ActorName.Organization)
-                            let! organizationDto = organizationActorProxy.GetDto()
+                            let! organizationDto = organizationActorProxy.Get()
     
                             let ownerActorId = ActorId($"{repositoryDto.OwnerId}")
                             let ownerActorProxy = this.ProxyFactory.CreateActorProxy<IOwnerActor>(ownerActorId, ActorName.Owner)
-                            let! ownerDto = ownerActorProxy.GetDto()
+                            let! ownerDto = ownerActorProxy.Get()
     
                             containerName <- $"{ownerDto.OwnerName}-{organizationDto.OrganizationName}-{repositoryDto.RepositoryName}".ToLowerInvariant()
                             return Ok containerName

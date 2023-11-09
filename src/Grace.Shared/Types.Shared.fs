@@ -67,21 +67,21 @@ module Types =
     type OwnerType =
         | Public
         | Private
-        override this.ToString() = Utilities.discriminatedUnionFullNameToString this
+        override this.ToString() = Utilities.getDiscriminatedUnionFullName this
         static member GetKnownTypes() = GetKnownTypes<OwnerType>()
 
     [<KnownType("GetKnownTypes")>]
     type OrganizationType =
         | Public
         | Private
-        override this.ToString() = Utilities.discriminatedUnionFullNameToString this
+        override this.ToString() = Utilities.getDiscriminatedUnionFullName this
         static member GetKnownTypes() = GetKnownTypes<OrganizationType>()
 
     [<KnownType("GetKnownTypes")>]
     type SearchVisibility =
         | Visible
         | NotVisible
-        override this.ToString() = Utilities.discriminatedUnionFullNameToString this
+        override this.ToString() = Utilities.getDiscriminatedUnionFullName this
         static member GetKnownTypes() = GetKnownTypes<SearchVisibility>()
     
     [<KnownType("GetKnownTypes")>]
@@ -91,7 +91,7 @@ module Types =
         | Checkpoint
         | Save
         | Tag
-        override this.ToString() = Utilities.discriminatedUnionFullNameToString this
+        override this.ToString() = Utilities.getDiscriminatedUnionFullName this
         static member FromString s = Utilities.discriminatedUnionFromString<ReferenceType> s
         static member GetKnownTypes() = GetKnownTypes<ReferenceType>()
 
@@ -354,6 +354,7 @@ module Types =
             CorrelationId: string
             Properties: Dictionary<String, String>
         }
+        static member Default = {Error = "Empty error message"; EventTime = getCurrentInstant(); CorrelationId = String.Empty; Properties = new Dictionary<String, String>()}
         static member Create (error: string) (correlationId: string) =
             {Error = error; EventTime = getCurrentInstant(); CorrelationId = correlationId; Properties = new Dictionary<String, String>()}
         static member CreateWithMetadata (error: string) (correlationId: string) (properties: Dictionary<String, String>) =
@@ -372,7 +373,7 @@ module Types =
         | Directory
         | File
         static member GetKnownTypes() = GetKnownTypes<FileSystemEntryType>()
-        override this.ToString() = Utilities.discriminatedUnionFullNameToString this
+        override this.ToString() = Utilities.getDiscriminatedUnionFullName this
 
     /// Specifies whether a change detected in a diff is an add, change, or delete.
     [<KnownType("GetKnownTypes")>]
@@ -381,7 +382,7 @@ module Types =
         | Change 
         | Delete 
         static member GetKnownTypes() = GetKnownTypes<DifferenceType>()
-        override this.ToString() = Utilities.discriminatedUnionFullNameToString this
+        override this.ToString() = Utilities.getDiscriminatedUnionFullName this
 
     /// A file system difference is a change detected (at a file level) in a diff. It specifies the type of change (add, change, or delete), the type of file system entry (directory or file), and the relative path of the entry.
     type FileSystemDifference =
@@ -461,4 +462,4 @@ module Types =
         | SingleStep
         | Complex
         static member GetKnownTypes() = GetKnownTypes<PromotionType>()
-        override this.ToString() = Utilities.discriminatedUnionFullNameToString this
+        override this.ToString() = Utilities.getDiscriminatedUnionFullName this

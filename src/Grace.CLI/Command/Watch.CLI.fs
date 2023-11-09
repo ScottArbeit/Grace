@@ -1,7 +1,7 @@
-namespace Grace.Cli.Command
+namespace Grace.CLI.Command
 
-open Grace.Cli.Common
-open Grace.Cli.Services
+open Grace.CLI.Common
+open Grace.CLI.Services
 open Grace.SDK
 open Grace.SDK.Common
 open Grace.Shared
@@ -36,7 +36,6 @@ open System.Threading
 open System.Collections.Concurrent
 open Spectre.Console
 open System.Text
-open Branch
 
 module Watch =
 
@@ -132,7 +131,7 @@ module Watch =
         // Ignore directory creation; need to think about this more... should we capture new empty directories?
         if updateNotInProgress() && isNotDirectory args.FullPath then
             let shouldIgnore = shouldIgnoreFile args.FullPath
-            //logToConsole $"Should ignore {args.FullPath}: {shouldIgnore}."
+            logToAnsiConsole Colors.Verbose $"Should ignore {args.FullPath}: {shouldIgnore}."
 
             if not <| shouldIgnore then
                 logToAnsiConsole Colors.Added $"I saw that {args.FullPath} was created."
@@ -141,7 +140,7 @@ module Watch =
     let OnChanged (args: FileSystemEventArgs) =
         if updateNotInProgress() && isNotDirectory args.FullPath then            
             let shouldIgnore = shouldIgnoreFile args.FullPath
-            //logToAnsiConsole Colors.Important $"Should ignore {args.FullPath}: {shouldIgnore}."
+            logToAnsiConsole Colors.Verbose $"Should ignore {args.FullPath}: {shouldIgnore}."
 
             if not <| shouldIgnore then
                 logToAnsiConsole Colors.Changed $"I saw that {args.FullPath} changed."
@@ -156,7 +155,7 @@ module Watch =
     let OnDeleted (args: FileSystemEventArgs) =
         if updateNotInProgress() && isNotDirectory args.FullPath then
             let shouldIgnore = shouldIgnoreFile args.FullPath
-            //logToConsole $"Should ignore {args.FullPath}: {shouldIgnore}."
+            logToAnsiConsole Colors.Verbose $"Should ignore {args.FullPath}: {shouldIgnore}."
 
             if not <| shouldIgnore then
                 logToAnsiConsole Colors.Deleted $"I saw that {args.FullPath} was deleted."
@@ -169,12 +168,12 @@ module Watch =
 
             if not <| shouldIgnoreOldFile then
                 logToAnsiConsole Colors.Changed $"I saw that {args.OldFullPath} was renamed to {args.FullPath}."
-                //logToConsole $"Should ignore {args.OldFullPath}: {shouldIgnoreOldFile}. Should ignore {args.FullPath}: {shouldIgnoreNewFile}."
+                logToAnsiConsole Colors.Verbose $"Should ignore {args.OldFullPath}: {shouldIgnoreOldFile}. Should ignore {args.FullPath}: {shouldIgnoreNewFile}."
                 logToAnsiConsole Colors.Changed $"Delete processing is not yet implemented."
                 
             if not <| shouldIgnoreNewFile then
                 logToAnsiConsole Colors.Changed $"I saw that {args.OldFullPath} was renamed to {args.FullPath}."
-                //logToConsole $"Should ignore {args.OldFullPath}: {shouldIgnoreOldFile}. Should ignore {args.FullPath}: {shouldIgnoreNewFile}."
+                logToAnsiConsole Colors.Verbose $"Should ignore {args.OldFullPath}: {shouldIgnoreOldFile}. Should ignore {args.FullPath}: {shouldIgnoreNewFile}."
                 filesToProcess.TryAdd(args.FullPath, ()) |> ignore
 
     let OnError (args: ErrorEventArgs) =
@@ -192,7 +191,7 @@ module Watch =
     let printDifferences (differences: List<FileSystemDifference>) =
         if differences.Count > 0 then logToAnsiConsole Colors.Verbose $"Differences detected since last save/checkpoint/commit:"
         for difference in differences.OrderBy(fun diff -> diff.RelativePath) do
-            logToAnsiConsole Colors.Verbose $"{discriminatedUnionCaseNameToString difference.DifferenceType} {discriminatedUnionCaseNameToString difference.FileSystemEntryType} {difference.RelativePath}"
+            logToAnsiConsole Colors.Verbose $"{getDistributedUnionCaseName difference.DifferenceType} {getDistributedUnionCaseName difference.FileSystemEntryType} {difference.RelativePath}"
 
     /// Update the Grace Object Cache file with the new DirectoryVersions.
     let updateObjectCacheFile (newDirectoryVersions: List<LocalDirectoryVersion>) =
@@ -383,7 +382,7 @@ module Watch =
                         (task {
                             logToAnsiConsole Colors.Highlighted $"Parent branch {parentBranchName} has a new promotion; referenceId: {referenceId}."
                             let! graceStatus = readGraceStatusFile()
-                            let rebaseParameters = RebaseParameters(OwnerId = $"{Current().OwnerId}", OrganizationId = $"{Current().OrganizationId}",
+                            let rebaseParameters = Branch.RebaseParameters(OwnerId = $"{Current().OwnerId}", OrganizationId = $"{Current().OrganizationId}",
                                 RepositoryId = $"{Current().RepositoryId}", BranchId = $"{Current().BranchId}", BasedOn = referenceId, CorrelationId = (parseResult |> getCorrelationId))
                             let! x = Branch.rebaseHandler parseResult rebaseParameters graceStatus
                             ()
@@ -450,9 +449,14 @@ module Watch =
                         let! tick = periodicTimer.WaitForNextTickAsync()
                         ticked <- tick
 
-                        // About once a minute, do a full GC to be kind with our memory usage.
+                        // About once a minute, do a full GC to be kind with our memory usage. This is for looks, not for function.
+                        //   In .NET, when a computer has lots of available memory, and therefore no memory pressure, GC basically doesn't happen, so `grace watch` doesn't bother releasing its unused heap back to the OS.
+                        //   Seeing a large memory footprint will make uninformed people say things like, "OMG, `grace watch` takes up so much memory!" In fact, it's just the GC not running because there's no
+                        //   signal from the OS that there's memory pressure. This is not a problem, and is actually a good thing for general performance, but it's not obvious to the uninformed.
+                        //   Been seeing the same thing since the 1990's; whenever someone says, "<This program> is taking up so much memory!" and you look at the machine, it's (almost) always fine.
+                        //   Forcing a GC every minute will cause `grace watch` to stay as slim as possible, so it looks as lightweight as it actually is.
                         if previousGC < getCurrentInstant().Minus(Duration.FromMinutes(1.0)) then
-                            let memoryBeforeGC = Process.GetCurrentProcess().WorkingSet64
+                            //let memoryBeforeGC = Process.GetCurrentProcess().WorkingSet64
                             GC.Collect(2, GCCollectionMode.Forced, blocking = true, compacting = true)
                             //logToAnsiConsole Colors.Verbose $"Memory before GC: {memoryBeforeGC:N0}; after: {Process.GetCurrentProcess().WorkingSet64:N0}."
                             previousGC <- getCurrentInstant()

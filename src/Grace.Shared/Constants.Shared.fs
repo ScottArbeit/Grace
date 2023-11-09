@@ -39,12 +39,13 @@ module Constants =
     JsonSerializerOptions.DefaultBufferSize <- 64 * 1024
     JsonSerializerOptions.DefaultIgnoreCondition <- JsonIgnoreCondition.WhenWritingDefault  // JsonSerializerOptions.IgnoreNullValues is deprecated. This is the new way to say it.
     JsonSerializerOptions.NumberHandling <- JsonNumberHandling.AllowReadingFromString
-    JsonSerializerOptions.PropertyNameCaseInsensitive <- true
+    JsonSerializerOptions.PropertyNameCaseInsensitive <- true   // Case sensitivity is from the 1970's. We should let it go.
     //JsonSerializerOptions.PropertyNamingPolicy <- JsonNamingPolicy.CamelCase
     JsonSerializerOptions.ReadCommentHandling <- JsonCommentHandling.Skip
     JsonSerializerOptions.ReferenceHandler <- ReferenceHandler.IgnoreCycles
     JsonSerializerOptions.UnknownTypeHandling <- JsonUnknownTypeHandling.JsonElement
     JsonSerializerOptions.WriteIndented <- true
+    JsonSerializerOptions.MaxDepth <- 16    // Default is 64, but if we exceed a depth of 16, we're probably doing something wrong.
     
     /// Converts the full name of a discriminated union to a string. Example: ServerApiVersions.Latest -> "ServerApiVersions.Latest"
     let discriminatedUnionFullName (value:'T) = 
@@ -219,6 +220,9 @@ module Constants =
 
     /// The name of the inter-process communication file used by grace watch to share status with other invocations of Grace.
     let IpcFileName = "graceWatchStatus.json"
+
+    /// The default sliding expiration time for a cache entry.
+    let DefaultSlidingExpiration = TimeSpan.FromMinutes(5.0)
 
 module Results =
     let Ok = 0

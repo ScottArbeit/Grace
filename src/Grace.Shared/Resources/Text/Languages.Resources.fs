@@ -5,8 +5,6 @@ module Text =
     /// This is intended to be the definitive list of locali[sz]ations that Grace supports.
     ///
     /// I'm starting with en-US, because that's all I know, but trying to do it right from the start.
-    ///
-    /// Sorry for all the upper-case; first letter of a discriminated union case has to be upper-case.
     type Language =
         | ``EN-US``
 
@@ -20,6 +18,8 @@ module Text =
         | BranchNameIsRequired
         | CheckpointIsDisabled
         | CommitIsDisabled
+        | CreatingNewDirectoryVersions
+        | CreatingSaveReference
         | DeleteReasonIsRequired
         | DescriptionIsRequired
         | DirectoryAlreadyExists
@@ -39,6 +39,8 @@ module Text =
         | FailedWhileApplyingEvent
         | FailedWhileSavingEvent
         | FilesMustNotBeEmpty
+        | GettingLatestVersion
+        | GettingCurrentBranch
         | GraceConfigFileNotFound
         | IndexFileNotFound
         | InitialPromotionMessage
@@ -72,7 +74,8 @@ module Text =
         | NotImplemented
         | ObjectCacheFileNotFound
         | ObjectStorageException
-        | OrganizationAlreadyExists
+        | OrganizationIdAlreadyExists
+        | OrganizationNameAlreadyExists
         | OrganizationContainsRepositories
         | OrganizationDoesNotExist
         | OrganizationIdDoesNotExist
@@ -92,6 +95,7 @@ module Text =
         | OwnerNameIsRequired
         | OwnerTypeIsRequired
         | ParentBranchDoesNotExist
+        | ReadingGraceStatus
         | ReferenceIdDoesNotExist
         | ReferenceIdsAreRequired
         | ReferenceTypeMustBeProvided
@@ -107,10 +111,14 @@ module Text =
         | RepositoryIsNotEmpty
         | RepositoryNameIsRequired
         | SaveIsDisabled
+        | SavingDirectoryVersions
+        | ScanningWorkingDirectory
         | SearchVisibilityIsRequired
         | ServerRequestsMustIncludeXCorrelationIdHeader
         | Sha256HashDoesNotExist
         | Sha256HashIsRequired
         | StringIsTooLong
         | TagIsDisabled
+        | UpdatingWorkingDirectory
+        | UploadingFiles
         | ValueMustBePositive

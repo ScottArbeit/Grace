@@ -2,12 +2,14 @@
 
 open Dapr.Actors
 open Dapr.Actors.Runtime
+open FSharp.Control
 open Grace.Actors.Commands.Owner
 open Grace.Actors.Services
 open Grace.Actors.Events.Owner
 open Grace.Actors.Interfaces
 open Grace.Shared
 open Grace.Shared.Constants
+open Grace.Shared.Dto.Organization
 open Grace.Shared.Dto.Owner
 open Grace.Shared.Types
 open Grace.Shared.Utilities
@@ -15,24 +17,22 @@ open Grace.Shared.Validation.Errors.Owner
 open Microsoft.Extensions.Logging
 open NodaTime
 open System
+open System.Collections.Concurrent
 open System.Collections.Generic
 open System.Runtime.Serialization
 open System.Text.Json
 open System.Threading.Tasks
-open FSharp.Control
 open Constants
-open System.Collections.Concurrent
-open Grace.Shared.Dto.Organization
 
 module Owner =
 
     let GetActorId (ownerId: OwnerId) = ActorId($"{ownerId}")
 
-    type OwnerActor(host: ActorHost) as this =
+    type OwnerActor(host: ActorHost) =
         inherit Actor(host)
 
         let actorName = Constants.ActorName.Owner
-        let log = this.Logger
+        let log = host.LoggerFactory.CreateLogger(actorName)
         let mutable actorStartTime = Instant.MinValue
         let mutable logScope: IDisposable = null
         let mutable currentCommand = String.Empty
@@ -61,13 +61,16 @@ module Owner =
             {newOwnerDto with UpdatedAt = Some (getCurrentInstant())}
 
         override this.OnActivateAsync() =
+            let activateStartTime = getCurrentInstant()
             let stateManager = this.StateManager
-            log.LogInformation("{CurrentInstant}: Activated {ActorType} {ActorId}.", getCurrentInstantExtended(), this.GetType().Name, host.Id)
             task {
                 let! retrievedDto = Storage.RetrieveState<OwnerDto> stateManager (dtoStateName)
                 match retrievedDto with
                     | Some retrievedDto -> ownerDto <- retrievedDto
                     | None -> ownerDto <- OwnerDto.Default
+
+                let duration = getCurrentInstant().Minus(activateStartTime)
+                log.LogInformation("{CurrentInstant}: Activated {ActorType} {ActorId}. Retrieved from storage in {duration}ms.", getCurrentInstantExtended(), actorName, host.Id, duration.TotalMilliseconds.ToString("F3"))
             } :> Task
 
         member private this.SetMaintenanceReminder() =
@@ -84,26 +87,25 @@ module Owner =
 
         override this.OnPreActorMethodAsync(context) =
             if context.CallType = ActorCallType.ReminderMethod then
-                log.LogInformation("{CurrentInstant}: Reminder {ActorName}.{MethodName} Id: {Id}.", getCurrentInstantExtended(), actorName, context.MethodName, this.Id.GetId())
+                log.LogInformation("{CurrentInstant}: Reminder {ActorName}.{MethodName} Id: {Id}.", getCurrentInstantExtended(), actorName, context.MethodName, this.Id)
             actorStartTime <- getCurrentInstant()
             logScope <- log.BeginScope("Actor {actorName}", actorName)
             currentCommand <- String.Empty
+            log.LogTrace("{CurrentInstant}: Started {ActorName}.{MethodName} Id: {Id}.", getCurrentInstantExtended(), actorName, context.MethodName, this.Id)
 
             // This checks if the actor is still active, but in an undefined state, which will _almost_ never happen.
             // isDisposed is set when the actor is deleted, or if an error occurs where we're not sure of the state and want to reload from the database.
             if isDisposed then
                 this.OnActivateAsync().Wait()
                 isDisposed <- false
-    
-            //log.LogInformation("{CurrentInstant}: Started {ActorName}.{MethodName} Id: {Id}.", getCurrentInstantExtended(), actorName, context.MethodName, this.Id.GetId())
             Task.CompletedTask
             
         override this.OnPostActorMethodAsync(context) =
-            let duration = getCurrentInstant().Minus(actorStartTime)
+            let durationμs = (getCurrentInstant().Minus(actorStartTime).TotalMilliseconds * 1000.0).ToString("F0")
             if String.IsNullOrEmpty(currentCommand) then
-                log.LogInformation("{CurrentInstant}: Finished {ActorName}.{MethodName}; Id: {Id}; Duration: {duration}ms.", $"{getCurrentInstantExtended(),-28}", actorName, context.MethodName, this.Id.GetId(), duration.TotalMilliseconds.ToString("F3"))
+                log.LogInformation("{CurrentInstant}: Finished {ActorName}.{MethodName}; Id: {Id}; Duration: {duration}μs.", getCurrentInstantExtended(), actorName, context.MethodName, this.Id, durationμs)
             else
-                log.LogInformation("{CurrentInstant}: Finished {ActorName}.{MethodName}; Command: {Command}; Id: {Id}; Duration: {duration}ms.", $"{getCurrentInstantExtended(),-28}", actorName, context.MethodName, currentCommand, this.Id.GetId(), duration.TotalMilliseconds.ToString("F3"))
+                log.LogInformation("{CurrentInstant}: Finished {ActorName}.{MethodName}; Command: {Command}; Id: {Id}; Duration: {duration}μs.", getCurrentInstantExtended(), actorName, context.MethodName, currentCommand, this.Id, durationμs)    
             logScope.Dispose()
             Task.CompletedTask
             
@@ -142,7 +144,7 @@ module Owner =
                     let returnValue = GraceReturnValue.Create "Owner command succeeded." ownerEvent.Metadata.CorrelationId
                     returnValue.Properties.Add(nameof(OwnerId), $"{ownerDto.OwnerId}")
                     returnValue.Properties.Add(nameof(OwnerName), $"{ownerDto.OwnerName}")
-                    returnValue.Properties.Add("EventType", $"{discriminatedUnionFullNameToString ownerEvent.Event}")
+                    returnValue.Properties.Add("EventType", $"{getDiscriminatedUnionFullName ownerEvent.Event}")
                     return Ok returnValue
                 with ex ->
                     let graceError = GraceError.Create (OwnerError.getErrorMessage OwnerError.FailedWhileApplyingEvent) ownerEvent.Metadata.CorrelationId
@@ -184,7 +186,7 @@ module Owner =
             member this.IsDeleted() =
                 Task.FromResult(if ownerDto.DeletedAt.IsSome then true else false)
 
-            member this.GetDto() =
+            member this.Get() =
                 Task.FromResult(ownerDto)
 
             member this.OrganizationExists organizationName = 
@@ -250,7 +252,7 @@ module Owner =
                     }
 
                 task {
-                    currentCommand <- discriminatedUnionCaseNameToString command
+                    currentCommand <- getDistributedUnionCaseName command
                     match! isValid command metadata with
                     | Ok command -> return! processCommand command metadata
                     | Error error -> return Error error

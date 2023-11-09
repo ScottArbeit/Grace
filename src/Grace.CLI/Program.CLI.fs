@@ -1,8 +1,8 @@
-namespace Grace.Cli
+namespace Grace.CLI
 
-open Grace.Cli.Command
-open Grace.Cli.Common
-open Grace.Cli.Services
+open Grace.CLI.Command
+open Grace.CLI.Common
+open Grace.CLI.Services
 open Grace.Shared
 open Grace.Shared.Client.Configuration
 open Grace.Shared.Converters
@@ -28,6 +28,7 @@ open System.Linq
 open System.Threading.Tasks
 open Grace.Shared.Validation
 open Grace.Shared.Resources.Text
+open System.ComponentModel.DataAnnotations
 
 module Configuration =
     
@@ -43,7 +44,7 @@ module Configuration =
 
 module GraceCommand =
 
-    type OptionToUpdate = {optionName: string; displayValue: string}
+    type OptionToUpdate = {optionName: string; command: string; display: string; displayOnCreate: string}
 
     /// Built-in aliases for Grace commands.
     let private aliases = 
@@ -130,6 +131,7 @@ module GraceCommand =
                         HelpBuilder.Default.GetLayout().Where(fun section -> not <| section.Method.Name.Contains("Synopsis", StringComparison.InvariantCultureIgnoreCase))
                     )
 
+                /// Gathers the available options for the current command and all its parents, which are applied hierarchically.
                 let rec gatherAllOptions (command: Command) (allOptions: List<Option>) = 
                     allOptions.AddRange(command.Options)
                     let parentCommand = command.Parents.OfType<Command>().FirstOrDefault()
@@ -138,6 +140,7 @@ module GraceCommand =
                     else
                         allOptions
 
+                // We're passing a new List<Option> here, because we're going to be adding to it recursively in gatherAllOptions.
                 let allOptions = gatherAllOptions helpContext.Command (List<Option>())
 
                 //logToConsole "Children:"
@@ -152,17 +155,22 @@ module GraceCommand =
                 // This section sets the display of the default value for these options in all commands in Grace CLI.
                 // Without setting it here, by default, we'd get something like "[default: thing-we-said-in-the-Option-definition] [default:e4def31b-4547-4f6b-9324-56eba666b4b2]" i.e. whatever the generated Guid value on create might be.
                 let optionsToUpdate = [
-                    {optionName = "correlationId"; displayValue = "new Guid"}
-                    {optionName = "branchId"; displayValue = "current branch, or new Guid on create"}
-                    {optionName = "organizationId"; displayValue = "current organization, or new Guid on create"}
-                    {optionName = "ownerId"; displayValue = "current owner, or new Guid on create"}
-                    {optionName = "repositoryId"; displayValue = "current repository, or new Guid on create"}
-                    {optionName = "parentBranchId"; displayValue = "current branch, empty if parentBranchName is provided"}
+                    {optionName = "correlationId"; command = String.Empty; display = "new Guid"; displayOnCreate = "new Guid"}
+                    {optionName = "branchId"; command = "Branch"; display = "current branch"; displayOnCreate = "new Guid"}
+                    {optionName = "organizationId"; command = "Organization";  display = "current organization"; displayOnCreate = "new Guid"}
+                    {optionName = "ownerId"; command = "Owner"; display = "current owner"; displayOnCreate = "new Guid"}
+                    {optionName = "repositoryId"; command = "Repository"; display = "current repository"; displayOnCreate = "new Guid"}
+                    {optionName = "parentBranchId"; command = "Branch"; display = "current branch, empty if parentBranchName is provided"; displayOnCreate = "current branch, empty if parentBranchName is provided"}
                 ]
 
-                for optionToUpdate in optionsToUpdate do
-                    for option in allOptions.Where(fun opt -> opt.Name = optionToUpdate.optionName) do
-                        helpContext.HelpBuilder.CustomizeSymbol(option, defaultValue = optionToUpdate.displayValue)
+                optionsToUpdate |> List.iter(fun optionToUpdate ->
+                     allOptions |> Seq.where(fun opt -> opt.Name = optionToUpdate.optionName)
+                                |> Seq.iter(fun option -> 
+                                                if helpContext.Command.Aliases.Any(fun alias -> alias = "create") && 
+                                                    helpContext.Command.Parents.Any(fun parent -> parent.Name.Equals(optionToUpdate.command, StringComparison.InvariantCultureIgnoreCase)) then
+                                                    helpContext.HelpBuilder.CustomizeSymbol(option, defaultValue = optionToUpdate.displayOnCreate)
+                                                else
+                                                    helpContext.HelpBuilder.CustomizeSymbol(option, defaultValue = optionToUpdate.display)))
 
                 // Add the feedback section at the end.
                 helpContext.HelpBuilder.CustomizeLayout(fun layoutContext ->
@@ -207,7 +215,7 @@ module GraceCommand =
                     // If we don't, we're just going to print an error message and exit.
                     if configurationFileExists() then
                         parseResult <- command.Parse(args)
-                        if parseResult |> showOutput then
+                        if parseResult |> hasOutput then
                             if parseResult |> verbose then
                                 AnsiConsole.Write((new Rule($"[{Colors.Important}]Started: {startTime.ToString(InstantPattern.ExtendedIso.PatternText, CultureInfo.InvariantCulture)}.[/]")).RightJustified())
                             else
@@ -230,7 +238,7 @@ module GraceCommand =
                         if parseResult |> isGraceWatch then
                             logToAnsiConsole Colors.Important (getLocalizedString StringResourceName.InterprocessFileDeleted)
 
-                        if parseResult |> showOutput then
+                        if parseResult |> hasOutput then
                             let finishTime = getCurrentInstant()
                             let elapsed = finishTime - startTime
                             if parseResult |> verbose then

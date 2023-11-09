@@ -30,11 +30,11 @@ module Organization =
 
     let GetActorId (organizationId: OrganizationId) = ActorId($"{organizationId}")
 
-    type OrganizationActor(host: ActorHost) as this = 
+    type OrganizationActor(host: ActorHost) = 
         inherit Actor(host)
 
         let actorName = ActorName.Organization
-        let log = this.Logger
+        let log = host.LoggerFactory.CreateLogger(actorName)
         let mutable actorStartTime = Instant.MinValue
         let mutable logScope: IDisposable = null
         let mutable currentCommand = String.Empty
@@ -63,13 +63,16 @@ module Organization =
             {newOrganizationDto with UpdatedAt = Some (getCurrentInstant())}
 
         override this.OnActivateAsync() =
+            let activateStartTime = getCurrentInstant()
             let stateManager = this.StateManager
-            log.LogInformation("{CurrentInstant} Activated {ActorType} {ActorId}.", getCurrentInstantExtended(), this.GetType().Name, host.Id)
             task {
                 let! retrievedDto = Storage.RetrieveState<OrganizationDto> stateManager dtoStateName
                 match retrievedDto with
                     | Some retrievedDto -> organizationDto <- retrievedDto
                     | None -> organizationDto <- OrganizationDto.Default
+                
+                let duration = getCurrentInstant().Minus(activateStartTime)
+                log.LogInformation("{CurrentInstant}: Activated {ActorType} {ActorId}. Retrieved from storage in {duration}ms.", getCurrentInstantExtended(), actorName, host.Id, duration.TotalMilliseconds.ToString("F3"))
             } :> Task
 
         member private this.SetMaintenanceReminder() =
@@ -88,22 +91,21 @@ module Organization =
             actorStartTime <- getCurrentInstant()
             logScope <- log.BeginScope("Actor {actorName}", actorName)
             currentCommand <- String.Empty
-            //log.LogInformation("{CurrentInstant}: Started {ActorName}.{MethodName} Id: {Id}.", getCurrentInstantExtended(), actorName, context.MethodName, this.Id.GetId())
+            log.LogTrace("{CurrentInstant}: Started {ActorName}.{MethodName} Id: {Id}.", getCurrentInstantExtended(), actorName, context.MethodName, this.Id)
 
             // This checks if the actor is still active, but in an undefined state, which will _almost_ never happen.
             // isDisposed is set when the actor is deleted, or if an error occurs where we're not sure of the state and want to reload from the database.
             if isDisposed then
                 this.OnActivateAsync().Wait()
                 isDisposed <- false
-
             Task.CompletedTask
             
         override this.OnPostActorMethodAsync(context) =
-            let duration = getCurrentInstant().Minus(actorStartTime)
+            let durationμs = (getCurrentInstant().Minus(actorStartTime).TotalMilliseconds * 1000.0).ToString("F0")
             if String.IsNullOrEmpty(currentCommand) then
-                log.LogInformation("{CurrentInstant}: Finished {ActorName}.{MethodName}; Id: {Id}; Duration: {duration}ms.", $"{getCurrentInstantExtended(),-28}", actorName, context.MethodName, this.Id.GetId(), duration.TotalMilliseconds.ToString("F3"))
+                log.LogInformation("{CurrentInstant}: Finished {ActorName}.{MethodName}; Id: {Id}; Duration: {duration}μs.", getCurrentInstantExtended(), actorName, context.MethodName, this.Id, durationμs)
             else
-                log.LogInformation("{CurrentInstant}: Finished {ActorName}.{MethodName}; Command: {Command}; Id: {Id}; Duration: {duration}ms.", $"{getCurrentInstantExtended(),-28}", actorName, context.MethodName, currentCommand, this.Id.GetId(), duration.TotalMilliseconds.ToString("F3"))
+                log.LogInformation("{CurrentInstant}: Finished {ActorName}.{MethodName}; Command: {Command}; Id: {Id}; Duration: {duration}μs.", getCurrentInstantExtended(), actorName, context.MethodName, currentCommand, this.Id, durationμs)
             logScope.Dispose()
             Task.CompletedTask
             
@@ -130,7 +132,7 @@ module Organization =
                         do! this.OnFirstWrite()
 
                     organizationEvents.Add(organizationEvent)
-                    do! DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> stateManager.SetStateAsync(eventsStateName, this.OrganizationEvents))
+                    do! DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> stateManager.SetStateAsync(eventsStateName, organizationEvents))
                 
                     // Publish the event to the rest of the world.
                     let graceEvent = Events.GraceEvent.OrganizationEvent organizationEvent
@@ -145,7 +147,7 @@ module Organization =
                     returnValue.Properties.Add(nameof(OwnerId), $"{organizationDto.OwnerId}")
                     returnValue.Properties.Add(nameof(OrganizationId), $"{organizationDto.OrganizationId}")
                     returnValue.Properties.Add(nameof(OrganizationName), $"{organizationDto.OrganizationName}")
-                    returnValue.Properties.Add("EventType", $"{discriminatedUnionFullNameToString organizationEvent.Event}")
+                    returnValue.Properties.Add("EventType", $"{getDiscriminatedUnionFullName organizationEvent.Event}")
                     return Ok returnValue
                 with ex -> 
                     let graceError = GraceError.Create (OrganizationError.getErrorMessage OrganizationError.FailedWhileApplyingEvent) organizationEvent.Metadata.CorrelationId
@@ -183,7 +185,7 @@ module Organization =
             member this.IsDeleted() =
                 Task.FromResult(if organizationDto.DeletedAt.IsSome then true else false)
 
-            member this.GetDto() =
+            member this.Get() =
                 Task.FromResult(organizationDto)
 
             member this.RepositoryExists repositoryName = 
@@ -203,7 +205,7 @@ module Organization =
                             match command with 
                             | OrganizationCommand.Create (organizationId, organizationName, ownerId) ->
                                 match organizationDto.UpdatedAt with
-                                | Some _ -> return Error (GraceError.Create (OrganizationError.getErrorMessage OrganizationAlreadyExists) metadata.CorrelationId) 
+                                | Some _ -> return Error (GraceError.Create (OrganizationError.getErrorMessage OrganizationIdAlreadyExists) metadata.CorrelationId) 
                                 | None -> return Ok command
                             | _ -> 
                                 match organizationDto.UpdatedAt with
@@ -251,7 +253,7 @@ module Organization =
                     }
 
                 task {
-                    currentCommand <- discriminatedUnionCaseNameToString command
+                    currentCommand <- getDistributedUnionCaseName command
                     match! isValid command metadata with
                     | Ok command -> return! processCommand command metadata 
                     | Error error -> return Error error

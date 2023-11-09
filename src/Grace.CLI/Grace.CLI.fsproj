@@ -1,13 +1,13 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <Project Sdk="Microsoft.NET.Sdk">
 	<PropertyGroup>
-		<OutputType>Exe</OutputType>
-		<TargetFramework>net7.0</TargetFramework>
-		<!--<PublishAot>true</PublishAot>-->
+		<TargetFramework>net8.0</TargetFramework>
+		<LangVersion>preview</LangVersion>
 		<PublishReadyToRun>true</PublishReadyToRun>
+		<OutputType>Exe</OutputType>
+		<!--<PublishAot>true</PublishAot>-->
 		<!--<RuntimeIdentifier>win10-x64</RuntimeIdentifier>-->
 		<Version>0.1</Version>
-		<LangVersion>preview</LangVersion>
 		<Description>The command-line interface for Grace.</Description>
 		<GenerateDocumentationFile>true</GenerateDocumentationFile>
 		<WarningsAsErrors>FS0025</WarningsAsErrors>
@@ -17,6 +17,7 @@
 	</PropertyGroup>
 	<ItemGroup>
 		<Compile Include="Log.CLI.fs" />
+		<Compile Include="Text.CLI.fs" />
 		<Compile Include="Command\Services.CLI.fs" />
 		<Compile Include="Command\Common.CLI.fs" />
 		<Compile Include="Command\Owner.CLI.fs" />
@@ -32,30 +33,31 @@
 	</ItemGroup>
 	<ItemGroup>
 		<PackageReference Include="Ben.Demystifier" Version="0.4.1" />
-		<PackageReference Include="Microsoft.AspNetCore.SignalR.Client" Version="7.0.3" />
-		<PackageReference Include="Microsoft.AspNetCore.SignalR.Protocols.Json" Version="7.0.3" />
-		<PackageReference Include="Microsoft.Extensions.Logging.Configuration" Version="7.0.0" />
-		<PackageReference Include="Microsoft.Extensions.Logging.Console" Version="7.0.0" />
+		<PackageReference Include="Microsoft.AspNetCore.SignalR.Client" Version="8.0.0-rc.2.23480.2" />
+		<PackageReference Include="Microsoft.AspNetCore.SignalR.Protocols.Json" Version="8.0.0-rc.2.23480.2" />
+		<PackageReference Include="Microsoft.Extensions.Logging.Configuration" Version="8.0.0-rc.2.23479.6" />
+		<PackageReference Include="Microsoft.Extensions.Logging.Console" Version="8.0.0-rc.2.23479.6" />
 		<PackageReference Include="NodaTime" Version="3.1.9" />
-		<PackageReference Include="NodaTime.Serialization.SystemTextJson" Version="1.1.0" />
-		<PackageReference Include="OpenTelemetry" Version="1.4.0" />
-		<PackageReference Include="OpenTelemetry.Api" Version="1.4.0" />
-		<PackageReference Include="OpenTelemetry.Exporter.Console" Version="1.4.0" />
-		<PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.4.0" />
-		<PackageReference Include="OpenTelemetry.Exporter.Zipkin" Version="1.4.0" />
-		<PackageReference Include="Polly" Version="7.2.3" />
-		<PackageReference Include="Spectre.Console" Version="0.46.0" />
-		<PackageReference Include="Spectre.Console.ImageSharp" Version="0.46.0" />
+		<PackageReference Include="NodaTime.Serialization.SystemTextJson" Version="1.1.2" />
+		<PackageReference Include="OpenTelemetry" Version="1.7.0-alpha.1" />
+		<PackageReference Include="OpenTelemetry.Api" Version="1.7.0-alpha.1" />
+		<PackageReference Include="OpenTelemetry.Exporter.Console" Version="1.7.0-alpha.1" />
+		<PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.7.0-alpha.1" />
+		<PackageReference Include="OpenTelemetry.Exporter.Zipkin" Version="1.7.0-alpha.1" />
+		<PackageReference Include="Polly" Version="8.1.0" />
+		<PackageReference Include="Spectre.Console" Version="0.47.0" />
+		<PackageReference Include="Spectre.Console.ImageSharp" Version="0.47.0" />
+		<PackageReference Include="Spectre.Console.Json" Version="0.47.0" />
 		<PackageReference Include="System.CommandLine" Version="2.0.0-beta4.22272.1" />
 		<PackageReference Include="System.CommandLine.Hosting" Version="0.4.0-alpha.22272.1" />
-		<PackageReference Include="System.Diagnostics.DiagnosticSource" Version="7.0.1" />
-		<PackageReference Include="System.Reactive" Version="5.0.0" />
+		<PackageReference Include="System.Diagnostics.DiagnosticSource" Version="8.0.0-rc.2.23479.6" />
+		<PackageReference Include="System.Reactive" Version="6.0.1-preview.1" />
 	</ItemGroup>
 	<ItemGroup>
 		<ProjectReference Include="..\Grace.SDK\Grace.SDK.fsproj" />
 		<ProjectReference Include="..\Grace.Shared\Grace.Shared.fsproj" />
 	</ItemGroup>
 	<ItemGroup>
-		<PackageReference Update="FSharp.Core" Version="7.0.200" />
+		<PackageReference Update="FSharp.Core" Version="8.0.100-beta.23475.2" />
 	</ItemGroup>
 </Project>

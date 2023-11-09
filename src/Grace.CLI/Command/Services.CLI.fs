@@ -1,4 +1,4 @@
-﻿namespace Grace.Cli
+﻿namespace Grace.CLI
 
 open Microsoft.Extensions
 open FSharp.Collections
@@ -31,8 +31,8 @@ open System.Threading.Tasks
 module Services =
 
     /// Utility method to write to the console using color.
-    let logToAnsiConsole color message = AnsiConsole.MarkupLine $"[{color}]{getCurrentInstantExtended(),-28} {Environment.CurrentManagedThreadId:X2} {message}[/]"
-    
+    let logToAnsiConsole color message = AnsiConsole.MarkupLine $"[{color}]{getCurrentInstantExtended()} {Environment.CurrentManagedThreadId:X2} {Markup.Escape(message)}[/]"
+
     /// A cache of paths that we've already decided to ignore or not.
     let private shouldIgnoreCache = ConcurrentDictionary<FilePath, bool>()
 
@@ -117,19 +117,19 @@ module Services =
             shouldIgnore
         else
             // Ignore it if:
-            //   it's in the .grace\objects directory, or
+            //   it's in the .grace directory, or
             //   it's the Grace Status file, or
             //   it's a Grace-owned temporary file, or
             //   it's a directory itself, or
             //   it matches something in graceignore.txt.
             let fileInfo = FileInfo(filePath)
-            //let b1 = filePath.StartsWith(Current().ObjectDirectory)           // it's in the /objects directory
+            //let b1 = filePath.StartsWith(Current().GraceDirectory)           // it's in the /.grace directory
             //let b2 = filePath.EndsWith(".gracetmp")                           // it's a Grace temporary file
             //let b3 = Directory.Exists(filePath)                               // it's a directory
             //let b4 = fileInfo.Attributes.HasFlag(FileAttributes.Temporary)    // it's temporary
             //printfn $"{GetCurrentInstantString()}: b1: {b1}; b2: {b2}; b3: {b3}; b4: {b4}"
             let shouldIgnoreThisFile = 
-                filePath.StartsWith(Current().ObjectDirectory)              // it's in the /objects directory
+                filePath.StartsWith(Current().GraceDirectory)              // it's in the /.grace directory
                 || filePath.Equals(Current().GraceStatusFile, StringComparison.InvariantCultureIgnoreCase)
                 || filePath.Equals(Current().GraceObjectCacheFile, StringComparison.InvariantCultureIgnoreCase)
                 || filePath.EndsWith(".gracetmp")                           // it's a Grace temporary file
@@ -306,14 +306,16 @@ module Services =
                 return List<FileSystemDifference>()
         }
 
-    let processedThings = ConcurrentQueue<string>()
+    //let processedThings = ConcurrentQueue<string>()
+
     /// Computes the SHA-256 value for a given local directory.
-    let rec processDirectoryContents (relativeDirectoryPath: RelativePath) (previousGraceIndexValues: Dictionary<RelativePath, LocalDirectoryVersion>) (newGraceStatus: GraceStatus) =
-        let getDirectoryContents (previousGraceIndexValues: Dictionary<RelativePath, LocalDirectoryVersion>) (directoryInfo: DirectoryInfo) =
+    let rec processDirectoryContents (relativeDirectoryPath: RelativePath) (previousDirectoryVersions: Dictionary<RelativePath, LocalDirectoryVersion>) (newGraceStatus: GraceStatus) =
+        let getDirectoryContents (previousDirectoryVersions: Dictionary<RelativePath, LocalDirectoryVersion>) (directoryInfo: DirectoryInfo) =
             task {
                 let files = ConcurrentQueue<LocalFileVersion>()
                 let directories = ConcurrentQueue<LocalDirectoryVersion>()
 
+                // Create LocalFileVersion instances for each file in this directory.
                 do! Parallel.ForEachAsync(directoryInfo.GetFiles().Where(fun f -> not <| shouldIgnoreFile f.FullName), Constants.ParallelOptions, (fun fileInfo continuationToken ->
                     ValueTask(task {
                         match! createLocalFileVersion fileInfo with
@@ -322,15 +324,18 @@ module Services =
                     })
                 ))
 
+                // Create or reuse existing LocalDirectoryVersion instances for each subdirectory in this directory.
                 do! Parallel.ForEachAsync(directoryInfo.GetDirectories().Where(fun d -> not <| shouldIgnoreDirectory d.FullName), Constants.ParallelOptions, (fun subdirectoryInfo continuationToken ->
                     ValueTask(task {
                         let subdirectoryRelativePath = Path.GetRelativePath(Current().RootDirectory, subdirectoryInfo.FullName)
-                        let! (subdirectoryVersions: List<LocalDirectoryVersion>, filesInSubdirectory: List<LocalFileVersion>, sha256Hash) = processDirectoryContents subdirectoryRelativePath previousGraceIndexValues newGraceStatus
-                        // Check if we already have this exact SHA-256 hash for this relative path; if so, keep the existing SubdirectoryVersion and it's Guid.
-                        let existingSubdirectoryVersion = previousGraceIndexValues.FirstOrDefault(
-                            (fun existingDirectoryVersion -> existingDirectoryVersion.Key = normalizeFilePath subdirectoryRelativePath), KeyValuePair(String.Empty, LocalDirectoryVersion.Default)).Value
-                             
-                        // If the DirectoryId is Guid.Empty, or the Sha256Hash doesn't match, we didn't find it, so create a new LocalDirectoryVersion reflecting the changes.
+                        let! (subdirectoryVersions: List<LocalDirectoryVersion>, filesInSubdirectory: List<LocalFileVersion>, sha256Hash) = processDirectoryContents subdirectoryRelativePath previousDirectoryVersions newGraceStatus
+                        
+                        // Check if we already have a LocalDirectoryVersion for this subdirectory.
+                        let existingSubdirectoryVersion = previousDirectoryVersions.FirstOrDefault((fun existingDirectoryVersion -> existingDirectoryVersion.Key = normalizeFilePath subdirectoryRelativePath), 
+                            defaultValue = KeyValuePair(String.Empty, LocalDirectoryVersion.Default)).Value
+                        
+                        // Check if we already have this exact SHA-256 hash for this relative path; if so, keep the existing SubdirectoryVersion and its Guid.     
+                        // If the DirectoryId is Guid.Empty (from LocalDirectoryVersion.Default), or the Sha256Hash doesn't match, create a new LocalDirectoryVersion reflecting the changes.
                         if existingSubdirectoryVersion.DirectoryId = Guid.Empty || existingSubdirectoryVersion.Sha256Hash <> sha256Hash then
                             let directoryIds = subdirectoryVersions.OrderBy(fun d -> d.RelativePath).Select(fun d -> d.DirectoryId).ToList()
                             let subdirectoryVersion = LocalDirectoryVersion.Create (Guid.NewGuid()) (Current().RepositoryId) (RelativePath (normalizeFilePath subdirectoryRelativePath))
@@ -350,7 +355,7 @@ module Services =
 
         task {
             let directoryInfo = DirectoryInfo(Path.Combine(Current().RootDirectory, relativeDirectoryPath))
-            let! (directories, files) = getDirectoryContents previousGraceIndexValues directoryInfo
+            let! (directories, files) = getDirectoryContents previousDirectoryVersions directoryInfo
             //for file in files do processedThings.Enqueue(file.RelativePath)
             let sha256Hash = computeSha256ForDirectory relativeDirectoryPath directories files
             return (directories, files, sha256Hash)
@@ -359,15 +364,17 @@ module Services =
     /// Creates the Grace index file by scanning the repository's working directory.
     let createNewGraceStatusFile (previousGraceStatus: GraceStatus) = 
         task {
+            // Start with a new GraceStatus instance.
             let newGraceStatus = GraceStatus.Default
-            
             let rootDirectoryInfo = DirectoryInfo(Current().RootDirectory)
-            let ppp = Dictionary<RelativePath, LocalDirectoryVersion>()
+            
+            // Get the previous GraceStatus index values into a Dictionary for faster lookup.
+            let previousDirectoryVersions = Dictionary<RelativePath, LocalDirectoryVersion>()
             for kvp in previousGraceStatus.Index do   
-                ppp.Add(kvp.Value.RelativePath, kvp.Value)
-            //let previousGraceIndexValues = previousGraceIndex.Values.ToList()
+                previousDirectoryVersions.Add(kvp.Value.RelativePath, kvp.Value)
+
             let! (subdirectoriesInRootDirectory, filesInRootDirectory, rootSha256Hash) = 
-                processDirectoryContents Constants.RootDirectoryPath ppp newGraceStatus
+                processDirectoryContents Constants.RootDirectoryPath previousDirectoryVersions newGraceStatus
 
             //let getBySha256HashParameters = GetBySha256HashParameters(RepositoryId = $"{Current().RepositoryId}", Sha256Hash = rootSha256Hash)
             //let! directoryId = Directory.GetBySha256Hash(getBySha256HashParameters)
@@ -444,25 +451,28 @@ module Services =
             match Current().ObjectStorageProvider with
             | ObjectStorageProvider.Unknown -> return Error (GraceError.Create (StorageError.getErrorMessage StorageError.NotImplemented) correlationId)
             | AzureBlobStorage -> 
-                let! graceResult = Storage.FilesExistInObjectStorage (fileVersions.Select(fun f -> f.ToFileVersion).ToList()) correlationId
-                match graceResult with
-                | Ok graceReturnValue ->
-                    let filesToUpload = graceReturnValue.ReturnValue
-                    let errors = ConcurrentQueue<GraceError>()
-                    do! Parallel.ForEachAsync(filesToUpload, Constants.ParallelOptions, (fun uploadMetadata ct ->
-                        ValueTask(task {
-                            let fileVersion = (fileVersions.First(fun f -> f.Sha256Hash = uploadMetadata.Sha256Hash)).ToFileVersion
-                            let! x = Storage.SaveFileToObjectStorage fileVersion (uploadMetadata.BlobUriWithSasToken) correlationId
-                            match x with
-                            | Ok result -> ()
-                            | Error error -> errors.Enqueue(error)
-                        })))
+                if fileVersions.Count() > 0 then
+                    let! graceResult = Storage.FilesExistInObjectStorage (fileVersions.Select(fun f -> f.ToFileVersion).ToList()) correlationId
+                    match graceResult with
+                    | Ok graceReturnValue ->
+                        let filesToUpload = graceReturnValue.ReturnValue
+                        let errors = ConcurrentQueue<GraceError>()
+                        do! Parallel.ForEachAsync(filesToUpload, Constants.ParallelOptions, (fun uploadMetadata ct ->
+                            ValueTask(task {
+                                let fileVersion = (fileVersions.First(fun f -> f.Sha256Hash = uploadMetadata.Sha256Hash)).ToFileVersion
+                                let! x = Storage.SaveFileToObjectStorage fileVersion (uploadMetadata.BlobUriWithSasToken) correlationId
+                                match x with
+                                | Ok result -> ()
+                                | Error error -> errors.Enqueue(error)
+                            })))
 
-                    if errors.Count = 0 then
-                        return Ok (GraceReturnValue.Create true correlationId)
-                    else
-                        return Error (GraceError.Create (StorageError.getErrorMessage StorageError.FailedUploadingFilesToObjectStorage) correlationId)
-                | Error error -> return Error error
+                        if errors.Count = 0 then
+                            return Ok (GraceReturnValue.Create true correlationId)
+                        else
+                            return Error (GraceError.Create (StorageError.getErrorMessage StorageError.FailedUploadingFilesToObjectStorage) correlationId)
+                    | Error error -> return Error error
+                else
+                    return Ok (GraceReturnValue.Create true correlationId)
             | AWSS3 -> return Error (GraceError.Create (StorageError.getErrorMessage StorageError.NotImplemented) correlationId)
             | GoogleCloudStorage -> return Error (GraceError.Create (StorageError.getErrorMessage StorageError.NotImplemented) correlationId)
         }
@@ -831,7 +841,7 @@ module Services =
         newGraceStatus
 
     /// Gets the file name used to indicate to `grace watch` that updates are in progress from another Grace command, and that it should ignore them.
-    let getUpdateInProgressFileName() = getNativeFilePath (Path.Combine(Environment.GetEnvironmentVariable("temp"), $"UpdatesInProgress-{Current().BranchId}.txt"))
+    let getUpdateInProgressFileName() = getNativeFilePath (Path.Combine(Environment.GetEnvironmentVariable("temp"), $"grace-UpdatesInProgress.txt"))
 
     /// Updates the working directory to match the contents of new DirectoryVersions.
     ///
@@ -867,9 +877,11 @@ module Services =
 
             // Delete unnecessary directories.
             // Get DirectoryVersions for the subdirectories of the new DirectoryVersion.
+            logToAnsiConsole Colors.Verbose $"Services.CLI.fs: updateWorkingDirectory(): {Markup.Escape(serialize (updatedGraceStatus.Index.Select(fun x -> x.Value.DirectoryId)))}"
+            logToAnsiConsole Colors.Verbose $"Services.CLI.fs: updateWorkingDirectory(): {Markup.Escape(serialize (newDirectoryVersions.Select(fun x -> x.DirectoryId)))}"
             let subdirectoryVersions = newDirectoryVersion.Directories.Select(fun directoryId -> updatedGraceStatus.Index[directoryId])
             // Loop through the actual subdirectories on disk.
-            for subdirectoryInfo in directoryInfo.EnumerateDirectories().ToArray() do
+            for subdirectoryInfo in directoryInfo.EnumerateDirectories().ToArray() do 
                 // If we don't have this subdirectory listed in new parent DirectoryVersion, and it's a directory that we shouldn't ignore,
                 //    that means that it was deleted, and we should delete it from the working directory.
                 let relativeSubdirectoryPath = Path.GetRelativePath(Current().RootDirectory, subdirectoryInfo.FullName)

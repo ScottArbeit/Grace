@@ -90,13 +90,16 @@ module Branch =
             }
 
         override this.OnActivateAsync() =
+            let activateStartTime = getCurrentInstant()
             let stateManager = this.StateManager
-            log.LogInformation($"{getCurrentInstantExtended()} Activated BranchActor {host.Id}.")
             task {
                 let! retrievedDto = Storage.RetrieveState<BranchDto> stateManager dtoStateName
                 match retrievedDto with
                     | Some retrievedDto -> branchDto <- retrievedDto
                     | None -> branchDto <- BranchDto.Default
+                
+                let duration = getCurrentInstant().Minus(activateStartTime)
+                log.LogInformation("{CurrentInstant}: Activated {ActorType} {ActorId}. Retrieved from storage in {duration}ms.", getCurrentInstantExtended(), actorName, host.Id, duration.TotalMilliseconds.ToString("F3"))
             } :> Task
 
         member private this.SetMaintenanceReminder() =
@@ -115,22 +118,21 @@ module Branch =
             actorStartTime <- getCurrentInstant()
             logScope <- log.BeginScope("Actor {actorName}", actorName)
             currentCommand <- String.Empty
-            //log.LogInformation("{CurrentInstant}: Started {ActorName}.{MethodName} Id: {Id}.", getCurrentInstantExtended(), actorName, context.MethodName, this.Id.GetId())
+            log.LogTrace("{CurrentInstant}: Started {ActorName}.{MethodName} Id: {Id}.", getCurrentInstantExtended(), actorName, context.MethodName, this.Id)
             
             // This checks if the actor is still active, but in an undefined state, which will _almost_ never happen.
             // isDisposed is set when the actor is deleted, or if an error occurs where we're not sure of the state and want to reload from the database.
             if isDisposed then
                 this.OnActivateAsync().Wait()
                 isDisposed <- false
-            
             Task.CompletedTask
 
         override this.OnPostActorMethodAsync(context) =
-            let duration = getCurrentInstant().Minus(actorStartTime)
+            let durationμs = (getCurrentInstant().Minus(actorStartTime).TotalMilliseconds * 1000.0).ToString("F0")
             if String.IsNullOrEmpty(currentCommand) then
-                log.LogInformation("{CurrentInstant}: Finished {ActorName}.{MethodName}; Id: {Id}; Duration: {duration}ms.", $"{getCurrentInstantExtended(),-28}", actorName, context.MethodName, this.Id.GetId(), duration.TotalMilliseconds.ToString("F3"))
+                log.LogInformation("{CurrentInstant}: Finished {ActorName}.{MethodName}; Id: {Id}; Duration: {duration}μs.", getCurrentInstantExtended(), actorName, context.MethodName, this.Id, durationμs)
             else
-                log.LogInformation("{CurrentInstant}: Finished {ActorName}.{MethodName}; Command: {Command}; Id: {Id}; Duration: {duration}ms.", $"{getCurrentInstantExtended(),-28}", actorName, context.MethodName, currentCommand, this.Id.GetId(), duration.TotalMilliseconds.ToString("F3"))
+                log.LogInformation("{CurrentInstant}: Finished {ActorName}.{MethodName}; Command: {Command}; Id: {Id}; Duration: {duration}μs.", getCurrentInstantExtended(), actorName, context.MethodName, currentCommand, this.Id, durationμs)
             logScope.Dispose()
             Task.CompletedTask
 
@@ -164,7 +166,9 @@ module Branch =
                     returnValue.Properties.Add(nameof(BranchId), $"{branchDto.BranchId}")
                     returnValue.Properties.Add(nameof(BranchName), $"{branchDto.BranchName}")
                     returnValue.Properties.Add("ParentBranchId", $"{branchDto.ParentBranchId}")
-                    returnValue.Properties.Add("EventType", $"{discriminatedUnionFullNameToString branchEvent.Event}")
+                    returnValue.Properties.Add("EventType", $"{getDiscriminatedUnionFullName branchEvent.Event}")
+
+                    // If the event has a referenceId, add it to the return properties.
                     if branchEvent.Metadata.Properties.ContainsKey(nameof(ReferenceId)) then  
                         returnValue.Properties.Add(nameof(ReferenceId), branchEvent.Metadata.Properties[nameof(ReferenceId)])
                     return Ok returnValue
@@ -283,7 +287,7 @@ module Branch =
                     }
 
                 task {
-                    currentCommand <- discriminatedUnionCaseNameToString command
+                    currentCommand <- getDistributedUnionCaseName command
                     match! isValid command metadata with
                     | Ok command -> return! processCommand command metadata 
                     | Error error -> return Error error

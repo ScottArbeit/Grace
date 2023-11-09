@@ -39,16 +39,39 @@ module Combinators =
     let (>=>) s1 s2 =
         s1 >> bind s2
 
-
 module Utilities =
     /// Gets the current instant.
     let getCurrentInstant() = SystemClock.Instance.GetCurrentInstant()
 
-    /// Gets the current instant as a string in ExtendedIso format. Example: "2009-06-15T13:45:30.0000000Z". 
-    let getCurrentInstantExtended() = getCurrentInstant().ToString(InstantPattern.ExtendedIso.PatternText, CultureInfo.InvariantCulture)
+    /// Formats an instant as a string in ExtendedIso format.
+    ///
+    /// Example: "2019-06-15T13:45:30.9040833Z".
+    let formatInstantExtended (instant: Instant) = 
+        let instantString = instant.ToString(InstantPattern.ExtendedIso.PatternText, CultureInfo.InvariantCulture)
+        if instantString.Length = 28 then
+            instantString
+        else
+            // Pad the fractional seconds with zeros.
+            let zerosToAdd = 28 - instantString.Length
+            let extraZeros = String.replicate zerosToAdd "0"
+            $"{instantString.Substring(0, instantString.Length - 1)}{extraZeros}Z"
+            
+        //$"{instant.ToString(InstantPattern.ExtendedIso.PatternText, CultureInfo.InvariantCulture),-28}"
 
-    /// Gets the current instant as a string in General format. Example: "2009-06-15T13:45:30Z".
-    let getCurrentInstantGeneral() = getCurrentInstant().ToString(InstantPattern.General.PatternText, CultureInfo.InvariantCulture)
+    /// Gets the current instant as a string in ExtendedIso format.
+    ///
+    /// Example: "2019-06-15T13:45:30.9040833Z".
+    let getCurrentInstantExtended() = getCurrentInstant() |> formatInstantExtended
+
+    /// Formats an instant as a string in General format.
+    ///
+    /// Example: "2019-06-15T13:45:30Z".
+    let formatInstantGeneral (instant: Instant) = instant.ToString(InstantPattern.General.PatternText, CultureInfo.InvariantCulture)
+
+    /// Gets the current instant as a string in General format.
+    ///
+    /// Example: "2019-06-15T13:45:30Z".
+    let getCurrentInstantGeneral() = getCurrentInstant() |> formatInstantGeneral
 
     /// Converts an Instant to local time, and produces a string in short date/time format, using the CurrentUICulture.
     let instantToLocalTime (instant: Instant) = instant.ToDateTimeUtc().ToLocalTime().ToString("g", CultureInfo.CurrentUICulture)
@@ -56,8 +79,8 @@ module Utilities =
     /// Gets the current instant in local time as a string in short date/time format, using the CurrentUICulture.
     let getCurrentInstantLocal() = getCurrentInstant() |> instantToLocalTime
 
-    /// Logs the message to the console, with the current instant, thread ID, and message.
-    let logToConsole message = printfn $"{getCurrentInstantExtended(),-28} {Environment.CurrentManagedThreadId:X2} {message}"
+    /// Logs the message to the console, with the current instant and thread ID.
+    let logToConsole message = printfn $"{getCurrentInstantExtended()} {Environment.CurrentManagedThreadId:X2} {message}"
 
     /// Gets the first eight characters of a SHA256 hash.
     let getShortenedSha256Hash (sha256Hash: String) =
@@ -66,18 +89,18 @@ module Utilities =
         else
             String.Empty
 
-    /// Converts the type name and case name of a discriminated union to a string.
+    /// Converts both the type name and case name of a discriminated union to a string.
     ///
     /// Example: Animal.Dog -> "Animal.Dog"
-    let discriminatedUnionFullNameToString (x:'T) = 
+    let getDiscriminatedUnionFullName (x:'T) = 
         let discriminatedUnionType = typeof<'T>
         let (case, _ ) = FSharpValue.GetUnionFields(x, discriminatedUnionType)
         $"{discriminatedUnionType.Name}.{case.Name}"
 
-    /// Converts the case name of a discriminated union to a string.
+    /// Converts just the case name of a discriminated union to a string.
     ///
     /// Example: Animal.Dog -> "Dog"
-    let discriminatedUnionCaseNameToString (x:'T) = 
+    let getDistributedUnionCaseName (x:'T) = 
         let discriminatedUnionType = typeof<'T>
         let (case, _ ) = FSharpValue.GetUnionFields(x, discriminatedUnionType)
         $"{case.Name}"
@@ -97,21 +120,21 @@ module Utilities =
     /// Gets the cases of discriminated union for serialization.
     let GetKnownTypes<'T>() = typeof<'T>.GetNestedTypes(BindingFlags.Public ||| BindingFlags.NonPublic) |> Array.filter FSharpType.IsUnion
 
-    /// Serializes an object to JSON, using the Grace JsonSerializerOptions.
+    /// Serializes an object to JSON, using Grace's custom JsonSerializerOptions.
     let serialize<'T> item =
         JsonSerializer.Serialize<'T>(item, Constants.JsonSerializerOptions)
 
-    /// Serializes a stream to JSON, using the Grace JsonSerializerOptions.
+    /// Serializes a stream to JSON, using Grace's custom JsonSerializerOptions.
     let serializeAsync<'T> stream item =
         task {
             return! JsonSerializer.SerializeAsync<'T>(stream, item, Constants.JsonSerializerOptions)
         }
 
-    /// Deserializes a JSON string to a provided type, using the Grace JsonSerializerOptions.
+    /// Deserializes a JSON string to a provided type, using Grace's custom JsonSerializerOptions.
     let deserialize<'T> (s: string) =
         JsonSerializer.Deserialize<'T>(s, Constants.JsonSerializerOptions)
 
-    /// Deserializes a stream to a provided type, using the Grace JsonSerializerOptions.
+    /// Deserializes a stream to a provided type, using Grace's custom JsonSerializerOptions.
     let deserializeAsync<'T> stream =
         task {
             return! JsonSerializer.DeserializeAsync<'T>(stream, Constants.JsonSerializerOptions)
@@ -121,11 +144,9 @@ module Utilities =
     let jsonContent<'T> item =
         JsonContent.Create(item, options = Constants.JsonSerializerOptions)
 
-    /// <summary>
     /// Retrieves the localized version of a system resource string.
     ///
     /// Note: For now, it's hardcoded to return en_US. I'll fix this when we really implement localization.
-    /// </summary>
     let getLocalizedString stringName = 
         en_US.getString stringName
 
@@ -153,7 +174,7 @@ module Utilities =
         | PlatformID.Other -> true
         | _ -> false
 
-    /// Returns the given path, replacing any Windows-style backslash characters (\) with forward-slash (/).
+    /// Returns the given path, replacing any Windows-style backslash characters (\) with forward-slash characters (/).
     let normalizeFilePath (filePath: string) = filePath.Replace(@"\", "/")
 
     /// Switches "/" to "\" when we're running on Windows.
@@ -164,17 +185,24 @@ module Utilities =
             filePath
 
     /// Checks if a file is a binary file by scanning the first 8K for a 0x00 character; if it finds one, we assume the file is binary.
+    ///
+    /// This is the same algorithm used by Git.
     let isBinaryFile (stream: Stream) =
         task {
             let defaultBytesToCheck = 8 * 1024
             let nulChar = char(0)
             
+            // If the file is smaller than 8K, we'll check the whole file.
             let bytesToCheck = if stream.Length > defaultBytesToCheck then defaultBytesToCheck else int(stream.Length)
             
+            // Create a buffer to hold the part of the file we're going to check.
             let startingBytes = Array.zeroCreate<byte> bytesToCheck
+
+            // Read the file into the buffer.
             let! bytesRead = stream.ReadAsync(startingBytes, 0, bytesToCheck)
 
-            match startingBytes |> Seq.tryFind (fun b -> char(b) = nulChar) with
+            // Search for a 0x00 character.
+            match startingBytes |> Array.tryFind (fun b -> char(b) = nulChar) with
                 | Some nul -> return true
                 | None -> return false
         }
@@ -282,6 +310,18 @@ module Utilities =
 
     /// Alias for calling Task.FromResult() with the provided value.
     let returnTask<'T> value = Task.FromResult<'T>(value)
+
+    /// Monadic bind for the nested monad Task<Result<'T, 'TError>>.
+    let bindTaskResult (result: Task<Result<'T, 'TError>>) (f: 'T -> Task<Result<'U, 'TError>>) =
+        (task {
+            match! result with
+            | Ok returnValue -> return (f returnValue)
+            | Error error -> return Error error |> returnTask
+        }).Unwrap()
+
+    /// Custom monadic bind operator for the nested monad Task<Result<'T, 'TError>>.
+    let inline (>>=!) (result: Task<Result<'T, 'TError>>) (f: 'T -> Task<Result<'U, 'TError>>) =
+        bindTaskResult result f
 
     /// Computes text for the time between two instants. You can pass the two instants in any order.
     let elapsedBetween (instant1: Instant) (instant2: Instant) =

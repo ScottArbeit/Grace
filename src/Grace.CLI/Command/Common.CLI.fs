@@ -1,7 +1,8 @@
-﻿namespace Grace.Cli
+﻿namespace Grace.CLI
 
 open Grace.Shared
 open Grace.Shared.Client.Configuration
+open Grace.Shared.Resources.Text
 open Grace.Shared.Types
 open Grace.Shared.Utilities
 open Spectre.Console
@@ -11,9 +12,10 @@ open System.CommandLine.Parsing
 open System.Text.Json
 open System.Threading.Tasks
 open Spectre.Console.Rendering
+open Spectre.Console.Json
 
 module Common =
-
+            
     type ParameterBase() = 
         member val public CorrelationId: string = String.Empty with get, set
         member val public Json: bool = false with get, set
@@ -45,7 +47,7 @@ module Common =
     let isOutputFormat (outputFormat: OutputFormat) (parseResult: ParseResult) =
         if parseResult.HasOption(Options.output) then
             let format = parseResult.FindResultFor(Options.output).GetValueOrDefault<String>()
-            format = discriminatedUnionFullNameToString(outputFormat).Replace($"{nameof(OutputFormat)}.","")
+            format = getDiscriminatedUnionFullName(outputFormat).Replace($"{nameof(OutputFormat)}.","")
         else
             if outputFormat = OutputFormat.Normal then true else false
 
@@ -54,7 +56,12 @@ module Common =
     let normal parseResult = parseResult |> isOutputFormat Normal
     let silent parseResult = parseResult |> isOutputFormat Silent
     let verbose parseResult = parseResult |> isOutputFormat Verbose
-    let showOutput parseResult = parseResult |> normal || parseResult |> verbose
+    let hasOutput parseResult = parseResult |> normal || parseResult |> verbose
+
+    let startProgressTask showOutput (t: ProgressTask) = if showOutput then t.StartTask()
+    let setProgressTaskValue showOutput (value: float) (t: ProgressTask) = if showOutput then t.Value <- value
+    let incrementProgressTaskValue showOutput (value: float) (t: ProgressTask) = if showOutput then t.Increment(value)
+    let emptyTask = ProgressTask(0, "Empty progress task", 0.0, autoStart = false)
 
     /// Gets the correlationId parameter from the command line.
     let getCorrelationId (parseResult: ParseResult) = parseResult.FindResultFor(Options.correlationId).GetValueOrDefault<String>()
@@ -68,10 +75,12 @@ module Common =
             AnsiConsole.MarkupLine($"[{Colors.Verbose}]{escapeBrackets parseResult}[/]")
             AnsiConsole.WriteLine()
 
+    /// Prints AnsiConsole markup to the console.
     let writeMarkup (markup: IRenderable) =
         AnsiConsole.Write(markup)
         AnsiConsole.WriteLine()
 
+    /// Prints output to the console, depending on the output format.
     let renderOutput (parseResult: ParseResult) (result: GraceResult<'T>) =
         let outputFormat = discriminatedUnionFromString<OutputFormat>(parseResult.FindResultFor(Options.output).GetValueOrDefault<String>()).Value
         match result with
@@ -82,7 +91,7 @@ module Common =
             | Silent -> ()
             | Verbose -> AnsiConsole.MarkupLine($"""[{Colors.Verbose}]{Markup.Escape($"{graceReturnValue}")}[/]""")
                          AnsiConsole.WriteLine()
-            | Normal -> ()
+            | Normal -> ()      // Return unit because in the Normal case, we expect to print output within each command.
             0
         | Error error -> 
             let json = if error.Error.Contains("Stack trace") then
