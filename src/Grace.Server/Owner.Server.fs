@@ -19,16 +19,21 @@ open Grace.Shared.Types
 open Grace.Shared.Utilities
 open Microsoft.AspNetCore.Http
 open Microsoft.Azure.Cosmos
+open Microsoft.Extensions.Logging
 open NodaTime
 open System
 open System.Diagnostics
 open System.Linq
 open System.Threading.Tasks
 open Grace.Shared.Utilities
+open System.Reflection
+open Grace.Shared.Constants
 
 module Owner =
 
     type Validations<'T when 'T :> OwnerParameters> = 'T -> HttpContext -> Task<Result<unit, OwnerError>> array
+
+    let log = ApplicationContext.loggerFactory.CreateLogger("Owner.Server")
 
     let activitySource = new ActivitySource("Owner")
 
@@ -44,6 +49,9 @@ module Owner =
             try
                 use activity = activitySource.StartActivity("processCommand", ActivityKind.Server)
                 let! parameters = context |> parse<'T>
+                let! cmd = command parameters
+                let commandName = discriminatedUnionFullName cmd 
+
                 let validationResults = validations parameters context
                 let! validationsPassed = validationResults |> allPass
                 if validationsPassed then
@@ -51,16 +59,21 @@ module Owner =
                     match ownerId with
                     | Some ownerId ->
                         let actorProxy = getActorProxy context ownerId
-                        let! cmd = command parameters
                         match! actorProxy.Handle cmd (Services.createMetadata context) with
-                            | Ok graceReturn -> return! context |> result200Ok graceReturn
-                            | Error graceError -> return! context |> result400BadRequest {graceError with Properties = (getPropertiesAsDictionary parameters)}
-                    | None -> 
+                            | Ok graceReturn -> 
+                                log.Log(LogLevel.Information, "{currentInstant}: OwnerId: {ownerId}; command {commandName} succeeded.", getCurrentInstantExtended(), ownerId, commandName)
+                                return! context |> result200Ok graceReturn
+                            | Error graceError -> 
+                                log.Log(LogLevel.Information, "{currentInstant}: OwnerId: {ownerId}; command {commandName} had an error {graceError}.", getCurrentInstantExtended(), ownerId, commandName, graceError)
+                                return! context |> result400BadRequest {graceError with Properties = (getPropertiesAsDictionary parameters)}
+                    | None ->
+                        log.Log(LogLevel.Information, "{currentInstant}: Error: OwnerNotFound; OwnerId: {ownerId}; OwnerName: {ownerName}; command {commandName}.", getCurrentInstantExtended(), parameters.OwnerId, parameters.OwnerName, commandName)
                         return! context |> result400BadRequest (GraceError.CreateWithMetadata (OwnerError.getErrorMessage OwnerDoesNotExist) (getCorrelationId context) (getPropertiesAsDictionary parameters))
                 else
                     let! error = validationResults |> getFirstError
                     let graceError = GraceError.CreateWithMetadata (OwnerError.getErrorMessage error) (getCorrelationId context) (getPropertiesAsDictionary parameters)
                     graceError.Properties.Add("Path", context.Request.Path)
+                    log.Log(LogLevel.Information, "{currentInstant}: Validation failed; {graceError}.", getCurrentInstantExtended(), commandName, graceError)
                     return! context |> result400BadRequest graceError
             with ex ->
                 return! context |> result500ServerError (GraceError.Create $"{Utilities.createExceptionResponse ex}" (getCorrelationId context))
@@ -124,8 +137,9 @@ module Owner =
                        Owner.ownerIsNotDeleted parameters.OwnerId parameters.OwnerName OwnerIsDeleted
                        Owner.ownerNameDoesNotExist parameters.NewName OwnerNameAlreadyExists |]
 
+                let ownerCommand = OwnerCommand.SetName
                 let command (parameters: SetOwnerNameParameters) = 
-                    OwnerCommand.SetName (OwnerName parameters.NewName) |> returnTask
+                    ownerCommand (OwnerName parameters.NewName) |> returnTask
 
                 return! processCommand context validations command
             }

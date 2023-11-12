@@ -153,7 +153,8 @@ module GraceCommand =
                 //    logToConsole $"{xx.Name}; {xx.Description}"
 
                 // This section sets the display of the default value for these options in all commands in Grace CLI.
-                // Without setting it here, by default, we'd get something like "[default: thing-we-said-in-the-Option-definition] [default:e4def31b-4547-4f6b-9324-56eba666b4b2]" i.e. whatever the generated Guid value on create might be.
+                // Without setting the display values here, by default, we'd get something like "[default: thing-we-said-in-the-Option-definition] [default:e4def31b-4547-4f6b-9324-56eba666b4b2]" 
+                //   i.e. whatever the generated Guid value on create might be.
                 let optionsToUpdate = [
                     {optionName = "correlationId"; command = String.Empty; display = "new Guid"; displayOnCreate = "new Guid"}
                     {optionName = "branchId"; command = "Branch"; display = "current branch"; displayOnCreate = "new Guid"}

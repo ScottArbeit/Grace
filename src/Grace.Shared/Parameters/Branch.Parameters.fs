@@ -85,6 +85,12 @@ module Branch =
     type GetBranchParameters() = 
         inherit BranchQueryParameters()
 
+    type ListFilesParameters() =
+        inherit BranchQueryParameters()
+        member val public Pattern = String.Empty with get, set
+        member val public ShowDirectories = true with get, set
+        member val public ShowFiles = true with get, set
+
     /// Parameters for the /branch/switch endpoint.
     type SwitchParameters() = 
         inherit BranchQueryParameters()

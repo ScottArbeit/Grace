@@ -95,7 +95,7 @@ module Organization =
 
     /// Adjusts parameters to account for whether Id's or Name's were specified by the user.
     let normalizeIdsAndNames<'T when 'T :> CommonParameters> (parseResult: ParseResult) (parameters: 'T) =
-        // If the name was specified on the command line, but the id wasn't, drop the default assignment of the id.
+        // If the name was specified on the command line, but the id wasn't, then we should only send the name, and we set the id to String.Empty.
         if parseResult.CommandResult.FindResultFor(Options.ownerId).IsImplicit && not <| isNull(parseResult.CommandResult.FindResultFor(Options.ownerName)) && not <| parseResult.CommandResult.FindResultFor(Options.ownerName).IsImplicit then
             parameters.OwnerId <- String.Empty
         if parseResult.CommandResult.FindResultFor(Options.organizationId).IsImplicit && not <| isNull(parseResult.CommandResult.FindResultFor(Options.organizationName)) && not <| parseResult.CommandResult.FindResultFor(Options.organizationName).IsImplicit then

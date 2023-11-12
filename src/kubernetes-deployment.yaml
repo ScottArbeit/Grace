@@ -39,10 +39,10 @@ spec:
   ports:
   - name: http
     port: 5000
-    targetPort: 5000
+    targetPort: http-grace
   - name: https
     port: 5001
-    targetPort: 5001
+    targetPort: https-grace
   selector:
     app: grace-server
 
@@ -64,6 +64,9 @@ spec:
       labels:
         app: grace-server
       annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/path: /metrics
+        prometheus.io/port: "8080"
         dapr.io/enabled: "true"
         dapr.io/app-id: "grace-server"
         dapr.io/app-port: "5000"
@@ -86,6 +89,13 @@ spec:
       - name: grace-server
         image: scottarbeit/grace-server:latest 
         imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 5000
+          name: http-grace
+          protocol: TCP
+        - containerPort: 5001
+          name: https-grace
+          protocol: TCP
         volumeMounts:
         - name: secret-volume
           mountPath: /etc/certificates
@@ -130,6 +140,5 @@ spec:
             secretKeyRef:
               name: cosmoscontainername
               key: cosmoscontainername
-        ports:
-        - containerPort: 5000
-        - containerPort: 5001
+
+---

@@ -155,7 +155,7 @@ module Branch =
 
     /// Adjusts parameters to account for whether Id's or Name's were specified by the user.
     let normalizeIdsAndNames<'T when 'T :> CommonParameters> (parseResult: ParseResult) (parameters: 'T) =
-        // If the name was specified on the command line, but the id wasn't, drop the default assignment of the id.
+        // If the name was specified on the command line, but the id wasn't, then we should only send the name, and we set the id to String.Empty.
         if parseResult.CommandResult.FindResultFor(Options.ownerId).IsImplicit && not <| isNull(parseResult.CommandResult.FindResultFor(Options.ownerName)) && not <| parseResult.CommandResult.FindResultFor(Options.ownerName).IsImplicit then
             parameters.OwnerId <- String.Empty
         if parseResult.CommandResult.FindResultFor(Options.organizationId).IsImplicit && not <| isNull(parseResult.CommandResult.FindResultFor(Options.organizationName)) && not <| parseResult.CommandResult.FindResultFor(Options.organizationName).IsImplicit then
@@ -240,9 +240,53 @@ module Branch =
                 return result |> renderOutput parseResult
             })
 
+    type ListFilesParameters() =
+        inherit CommonParameters()
+        member val public Sha256Hash: Sha256Hash = String.Empty with get, set
+        member val public ReferenceId = String.Empty with get, set
+        member val public Pattern = String.Empty with get, set
+        member val public ShowDirectories = true with get, set
+        member val public ShowFiles = true with get, set
+    let private listFilesHandler (parseResult: ParseResult) (listFileParameters: ListFilesParameters) =
+        task {
+            try
+                if parseResult |> verbose then printParseResult parseResult
+                let validateIncomingParameters = CommonValidations parseResult listFileParameters
+                match validateIncomingParameters with
+                | Ok _ -> 
+                    let sdkParameters = Parameters.Branch.ListFilesParameters(
+                        RepositoryId = listFileParameters.RepositoryId,
+                        RepositoryName = listFileParameters.RepositoryName,
+                        OwnerId = listFileParameters.OwnerId,
+                        OwnerName = listFileParameters.OwnerName,
+                        OrganizationId = listFileParameters.OrganizationId,
+                        OrganizationName = listFileParameters.OrganizationName,
+                        BranchId = listFileParameters.BranchId,
+                        BranchName = listFileParameters.BranchName,
+                        Pattern = listFileParameters.Pattern,
+                        ShowDirectories = listFileParameters.ShowDirectories,
+                        ShowFiles = listFileParameters.ShowFiles,
+                        CorrelationId = listFileParameters.CorrelationId)
+                    if parseResult |> hasOutput then
+                        return! progress.Columns(progressColumns)
+                                .StartAsync(fun progressContext ->
+                                task {
+                                    let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
+                                    let! result = Branch.ListFiles(sdkParameters)
+                                    t0.Increment(100.0)
+                                    return result
+                                })
+                    else
+                        return! Branch.ListFiles(sdkParameters)
+
+                | Error error -> return Error error
+            with ex ->
+                return Error (GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
+        }
+
     type SetNameParameters() =
         inherit CommonParameters()
-        member val public NewName: string = String.Empty with get, set
+        member val public NewName = String.Empty with get, set
     let private setNameHandler (parseResult: ParseResult) (setNameParameters: SetNameParameters) =
         task {
             try
@@ -671,6 +715,8 @@ module Branch =
     type GetRefParameters() =
         inherit CommonParameters()
         member val public MaxCount = 50 with get, set
+
+    /// Executes the query to retrieve a set of references.
     let getReferenceHandler (parseResult: ParseResult) (parameters: GetRefParameters) (query: GetReferenceQuery) =
         task {
             try

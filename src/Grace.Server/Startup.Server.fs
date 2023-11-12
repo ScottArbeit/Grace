@@ -245,8 +245,10 @@ module Application =
             globalOpenTelemetryAttributes.Add("process.runtime.version", System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription)
             
             // Set up the ActorProxyFactory for the application.
-            let actorProxyOptions = ActorProxyOptions(JsonSerializerOptions = Constants.JsonSerializerOptions)  // DaprApiToken = Environment.GetEnvironmentVariable("DAPR_API_TOKEN")) (when we actually implement auth)
+            let actorProxyOptions = ActorProxyOptions()  // DaprApiToken = Environment.GetEnvironmentVariable("DAPR_API_TOKEN")) (when we actually implement auth)
             actorProxyOptions.HttpEndpoint <- $"{Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.DaprServerUri)}:{Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.DaprHttpPort)}"
+            actorProxyOptions.JsonSerializerOptions <- Constants.JsonSerializerOptions
+            actorProxyOptions.RequestTimeout <- TimeSpan.FromSeconds(10.0)
             logToConsole $"actorProxyOptions.HttpEndpoint: {actorProxyOptions.HttpEndpoint}"
             let actorProxyFactory = new ActorProxyFactory(actorProxyOptions)
             ApplicationContext.setActorProxyFactory actorProxyFactory
@@ -262,10 +264,11 @@ module Application =
             openApiInfo.Contact.Url <- Uri("https://gracevcs.com")
 
             services.AddOpenTelemetry()
-                .WithTracing(fun config -> 
+                .ConfigureResource(fun resourceBuilder -> resourceBuilder.AddService(Constants.GraceServerAppId) |> ignore)
+                .WithTracing(fun tracerProviderBuilder -> 
                     //if env.IsDevelopment() then
                     //    config.AddConsoleExporter(fun options -> options.Targets <- ConsoleExporterOutputTargets.Console) |> ignore
-                    config.AddSource(Constants.GraceServerAppId)
+                    tracerProviderBuilder.AddSource(Constants.GraceServerAppId)
                            .SetResourceBuilder(ResourceBuilder.CreateDefault()
                                 .AddService(Constants.GraceServerAppId)
                                 .AddTelemetrySdk()
@@ -273,9 +276,19 @@ module Application =
                            .AddAspNetCoreInstrumentation(fun options -> options.EnrichWithHttpRequest <- enrichTelemetry)
                            .AddHttpClientInstrumentation()
                            .AddAzureMonitorTraceExporter(fun options -> options.ConnectionString <- azureMonitorConnectionString) |> ignore)
+                .WithMetrics(fun meterProviderBuilder ->
+                    meterProviderBuilder.AddAspNetCoreInstrumentation()
+                          .AddHttpClientInstrumentation()
+                          .AddAzureMonitorMetricExporter(fun options -> options.ConnectionString <- azureMonitorConnectionString)
+                          .AddOtlpExporter()
+                          |> ignore)
                            //.StartWithHost()
                            //.AddZipkinExporter()
-                           |> ignore
+                .WithLogging().ConfigureResource(fun resourceBuilder -> 
+                    resourceBuilder.AddService(Constants.GraceServerAppId)
+                                   .AddTelemetrySdk()
+                                   .AddAttributes(globalOpenTelemetryAttributes) |> ignore)
+                |> ignore
             
             services.AddAuthentication() |> ignore
 

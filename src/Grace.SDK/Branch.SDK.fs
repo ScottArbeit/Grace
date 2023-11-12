@@ -147,6 +147,9 @@ type Branch() =
     static member public GetVersion(parameters: GetBranchVersionParameters) =
         postServer<GetBranchVersionParameters, IEnumerable<DirectoryId>>(parameters |> ensureCorrelationIdIsSet, $"branch/{nameof(Branch.GetVersion)}")
 
+    static member public ListFiles(parameters: ListFilesParameters) =
+        postServer<ListFilesParameters, IEnumerable<DirectoryVersion>>(parameters |> ensureCorrelationIdIsSet, $"branch/{nameof(Branch.ListFiles)}")
+
     /// Delete the branch.
     static member public Delete(parameters: DeleteBranchParameters) =
         postServer<DeleteBranchParameters, string>(parameters |> ensureCorrelationIdIsSet, $"branch/{nameof(Branch.Delete)}")

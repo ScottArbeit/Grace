@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: dapr-prometheus-server
+  namespace: dapr-monitoring
+spec:
+  selector:
+    app: dapr-prometheus-server
+  ports:
+    - protocol: TCP
+      port: 9090
+      targetPort: 9090
+      name: http-prometheus
+  type: LoadBalancer
