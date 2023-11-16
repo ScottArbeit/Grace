@@ -15,6 +15,9 @@
 		<NoWarn>67;NETSDK1057</NoWarn>
 		<Platforms>AnyCPU</Platforms>
 		<FSharpPreferNetFrameworkTools>False</FSharpPreferNetFrameworkTools>
+		<OtherFlags>--test:GraphBasedChecking</OtherFlags>
+		<OtherFlags>--test:ParallelOptimization</OtherFlags>
+		<OtherFlags>--test:ParallelIlxGen</OtherFlags>
 	</PropertyGroup>
 	<ItemGroup>
 		<Compile Include="Log.CLI.fs" />

@@ -10,6 +10,9 @@
 		<WarningsAsErrors>FS0025</WarningsAsErrors>
 		<NoWarn>NETSDK1057</NoWarn>
 		<Platforms>AnyCPU</Platforms>
+		<OtherFlags>--test:GraphBasedChecking</OtherFlags>
+		<OtherFlags>--test:ParallelOptimization</OtherFlags>
+		<OtherFlags>--test:ParallelIlxGen</OtherFlags>
 	</PropertyGroup>
 	<ItemGroup>
 		<Compile Include="Common.SDK.fs" />

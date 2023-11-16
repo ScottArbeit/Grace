@@ -9,6 +9,9 @@
 		<WarningsAsErrors>FS0025</WarningsAsErrors>
 		<NoWarn>1057</NoWarn>
 		<Platforms>AnyCPU;x64</Platforms>
+		<OtherFlags>--test:GraphBasedChecking</OtherFlags>
+		<OtherFlags>--test:ParallelOptimization</OtherFlags>
+		<OtherFlags>--test:ParallelIlxGen</OtherFlags>
 	</PropertyGroup>
 
 	<ItemGroup>

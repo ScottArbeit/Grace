@@ -6,6 +6,9 @@
 		<LangVersion>preview</LangVersion>
 		<NoWarn>1057</NoWarn>
 		<AccelerateBuildsInVisualStudio>true</AccelerateBuildsInVisualStudio>
+		<OtherFlags>--test:GraphBasedChecking</OtherFlags>
+		<OtherFlags>--test:ParallelOptimization</OtherFlags>
+		<OtherFlags>--test:ParallelIlxGen</OtherFlags>
 	</PropertyGroup>
 
 	<ItemGroup>

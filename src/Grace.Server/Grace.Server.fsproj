@@ -20,6 +20,9 @@
 		<Platforms>AnyCPU;x64</Platforms>
 		<UseAppHost>false</UseAppHost>
 		<PackageProjectUrl>https://github.com/ScottArbeit/Grace</PackageProjectUrl>
+		<OtherFlags>--test:GraphBasedChecking</OtherFlags>
+		<OtherFlags>--test:ParallelOptimization</OtherFlags>
+		<OtherFlags>--test:ParallelIlxGen</OtherFlags>
 	</PropertyGroup>
 	<ItemGroup>
 		<ContainerPort Include="5000" Type="tcp" />
