@@ -33,7 +33,7 @@ module DirectoryVersion =
     
     let activitySource = new ActivitySource("Branch")
 
-    let actorProxyFactory = ApplicationContext.ActorProxyFactory()
+    let actorProxyFactory = ApplicationContext.actorProxyFactory
 
     let getActorProxy (context: HttpContext) (directoryId: string) =
         let actorId = ActorId(directoryId)
@@ -95,7 +95,7 @@ module DirectoryVersion =
                 let command (parameters: CreateParameters) (context: HttpContext) =
                     task {
                         let actorId = GetActorId parameters.DirectoryVersion.DirectoryId
-                        let actorProxy = ApplicationContext.ActorProxyFactory().CreateActorProxy<IDirectoryVersionActor>(actorId, ActorName.DirectoryVersion)
+                        let actorProxy = ApplicationContext.actorProxyFactory.CreateActorProxy<IDirectoryVersionActor>(actorId, ActorName.DirectoryVersion)
                         let correlationId = context.Items[Constants.CorrelationIdHeaderKey] :?> string
                         return! actorProxy.Create parameters.DirectoryVersion correlationId
                     }
@@ -157,7 +157,7 @@ module DirectoryVersion =
                         let directoryVersions = List<DirectoryVersion>()
                         let directoryIds = context.Items[nameof(GetByDirectoryIdsParameters)] :?> List<DirectoryId>
                         for directoryId in directoryIds do
-                            let actorProxy = ApplicationContext.ActorProxyFactory().CreateActorProxy<IDirectoryVersionActor>(ActorId($"{directoryId}"), ActorName.DirectoryVersion)
+                            let actorProxy = ApplicationContext.actorProxyFactory.CreateActorProxy<IDirectoryVersionActor>(ActorId($"{directoryId}"), ActorName.DirectoryVersion)
                             let! directoryVersion = actorProxy.Get()
                             directoryVersions.Add(directoryVersion)
                         return directoryVersions
@@ -212,7 +212,7 @@ module DirectoryVersion =
                         do! Parallel.ForEachAsync(parameters.DirectoryVersions, Constants.ParallelOptions, (fun dv ct ->
                             ValueTask(task {
                                 let actorId = GetActorId dv.DirectoryId
-                                let actorProxy = ApplicationContext.ActorProxyFactory().CreateActorProxy<IDirectoryVersionActor>(actorId, ActorName.DirectoryVersion)
+                                let actorProxy = ApplicationContext.actorProxyFactory.CreateActorProxy<IDirectoryVersionActor>(actorId, ActorName.DirectoryVersion)
                                 let! exists = actorProxy.Exists()
                                 if not <| exists then
                                     let! createResult = actorProxy.Create dv correlationId

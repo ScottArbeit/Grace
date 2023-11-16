@@ -15,6 +15,7 @@
 		<DockerComposeProjectPath>..\docker-compose.dcproj</DockerComposeProjectPath>
 		<WarningsAsErrors>FS0025</WarningsAsErrors>
 		<GenerateDocumentationFile>false</GenerateDocumentationFile>
+		<AccelerateBuildsInVisualStudio>true</AccelerateBuildsInVisualStudio>
 		<NoWarn>NETSDK1057</NoWarn>
 		<Platforms>AnyCPU;x64</Platforms>
 		<UseAppHost>false</UseAppHost>
@@ -27,12 +28,12 @@
 		<ContainerPort Include="57256" Type="tcp" />
 	</ItemGroup>
 	<ItemGroup>
-		<Compile Include="CosmosSystemTextJsonSerializer.Server.fs" />
 		<Compile Include="ApplicationContext.Server.fs" />
 		<Compile Include="Services.Server.fs" />
 		<Compile Include="Validations.Server.fs" />
 		<Compile Include="Middleware\HttpSecurityHeaders.Middleware.fs" />
 		<Compile Include="Middleware\CorrelationId.Middleware.fs" />
+		<Compile Include="Middleware\ValidateIds.Middleware.fs" />
 		<Compile Include="Owner.Server.fs" />
 		<Compile Include="Organization.Server.fs" />
 		<Compile Include="Repository.Server.fs" />

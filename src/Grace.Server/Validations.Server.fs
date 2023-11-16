@@ -20,7 +20,7 @@ open ApplicationContext
 
 module Validations =
 
-    let actorProxyFactory = ApplicationContext.ActorProxyFactory()
+    let actorProxyFactory = ApplicationContext.actorProxyFactory
     let memoryCache = ApplicationContext.memoryCache
 
     module Owner =
@@ -39,7 +39,7 @@ module Validations =
                         let ownerActorProxy = actorProxyFactory.CreateActorProxy<IOwnerActor>(actorId, ActorName.Owner)
                         let! exists = ownerActorProxy.Exists()
                         if exists then
-                            use newCacheEntry = memoryCache.CreateEntry(ownerGuid, Value = null, SlidingExpiration = DefaultSlidingExpiration)
+                            use newCacheEntry = memoryCache.CreateEntry(ownerGuid, Value = null, SlidingExpiration = DefaultExpirationTime)
                             return Ok ()
                         else
                             return Error error
@@ -79,7 +79,7 @@ module Validations =
                             let ownerActorProxy = actorProxyFactory.CreateActorProxy<IOwnerActor>(actorId, ActorName.Owner)
                             let! exists = ownerActorProxy.Exists()
                             if exists then
-                                use newCacheEntry = memoryCache.CreateEntry(ownerGuid, Value = null, SlidingExpiration = DefaultSlidingExpiration)
+                                use newCacheEntry = memoryCache.CreateEntry(ownerGuid, Value = null, SlidingExpiration = DefaultExpirationTime)
                                 return Ok ()
                             else
                                 return Error error
@@ -161,7 +161,7 @@ module Validations =
                         let organizationActorProxy = actorProxyFactory.CreateActorProxy<IOrganizationActor>(actorId, ActorName.Organization)
                         let! exists = organizationActorProxy.Exists()
                         if exists then
-                            use newCacheEntry = memoryCache.CreateEntry(organizationGuid, Value = null, SlidingExpiration = DefaultSlidingExpiration)
+                            use newCacheEntry = memoryCache.CreateEntry(organizationGuid, Value = null, SlidingExpiration = DefaultExpirationTime)
                             return Ok ()
                         else
                             return Error error
@@ -213,7 +213,7 @@ module Validations =
                             let organizationActorProxy = actorProxyFactory.CreateActorProxy<IOrganizationActor>(actorId, ActorName.Organization)
                             let! exists = organizationActorProxy.Exists()
                             if exists then
-                                use newCacheEntry = memoryCache.CreateEntry(organizationGuid, Value = null, SlidingExpiration = DefaultSlidingExpiration)
+                                use newCacheEntry = memoryCache.CreateEntry(organizationGuid, Value = null, SlidingExpiration = DefaultExpirationTime)
                                 return Ok ()
                             else
                                 return Error error
@@ -278,7 +278,7 @@ module Validations =
                         let repositoryActorProxy = actorProxyFactory.CreateActorProxy<IRepositoryActor>(actorId, ActorName.Repository)
                         let! exists = repositoryActorProxy.Exists()
                         if exists then
-                            use newCacheEntry = memoryCache.CreateEntry(repositoryGuid, Value = null, SlidingExpiration = DefaultSlidingExpiration)
+                            use newCacheEntry = memoryCache.CreateEntry(repositoryGuid, Value = null, SlidingExpiration = DefaultExpirationTime)
                             return Ok ()
                         else
                             return Error error
@@ -313,7 +313,7 @@ module Validations =
                             let repositoryActorProxy = actorProxyFactory.CreateActorProxy<IRepositoryActor>(actorId, ActorName.Repository)
                             let! exists = repositoryActorProxy.Exists()
                             if exists then
-                                use newCacheEntry = memoryCache.CreateEntry(repositoryGuid, Value = null, SlidingExpiration = DefaultSlidingExpiration)
+                                use newCacheEntry = memoryCache.CreateEntry(repositoryGuid, Value = null, SlidingExpiration = DefaultExpirationTime)
                                 return Ok ()
                             else
                                 return Error error
@@ -376,7 +376,7 @@ module Validations =
                         let branchActorProxy = actorProxyFactory.CreateActorProxy<IBranchActor>(actorId, ActorName.Branch)
                         let! exists = branchActorProxy.Exists()
                         if exists then
-                            use newCacheEntry = memoryCache.CreateEntry(branchGuid, Value = null, SlidingExpiration = DefaultSlidingExpiration)
+                            use newCacheEntry = memoryCache.CreateEntry(branchGuid, Value = null, SlidingExpiration = DefaultExpirationTime)
                             return Ok ()
                         else
                             return Error error
@@ -419,7 +419,7 @@ module Validations =
                                 let branchActorProxy = actorProxyFactory.CreateActorProxy<IBranchActor>(actorId, ActorName.Branch)
                                 let! exists = branchActorProxy.Exists()
                                 if exists then
-                                    use newCacheEntry = memoryCache.CreateEntry(branchGuid, Value = null, SlidingExpiration = DefaultSlidingExpiration)
+                                    use newCacheEntry = memoryCache.CreateEntry(branchGuid, Value = null, SlidingExpiration = DefaultExpirationTime)
                                     return Ok ()
                                 else
                                     return Error error
@@ -491,10 +491,10 @@ module Validations =
                     return Ok ()
                 else
                     let actorId = DirectoryVersion.GetActorId(directoryId)
-                    let directoryVersionActorProxy = ApplicationContext.ActorProxyFactory().CreateActorProxy<IDirectoryVersionActor>(actorId, ActorName.DirectoryVersion)
+                    let directoryVersionActorProxy = ApplicationContext.actorProxyFactory.CreateActorProxy<IDirectoryVersionActor>(actorId, ActorName.DirectoryVersion)
                     let! exists = directoryVersionActorProxy.Exists()
                     if exists then
-                        use newCacheEntry = memoryCache.CreateEntry(directoryId, Value = null, SlidingExpiration = DefaultSlidingExpiration)
+                        use newCacheEntry = memoryCache.CreateEntry(directoryId, Value = null, SlidingExpiration = DefaultExpirationTime)
                         return Ok ()
                     else
                         return Error error

@@ -3,6 +3,7 @@ namespace Grace.Server.Middleware
 open Microsoft.AspNetCore.Http
 open Microsoft.Extensions.Primitives
 open System.Collections.Generic
+open Microsoft.Extensions.DependencyInjection
 
 type HttpSecurityHeadersMiddleware(next: RequestDelegate) =
 
@@ -22,7 +23,7 @@ type HttpSecurityHeadersMiddleware(next: RequestDelegate) =
 // On the way in...
 #if DEBUG
         let middlewareTraceHeader = context.Request.Headers["X-MiddlewareTraceIn"];
-        context.Request.Headers["X-MiddlewareTraceIn"] <- $"{middlewareTraceHeader}{this.GetType().Name} --> ";
+        context.Request.Headers["X-MiddlewareTraceIn"] <- $"{middlewareTraceHeader}{nameof(HttpSecurityHeadersMiddleware)} --> ";
 #endif
 
         let headers = context.Response.Headers
@@ -45,7 +46,7 @@ type HttpSecurityHeadersMiddleware(next: RequestDelegate) =
 
 #if DEBUG
         let middlewareTraceOutHeader = context.Request.Headers["X-MiddlewareTraceOut"];
-        context.Request.Headers["X-MiddlewareTraceOut"] <- $"{middlewareTraceOutHeader}{this.GetType().Name} --> ";
+        context.Request.Headers["X-MiddlewareTraceOut"] <- $"{middlewareTraceOutHeader}{nameof(HttpSecurityHeadersMiddleware)} --> ";
 #endif
 
         nextTask

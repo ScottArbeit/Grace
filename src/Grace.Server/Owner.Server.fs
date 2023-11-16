@@ -37,7 +37,7 @@ module Owner =
 
     let activitySource = new ActivitySource("Owner")
 
-    let actorProxyFactory = ApplicationContext.ActorProxyFactory()
+    let actorProxyFactory = ApplicationContext.actorProxyFactory
 
     let getActorProxy (context: HttpContext) (ownerId: string) =
         let actorId = ActorId(ownerId)
@@ -89,7 +89,6 @@ module Owner =
                 if validationsPassed then
                     match! resolveOwnerId parameters.OwnerId parameters.OwnerName with
                     | Some ownerId ->
-                        context.Items.Add(nameof(OwnerId), OwnerId ownerId)
                         let actorProxy = getActorProxy context ownerId
                         let! queryResult = query context maxCount actorProxy
                         return! context |> result200Ok (GraceReturnValue.Create queryResult (getCorrelationId context))

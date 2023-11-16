@@ -42,7 +42,7 @@ module Repository =
 
     let activitySource = new ActivitySource("Repository")
 
-    let actorProxyFactory = ApplicationContext.ActorProxyFactory()
+    let actorProxyFactory = ApplicationContext.actorProxyFactory
 
     let getActorProxy (context: HttpContext) (repositoryId: string) =
         let actorId = ActorId(repositoryId)
@@ -101,7 +101,6 @@ module Repository =
                 if validationsPassed then
                     match! resolveRepositoryId parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName with
                     | Some repositoryId ->
-                        context.Items.Add(nameof(RepositoryId), RepositoryId repositoryId)
                         let actorProxy = getActorProxy context repositoryId
                         let! queryResult = query context maxCount actorProxy
                         return! context |> result200Ok (GraceReturnValue.Create queryResult (getCorrelationId context))
@@ -408,7 +407,7 @@ module Repository =
 
                     let query (context: HttpContext) (maxCount: int) (actorProxy: IRepositoryActor) =
                         task {
-                            let repositoryId = context.Items[nameof(RepositoryId)] :?> RepositoryId
+                            let repositoryId = RepositoryId(context.Items[nameof(RepositoryId)] :?> String)
                             let includeDeleted = context.Items["IncludeDeleted"] :?> bool
                             return! getBranches repositoryId maxCount includeDeleted
                         }

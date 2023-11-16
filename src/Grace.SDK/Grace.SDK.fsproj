@@ -5,6 +5,7 @@
 		<LangVersion>preview</LangVersion>
 		<PublishReadyToRun>true</PublishReadyToRun>
 		<GenerateDocumentationFile>true</GenerateDocumentationFile>
+		<AccelerateBuildsInVisualStudio>true</AccelerateBuildsInVisualStudio>
 		<WarnOn>3390;$(WarnOn)</WarnOn>
 		<WarningsAsErrors>FS0025</WarningsAsErrors>
 		<NoWarn>NETSDK1057</NoWarn>

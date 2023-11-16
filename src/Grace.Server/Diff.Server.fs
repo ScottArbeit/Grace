@@ -32,7 +32,7 @@ module Diff =
 
     let activitySource = new ActivitySource("Repository")
 
-    let actorProxyFactory = ApplicationContext.ActorProxyFactory()
+    let actorProxyFactory = ApplicationContext.actorProxyFactory
 
     let getActorProxy directoryId1 directoryId2 (context: HttpContext) =
         let actorId = Diff.GetActorId directoryId1 directoryId2

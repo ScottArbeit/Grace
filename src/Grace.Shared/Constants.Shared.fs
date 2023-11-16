@@ -221,8 +221,8 @@ module Constants =
     /// The name of the inter-process communication file used by grace watch to share status with other invocations of Grace.
     let IpcFileName = "graceWatchStatus.json"
 
-    /// The default sliding expiration time for a cache entry.
-    let DefaultSlidingExpiration = TimeSpan.FromMinutes(5.0)
+    /// The default expiration time for a cache entry.
+    let DefaultExpirationTime = TimeSpan.FromMinutes(5.0)
 
 module Results =
     let Ok = 0

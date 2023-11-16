@@ -10,6 +10,7 @@
 		<Version>0.1</Version>
 		<Description>The command-line interface for Grace.</Description>
 		<GenerateDocumentationFile>true</GenerateDocumentationFile>
+		<AccelerateBuildsInVisualStudio>true</AccelerateBuildsInVisualStudio>
 		<WarningsAsErrors>FS0025</WarningsAsErrors>
 		<NoWarn>67;NETSDK1057</NoWarn>
 		<Platforms>AnyCPU</Platforms>

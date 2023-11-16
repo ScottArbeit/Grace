@@ -6,6 +6,7 @@
 		<Version>0.1</Version>
 		<Description>The shared core module for Grace.</Description>
 		<GenerateDocumentationFile>true</GenerateDocumentationFile>
+		<AccelerateBuildsInVisualStudio>true</AccelerateBuildsInVisualStudio>
 		<NoWarn>67;1057</NoWarn>
 		<WarningsAsErrors>FS0025</WarningsAsErrors>
 		<Platforms>AnyCPU;x64</Platforms>

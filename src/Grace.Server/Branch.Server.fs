@@ -33,7 +33,7 @@ module Branch =
     
     let activitySource = new ActivitySource("Branch")
 
-    let actorProxyFactory = ApplicationContext.ActorProxyFactory()
+    let actorProxyFactory = ApplicationContext.actorProxyFactory
 
     let getActorProxy (context: HttpContext) (branchId: string) =
         let actorId = ActorId($"{branchId}")
@@ -133,7 +133,7 @@ module Branch =
                         match! (resolveBranchId parameters.RepositoryId parameters.ParentBranchId parameters.ParentBranchName) with
                         | Some parentBranchId -> 
                             let parentBranchActorId = ActorId(parentBranchId)
-                            let parentBranchActorProxy = ApplicationContext.ActorProxyFactory().CreateActorProxy<IBranchActor>(parentBranchActorId, ActorName.Branch)
+                            let parentBranchActorProxy = ApplicationContext.actorProxyFactory.CreateActorProxy<IBranchActor>(parentBranchActorId, ActorName.Branch)
                             let! parentBranch = parentBranchActorProxy.Get()
                             return Create(
                                 (Guid.Parse(parameters.BranchId)), 
@@ -451,7 +451,7 @@ module Branch =
                     let query (context: HttpContext) maxCount (actorProxy: IBranchActor) =
                         task {
                             let referenceActorId = ActorId(context.Items["ReferenceId"] :?> string)
-                            let referenceActorProxy = ApplicationContext.ActorProxyFactory().CreateActorProxy<IReferenceActor>(referenceActorId, ActorName.Reference)
+                            let referenceActorProxy = ApplicationContext.actorProxyFactory.CreateActorProxy<IReferenceActor>(referenceActorId, ActorName.Reference)
                             let! referenceDto = referenceActorProxy.Get()
                             return referenceDto
                         }
@@ -521,7 +521,7 @@ module Branch =
                             do! Parallel.ForEachAsync([0..sortedRefs.Count - 2], Constants.ParallelOptions, (fun i ct ->
                                 ValueTask(task {
                                     let diffActorId = Diff.GetActorId sortedRefs[i].DirectoryId sortedRefs[i + 1].DirectoryId
-                                    let diffActorProxy = ApplicationContext.ActorProxyFactory().CreateActorProxy<IDiffActor>(diffActorId, ActorName.Diff)
+                                    let diffActorProxy = ApplicationContext.actorProxyFactory.CreateActorProxy<IDiffActor>(diffActorId, ActorName.Diff)
                                     let! diffDto = diffActorProxy.GetDiff()
                                     diffDtos.Add(diffDto)
                                 })
@@ -715,7 +715,7 @@ module Branch =
 
                             if rootDirectoryVersion.DirectoryId <> DirectoryVersion.Default.DirectoryId then
                                 let directoryVersionActorId = ActorId($"{rootDirectoryVersion.DirectoryId}")
-                                let directoryVersionActorProxy = ApplicationContext.ActorProxyFactory().CreateActorProxy<IDirectoryVersionActor>(directoryVersionActorId, ActorName.DirectoryVersion)
+                                let directoryVersionActorProxy = ApplicationContext.actorProxyFactory.CreateActorProxy<IDirectoryVersionActor>(directoryVersionActorId, ActorName.DirectoryVersion)
                                 let! directoryVersions = directoryVersionActorProxy.GetDirectoryVersionsRecursive()
                                 let directoryIds = directoryVersions.Select(fun dv -> dv.DirectoryId).ToList()
                                 return directoryIds
@@ -736,7 +736,7 @@ module Branch =
                         elif not <| String.IsNullOrEmpty(parameters.ReferenceId) then
                             logToConsole $"In Branch.GetVersion: parameters.ReferenceId: {parameters.ReferenceId}"
                             let referenceActorId = Reference.GetActorId(parameters.ReferenceId)
-                            let referenceActorProxy = ApplicationContext.ActorProxyFactory().CreateActorProxy<IReferenceActor>(referenceActorId, ActorName.Reference)
+                            let referenceActorProxy = ApplicationContext.actorProxyFactory.CreateActorProxy<IReferenceActor>(referenceActorId, ActorName.Reference)
                             let! referenceDto = referenceActorProxy.Get()
                             logToConsole $"referenceDto.ReferenceId: {referenceDto.ReferenceId}"
                             parameters.BranchId <- $"{referenceDto.BranchId}"

@@ -6,6 +6,7 @@ open Grace.Shared.Utilities
 open Microsoft.AspNetCore.Http
 open System
 
+/// Checks the incoming request for an X-Correlation-Id header. If there's no CorrelationId header, it generates one and adds it to the response headers.
 type CorrelationIdMiddleware(next: RequestDelegate) =
 
     member this.Invoke(context: HttpContext) =
@@ -14,7 +15,7 @@ type CorrelationIdMiddleware(next: RequestDelegate) =
 // On the way in...
 #if DEBUG
         let middlewareTraceHeader = context.Request.Headers["X-MiddlewareTraceIn"];
-        context.Request.Headers["X-MiddlewareTraceIn"] <- $"{middlewareTraceHeader}{this.GetType().Name} --> ";
+        context.Request.Headers["X-MiddlewareTraceIn"] <- $"{middlewareTraceHeader}{nameof(CorrelationIdMiddleware)} --> ";
 #endif
 
         let correlationId = 
@@ -28,11 +29,11 @@ type CorrelationIdMiddleware(next: RequestDelegate) =
 // -----------------------------------------------------------------------------------------------------
 // Pass control to next middleware instance...
         let nextTask = next.Invoke(context);
+
 // -----------------------------------------------------------------------------------------------------
 // On the way out...
-
 #if DEBUG
         let middlewareTraceOutHeader = context.Request.Headers["X-MiddlewareTraceOut"];
-        context.Request.Headers["X-MiddlewareTraceOut"] <- $"{middlewareTraceOutHeader}{this.GetType().Name} --> ";
+        context.Request.Headers["X-MiddlewareTraceOut"] <- $"{middlewareTraceOutHeader}{nameof(CorrelationIdMiddleware)} --> ";
 #endif
         nextTask

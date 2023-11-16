@@ -10,12 +10,17 @@ open Grace.Shared
 open Grace.Shared.Utilities
 open Grace.Server
 open Grace.Server.Middleware
+open Grace.Shared.Converters
+open Grace.Shared.Parameters
+open Grace.Shared.Types
 open Microsoft.AspNetCore.Builder
 open Microsoft.AspNetCore.Hosting
 open Microsoft.AspNetCore.Http
+open Microsoft.AspNetCore.HttpLogging
 open Microsoft.AspNetCore.Mvc
 open Asp.Versioning
 open Asp.Versioning.ApiExplorer
+open Microsoft.Extensions.Configuration
 open Microsoft.Extensions.DependencyInjection
 open Microsoft.Extensions.Hosting
 open Microsoft.Extensions.Hosting.Internal
@@ -37,9 +42,6 @@ open System.Collections.Generic
 open System.Diagnostics
 open System.Text
 open System.IO
-open Microsoft.Extensions.Configuration
-open Grace.Shared.Converters
-open Grace.Shared.Types
 
 module Application =
     type FunctionThat_AddsOrUpdatesFile = DirectoryVersion -> FileVersion -> DirectoryVersion
@@ -72,51 +74,51 @@ module Application =
                 GET [
                 ]
                 POST [
-                    route "/checkpoint" Branch.Checkpoint
-                    route "/commit" Branch.Commit
-                    route "/create" Branch.Create
-                    route "/delete" Branch.Delete
-                    route "/enableCheckpoint" Branch.EnableCheckpoint
-                    route "/enableCommit" Branch.EnableCommit
-                    route "/enablePromotion" Branch.EnablePromotion
-                    route "/enableSave" Branch.EnableSave
-                    route "/enableTag" Branch.EnableTag
-                    route "/get" Branch.Get
-                    route "/getCheckpoints" Branch.GetCheckpoints
-                    route "/getCommits" Branch.GetCommits
-                    route "/getDiffsForReferenceType" Branch.GetDiffsForReferenceType
-                    route "/getParentBranch" Branch.GetParentBranch
-                    route "/getPromotions" Branch.GetPromotions
-                    route "/getReference" Branch.GetReference
-                    route "/getReferences" Branch.GetReferences
-                    route "/getSaves" Branch.GetSaves
-                    route "/getTags" (Branch.GetTags >=> mustBeLoggedIn)
-                    route "/getVersion" Branch.GetVersion
-                    route "/promote" Branch.Promote
-                    route "/rebase" Branch.Rebase
-                    route "/save" Branch.Save
-                    route "/tag" Branch.Tag
+                    route "/checkpoint" Branch.Checkpoint |> addMetadata typeof<Branch.CreateReferenceParameters>
+                    route "/commit" Branch.Commit |> addMetadata typeof<Branch.CreateReferenceParameters>
+                    route "/create" Branch.Create |> addMetadata typeof<Branch.CreateBranchParameters>
+                    route "/delete" Branch.Delete |> addMetadata typeof<Branch.DeleteBranchParameters>
+                    route "/enableCheckpoint" Branch.EnableCheckpoint |> addMetadata typeof<Branch.EnableFeatureParameters>
+                    route "/enableCommit" Branch.EnableCommit |> addMetadata typeof<Branch.EnableFeatureParameters>
+                    route "/enablePromotion" Branch.EnablePromotion |> addMetadata typeof<Branch.EnableFeatureParameters>
+                    route "/enableSave" Branch.EnableSave |> addMetadata typeof<Branch.EnableFeatureParameters>
+                    route "/enableTag" Branch.EnableTag |> addMetadata typeof<Branch.EnableFeatureParameters>
+                    route "/get" Branch.Get |> addMetadata typeof<Branch.GetBranchParameters>
+                    route "/getCheckpoints" Branch.GetCheckpoints |> addMetadata typeof<Branch.GetBranchParameters>
+                    route "/getCommits" Branch.GetCommits |> addMetadata typeof<Branch.GetBranchParameters>
+                    route "/getDiffsForReferenceType" Branch.GetDiffsForReferenceType |> addMetadata typeof<Branch.GetDiffsForReferenceTypeParameters>
+                    route "/getParentBranch" Branch.GetParentBranch |> addMetadata typeof<Branch.GetBranchParameters>
+                    route "/getPromotions" Branch.GetPromotions |> addMetadata typeof<Branch.GetReferenceParameters>
+                    route "/getReference" Branch.GetReference |> addMetadata typeof<Branch.GetReferenceParameters>
+                    route "/getReferences" Branch.GetReferences |> addMetadata typeof<Branch.GetReferencesParameters>
+                    route "/getSaves" Branch.GetSaves |> addMetadata typeof<Branch.GetReferenceParameters>
+                    route "/getTags" (Branch.GetTags >=> mustBeLoggedIn) |> addMetadata typeof<Branch.GetReferenceParameters>
+                    route "/getVersion" Branch.GetVersion |> addMetadata typeof<Branch.GetBranchVersionParameters>
+                    route "/promote" Branch.Promote |> addMetadata typeof<Branch.CreateReferenceParameters>
+                    route "/rebase" Branch.Rebase |> addMetadata typeof<Branch.RebaseParameters>
+                    route "/save" Branch.Save |> addMetadata typeof<Branch.CreateReferenceParameters>
+                    route "/tag" Branch.Tag |> addMetadata typeof<Branch.CreateReferenceParameters>
                 ]
             ]
             subRoute "/diff" [
                 GET [
                 ]
                 POST [
-                    route "/getDiff" Diff.GetDiff
-                    route "/getDiffBySha256Hash" Diff.GetDiffBySha256Hash
-                    route "/populate" Diff.Populate
+                    route "/getDiff" Diff.GetDiff |> addMetadata typeof<Diff.GetDiffParameters>
+                    route "/getDiffBySha256Hash" Diff.GetDiffBySha256Hash |> addMetadata typeof<Diff.GetDiffBySha256HashParameters>
+                    route "/populate" Diff.Populate |> addMetadata typeof<Diff.PopulateParameters>
                 ]
             ]
             subRoute "/directory" [
                 GET [
                 ]
                 POST [
-                    route "/create" DirectoryVersion.Create
-                    route "/get" DirectoryVersion.Get
-                    route "/getByDirectoryIds" DirectoryVersion.GetByDirectoryIds
-                    route "/getBySha256Hash" DirectoryVersion.GetBySha256Hash
-                    route "/getDirectoryVersionsRecursive" DirectoryVersion.GetDirectoryVersionsRecursive
-                    route "/saveDirectoryVersions" DirectoryVersion.SaveDirectoryVersions
+                    route "/create" DirectoryVersion.Create |> addMetadata typeof<Directory.CreateParameters>
+                    route "/get" DirectoryVersion.Get |> addMetadata typeof<Directory.GetParameters>
+                    route "/getByDirectoryIds" DirectoryVersion.GetByDirectoryIds |> addMetadata typeof<Directory.GetByDirectoryIdsParameters>
+                    route "/getBySha256Hash" DirectoryVersion.GetBySha256Hash |> addMetadata typeof<Directory.GetBySha256HashParameters>
+                    route "/getDirectoryVersionsRecursive" DirectoryVersion.GetDirectoryVersionsRecursive |> addMetadata typeof<Directory.GetParameters>
+                    route "/saveDirectoryVersions" DirectoryVersion.SaveDirectoryVersions |> addMetadata typeof<Directory.SaveDirectoryVersionsParameters>
                 ]
             ]
             subRoute "/notifications" [
@@ -128,28 +130,28 @@ module Application =
             ]
             subRoute "/organization" [
                 POST [
-                    route "/create" Organization.Create
-                    route "/delete" Organization.Delete
-                    route "/get" Organization.Get
-                    route "/listRepositories" Organization.ListRepositories
-                    route "/setDescription" Organization.SetDescription
-                    route "/setName" Organization.SetName
-                    route "/setSearchVisibility" Organization.SetSearchVisibility
-                    route "/setType" Organization.SetType
-                    route "/undelete" Organization.Undelete
+                    route "/create" Organization.Create |> addMetadata typeof<Organization.CreateOrganizationParameters>
+                    route "/delete" Organization.Delete |> addMetadata typeof<Organization.DeleteOrganizationParameters>
+                    route "/get" Organization.Get |> addMetadata typeof<Organization.GetOrganizationParameters>
+                    route "/listRepositories" Organization.ListRepositories |> addMetadata typeof<Organization.GetOrganizationParameters>
+                    route "/setDescription" Organization.SetDescription |> addMetadata typeof<Organization.SetOrganizationDescriptionParameters>
+                    route "/setName" Organization.SetName |> addMetadata typeof<Organization.SetOrganizationNameParameters>
+                    route "/setSearchVisibility" Organization.SetSearchVisibility |> addMetadata typeof<Organization.SetOrganizationSearchVisibilityParameters>
+                    route "/setType" Organization.SetType |> addMetadata typeof<Organization.SetOrganizationTypeParameters>
+                    route "/undelete" Organization.Undelete |> addMetadata typeof<Organization.UndeleteOrganizationParameters>
                 ]
             ]
             subRoute "/owner" [
                 POST [
-                    route "/create" Owner.Create
-                    route "/delete" Owner.Delete
-                    route "/get" Owner.Get
-                    route "/listOrganizations" Owner.ListOrganizations
-                    route "/setDescription" Owner.SetDescription
-                    route "/setName" Owner.SetName                   
-                    route "/setSearchVisibility" Owner.SetSearchVisibility
-                    route "/setType" Owner.SetType        
-                    route "/undelete" Owner.Undelete
+                    route "/create" Owner.Create |> addMetadata typeof<Owner.CreateOwnerParameters>
+                    route "/delete" Owner.Delete |> addMetadata typeof<Owner.DeleteOwnerParameters>
+                    route "/get" Owner.Get |> addMetadata typeof<Owner.GetOwnerParameters>
+                    route "/listOrganizations" Owner.ListOrganizations |> addMetadata typeof<Owner.GetOwnerParameters>
+                    route "/setDescription" Owner.SetDescription |> addMetadata typeof<Owner.SetOwnerDescriptionParameters>
+                    route "/setName" Owner.SetName |> addMetadata typeof<Owner.SetOwnerNameParameters>
+                    route "/setSearchVisibility" Owner.SetSearchVisibility |> addMetadata typeof<Owner.SetOwnerSearchVisibilityParameters>
+                    route "/setType" Owner.SetType |> addMetadata typeof<Owner.SetOwnerTypeParameters>
+                    route "/undelete" Owner.Undelete |> addMetadata typeof<Owner.UndeleteOwnerParameters>
                 ]
             ]
             subRoute "/repository" [
@@ -157,24 +159,24 @@ module Application =
                     
                 ]
                 POST [
-                    route "/create" Repository.Create
-                    route "/delete" Repository.Delete
-                    route "/enableSingleStepPromotion" Repository.EnableSingleStepPromotion
-                    route "/enableComplexPromotion" Repository.EnableComplexPromotion
-                    route "/exists" Repository.Exists
-                    route "/get" Repository.Get
-                    route "/getBranches" Repository.GetBranches
-                    route "/getBranchesByBranchId" Repository.GetBranchesByBranchId
-                    route "/getReferencesByReferenceId" Repository.GetReferencesByReferenceId
-                    route "/isEmpty" Repository.IsEmpty
-                    route "/setCheckpointDays" Repository.SetCheckpointDays
-                    route "/setDefaultServerApiVersion" Repository.SetDefaultServerApiVersion
-                    route "/setDescription" Repository.SetDescription
-                    route "/setRecordSaves" Repository.SetRecordSaves
-                    route "/setSaveDays" Repository.SetSaveDays
-                    route "/setStatus" Repository.SetStatus
-                    route "/setVisibility" Repository.SetVisibility
-                    route "/undelete" Repository.Undelete
+                    route "/create" Repository.Create |> addMetadata typeof<Repository.CreateRepositoryParameters>
+                    route "/delete" Repository.Delete |> addMetadata typeof<Repository.DeleteRepositoryParameters>
+                    //route "/enableSingleStepPromotion" Repository.EnableSingleStepPromotion |> addMetadata typeof<Repository.EnablePromotionTypeParameters>
+                    //route "/enableComplexPromotion" Repository.EnableComplexPromotion |> addMetadata typeof<Repository.EnablePromotionTypeParameters>
+                    route "/exists" Repository.Exists |> addMetadata typeof<Repository.RepositoryParameters>
+                    route "/get" Repository.Get |> addMetadata typeof<Repository.RepositoryParameters>
+                    route "/getBranches" Repository.GetBranches |> addMetadata typeof<Repository.GetBranchesParameters>
+                    route "/getBranchesByBranchId" Repository.GetBranchesByBranchId |> addMetadata typeof<Repository.GetBranchesByBranchIdParameters>
+                    route "/getReferencesByReferenceId" Repository.GetReferencesByReferenceId |> addMetadata typeof<Repository.GetReferencesByReferenceIdParameters>
+                    route "/isEmpty" Repository.IsEmpty |> addMetadata typeof<Repository.IsEmptyParameters>
+                    route "/setCheckpointDays" Repository.SetCheckpointDays |> addMetadata typeof<Repository.SetCheckpointDaysParameters>
+                    route "/setDefaultServerApiVersion" Repository.SetDefaultServerApiVersion |> addMetadata typeof<Repository.SetDefaultServerApiVersionParameters>
+                    route "/setDescription" Repository.SetDescription |> addMetadata typeof<Repository.SetRepositoryDescriptionParameters>
+                    route "/setRecordSaves" Repository.SetRecordSaves |> addMetadata typeof<Repository.RecordSavesParameters>
+                    route "/setSaveDays" Repository.SetSaveDays |> addMetadata typeof<Repository.SetSaveDaysParameters>
+                    route "/setStatus" Repository.SetStatus |> addMetadata typeof<Repository.SetRepositoryStatusParameters>
+                    route "/setVisibility" Repository.SetVisibility |> addMetadata typeof<Repository.SetRepositoryVisibilityParameters>
+                    route "/undelete" Repository.Undelete |> addMetadata typeof<Repository.UndeleteRepositoryParameters>
                 ]
             ]
             subRoute "/storage" [
@@ -228,10 +230,9 @@ module Application =
             //| _ -> activity.AddTag("eventName", eventName) |> ignore
 
         member _.ConfigureServices (services: IServiceCollection) =
-            let n = Constants.JsonSerializerOptions.Converters.Count
             Constants.JsonSerializerOptions.Converters.Add(BranchDtoConverter())
-            //logToConsole $"Was {n}, now {Constants.JsonSerializerOptions.Converters.Count}."
 
+            // Get the hosting environment.
             let env = (services.First(fun service -> service.ImplementationType = Type.GetType("IWebHostEnvironment")).ImplementationInstance) :?> HostingEnvironment
 
             let azureMonitorConnectionString = Environment.GetEnvironmentVariable("AZURE_MONITOR_CONNECTION_STRING")
@@ -263,11 +264,10 @@ module Application =
             openApiInfo.Contact.Email <- "scott@scottarbeit.com"
             openApiInfo.Contact.Url <- Uri("https://gracevcs.com")
 
+            // Telemetry configuration
             services.AddOpenTelemetry()
                 .ConfigureResource(fun resourceBuilder -> resourceBuilder.AddService(Constants.GraceServerAppId) |> ignore)
-                .WithTracing(fun tracerProviderBuilder -> 
-                    //if env.IsDevelopment() then
-                    //    config.AddConsoleExporter(fun options -> options.Targets <- ConsoleExporterOutputTargets.Console) |> ignore
+                .WithTracing(fun tracerProviderBuilder ->
                     tracerProviderBuilder.AddSource(Constants.GraceServerAppId)
                            .SetResourceBuilder(ResourceBuilder.CreateDefault()
                                 .AddService(Constants.GraceServerAppId)
@@ -299,8 +299,12 @@ module Application =
                     //.AddSingleton(Constants.JsonSerializerOptions)
                     // Next line adds the Json serializer that Giraffe uses internally
                     .AddSingleton<Json.ISerializer>(SystemTextJson.Serializer(Constants.JsonSerializerOptions))
-                    .AddW3CLogging(fun options -> options.FileName <- "Grace.Server.log-"
-                                                  options.LogDirectory <- Path.Combine(Environment.GetEnvironmentVariable("TEMP"), "Grace.Server.Logs"))
+                    .AddHttpLogging(fun loggingOptions ->
+                        loggingOptions.CombineLogs <- true
+                        loggingOptions.LoggingFields <- HttpLoggingFields.All)
+                    .AddW3CLogging(fun options -> 
+                        options.FileName <- "Grace.Server.log-"
+                        options.LogDirectory <- Path.Combine(Environment.GetEnvironmentVariable("TEMP"), "Grace.Server.Logs"))
                     .AddSingleton<ActorProxyOptions>(actorProxyOptions)
                     .AddSingleton<IActorProxyFactory>(actorProxyFactory)
                     .AddDaprClient(fun daprClientBuilder ->
@@ -379,12 +383,13 @@ module Application =
             AppContext.SetSwitch("Azure.Experimental.EnableActivitySource", true)
 
             app.UseW3CLogging()
-               .UseMiddleware<CorrelationIdMiddleware>()
-               .UseMiddleware<HttpSecurityHeadersMiddleware>()
                .UseAuthentication()
                .UseStatusCodePages()
-               .UseRouting()
                .UseStaticFiles()
+               .UseRouting()
+               .UseMiddleware<CorrelationIdMiddleware>()
+               .UseMiddleware<HttpSecurityHeadersMiddleware>()
+               .UseMiddleware<ValidateIdsMiddleware>()
                .UseEndpoints(fun endpointBuilder ->
                    // Add Dapr actor endpoints
                    endpointBuilder.MapActorsHandlers() |> ignore
@@ -397,6 +402,9 @@ module Application =
 
                    // Add SignalR hub endpoints
                    endpointBuilder.MapHub<Notifications.NotificationHub>("/notifications") |> ignore)
+
+               // If we get here, we didn't find a route.
                .UseGiraffe(notFoundHandler)
 
+            // Set the global ApplicationContext.
             ApplicationContext.Set.Wait()

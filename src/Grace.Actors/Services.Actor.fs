@@ -174,11 +174,7 @@ module Services =
                     return Uri("http://localhost:3500")
         }
 
-    /// <summary>
     /// Gets the OwnerId by returning OwnerId if provided, or searching by OwnerName.
-    /// </summary>
-    /// <param name="ownerId">The OwnerId provided by the user</param>
-    /// <param name="ownerName">The OwnerName provided by the user</param>
     let resolveOwnerId (ownerId: string) (ownerName: string) =
         task {
             if not <| String.IsNullOrEmpty(ownerId) then
@@ -208,12 +204,8 @@ module Services =
                         else return None
                     | MongoDB -> return None
         }
-
-    /// <summary>
+ 
     /// Gets the OrganizationId by either returning OrganizationId if provided, or searching by OrganizationName.
-    /// </summary>
-    /// <param name="organizationId">The OrganizationId to find</param>
-    /// <param name="organizationName">The OrganizationName to find</param>
     let resolveOrganizationId (ownerId: string) (ownerName: string) (organizationId: string) (organizationName: string) =
         task {
             match! resolveOwnerId ownerId ownerName with

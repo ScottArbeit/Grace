@@ -29,13 +29,10 @@ module ApplicationContext =
     let mutable private configuration: IConfiguration = null
     let Configuration(): IConfiguration = configuration
 
-    let mutable private actorProxyFactory: IActorProxyFactory = null
-    let mutable private actorStateStorageProvider: ActorStateStorageProvider = ActorStateStorageProvider.Unknown
+    let mutable actorProxyFactory: IActorProxyFactory = null
+    let mutable actorStateStorageProvider: ActorStateStorageProvider = ActorStateStorageProvider.Unknown
     let mutable loggerFactory: ILoggerFactory = null
     let mutable memoryCache: IMemoryCache = null
-
-    let ActorProxyFactory() = actorProxyFactory
-    let ActorStateStorageProvider() = actorStateStorageProvider
 
     /// <summary>
     /// Sets the Application global configuration.
@@ -79,7 +76,7 @@ module ApplicationContext =
             let mutable isReady = false
 
             // Wait for the Dapr gRPC port to be ready.
-            let mutable gRPCPort: int = 50001
+            let mutable gRPCPort: int = 50001   // This is Dapr's default gRPC port.
             let grpcPortString = Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.DaprGrpcPort)
             Int32.TryParse(grpcPortString, &gRPCPort) |> ignore
             let mutable counter = 0
@@ -112,6 +109,7 @@ module ApplicationContext =
                 EnableContentResponseOnWrite = false,
                 LimitToEndpoint = true,
                 Serializer = new CosmosJsonSerializer(Constants.JsonSerializerOptions))
+
 #if DEBUG
             // The CosmosDB emulator uses a self-signed certificate, and, by default, HttpClient will refuse
             //   to connect over https: if the certificate can't be traced back to a root.

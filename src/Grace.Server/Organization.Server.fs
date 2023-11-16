@@ -27,7 +27,7 @@ module Organization =
 
     let activitySource = new ActivitySource("Organization")
 
-    let actorProxyFactory = ApplicationContext.ActorProxyFactory()
+    let actorProxyFactory = ApplicationContext.actorProxyFactory
 
     let getActorProxy (context: HttpContext) (organizationId: string) =
         let actorId = ActorId(organizationId)
@@ -72,7 +72,6 @@ module Organization =
                 if validationsPassed then
                     match! resolveOrganizationId parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName with
                     | Some organizationId ->
-                        context.Items.Add(nameof(OrganizationId), OrganizationId organizationId)
                         let actorProxy = getActorProxy context organizationId
                         let! queryResult = query context maxCount actorProxy
                         return! context |> result200Ok (GraceReturnValue.Create queryResult (getCorrelationId context))
