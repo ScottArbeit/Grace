@@ -15,6 +15,7 @@ open System.Net
 open System.Net.Http
 open System.Net.Http.Json
 open System.Net.Security
+open System.Text
 open System.Text.Json
 open System.Threading.Tasks
 
@@ -129,8 +130,14 @@ module Common =
                     if response.StatusCode = HttpStatusCode.NotFound then
                         return Error (GraceError.Create $"Server endpoint {route} not found." parameters.CorrelationId)
                     else
-                        let! graceError = response.Content.ReadFromJsonAsync<GraceError>(Constants.JsonSerializerOptions)
-                        return Error graceError |> enhance ("ServerElapsedTime", $"{(endTime - startTime).TotalMilliseconds:F3} ms")
+                        use! responseStream = response.Content.ReadAsStreamAsync()
+                        use memoryStream = new MemoryStream(int responseStream.Length)
+                        do! responseStream.CopyToAsync(memoryStream)
+                        use reader = new StreamReader(memoryStream, Encoding.UTF8)
+                        let! s = reader.ReadToEndAsync()
+                        let graceError = GraceError.Create s parameters.CorrelationId
+                        //let! graceError = response.Content.ReadFromJsonAsync<GraceError>(Constants.JsonSerializerOptions)
+                        return Error graceError |> enhance ("ServerElapsedTime", $"{(endTime - startTime).TotalMilliseconds:F3} ms") |> enhance ("StatusCode", $"{response.StatusCode}")
             with ex ->
                 let exceptionResponse = Utilities.createExceptionResponse ex
                 return Error (GraceError.Create ($"{exceptionResponse}") parameters.CorrelationId)

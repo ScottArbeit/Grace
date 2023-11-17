@@ -198,7 +198,13 @@ module Organization =
                 let validateIncomingParameters = CommonValidations (parseResult, setNameParameters)
                 match validateIncomingParameters with
                 | Ok _ -> 
-                    let parameters = Parameters.Organization.SetOrganizationNameParameters(OrganizationId = setNameParameters.OrganizationId, OrganizationName = setNameParameters.OrganizationName, NewName = setNameParameters.NewName, CorrelationId = setNameParameters.CorrelationId)
+                    let parameters = Parameters.Organization.SetOrganizationNameParameters(
+                        OwnerId = setNameParameters.OwnerId, 
+                        OwnerName = setNameParameters.OwnerName,
+                        OrganizationId = setNameParameters.OrganizationId, 
+                        OrganizationName = setNameParameters.OrganizationName, 
+                        NewName = setNameParameters.NewName, 
+                        CorrelationId = setNameParameters.CorrelationId)
                     if parseResult |> hasOutput then
                         return! progress.Columns(progressColumns)
                                 .StartAsync(fun progressContext ->

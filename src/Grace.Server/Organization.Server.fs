@@ -20,6 +20,7 @@ open Microsoft.AspNetCore.Http
 open System
 open System.Threading.Tasks
 open System.Diagnostics
+open Grace.Shared.Services
 
 module Organization =
 
@@ -58,6 +59,7 @@ module Organization =
                     let! error = validationResults |> getFirstError
                     let graceError = GraceError.CreateWithMetadata (OrganizationError.getErrorMessage error) (getCorrelationId context) (getPropertiesAsDictionary parameters)
                     graceError.Properties.Add("Path", context.Request.Path)
+                    graceError.Properties.Add("Error", OrganizationError.getErrorMessage error)
                     return! context |> result400BadRequest graceError
             with ex ->
                 return! context |> result500ServerError (GraceError.Create $"{Utilities.createExceptionResponse ex}" (getCorrelationId context))
@@ -118,9 +120,12 @@ module Organization =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let validations (parameters: SetOrganizationNameParameters) (context: HttpContext) =
-                    [| String.isNotEmpty parameters.OrganizationId OrganizationIdIsRequired
+                    [| Guid.isValidAndNotEmpty parameters.OwnerId InvalidOwnerId
+                       String.isValidGraceName parameters.OwnerName InvalidOwnerName
+                       Input.eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
                        Guid.isValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId
                        String.isValidGraceName parameters.OrganizationName InvalidOrganizationName
+                       Input.eitherIdOrNameMustBeProvided parameters.OrganizationId parameters.OrganizationName EitherOrganizationIdOrOrganizationNameRequired
                        String.isNotEmpty parameters.NewName OrganizationNameIsRequired
                        String.isValidGraceName parameters.NewName InvalidOrganizationName
                        Organization.organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName OrganizationDoesNotExist
@@ -137,10 +142,12 @@ module Organization =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let validations (parameters: SetOrganizationTypeParameters) (context: HttpContext) =
-                    [| String.isNotEmpty parameters.OrganizationId OrganizationIdIsRequired
+                    [| Guid.isValidAndNotEmpty parameters.OwnerId InvalidOwnerId
+                       String.isValidGraceName parameters.OwnerName InvalidOwnerName
+                       Input.eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
                        Guid.isValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId
                        String.isValidGraceName parameters.OrganizationName InvalidOrganizationName
-                       String.isNotEmpty parameters.OrganizationType OrganizationTypeIsRequired
+                       Input.eitherIdOrNameMustBeProvided parameters.OrganizationId parameters.OrganizationName EitherOrganizationIdOrOrganizationNameRequired
                        DiscriminatedUnion.isMemberOf<OrganizationType, OrganizationError> parameters.OrganizationType InvalidOrganizationType
                        Organization.organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName OrganizationDoesNotExist
                        Organization.organizationIsNotDeleted parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName OrganizationIsDeleted |]
@@ -155,9 +162,12 @@ module Organization =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let validations (parameters: SetOrganizationSearchVisibilityParameters) (context: HttpContext) =
-                    [| String.isNotEmpty parameters.OrganizationId OrganizationIdIsRequired
+                    [| Guid.isValidAndNotEmpty parameters.OwnerId InvalidOwnerId
+                       String.isValidGraceName parameters.OwnerName InvalidOwnerName
+                       Input.eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
                        Guid.isValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId
                        String.isValidGraceName parameters.OrganizationName InvalidOrganizationName
+                       Input.eitherIdOrNameMustBeProvided parameters.OrganizationId parameters.OrganizationName EitherOrganizationIdOrOrganizationNameRequired
                        String.isNotEmpty parameters.SearchVisibility SearchVisibilityIsRequired
                        DiscriminatedUnion.isMemberOf<SearchVisibility, OrganizationError> parameters.SearchVisibility InvalidSearchVisibility
                        Organization.organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName OrganizationDoesNotExist
@@ -174,8 +184,12 @@ module Organization =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let validations (parameters: SetOrganizationDescriptionParameters) (context: HttpContext) =
-                    [| String.isNotEmpty parameters.OrganizationId OrganizationIdIsRequired
+                    [| Guid.isValidAndNotEmpty parameters.OwnerId InvalidOwnerId
+                       String.isValidGraceName parameters.OwnerName InvalidOwnerName
+                       Input.eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
                        Guid.isValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId
+                       String.isValidGraceName parameters.OrganizationName InvalidOrganizationName
+                       Input.eitherIdOrNameMustBeProvided parameters.OrganizationId parameters.OrganizationName EitherOrganizationIdOrOrganizationNameRequired
                        String.isNotEmpty parameters.Description OrganizationDescriptionIsRequired
                        Organization.organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName OrganizationDoesNotExist
                        Organization.organizationIsNotDeleted parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName OrganizationIsDeleted |]
@@ -191,9 +205,12 @@ module Organization =
             task {
                 try
                     let validations (parameters: ListRepositoriesParameters) (context: HttpContext) =
-                        [| String.isNotEmpty parameters.OrganizationId OrganizationIdIsRequired
+                        [| Guid.isValidAndNotEmpty parameters.OwnerId InvalidOwnerId
+                           String.isValidGraceName parameters.OwnerName InvalidOwnerName
+                           Input.eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
                            Guid.isValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId
                            String.isValidGraceName parameters.OrganizationName InvalidOrganizationName
+                           Input.eitherIdOrNameMustBeProvided parameters.OrganizationId parameters.OrganizationName EitherOrganizationIdOrOrganizationNameRequired
                            Organization.organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName OrganizationDoesNotExist
                            Organization.organizationIsNotDeleted parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName OrganizationIsDeleted |]
 
@@ -214,9 +231,12 @@ module Organization =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let validations (parameters: DeleteOrganizationParameters) (context: HttpContext) =
-                    [| String.isNotEmpty parameters.OrganizationId OrganizationIdIsRequired
+                    [| Guid.isValidAndNotEmpty parameters.OwnerId InvalidOwnerId
+                       String.isValidGraceName parameters.OwnerName InvalidOwnerName
+                       Input.eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
                        Guid.isValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId
                        String.isValidGraceName parameters.OrganizationName InvalidOrganizationName
+                       Input.eitherIdOrNameMustBeProvided parameters.OrganizationId parameters.OrganizationName EitherOrganizationIdOrOrganizationNameRequired
                        String.isNotEmpty parameters.DeleteReason DeleteReasonIsRequired
                        Organization.organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName OrganizationDoesNotExist
                        Organization.organizationIsNotDeleted parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName OrganizationIsDeleted |]
@@ -231,9 +251,12 @@ module Organization =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let validations (parameters: OrganizationParameters) (context: HttpContext) =
-                    [| String.isNotEmpty parameters.OrganizationId OrganizationIdIsRequired
+                    [| Guid.isValidAndNotEmpty parameters.OwnerId InvalidOwnerId
+                       String.isValidGraceName parameters.OwnerName InvalidOwnerName
+                       Input.eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
                        Guid.isValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId
                        String.isValidGraceName parameters.OrganizationName InvalidOrganizationName
+                       Input.eitherIdOrNameMustBeProvided parameters.OrganizationId parameters.OrganizationName EitherOrganizationIdOrOrganizationNameRequired
                        Input.eitherIdOrNameMustBeProvided parameters.OrganizationId parameters.OrganizationName EitherOrganizationIdOrOrganizationNameRequired
                        Organization.organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName OrganizationDoesNotExist
                        Organization.organizationIsDeleted parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName OrganizationIsNotDeleted |]
@@ -252,10 +275,10 @@ module Organization =
                         [| Guid.isValidAndNotEmpty parameters.OwnerId InvalidOwnerId
                            String.isValidGraceName parameters.OwnerName InvalidOwnerName
                            Input.eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
-                           Owner.ownerExists parameters.OwnerId parameters.OwnerName OwnerDoesNotExist
-                           String.isNotEmpty parameters.OrganizationId OrganizationIdIsRequired
                            Guid.isValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId
                            String.isValidGraceName parameters.OrganizationName InvalidOrganizationName
+                           Input.eitherIdOrNameMustBeProvided parameters.OrganizationId parameters.OrganizationName EitherOrganizationIdOrOrganizationNameRequired
+                           Owner.ownerExists parameters.OwnerId parameters.OwnerName OwnerDoesNotExist
                            Organization.organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName OrganizationDoesNotExist
                            Organization.organizationIsNotDeleted parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName OrganizationIsDeleted |]
 

@@ -97,7 +97,7 @@ module Common =
             let json = if error.Error.Contains("Stack trace") then
                                 logToConsole $"Error: {error.Error}"
                                 try
-                                    let exceptionResponse = JsonSerializer.Deserialize<ExceptionResponse>(error.Error, Constants.JsonSerializerOptions)
+                                    let exceptionResponse = deserialize<ExceptionResponse> error.Error
                                     sprintf "%A" exceptionResponse
                                 with ex -> 
                                     sprintf "%A" error.Error
@@ -106,7 +106,7 @@ module Common =
 
             let errorText = if error.Error.Contains("Stack trace") then 
                                 try
-                                    let exceptionResponse = JsonSerializer.Deserialize<ExceptionResponse>(error.Error, Constants.JsonSerializerOptions)
+                                    let exceptionResponse = deserialize<ExceptionResponse> error.Error
                                     sprintf "%A" exceptionResponse
                                 with ex -> 
                                     sprintf "%A" error.Error
@@ -117,7 +117,8 @@ module Common =
             | Json -> AnsiConsole.WriteLine($"{Markup.Escape(json)}")
             | Minimal -> AnsiConsole.MarkupLine($"[{Colors.Error}]{Markup.Escape(errorText)}[/]")
             | Silent -> ()
-            | Verbose -> AnsiConsole.MarkupLine($"[{Colors.Verbose}]{Markup.Escape(json)}[/]")
+            | Verbose -> AnsiConsole.MarkupLine($"[{Colors.Error}]{Markup.Escape(errorText)}[/]")
+                         AnsiConsole.MarkupLine($"[{Colors.Verbose}]{Markup.Escape(json)}[/]")
                          AnsiConsole.WriteLine()
                          //AnsiConsole.MarkupLine($"[{Colors.Error}]{Markup.Escape(errorText)}[/]")
             | Normal -> AnsiConsole.MarkupLine($"[{Colors.Error}]{Markup.Escape(errorText)}[/]")
