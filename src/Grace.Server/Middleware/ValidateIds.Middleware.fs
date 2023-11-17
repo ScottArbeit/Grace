@@ -23,6 +23,32 @@ open System.Reflection
 open System.Text
 open System.Threading.Tasks
 open Giraffe.Core
+open System.Text.Json
+
+/// Holds the PropertyInfo for each Entity Id and Name property.
+type EntityProperties =
+    {
+        OwnerId: PropertyInfo option
+        OwnerName: PropertyInfo option
+        OrganizationId: PropertyInfo option
+        OrganizationName: PropertyInfo option
+        RepositoryId: PropertyInfo option
+        RepositoryName: PropertyInfo option
+        BranchId: PropertyInfo option
+        BranchName: PropertyInfo option
+    }
+
+    static member Default =
+        {
+            OwnerId = None
+            OwnerName = None
+            OrganizationId = None
+            OrganizationName = None
+            RepositoryId = None
+            RepositoryName = None
+            BranchId = None
+            BranchName = None
+        }
 
 /// Examines the body of the incoming request to validate the Ids and Names in the request, and ensure that we know the right Ids. Having the Ids already figured out saves work for the rest of the pipeline.
 ///
@@ -37,7 +63,7 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
     let typeLookup = ConcurrentDictionary<String, Type>()
 
     /// Holds the property info for each parameter type.
-    let propertyLookup = ConcurrentDictionary<Type, PropertyInfo[]>()
+    let propertyLookup = ConcurrentDictionary<Type, EntityProperties>()
 
     /// Gets the parameter type for the endpoint from the endpoint metadata created in Startup.Server.fs.
     let getBodyType (context: HttpContext) = 
@@ -45,16 +71,18 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
         if not <| path.StartsWith("/healthz") && not <| path.StartsWith("/actors") && not <| path.StartsWith("/dapr") then
             let endpoint = context.GetEndpoint()
             if isNull(endpoint) then
-                log.LogTrace("Path: {context.Request.Path}; Endpoint: null.", context.Request.Path)
+                log.LogDebug("Path: {context.Request.Path}; Endpoint: null.", context.Request.Path)
                 None
             elif endpoint.Metadata.Count > 0 then
                 //logToConsole $"Path: {context.Request.Path}; endpoint.Metadata.Count: {endpoint.Metadata.Count}."
                 //endpoint.Metadata |> Seq.iter (fun m -> logToConsole (sprintf "%A: %A" m (m.GetType())))
-                let requestBodyType = endpoint.Metadata |> Seq.tryFind (fun m -> m.GetType().FullName = "System.RuntimeType") |> Option.map (fun m -> m :?> Type)
-                if requestBodyType |> Option.isSome then log.LogTrace("Path: {context.Request.Path}; Endpoint: {endpoint.DisplayName}; RequestBodyType: {requestBodyType.Value.Name}.", context.Request.Path, endpoint.DisplayName, requestBodyType.Value.Name)
+                let requestBodyType = endpoint.Metadata 
+                                        |> Seq.tryFind (fun m -> m.GetType().FullName = "System.RuntimeType") 
+                                        |> Option.map (fun m -> m :?> Type)
+                if requestBodyType |> Option.isSome then log.LogDebug("Path: {context.Request.Path}; Endpoint: {endpoint.DisplayName}; RequestBodyType: {requestBodyType.Value.Name}.", context.Request.Path, endpoint.DisplayName, requestBodyType.Value.Name)
                 requestBodyType
             else
-                log.LogTrace("Path: {context.Request.Path}; endpoint.Metadata.Count = 0.", context.Request.Path)
+                log.LogDebug("Path: {context.Request.Path}; endpoint.Metadata.Count = 0.", context.Request.Path)
                 None            
         else
             None
@@ -70,8 +98,11 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
             context.Request.Headers["X-MiddlewareTraceIn"] <- $"{middlewareTraceHeader}{nameof(ValidateIdsMiddleware)} --> ";
 #endif
 
-            let path = context.Request.Path
+            let path = context.Request.Path.ToString()
             let mutable requestBodyType: Type = null
+            let mutable graceIds = GraceIds.Default
+            let mutable notFound = false
+            let mutable badRequest = false
 
             // If we haven't seen this endpoint before, get the parameter type for the endpoint.
             if not <| typeLookup.TryGetValue(path, &requestBodyType) then
@@ -88,22 +119,35 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
                 context.Request.EnableBuffering()
                 match! context |> parseType requestBodyType with
                 | Some requestBody ->
-                    let mutable properties = Array.Empty<PropertyInfo>()
-                    if not <| propertyLookup.TryGetValue(requestBodyType, &properties) then
-                        properties <- requestBodyType.GetProperties(BindingFlags.Public ||| BindingFlags.Instance)
-                        propertyLookup.TryAdd(requestBodyType, properties) |> ignore
+                    // Get the available entity properties for this endpoint from the dictionary.
+                    //   If we don't already have them, figure out which properties are available for this type, and cache that.
+                    let mutable entityProperties: EntityProperties = EntityProperties.Default
+                    if not <| propertyLookup.TryGetValue(requestBodyType, &entityProperties) then
+                        // We haven't seen this request body type before, so we need to figure out which properties are available.
 
-                    let sb = StringBuilder()
+                        // Get all of the properties on the request body type.
+                        let properties = requestBodyType.GetProperties(BindingFlags.Public ||| BindingFlags.Instance)
+                        let findProperty name = properties |> Seq.tryFind(fun p -> p.Name = name)
+
+                        // Check if these indivudal properties exist on the request body type.
+                        entityProperties <-
+                            {
+                                OwnerId =           findProperty (nameof(OwnerId))
+                                OwnerName =         findProperty (nameof(OwnerName))
+                                OrganizationId =    findProperty (nameof(OrganizationId))
+                                OrganizationName =  findProperty (nameof(OrganizationName))
+                                RepositoryId =      findProperty (nameof(RepositoryId))
+                                RepositoryName =    findProperty (nameof(RepositoryName))
+                                BranchId =          findProperty (nameof(BranchId))
+                                BranchName =        findProperty (nameof(BranchName))
+                            }
+
+                        // Cache the results.
+                        propertyLookup.TryAdd(requestBodyType, entityProperties) |> ignore
+
+                    // let sb = StringBuilder()
                     // properties |> Array.iter (fun p -> sb.Append($"{p.Name}; ") |> ignore)
                     // logToConsole $"Path: {context.Request.Path}; Properties: {sb.ToString()}."
-                    let ownerIdProperty = properties.FirstOrDefault(fun p -> p.Name = nameof(OwnerId))
-                    let ownerNameProperty = properties.FirstOrDefault(fun p -> p.Name = nameof(OwnerName))
-                    let organizationIdProperty = properties.FirstOrDefault(fun p -> p.Name = nameof(OrganizationId))
-                    let organizationNameProperty = properties.FirstOrDefault(fun p -> p.Name = nameof(OrganizationName))
-                    let repositoryIdProperty = properties.FirstOrDefault(fun p -> p.Name = nameof(RepositoryId))
-                    let repositoryNameProperty = properties.FirstOrDefault(fun p -> p.Name = nameof(RepositoryName))
-                    let branchIdProperty = properties.FirstOrDefault(fun p -> p.Name = nameof(BranchId))
-                    let branchNameProperty = properties.FirstOrDefault(fun p -> p.Name = nameof(BranchName))
 
                     let mutable ownerId = String.Empty
                     let mutable ownerName = String.Empty
@@ -114,10 +158,14 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
                     let mutable branchId = String.Empty
                     let mutable branchName = String.Empty
                     
-                    if not <| isNull(ownerIdProperty) && not <| isNull(ownerNameProperty) then
+                    log.LogDebug("Request body: {requestBody}", serialize requestBody)
+                    context.Items.Add("", requestBody)
+
+                    // Get Owner information.
+                    if Option.isSome entityProperties.OwnerId && Option.isSome entityProperties.OwnerName then
                         // Get the values from the request body.
-                        ownerId <- ownerIdProperty.GetValue(requestBody) :?> string
-                        ownerName <- ownerNameProperty.GetValue(requestBody) :?> string
+                        ownerId <- entityProperties.OwnerId.Value.GetValue(requestBody) :?> string
+                        ownerName <- entityProperties.OwnerName.Value.GetValue(requestBody) :?> string
 
                         // Resolve the OwnerId based on the provided Id and Name.
                         match! resolveOwnerId ownerId ownerName with
@@ -125,19 +173,17 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
                             // Check to see if the Owner exists.
                             match! Owner.ownerExists resolvedOwnerId ownerName Owner.OwnerError.OwnerDoesNotExist with
                             | Ok _ ->
-                                context.Items.Add(nameof(OwnerId), resolvedOwnerId)
-                                context.Items.Add("HasOwner", true)
+                                graceIds <- {graceIds with OwnerId = resolvedOwnerId; HasOwner = true}
                             | Error error ->
-                                context.Items.Add("NotFound", true)
+                                notFound <- true
                         | None ->
-                            context.Items.Add("BadRequest", true)
-                    else // These parameters don't have Owner fields.
-                        context.Items.Add("HasOwner", false)
+                            badRequest <- true
 
-                    if not <| isNull(organizationIdProperty) && not <| isNull(organizationNameProperty) then
+                    // Get Organization information.
+                    if Option.isSome entityProperties.OrganizationId && Option.isSome entityProperties.OrganizationName then
                         // Get the values from the request body.
-                        organizationId <- organizationIdProperty.GetValue(requestBody) :?> string
-                        organizationName <- organizationNameProperty.GetValue(requestBody) :?> string
+                        organizationId <- entityProperties.OrganizationId.Value.GetValue(requestBody) :?> string
+                        organizationName <- entityProperties.OrganizationName.Value.GetValue(requestBody) :?> string
 
                         // Resolve the OrganizationId based on the provided Id and Name.
                         match! resolveOrganizationId ownerId ownerName organizationId organizationName with
@@ -145,19 +191,17 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
                             // Check to see if the Organization exists.
                             match! Organization.organizationExists ownerId ownerName resolvedOrganizationId organizationName Organization.OrganizationError.OrganizationDoesNotExist with
                             | Ok _ ->
-                                context.Items.Add(nameof(OrganizationId), resolvedOrganizationId)
-                                context.Items.Add("HasOrganization", true)
+                                graceIds <- {graceIds with OrganizationId = resolvedOrganizationId; HasOrganization = true}
                             | Error error ->
-                                context.Items.Add("NotFound", true)
-                        | None ->
-                            context.Items.Add("BadRequest", true)
-                    else // These parameters don't have Organization fields.
-                        context.Items.Add("HasOrganization", false)
+                                notFound <- true
+                        | None -> 
+                            badRequest <- true
 
-                    if not <| isNull(repositoryIdProperty) && not <| isNull(repositoryNameProperty) then
+                    // Get repository information.
+                    if Option.isSome entityProperties.RepositoryId && Option.isSome entityProperties.RepositoryName then
                         // Get the values from the request body.
-                        repositoryId <- repositoryIdProperty.GetValue(requestBody) :?> string
-                        repositoryName <- repositoryNameProperty.GetValue(requestBody) :?> string
+                        repositoryId <- entityProperties.RepositoryId.Value.GetValue(requestBody) :?> string
+                        repositoryName <- entityProperties.RepositoryName.Value.GetValue(requestBody) :?> string
 
                         // Resolve the RepositoryId based on the provided Id and Name.
                         match! resolveRepositoryId ownerId ownerName organizationId organizationName repositoryId repositoryName with
@@ -165,48 +209,44 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
                             // Check to see if the Repository exists.
                             match! Repository.repositoryExists ownerId ownerName organizationId organizationName resolvedRepositoryId repositoryName Repository.RepositoryError.RepositoryDoesNotExist with
                             | Ok _ ->
-                                context.Items.Add(nameof(RepositoryId), resolvedRepositoryId)
-                                context.Items.Add("HasRepository", true)
+                                graceIds <- {graceIds with RepositoryId = resolvedRepositoryId; HasRepository = true}
                             | Error error ->
-                                context.Items.Add("NotFound", true)
+                                notFound <- true
                         | None ->
-                            context.Items.Add("BadRequest", true)
-                    else // These parameters don't have Repository fields.
-                        context.Items.Add("HasRepository", false)
+                            badRequest <- true
 
-                    if not <| isNull(branchIdProperty) && not <| isNull(branchNameProperty) then
+                    // Get branch information.
+                    if Option.isSome entityProperties.BranchId && Option.isSome entityProperties.BranchName then
                         // Get the values from the request body.
-                        branchId <- branchIdProperty.GetValue(requestBody) :?> string
-                        branchName <- branchNameProperty.GetValue(requestBody) :?> string
+                        branchId <- entityProperties.BranchId.Value.GetValue(requestBody) :?> string
+                        branchName <- entityProperties.BranchName.Value.GetValue(requestBody) :?> string
 
                         // Resolve the BranchId based on the provided Id and Name.
-                        let repositoryId = context.Items[nameof(RepositoryId)] :?> string
-                        match! resolveBranchId repositoryId branchId branchName with
+                        match! resolveBranchId graceIds.RepositoryId branchId branchName with
                         | Some resolvedBranchId ->
                             // Check to see if the Branch exists.
                             match! Branch.branchExists ownerId ownerName organizationId organizationName repositoryId repositoryName resolvedBranchId branchName Branch.BranchError.BranchDoesNotExist with
                             | Ok _ ->
-                                context.Items.Add(nameof(BranchId), resolvedBranchId)
-                                context.Items.Add("HasBranch", true)
+                                graceIds <- {graceIds with BranchId = resolvedBranchId; HasBranch = true}
                             | Error error ->
-                                context.Items.Add("NotFound", true)
+                                notFound <- true
                         | None ->
-                            context.Items.Add("BadRequest", true)
-                    else // These parameters don't have Branch fields.
-                        context.Items.Add("HasBranch", false)
+                            badRequest <- true
+
+                    context.Items.Add(nameof(GraceIds), graceIds)
                 | None ->
                     ()
 
                 // Reset the Body to the beginning so that it can be read again later in the pipeline.
                 context.Request.Body.Seek(0L, IO.SeekOrigin.Begin) |> ignore
-
-            if context.Items.ContainsKey("BadRequest") then
+                
+            if badRequest then
                 context.Response.StatusCode <- 400
-                do! context.Response.WriteAsync("The Id's and/or Names are invalid.")
+                do! context.Response.WriteAsync("The provided entity Id's and/or Names are invalid.")
                 do! Task.CompletedTask
-            elif context.Items.ContainsKey("NotFound") then
-                context.Response.StatusCode <- 404
-                do! context.Response.WriteAsync("The Id's and/or Names do not exist.")
+            elif notFound then
+                context.Response.StatusCode <- 400
+                do! context.Response.WriteAsync("The provided entity Id's and/or Names were not found in the database.")
                 do! Task.CompletedTask
             else
 // -----------------------------------------------------------------------------------------------------
@@ -220,17 +260,11 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
 #if DEBUG
                 let middlewareTraceOutHeader = context.Request.Headers["X-MiddlewareTraceOut"];
                 context.Request.Headers["X-MiddlewareTraceOut"] <- $"{middlewareTraceOutHeader}{nameof(ValidateIdsMiddleware)} --> ";
-                
-                let getContextItem key = 
-                    let mutable value = null
-                    context.Items.TryGetValue(key, &value) |> ignore
-                    if not <| isNull(value) then value.ToString() else "Not found"
 
-                let path = context.Request.Path.ToString()
                 let elapsed = getCurrentInstant().Minus(startTime).TotalMilliseconds
                 if not <| path.StartsWith("/healthz") && not <| path.StartsWith("/actors") && not <| path.StartsWith("/dapr") then
-                    log.LogTrace("{currentInstant}: Path: {path}; Elapsed: {elapsed}ms; OwnerId: {OwnerId}; OrganizationId: {OrganizationId}; RepositoryId: {RepositoryId}; BranchId: {BranchId}; HasOwner: {HasOwner}; HasOrganization: {HasOrganization}; HasRepository: {HasRepository}; HasBranch: {HasBranch}",
-                        getCurrentInstantExtended(), context.Request.Path, elapsed, getContextItem (nameof(OwnerId)), getContextItem (nameof(OrganizationId)), getContextItem (nameof(RepositoryId)), getContextItem (nameof(BranchId)), getContextItem ("HasOwner"), getContextItem ("HasOrganization"), getContextItem ("HasRepository"), getContextItem ("HasBranch"))
+                    log.LogDebug("{currentInstant}: Path: {path}; Elapsed: {elapsed}ms; Context.Items: {context.Items}",
+                        getCurrentInstantExtended(), context.Request.Path, elapsed, serialize context.Items)
 #endif
                 do! nextTask
         } :> Task

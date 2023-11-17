@@ -38,15 +38,20 @@ open System.Text.Json
 
 module Services =
 
-    /// Gets the CorrelationId from HttpContext.Items.
-    let getCorrelationId (context: HttpContext) = (context.Items[Constants.CorrelationId] :?> string)
-
     /// Defines the type of all server queries in Grace.
     ///
     /// Takes an HttpContext, the MaxCount of results to return, and the ActorProxy to use for the query, and returns a Task containing the return value.
     type QueryResult<'T, 'U when 'T :> IActor> = HttpContext -> int -> 'T -> Task<'U>
 
-    let actorProxyFactory = ApplicationContext.actorProxyFactory
+    /// Gets the CorrelationId from HttpContext.Items.
+    let getCorrelationId (context: HttpContext) = (context.Items[Constants.CorrelationId] :?> string)
+
+    /// Gets the GraceIds record from HttpContext.Items.
+    let getGraceIds (context: HttpContext) =
+        if context.Items.ContainsKey(nameof(GraceIds)) then
+            Some (context.Items[nameof(GraceIds)] :?> GraceIds)
+        else
+            None
 
     /// Creates common metadata for Grace events.
     let createMetadata (context: HttpContext): EventMetadata = 

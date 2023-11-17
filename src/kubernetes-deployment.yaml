@@ -22,6 +22,8 @@ data:
   DAPR_HTTP_PORT: "3500"
   DAPR_GRPC_PORT: "50001"
   DAPR_SERVER_URI: http://127.0.0.1
+  Logging__LogLevel__Default: "Information"
+  #Logging__LogLevel__Default: "Debug"
   TEMP: /tmp
 
 ---

@@ -463,3 +463,21 @@ module Types =
         | Complex
         static member GetKnownTypes() = GetKnownTypes<PromotionType>()
         override this.ToString() = Utilities.getDiscriminatedUnionFullName this
+
+    /// Holds the entity Id's involved in an API call. It's populated in ValidateIds.Middleware.fs.
+    type GraceIds =
+        {
+            OwnerId: string
+            OrganizationId: string
+            RepositoryId: string
+            BranchId: string
+            HasOwner: bool
+            HasOrganization: bool
+            HasRepository: bool
+            HasBranch: bool
+        }
+
+        static member Default = 
+            {OwnerId = String.Empty; OrganizationId = String.Empty; RepositoryId = String.Empty; BranchId = String.Empty; 
+                HasOwner = false; HasOrganization = false; HasRepository = false; HasBranch = false}
+        override this.ToString() = serialize this

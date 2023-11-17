@@ -420,7 +420,7 @@ module Utilities =
 
     /// This construct is equivalent to using IHttpClientFactory in the ASP.NET Dependency Injection container, for code (like this) that isn't using GenericHost.
     ///
-    /// See https://docs.microsoft.com/en-us/aspnet/core/fundamentals/http-requests?view=aspnetcore-7.0#alternatives-to-ihttpclientfactory for more information.
+    /// See https://docs.microsoft.com/en-us/aspnet/core/fundamentals/http-requests?view=aspnetcore-8.0#alternatives-to-ihttpclientfactory for more information.
     let socketsHttpHandler = new SocketsHttpHandler(
         AllowAutoRedirect = true,                               // We expect to use Traffic Manager or equivalents, so there will be redirects.
         MaxAutomaticRedirections = 6,                           // Not sure of the exact right number, but definitely want a limit here.
