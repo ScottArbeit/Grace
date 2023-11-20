@@ -101,7 +101,7 @@ module Organization =
                        String.isNotEmpty parameters.OrganizationName OrganizationNameIsRequired
                        String.isValidGraceName parameters.OrganizationName InvalidOrganizationName
                        Owner.ownerExists parameters.OwnerId parameters.OwnerName OwnerDoesNotExist
-                       Organization.organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName OrganizationDoesNotExist
+                       Organization.organizationDoesNotExist parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName OrganizationIdAlreadyExists
                        Organization.organizationNameIsUnique parameters.OwnerId parameters.OwnerName parameters.OrganizationName OrganizationNameAlreadyExists |]
 
                 let command (parameters: CreateOrganizationParameters) = 

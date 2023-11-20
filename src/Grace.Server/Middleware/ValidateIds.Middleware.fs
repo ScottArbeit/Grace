@@ -71,7 +71,7 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
         if not <| path.StartsWith("/healthz") && not <| path.StartsWith("/actors") && not <| path.StartsWith("/dapr") then
             let endpoint = context.GetEndpoint()
             if isNull(endpoint) then
-                log.LogDebug("Path: {context.Request.Path}; Endpoint: null.", context.Request.Path)
+                log.LogDebug("{currentInstant}: Path: {context.Request.Path}; Endpoint: null.", getCurrentInstantExtended(), context.Request.Path)
                 None
             elif endpoint.Metadata.Count > 0 then
                 //logToConsole $"Path: {context.Request.Path}; endpoint.Metadata.Count: {endpoint.Metadata.Count}."
@@ -79,10 +79,10 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
                 let requestBodyType = endpoint.Metadata 
                                         |> Seq.tryFind (fun m -> m.GetType().FullName = "System.RuntimeType") 
                                         |> Option.map (fun m -> m :?> Type)
-                if requestBodyType |> Option.isSome then log.LogDebug("Path: {context.Request.Path}; Endpoint: {endpoint.DisplayName}; RequestBodyType: {requestBodyType.Value.Name}.", context.Request.Path, endpoint.DisplayName, requestBodyType.Value.Name)
+                if requestBodyType |> Option.isSome then log.LogDebug("{currentInstant}: Path: {context.Request.Path}; Endpoint: {endpoint.DisplayName}; RequestBodyType: {requestBodyType.Value.Name}.", getCurrentInstantExtended(), context.Request.Path, endpoint.DisplayName, requestBodyType.Value.Name)
                 requestBodyType
             else
-                log.LogDebug("Path: {context.Request.Path}; endpoint.Metadata.Count = 0.", context.Request.Path)
+                log.LogDebug("{currentInstant}: Path: {context.Request.Path}; endpoint.Metadata.Count = 0.", getCurrentInstantExtended(), context.Request.Path)
                 None            
         else
             None
@@ -162,7 +162,7 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
                         let serializedRequestBody = serialize requestBody
 
                         context.Items.Add("Request.Body", serializedRequestBody)
-                        log.LogDebug("Request body: {requestBody}", serializedRequestBody)
+                        log.LogDebug("{currentInstant}: Request body: {requestBody}", getCurrentInstantExtended(), serializedRequestBody)
                     
                         // Get Owner information.
                         if Option.isSome entityProperties.OwnerId && Option.isSome entityProperties.OwnerName then
@@ -170,17 +170,21 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
                             ownerId <- entityProperties.OwnerId.Value.GetValue(requestBody) :?> string
                             ownerName <- entityProperties.OwnerName.Value.GetValue(requestBody) :?> string
 
-                            // Resolve the OwnerId based on the provided Id and Name.
-                            match! resolveOwnerId ownerId ownerName with
-                            | Some resolvedOwnerId ->
-                                // Check to see if the Owner exists.
-                                match! Owner.ownerExists resolvedOwnerId ownerName Owner.OwnerError.OwnerDoesNotExist with
-                                | Ok _ ->
-                                    graceIds <- {graceIds with OwnerId = resolvedOwnerId; HasOwner = true}
-                                | Error error ->
-                                    notFound <- true
-                            | None ->
-                                badRequest <- true
+                            if path.EndsWith("/create", StringComparison.InvariantCultureIgnoreCase) then
+                                // If we're creating a new Owner, we don't need to resolve the Id.
+                                graceIds <- {graceIds with OwnerId = ownerId; HasOwner = true}
+                            else
+                                // Resolve the OwnerId based on the provided Id and Name.
+                                match! resolveOwnerId ownerId ownerName with
+                                | Some resolvedOwnerId ->
+                                    // Check to see if the Owner exists.
+                                    match! Owner.ownerExists resolvedOwnerId ownerName Owner.OwnerError.OwnerDoesNotExist with
+                                    | Ok _ ->
+                                        graceIds <- {graceIds with OwnerId = resolvedOwnerId; HasOwner = true}
+                                    | Error error ->
+                                        notFound <- true
+                                | None ->
+                                    badRequest <- true
 
                         // Get Organization information.
                         if Option.isSome entityProperties.OrganizationId && Option.isSome entityProperties.OrganizationName then
@@ -188,17 +192,21 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
                             organizationId <- entityProperties.OrganizationId.Value.GetValue(requestBody) :?> string
                             organizationName <- entityProperties.OrganizationName.Value.GetValue(requestBody) :?> string
 
-                            // Resolve the OrganizationId based on the provided Id and Name.
-                            match! resolveOrganizationId ownerId ownerName organizationId organizationName with
-                            | Some resolvedOrganizationId ->
-                                // Check to see if the Organization exists.
-                                match! Organization.organizationExists ownerId ownerName resolvedOrganizationId organizationName Organization.OrganizationError.OrganizationDoesNotExist with
-                                | Ok _ ->
-                                    graceIds <- {graceIds with OrganizationId = resolvedOrganizationId; HasOrganization = true}
-                                | Error error ->
-                                    notFound <- true
-                            | None -> 
-                                badRequest <- true
+                            if path.EndsWith("/create", StringComparison.InvariantCultureIgnoreCase) then
+                                // If we're creating a new Organization, we don't need to resolve the Id.
+                                graceIds <- {graceIds with OrganizationId = organizationId; HasOrganization = true}
+                            else
+                                // Resolve the OrganizationId based on the provided Id and Name.
+                                match! resolveOrganizationId ownerId ownerName organizationId organizationName with
+                                | Some resolvedOrganizationId ->
+                                    // Check to see if the Organization exists.
+                                    match! Organization.organizationExists ownerId ownerName resolvedOrganizationId organizationName Organization.OrganizationError.OrganizationDoesNotExist with
+                                    | Ok _ ->
+                                        graceIds <- {graceIds with OrganizationId = resolvedOrganizationId; HasOrganization = true}
+                                    | Error error ->
+                                        notFound <- true
+                                | None -> 
+                                    badRequest <- true
 
                         // Get repository information.
                         if Option.isSome entityProperties.RepositoryId && Option.isSome entityProperties.RepositoryName then
@@ -206,17 +214,21 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
                             repositoryId <- entityProperties.RepositoryId.Value.GetValue(requestBody) :?> string
                             repositoryName <- entityProperties.RepositoryName.Value.GetValue(requestBody) :?> string
 
-                            // Resolve the RepositoryId based on the provided Id and Name.
-                            match! resolveRepositoryId ownerId ownerName organizationId organizationName repositoryId repositoryName with
-                            | Some resolvedRepositoryId ->
-                                // Check to see if the Repository exists.
-                                match! Repository.repositoryExists ownerId ownerName organizationId organizationName resolvedRepositoryId repositoryName Repository.RepositoryError.RepositoryDoesNotExist with
-                                | Ok _ ->
-                                    graceIds <- {graceIds with RepositoryId = resolvedRepositoryId; HasRepository = true}
-                                | Error error ->
-                                    notFound <- true
-                            | None ->
-                                badRequest <- true
+                            if path.EndsWith("/create", StringComparison.InvariantCultureIgnoreCase) then
+                                // If we're creating a new Repository, we don't need to resolve the Id.
+                                graceIds <- {graceIds with RepositoryId = repositoryId; HasRepository = true}
+                            else
+                                // Resolve the RepositoryId based on the provided Id and Name.
+                                match! resolveRepositoryId ownerId ownerName organizationId organizationName repositoryId repositoryName with
+                                | Some resolvedRepositoryId ->
+                                    // Check to see if the Repository exists.
+                                    match! Repository.repositoryExists ownerId ownerName organizationId organizationName resolvedRepositoryId repositoryName Repository.RepositoryError.RepositoryDoesNotExist with
+                                    | Ok _ ->
+                                        graceIds <- {graceIds with RepositoryId = resolvedRepositoryId; HasRepository = true}
+                                    | Error error ->
+                                        notFound <- true
+                                | None ->
+                                    badRequest <- true
 
                         // Get branch information.
                         if Option.isSome entityProperties.BranchId && Option.isSome entityProperties.BranchName then
@@ -224,57 +236,58 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
                             branchId <- entityProperties.BranchId.Value.GetValue(requestBody) :?> string
                             branchName <- entityProperties.BranchName.Value.GetValue(requestBody) :?> string
 
-                            // Resolve the BranchId based on the provided Id and Name.
-                            match! resolveBranchId graceIds.RepositoryId branchId branchName with
-                            | Some resolvedBranchId ->
-                                // Check to see if the Branch exists.
-                                match! Branch.branchExists ownerId ownerName organizationId organizationName repositoryId repositoryName resolvedBranchId branchName Branch.BranchError.BranchDoesNotExist with
-                                | Ok _ ->
-                                    graceIds <- {graceIds with BranchId = resolvedBranchId; HasBranch = true}
-                                | Error error ->
-                                    notFound <- true
-                            | None ->
-                                badRequest <- true
+                            if path.EndsWith("/create", StringComparison.InvariantCultureIgnoreCase) then
+                                // If we're creating a new Branch, we don't need to resolve the Id.
+                                graceIds <- {graceIds with BranchId = branchId; HasBranch = true}
+                            else
+                                // Resolve the BranchId based on the provided Id and Name.
+                                match! resolveBranchId graceIds.RepositoryId branchId branchName with
+                                | Some resolvedBranchId ->
+                                    // Check to see if the Branch exists.
+                                    match! Branch.branchExists ownerId ownerName organizationId organizationName repositoryId repositoryName resolvedBranchId branchName Branch.BranchError.BranchDoesNotExist with
+                                    | Ok _ ->
+                                        graceIds <- {graceIds with BranchId = resolvedBranchId; HasBranch = true}
+                                    | Error error ->
+                                        notFound <- true
+                                | None ->
+                                    badRequest <- true
 
-                        context.Items.Add(nameof(GraceIds), graceIds)
                     | None ->
                         ()
+
+                    // Add the parsed Id's and Names to the HttpContext.
+                    context.Items.Add(nameof(GraceIds), graceIds)
 
                     // Reset the Body to the beginning so that it can be read again later in the pipeline.
                     context.Request.Body.Seek(0L, IO.SeekOrigin.Begin) |> ignore
                 
                 if badRequest then
-                    log.LogDebug("Bad request: {requestBody}", context.Items["Request.Body"])
-                    context.Response.StatusCode <- 400
-                    do! context.Response.WriteAsync("The provided entity Id's and/or Names are invalid.")
-                    do! Task.CompletedTask
+                    log.LogDebug("{currentInstant}: Bad request. Request body: {requestBody}", getCurrentInstantExtended(), context.Items["Request.Body"])
+                    context.Items.Add("BadRequest", true)
                 elif notFound then
-                    log.LogDebug("The provided entity Id's and/or Names were not found in the database. {requestBody}", context.Items["Request.Body"])
-                    context.Response.StatusCode <- 400
-                    do! context.Response.WriteAsync("The provided entity Id's and/or Names were not found in the database.")
-                    do! Task.CompletedTask
-                else
+                    log.LogDebug("{currentInstant}: The provided entity Id's and/or Names were not found in the database. This is normal for Create commands. RequestBody: {requestBody}", getCurrentInstantExtended(), context.Items["Request.Body"])
+                    context.Items.Add("EntitiesNotFound", true)
     // -----------------------------------------------------------------------------------------------------
 
-                    // Pass control to next middleware instance...
-                    let nextTask = next.Invoke(context);
+                // Pass control to next middleware instance...
+                let nextTask = next.Invoke(context);
 
     // -----------------------------------------------------------------------------------------------------
     // On the way out...
 
     #if DEBUG
-                    let middlewareTraceOutHeader = context.Request.Headers["X-MiddlewareTraceOut"];
-                    context.Request.Headers["X-MiddlewareTraceOut"] <- $"{middlewareTraceOutHeader}{nameof(ValidateIdsMiddleware)} --> ";
+                let middlewareTraceOutHeader = context.Request.Headers["X-MiddlewareTraceOut"];
+                context.Request.Headers["X-MiddlewareTraceOut"] <- $"{middlewareTraceOutHeader}{nameof(ValidateIdsMiddleware)} --> ";
 
-                    let elapsed = getCurrentInstant().Minus(startTime).TotalMilliseconds
-                    if not <| path.StartsWith("/healthz") && not <| path.StartsWith("/actors") && not <| path.StartsWith("/dapr") then
-                        log.LogDebug("{currentInstant}: Path: {path}; Elapsed: {elapsed}ms; Status code: {statusCode}; graceIds: {graceIds}",
-                            getCurrentInstantExtended(), context.Request.Path, elapsed, context.Response.StatusCode, serialize graceIds)
-    #endif
-                    do! nextTask
+                let elapsed = getCurrentInstant().Minus(startTime).TotalMilliseconds
+                if not <| path.StartsWith("/healthz") && not <| path.StartsWith("/actors") && not <| path.StartsWith("/dapr") then
+                    log.LogDebug("{currentInstant}: Path: {path}; Elapsed: {elapsed}ms; Status code: {statusCode}; graceIds: {graceIds}",
+                        getCurrentInstantExtended(), context.Request.Path, elapsed, context.Response.StatusCode, serialize graceIds)
+#endif
+                do! nextTask
             with ex ->
-                log.LogError(ex, "An unhandled exception occurred in the {middlewareName} middleware.", nameof(ValidateIdsMiddleware))
+                log.LogError(ex, "{currentInstant}: An unhandled exception occurred in the {middlewareName} middleware.", getCurrentInstantExtended(), nameof(ValidateIdsMiddleware))
                 context.Response.StatusCode <- 500
-                do! context.Response.WriteAsync("An unhandled exception occurred in the ValidateIdsMiddleware middleware.")
+                do! context.Response.WriteAsync($"{getCurrentInstantExtended()}: An unhandled exception occurred in the ValidateIdsMiddleware middleware.")
                 do! Task.CompletedTask
         } :> Task

@@ -199,7 +199,7 @@ module Repository =
                                     return processGraceError FailedCreatingInitialBranch repositoryEvent graceError
                             | _ -> return Ok (BranchId.Empty, ReferenceId.Empty)
                         }
-                    
+
                     match! handleEvent with
                     | Ok (branchId, referenceId) ->                   
                         // Publish the event to the rest of the world.

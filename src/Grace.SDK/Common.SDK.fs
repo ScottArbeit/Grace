@@ -122,9 +122,9 @@ module Common =
                 let! response = Constants.DefaultAsyncRetryPolicy.ExecuteAsync(fun _ -> httpClient.PostAsync(serverUriWithRoute, jsonContent parameters))
                 let endTime = getCurrentInstant()
                 if response.IsSuccessStatusCode then
-                    let! graceReturnValue = response.Content.ReadFromJsonAsync<GraceReturnValue<'U>>(Constants.JsonSerializerOptions)
-                    //let! blah = response.Content.ReadAsStringAsync()
-                    //let graceReturnValue = JsonSerializer.Deserialize<GraceReturnValue<'U>>(blah, Constants.JsonSerializerOptions)
+                    //let! graceReturnValue = response.Content.ReadFromJsonAsync<GraceReturnValue<'U>>(Constants.JsonSerializerOptions)
+                    let! blah = response.Content.ReadAsStringAsync()
+                    let graceReturnValue = JsonSerializer.Deserialize<GraceReturnValue<'U>>(blah, Constants.JsonSerializerOptions)
                     return Ok graceReturnValue |> enhance ("ServerElapsedTime", $"{(endTime - startTime).TotalMilliseconds:F3} ms")
                 else
                     if response.StatusCode = HttpStatusCode.NotFound then

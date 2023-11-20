@@ -225,7 +225,6 @@ module Validations =
         /// Validates that the organization does not exist.
         let organizationDoesNotExist<'T> ownerId ownerName organizationId organizationName (error: 'T) =
             task {
-                let mutable organizationGuid = Guid.Empty
                 match! resolveOrganizationId ownerId ownerName organizationId organizationName with
                 | Some organizationId ->
                         return Error error
