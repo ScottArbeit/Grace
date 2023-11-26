@@ -124,6 +124,7 @@ module Repository =
                 | CheckpointDaysSet days -> {currentRepositoryDto with CheckpointDays = days}
                 | EnabledSingleStepPromotion enabled -> {currentRepositoryDto with EnabledSingleStepPromotion = enabled}
                 | EnabledComplexPromotion enabled -> {currentRepositoryDto with EnabledComplexPromotion = enabled}
+                | NameSet repositoryName -> {currentRepositoryDto with RepositoryName = repositoryName}
                 | DescriptionSet description -> {currentRepositoryDto with Description = description}
                 | LogicalDeleted _ -> {currentRepositoryDto with DeletedAt = Some (getCurrentInstant())}
                 | PhysicalDeleted -> currentRepositoryDto // Do nothing because it's about to be deleted anyway.
@@ -395,6 +396,7 @@ module Repository =
                                     | SetCheckpointDays days -> return CheckpointDaysSet days
                                     | EnableSingleStepPromotion enabled -> return EnabledSingleStepPromotion enabled
                                     | EnableComplexPromotion enabled -> return EnabledComplexPromotion enabled
+                                    | SetName repositoryName -> return NameSet repositoryName
                                     | SetDescription description -> return DescriptionSet description
                                     | DeleteLogical (force, deleteReason) ->
                                         // Get the list of branches that aren't already deleted.

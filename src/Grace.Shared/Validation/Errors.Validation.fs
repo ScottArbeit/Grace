@@ -238,6 +238,7 @@ module Errors =
             | DuplicateCorrelationId
             | EitherOrganizationIdOrOrganizationNameRequired
             | EitherOwnerIdOrOwnerNameRequired
+            | ExceptionCaught
             | FailedWhileApplyingEvent
             | FailedWhileSavingEvent
             | InvalidOrganizationId
@@ -271,6 +272,7 @@ module Errors =
                 | DuplicateCorrelationId -> getLocalizedString StringResourceName.DuplicateCorrelationId
                 | EitherOrganizationIdOrOrganizationNameRequired -> getLocalizedString StringResourceName.EitherOrganizationIdOrOrganizationNameIsRequired
                 | EitherOwnerIdOrOwnerNameRequired -> getLocalizedString StringResourceName.EitherOwnerIdOrOwnerNameIsRequired
+                | ExceptionCaught -> getLocalizedString StringResourceName.ExceptionCaught
                 | FailedWhileApplyingEvent -> getLocalizedString StringResourceName.FailedWhileApplyingEvent
                 | FailedWhileSavingEvent -> getLocalizedString StringResourceName.FailedWhileSavingEvent
                 | InvalidOrganizationId -> getLocalizedString StringResourceName.InvalidOrganizationId
@@ -344,6 +346,7 @@ module Errors =
             | RepositoryIsDeleted
             | RepositoryIsNotDeleted
             | RepositoryIsNotEmpty
+            | RepositoryNameAlreadyExists
         
             static member getErrorMessage (repositoryError: RepositoryError): string =
                 match repositoryError with
@@ -387,6 +390,7 @@ module Errors =
                 | RepositoryIsNotDeleted -> getLocalizedString StringResourceName.RepositoryIsNotDeleted
                 | RepositoryIsNotEmpty -> getLocalizedString StringResourceName.RepositoryIsNotEmpty
                 | RepositoryNameIsRequired -> getLocalizedString StringResourceName.RepositoryNameIsRequired
+                | RepositoryNameAlreadyExists -> getLocalizedString StringResourceName.RepositoryNameAlreadyExists
             
 
             static member getErrorMessage (repositoryError: RepositoryError option): string =

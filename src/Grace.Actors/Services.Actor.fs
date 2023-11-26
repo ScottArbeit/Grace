@@ -174,11 +174,23 @@ module Services =
                     return Uri("http://localhost:3500")
         }
 
-    /// Gets the OwnerId by returning OwnerId if provided, or searching by OwnerName.
+    /// Gets the OwnerId by checking for the existence of OwnerId if provided, or searching by OwnerName.
     let resolveOwnerId (ownerId: string) (ownerName: string) =
         task {
-            if not <| String.IsNullOrEmpty(ownerId) then
-                return Some ownerId
+            let mutable ownerGuid = Guid.Empty
+            if not <| String.IsNullOrEmpty(ownerId) && Guid.TryParse(ownerId, &ownerGuid) then
+                let mutable x = obj
+                let cached = memoryCache.TryGetValue(ownerGuid, &x)
+                if cached then
+                    return Some ownerId
+                else
+                    let actorProxy = actorProxyFactory.CreateActorProxy<IOwnerActor>(ActorId(ownerId), ActorName.Owner)
+                    let! exists = actorProxy.Exists()
+                    if exists then
+                        use newCacheEntry = memoryCache.CreateEntry(ownerGuid, Value = null, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
+                        return Some ownerId
+                    else
+                        return None
             elif String.IsNullOrEmpty(ownerName) then
                 return None
             else
@@ -200,18 +212,32 @@ module Services =
                                 return None
                             else
                                 do! ownerNameActorProxy.SetOwnerId(ownerId)
+                                ownerGuid <- Guid.Parse(ownerId)
+                                use newCacheEntry = memoryCache.CreateEntry(ownerGuid, Value = null, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
                                 return Some ownerId
                         else return None
                     | MongoDB -> return None
         }
- 
+
     /// Gets the OrganizationId by either returning OrganizationId if provided, or searching by OrganizationName.
     let resolveOrganizationId (ownerId: string) (ownerName: string) (organizationId: string) (organizationName: string) =
         task {
+            let mutable organizationGuid = Guid.Empty
             match! resolveOwnerId ownerId ownerName with
             | Some ownerId ->
-                if not <| String.IsNullOrEmpty(organizationId) then
-                    return Some organizationId
+                if not <| String.IsNullOrEmpty(organizationId) && Guid.TryParse(organizationId, &organizationGuid) then
+                    let mutable x = obj
+                    let cached = memoryCache.TryGetValue(organizationGuid, &x)
+                    if cached then
+                        return Some organizationId
+                    else
+                        let actorProxy = actorProxyFactory.CreateActorProxy<IOrganizationActor>(ActorId(organizationId), ActorName.Organization)
+                        let! exists = actorProxy.Exists()
+                        if exists then
+                            use newCacheEntry = memoryCache.CreateEntry(organizationGuid, Value = null, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
+                            return Some organizationId
+                        else
+                            return None
                 elif String.IsNullOrEmpty(organizationName) then
                     return None
                 else
@@ -234,6 +260,8 @@ module Services =
                                     return None
                                 else
                                     do! organizationNameActorProxy.SetOrganizationId(organizationId)
+                                    organizationGuid <- Guid.Parse(organizationId)
+                                    use newCacheEntry = memoryCache.CreateEntry(organizationGuid, Value = null, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
                                     return Some organizationId
                             else return None
                         | MongoDB -> return None
@@ -243,12 +271,24 @@ module Services =
     /// Gets the RepositoryId by returning RepositoryId if provided, or searching by RepositoryName within the provided owner and organization.
     let resolveRepositoryId (ownerId: string) (ownerName: string) (organizationId: string) (organizationName: string) (repositoryId: string) (repositoryName: string) =
         task {
+            let mutable repositoryGuid = Guid.Empty
             match! resolveOwnerId ownerId ownerName with
             | Some ownerId ->
                 match! resolveOrganizationId ownerId String.Empty organizationId organizationName with
                 | Some organizationId ->
-                    if not <| String.IsNullOrEmpty(repositoryId) then
-                        return Some repositoryId
+                    if not <| String.IsNullOrEmpty(repositoryId) && Guid.TryParse(repositoryId, &repositoryGuid) then
+                        let mutable x = obj
+                        let cached = memoryCache.TryGetValue(repositoryGuid, &x)
+                        if cached then
+                            return Some repositoryId
+                        else
+                            let actorProxy = actorProxyFactory.CreateActorProxy<IRepositoryActor>(ActorId(repositoryId), ActorName.Repository)
+                            let! exists = actorProxy.Exists()
+                            if exists then
+                                use newCacheEntry = memoryCache.CreateEntry(repositoryGuid, Value = null, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
+                                return Some repositoryId
+                            else
+                                return None
                     elif String.IsNullOrEmpty(repositoryName) then
                         return None
                     else
@@ -264,7 +304,7 @@ module Services =
                                                         .WithParameter("@organizationId", organizationId)
                                                         .WithParameter("@ownerId", ownerId)
                                                         .WithParameter("@class", "RepositoryDto")
-                                let iterator = DefaultRetryPolicy.Execute(fun () -> cosmosContainer.GetItemQueryIterator<repositoryIdRecord>(queryDefinition))
+                                let iterator = cosmosContainer.GetItemQueryIterator<repositoryIdRecord>(queryDefinition)
                                 if iterator.HasMoreResults then
                                     let! currentResultSet = iterator.ReadNextAsync()
                                     let repositoryId = currentResultSet.FirstOrDefault({repositoryId = String.Empty}).repositoryId
@@ -272,6 +312,8 @@ module Services =
                                         return None
                                     else
                                         do! repositoryNameActorProxy.SetRepositoryId(repositoryId)
+                                        repositoryGuid <- Guid.Parse(repositoryId)
+                                        use newCacheEntry = memoryCache.CreateEntry(repositoryGuid, Value = null, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
                                         return Some repositoryId
                                 else return None
                             | MongoDB -> return None
@@ -328,8 +370,20 @@ module Services =
     /// Gets the BranchId by returning BranchId if provided, or searching by BranchName within the provided repository.
     let resolveBranchId repositoryId branchId branchName =
         task {            
+            let mutable branchGuid = Guid.Empty
             if not <| String.IsNullOrEmpty(branchId) then
-                return Some branchId
+                let mutable x = obj
+                let cached = memoryCache.TryGetValue(branchGuid, &x)
+                if cached then
+                    return Some branchId
+                else
+                    let actorProxy = actorProxyFactory.CreateActorProxy<IBranchActor>(ActorId(branchId), ActorName.Branch)
+                    let! exists = actorProxy.Exists()
+                    if exists then
+                        use newCacheEntry = memoryCache.CreateEntry(branchGuid, Value = null, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
+                        return Some branchId
+                    else
+                        return None
             elif String.IsNullOrEmpty(branchName) then
                 return None
             else
@@ -352,6 +406,8 @@ module Services =
                                 return None
                             else
                                 do! branchNameActorProxy.SetBranchId(branchId)
+                                branchGuid <- Guid.Parse(branchId)
+                                use newCacheEntry = memoryCache.CreateEntry(branchGuid, Value = null, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
                                 return Some branchId
                         else return None
                     | MongoDB -> return None
@@ -435,6 +491,7 @@ module Services =
             return repositories
         }
 
+    /// Checks if the specified organization name is unique for the specified owner.
     let organizationNameIsUnique<'T> (ownerId: string) (ownerName: string) (organizationName: string) =
         task {
             match actorStateStorageProvider with
@@ -458,6 +515,38 @@ module Services =
                                 return Ok true
                             else
                                 // The organization name is not unique.
+                                return Ok false
+                        else return Ok true     // This else should never be hit.
+                    | None -> return Ok false
+                with ex ->
+                    return Error $"{createExceptionResponse ex}"
+            | MongoDB -> return Ok false
+        }
+
+    /// Checks if the specified repository name is unique for the specified organization.
+    let repositoryNameIsUnique<'T> (ownerId: string) (ownerName: string) (organizationId: string) (organizationName: string) (repositoryName: string) =
+        task {
+            match actorStateStorageProvider with
+            | Unknown -> return Ok false
+            | AzureCosmosDb -> 
+                try
+                    match! resolveOrganizationId ownerId ownerName organizationId organizationName with
+                    | Some organizationId ->
+                        let queryDefinition = QueryDefinition("""SELECT c["value"].RepositoryId FROM c WHERE c["value"].OrganizationId = @organizationId AND c["value"].RepositoryName = @repositoryName AND c["value"].Class = @class""")
+                                                .WithParameter("@organizationId", organizationId)
+                                                .WithParameter("@repositoryName", repositoryName)
+                                                .WithParameter("@class", "RepositoryDto")
+                        //logToConsole (queryDefinition.QueryText.Replace("@organizationId", $"\"{organizationId}\"").Replace("@repositoryName", $"\"{repositoryName}\""))
+                        let iterator = cosmosContainer.GetItemQueryIterator<repositoryIdRecord>(queryDefinition, requestOptions = queryRequestOptions)
+                        if iterator.HasMoreResults then
+                            let! currentResultSet = iterator.ReadNextAsync()
+                            // If a row is returned, and repositoryId gets a value, then the repository name is not unique.
+                            let repositoryId = currentResultSet.FirstOrDefault({repositoryId = String.Empty}).repositoryId
+                            if String.IsNullOrEmpty(repositoryId) then
+                                // The repository name is unique.
+                                return Ok true
+                            else
+                                // The repository name is not unique.
                                 return Ok false
                         else return Ok true     // This else should never be hit.
                     | None -> return Ok false

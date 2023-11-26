@@ -119,24 +119,21 @@ module Common =
                 let serverUriWithRoute = Uri($"{Current().ServerUri}/{route}")
                 //logToConsole $"serverUriWithRoute: {serverUriWithRoute}"
                 let startTime = getCurrentInstant()
-                let! response = Constants.DefaultAsyncRetryPolicy.ExecuteAsync(fun _ -> httpClient.PostAsync(serverUriWithRoute, jsonContent parameters))
+                let! response = httpClient.PostAsync(serverUriWithRoute, jsonContent parameters)
                 let endTime = getCurrentInstant()
                 if response.IsSuccessStatusCode then
-                    //let! graceReturnValue = response.Content.ReadFromJsonAsync<GraceReturnValue<'U>>(Constants.JsonSerializerOptions)
-                    let! blah = response.Content.ReadAsStringAsync()
-                    let graceReturnValue = JsonSerializer.Deserialize<GraceReturnValue<'U>>(blah, Constants.JsonSerializerOptions)
+                    let! graceReturnValue = response.Content.ReadFromJsonAsync<GraceReturnValue<'U>>(Constants.JsonSerializerOptions)
+                    //let! blah = response.Content.ReadAsStringAsync()
+                    //let graceReturnValue = JsonSerializer.Deserialize<GraceReturnValue<'U>>(blah, Constants.JsonSerializerOptions)
                     return Ok graceReturnValue |> enhance ("ServerElapsedTime", $"{(endTime - startTime).TotalMilliseconds:F3} ms")
                 else
                     if response.StatusCode = HttpStatusCode.NotFound then
                         return Error (GraceError.Create $"Server endpoint {route} not found." parameters.CorrelationId)
                     else
-                        use! responseStream = response.Content.ReadAsStreamAsync()
-                        use memoryStream = new MemoryStream(int responseStream.Length)
-                        do! responseStream.CopyToAsync(memoryStream)
-                        use reader = new StreamReader(memoryStream, Encoding.UTF8)
-                        let! s = reader.ReadToEndAsync()
-                        let graceError = GraceError.Create s parameters.CorrelationId
-                        //let! graceError = response.Content.ReadFromJsonAsync<GraceError>(Constants.JsonSerializerOptions)
+                        //let! responseAsString = response.Content.ReadAsStringAsync()
+                        //logToConsole $"responseAsString: {responseAsString}"
+                        //let graceError = GraceError.Create responseAsString parameters.CorrelationId
+                        let! graceError = response.Content.ReadFromJsonAsync<GraceError>(Constants.JsonSerializerOptions)
                         return Error graceError |> enhance ("ServerElapsedTime", $"{(endTime - startTime).TotalMilliseconds:F3} ms") |> enhance ("StatusCode", $"{response.StatusCode}")
             with ex ->
                 let exceptionResponse = Utilities.createExceptionResponse ex

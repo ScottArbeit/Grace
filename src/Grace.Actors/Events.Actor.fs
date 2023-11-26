@@ -106,6 +106,7 @@ module Events =
             | CheckpointDaysSet of duration: double
             | EnabledSingleStepPromotion of enabled: bool
             | EnabledComplexPromotion of enabled: bool
+            | NameSet of repositoryName: RepositoryName
             | DescriptionSet of description: string
             | LogicalDeleted of force: bool * deleteReason: string
             | PhysicalDeleted

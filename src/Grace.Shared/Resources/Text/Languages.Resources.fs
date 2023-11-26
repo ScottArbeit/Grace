@@ -29,6 +29,7 @@ module Text =
         | EitherOrganizationIdOrOrganizationNameIsRequired
         | EitherOwnerIdOrOwnerNameIsRequired
         | EitherRepositoryIdOrRepositoryNameIsRequired
+        | ExceptionCaught
         | FailedCommunicatingWithObjectStorage
         | FailedCreatingInitialBranch
         | FailedRebasingInitialBranch
@@ -110,6 +111,7 @@ module Text =
         | RepositoryIsNotDeleted
         | RepositoryIsNotEmpty
         | RepositoryNameIsRequired
+        | RepositoryNameAlreadyExists
         | SaveIsDisabled
         | SavingDirectoryVersions
         | ScanningWorkingDirectory

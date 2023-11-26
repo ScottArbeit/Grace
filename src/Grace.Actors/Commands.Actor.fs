@@ -69,6 +69,7 @@ module Commands =
             | SetDefaultBranchName of defaultBranchName: BranchName
             | SetSaveDays of duration: double
             | SetCheckpointDays of duration: double
+            | SetName of repositoryName: RepositoryName
             | SetDescription of description: string
             | EnableSingleStepPromotion of enabled: bool
             | EnableComplexPromotion of enabled: bool

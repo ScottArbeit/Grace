@@ -177,12 +177,7 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
                                 // Resolve the OwnerId based on the provided Id and Name.
                                 match! resolveOwnerId ownerId ownerName with
                                 | Some resolvedOwnerId ->
-                                    // Check to see if the Owner exists.
-                                    match! Owner.ownerExists resolvedOwnerId ownerName Owner.OwnerError.OwnerDoesNotExist with
-                                    | Ok _ ->
-                                        graceIds <- {graceIds with OwnerId = resolvedOwnerId; HasOwner = true}
-                                    | Error error ->
-                                        notFound <- true
+                                    graceIds <- {graceIds with OwnerId = resolvedOwnerId; HasOwner = true}
                                 | None ->
                                     badRequest <- true
 
@@ -199,12 +194,7 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
                                 // Resolve the OrganizationId based on the provided Id and Name.
                                 match! resolveOrganizationId ownerId ownerName organizationId organizationName with
                                 | Some resolvedOrganizationId ->
-                                    // Check to see if the Organization exists.
-                                    match! Organization.organizationExists ownerId ownerName resolvedOrganizationId organizationName Organization.OrganizationError.OrganizationDoesNotExist with
-                                    | Ok _ ->
-                                        graceIds <- {graceIds with OrganizationId = resolvedOrganizationId; HasOrganization = true}
-                                    | Error error ->
-                                        notFound <- true
+                                    graceIds <- {graceIds with OrganizationId = resolvedOrganizationId; HasOrganization = true}
                                 | None -> 
                                     badRequest <- true
 
@@ -221,12 +211,7 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
                                 // Resolve the RepositoryId based on the provided Id and Name.
                                 match! resolveRepositoryId ownerId ownerName organizationId organizationName repositoryId repositoryName with
                                 | Some resolvedRepositoryId ->
-                                    // Check to see if the Repository exists.
-                                    match! Repository.repositoryExists ownerId ownerName organizationId organizationName resolvedRepositoryId repositoryName Repository.RepositoryError.RepositoryDoesNotExist with
-                                    | Ok _ ->
-                                        graceIds <- {graceIds with RepositoryId = resolvedRepositoryId; HasRepository = true}
-                                    | Error error ->
-                                        notFound <- true
+                                    graceIds <- {graceIds with RepositoryId = resolvedRepositoryId; HasRepository = true}
                                 | None ->
                                     badRequest <- true
 

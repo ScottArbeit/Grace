@@ -192,7 +192,6 @@ module Branch =
                 let isValid (command: BranchCommand) (metadata: EventMetadata) =
                     task {
                         let! branchEvents = this.BranchEvents
-                        logToConsole (serialize branchEvents)
                         if branchEvents.Exists(fun ev -> ev.Metadata.CorrelationId = metadata.CorrelationId) && (branchEvents.Count > 3) then
                             return Error (GraceError.Create (BranchError.getErrorMessage DuplicateCorrelationId) metadata.CorrelationId)
                         else
@@ -226,7 +225,7 @@ module Branch =
                                     | Create (branchId, branchName, parentBranchId, basedOn, repositoryId, branchPermissions) ->
                                         return Created(branchId, branchName, parentBranchId, basedOn, repositoryId, branchPermissions)
                                     | Rebase referenceId -> return Rebased referenceId
-                                    | SetName organizationName -> return NameSet (organizationName)
+                                    | SetName branchName -> return NameSet branchName
                                     | BranchCommand.Promote (directoryId, sha256Hash, referenceText) ->
                                         let! referenceId = addReference directoryId sha256Hash referenceText ReferenceType.Promotion
                                         metadata.Properties.Add(nameof(ReferenceId), $"{referenceId}")

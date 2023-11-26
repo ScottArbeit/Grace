@@ -11,16 +11,18 @@ open Grace.Actors.Services
 open Grace.Shared.Constants
 open Grace.Shared.Types
 open Grace.Shared.Utilities
+open Grace.Shared.Validation
 open Microsoft.AspNetCore.Http
+open Microsoft.Extensions.Logging
 open System
 open System.Collections.Concurrent
 open System.Collections.Generic
 open System.Threading.Tasks
-open ApplicationContext
 
 module Validations =
 
     let actorProxyFactory = ApplicationContext.actorProxyFactory
+    let log = ApplicationContext.loggerFactory.CreateLogger("Validations.Server")
     let memoryCache = ApplicationContext.memoryCache
 
     module Owner =
@@ -39,7 +41,7 @@ module Validations =
                         let ownerActorProxy = actorProxyFactory.CreateActorProxy<IOwnerActor>(actorId, ActorName.Owner)
                         let! exists = ownerActorProxy.Exists()
                         if exists then
-                            use newCacheEntry = memoryCache.CreateEntry(ownerGuid, Value = null, SlidingExpiration = DefaultExpirationTime)
+                            use newCacheEntry = memoryCache.CreateEntry(ownerGuid, Value = null, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
                             return Ok ()
                         else
                             return Error error
@@ -79,7 +81,7 @@ module Validations =
                             let ownerActorProxy = actorProxyFactory.CreateActorProxy<IOwnerActor>(actorId, ActorName.Owner)
                             let! exists = ownerActorProxy.Exists()
                             if exists then
-                                use newCacheEntry = memoryCache.CreateEntry(ownerGuid, Value = null, SlidingExpiration = DefaultExpirationTime)
+                                use newCacheEntry = memoryCache.CreateEntry(ownerGuid, Value = null, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
                                 return Ok ()
                             else
                                 return Error error
@@ -161,7 +163,7 @@ module Validations =
                         let organizationActorProxy = actorProxyFactory.CreateActorProxy<IOrganizationActor>(actorId, ActorName.Organization)
                         let! exists = organizationActorProxy.Exists()
                         if exists then
-                            use newCacheEntry = memoryCache.CreateEntry(organizationGuid, Value = null, SlidingExpiration = DefaultExpirationTime)
+                            use newCacheEntry = memoryCache.CreateEntry(organizationGuid, Value = null, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
                             return Ok ()
                         else
                             return Error error
@@ -200,35 +202,39 @@ module Validations =
         /// Validates that the organization exists.
         let organizationExists<'T> ownerId ownerName organizationId organizationName (error: 'T) =
             task {
-                let mutable organizationGuid = Guid.Empty
-                match! resolveOrganizationId ownerId ownerName organizationId organizationName with
-                | Some organizationId ->
-                    if Guid.TryParse(organizationId, &organizationGuid) then
-                        let mutable x = null
-                        let cached = memoryCache.TryGetValue(organizationGuid, &x)
-                        if cached then
-                            return Ok ()
-                        else
-                            let actorId = Organization.GetActorId(organizationGuid)
-                            let organizationActorProxy = actorProxyFactory.CreateActorProxy<IOrganizationActor>(actorId, ActorName.Organization)
-                            let! exists = organizationActorProxy.Exists()
-                            if exists then
-                                use newCacheEntry = memoryCache.CreateEntry(organizationGuid, Value = null, SlidingExpiration = DefaultExpirationTime)
+                try
+                    let mutable organizationGuid = Guid.Empty
+                    match! resolveOrganizationId ownerId ownerName organizationId organizationName with
+                    | Some organizationId ->
+                        if Guid.TryParse(organizationId, &organizationGuid) then
+                            let mutable x = null
+                            let cached = memoryCache.TryGetValue(organizationGuid, &x)
+                            if cached then
                                 return Ok ()
                             else
-                                return Error error
-                    else
-                        return Ok ()
-                | None -> return Error error
+                                let actorId = Organization.GetActorId(organizationGuid)
+                                let organizationActorProxy = actorProxyFactory.CreateActorProxy<IOrganizationActor>(actorId, ActorName.Organization)
+                                let! exists = organizationActorProxy.Exists()
+                                if exists then
+                                    use newCacheEntry = memoryCache.CreateEntry(organizationGuid, Value = null, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
+                                    return Ok ()
+                                else
+                                    return Error error
+                        else
+                            return Ok ()
+                    | None -> return Error error
+                with ex ->
+                    log.LogError(ex, "{currentInstant}: Exception in Grace.Server.Validations.organizationExists.", getCurrentInstantExtended())
+                    return Error error
             }
 
         /// Validates that the organization does not exist.
         let organizationDoesNotExist<'T> ownerId ownerName organizationId organizationName (error: 'T) =
             task {
-                match! resolveOrganizationId ownerId ownerName organizationId organizationName with
-                | Some organizationId ->
-                        return Error error
-                | None -> return Ok ()
+                match! organizationExists ownerId ownerName organizationId organizationName error with
+                | Ok _ ->
+                    return Error error
+                | Error error -> return Ok ()
             }
 
         /// Validates that the organization is deleted.
@@ -277,7 +283,7 @@ module Validations =
                         let repositoryActorProxy = actorProxyFactory.CreateActorProxy<IRepositoryActor>(actorId, ActorName.Repository)
                         let! exists = repositoryActorProxy.Exists()
                         if exists then
-                            use newCacheEntry = memoryCache.CreateEntry(repositoryGuid, Value = null, SlidingExpiration = DefaultExpirationTime)
+                            use newCacheEntry = memoryCache.CreateEntry(repositoryGuid, Value = null, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
                             return Ok ()
                         else
                             return Error error
@@ -308,11 +314,10 @@ module Validations =
                         if cached then
                             return Ok ()
                         else
-                            let actorId = ActorId($"{repositoryGuid}")
-                            let repositoryActorProxy = actorProxyFactory.CreateActorProxy<IRepositoryActor>(actorId, ActorName.Repository)
+                            let repositoryActorProxy = actorProxyFactory.CreateActorProxy<IRepositoryActor>(ActorId(repositoryId), ActorName.Repository)
                             let! exists = repositoryActorProxy.Exists()
                             if exists then
-                                use newCacheEntry = memoryCache.CreateEntry(repositoryGuid, Value = null, SlidingExpiration = DefaultExpirationTime)
+                                use newCacheEntry = memoryCache.CreateEntry(repositoryGuid, Value = null, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
                                 return Ok ()
                             else
                                 return Error error
@@ -359,6 +364,22 @@ module Validations =
                 | None -> return Error error
             }
 
+        let repositoryNameIsUnique<'T> ownerId ownerName organizationId organizationName repositoryName (error: 'T) =
+            task {
+                if not <| String.IsNullOrEmpty(repositoryName) then
+                    match! repositoryNameIsUnique ownerId ownerName organizationId organizationName repositoryName with 
+                    | Ok isUnique -> 
+                        if isUnique then 
+                            return Ok () 
+                        else
+                            return Error error
+                    | Error internalError ->
+                        logToConsole internalError
+                        return Error error
+                else
+                    return Ok ()
+            }
+
     module Branch =
 
         /// Validates that the given branchId exists in the database.
@@ -375,7 +396,7 @@ module Validations =
                         let branchActorProxy = actorProxyFactory.CreateActorProxy<IBranchActor>(actorId, ActorName.Branch)
                         let! exists = branchActorProxy.Exists()
                         if exists then
-                            use newCacheEntry = memoryCache.CreateEntry(branchGuid, Value = null, SlidingExpiration = DefaultExpirationTime)
+                            use newCacheEntry = memoryCache.CreateEntry(branchGuid, Value = null, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
                             return Ok ()
                         else
                             return Error error
@@ -418,7 +439,7 @@ module Validations =
                                 let branchActorProxy = actorProxyFactory.CreateActorProxy<IBranchActor>(actorId, ActorName.Branch)
                                 let! exists = branchActorProxy.Exists()
                                 if exists then
-                                    use newCacheEntry = memoryCache.CreateEntry(branchGuid, Value = null, SlidingExpiration = DefaultExpirationTime)
+                                    use newCacheEntry = memoryCache.CreateEntry(branchGuid, Value = null, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
                                     return Ok ()
                                 else
                                     return Error error
@@ -493,7 +514,7 @@ module Validations =
                     let directoryVersionActorProxy = ApplicationContext.actorProxyFactory.CreateActorProxy<IDirectoryVersionActor>(actorId, ActorName.DirectoryVersion)
                     let! exists = directoryVersionActorProxy.Exists()
                     if exists then
-                        use newCacheEntry = memoryCache.CreateEntry(directoryId, Value = null, SlidingExpiration = DefaultExpirationTime)
+                        use newCacheEntry = memoryCache.CreateEntry(directoryId, Value = null, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
                         return Ok ()
                     else
                         return Error error

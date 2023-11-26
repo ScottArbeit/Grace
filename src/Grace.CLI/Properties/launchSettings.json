@@ -93,10 +93,10 @@
       "commandLineArgs": "owner get --ownerName Owner4",
       "workingDirectory": "D:\\Source\\GraceDemo\\Mika"
     },
-    "grace org create /?": {
+    "grace org create": {
       "commandName": "Project",
-      "commandLineArgs": "org create /?",
-      "workingDirectory": "C:\\Temp"
+      "commandLineArgs": "org create --output Verbose --ownerName Owner9FEDA --organizationName Org9FEDc --organizationId 9871826b-73f4-41a4-bf4b-dea42ea95bf1",
+      "workingDirectory": "D:\\Source\\GraceDemo\\Ryan"
     }
   }
 }

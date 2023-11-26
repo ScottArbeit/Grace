@@ -172,6 +172,7 @@ module Application =
                     route "/setCheckpointDays" Repository.SetCheckpointDays |> addMetadata typeof<Repository.SetCheckpointDaysParameters>
                     route "/setDefaultServerApiVersion" Repository.SetDefaultServerApiVersion |> addMetadata typeof<Repository.SetDefaultServerApiVersionParameters>
                     route "/setDescription" Repository.SetDescription |> addMetadata typeof<Repository.SetRepositoryDescriptionParameters>
+                    route "/setName" Repository.SetName |> addMetadata typeof<Repository.SetRepositoryNameParameters>
                     route "/setRecordSaves" Repository.SetRecordSaves |> addMetadata typeof<Repository.RecordSavesParameters>
                     route "/setSaveDays" Repository.SetSaveDays |> addMetadata typeof<Repository.SetSaveDaysParameters>
                     route "/setStatus" Repository.SetStatus |> addMetadata typeof<Repository.SetRepositoryStatusParameters>

@@ -19,6 +19,7 @@ open Grace.Shared.Validation.Common
 open Grace.Shared.Validation.Errors.Branch
 open Grace.Shared.Validation.Utilities
 open Microsoft.AspNetCore.Http
+open Microsoft.Extensions.Logging
 open System
 open System.Collections.Concurrent
 open System.Collections.Generic
@@ -32,6 +33,8 @@ module Branch =
     type Validations<'T when 'T :> BranchParameters> = 'T -> HttpContext -> Task<Result<unit, BranchError>> array
     
     let activitySource = new ActivitySource("Branch")
+
+    let log = ApplicationContext.loggerFactory.CreateLogger("Branch.Server")
 
     let actorProxyFactory = ApplicationContext.actorProxyFactory
 
@@ -56,30 +59,51 @@ module Branch =
     let processCommand<'T when 'T :> BranchParameters> (context: HttpContext) (validations: Validations<'T>) (command: 'T -> Task<BranchCommand>) =
         task {
             try
+                let commandName = context.Items["Command"] :?> string
+                let graceIds = context.Items[nameof(GraceIds)] :?> GraceIds
                 use activity = activitySource.StartActivity("processCommand", ActivityKind.Server)
                 let! parameters = context |> parse<'T>
+
+                let handleCommand branchId cmd  =
+                    task {
+                        log.LogDebug("{currentInstant}: In Branch.Server.handleCommand: branchId: {branchId}.", getCurrentInstantExtended(), branchId)
+                        let actorProxy = getActorProxy context branchId
+                
+                        let! result = actorProxy.Handle cmd (Services.createMetadata context)
+                        match result with
+                        | Ok graceReturn ->
+                            return! context |> result200Ok graceReturn
+                        | Error graceError ->
+                            log.LogDebug("{currentInstant}: In Branch.Server.handleCommand: error from actorProxy.Handle: {error}", getCurrentInstantExtended(), (graceError.ToString()))
+                            return! context |> result400BadRequest {graceError with Properties = getPropertiesAsDictionary parameters}
+                    }
+
                 let validationResults = Array.append (commonValidations parameters context) (validations parameters context)
                 let! validationsPassed = validationResults |> allPass
+                log.LogDebug("{currentInstant}: In Branch.Server.processCommand: validationsPassed: {validationsPassed}.", getCurrentInstantExtended(), validationsPassed)
+
                 if validationsPassed then
-                    let! repositoryId = resolveRepositoryId parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName
-                    match repositoryId with
-                    | Some repositoryId ->
-                        parameters.RepositoryId <- repositoryId
-                        match! resolveBranchId repositoryId parameters.BranchId parameters.BranchName with
-                        | Some branchId ->
-                            let actorProxy = getActorProxy context branchId
-                            let! cmd = command parameters
-                            match! actorProxy.Handle cmd (Services.createMetadata context) with
-                                | Ok graceReturn -> return! context |> result200Ok graceReturn
-                                | Error graceError -> return! context |> result400BadRequest graceError
-                        | None -> 
-                            return! context |> result400BadRequest (GraceError.Create (BranchError.getErrorMessage BranchDoesNotExist) (getCorrelationId context))
-                    | None -> 
+                    let! cmd = command parameters
+                    let! branchId = resolveBranchId graceIds.RepositoryId parameters.BranchId parameters.BranchName
+                    match branchId, commandName = nameof(Create) with
+                    | Some branchId, _ ->
+                        // If Id is Some, then we know we have a valid Id.
+                        if String.IsNullOrEmpty(parameters.BranchId) then parameters.BranchId <- branchId
+                        return! handleCommand branchId cmd
+                    | None, true ->
+                        // If it's None, but this is a Create command, still valid, just use the Id from the parameters.
+                        return! handleCommand parameters.BranchId cmd
+                    | None, false -> 
+                        // If it's None, and this is not a Create command, then we have a bad request.
+                        log.LogDebug("{currentInstant}: In Branch.Server.processCommand: resolveBranchId failed. Branch does not exist. repositoryId: {repositoryId}; repositoryName: {repositoryName}.", getCurrentInstantExtended(), parameters.RepositoryId, parameters.RepositoryName)
                         return! context |> result400BadRequest (GraceError.Create (BranchError.getErrorMessage RepositoryDoesNotExist) (getCorrelationId context))
                 else
                     let! error = validationResults |> getFirstError
-                    let graceError = GraceError.Create (BranchError.getErrorMessage error) (getCorrelationId context)
-                    graceError.Properties.Add("Path", context.Request.Path)                    
+                    let errorMessage = BranchError.getErrorMessage error
+                    log.LogDebug("{currentInstant}: error: {error}", getCurrentInstantExtended(), errorMessage)
+                    let graceError = GraceError.CreateWithMetadata errorMessage (getCorrelationId context) (getPropertiesAsDictionary parameters)
+                    graceError.Properties.Add("Path", context.Request.Path)
+                    graceError.Properties.Add("Error", errorMessage)
                     return! context |> result400BadRequest graceError
             with ex ->
                 let graceError = GraceError.Create $"{Utilities.createExceptionResponse ex}" (getCorrelationId context)
@@ -152,6 +176,7 @@ module Branch =
                                 parameters.InitialPermissions)
                     }
 
+                context.Items.Add("Command", nameof(Create))
                 return! processCommand context validations command
             }
 
@@ -169,8 +194,10 @@ module Branch =
                        Branch.branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName ParentBranchDoesNotExist
                        Branch.branchAllowsReferenceType parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName ReferenceType.Commit CommitIsDisabled |]
 
-                let command (parameters: RebaseParameters) = Rebase(parameters.BasedOn) |> returnTask
+                let command (parameters: RebaseParameters) = 
+                    Rebase(parameters.BasedOn) |> returnTask
 
+                context.Items.Add("Command", nameof(Rebase))
                 return! processCommand context validations command
             }
 
@@ -189,8 +216,10 @@ module Branch =
                        Branch.branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName ParentBranchDoesNotExist
                        Branch.branchAllowsReferenceType parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName ReferenceType.Promotion PromotionIsDisabled |]
 
-                let command (parameters: CreateReferenceParameters) = BranchCommand.Promote(parameters.DirectoryId, parameters.Sha256Hash, ReferenceText parameters.Message) |> returnTask
+                let command (parameters: CreateReferenceParameters) = 
+                    BranchCommand.Promote(parameters.DirectoryId, parameters.Sha256Hash, ReferenceText parameters.Message) |> returnTask
 
+                context.Items.Add("Command", nameof(Promote))
                 return! processCommand context validations command
             }
 
@@ -209,8 +238,10 @@ module Branch =
                        Branch.branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName BranchDoesNotExist
                        Branch.branchAllowsReferenceType parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName ReferenceType.Commit CommitIsDisabled |]
 
-                let command (parameters: CreateReferenceParameters) = BranchCommand.Commit(parameters.DirectoryId, parameters.Sha256Hash, ReferenceText parameters.Message) |> returnTask
+                let command (parameters: CreateReferenceParameters) = 
+                    BranchCommand.Commit(parameters.DirectoryId, parameters.Sha256Hash, ReferenceText parameters.Message) |> returnTask
 
+                context.Items.Add("Command", nameof(Commit))
                 return! processCommand context validations command
             }
             
@@ -229,8 +260,10 @@ module Branch =
                        Branch.branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName BranchDoesNotExist
                        Branch.branchAllowsReferenceType parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName ReferenceType.Checkpoint CheckpointIsDisabled |]
 
-                let command (parameters: CreateReferenceParameters) = BranchCommand.Checkpoint(parameters.DirectoryId, parameters.Sha256Hash, ReferenceText parameters.Message) |> returnTask
+                let command (parameters: CreateReferenceParameters) = 
+                    BranchCommand.Checkpoint(parameters.DirectoryId, parameters.Sha256Hash, ReferenceText parameters.Message) |> returnTask
 
+                context.Items.Add("Command", nameof(Checkpoint))
                 return! processCommand context validations command
             }
 
@@ -249,8 +282,10 @@ module Branch =
                        Branch.branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName BranchDoesNotExist
                        Branch.branchAllowsReferenceType parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName ReferenceType.Save SaveIsDisabled |]
 
-                let command (parameters: CreateReferenceParameters) = BranchCommand.Save(parameters.DirectoryId, parameters.Sha256Hash, ReferenceText parameters.Message) |> returnTask
+                let command (parameters: CreateReferenceParameters) = 
+                    BranchCommand.Save(parameters.DirectoryId, parameters.Sha256Hash, ReferenceText parameters.Message) |> returnTask
 
+                context.Items.Add("Command", nameof(Save))
                 return! processCommand context validations command
             }
 
@@ -269,8 +304,10 @@ module Branch =
                        Branch.branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName BranchDoesNotExist
                        Branch.branchAllowsReferenceType parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName ReferenceType.Tag TagIsDisabled |]
 
-                let command (parameters: CreateReferenceParameters) = BranchCommand.Tag(parameters.DirectoryId, parameters.Sha256Hash, ReferenceText parameters.Message) |> returnTask
+                let command (parameters: CreateReferenceParameters) = 
+                    BranchCommand.Tag(parameters.DirectoryId, parameters.Sha256Hash, ReferenceText parameters.Message) |> returnTask
 
+                context.Items.Add("Command", nameof(Tag))
                 return! processCommand context validations command
             }
 
@@ -287,8 +324,10 @@ module Branch =
                        Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName RepositoryDoesNotExist
                        Branch.branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName BranchDoesNotExist |]
 
-                let command (parameters: EnableFeatureParameters) = EnablePromotion(parameters.Enabled) |> returnTask
+                let command (parameters: EnableFeatureParameters) = 
+                    EnablePromotion(parameters.Enabled) |> returnTask
 
+                context.Items.Add("Command", nameof(EnablePromotion))
                 return! processCommand context validations command
             }
             
@@ -305,8 +344,10 @@ module Branch =
                        Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName RepositoryDoesNotExist
                        Branch.branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName BranchDoesNotExist |]
                        
-                let command (parameters: EnableFeatureParameters) = EnableCommit(parameters.Enabled) |> returnTask
+                let command (parameters: EnableFeatureParameters) = 
+                    EnableCommit(parameters.Enabled) |> returnTask
 
+                context.Items.Add("Command", nameof(EnableCommit))
                 return! processCommand context validations command
             }
 
@@ -323,8 +364,10 @@ module Branch =
                        Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName RepositoryDoesNotExist
                        Branch.branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName BranchDoesNotExist |]
 
-                let command (parameters: EnableFeatureParameters) = EnableCheckpoint(parameters.Enabled) |> returnTask
+                let command (parameters: EnableFeatureParameters) = 
+                    EnableCheckpoint(parameters.Enabled) |> returnTask
 
+                context.Items.Add("Command", nameof(EnableCheckpoint))
                 return! processCommand context validations command
             }
 
@@ -341,8 +384,10 @@ module Branch =
                        Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName RepositoryDoesNotExist
                        Branch.branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName ParentBranchDoesNotExist |]
 
-                let command (parameters: EnableFeatureParameters) = EnableSave(parameters.Enabled) |> returnTask
+                let command (parameters: EnableFeatureParameters) = 
+                    EnableSave(parameters.Enabled) |> returnTask
 
+                context.Items.Add("Command", nameof(EnableSave))
                 return! processCommand context validations command
             }
 
@@ -359,8 +404,10 @@ module Branch =
                        Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName RepositoryDoesNotExist
                        Branch.branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName BranchDoesNotExist |]
 
-                let command (parameters: EnableFeatureParameters) = EnableTag(parameters.Enabled) |> returnTask
+                let command (parameters: EnableFeatureParameters) = 
+                    EnableTag(parameters.Enabled) |> returnTask
 
+                context.Items.Add("Command", nameof(EnableTag))
                 return! processCommand context validations command
             }
 
@@ -377,8 +424,10 @@ module Branch =
                        Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName RepositoryDoesNotExist
                        Branch.branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName BranchDoesNotExist |]
 
-                let command (parameters: DeleteBranchParameters) = DeleteLogical (parameters.Force, parameters.DeleteReason) |> returnTask
+                let command (parameters: DeleteBranchParameters) = 
+                    DeleteLogical (parameters.Force, parameters.DeleteReason) |> returnTask
 
+                context.Items.Add("Command", nameof(DeleteLogical))
                 return! processCommand context validations command
             }
             

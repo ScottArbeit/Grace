@@ -3,28 +3,19 @@
 open Dapr.Actors
 open Giraffe
 open Grace.Actors
-open Grace.Actors.BranchName
-open Grace.Actors.Organization
-open Grace.Actors.OrganizationName
-open Grace.Actors.Owner
-open Grace.Actors.OwnerName
-open Grace.Actors.Repository
-open Grace.Actors.RepositoryName
 open Grace.Actors.Constants
+open Grace.Actors.Interfaces
+open Grace.Actors.Services
 open Grace.Server.ApplicationContext
-open Grace.Actors.Reference
 open Grace.Shared
 open Grace.Shared.Constants
-open Grace.Shared.Dto.Branch
-open Grace.Shared.Dto.Reference
-open Grace.Shared.Dto.Repository
 open Grace.Shared.Parameters.Common
+open Grace.Shared.Resources.Text
 open Grace.Shared.Types
 open Grace.Shared.Utilities
-open Grace.Shared.Validation.Utilities
 open Microsoft.AspNetCore.Http
-open Microsoft.Azure.Cosmos
-open Microsoft.Azure.Cosmos.Linq
+open Microsoft.Extensions.Caching.Memory
+open Microsoft.Extensions.Logging
 open NodaTime
 open System
 open System.Collections.Concurrent
@@ -37,6 +28,8 @@ open System.Text
 open System.Text.Json
 
 module Services =
+
+    let log = ApplicationContext.loggerFactory.CreateLogger("Server.Services")
 
     /// Defines the type of all server queries in Grace.
     ///
@@ -92,6 +85,8 @@ module Services =
                                 .AddTag("http.status_code", statusCode) |> ignore
                 context.SetStatusCode(statusCode)
 
+                log.LogDebug("{currentInstant}: In returnResult: StatusCode: {statusCode}; result: {result}", getCurrentInstantExtended(), statusCode, serialize result)
+
                 // .WriteJsonAsync() uses Grace's Constants.JsonSerializerOptions through DI.
                 return! context.WriteJsonAsync(result)
             with ex ->
@@ -119,3 +114,29 @@ module Services =
 
     /// Adds common attributes to the current OpenTelemetry activity, and returns the result with a 500 Internal server error status.
     let result500ServerError<'T> = returnResult<'T> StatusCodes.Status500InternalServerError
+
+    /// Validates that the owner exists in the database.
+    //let confirmOwnerId<'T> context ownerId ownerName =
+    //    task {
+    //        let mutable ownerGuid = Guid.Empty
+
+    //        match! resolveOwnerId ownerId ownerName with
+    //        | Some ownerId ->
+    //            if Guid.TryParse(ownerId, &ownerGuid) then
+    //                let mutable x = null
+    //                let cached = memoryCache.TryGetValue(ownerGuid, &x)
+    //                if cached then
+    //                    return Ok ownerGuid
+    //                else
+    //                    let actorId = Owner.GetActorId(ownerGuid)
+    //                    let ownerActorProxy = actorProxyFactory.CreateActorProxy<IOwnerActor>(actorId, ActorName.Owner)
+    //                    let! exists = ownerActorProxy.Exists()
+    //                    if exists then
+    //                        use newCacheEntry = memoryCache.CreateEntry(ownerGuid, Value = null, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
+    //                        return Ok ownerGuid
+    //                    else
+    //                        return Error (GraceError.Create (getLocalizedString OwnerDoesNotExist) (getCorrelationId context))
+    //            else
+    //                return Ok ownerGuid
+    //        | None -> return Error (GraceError.Create (getLocalizedString OwnerDoesNotExist) (getCorrelationId context))
+    //    }

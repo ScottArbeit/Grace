@@ -17,6 +17,7 @@ open Grace.Shared.Validation.Errors.Organization
 open Grace.Shared.Validation.Utilities
 open Grace.Shared.Types
 open Microsoft.AspNetCore.Http
+open Microsoft.Extensions.Logging
 open System
 open System.Threading.Tasks
 open System.Diagnostics
@@ -28,6 +29,8 @@ module Organization =
 
     let activitySource = new ActivitySource("Organization")
 
+    let log = ApplicationContext.loggerFactory.CreateLogger("Organization.Server")
+
     let actorProxyFactory = ApplicationContext.actorProxyFactory
 
     let getActorProxy (context: HttpContext) (organizationId: string) =
@@ -37,32 +40,54 @@ module Organization =
     let processCommand<'T when 'T :> OrganizationParameters> (context: HttpContext) (validations: Validations<'T>) (command: 'T -> Task<OrganizationCommand>) =
         task {
             try
+                let commandName = context.Items["Command"] :?> string
                 use activity = activitySource.StartActivity("processCommand", ActivityKind.Server)
                 let! parameters = context |> parse<'T>
-                let validationResults = validations parameters context
-                let! validationsPassed = validationResults |> allPass
-                if validationsPassed then
-                    let! organizationId = resolveOrganizationId parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName
-                    match organizationId with
-                    | Some organizationId ->
+
+                let handleCommand organizationId cmd  =
+                    task {
+                        log.LogDebug("{currentInstant}: In Organization.Server.handleCommand: organizationId: {organizationId}.", getCurrentInstantExtended(), organizationId)
                         let actorProxy = getActorProxy context organizationId
-                        let! cmd = command parameters
+
                         let! result = actorProxy.Handle cmd (Services.createMetadata context)
                         match result with
-                        | Ok graceReturn -> 
-                            return! context |> result200Ok graceReturn 
-                        | Error graceError -> 
+                        | Ok graceReturn ->
+                            return! context |> result200Ok graceReturn
+                        | Error graceError ->
+                            log.LogDebug("{currentInstant}: In Organization.Server.handleCommand: error from actorProxy.Handle: {error}", getCurrentInstantExtended(), (graceError.ToString()))
                             return! context |> result400BadRequest {graceError with Properties = getPropertiesAsDictionary parameters}
-                    | None -> 
+                    }
+
+                let validationResults = validations parameters context
+                let! validationsPassed = validationResults |> allPass
+                log.LogDebug("{currentInstant}: In Organization.Server.processCommand: validationsPassed: {validationsPassed}.", getCurrentInstantExtended(), validationsPassed)
+
+                if validationsPassed then
+                    let! cmd = command parameters
+                    let! organizationId = resolveOrganizationId parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName
+                    match organizationId, commandName = nameof(Create) with
+                    | Some organizationId, _ ->
+                        // If Id is Some, then we know we have a valid Id.
+                        if String.IsNullOrEmpty(parameters.OrganizationId) then parameters.OrganizationId<- organizationId
+                        return! handleCommand organizationId cmd
+                    | None, true ->
+                        // If it's None, but this is a Create command, still valid, just use the Id from the parameters.
+                        return! handleCommand parameters.OrganizationId cmd
+                    | None, false ->
+                        // If it's None, and this is not a Create command, then we have a bad request.
+                        log.LogDebug("{currentInstant}: In Organization.Server.processCommand: resolveOrganizationId failed. Organization does not exist. organizationId: {organizationId}; organizationName: {organizationName}.", getCurrentInstantExtended(), parameters.OrganizationId, parameters.OrganizationName)
                         return! context |> result400BadRequest (GraceError.CreateWithMetadata (OrganizationError.getErrorMessage OrganizationDoesNotExist) (getCorrelationId context) (getPropertiesAsDictionary parameters))
                 else
                     let! error = validationResults |> getFirstError
-                    let graceError = GraceError.CreateWithMetadata (OrganizationError.getErrorMessage error) (getCorrelationId context) (getPropertiesAsDictionary parameters)
+                    let errorMessage = OrganizationError.getErrorMessage error
+                    log.LogDebug("{currentInstant}: error: {error}", getCurrentInstantExtended(), errorMessage)
+                    let graceError = GraceError.CreateWithMetadata errorMessage (getCorrelationId context) (getPropertiesAsDictionary parameters)
                     graceError.Properties.Add("Path", context.Request.Path)
-                    graceError.Properties.Add("Error", OrganizationError.getErrorMessage error)
+                    graceError.Properties.Add("Error", errorMessage)
                     return! context |> result400BadRequest graceError
             with ex ->
-                return! context |> result500ServerError (GraceError.Create $"{Utilities.createExceptionResponse ex}" (getCorrelationId context))
+                log.LogError(ex, "{currentInstant}: Exception in Organization.Server.processCommand. CorrelationId: {correlationId}.", getCurrentInstantExtended(), (getCorrelationId context))
+                return! context |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
         }
     
     let processQuery<'T, 'U when 'T :> OrganizationParameters> (context: HttpContext) (parameters: 'T) (validations: Validations<'T>) (maxCount: int) (query: QueryResult<IOrganizationActor, 'U>) =
@@ -85,7 +110,7 @@ module Organization =
                     graceError.Properties.Add("Path", context.Request.Path)
                     return! context |> result400BadRequest graceError
             with ex ->
-                return! context |> result500ServerError (GraceError.Create $"{Utilities.createExceptionResponse ex}" (getCorrelationId context))
+                return! context |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
         }
 
     /// Create an organization.
@@ -109,9 +134,11 @@ module Organization =
                         let! ownerId = resolveOwnerId parameters.OwnerId parameters.OwnerName
                         let ownerIdGuid = Guid.Parse(ownerId.Value)
                         let organizationIdGuid = Guid.Parse(parameters.OrganizationId)
-                        return OrganizationCommand.Create (organizationIdGuid, OrganizationName parameters.OrganizationName, ownerIdGuid)
+                        return Create (organizationIdGuid, OrganizationName parameters.OrganizationName, ownerIdGuid)
                     }
-                    
+
+                log.LogDebug("{currentInstant}: In Grace.Server.Create.", getCurrentInstantExtended())
+                context.Items.Add("Command", nameof(Create))
                 return! processCommand context validations command
             }
 
@@ -132,8 +159,9 @@ module Organization =
                        Organization.organizationIsNotDeleted parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName OrganizationIsDeleted |]
 
                 let command (parameters: SetOrganizationNameParameters) = 
-                    OrganizationCommand.SetName (OrganizationName parameters.NewName) |> returnTask
+                    SetName (OrganizationName parameters.NewName) |> returnTask
 
+                context.Items.Add("Command", nameof(SetName))
                 return! processCommand context validations command
             }
 
@@ -152,8 +180,10 @@ module Organization =
                        Organization.organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName OrganizationDoesNotExist
                        Organization.organizationIsNotDeleted parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName OrganizationIsDeleted |]
 
-                let command (parameters: SetOrganizationTypeParameters) = OrganizationCommand.SetType (Utilities.discriminatedUnionFromString<OrganizationType>(parameters.OrganizationType).Value) |> returnTask
+                let command (parameters: SetOrganizationTypeParameters) = 
+                    SetType (discriminatedUnionFromString<OrganizationType>(parameters.OrganizationType).Value) |> returnTask
                 
+                context.Items.Add("Command", nameof(SetType))
                 return! processCommand context validations command
             }
 
@@ -174,8 +204,9 @@ module Organization =
                        Organization.organizationIsNotDeleted parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName OrganizationIsDeleted |]
 
                 let command (parameters: SetOrganizationSearchVisibilityParameters) =
-                    OrganizationCommand.SetSearchVisibility (Utilities.discriminatedUnionFromString<SearchVisibility>(parameters.SearchVisibility).Value) |> returnTask
+                    SetSearchVisibility (discriminatedUnionFromString<SearchVisibility>(parameters.SearchVisibility).Value) |> returnTask
                 
+                context.Items.Add("Command", nameof(SetSearchVisibility))
                 return! processCommand context validations command
             }
             
@@ -194,8 +225,10 @@ module Organization =
                        Organization.organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName OrganizationDoesNotExist
                        Organization.organizationIsNotDeleted parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName OrganizationIsDeleted |]
 
-                let command (parameters: SetOrganizationDescriptionParameters) = OrganizationCommand.SetDescription(parameters.Description) |> returnTask
+                let command (parameters: SetOrganizationDescriptionParameters) =
+                    SetDescription(parameters.Description) |> returnTask
 
+                context.Items.Add("Command", nameof(SetDescription))
                 return! processCommand context validations command
             }
 
@@ -223,7 +256,7 @@ module Organization =
                     let! parameters = context |> parse<ListRepositoriesParameters>
                     return! processQuery context parameters validations 1 query
                 with ex ->
-                    return! context |> result500ServerError (GraceError.Create $"{Utilities.createExceptionResponse ex}" (getCorrelationId context))
+                    return! context |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
             }
 
     /// Delete an organization.
@@ -241,8 +274,10 @@ module Organization =
                        Organization.organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName OrganizationDoesNotExist
                        Organization.organizationIsNotDeleted parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName OrganizationIsDeleted |]
 
-                let command (parameters: DeleteOrganizationParameters) = OrganizationCommand.DeleteLogical (parameters.Force, parameters.DeleteReason) |> returnTask
+                let command (parameters: DeleteOrganizationParameters) = 
+                    DeleteLogical (parameters.Force, parameters.DeleteReason) |> returnTask
 
+                context.Items.Add("Command", nameof(DeleteLogical))
                 return! processCommand context validations command
             }
 
@@ -261,8 +296,10 @@ module Organization =
                        Organization.organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName OrganizationDoesNotExist
                        Organization.organizationIsDeleted parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName OrganizationIsNotDeleted |]
 
-                let command (parameters: OrganizationParameters) = OrganizationCommand.Undelete |> returnTask
+                let command (parameters: OrganizationParameters) = 
+                    Undelete |> returnTask
 
+                context.Items.Add("Command", nameof(Undelete))
                 return! processCommand context validations command
             }
 
@@ -290,5 +327,5 @@ module Organization =
                     let! parameters = context |> parse<GetOrganizationParameters>
                     return! processQuery context parameters validations 1 query
                 with ex ->
-                    return! context |> result500ServerError (GraceError.Create $"{Utilities.createExceptionResponse ex}" (getCorrelationId context))
+                    return! context |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
             }
