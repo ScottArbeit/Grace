@@ -51,7 +51,6 @@ module Owner =
 
                 let handleCommand ownerId cmd  =
                     task {
-                        log.LogDebug("{currentInstant}: In Owner.Server.handleCommand: ownerId: {ownerId}.", getCurrentInstantExtended(), ownerId)
                         let actorProxy = getActorProxy context ownerId
 
                         let! result = actorProxy.Handle cmd (Services.createMetadata context)

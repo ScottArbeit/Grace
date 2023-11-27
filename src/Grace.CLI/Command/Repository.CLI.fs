@@ -59,7 +59,7 @@ module Repository =
         let deleteReason = new Option<String>("--deleteReason", IsRequired = true, Description = "The reason for deleting the repository.", Arity = ArgumentArity.ExactlyOne)
         let graceConfig = new Option<String>("--graceConfig", IsRequired = false, Description = "The path of a Grace config file that you'd like to use instead of the default graceconfig.json.", Arity = ArgumentArity.ExactlyOne)
         let force = new Option<bool>("--force", IsRequired = false, Description = "Deletes repository even if there are links to other repositories.", Arity = ArgumentArity.ExactlyOne)
-        let doNotSwitch = new Option<bool>("--doNotSwitch", IsRequired = false, Description = "Do not switch to the new repository as the current repository.", Arity = ArgumentArity.ExactlyOne)
+        let doNotSwitch = new Option<bool>("--doNotSwitch", IsRequired = false, Description = "Do not switch to the new repository as the current repository.", Arity = ArgumentArity.ZeroOrOne)
         let directory = new Option<String>("--directory", IsRequired = false, Description = "The directory to use when initializing the repository. [default: current directory]", Arity = ArgumentArity.ExactlyOne)
         //enabled.SetDefaultValue(false)
         let includeDeleted = new Option<bool>("--includeDeleted", IsRequired = false, Description = "True to include deleted branches; false to exclude them.", Arity = ArgumentArity.ZeroOrOne)
@@ -975,7 +975,7 @@ module Repository =
         repositoryCommand.AddAlias("repo")
 
         // Add subcommands.
-        let repositoryCreateCommand = new Command("create", Description = "Create a new repository.") |> addOption Options.requiredRepositoryName |> addCommonOptionsExceptForRepositoryInfo
+        let repositoryCreateCommand = new Command("create", Description = "Create a new repository.") |> addOption Options.requiredRepositoryName |> addCommonOptionsExceptForRepositoryInfo |> addOption Options.doNotSwitch
         repositoryCreateCommand.Handler <- Create
         repositoryCommand.AddCommand(repositoryCreateCommand)
 

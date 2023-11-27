@@ -70,7 +70,6 @@ module Repository =
 
                 let handleCommand repositoryId cmd  =
                     task {
-                        log.LogDebug("{currentInstant}: In Repository.Server.handleCommand: repositoryId: {repositoryId}.", getCurrentInstantExtended(), repositoryId)
                         let actorProxy = getActorProxy context repositoryId
                 
                         let! result = actorProxy.Handle cmd (Services.createMetadata context)

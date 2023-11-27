@@ -316,10 +316,17 @@ module Branch =
                     } :> Task
                 | ReminderType.PhysicalDeletion ->
                     task {
+                        // Delete saved state for this actor.
                         let! deletedDtoState = stateManager.TryRemoveStateAsync(dtoStateName)
                         let! deletedEventsState = stateManager.TryRemoveStateAsync(eventsStateName)
+
+                        // Mark the actor as disposed, in case someone tries to use it before Dapr GC's it.
                         isDisposed <- true
-                        // TODO: Log these results.
-                        return ()
+
+                        log.LogInformation("{currentInstant}: Deleted physical state for branch; RepositoryId: {repositoryId}; BranchId: {branchId}; BranchName: {branchName}; ParentBranchId: {parentBranchId}; deletedDtoState: {deletedDtoState}; deletedEventsState: {deletedEventsState}.", 
+                            getCurrentInstantExtended(), branchDto.RepositoryId, branchDto.BranchId, branchDto.BranchName, branchDto.ParentBranchId, deletedDtoState, deletedEventsState)
+
+                        // Set all values to default.
+                        branchDto <- BranchDto.Default
                     } :> Task
                 | _ -> failwith "Unknown reminder type."

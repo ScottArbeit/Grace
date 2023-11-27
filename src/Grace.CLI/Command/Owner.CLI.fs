@@ -374,7 +374,7 @@ module Owner =
         let ownerCommand = new Command("owner", Description = "Create, change, or delete owner-level information.")
 
         // Add subcommands.
-        let ownerCreateCommand = new Command("create", Description = "Create a new owner.") |> addOption Options.ownerNameRequired |> addOption Options.ownerId
+        let ownerCreateCommand = new Command("create", Description = "Create a new owner.") |> addOption Options.ownerNameRequired |> addOption Options.ownerId |> addOption Options.doNotSwitch
         ownerCreateCommand.Handler <- Create
         ownerCommand.AddCommand(ownerCreateCommand)
 

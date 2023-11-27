@@ -43,7 +43,7 @@ module Organization =
         let force = new Option<bool>("--force", IsRequired = false, Description = "Delete even if there is data under this organization. [default: false]")
         let includeDeleted = new Option<bool>([|"--include-deleted"; "-d"|], IsRequired = false, Description = "Include deleted organizations in the result. [default: false]")
         let deleteReason = new Option<String>("--deleteReason", IsRequired = true, Description = "The reason for deleting the organization.", Arity = ArgumentArity.ExactlyOne)
-        let doNotSwitch = new Option<bool>("--doNotSwitch", IsRequired = false, Description = "Do not switch to the new organization as the current organization.", Arity = ArgumentArity.ExactlyOne)
+        let doNotSwitch = new Option<bool>("--doNotSwitch", IsRequired = false, Description = "Do not switch to the new organization as the current organization.", Arity = ArgumentArity.ZeroOrOne)
 
     let mustBeAValidGuid (parseResult: ParseResult) (parameters: CommonParameters) (option: Option) (value: string) (error: OrganizationError) =
         let mutable guid = Guid.Empty
@@ -437,12 +437,12 @@ module Organization =
         let addCommonOptions (command: Command) =
             command |> addOption Options.organizationName |> addCommonOptionsWithoutOrganizationName
 
-        // Create main command and aliases, if any.`
+        // Create main command and aliases, if any.
         let organizationCommand = new Command("organization", Description = "Create, change, or delete organization-level information.")
         organizationCommand.AddAlias("org")
 
         // Add subcommands.
-        let organizationCreateCommand = new Command("create", Description = "Create a new organization.") |> addOption Options.organizationNameRequired |> addCommonOptionsWithoutOrganizationName
+        let organizationCreateCommand = new Command("create", Description = "Create a new organization.") |> addOption Options.organizationNameRequired |> addCommonOptionsWithoutOrganizationName |> addOption Options.doNotSwitch
         organizationCreateCommand.Handler <- Create
         organizationCommand.AddCommand(organizationCreateCommand)
 

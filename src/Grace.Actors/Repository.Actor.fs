@@ -234,9 +234,10 @@ module Repository =
                 // Loop through each branch and send a DeleteLogical command to it.
                 do! Parallel.ForEachAsync(branches, Constants.ParallelOptions, (fun branch ct ->
                     ValueTask(task {
-                        let branchActor = this.ProxyFactory.CreateActorProxy<IBranchActor> (ActorId($"{branch.BranchId}"), Constants.ActorName.Branch)
-                        let! result = branchActor.Handle (Commands.Branch.DeleteLogical (true, $"Cascaded from deleting repository. ownerId: {repositoryDto.OwnerId}; organizationId: {repositoryDto.OrganizationId}; repositoryId: {repositoryDto.RepositoryId}; repositoryName: {repositoryDto.RepositoryName}; deleteReason: {deleteReason}")) metadata
-                        results.Enqueue(result)
+                        if branch.DeletedAt |> Option.isNone then
+                            let branchActor = this.ProxyFactory.CreateActorProxy<IBranchActor> (ActorId($"{branch.BranchId}"), Constants.ActorName.Branch)
+                            let! result = branchActor.Handle (Commands.Branch.DeleteLogical (true, $"Cascaded from deleting repository. ownerId: {repositoryDto.OwnerId}; organizationId: {repositoryDto.OrganizationId}; repositoryId: {repositoryDto.RepositoryId}; repositoryName: {repositoryDto.RepositoryName}; deleteReason: {deleteReason}")) metadata
+                            results.Enqueue(result)
                     })))
 
                 // Check if any of the results were errors, and take the first one if so.
@@ -401,11 +402,13 @@ module Repository =
                                     | DeleteLogical (force, deleteReason) ->
                                         // Get the list of branches that aren't already deleted.
                                         let! branches = getBranches repositoryDto.RepositoryId Int32.MaxValue false
-                                        if not <| force && branches.Count > 0 then
-                                            raise (ApplicationException($"{error}"))
+
+                                        // If any branches are not already deleted, and we're not forcing the deletion, then throw an exception.
+                                        if not <| force && branches.Count > 0 && branches.Any(fun branch -> branch.DeletedAt |> Option.isNone) then
+                                            //raise (ApplicationException($"{error}"))
                                             return LogicalDeleted (force, deleteReason)
                                         else
-                                            // Delete the branches.
+                                            // We have --force specified, so delete the branches that aren't already deleted.
                                             match! this.LogicalDeleteBranches(branches, metadata, deleteReason) with
                                             | Ok _ -> this.SchedulePhysicalDeletion(deleteReason)
                                             | Error error -> raise (ApplicationException($"{error}"))
@@ -446,6 +449,10 @@ module Repository =
                         // Mark the actor as disposed, in case someone tries to use it before Dapr GC's it.
                         isDisposed <- true
 
-                        log.LogInformation("Physical deleted state for repository; RepositoryId: {}; RepositoryName: {}; OrganizationId: {organizationId}; OwnerId: {ownerId}.", repositoryDto.RepositoryId, repositoryDto.RepositoryName, repositoryDto.OrganizationId, repositoryDto.OwnerId)
+                        log.LogInformation("{currentInstant}: Deleted physical state for repository; RepositoryId: {}; RepositoryName: {}; OrganizationId: {organizationId}; OwnerId: {ownerId}; deletedDtoState: {deletedDtoState}; deletedEventsState: {deletedEventsState}.",
+                            getCurrentInstantExtended(), repositoryDto.RepositoryId, repositoryDto.RepositoryName, repositoryDto.OrganizationId, repositoryDto.OwnerId, deletedDtoState, deletedEventsState)
+
+                        // Set all values to default.
+                        repositoryDto <- RepositoryDto.Default
                     } :> Task
                 | _ -> failwith "Unknown reminder type."

@@ -46,7 +46,6 @@ module Organization =
 
                 let handleCommand organizationId cmd  =
                     task {
-                        log.LogDebug("{currentInstant}: In Organization.Server.handleCommand: organizationId: {organizationId}.", getCurrentInstantExtended(), organizationId)
                         let actorProxy = getActorProxy context organizationId
 
                         let! result = actorProxy.Handle cmd (Services.createMetadata context)

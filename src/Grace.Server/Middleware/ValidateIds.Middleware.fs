@@ -162,7 +162,7 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
                         let serializedRequestBody = serialize requestBody
 
                         context.Items.Add("Request.Body", serializedRequestBody)
-                        log.LogDebug("{currentInstant}: Request body: {requestBody}", getCurrentInstantExtended(), serializedRequestBody)
+                        log.LogDebug("{currentInstant}: requestBodyType: {requestBodyType}; Request body: {requestBody}", getCurrentInstantExtended(), requestBodyType.Name, serializedRequestBody)
                     
                         // Get Owner information.
                         if Option.isSome entityProperties.OwnerId && Option.isSome entityProperties.OwnerName then

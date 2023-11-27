@@ -66,7 +66,6 @@ module Branch =
 
                 let handleCommand branchId cmd  =
                     task {
-                        log.LogDebug("{currentInstant}: In Branch.Server.handleCommand: branchId: {branchId}.", getCurrentInstantExtended(), branchId)
                         let actorProxy = getActorProxy context branchId
                 
                         let! result = actorProxy.Handle cmd (Services.createMetadata context)

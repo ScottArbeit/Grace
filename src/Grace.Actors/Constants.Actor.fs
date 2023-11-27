@@ -39,4 +39,4 @@ module Constants =
     let DefaultObjectStorageContainerName = "grace-objects"
 
     // This will be TimeSpan.FromDays(7.0) in production, but for development purposes we'll use 30 seconds
-    let DefaultPhysicalDeletionReminderTime = TimeSpan.FromSeconds(30.0)
+    let DefaultPhysicalDeletionReminderTime = TimeSpan.FromSeconds(120.0)

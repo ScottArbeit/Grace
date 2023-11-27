@@ -19,6 +19,7 @@ open NodaTime
 open System
 open System.Collections.Concurrent
 open System.Collections.Generic
+open System.Linq
 open System.Runtime.Serialization
 open System.Text.Json
 open System.Threading.Tasks
@@ -162,9 +163,10 @@ module Owner =
                 // Loop through each organization and send a DeleteLogical command to it.
                 do! Parallel.ForEachAsync(organizations, Constants.ParallelOptions, (fun organization ct ->
                     ValueTask(task {
-                        let organizationActor = this.ProxyFactory.CreateActorProxy<IOrganizationActor> (ActorId($"{organization.OrganizationId}"), Constants.ActorName.Organization)
-                        let! result = organizationActor.Handle (Commands.Organization.DeleteLogical (true, $"Cascaded from deleting owner. ownerId: {ownerDto.OwnerId}; ownerName: {ownerDto.OwnerName}; deleteReason: {deleteReason}")) metadata
-                        results.Enqueue(result)
+                        if organization.DeletedAt |> Option.isNone then
+                            let organizationActor = this.ProxyFactory.CreateActorProxy<IOrganizationActor> (ActorId($"{organization.OrganizationId}"), Constants.ActorName.Organization)
+                            let! result = organizationActor.Handle (Commands.Organization.DeleteLogical (true, $"Cascaded from deleting owner. ownerId: {ownerDto.OwnerId}; ownerName: {ownerDto.OwnerName}; deleteReason: {deleteReason}")) metadata
+                            results.Enqueue(result)
                     })))
 
                 // Check if any of the results were errors. If so, return the first one.
@@ -229,7 +231,7 @@ module Owner =
                                         let! organizations = getOrganizations ownerDto.OwnerId Int32.MaxValue false
 
                                         // If the owner contains active organizations, and the force flag is not set, return an error.
-                                        if not <| force && organizations.Count > 0 then
+                                        if not <| force && organizations.Count > 0 && organizations.Any(fun organization -> organization.DeletedAt |> Option.isNone) then
                                             return Error (GraceError.CreateWithMetadata (OwnerError.getErrorMessage OwnerContainsOrganizations) metadata.CorrelationId metadata.Properties)
                                         else
                                             // Delete the organizations.
@@ -275,7 +277,10 @@ module Owner =
 
                         // Mark the actor as disposed, in case someone tries to use it before Dapr GC's it.
                         isDisposed <- true
+                        log.LogInformation("{currentInstant}: Deleted physical state for owner; OwnerId: {ownerId}; OwnerName: {ownerName}; deletedDtoState: {deletedDtoState}; deletedEventsState: {deletedEventsState}.", 
+                            getCurrentInstantExtended(), ownerDto.OwnerId, ownerDto.OwnerName, deletedDtoState, deletedEventsState)
 
-                        log.LogInformation("Physical deleted state for owner; OwnerId: {ownerId}; OwnerName: {ownerName}.", ownerDto.OwnerId, ownerDto.OwnerName)
+                        // Set all values to default.
+                        ownerDto <- OwnerDto.Default
                     } :> Task
                 | _ -> failwith "Unknown reminder type."

@@ -10,20 +10,19 @@ open Grace.Actors.Services
 open Grace.Shared
 open Grace.Shared.Constants
 open Grace.Shared.Dto.Organization
+open Grace.Shared.Dto.Repository
 open Grace.Shared.Types
 open Grace.Shared.Utilities
 open Grace.Shared.Validation.Errors.Organization
 open Microsoft.Extensions.Logging
 open NodaTime
 open System
+open System.Collections.Concurrent
 open System.Collections.Generic
+open System.Linq
 open System.Runtime.Serialization
 open System.Text.Json
 open System.Threading.Tasks
-open Constants.ReminderType
-open Commands.Owner
-open System.Collections.Concurrent
-open Grace.Shared.Dto.Repository
 open Constants.ActorName
 
 module Organization =
@@ -162,9 +161,10 @@ module Organization =
                 // Loop through each repository and send a DeleteLogical command to it.
                 do! Parallel.ForEachAsync(repositories, Constants.ParallelOptions, (fun repository ct ->
                     ValueTask(task {
-                        let repositoryActor = this.ProxyFactory.CreateActorProxy<IRepositoryActor> (ActorId($"{repository.RepositoryId}"), Constants.ActorName.Repository)
-                        let! result = repositoryActor.Handle (Commands.Repository.DeleteLogical (true, $"Cascaded from deleting organization. ownerId: {organizationDto.OwnerId}; organizationId: {organizationDto.OrganizationId}; organizationName: {organizationDto.OrganizationName}; deleteReason: {deleteReason}")) metadata
-                        results.Enqueue(result)
+                        if repository.DeletedAt |> Option.isNone then
+                            let repositoryActor = this.ProxyFactory.CreateActorProxy<IRepositoryActor> (ActorId($"{repository.RepositoryId}"), Constants.ActorName.Repository)
+                            let! result = repositoryActor.Handle (Commands.Repository.DeleteLogical (true, $"Cascaded from deleting organization. ownerId: {organizationDto.OwnerId}; organizationId: {organizationDto.OrganizationId}; organizationName: {organizationDto.OrganizationName}; deleteReason: {deleteReason}")) metadata
+                            results.Enqueue(result)
                     })))
 
                 // Check if any of the commands failed, and if so, return the first error.
@@ -229,8 +229,8 @@ module Organization =
                                         // Get the list of branches that aren't already deleted.
                                         let! repositories = getRepositories organizationDto.OrganizationId Int32.MaxValue false
 
-                                        // If the organization contains repositories, and the force flag is not set, return an error.
-                                        if not <| force && repositories.Count > 0 then
+                                        // If the organization contains repositories, and any of them isn't already deleted, and the force flag is not set, return an error.
+                                        if not <| force && repositories.Count > 0 && repositories.Any(fun repository -> repository.DeletedAt |> Option.isNone) then
                                             return Error (GraceError.CreateWithMetadata (OrganizationError.getErrorMessage OrganizationContainsRepositories) metadata.CorrelationId metadata.Properties)
                                         else
                                             // Delete the repositories.
@@ -279,6 +279,10 @@ module Organization =
                         // Mark the actor as disposed, in case someone tries to use it before Dapr GC's it.
                         isDisposed <- true
 
-                        log.LogInformation("Physically deleted state for organization; OrganizationId: {organizationId}; OrganizationName: {organizationName}; OwnerId: {ownerId}.", organizationDto.OrganizationId, organizationDto.OrganizationName, organizationDto.OwnerId)
+                        log.LogInformation("{currentInstant}: Physically deleted state for organization; OrganizationId: {organizationId}; OrganizationName: {organizationName}; OwnerId: {ownerId}; deletedDtoState: {deletedDtoState}; deletedEventsState: {deletedEventsState}.", 
+                            getCurrentInstantExtended(), organizationDto.OrganizationId, organizationDto.OrganizationName, organizationDto.OwnerId, deletedDtoState, deletedEventsState)
+
+                        // Set all values to default.
+                        organizationDto <- OrganizationDto.Default
                     } :> Task
                 | _ -> failwith "Unknown reminder type."
