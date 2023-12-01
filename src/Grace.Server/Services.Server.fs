@@ -85,7 +85,7 @@ module Services =
                                 .AddTag("http.status_code", statusCode) |> ignore
                 context.SetStatusCode(statusCode)
 
-                log.LogDebug("{currentInstant}: In returnResult: StatusCode: {statusCode}; result: {result}", getCurrentInstantExtended(), statusCode, serialize result)
+                //log.LogDebug("{currentInstant}: In returnResult: StatusCode: {statusCode}; result: {result}", getCurrentInstantExtended(), statusCode, serialize result)
 
                 // .WriteJsonAsync() uses Grace's Constants.JsonSerializerOptions through DI.
                 return! context.WriteJsonAsync(result)

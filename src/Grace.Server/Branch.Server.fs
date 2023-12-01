@@ -170,7 +170,7 @@ module Branch =
                                 (Guid.Parse(parameters.BranchId)), 
                                 (BranchName parameters.BranchName),
                                 Constants.DefaultParentBranchId,
-                                ReferenceId.Empty,
+                                ReferenceId.Empty,  // This is fucked.
                                 Guid.Parse(parameters.RepositoryId),
                                 parameters.InitialPermissions)
                     }
@@ -216,7 +216,7 @@ module Branch =
                        Branch.branchAllowsReferenceType parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName ReferenceType.Promotion PromotionIsDisabled |]
 
                 let command (parameters: CreateReferenceParameters) = 
-                    BranchCommand.Promote(parameters.DirectoryId, parameters.Sha256Hash, ReferenceText parameters.Message) |> returnTask
+                    Promote(parameters.DirectoryId, parameters.Sha256Hash, ReferenceText parameters.Message) |> returnTask
 
                 context.Items.Add("Command", nameof(Promote))
                 return! processCommand context validations command

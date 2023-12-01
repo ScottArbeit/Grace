@@ -1,8 +1,8 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk.Web">
 	<PropertyGroup>
 		<TargetFramework>net8.0</TargetFramework>
+		<Platforms>AnyCPU;x64</Platforms>
 		<LangVersion>preview</LangVersion>
-		<PublishReadyToRun>false</PublishReadyToRun>
 		<Version>0.1</Version>
 		<Description>The server module for Grace Version Control System.</Description>
 		<UserSecretsId>f1167a88-7f15-49c3-8ea1-30c2608081c9</UserSecretsId>
@@ -17,12 +17,14 @@
 		<GenerateDocumentationFile>false</GenerateDocumentationFile>
 		<AccelerateBuildsInVisualStudio>true</AccelerateBuildsInVisualStudio>
 		<NoWarn>NETSDK1057</NoWarn>
-		<Platforms>AnyCPU;x64</Platforms>
 		<UseAppHost>false</UseAppHost>
 		<PackageProjectUrl>https://github.com/ScottArbeit/Grace</PackageProjectUrl>
 		<OtherFlags>--test:GraphBasedChecking</OtherFlags>
 		<OtherFlags>--test:ParallelOptimization</OtherFlags>
 		<OtherFlags>--test:ParallelIlxGen</OtherFlags>
+	</PropertyGroup>
+	<PropertyGroup Condition="'$(Configuration)'=='Release'">
+		<PublishReadyToRun>true</PublishReadyToRun>
 	</PropertyGroup>
 	<ItemGroup>
 		<ContainerPort Include="5000" Type="tcp" />

@@ -45,7 +45,7 @@ module Branch =
         let mutable isDisposed = false
         
         let updateDto branchEventType currentBranchDto =
-            let newOrganizationDto = 
+            let newBranchDto = 
                 match branchEventType with
                 | Created (branchId, branchName, parentBranchId, basedOn, repositoryId, initialPermissions) -> 
                     let mutable branchDto = {BranchDto.Default with BranchId = branchId; BranchName = branchName; ParentBranchId = parentBranchId; BasedOn = basedOn; RepositoryId = repositoryId}
@@ -57,10 +57,10 @@ module Branch =
                                         | ReferenceType.Save -> {branchDto with SaveEnabled = true}
                                         | ReferenceType.Tag -> {branchDto with TagEnabled = true}
                     branchDto
-
                 | Rebased referenceId -> {currentBranchDto with BasedOn = referenceId}
                 | NameSet branchName -> {currentBranchDto with BranchName = branchName}
-                | Promoted (referenceId, directoryVersion, sha256Hash, referenceText) -> {currentBranchDto with LatestPromotion = referenceId}
+                | Promoted (referenceId, directoryVersion, sha256Hash, referenceText) -> 
+                    {currentBranchDto with LatestPromotion = referenceId; BasedOn = referenceId}
                 | Committed (referenceId, directoryVersion, sha256Hash, referenceText) -> {currentBranchDto with LatestCommit = referenceId}
                 | Checkpointed (referenceId, directoryVersion, sha256Hash, referenceText) -> {currentBranchDto with LatestCheckpoint = referenceId}
                 | Saved (referenceId, directoryVersion, sha256Hash, referenceText) -> {currentBranchDto with LatestSave = referenceId}
@@ -75,11 +75,11 @@ module Branch =
                 | PhysicalDeleted -> currentBranchDto // Do nothing because it's about to be deleted anyway.
                 | Undeleted -> {currentBranchDto with DeletedAt = None; DeleteReason = String.Empty}
 
-            {newOrganizationDto with UpdatedAt = Some (getCurrentInstant())}
+            {newBranchDto with UpdatedAt = Some (getCurrentInstant())}
 
-        member private this.BranchEvents =
+        member private this.BranchEvents() =
+            let stateManager = this.StateManager
             task {
-                let stateManager = this.StateManager
                 if branchEvents = null then
                     let! retrievedEvents = (Storage.RetrieveState<List<BranchEvent>> stateManager eventsStateName)
                     branchEvents <- match retrievedEvents with
@@ -112,7 +112,7 @@ module Branch =
             task {
                 //let! _ = Constants.DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> this.SetMaintenanceReminder())
                 ()
-            }
+            } :> Task
 
         override this.OnPreActorMethodAsync(context) =
             actorStartTime <- getCurrentInstant()
@@ -140,7 +140,7 @@ module Branch =
             let stateManager = this.StateManager
             task {
                 try
-                    let! branchEvents = this.BranchEvents
+                    let! branchEvents = this.BranchEvents()
                     if branchEvents.Count = 0 then
                         do! this.OnFirstWrite()
 
@@ -191,7 +191,7 @@ module Branch =
             member this.Handle (command: BranchCommand) (metadata: EventMetadata) =
                 let isValid (command: BranchCommand) (metadata: EventMetadata) =
                     task {
-                        let! branchEvents = this.BranchEvents
+                        let! branchEvents = this.BranchEvents()
                         if branchEvents.Exists(fun ev -> ev.Metadata.CorrelationId = metadata.CorrelationId) && (branchEvents.Count > 3) then
                             return Error (GraceError.Create (BranchError.getErrorMessage DuplicateCorrelationId) metadata.CorrelationId)
                         else
@@ -316,6 +316,9 @@ module Branch =
                     } :> Task
                 | ReminderType.PhysicalDeletion ->
                     task {
+                        // Delete the references for this branch.
+
+
                         // Delete saved state for this actor.
                         let! deletedDtoState = stateManager.TryRemoveStateAsync(dtoStateName)
                         let! deletedEventsState = stateManager.TryRemoveStateAsync(eventsStateName)

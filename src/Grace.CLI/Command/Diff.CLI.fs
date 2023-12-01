@@ -281,9 +281,14 @@ module Diff =
                                                     logToAnsiConsole Colors.Verbose $"In diffToReference / Promotion: Did not find the basedOn reference."
                                                     ()
                                             | Error error ->
+                                                logToAnsiConsole Colors.Error "Error in GetReferencesByReferenceId."
                                                 logToAnsiConsole Colors.Error (Markup.Escape($"{error}"))
+                                                if parseResult |> json || parseResult |> verbose then
+                                                    logToAnsiConsole Colors.Verbose (serialize error)
                                         | Error error ->
-                                            logToAnsiConsole Colors.Error (Markup.Escape($"{error}"))
+                                            logToAnsiConsole Colors.Error (Markup.Escape($"Error in Branch.Get: {error}"))
+                                            if parseResult |> json || parseResult |> verbose then
+                                                logToAnsiConsole Colors.Verbose (serialize error)
                                         
                                         return Ok (GraceReturnValue.Create (promotions :> IEnumerable<ReferenceDto>) parameters.CorrelationId) 
                                 }
@@ -352,6 +357,8 @@ module Diff =
                             | Error error ->
                                 let s = StringExtensions.EscapeMarkup($"{error.Error}")
                                 logToAnsiConsole Colors.Error $"Error submitting diff: {s}"
+                                if parseResult |> json || parseResult |> verbose then
+                                    logToAnsiConsole Colors.Verbose (serialize error)
                             t6.Increment(100.0)
                             //AnsiConsole.MarkupLine($"[{Colors.Important}]Differences: {differences.Count}.[/]")
                             //AnsiConsole.MarkupLine($"[{Colors.Error}]{error.Error.EscapeMarkup()}[/]")

@@ -320,6 +320,9 @@ module Utilities =
         }).Unwrap()
 
     /// Custom monadic bind operator for the nested monad Task<Result<'T, 'TError>>.
+    //let inline (>>=!) (result: Task<Result<'T, 'TError>>) (f: 'T -> Task<Result<'U, 'TError>>) =
+    //    bindTaskResult result f
+
     let inline (>>=!) (result: Task<Result<'T, 'TError>>) (f: 'T -> Task<Result<'U, 'TError>>) =
         bindTaskResult result f
 

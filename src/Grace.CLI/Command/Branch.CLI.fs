@@ -914,7 +914,7 @@ module Branch =
                     | Ok result -> Ok (showOutput, parseResult, parameters) |> returnTask
                     | Error error -> Error error |> returnTask
 
-                // 0. Get the branchDto from the parameters.
+                // 0. Get the branchDto for the current branch.
                 let getCurrentBranch (t: ProgressTask) (showOutput, parseResult: ParseResult, parameters: CommonParameters) =
                     task {
                         t |> startProgressTask showOutput

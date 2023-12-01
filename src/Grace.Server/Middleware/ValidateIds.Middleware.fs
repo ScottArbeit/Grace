@@ -68,18 +68,17 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
     /// Gets the parameter type for the endpoint from the endpoint metadata created in Startup.Server.fs.
     let getBodyType (context: HttpContext) = 
         let path = context.Request.Path.ToString()
-        if not <| path.StartsWith("/healthz") && not <| path.StartsWith("/actors") && not <| path.StartsWith("/dapr") then
+        if not <| path.StartsWith("/healthz") && not <| path.StartsWith("/actors") && not <| path.StartsWith("/dapr") && not <| path.StartsWith("/notifications") then
             let endpoint = context.GetEndpoint()
             if isNull(endpoint) then
                 log.LogDebug("{currentInstant}: Path: {context.Request.Path}; Endpoint: null.", getCurrentInstantExtended(), context.Request.Path)
                 None
             elif endpoint.Metadata.Count > 0 then
-                //logToConsole $"Path: {context.Request.Path}; endpoint.Metadata.Count: {endpoint.Metadata.Count}."
-                //endpoint.Metadata |> Seq.iter (fun m -> logToConsole (sprintf "%A: %A" m (m.GetType())))
                 let requestBodyType = endpoint.Metadata 
-                                        |> Seq.tryFind (fun m -> m.GetType().FullName = "System.RuntimeType") 
-                                        |> Option.map (fun m -> m :?> Type)
-                if requestBodyType |> Option.isSome then log.LogDebug("{currentInstant}: Path: {context.Request.Path}; Endpoint: {endpoint.DisplayName}; RequestBodyType: {requestBodyType.Value.Name}.", getCurrentInstantExtended(), context.Request.Path, endpoint.DisplayName, requestBodyType.Value.Name)
+                                        |> Seq.tryFind (fun metadataItem -> metadataItem.GetType().FullName = "System.RuntimeType") // The types that we add in Startup.Server.fs show up here as "System.RuntimeType".
+                                        |> Option.map (fun metadataItem -> metadataItem :?> Type)                                   // Convert the metadata item to a Type.
+                if requestBodyType |> Option.isSome then 
+                    log.LogDebug("{currentInstant}: Path: {context.Request.Path}; Endpoint: {endpoint.DisplayName}; RequestBodyType: {requestBodyType.Value.Name}.", getCurrentInstantExtended(), context.Request.Path, endpoint.DisplayName, requestBodyType.Value.Name)
                 requestBodyType
             else
                 log.LogDebug("{currentInstant}: Path: {context.Request.Path}; endpoint.Metadata.Count = 0.", getCurrentInstantExtended(), context.Request.Path)
@@ -115,7 +114,7 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
                         typeLookup.TryAdd(path, null) |> ignore
 
                 // If we have a parameter type for the endpoint, parse the body of the request to get the Ids and Names.
-                // If we don't have a parameter type for the endpoint, it's an endpoint like /healthz or whatever.
+                // If the parameter type is null, it's an endpoint like /healthz where we don't take these parameters.
                 if not <| isNull(requestBodyType) then
                     context.Request.EnableBuffering()
                     match! context |> parseType requestBodyType with
@@ -265,7 +264,7 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
                 context.Request.Headers["X-MiddlewareTraceOut"] <- $"{middlewareTraceOutHeader}{nameof(ValidateIdsMiddleware)} --> ";
 
                 let elapsed = getCurrentInstant().Minus(startTime).TotalMilliseconds
-                if not <| path.StartsWith("/healthz") && not <| path.StartsWith("/actors") && not <| path.StartsWith("/dapr") then
+                if not <| path.StartsWith("/healthz") && not <| path.StartsWith("/actors") && not <| path.StartsWith("/dapr") && not <| path.StartsWith("/notifications") then
                     log.LogDebug("{currentInstant}: Path: {path}; Elapsed: {elapsed}ms; Status code: {statusCode}; graceIds: {graceIds}",
                         getCurrentInstantExtended(), context.Request.Path, elapsed, context.Response.StatusCode, serialize graceIds)
 #endif

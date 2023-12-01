@@ -471,7 +471,8 @@ module Repository =
 
                     let query (context: HttpContext) (maxCount: int) (actorProxy: IRepositoryActor) =
                         task {
-                            let repositoryId = RepositoryId(context.Items[nameof(RepositoryId)] :?> String)
+                            let graceIds = context.Items[nameof(GraceIds)] :?> GraceIds
+                            let repositoryId = Guid.Parse(graceIds.RepositoryId)
                             let includeDeleted = context.Items["IncludeDeleted"] :?> bool
                             return! getBranches repositoryId maxCount includeDeleted
                         }

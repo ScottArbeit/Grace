@@ -45,7 +45,7 @@ module Owner =
     let processCommand<'T when 'T :> OwnerParameters> (context: HttpContext) (validations: Validations<'T>) (command: 'T -> Task<OwnerCommand>) =
         task {
             try
-                let commandName = context.Items["Command"] :?> string
+                let commandName = context.Items["Command"] :?> string 
                 use activity = activitySource.StartActivity("processCommand", ActivityKind.Server)
                 let! parameters = context |> parse<'T>
 
