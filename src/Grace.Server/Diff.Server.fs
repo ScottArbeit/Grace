@@ -28,7 +28,7 @@ open System.Threading.Tasks
 open System.Text.Json
 
 module Diff = 
-    type Validations<'T when 'T :> DiffParameters> = 'T -> HttpContext -> Task<Result<unit, DiffError>> array
+    type Validations<'T when 'T :> DiffParameters> = 'T -> HttpContext -> ValueTask<Result<unit, DiffError>> array
 
     let activitySource = new ActivitySource("Repository")
 

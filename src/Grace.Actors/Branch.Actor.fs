@@ -183,10 +183,7 @@ module Branch =
 
         interface IBranchActor with
             member this.Exists() =
-                if branchDto.BranchId = BranchDto.Default.BranchId then
-                    false |> returnTask
-                else
-                    true |> returnTask
+                not <| (branchDto.BranchId = BranchDto.Default.BranchId) |> returnTask
 
             member this.Handle (command: BranchCommand) (metadata: EventMetadata) =
                 let isValid (command: BranchCommand) (metadata: EventMetadata) =

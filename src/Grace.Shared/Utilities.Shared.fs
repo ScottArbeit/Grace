@@ -308,10 +308,25 @@ module Utilities =
 //        {|message = $"Internal server error, and, yes, it's been logged. The correlationId is in the X-Correlation-Id header."|}
 //#endif
 
+    let flattenValueTask (valueTask: ValueTask<ValueTask<'T>>) =
+        if valueTask.IsCompleted then
+            valueTask.Result
+        else
+            valueTask.GetAwaiter().GetResult()
+
     /// Alias for calling Task.FromResult() with the provided value.
     let returnTask<'T> value = Task.FromResult<'T>(value)
 
+    /// Alias for calling ValueTask.FromResult() with the provided value.
+    let returnValueTask<'T> value = ValueTask.FromResult<'T>(value)
+
     /// Monadic bind for the nested monad Task<Result<'T, 'TError>>.
+    //let bindTaskResult (result: ValueTask<Result<'T, 'TError>>) (f: 'T -> ValueTask<Result<'U, 'TError>>) =
+    //    (task {
+    //        match! result with
+    //        | Ok returnValue -> return (f returnValue)
+    //        | Error error -> return Error error |> returnValueTask
+    //    }) |> ValueTask<ValueTask<Result<'U, 'TError>>> |> flattenValueTask
     let bindTaskResult (result: Task<Result<'T, 'TError>>) (f: 'T -> Task<Result<'U, 'TError>>) =
         (task {
             match! result with
@@ -320,11 +335,11 @@ module Utilities =
         }).Unwrap()
 
     /// Custom monadic bind operator for the nested monad Task<Result<'T, 'TError>>.
-    //let inline (>>=!) (result: Task<Result<'T, 'TError>>) (f: 'T -> Task<Result<'U, 'TError>>) =
-    //    bindTaskResult result f
-
     let inline (>>=!) (result: Task<Result<'T, 'TError>>) (f: 'T -> Task<Result<'U, 'TError>>) =
         bindTaskResult result f
+
+    //let inline (>>=!) (result: ValueTask<Result<'T, 'TError>>) (f: 'T -> ValueTask<Result<'U, 'TError>>) =
+    //    bindTaskResult result f
 
     /// Computes text for the time between two instants. You can pass the two instants in any order.
     let elapsedBetween (instant1: Instant) (instant2: Instant) =

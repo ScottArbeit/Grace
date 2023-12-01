@@ -28,7 +28,7 @@ open System.Threading.Tasks
 
 module DirectoryVersion =
 
-    type Validations<'T when 'T :> DirectoryParameters> = 'T -> HttpContext -> Task<Result<unit, DirectoryError>> array
+    type Validations<'T when 'T :> DirectoryParameters> = 'T -> HttpContext -> ValueTask<Result<unit, DirectoryError>> array
     //type QueryResult<'T, 'U when 'T :> DirectoryParameters> = 'T -> int -> IDirectoryVersionActor ->Task<'U>
     
     let activitySource = new ActivitySource("Branch")
@@ -194,7 +194,7 @@ module DirectoryVersion =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let validations (parameters: SaveDirectoryVersionsParameters) (context: HttpContext) =
-                    let mutable allValidations: Task<Result<unit, DirectoryError>> array = Array.Empty()
+                    let mutable allValidations: ValueTask<Result<unit, DirectoryError>> array = Array.Empty()
                     for directoryVersion in parameters.DirectoryVersions do
                         let validations = 
                             [| Guid.isValidAndNotEmpty $"{directoryVersion.DirectoryId}" DirectoryError.InvalidDirectoryId

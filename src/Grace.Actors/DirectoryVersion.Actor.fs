@@ -91,7 +91,7 @@ module DirectoryVersion =
 
             member this.Delete(correlationId) = GraceResult.Error (GraceError.Create "Not implemented" correlationId) |> returnTask
 
-            member this.Get() = directoryVersion  |> returnTask
+            member this.Get() = directoryVersion |> returnTask
 
             member this.GetCreatedAt() = directoryVersion.CreatedAt |> returnTask
 

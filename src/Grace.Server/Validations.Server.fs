@@ -47,7 +47,7 @@ module Validations =
                             return Error error
                 else
                     return Error error
-            }
+            } |> ValueTask<Result<unit, 'T>>
 
         /// Validates that the given ownerId does not already exist in the database.
         let ownerIdDoesNotExist<'T> (ownerId: string) (error: 'T) =
@@ -63,7 +63,7 @@ module Validations =
                         return Ok ()
                 else
                     return Error error
-            }
+            } |> ValueTask<Result<unit, 'T>>
 
         /// Validates that the owner exists in the database.
         let ownerExists<'T> ownerId ownerName (error: 'T) =
@@ -88,7 +88,7 @@ module Validations =
                     else
                         return Ok ()
                 | None -> return Error error
-            }
+            } |> ValueTask<Result<unit, 'T>>
 
         /// Validates that the given ownerName does not already exist in the database.
         let ownerNameDoesNotExist<'T> (ownerName: string) (error: 'T) =
@@ -96,7 +96,7 @@ module Validations =
                 match! resolveOwnerId String.Empty ownerName with
                 | Some ownerId -> return Error error
                 | None -> return Ok ()
-            }
+            } |> ValueTask<Result<unit, 'T>>
 
         /// Validates that the owner is deleted.
         let ownerIsDeleted<'T> ownerId ownerName (error: 'T) =
@@ -115,7 +115,7 @@ module Validations =
                     else
                         return Error error
                 | None -> return Error error
-            }
+            } |> ValueTask<Result<unit, 'T>>
 
         /// Validates that the owner is not deleted.
         let ownerIsNotDeleted<'T> ownerId ownerName (error: 'T) =
@@ -134,7 +134,7 @@ module Validations =
                     else
                         return Error error
                 | None -> return Error error
-            }
+            } |> ValueTask<Result<unit, 'T>>
 
         /// Validates that the given ownerId does not already exist in the database.
         let ownerDoesNotExist<'T> ownerId ownerName (error: 'T) =
@@ -145,7 +145,7 @@ module Validations =
                     | Error _ -> return Ok ()
                 else
                     return Ok ()
-            }
+            } |> ValueTask<Result<unit, 'T>>
 
     module Organization =
 
@@ -169,7 +169,7 @@ module Validations =
                             return Error error
                 else
                     return Ok ()
-            }
+            } |> ValueTask<Result<unit, 'T>>
 
         /// Validates that the given organizationId does not already exist in the database.
         let organizationIdDoesNotExist<'T> (organizationId: string) (error: 'T) =
@@ -180,7 +180,7 @@ module Validations =
                     | Error _ -> return Ok ()
                 else
                     return Ok ()
-            }
+            } |> ValueTask<Result<unit, 'T>>
 
         /// Validates that the given organizationName does not already exist for this owner.
         let organizationNameIsUnique<'T> (ownerId: string) (ownerName: string) (organizationName: string) (error: 'T) =
@@ -197,7 +197,7 @@ module Validations =
                         return Error error
                 else
                     return Ok ()
-            }
+            } |> ValueTask<Result<unit, 'T>>
 
         /// Validates that the organization exists.
         let organizationExists<'T> ownerId ownerName organizationId organizationName (error: 'T) =
@@ -226,7 +226,7 @@ module Validations =
                 with ex ->
                     log.LogError(ex, "{currentInstant}: Exception in Grace.Server.Validations.organizationExists.", getCurrentInstantExtended())
                     return Error error
-            }
+            } |> ValueTask<Result<unit, 'T>>
 
         /// Validates that the organization does not exist.
         let organizationDoesNotExist<'T> ownerId ownerName organizationId organizationName (error: 'T) =
@@ -235,7 +235,7 @@ module Validations =
                 | Ok _ ->
                     return Error error
                 | Error error -> return Ok ()
-            }
+            } |> ValueTask<Result<unit, 'T>>
 
         /// Validates that the organization is deleted.
         let organizationIsDeleted<'T> ownerId ownerName organizationId organizationName (error: 'T) =
@@ -250,7 +250,7 @@ module Validations =
                     else
                         return Error error
                 | None -> return Error error
-            }
+            } |> ValueTask<Result<unit, 'T>>
 
         /// Validates that the organization is not deleted.
         let organizationIsNotDeleted<'T> ownerId ownerName organizationId organizationName (error: 'T) =
@@ -265,7 +265,7 @@ module Validations =
                     else
                         return Ok ()
                 | None -> return Error error
-            }
+            } |> ValueTask<Result<unit, 'T>>
 
     module Repository =
 
@@ -289,7 +289,7 @@ module Validations =
                             return Error error
                 else
                     return Ok ()
-            }
+            } |> ValueTask<Result<unit, 'T>>
 
         /// Validates that the given repositoryId does not already exist in the database.
         let repositoryIdDoesNotExist<'T> (repositoryId: string) (error: 'T) =
@@ -300,7 +300,7 @@ module Validations =
                     | Error _ -> return Ok ()
                 else
                     return Ok ()
-            }
+            } |> ValueTask<Result<unit, 'T>>
 
         /// Validates that the repository exists.
         let repositoryExists<'T> ownerId ownerName organizationId organizationName repositoryId repositoryName (error: 'T) =
@@ -324,7 +324,7 @@ module Validations =
                     else
                         return Ok ()
                 | None -> return Error error
-            }
+            } |> ValueTask<Result<unit, 'T>>
 
         /// Validates that the repository is deleted.
         let repositoryIsDeleted<'T> ownerId ownerName organizationId organizationName repositoryId repositoryName (error: 'T) =
@@ -343,7 +343,7 @@ module Validations =
                     else
                         return Error error
                 | None -> return Error error
-            }
+            } |> ValueTask<Result<unit, 'T>>
 
         /// Validates that the repository is not deleted.
         let repositoryIsNotDeleted<'T> ownerId ownerName organizationId organizationName repositoryId repositoryName (error: 'T) =
@@ -362,7 +362,7 @@ module Validations =
                     else
                         return Error error
                 | None -> return Error error
-            }
+            } |> ValueTask<Result<unit, 'T>>
 
         let repositoryNameIsUnique<'T> ownerId ownerName organizationId organizationName repositoryName (error: 'T) =
             task {
@@ -378,7 +378,7 @@ module Validations =
                         return Error error
                 else
                     return Ok ()
-            }
+            } |> ValueTask<Result<unit, 'T>>
 
     module Branch =
 
@@ -402,7 +402,7 @@ module Validations =
                             return Error error
                 else
                     return Ok ()
-            }
+            } |> ValueTask<Result<unit, 'T>>
 
 
         /// Validates that the given branchId does not exist in the database.
@@ -419,7 +419,7 @@ module Validations =
                         return Ok ()
                 else
                     return Ok ()
-            }
+            } |> ValueTask<Result<unit, 'T>>
 
         /// Validates that the branch exists in the database.
         let branchExists<'T> ownerId ownerName organizationId organizationName repositoryId repositoryName branchId branchName (error: 'T) =
@@ -447,7 +447,7 @@ module Validations =
                             return Error error
                     | None -> return Error error
                 | None -> return Error error
-            }
+            } |> ValueTask<Result<unit, 'T>>
 
         /// Validates that a branch allows a specific reference type.
         let branchAllowsReferenceType<'T> ownerId ownerName organizationId organizationName repositoryId repositoryName branchId branchName (referenceType: ReferenceType) (error: 'T) =
@@ -473,7 +473,7 @@ module Validations =
                             return Error error
                     | None -> return Error error
                 | None -> return Error error
-            }
+            } |> ValueTask<Result<unit, 'T>>
 
         /// Validates that the given branchName does not exist in the database.
         let branchNameDoesNotExist<'T> ownerId ownerName organizationId organizationName repositoryId repositoryName branchName (error: 'T) =
@@ -484,7 +484,7 @@ module Validations =
                     | Some branchId -> return Error error
                     | None -> return Ok ()
                 | None -> return Ok ()
-            }
+            } |> ValueTask<Result<unit, 'T>>
 
         /// Validates that the given ReferenceId exists in the database.
         let referenceIdExists<'T> (referenceId: ReferenceId) (error: 'T) =
@@ -499,7 +499,7 @@ module Validations =
                         return Error error
                 else
                     return Ok ()
-            }
+            } |> ValueTask<Result<unit, 'T>>
 
     module Directory =
         /// Validates that the given DirectoryId exists in the database.
@@ -518,7 +518,7 @@ module Validations =
                         return Ok ()
                     else
                         return Error error
-            }
+            } |> ValueTask<Result<unit, 'T>>
 
         /// Validates that all of the given DirectoryIds exist in the database.
         let directoryIdsExist<'T> (directoryIds: List<DirectoryId>) (error: 'T) =
@@ -535,7 +535,7 @@ module Validations =
                     return Ok ()
                 else
                     return Error error
-            }
+            } |> ValueTask<Result<unit, 'T>>
 
         /// Validates that the branch exists in the database.
         let sha256HashExists<'T> repositoryId branchId branchName sha256Hash (error: 'T) =
@@ -554,4 +554,4 @@ module Validations =
                     else
                         return Error error
                 | None -> return Error error
-            }
+            } |> ValueTask<Result<unit, 'T>>

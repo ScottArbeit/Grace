@@ -38,7 +38,7 @@ open FSharpPlus.Data
 
 module Repository =
 
-    type Validations<'T when 'T :> RepositoryParameters> = 'T -> HttpContext -> Task<Result<unit, RepositoryError>> array
+    type Validations<'T when 'T :> RepositoryParameters> = 'T -> HttpContext -> ValueTask<Result<unit, RepositoryError>> array
 
     let activitySource = new ActivitySource("Repository")
 
@@ -61,7 +61,7 @@ module Repository =
            String.isValidGraceName parameters.RepositoryName InvalidRepositoryName
            Input.eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName RepositoryError.EitherRepositoryIdOrRepositoryNameRequired |]
 
-    let processCommand<'T when 'T :> RepositoryParameters> (context: HttpContext) (validations: Validations<'T>) (command: 'T -> Task<RepositoryCommand>) = 
+    let processCommand<'T when 'T :> RepositoryParameters> (context: HttpContext) (validations: Validations<'T>) (command: 'T -> ValueTask<RepositoryCommand>) = 
         task {
             try
                 let commandName = context.Items["Command"] :?> string
@@ -166,7 +166,7 @@ module Repository =
                         let! organizationId = resolveOrganizationId ownerId.Value parameters.OwnerName parameters.OrganizationId parameters.OrganizationName
                         return Create (RepositoryName parameters.RepositoryName, (Guid.Parse(parameters.RepositoryId)),
                             (Guid.Parse(ownerId.Value)), (Guid.Parse(organizationId.Value)))
-                    }
+                    } |> ValueTask<RepositoryCommand>
 
                 context.Items.Add("Command", nameof(Create))
                 return! processCommand context validations command
@@ -183,7 +183,7 @@ module Repository =
                        Repository.repositoryIsNotDeleted parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName RepositoryIsDeleted |]
   
                 let command (parameters: SetRepositoryVisibilityParameters) = 
-                    SetVisibility(discriminatedUnionFromString<RepositoryVisibility>(parameters.Visibility).Value) |> returnTask
+                    SetVisibility(discriminatedUnionFromString<RepositoryVisibility>(parameters.Visibility).Value) |> returnValueTask
                 
                 context.Items.Add("Command", nameof(SetVisibility))
                 return! processCommand context validations command
@@ -200,7 +200,7 @@ module Repository =
                        Repository.repositoryIsNotDeleted parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName RepositoryIsDeleted |]
                 
                 let command (parameters: SetSaveDaysParameters) = 
-                    SetSaveDays(parameters.SaveDays) |> returnTask
+                    SetSaveDays(parameters.SaveDays) |> returnValueTask
                 
                 context.Items.Add("Command", nameof(SetSaveDays))
                 return! processCommand context validations command
@@ -216,7 +216,7 @@ module Repository =
                        Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName RepositoryDoesNotExist
                        Repository.repositoryIsNotDeleted parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName RepositoryIsDeleted |]
                 
-                let command (parameters: SetCheckpointDaysParameters) = SetCheckpointDays(parameters.CheckpointDays) |> returnTask
+                let command (parameters: SetCheckpointDaysParameters) = SetCheckpointDays(parameters.CheckpointDays) |> returnValueTask
                 
                 context.Items.Add("Command", nameof(SetCheckpointDays))
                 return! processCommand context validations command
@@ -232,7 +232,7 @@ module Repository =
                        Repository.repositoryIsNotDeleted parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName RepositoryIsDeleted |]
                 
                 let command (parameters: EnablePromotionTypeParameters) = 
-                    EnableSingleStepPromotion (parameters.Enabled) |> returnTask
+                    EnableSingleStepPromotion (parameters.Enabled) |> returnValueTask
                 
                 context.Items.Add("Command", nameof(EnableSingleStepPromotion))
                 return! processCommand context validations command
@@ -248,7 +248,7 @@ module Repository =
                        Repository.repositoryIsNotDeleted parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName RepositoryIsDeleted |]
                 
                 let command (parameters: EnablePromotionTypeParameters) = 
-                    EnableComplexPromotion (parameters.Enabled) |> returnTask
+                    EnableComplexPromotion (parameters.Enabled) |> returnValueTask
                 
                 context.Items.Add("Command", nameof(EnableComplexPromotion))
                 return! processCommand context validations command
@@ -265,7 +265,7 @@ module Repository =
                        Repository.repositoryIsNotDeleted parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName RepositoryIsDeleted |]
                 
                 let command (parameters: SetRepositoryStatusParameters) =
-                    SetRepositoryStatus(discriminatedUnionFromString<RepositoryStatus>(parameters.Status).Value) |> returnTask
+                    SetRepositoryStatus(discriminatedUnionFromString<RepositoryStatus>(parameters.Status).Value) |> returnValueTask
                 
                 context.Items.Add("Command", nameof(SetRepositoryStatus))
                 return! processCommand context validations command
@@ -282,7 +282,7 @@ module Repository =
                        Repository.repositoryIsNotDeleted parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName RepositoryIsDeleted |]
                 
                 let command (parameters: SetDefaultServerApiVersionParameters) = 
-                    SetDefaultServerApiVersion(parameters.DefaultServerApiVersion) |> returnTask
+                    SetDefaultServerApiVersion(parameters.DefaultServerApiVersion) |> returnValueTask
                 
                 context.Items.Add("Command", nameof(SetDefaultServerApiVersion))
                 return! processCommand context validations command
@@ -298,7 +298,7 @@ module Repository =
                        Repository.repositoryIsNotDeleted parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName RepositoryIsDeleted |]
                 
                 let command (parameters: RecordSavesParameters) = 
-                    SetRecordSaves (parameters.RecordSaves) |> returnTask
+                    SetRecordSaves (parameters.RecordSaves) |> returnValueTask
                 
                 context.Items.Add("Command", nameof(SetRecordSaves))
                 return! processCommand context validations command
@@ -315,7 +315,7 @@ module Repository =
                        Repository.repositoryIsNotDeleted parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName RepositoryIsDeleted |]
 
                 let command (parameters: SetRepositoryDescriptionParameters) = 
-                    SetDescription (parameters.Description) |> returnTask
+                    SetDescription (parameters.Description) |> returnValueTask
 
                 context.Items.Add("Command", nameof(SetDescription))
                 return! processCommand context validations command
@@ -334,7 +334,7 @@ module Repository =
                        Repository.repositoryNameIsUnique parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.NewName RepositoryNameAlreadyExists |]
 
                 let command (parameters: SetRepositoryNameParameters) = 
-                    SetName (parameters.NewName) |> returnTask
+                    SetName (parameters.NewName) |> returnValueTask
 
                 context.Items.Add("Command", nameof(SetName))
                 return! processCommand context validations command
@@ -351,7 +351,7 @@ module Repository =
                        Repository.repositoryIsNotDeleted parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName RepositoryIsDeleted |]
 
                 let command (parameters: DeleteRepositoryParameters) = 
-                    DeleteLogical (parameters.Force, parameters.DeleteReason) |> returnTask
+                    DeleteLogical (parameters.Force, parameters.DeleteReason) |> returnValueTask
 
                 context.Items.Add("Command", nameof(DeleteLogical))
                 return! processCommand context validations command
@@ -367,7 +367,7 @@ module Repository =
                        Repository.repositoryIsDeleted parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName RepositoryIsNotDeleted |]
 
                 let command (parameters: RepositoryParameters) = 
-                    Undelete |> returnTask
+                    Undelete |> returnValueTask
 
                 context.Items.Add("Command", nameof(Undelete))
                 return! processCommand context validations command

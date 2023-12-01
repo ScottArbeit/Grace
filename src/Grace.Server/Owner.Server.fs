@@ -29,7 +29,7 @@ open System.Threading.Tasks
 
 module Owner =
 
-    type Validations<'T when 'T :> OwnerParameters> = 'T -> HttpContext -> Task<Result<unit, OwnerError>> array
+    type Validations<'T when 'T :> OwnerParameters> = 'T -> HttpContext -> ValueTask<Result<unit, OwnerError>> array
 
     let log = ApplicationContext.loggerFactory.CreateLogger("Owner.Server")
 
@@ -42,7 +42,7 @@ module Owner =
         actorProxyFactory.CreateActorProxy<IOwnerActor>(actorId, ActorName.Owner)
 
     /// Generic processor for all Owner commands.
-    let processCommand<'T when 'T :> OwnerParameters> (context: HttpContext) (validations: Validations<'T>) (command: 'T -> Task<OwnerCommand>) =
+    let processCommand<'T when 'T :> OwnerParameters> (context: HttpContext) (validations: Validations<'T>) (command: 'T -> ValueTask<OwnerCommand>) =
         task {
             try
                 let commandName = context.Items["Command"] :?> string 
@@ -133,7 +133,7 @@ module Owner =
 
                 let command (parameters: CreateOwnerParameters) = 
                     let ownerIdGuid = Guid.Parse(parameters.OwnerId)
-                    Create (ownerIdGuid, OwnerName parameters.OwnerName) |> returnTask
+                    Create (ownerIdGuid, OwnerName parameters.OwnerName) |> returnValueTask
 
                 context.Items.Add("Command", nameof(Create))
                 return! processCommand context validations command
@@ -154,7 +154,7 @@ module Owner =
                        Owner.ownerNameDoesNotExist parameters.NewName OwnerNameAlreadyExists |]
 
                 let command (parameters: SetOwnerNameParameters) = 
-                    SetName (OwnerName parameters.NewName) |> returnTask
+                    SetName (OwnerName parameters.NewName) |> returnValueTask
 
                 context.Items.Add("Command", nameof(SetName))
                 return! processCommand context validations command
@@ -173,7 +173,7 @@ module Owner =
                        Owner.ownerExists parameters.OwnerId parameters.OwnerName OwnerDoesNotExist
                        Owner.ownerIsNotDeleted parameters.OwnerId parameters.OwnerName OwnerIsDeleted |]
 
-                let command (parameters: SetOwnerTypeParameters) = OwnerCommand.SetType (Utilities.discriminatedUnionFromString<OwnerType>(parameters.OwnerType).Value) |> returnTask
+                let command (parameters: SetOwnerTypeParameters) = OwnerCommand.SetType (Utilities.discriminatedUnionFromString<OwnerType>(parameters.OwnerType).Value) |> returnValueTask
 
                 context.Items.Add("Command", nameof(SetType))
                 return! processCommand context validations command
@@ -191,7 +191,7 @@ module Owner =
                        Owner.ownerExists parameters.OwnerId parameters.OwnerName OwnerDoesNotExist
                        Owner.ownerIsNotDeleted parameters.OwnerId parameters.OwnerName OwnerIsDeleted |]
 
-                let command (parameters: SetOwnerSearchVisibilityParameters) = OwnerCommand.SetSearchVisibility (Utilities.discriminatedUnionFromString<SearchVisibility>(parameters.SearchVisibility).Value) |> returnTask
+                let command (parameters: SetOwnerSearchVisibilityParameters) = OwnerCommand.SetSearchVisibility (Utilities.discriminatedUnionFromString<SearchVisibility>(parameters.SearchVisibility).Value) |> returnValueTask
 
                 context.Items.Add("Command", nameof(SetSearchVisibility))
                 return! processCommand context validations command
@@ -209,7 +209,7 @@ module Owner =
                        Owner.ownerExists parameters.OwnerId parameters.OwnerName OwnerDoesNotExist
                        Owner.ownerIsNotDeleted parameters.OwnerId parameters.OwnerName OwnerIsDeleted |]
 
-                let command (parameters: SetOwnerDescriptionParameters) = OwnerCommand.SetDescription (parameters.Description) |> returnTask
+                let command (parameters: SetOwnerDescriptionParameters) = OwnerCommand.SetDescription (parameters.Description) |> returnValueTask
 
                 context.Items.Add("Command", nameof(SetDescription))
                 return! processCommand context validations command
@@ -247,7 +247,7 @@ module Owner =
                        Owner.ownerExists parameters.OwnerId parameters.OwnerName OwnerDoesNotExist
                        Owner.ownerIsNotDeleted parameters.OwnerId parameters.OwnerName OwnerIsDeleted |]
 
-                let command (parameters: DeleteOwnerParameters) = OwnerCommand.DeleteLogical (parameters.Force, parameters.DeleteReason) |> returnTask
+                let command (parameters: DeleteOwnerParameters) = OwnerCommand.DeleteLogical (parameters.Force, parameters.DeleteReason) |> returnValueTask
 
                 context.Items.Add("Command", nameof(Delete))
                 return! processCommand context validations command
@@ -264,7 +264,7 @@ module Owner =
                        Owner.ownerExists parameters.OwnerId parameters.OwnerName OwnerDoesNotExist
                        Owner.ownerIsDeleted parameters.OwnerId parameters.OwnerName OwnerIsNotDeleted |]
 
-                let command (parameters: OwnerParameters) = OwnerCommand.Undelete |> returnTask
+                let command (parameters: OwnerParameters) = OwnerCommand.Undelete |> returnValueTask
 
                 context.Items.Add("Command", nameof(Undelete))
                 return! processCommand context validations command

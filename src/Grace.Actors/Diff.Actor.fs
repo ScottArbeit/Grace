@@ -159,9 +159,9 @@ module Diff =
 
         member private this.GetDiffSimple() =
             if diffDto.DirectoryId1 = DiffDto.Default.DirectoryId1 then
-                None |> returnTask
+                None |> returnValueTask
             else
-                Some diffDto |> returnTask
+                Some diffDto |> returnValueTask
 
         interface IDiffActor with
             member this.Populate() =

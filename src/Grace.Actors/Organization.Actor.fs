@@ -279,7 +279,7 @@ module Organization =
                         // Mark the actor as disposed, in case someone tries to use it before Dapr GC's it.
                         isDisposed <- true
 
-                        log.LogInformation("{currentInstant}: Physically deleted state for organization; OrganizationId: {organizationId}; OrganizationName: {organizationName}; OwnerId: {ownerId}; deletedDtoState: {deletedDtoState}; deletedEventsState: {deletedEventsState}.", 
+                        log.LogInformation("{currentInstant}: Deleted physical state for organization; OrganizationId: {organizationId}; OrganizationName: {organizationName}; OwnerId: {ownerId}; deletedDtoState: {deletedDtoState}; deletedEventsState: {deletedEventsState}.", 
                             getCurrentInstantExtended(), organizationDto.OrganizationId, organizationDto.OrganizationName, organizationDto.OwnerId, deletedDtoState, deletedEventsState)
 
                         // Set all values to default.

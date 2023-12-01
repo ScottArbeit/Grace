@@ -25,7 +25,7 @@ open Grace.Shared.Services
 
 module Organization =
 
-    type Validations<'T when 'T :> OrganizationParameters> = 'T -> HttpContext -> Task<Result<unit, OrganizationError>> array
+    type Validations<'T when 'T :> OrganizationParameters> = 'T -> HttpContext -> ValueTask<Result<unit, OrganizationError>> array
 
     let activitySource = new ActivitySource("Organization")
 
@@ -37,7 +37,7 @@ module Organization =
         let actorId = ActorId(organizationId)
         actorProxyFactory.CreateActorProxy<IOrganizationActor>(actorId, ActorName.Organization)
 
-    let processCommand<'T when 'T :> OrganizationParameters> (context: HttpContext) (validations: Validations<'T>) (command: 'T -> Task<OrganizationCommand>) =
+    let processCommand<'T when 'T :> OrganizationParameters> (context: HttpContext) (validations: Validations<'T>) (command: 'T -> ValueTask<OrganizationCommand>) =
         task {
             try
                 let commandName = context.Items["Command"] :?> string
@@ -134,7 +134,7 @@ module Organization =
                         let ownerIdGuid = Guid.Parse(ownerId.Value)
                         let organizationIdGuid = Guid.Parse(parameters.OrganizationId)
                         return Create (organizationIdGuid, OrganizationName parameters.OrganizationName, ownerIdGuid)
-                    }
+                    } |> ValueTask<OrganizationCommand>
 
                 log.LogDebug("{currentInstant}: In Grace.Server.Create.", getCurrentInstantExtended())
                 context.Items.Add("Command", nameof(Create))
@@ -158,7 +158,7 @@ module Organization =
                        Organization.organizationIsNotDeleted parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName OrganizationIsDeleted |]
 
                 let command (parameters: SetOrganizationNameParameters) = 
-                    SetName (OrganizationName parameters.NewName) |> returnTask
+                    SetName (OrganizationName parameters.NewName) |> returnValueTask
 
                 context.Items.Add("Command", nameof(SetName))
                 return! processCommand context validations command
@@ -180,7 +180,7 @@ module Organization =
                        Organization.organizationIsNotDeleted parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName OrganizationIsDeleted |]
 
                 let command (parameters: SetOrganizationTypeParameters) = 
-                    SetType (discriminatedUnionFromString<OrganizationType>(parameters.OrganizationType).Value) |> returnTask
+                    SetType (discriminatedUnionFromString<OrganizationType>(parameters.OrganizationType).Value) |> returnValueTask
                 
                 context.Items.Add("Command", nameof(SetType))
                 return! processCommand context validations command
@@ -203,7 +203,7 @@ module Organization =
                        Organization.organizationIsNotDeleted parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName OrganizationIsDeleted |]
 
                 let command (parameters: SetOrganizationSearchVisibilityParameters) =
-                    SetSearchVisibility (discriminatedUnionFromString<SearchVisibility>(parameters.SearchVisibility).Value) |> returnTask
+                    SetSearchVisibility (discriminatedUnionFromString<SearchVisibility>(parameters.SearchVisibility).Value) |> returnValueTask
                 
                 context.Items.Add("Command", nameof(SetSearchVisibility))
                 return! processCommand context validations command
@@ -225,7 +225,7 @@ module Organization =
                        Organization.organizationIsNotDeleted parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName OrganizationIsDeleted |]
 
                 let command (parameters: SetOrganizationDescriptionParameters) =
-                    SetDescription(parameters.Description) |> returnTask
+                    SetDescription(parameters.Description) |> returnValueTask
 
                 context.Items.Add("Command", nameof(SetDescription))
                 return! processCommand context validations command
@@ -274,7 +274,7 @@ module Organization =
                        Organization.organizationIsNotDeleted parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName OrganizationIsDeleted |]
 
                 let command (parameters: DeleteOrganizationParameters) = 
-                    DeleteLogical (parameters.Force, parameters.DeleteReason) |> returnTask
+                    DeleteLogical (parameters.Force, parameters.DeleteReason) |> returnValueTask
 
                 context.Items.Add("Command", nameof(DeleteLogical))
                 return! processCommand context validations command
@@ -296,7 +296,7 @@ module Organization =
                        Organization.organizationIsDeleted parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName OrganizationIsNotDeleted |]
 
                 let command (parameters: OrganizationParameters) = 
-                    Undelete |> returnTask
+                    Undelete |> returnValueTask
 
                 context.Items.Add("Command", nameof(Undelete))
                 return! processCommand context validations command
