@@ -25,6 +25,7 @@ open System.IO
 open System.Threading
 open System.Threading.Tasks
 open Grace.Shared.Parameters.Directory
+open Spectre.Console.Json
 
 module Repository =
 
@@ -422,6 +423,51 @@ module Repository =
             task {                
                 let! result = initHandler parseResult initParameters
                 return result |> renderOutput parseResult
+            })
+
+
+    // Get subcommand
+    type GetParameters() =
+        inherit CommonParameters()
+    let private getHandler (parseResult: ParseResult) (getParameters: GetParameters) =
+        task {
+            try
+                if parseResult |> verbose then printParseResult parseResult
+                let validateIncomingParameters = CommonValidations (parseResult, getParameters)
+                match validateIncomingParameters with
+                | Ok _ -> 
+                    let parameters = Parameters.Repository.GetRepositoryParameters(OwnerId = getParameters.OwnerId, OwnerName = getParameters.OwnerName, 
+                        OrganizationId = getParameters.OrganizationId, OrganizationName = getParameters.OrganizationName, 
+                        RepositoryId = getParameters.RepositoryId, RepositoryName = getParameters.RepositoryName,
+                        CorrelationId = getParameters.CorrelationId)
+                    if parseResult |> hasOutput then
+                        return! progress.Columns(progressColumns)
+                                .StartAsync(fun progressContext ->
+                                task {
+                                    let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")                                    
+                                    let! result = Repository.Get(parameters)
+                                    t0.Increment(100.0)
+                                    return result
+                                })
+                    else
+                        return! Repository.Get(parameters)
+                | Error error -> return Error error
+            with
+                | ex -> return Error (GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
+        }
+    let private Get =
+        CommandHandler.Create(fun (parseResult: ParseResult) (getParameters: GetParameters) ->
+            task {                
+                let! result = getHandler parseResult (getParameters |> normalizeIdsAndNames parseResult)
+                //return result |> renderOutput parseResult
+                match result with
+                | Ok graceReturnValue ->
+                    let jsonText = JsonText(serialize graceReturnValue.ReturnValue)
+                    AnsiConsole.Write(jsonText)
+                    AnsiConsole.WriteLine()
+                    return 0
+                | Error graceError ->
+                    return Error graceError |> renderOutput parseResult
             })
 
     // Get-Branches subcommand
@@ -978,6 +1024,10 @@ module Repository =
         let repositoryCreateCommand = new Command("create", Description = "Create a new repository.") |> addOption Options.requiredRepositoryName |> addCommonOptionsExceptForRepositoryInfo |> addOption Options.doNotSwitch
         repositoryCreateCommand.Handler <- Create
         repositoryCommand.AddCommand(repositoryCreateCommand)
+
+        let repositoryGetCommand = new Command("get", Description = "Get information about a repository.") |> addCommonOptions
+        repositoryGetCommand.Handler <- Get
+        repositoryCommand.AddCommand(repositoryGetCommand)
 
         let repositoryInitCommand = new Command("init", Description = "Initializes a new repository with the contents of a directory.") |> addOption Options.directory |> addOption Options.graceConfig |> addCommonOptions
         repositoryInitCommand.Handler <- Init

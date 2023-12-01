@@ -21,6 +21,10 @@ module Repository =
     type CreateRepositoryParameters() = 
         inherit RepositoryParameters()
 
+    /// Parameters for the /repository/get endpoint.
+    type GetRepositoryParameters() = 
+        inherit RepositoryParameters()
+
     /// Parameters for the /repository/isEmpty endpoint.
     type IsEmptyParameters() = 
         inherit RepositoryParameters()

@@ -344,20 +344,15 @@ module Repository =
                 }
 
         interface IRepositoryActor with
-            member this.Get() =
-                Task.FromResult(repositoryDto)
+            member this.Get() = repositoryDto |> returnTask
 
-            member this.GetObjectStorageProvider() =
-                Task.FromResult(repositoryDto.ObjectStorageProvider)
+            member this.GetObjectStorageProvider() = repositoryDto.ObjectStorageProvider |> returnTask
 
-            member this.Exists() =
-                Task.FromResult(if repositoryDto.UpdatedAt.IsSome then true else false)
+            member this.Exists() = repositoryDto.UpdatedAt.IsSome |> returnTask
 
-            member this.IsEmpty() =
-                Task.FromResult(if repositoryDto.InitializedAt.IsSome then false else true)
+            member this.IsEmpty() = repositoryDto.InitializedAt.IsNone |> returnTask
 
-            member this.IsDeleted() =
-                Task.FromResult(if repositoryDto.DeletedAt.IsSome then true else false)
+            member this.IsDeleted() = repositoryDto.DeletedAt.IsSome |> returnTask
 
             member this.Handle command metadata =
                 let isValid command (metadata: EventMetadata) =
