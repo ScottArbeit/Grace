@@ -21,7 +21,7 @@ module OrganizationName =
         inherit Actor(host)
 
         let actorName = ActorName.OrganizationName
-        let log = host.LoggerFactory.CreateLogger(actorName)
+        let log = host.LoggerFactory.CreateLogger("OrganizationName.Actor")
     
         let mutable cachedOrganizationId: string option = None
 
@@ -32,8 +32,8 @@ module OrganizationName =
             Task.CompletedTask
 
         override this.OnPostActorMethodAsync(context) =
-            let durationμs = (getCurrentInstant().Minus(actorStartTime).TotalMilliseconds * 1000.0).ToString("F0")
-            log.LogInformation("{CurrentInstant}: Finished {ActorName}.{MethodName}; Id: {Id}; Duration: {duration}μs.", getCurrentInstantExtended(), actorName, context.MethodName, this.Id, durationμs)
+            let duration_ms = (getCurrentInstant().Minus(actorStartTime).TotalMilliseconds * 1000.0).ToString("F0")
+            log.LogInformation("{CurrentInstant}: Finished {ActorName}.{MethodName}; Id: {Id}; Duration: {duration}ms.", getCurrentInstantExtended(), actorName, context.MethodName, this.Id, duration_ms)
             logScope.Dispose()
             Task.CompletedTask
 

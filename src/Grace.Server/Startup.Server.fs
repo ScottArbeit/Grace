@@ -250,7 +250,7 @@ module Application =
             let actorProxyOptions = ActorProxyOptions()  // DaprApiToken = Environment.GetEnvironmentVariable("DAPR_API_TOKEN")) (when we actually implement auth)
             actorProxyOptions.HttpEndpoint <- $"{Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.DaprServerUri)}:{Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.DaprHttpPort)}"
             actorProxyOptions.JsonSerializerOptions <- Constants.JsonSerializerOptions
-            actorProxyOptions.RequestTimeout <- TimeSpan.FromSeconds(10.0)
+            actorProxyOptions.RequestTimeout <- TimeSpan.FromSeconds(20.0)
             logToConsole $"actorProxyOptions.HttpEndpoint: {actorProxyOptions.HttpEndpoint}"
             let actorProxyFactory = new ActorProxyFactory(actorProxyOptions)
             ApplicationContext.setActorProxyFactory actorProxyFactory

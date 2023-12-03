@@ -38,7 +38,7 @@ module Repository =
         inherit Actor(host)
 
         let actorName = ActorName.Repository
-        let log = host.LoggerFactory.CreateLogger(actorName)
+        let log = host.LoggerFactory.CreateLogger("Repository.Actor")
         let mutable actorStartTime = Instant.MinValue
         let mutable logScope: IDisposable = null
         let mutable currentCommand = String.Empty
@@ -80,11 +80,11 @@ module Repository =
             Task.CompletedTask
             
         override this.OnPostActorMethodAsync(context) =
-            let durationμs = (getCurrentInstant().Minus(actorStartTime).TotalMilliseconds * 1000.0).ToString("F0")
+            let duration_ms = (getCurrentInstant().Minus(actorStartTime).TotalMilliseconds).ToString("F3")
             if String.IsNullOrEmpty(currentCommand) then
-                log.LogInformation("{CurrentInstant}: Finished {ActorName}.{MethodName}; Id: {Id}; Duration: {duration}μs.", getCurrentInstantExtended(), actorName, context.MethodName, this.Id, durationμs)
+                log.LogInformation("{CurrentInstant}: Finished {ActorName}.{MethodName}; Id: {Id}; Duration: {duration}ms.", getCurrentInstantExtended(), actorName, context.MethodName, this.Id, duration_ms)
             else
-                log.LogInformation("{CurrentInstant}: Finished {ActorName}.{MethodName}; Command: {Command}; Id: {Id}; Duration: {duration}μs.", getCurrentInstantExtended(), actorName, context.MethodName, currentCommand, this.Id, durationμs)
+                log.LogInformation("{CurrentInstant}: Finished {ActorName}.{MethodName}; Command: {Command}; Id: {Id}; Duration: {duration}ms.", getCurrentInstantExtended(), actorName, context.MethodName, currentCommand, this.Id, duration_ms)
             logScope.Dispose()
             Task.CompletedTask
 
@@ -250,7 +250,7 @@ module Repository =
 
         /// Schedule an actor reminder to delete the repository from the database.
         member private this.SchedulePhysicalDeletion(deleteReason) =
-            this.RegisterReminderAsync(ReminderType.PhysicalDeletion, convertToByteArray deleteReason, Constants.DefaultPhysicalDeletionReminderTime, TimeSpan.FromMilliseconds(-1)).Wait()
+            this.RegisterReminderAsync(ReminderType.PhysicalDeletion, convertToByteArray deleteReason, Constants.DefaultPhysicalDeletionReminderTime, TimeSpan.FromMilliseconds(-1)).Result |> ignore
 
         interface IExportable<RepositoryEvent> with
             member this.Export() = 
@@ -397,6 +397,8 @@ module Repository =
                                     | DeleteLogical (force, deleteReason) ->
                                         // Get the list of branches that aren't already deleted.
                                         let! branches = getBranches repositoryDto.RepositoryId Int32.MaxValue false
+
+                                        this.SchedulePhysicalDeletion(deleteReason)
 
                                         // If any branches are not already deleted, and we're not forcing the deletion, then throw an exception.
                                         if not <| force && branches.Count > 0 && branches.Any(fun branch -> branch.DeletedAt |> Option.isNone) then

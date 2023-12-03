@@ -46,7 +46,7 @@ module Diff =
         let dtoStateName = "DiffDtoState"
         let mutable diffDto: DiffDto = DiffDto.Default
         let actorName = Constants.ActorName.Diff
-        let log = host.LoggerFactory.CreateLogger(actorName)
+        let log = host.LoggerFactory.CreateLogger("Diff.Actor")
         let mutable actorStartTime = Instant.MinValue
         let mutable logScope: IDisposable = null
 
@@ -152,8 +152,8 @@ module Diff =
             Task.CompletedTask
 
         override this.OnPostActorMethodAsync(context) =
-            let durationμs = (getCurrentInstant().Minus(actorStartTime).TotalMilliseconds * 1000.0).ToString("F0")
-            log.LogInformation("{CurrentInstant}: Finished {ActorName}.{MethodName}; Id: {Id}; Duration: {duration}μs.", getCurrentInstantExtended(), actorName, context.MethodName, this.Id, durationμs)
+            let duration_ms = (getCurrentInstant().Minus(actorStartTime).TotalMilliseconds * 1000.0).ToString("F0")
+            log.LogInformation("{CurrentInstant}: Finished {ActorName}.{MethodName}; Id: {Id}; Duration: {duration}ms.", getCurrentInstantExtended(), actorName, context.MethodName, this.Id, duration_ms)
             logScope.Dispose()
             Task.CompletedTask
 

@@ -104,36 +104,33 @@ module Validations =
                 let mutable ownerGuid = Guid.Empty
                 match! resolveOwnerId ownerId ownerName with
                 | Some ownerId ->
-                    if Guid.TryParse(ownerId, &ownerGuid) then
-                        let actorId = Owner.GetActorId(ownerGuid)
-                        let ownerActorProxy = actorProxyFactory.CreateActorProxy<IOwnerActor>(actorId, ActorName.Owner)
-                        let! isDeleted = ownerActorProxy.IsDeleted()
+                    let ownerGuid = Guid.Parse(ownerId)
+                    let mutable isDeleted = new obj()
+                    if memoryCache.TryGetValue($"{ownerGuid}deleted", &isDeleted) then
+                        let isDeleted = isDeleted :?> bool
                         if isDeleted then
                             return Ok ()
                         else
                             return Error error
                     else
-                        return Error error
+                        let actorId = Owner.GetActorId(ownerGuid)
+                        let ownerActorProxy = actorProxyFactory.CreateActorProxy<IOwnerActor>(actorId, ActorName.Owner)
+                        let! isDeleted = ownerActorProxy.IsDeleted()
+                        if isDeleted then
+                            use newCacheEntry = memoryCache.CreateEntry($"{ownerGuid}deleted", Value = true, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
+                            return Ok ()
+                        else
+                            use newCacheEntry = memoryCache.CreateEntry($"{ownerGuid}deleted", Value = false, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
+                            return Error error
                 | None -> return Error error
             } |> ValueTask<Result<unit, 'T>>
 
         /// Validates that the owner is not deleted.
         let ownerIsNotDeleted<'T> ownerId ownerName (error: 'T) =
             task {
-                let mutable ownerGuid = Guid.Empty
-                match! resolveOwnerId ownerId ownerName with
-                | Some ownerId ->
-                    if Guid.TryParse(ownerId, &ownerGuid) then
-                        let actorId = Owner.GetActorId(ownerGuid)
-                        let ownerActorProxy = actorProxyFactory.CreateActorProxy<IOwnerActor>(actorId, ActorName.Owner)
-                        let! isDeleted = ownerActorProxy.IsDeleted()
-                        if isDeleted then
-                            return Error error
-                        else
-                            return Ok ()
-                    else
-                        return Error error
-                | None -> return Error error
+                match! ownerIsDeleted ownerId ownerName error with
+                | Ok _ -> return Error error
+                | Error _ -> return Ok ()
             } |> ValueTask<Result<unit, 'T>>
 
         /// Validates that the given ownerId does not already exist in the database.
@@ -242,29 +239,33 @@ module Validations =
             task {
                 match! resolveOrganizationId ownerId ownerName organizationId organizationName with
                 | Some organizationId ->
-                    let actorId = Organization.GetActorId(Guid.Parse(organizationId))
-                    let organizationActorProxy = actorProxyFactory.CreateActorProxy<IOrganizationActor>(actorId, ActorName.Organization)
-                    let! isDeleted = organizationActorProxy.IsDeleted()
-                    if isDeleted then
-                        return Ok ()
+                    let organizationGuid = Guid.Parse(organizationId)
+                    let mutable isDeleted = new obj()
+                    if memoryCache.TryGetValue($"{organizationGuid}deleted", &isDeleted) then
+                        let isDeleted = isDeleted :?> bool
+                        if isDeleted then
+                            return Ok ()
+                        else
+                            return Error error
                     else
-                        return Error error
+                        let actorId = Organization.GetActorId(organizationGuid)
+                        let organizationActorProxy = actorProxyFactory.CreateActorProxy<IOrganizationActor>(actorId, ActorName.Organization)
+                        let! isDeleted = organizationActorProxy.IsDeleted()
+                        if isDeleted then
+                            use newCacheEntry = memoryCache.CreateEntry($"{organizationGuid}deleted", Value = true, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
+                            return Ok ()
+                        else
+                            use newCacheEntry = memoryCache.CreateEntry($"{organizationGuid}deleted", Value = false, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
+                            return Error error
                 | None -> return Error error
             } |> ValueTask<Result<unit, 'T>>
 
         /// Validates that the organization is not deleted.
         let organizationIsNotDeleted<'T> ownerId ownerName organizationId organizationName (error: 'T) =
             task {
-                match! resolveOrganizationId ownerId ownerName organizationId organizationName with
-                | Some organizationId ->
-                    let actorId = Organization.GetActorId(Guid.Parse(organizationId))
-                    let organizationActorProxy = actorProxyFactory.CreateActorProxy<IOrganizationActor>(actorId, ActorName.Organization)
-                    let! isDeleted = organizationActorProxy.IsDeleted()
-                    if isDeleted then
-                        return Error error
-                    else
-                        return Ok ()
-                | None -> return Error error
+                match! organizationIsDeleted ownerId ownerName organizationId organizationName error with
+                | Ok _ -> return Error error
+                | Error _ -> return Ok ()
             } |> ValueTask<Result<unit, 'T>>
 
     module Repository =
@@ -332,36 +333,33 @@ module Validations =
                 let mutable guid = Guid.Empty
                 match! resolveRepositoryId ownerId ownerName organizationId organizationName repositoryId repositoryName with
                 | Some repositoryId ->
-                    if Guid.TryParse(repositoryId, &guid) then
-                        let actorId = ActorId($"{guid}")
-                        let repositoryActorProxy = actorProxyFactory.CreateActorProxy<IRepositoryActor>(actorId, ActorName.Repository)
-                        let! isDeleted = repositoryActorProxy.IsDeleted()
+                    let repositoryGuid = Guid.Parse(repositoryId)
+                    let mutable isDeleted = new obj()
+                    if memoryCache.TryGetValue($"{repositoryGuid}deleted", &isDeleted) then
+                        let isDeleted = isDeleted :?> bool
                         if isDeleted then
                             return Ok ()
                         else
                             return Error error
                     else
-                        return Error error
+                        let actorId = Repository.GetActorId(repositoryGuid)
+                        let repositoryActorProxy = actorProxyFactory.CreateActorProxy<IRepositoryActor>(actorId, ActorName.Repository)
+                        let! isDeleted = repositoryActorProxy.IsDeleted()
+                        if isDeleted then
+                            use newCacheEntry = memoryCache.CreateEntry($"{repositoryGuid}deleted", Value = true, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
+                            return Ok ()
+                        else
+                            use newCacheEntry = memoryCache.CreateEntry($"{repositoryGuid}deleted", Value = false, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
+                            return Error error
                 | None -> return Error error
             } |> ValueTask<Result<unit, 'T>>
 
         /// Validates that the repository is not deleted.
         let repositoryIsNotDeleted<'T> ownerId ownerName organizationId organizationName repositoryId repositoryName (error: 'T) =
             task {
-                let mutable guid = Guid.Empty
-                match! resolveRepositoryId ownerId ownerName organizationId organizationName repositoryId repositoryName with
-                | Some repositoryId ->
-                    if Guid.TryParse(repositoryId, &guid) then
-                        let actorId = ActorId($"{guid}")
-                        let repositoryActorProxy = actorProxyFactory.CreateActorProxy<IRepositoryActor>(actorId, ActorName.Repository)
-                        let! isDeleted = repositoryActorProxy.IsDeleted()
-                        if isDeleted then
-                            return Error error
-                        else
-                            return Ok ()
-                    else
-                        return Error error
-                | None -> return Error error
+                match! repositoryIsDeleted ownerId ownerName organizationId organizationName repositoryId repositoryName error with
+                | Ok _ -> return Error error
+                | Error _ -> return Ok ()
             } |> ValueTask<Result<unit, 'T>>
 
         let repositoryNameIsUnique<'T> ownerId ownerName organizationId organizationName repositoryName (error: 'T) =
@@ -457,8 +455,12 @@ module Validations =
                 | Some repositoryId ->
                     match! resolveBranchId repositoryId branchId branchName with
                     | Some branchId ->
-                        if Guid.TryParse(branchId, &guid) then
-                            let actorId = ActorId($"{guid}")
+                        let mutable allowed = new obj()
+                        if memoryCache.TryGetValue($"{branchId}{referenceType}Allowed", &allowed) then
+                            let allowed = allowed :?> bool
+                            if allowed then return Ok () else return Error error
+                        else
+                            let actorId = ActorId(branchId)
                             let branchActorProxy = actorProxyFactory.CreateActorProxy<IBranchActor>(actorId, ActorName.Branch)
                             let! branchDto = branchActorProxy.Get()
                             let allowed = 
@@ -468,9 +470,8 @@ module Validations =
                                 | Checkpoint -> if branchDto.CheckpointEnabled then true else false
                                 | Save -> if branchDto.SaveEnabled then true else false
                                 | Tag -> if branchDto.TagEnabled then true else false
+                            use newCacheEntry = memoryCache.CreateEntry($"{branchId}{referenceType}Allowed", Value = allowed, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
                             if allowed then return Ok () else return Error error
-                        else
-                            return Error error
                     | None -> return Error error
                 | None -> return Error error
             } |> ValueTask<Result<unit, 'T>>

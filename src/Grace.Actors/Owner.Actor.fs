@@ -33,7 +33,7 @@ module Owner =
         inherit Actor(host)
 
         let actorName = Constants.ActorName.Owner
-        let log = host.LoggerFactory.CreateLogger(actorName)
+        let log = host.LoggerFactory.CreateLogger("Owner.Actor")
         let mutable actorStartTime = Instant.MinValue
         let mutable logScope: IDisposable = null
         let mutable currentCommand = String.Empty
@@ -102,11 +102,11 @@ module Owner =
             Task.CompletedTask
             
         override this.OnPostActorMethodAsync(context) =
-            let durationμs = (getCurrentInstant().Minus(actorStartTime).TotalMilliseconds * 1000.0).ToString("F0")
+            let duration_ms = (getCurrentInstant().Minus(actorStartTime).TotalMilliseconds).ToString("F3")
             if String.IsNullOrEmpty(currentCommand) then
-                log.LogInformation("{CurrentInstant}: Finished {ActorName}.{MethodName}; Id: {Id}; Duration: {duration}μs.", getCurrentInstantExtended(), actorName, context.MethodName, this.Id, durationμs)
+                log.LogInformation("{CurrentInstant}: Finished {ActorName}.{MethodName}; Id: {Id}; Duration: {duration}ms.", getCurrentInstantExtended(), actorName, context.MethodName, this.Id, duration_ms)
             else
-                log.LogInformation("{CurrentInstant}: Finished {ActorName}.{MethodName}; Command: {Command}; Id: {Id}; Duration: {duration}μs.", getCurrentInstantExtended(), actorName, context.MethodName, currentCommand, this.Id, durationμs)    
+                log.LogInformation("{CurrentInstant}: Finished {ActorName}.{MethodName}; Command: {Command}; Id: {Id}; Duration: {duration}ms.", getCurrentInstantExtended(), actorName, context.MethodName, currentCommand, this.Id, duration_ms)    
             logScope.Dispose()
             Task.CompletedTask
             
@@ -179,23 +179,18 @@ module Owner =
 
         /// Sets a Dapr Actor reminder to perform a physical deletion of this owner.
         member private this.SchedulePhysicalDeletion(deleteReason) =
-            this.RegisterReminderAsync(ReminderType.PhysicalDeletion, convertToByteArray deleteReason, Constants.DefaultPhysicalDeletionReminderTime, TimeSpan.FromMilliseconds(-1)).Wait()
+            this.RegisterReminderAsync(ReminderType.PhysicalDeletion, convertToByteArray deleteReason, Constants.DefaultPhysicalDeletionReminderTime, TimeSpan.FromMilliseconds(-1)).Result |> ignore
 
         interface IOwnerActor with
-            member this.Exists() =
-                Task.FromResult(if ownerDto.UpdatedAt.IsSome then true else false)
+            member this.Exists() = ownerDto.UpdatedAt.IsSome |> returnTask
 
-            member this.IsDeleted() =
-                Task.FromResult(if ownerDto.DeletedAt.IsSome then true else false)
+            member this.IsDeleted() = ownerDto.DeletedAt.IsSome |> returnTask
 
-            member this.Get() =
-                Task.FromResult(ownerDto)
+            member this.Get() = ownerDto |> returnTask
 
-            member this.OrganizationExists organizationName = 
-                Task.FromResult(ownerDto.Organizations.ContainsValue(OrganizationName organizationName))
+            member this.OrganizationExists organizationName = ownerDto.Organizations.ContainsValue(OrganizationName organizationName) |> returnTask
 
-            member this.ListOrganizations() =
-                Task.FromResult(ownerDto.Organizations :> IReadOnlyDictionary<OrganizationId, OrganizationName>)
+            member this.ListOrganizations() = ownerDto.Organizations :> IReadOnlyDictionary<OrganizationId, OrganizationName> |> returnTask
 
             member this.Handle command metadata =
                 let isValid command (metadata: EventMetadata) =
@@ -239,7 +234,7 @@ module Owner =
                                             | Ok _ -> 
                                                 this.SchedulePhysicalDeletion(deleteReason)
                                                 return Ok (LogicalDeleted (force, deleteReason))
-                                            | Error error -> return Error error                                    
+                                            | Error error -> return Error error
                                     | OwnerCommand.DeletePhysical ->
                                         isDisposed <- true
                                         return Ok (OwnerEventType.PhysicalDeleted)
