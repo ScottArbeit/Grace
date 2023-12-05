@@ -35,6 +35,7 @@ open System.Text
 open System.Text.Json
 open Repository
 open FSharpPlus.Data
+open Repository
 
 module Repository =
 
@@ -64,8 +65,9 @@ module Repository =
     let processCommand<'T when 'T :> RepositoryParameters> (context: HttpContext) (validations: Validations<'T>) (command: 'T -> ValueTask<RepositoryCommand>) = 
         task {
             try
-                let commandName = context.Items["Command"] :?> string
                 use activity = activitySource.StartActivity("processCommand", ActivityKind.Server)
+                let commandName = context.Items["Command"] :?> string
+                let graceIds = context.Items["GraceIds"] :?> GraceIds
                 let! parameters = context |> parse<'T>
 
                 let handleCommand repositoryId cmd  =
@@ -83,7 +85,7 @@ module Repository =
 
                 let validationResults = Array.append (commonValidations parameters context) (validations parameters context)
                 let! validationsPassed = validationResults |> allPass
-                log.LogDebug("{currentInstant}: In Repository.Server.processCommand: validationsPassed: {validationsPassed}.", getCurrentInstantExtended(), validationsPassed)
+                log.LogDebug("{currentInstant}: In Repository.Server.processCommand: RepositoryId: {repositoryId}; validationsPassed: {validationsPassed}; CorrelationId: {correlationId}.", getCurrentInstantExtended(), graceIds.RepositoryId, validationsPassed, (getCorrelationId context))
 
                 if validationsPassed then
                     let! cmd = command parameters
@@ -98,7 +100,8 @@ module Repository =
                         return! handleCommand parameters.RepositoryId cmd
                     | None, false -> 
                         // If it's None, and this is not a Create command, then we have a bad request.
-                        log.LogDebug("{currentInstant}: In Repository.Server.processCommand: resolveRepositoryId failed. Repository does not exist. repositoryId: {repositoryId}; repositoryName: {repositoryName}.", getCurrentInstantExtended(), parameters.RepositoryId, parameters.RepositoryName)
+                        log.LogDebug("{currentInstant}: In Repository.Server.processCommand: resolveRepositoryId failed. Repository does not exist. repositoryId: {repositoryId}; repositoryName: {repositoryName}; Path: {path}; CorrelationId: {correlationId}.", 
+                            getCurrentInstantExtended(), parameters.RepositoryId, parameters.RepositoryName, context.Request.Path, (getCorrelationId context))
                         return! context |> result400BadRequest (GraceError.CreateWithMetadata (RepositoryError.getErrorMessage RepositoryDoesNotExist) (getCorrelationId context) (getPropertiesAsDictionary parameters))
                 else
                     let! error = validationResults |> getFirstError
@@ -109,7 +112,7 @@ module Repository =
                     graceError.Properties.Add("Error", errorMessage)
                     return! context |> result400BadRequest graceError
             with ex ->
-                log.LogError(ex, "{currentInstant}: Exception in Repository.Server.processCommand. CorrelationId: {correlationId}.", getCurrentInstantExtended(), (getCorrelationId context))
+                log.LogError(ex, "{currentInstant}: Exception in Repository.Server.processCommand; Path: {path}; CorrelationId: {correlationId}.", getCurrentInstantExtended(), context.Request.Path, (getCorrelationId context))
                 return! context |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
         }
 
@@ -119,7 +122,6 @@ module Repository =
                 use activity = activitySource.StartActivity("processQuery", ActivityKind.Server)
                 //let! parameters = context |> parse<'T>              
                 let validationResults = Array.append (commonValidations parameters context) (validations parameters context)
-                //let validationResults = validations parameters context
                 let! validationsPassed = validationResults |> allPass
                 if validationsPassed then
                     match! resolveRepositoryId parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName with
@@ -135,6 +137,7 @@ module Repository =
                     graceError.Properties.Add("Path", context.Request.Path)
                     return! context |> result400BadRequest graceError
             with ex ->
+                log.LogError(ex, "{currentInstant}: Exception in Repository.Server.processQuery; Path: {path}; CorrelationId: {correlationId}.", getCurrentInstantExtended(), context.Request.Path, (getCorrelationId context))
                 return! context |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context)) 
         }
 
@@ -377,6 +380,9 @@ module Repository =
     let Exists: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
+                let startTime = getCurrentInstant()
+                let graceIds = context.Items[nameof(GraceIds)] :?> GraceIds
+
                 try
                     let validations (parameters: RepositoryParameters) (context: HttpContext) =
                         [| Guid.isValidAndNotEmpty parameters.OwnerId InvalidOwnerId
@@ -394,8 +400,13 @@ module Repository =
                         }
 
                     let! parameters = context |> parse<RepositoryParameters>
-                    return! processQuery context parameters validations 1 query
+                    let! result = processQuery context parameters validations 1 query
+                    let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
+                    log.LogInformation("{CurrentInstant}: Finished {path}; RepositoryId: {repositoryId}; Duration: {duration}ms.", getCurrentInstantExtended(), context.Request.Path, graceIds.RepositoryId, duration_ms)
+                    return result
                 with ex ->
+                    let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
+                    log.LogError(ex, "{CurrentInstant}: Error in {path}; RepositoryId: {repositoryId}; Duration: {duration}ms.", getCurrentInstantExtended(), context.Request.Path, graceIds.RepositoryId, duration_ms)
                     return! context |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
         }
 
@@ -403,6 +414,9 @@ module Repository =
     let IsEmpty: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
+                let startTime = getCurrentInstant()
+                let graceIds = context.Items[nameof(GraceIds)] :?> GraceIds
+
                 try
                     let validations (parameters: RepositoryParameters) (context: HttpContext) =
                         [| Guid.isValidAndNotEmpty parameters.OwnerId InvalidOwnerId
@@ -420,8 +434,13 @@ module Repository =
                         }
 
                     let! parameters = context |> parse<RepositoryParameters>
-                    return! processQuery context parameters validations 1 query
+                    let! result = processQuery context parameters validations 1 query
+                    let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
+                    log.LogInformation("{CurrentInstant}: Finished {path}; RepositoryId: {repositoryId}; Duration: {duration}ms.", getCurrentInstantExtended(), context.Request.Path, graceIds.RepositoryId, duration_ms)
+                    return result
                 with ex ->
+                    let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
+                    log.LogError(ex, "{CurrentInstant}: Error in {path}; RepositoryId: {repositoryId}; Duration: {duration}ms.", getCurrentInstantExtended(), context.Request.Path, graceIds.RepositoryId, duration_ms)
                     return! context |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
         }
 
@@ -429,6 +448,9 @@ module Repository =
     let Get: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
+                let startTime = getCurrentInstant()
+                let graceIds = context.Items[nameof(GraceIds)] :?> GraceIds
+
                 try
                     let validations (parameters: RepositoryParameters) (context: HttpContext) =
                         [| Guid.isValidAndNotEmpty parameters.OwnerId InvalidOwnerId
@@ -438,7 +460,7 @@ module Repository =
                            String.isValidGraceName parameters.OrganizationName InvalidOrganizationName
                            Input.eitherIdOrNameMustBeProvided parameters.OrganizationId parameters.OrganizationName EitherOrganizationIdOrOrganizationNameRequired
                            Guid.isValidAndNotEmpty parameters.RepositoryId InvalidRepositoryId
-                           String.isNotEmpty parameters.RepositoryName RepositoryNameIsRequired
+                           String.isValidGraceName parameters.RepositoryName RepositoryNameIsRequired
                            Repository.repositoryIdExists parameters.RepositoryId RepositoryIdDoesNotExist |]
 
                     let query (context: HttpContext) (maxCount: int) (actorProxy: IRepositoryActor) =
@@ -447,8 +469,13 @@ module Repository =
                         }
 
                     let! parameters = context |> parse<RepositoryParameters>
-                    return! processQuery context parameters validations 1 query
+                    let! result = processQuery context parameters validations 1 query
+                    let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
+                    log.LogInformation("{CurrentInstant}: Finished {path}; RepositoryId: {repositoryId}; Duration: {duration}ms.", getCurrentInstantExtended(), context.Request.Path, graceIds.RepositoryId, duration_ms)
+                    return result
                 with ex ->
+                    let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
+                    log.LogError(ex, "{CurrentInstant}: Error in {path}; RepositoryId: {repositoryId}; Duration: {duration}ms.", getCurrentInstantExtended(), context.Request.Path, graceIds.RepositoryId, duration_ms)
                     return! context |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
             }
 
@@ -456,6 +483,9 @@ module Repository =
     let GetBranches: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
+                let startTime = getCurrentInstant()
+                let graceIds = context.Items[nameof(GraceIds)] :?> GraceIds
+
                 try
                     let validations (parameters: GetBranchesParameters) (context: HttpContext) =
                         [| Guid.isValidAndNotEmpty parameters.OwnerId InvalidOwnerId
@@ -479,8 +509,13 @@ module Repository =
 
                     let! parameters = context |> parse<GetBranchesParameters>
                     context.Items.Add("IncludeDeleted", parameters.IncludeDeleted)
-                    return! processQuery context parameters validations 1000 query
+                    let! result = processQuery context parameters validations 1000 query
+                    let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
+                    log.LogInformation("{CurrentInstant}: Finished {path}; RepositoryId: {repositoryId}; Duration: {duration}ms.", getCurrentInstantExtended(), context.Request.Path, graceIds.RepositoryId, duration_ms)
+                    return result
                 with ex ->
+                    let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
+                    log.LogError(ex, "{CurrentInstant}: Error in {path}; RepositoryId: {repositoryId}; Duration: {duration}ms.", getCurrentInstantExtended(), context.Request.Path, graceIds.RepositoryId, duration_ms)
                     return! context |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
             }
 
@@ -488,6 +523,9 @@ module Repository =
     let GetReferencesByReferenceId: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
+                let startTime = getCurrentInstant()
+                let graceIds = context.Items[nameof(GraceIds)] :?> GraceIds
+
                 try
                     let validations (parameters: GetReferencesByReferenceIdParameters) (context: HttpContext) =
                         [| Guid.isValidAndNotEmpty parameters.OwnerId InvalidOwnerId
@@ -510,8 +548,13 @@ module Repository =
 
                     let! parameters = context |> parse<GetReferencesByReferenceIdParameters>
                     context.Items.Add("ReferenceIds", parameters.ReferenceIds)
-                    return! processQuery context parameters validations parameters.MaxCount query
+                    let! result = processQuery context parameters validations parameters.MaxCount query
+                    let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
+                    log.LogInformation("{CurrentInstant}: Finished {path}; RepositoryId: {repositoryId}; Duration: {duration}ms.", getCurrentInstantExtended(), context.Request.Path, graceIds.RepositoryId, duration_ms)
+                    return result
                 with ex ->
+                    let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
+                    log.LogError(ex, "{CurrentInstant}: Error in {path}; RepositoryId: {repositoryId}; Duration: {duration}ms.", getCurrentInstantExtended(), context.Request.Path, graceIds.RepositoryId, duration_ms)
                     return! context |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
             }
 
@@ -519,6 +562,9 @@ module Repository =
     let GetBranchesByBranchId: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
+                let startTime = getCurrentInstant()
+                let graceIds = context.Items[nameof(GraceIds)] :?> GraceIds
+
                 try
                     let validations (parameters: GetBranchesByBranchIdParameters) (context: HttpContext) =
                         [| Guid.isValidAndNotEmpty parameters.OwnerId InvalidOwnerId
@@ -535,19 +581,27 @@ module Repository =
 
                     let query (context: HttpContext) (maxCount: int) (actorProxy: IRepositoryActor) =
                         task {
-                            let repositoryId = context.Items[nameof(RepositoryId)] :?> RepositoryId
-                            let branchIds = context.Items["BranchIds"] :?> IEnumerable<ReferenceId>
+                            let repositoryId = Guid.Parse(graceIds.RepositoryId)
+                            let branchIdsFromContext = (context.Items["BranchIds"] :?> string)
+                            let branchIds = branchIdsFromContext.Split(',', StringSplitOptions.TrimEntries).Select(fun branchId -> Guid.Parse(branchId))
                             let includeDeleted = context.Items["IncludeDeleted"] :?> bool
                             return! getBranchesByBranchId repositoryId branchIds maxCount includeDeleted
                         }
 
                     let! parameters = context |> parse<GetBranchesByBranchIdParameters>
+                    
                     let branchIdList = parameters.BranchIds.ToList()    // We need .Count below, so may as well materialize it once here.
                     let branchIds = branchIdList.Aggregate(StringBuilder(), (fun state branchId -> 
-                        state.Append($"{branchId}, ")))
-                    context.Items.Add("BranchIds", (branchIds.ToString())[0..-2])
+                        state.Append($"{branchId},")))
+                    context.Items.Add("BranchIds", (branchIds.ToString())[0..^1])
                     context.Items.Add("IncludeDeleted", parameters.IncludeDeleted)
-                    return! processQuery context parameters validations (branchIdList.Count) query
+                    
+                    let! result = processQuery context parameters validations (branchIdList.Count) query
+                    let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
+                    log.LogInformation("{CurrentInstant}: Finished {path}; RepositoryId: {repositoryId}; Duration: {duration}ms.", getCurrentInstantExtended(), context.Request.Path, graceIds.RepositoryId, duration_ms)
+                    return result
                 with ex ->
+                    let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
+                    log.LogError(ex, "{CurrentInstant}: Error in {path}; RepositoryId: {repositoryId}; Duration: {duration}ms.", getCurrentInstantExtended(), context.Request.Path, graceIds.RepositoryId, duration_ms)
                     return! context |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
             }

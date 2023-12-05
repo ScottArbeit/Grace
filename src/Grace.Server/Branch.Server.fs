@@ -434,6 +434,9 @@ module Branch =
     let Get: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
+                let startTime = getCurrentInstant()
+                let graceIds = context.Items[nameof(GraceIds)] :?> GraceIds
+
                 try
                     let validations (parameters: GetBranchParameters) (context: HttpContext) =
                         [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
@@ -451,8 +454,13 @@ module Branch =
                         }
 
                     let! parameters = context |> parse<GetBranchParameters>
-                    return! processQuery context parameters validations 1 query
+                    let! result = processQuery context parameters validations 1 query
+                    let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
+                    log.LogInformation("{CurrentInstant}: Finished {path}; BranchId: {branchId}; Duration: {duration}ms.", getCurrentInstantExtended(), context.Request.Path, graceIds.BranchId, duration_ms)
+                    return result
                 with ex ->
+                    let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
+                    log.LogError(ex, "{CurrentInstant}: Error in {path}; BranchId: {branchId}; Duration: {duration}ms.", getCurrentInstantExtended(), context.Request.Path, graceIds.BranchId, duration_ms)
                     return! context |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
             }
 
@@ -460,6 +468,9 @@ module Branch =
     let GetParentBranch: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
+                let startTime = getCurrentInstant()
+                let graceIds = context.Items[nameof(GraceIds)] :?> GraceIds
+
                 try
                     let validations (parameters: BranchParameters) (context: HttpContext) =
                         [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
@@ -477,8 +488,13 @@ module Branch =
                         }
 
                     let! parameters = context |> parse<BranchParameters>
-                    return! processQuery context parameters validations 1 query
+                    let! result = processQuery context parameters validations 1 query
+                    let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
+                    log.LogInformation("{CurrentInstant}: Finished {path}; BranchId: {branchId}; Duration: {duration}ms.", getCurrentInstantExtended(), context.Request.Path, graceIds.BranchId, duration_ms)
+                    return result
                 with ex ->
+                    let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
+                    log.LogError(ex, "{CurrentInstant}: Error in {path}; BranchId: {branchId}; Duration: {duration}ms.", getCurrentInstantExtended(), context.Request.Path, graceIds.BranchId, duration_ms)
                     return! context |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
             }
 
@@ -486,6 +502,9 @@ module Branch =
     let GetReference: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
+                let startTime = getCurrentInstant()
+                let graceIds = context.Items[nameof(GraceIds)] :?> GraceIds
+
                 try
                     let validations (parameters: GetReferenceParameters) (context: HttpContext) =
                         [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
@@ -506,8 +525,13 @@ module Branch =
 
                     let! parameters = context |> parse<GetReferenceParameters>
                     context.Items.Add("ReferenceId", parameters.ReferenceId)
-                    return! processQuery context parameters validations 1 query
+                    let! result = processQuery context parameters validations 1 query
+                    let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
+                    log.LogInformation("{CurrentInstant}: Finished {path}; BranchId: {branchId}; Duration: {duration}ms.", getCurrentInstantExtended(), context.Request.Path, graceIds.BranchId, duration_ms)
+                    return result
                 with ex ->
+                    let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
+                    log.LogError(ex, "{CurrentInstant}: Error in {path}; BranchId: {branchId}; Duration: {duration}ms.", getCurrentInstantExtended(), context.Request.Path, graceIds.BranchId, duration_ms)
                     return! context |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
             }
 
@@ -515,6 +539,9 @@ module Branch =
     let GetReferences: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
+                let startTime = getCurrentInstant()
+                let graceIds = context.Items[nameof(GraceIds)] :?> GraceIds
+
                 try
                     let validations (parameters: GetReferencesParameters) (context: HttpContext) =
                         [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
@@ -534,8 +561,13 @@ module Branch =
                         }
 
                     let! parameters = context |> parse<GetReferencesParameters>
-                    return! processQuery context parameters validations (parameters.MaxCount) query
+                    let! result = processQuery context parameters validations (parameters.MaxCount) query
+                    let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
+                    log.LogInformation("{CurrentInstant}: Finished {path}; BranchId: {branchId}; Duration: {duration}ms.", getCurrentInstantExtended(), context.Request.Path, graceIds.BranchId, duration_ms)
+                    return result
                 with ex ->
+                    let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
+                    log.LogError(ex, "{CurrentInstant}: Error in {path}; BranchId: {branchId}; Duration: {duration}ms.", getCurrentInstantExtended(), context.Request.Path, graceIds.BranchId, duration_ms)
                     return! context |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
             }
 
@@ -543,6 +575,9 @@ module Branch =
     let GetDiffsForReferenceType: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
+                let startTime = getCurrentInstant()
+                let graceIds = context.Items[nameof(GraceIds)] :?> GraceIds
+
                 try
                     let validations (parameters: GetDiffsForReferenceTypeParameters) (context: HttpContext) =
                         [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
@@ -580,8 +615,13 @@ module Branch =
 
                     let! parameters = context |> parse<GetDiffsForReferenceTypeParameters>
                     context.Items.Add(nameof(ReferenceType), parameters.ReferenceType)
-                    return! processQuery context parameters validations (parameters.MaxCount) query
+                    let! result = processQuery context parameters validations (parameters.MaxCount) query
+                    let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
+                    log.LogInformation("{CurrentInstant}: Finished {path}; BranchId: {branchId}; Duration: {duration}ms.", getCurrentInstantExtended(), context.Request.Path, graceIds.BranchId, duration_ms)
+                    return result
                 with ex ->
+                    let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
+                    log.LogError(ex, "{CurrentInstant}: Error in {path}; BranchId: {branchId}; Duration: {duration}ms.", getCurrentInstantExtended(), context.Request.Path, graceIds.BranchId, duration_ms)
                     return! context |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
             }
 
@@ -589,6 +629,9 @@ module Branch =
     let GetPromotions: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
+                let startTime = getCurrentInstant()
+                let graceIds = context.Items[nameof(GraceIds)] :?> GraceIds
+
                 try
                     let validations (parameters: GetReferencesParameters) (context: HttpContext) =
                         [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
@@ -608,8 +651,13 @@ module Branch =
                         }
 
                     let! parameters = context |> parse<GetReferencesParameters>
-                    return! processQuery context parameters validations (parameters.MaxCount) query
+                    let! result = processQuery context parameters validations (parameters.MaxCount) query
+                    let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
+                    log.LogInformation("{CurrentInstant}: Finished {path}; BranchId: {branchId}; Duration: {duration}ms.", getCurrentInstantExtended(), context.Request.Path, graceIds.BranchId, duration_ms)
+                    return result
                 with ex ->
+                    let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
+                    log.LogError(ex, "{CurrentInstant}: Error in {path}; BranchId: {branchId}; Duration: {duration}ms.", getCurrentInstantExtended(), context.Request.Path, graceIds.BranchId, duration_ms)
                     return! context |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
             }
 
@@ -617,6 +665,9 @@ module Branch =
     let GetCommits: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
+                let startTime = getCurrentInstant()
+                let graceIds = context.Items[nameof(GraceIds)] :?> GraceIds
+
                 try
                     let validations (parameters: GetReferencesParameters) (context: HttpContext) =
                         [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
@@ -636,8 +687,13 @@ module Branch =
                         }
 
                     let! parameters = context |> parse<GetReferencesParameters>
-                    return! processQuery context parameters validations (parameters.MaxCount) query
+                    let! result = processQuery context parameters validations (parameters.MaxCount) query
+                    let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
+                    log.LogInformation("{CurrentInstant}: Finished {path}; BranchId: {branchId}; Duration: {duration}ms.", getCurrentInstantExtended(), context.Request.Path, graceIds.BranchId, duration_ms)
+                    return result
                 with ex ->
+                    let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
+                    log.LogError(ex, "{CurrentInstant}: Error in {path}; BranchId: {branchId}; Duration: {duration}ms.", getCurrentInstantExtended(), context.Request.Path, graceIds.BranchId, duration_ms)
                     return! context |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
             }
 
@@ -645,6 +701,9 @@ module Branch =
     let GetCheckpoints: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
+                let startTime = getCurrentInstant()
+                let graceIds = context.Items[nameof(GraceIds)] :?> GraceIds
+
                 try
                     let validations (parameters: GetReferencesParameters) (context: HttpContext) =
                         [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
@@ -664,8 +723,13 @@ module Branch =
                         }
 
                     let! parameters = context |> parse<GetReferencesParameters>
-                    return! processQuery context parameters validations (parameters.MaxCount) query
+                    let! result = processQuery context parameters validations (parameters.MaxCount) query
+                    let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
+                    log.LogInformation("{CurrentInstant}: Finished {path}; BranchId: {branchId}; Duration: {duration}ms.", getCurrentInstantExtended(), context.Request.Path, graceIds.BranchId, duration_ms)
+                    return result
                 with ex ->
+                    let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
+                    log.LogError(ex, "{CurrentInstant}: Error in {path}; BranchId: {branchId}; Duration: {duration}ms.", getCurrentInstantExtended(), context.Request.Path, graceIds.BranchId, duration_ms)
                     return! context |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
             }
 
@@ -673,6 +737,9 @@ module Branch =
     let GetSaves: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
+                let startTime = getCurrentInstant()
+                let graceIds = context.Items[nameof(GraceIds)] :?> GraceIds
+
                 try
                     let validations (parameters: GetReferencesParameters) (context: HttpContext) =
                         [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
@@ -693,8 +760,13 @@ module Branch =
                         }
 
                     let! parameters = context |> parse<GetReferencesParameters>
-                    return! processQuery context parameters validations (parameters.MaxCount) query
+                    let! result = processQuery context parameters validations (parameters.MaxCount) query
+                    let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
+                    log.LogInformation("{CurrentInstant}: Finished {path}; BranchId: {branchId}; Duration: {duration}ms.", getCurrentInstantExtended(), context.Request.Path, graceIds.BranchId, duration_ms)
+                    return result
                 with ex ->
+                    let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
+                    log.LogError(ex, "{CurrentInstant}: Error in {path}; BranchId: {branchId}; Duration: {duration}ms.", getCurrentInstantExtended(), context.Request.Path, graceIds.BranchId, duration_ms)
                     return! context |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
             }
 
@@ -702,6 +774,9 @@ module Branch =
     let GetTags: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
+                let startTime = getCurrentInstant()
+                let graceIds = context.Items[nameof(GraceIds)] :?> GraceIds
+
                 try
                     let validations (parameters: GetReferencesParameters) (context: HttpContext) =
                         [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
@@ -721,14 +796,22 @@ module Branch =
                         }
 
                     let! parameters = context |> parse<GetReferencesParameters>
-                    return! processQuery context parameters validations (parameters.MaxCount) query
+                    let! result = processQuery context parameters validations (parameters.MaxCount) query
+                    let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
+                    log.LogInformation("{CurrentInstant}: Finished {path}; BranchId: {branchId}; Duration: {duration}ms.", getCurrentInstantExtended(), context.Request.Path, graceIds.BranchId, duration_ms)
+                    return result
                 with ex ->
+                    let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
+                    log.LogError(ex, "{CurrentInstant}: Error in {path}; BranchId: {branchId}; Duration: {duration}ms.", getCurrentInstantExtended(), context.Request.Path, graceIds.BranchId, duration_ms)
                     return! context |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
             }
 
     let GetVersion: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
+                let startTime = getCurrentInstant()
+                let graceIds = context.Items[nameof(GraceIds)] :?> GraceIds
+
                 try
                     let validations (parameters: GetBranchVersionParameters) (context: HttpContext) =
                         [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
@@ -802,5 +885,7 @@ module Branch =
                     context.Items.Add("GetVersionParameters", parameters)
                     return! processQuery context parameters validations 1 query
                 with ex ->
+                    let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
+                    log.LogError(ex, "{CurrentInstant}: Error in {path}; BranchId: {branchId}; Duration: {duration}ms.", getCurrentInstantExtended(), context.Request.Path, graceIds.BranchId, duration_ms)
                     return! context |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
             }

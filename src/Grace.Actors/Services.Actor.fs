@@ -788,7 +788,7 @@ module Services =
                 let requestCharge = StringBuilder()
                 let queryDefinition = QueryDefinition("""SELECT TOP 1 c["value"] FROM c WHERE c["value"].BranchId = @branchId AND c["value"].Class = @class ORDER BY c["value"].CreatedAt DESC""")
                                         .WithParameter("@branchId", $"{branchId}")
-                                        .WithParameter("@class", "ReferenceDto")
+                                        .WithParameter("@class", nameof(ReferenceDto))
                 let iterator = cosmosContainer.GetItemQueryIterator<ReferenceDtoValue>(queryDefinition, requestOptions = queryRequestOptions)
                 let mutable referenceDto = ReferenceDto.Default
                 while iterator.HasMoreResults do
@@ -817,7 +817,7 @@ module Services =
                 let queryDefinition = QueryDefinition("""SELECT TOP 1 c["value"] FROM c WHERE c["value"].BranchId = @branchId AND c["value"].Class = @class AND STRINGEQUALS(c["value"].ReferenceType, @referenceType, true) ORDER BY c["value"].CreatedAt DESC""")
                                         .WithParameter("@branchId", $"{branchId}")
                                         .WithParameter("@referenceType", getDistributedUnionCaseName referenceType)
-                                        .WithParameter("@class", "ReferenceDto")
+                                        .WithParameter("@class", nameof(ReferenceDto))
                 let iterator = cosmosContainer.GetItemQueryIterator<ReferenceDtoValue>(queryDefinition, requestOptions = queryRequestOptions)
                 let mutable referenceDto = ReferenceDto.Default
                 while iterator.HasMoreResults do
@@ -947,7 +947,7 @@ module Services =
             | MongoDB -> return false
         }
 
-    /// Gets a list of ReferenceDtos based on ReferenceIds.
+    /// Gets a list of ReferenceDtos based on ReferenceIds. The list is returned in the same order as the supplied ReferenceIds.
     let getReferencesByReferenceId (referenceIds: IEnumerable<ReferenceId>) (maxCount: int) =
         task {
             let referenceDtos = List<ReferenceDto>()
@@ -955,24 +955,43 @@ module Services =
             | Unknown -> ()
             | AzureCosmosDb -> 
                 let mutable requestCharge = 0.0
-                for referenceId in referenceIds do
-                    let queryDefinition = QueryDefinition("""SELECT TOP @maxCount c["value"] FROM c 
-                                            WHERE c["value"].ReferenceId = @referenceId
-                                                AND c["value"].Class = @class""")
-                                            .WithParameter("@maxCount", maxCount)
-                                            .WithParameter("@referenceId", $"{referenceId}")
-                                            .WithParameter("@class", "ReferenceDto")
-                    let iterator = cosmosContainer.GetItemQueryIterator<ReferenceDtoValue>(queryDefinition, requestOptions = queryRequestOptions)
-                    while iterator.HasMoreResults do
-                        let! results = iterator.ReadNextAsync()
-                        requestCharge <- requestCharge + results.RequestCharge
-                        if results.Resource.Count() > 0 then referenceDtos.Add(results.Resource.First().value)
+
+                // In order to build the IN clause, we need to create a parameter for each referenceId. (I tried just using string concatenation, it didn't work for some reason.)
+                // The query starts with:
+                let queryText = StringBuilder(@"SELECT TOP @maxCount c[""value""] FROM c WHERE c[""value""].Class = @class and c[""value""].ReferenceId IN (")
+                // Then we add a parameter for each referenceId.
+                referenceIds |> Seq.iteri (fun i referenceId -> queryText.Append($"@referenceId{i},") |> ignore)
+                // Then we remove the last comma and close the parenthesis.
+                queryText.Remove(queryText.Length - 1, 1).Append(")") |> ignore
+
+                // Create the query definition.
+                let queryDefinition = QueryDefinition(queryText.ToString())
+                                        .WithParameter("@maxCount", referenceIds.Count())
+                                        .WithParameter("@class", "ReferenceDto")
+
+                // Add a .WithParameter for each referenceId.
+                referenceIds |> Seq.iteri (fun i referenceId -> queryDefinition.WithParameter($"@referenceId{i}", $"{referenceId}") |> ignore)
+
+                // Execute the query.
+                let iterator = cosmosContainer.GetItemQueryIterator<ReferenceDtoValue>(queryDefinition, requestOptions = queryRequestOptions)
+
+                // The query will return fewer results than the number of referenceIds if the supplied referenceIds have duplicates.
+                //   This is normal for `grace status` (BasedOn and Latest Promotion are likely to be the same, for instance).
+                //   We need to gather the query results, and then iterate through the referenceId's to return the dto's in the same order.
+                let queryResults = Dictionary<ReferenceId, ReferenceDto>()
+                while iterator.HasMoreResults do
+                    let! results = iterator.ReadNextAsync()
+                    requestCharge <- requestCharge + results.RequestCharge
+                    results.Resource |> Seq.iter (fun refDto -> queryResults.Add(refDto.value.ReferenceId, refDto.value))
                 
+                // Add the results to the list in the same order as the supplied referenceIds.
+                referenceIds |> Seq.iter (fun referenceId -> referenceDtos.Add(queryResults[referenceId]))
+
                 Activity.Current.SetTag("referenceDtos.Count", $"{referenceDtos.Count}")
                                 .SetTag("totalRequestCharge", $"{requestCharge}") |> ignore
             | MongoDB -> ()
 
-            return referenceDtos 
+            return referenceDtos
         }
 
     /// Gets a list of BranchDtos based on BranchIds.

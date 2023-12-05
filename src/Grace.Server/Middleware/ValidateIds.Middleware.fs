@@ -1,9 +1,5 @@
 ﻿namespace Grace.Server.Middleware
 
-open Dapr.Actors
-open Giraffe.HttpStatusCodeHandlers.RequestErrors
-open Grace.Actors.Constants
-open Grace.Actors.Interfaces
 open Grace.Actors.Services
 open Grace.Server
 open Grace.Server.Services
@@ -13,8 +9,6 @@ open Grace.Shared.Types
 open Grace.Shared.Utilities
 open Grace.Shared.Validation.Errors
 open Microsoft.AspNetCore.Http
-open Microsoft.AspNetCore.Http.Extensions
-open Microsoft.AspNetCore.Http.HttpResults
 open Microsoft.Extensions.Logging
 open System
 open System.Collections.Concurrent
@@ -22,8 +16,6 @@ open System.Linq
 open System.Reflection
 open System.Text
 open System.Threading.Tasks
-open Giraffe.Core
-open System.Text.Json
 
 /// Holds the PropertyInfo for each Entity Id and Name property.
 type EntityProperties =
@@ -57,7 +49,7 @@ type EntityProperties =
 /// If the Ids and/or Names aren't found, it returns 404 Not Found.
 type ValidateIdsMiddleware(next: RequestDelegate) =
 
-    let log = ApplicationContext.loggerFactory.CreateLogger("ValidateIdsMiddleware")
+    let log = ApplicationContext.loggerFactory.CreateLogger("ValidateIds.Middleware")
 
     /// Holds the parameter type for each endpoint.
     let typeLookup = ConcurrentDictionary<String, Type>()

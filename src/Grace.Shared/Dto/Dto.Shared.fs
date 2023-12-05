@@ -36,7 +36,7 @@ module Dto =
                 DeleteReason: string
             }
             static member Default = {
-                Class = "BranchDto"
+                Class = nameof(BranchDto)
                 BranchId = BranchId.Empty
                 BranchName = BranchName String.Empty
                 ParentBranchId = Constants.DefaultParentBranchId
@@ -74,7 +74,7 @@ module Dto =
             }
 
             static member Default = {
-                Class = "DiffDto"
+                Class = nameof(DiffDto)
                 HasDifferences = false
                 DirectoryId1 = DirectoryId.Empty
                 Directory1CreatedAt = Instant.FromUnixTimeTicks 0L
@@ -102,7 +102,7 @@ module Dto =
                 DeleteReason: string
             }
             static member Default = {
-                Class = "OrganizationDto"
+                Class = nameof(OrganizationDto)
                 OrganizationId = OrganizationId.Empty
                 OrganizationName = String.Empty
                 OwnerId = OwnerId.Empty
@@ -133,7 +133,7 @@ module Dto =
                 DeleteReason: string
             }
             static member Default = {
-                Class = "OwnerDto"
+                Class = nameof(OwnerDto)
                 OwnerId = OwnerId.Empty
                 OwnerName = String.Empty
                 OwnerType = OwnerType.Public
@@ -160,7 +160,7 @@ module Dto =
                 CreatedAt: Instant
             }
             static member Default = {
-                Class = "ReferenceDto"
+                Class = nameof(ReferenceDto)
                 ReferenceId = ReferenceId.Empty
                 BranchId = BranchId.Empty
                 DirectoryId = DirectoryId.Empty
@@ -201,7 +201,7 @@ module Dto =
             }
 
             static member Default = {
-                Class = "RepositoryDto"
+                Class = nameof(RepositoryDto)
                 RepositoryId = Guid.Empty 
                 OwnerId = OwnerId.Empty
                 OrganizationId = OrganizationId.Empty 

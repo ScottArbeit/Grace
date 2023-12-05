@@ -15,8 +15,8 @@ open System.Collections.Concurrent
 
 module Load =
 
-    let numberOfRepositories = 500
-    let numberOfEvents = 5000
+    let numberOfRepositories = 100
+    let numberOfEvents = 4000
 
     let showResult<'T> (r: GraceResult<'T>) =
         match r with
@@ -24,12 +24,11 @@ module Load =
         | Error error -> logToConsole $"{error}"
     
     let g() = $"{Guid.NewGuid()}"
-    let ParallelOptions = ParallelOptions(MaxDegreeOfParallelism = Environment.ProcessorCount * 2)
+    let ParallelOptions = ParallelOptions(MaxDegreeOfParallelism = Environment.ProcessorCount * 1)
 
     [<EntryPoint>]
     let main args =
         (task {
-            //ThreadPool.SetMinThreads(100, 100) |> ignore
             let startTime = getCurrentInstant()
             let cancellationToken = new CancellationToken()
 
@@ -96,9 +95,11 @@ module Load =
 
             do! Parallel.ForEachAsync({0..numberOfEvents}, ParallelOptions, (fun (i: int) (cancellationToken: CancellationToken) ->
                 ValueTask(task {
+                    if i % 250 = 0 then
+                        logToConsole $"Processing event {i} of {numberOfEvents}."
                     let rnd = Random.Shared.Next(ids.Count)
                     let (ownerId, organizationId, repositoryId, branchId) = ids[rnd]
-                    match Random.Shared.Next(4) with
+                    match Random.Shared.Next(13) with
                     | 0 -> 
                         let! r = Branch.Save(Branch.CreateReferenceParameters(OwnerId = $"{ownerId}", OrganizationId = $"{organizationId}", RepositoryId = $"{repositoryId}", BranchId = $"{branchId}", 
                             Message = $"Save - {DateTime.UtcNow}", DirectoryId = Guid.NewGuid(), CorrelationId = g()))
@@ -115,12 +116,42 @@ module Load =
                         let! r = Branch.Tag(Branch.CreateReferenceParameters(OwnerId = $"{ownerId}", OrganizationId = $"{organizationId}", RepositoryId = $"{repositoryId}", BranchId = $"{branchId}",
                             Message = $"Tag - {DateTime.UtcNow}", DirectoryId = Guid.NewGuid(), CorrelationId = g()))
                         showResult r
+                    | 4 ->
+                        let! r = Branch.Get(Branch.GetBranchParameters(OwnerId = $"{ownerId}", OrganizationId = $"{organizationId}", RepositoryId = $"{repositoryId}", BranchId = $"{branchId}", CorrelationId = g()))
+                        showResult r
+                    | 5 ->
+                        let! r = Branch.GetReferences(Branch.GetReferencesParameters(OwnerId = $"{ownerId}", OrganizationId = $"{organizationId}", RepositoryId = $"{repositoryId}", BranchId = $"{branchId}", MaxCount = 30, CorrelationId = g()))
+                        showResult r
+                    | 6 ->
+                        let! r = Branch.GetCommits(Branch.GetReferencesParameters(OwnerId = $"{ownerId}", OrganizationId = $"{organizationId}", RepositoryId = $"{repositoryId}", BranchId = $"{branchId}", MaxCount = 30, CorrelationId = g()))
+                        showResult r
+                    | 7 ->
+                        let! r = Branch.GetTags(Branch.GetReferencesParameters(OwnerId = $"{ownerId}", OrganizationId = $"{organizationId}", RepositoryId = $"{repositoryId}", BranchId = $"{branchId}", MaxCount = 30, CorrelationId = g()))
+                        showResult r
+                    | 8 ->
+                        let! r = Repository.GetBranches(Repository.GetBranchesParameters(OwnerId = $"{ownerId}", OrganizationId = $"{organizationId}", RepositoryId = $"{repositoryId}", MaxCount = 30, CorrelationId = g()))
+                        showResult r
+                    | 9 ->
+                        let! r = Repository.Get(Repository.GetRepositoryParameters(OwnerId = $"{ownerId}", OrganizationId = $"{organizationId}", RepositoryId = $"{repositoryId}", CorrelationId = g()))
+                        showResult r
+                    | 10 -> 
+                        let! r = Repository.GetBranchesByBranchId(Repository.GetBranchesByBranchIdParameters(OwnerId = $"{ownerId}", OrganizationId = $"{organizationId}", RepositoryId = $"{repositoryId}", BranchIds = [| branchId |], CorrelationId = g()))
+                        showResult r
+                    | 11 -> 
+                        let! r = Branch.GetCheckpoints(Branch.GetReferencesParameters(OwnerId = $"{ownerId}", OrganizationId = $"{organizationId}", RepositoryId = $"{repositoryId}", BranchId = $"{branchId}", MaxCount = 30, CorrelationId = g()))
+                        showResult r
+                    | 12 -> 
+                        let! r = Branch.GetSaves(Branch.GetReferencesParameters(OwnerId = $"{ownerId}", OrganizationId = $"{organizationId}", RepositoryId = $"{repositoryId}", BranchId = $"{branchId}", MaxCount = 30, CorrelationId = g()))
+                        showResult r
                     | _ -> ()
                 })
             ))
 
             let mainProcessingTime = getCurrentInstant()
             logToConsole "Main processing complete."
+            logToConsole $"Processing time:  {mainProcessingTime - setupTime}."
+            logToConsole $"Transactions/sec: {float numberOfEvents / (mainProcessingTime - setupTime).TotalSeconds}"
+            logToConsole "Starting tear down."
 
             // Tear down
             do! Parallel.ForEachAsync({0..numberOfRepositories}, ParallelOptions, (fun (i: int) (cancellationToken: CancellationToken) ->
@@ -139,15 +170,14 @@ module Load =
 
             let! r = Organization.Delete(Organization.DeleteOrganizationParameters(OwnerId = $"{ownerId}", OrganizationId = $"{organizationId}", DeleteReason = "performance test", CorrelationId = g()))
             showResult r
-            do! Task.Delay(Random.Shared.Next(25))
 
             let! r = Owner.Delete(Owner.DeleteOwnerParameters(OwnerId = $"{ownerId}", DeleteReason = "performance test", CorrelationId = g()))
             showResult r
-            do! Task.Delay(Random.Shared.Next(25))
 
             let endTime = getCurrentInstant()
             logToConsole "Tear down complete."
 
+            printfn $"Number of events: {numberOfEvents}."
             printfn $"Setup time:       {setupTime - startTime}."
             printfn $"Processing time:  {mainProcessingTime - setupTime}."
             printfn $"Tear down:        {endTime - mainProcessingTime}."
