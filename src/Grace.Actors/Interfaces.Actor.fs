@@ -113,7 +113,7 @@ module Interfaces =
         /// Returns the total size of files contained in this directory and all subdirectories.
         abstract member GetSizeRecursive: unit -> Task<uint64>
         /// Returns a list of DirectoryVersion objects for all subdirectories.
-        abstract member GetDirectoryVersionsRecursive: unit -> Task<List<DirectoryVersion>>
+        abstract member GetDirectoryVersionsRecursive: forceRegenerate: bool -> Task<List<DirectoryVersion>>
         /// Saves a DirectoryVersion instance as the state of this actor.
         abstract member Create: directoryContents: DirectoryVersion -> correlationId: string -> Task<GraceResult<string>>
         /// Delete the DirectoryVersion and all subdirectories and files.

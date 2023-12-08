@@ -208,15 +208,15 @@ module Constants =
     let DefaultFileCopyRetryPolicy = Policy.Handle<IOException>(fun ex -> ex.GetType() <> typeof<KeyNotFoundException>).WaitAndRetry(fileCopyBackoff)
 
     /// Grace's global settings for Parallel.ForEach/ForEachAsync expressions; sets MaxDegreeofParallelism to maximize performance.
-    // I'm choosing a high number here because these parallel loops are used in code where most of the time is spent on network 
+    // I'm choosing a higher-than-usual number here because these parallel loops are used in code where most of the time is spent on network 
     //   and disk traffic - and therefore Task<'T> - and we can run lots of them simultaneously.
-    let ParallelOptions = ParallelOptions(MaxDegreeOfParallelism = Environment.ProcessorCount * 8)
+    let ParallelOptions = ParallelOptions(MaxDegreeOfParallelism = Environment.ProcessorCount * 4)
 
     /// Default directory size magic value.
     let InitialDirectorySize = uint64 Int64.MaxValue
 
     /// The default root branch Id for a repository.
-    let DefaultParentBranchId = Guid("38EC9A98-00B0-4FA3-8CC5-ACFB04E445A7") // There's nothing special about this Guid.
+    let DefaultParentBranchId = Guid("38EC9A98-00B0-4FA3-8CC5-ACFB04E445A7") // There's nothing special about this Guid. I just generated it one day.
 
     /// The name of the inter-process communication file used by grace watch to share status with other invocations of Grace.
     let IpcFileName = "graceWatchStatus.json"

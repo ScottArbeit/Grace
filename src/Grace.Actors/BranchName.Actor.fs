@@ -4,6 +4,7 @@ open Dapr.Actors
 open Dapr.Actors.Runtime
 open Grace.Actors.Constants
 open Grace.Actors.Interfaces
+open Grace.Actors.Services
 open Grace.Shared.Utilities
 open Microsoft.Extensions.Logging
 open NodaTime
@@ -20,7 +21,7 @@ module BranchName =
 
         let actorName = Constants.ActorName.BranchName
     
-        let log = host.LoggerFactory.CreateLogger("BranchName.Actor")
+        let log = loggerFactory.CreateLogger("BranchName.Actor")
 
         let mutable cachedBranchId: string option = None
 

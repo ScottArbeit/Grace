@@ -5,6 +5,7 @@ open Dapr.Actors.Client
 open Dapr.Actors.Runtime
 open Grace.Actors.Constants
 open Grace.Actors.Interfaces
+open Grace.Actors.Services
 open Grace.Shared
 open Grace.Shared.Services
 open Grace.Shared.Types
@@ -13,11 +14,11 @@ open Grace.Shared.Validation.Errors.Directory
 open Microsoft.Extensions.Logging
 open NodaTime
 open System
+open System.Collections.Concurrent
 open System.Collections.Generic
+open System.Diagnostics
 open System.Linq
 open System.Threading.Tasks
-open System.Collections.Concurrent
-open System.Diagnostics
 
 module DirectoryVersion =
 
@@ -27,7 +28,7 @@ module DirectoryVersion =
         inherit Actor(host)
 
         let actorName = ActorName.DirectoryVersion
-        let log = host.LoggerFactory.CreateLogger("DirectoryVersion.Actor")
+        let log = loggerFactory.CreateLogger("DirectoryVersion.Actor")
         let dtoStateName = "DirectoryVersionState"
         let directoryVersionCacheStateName = "DirectoryVersionCacheState"
 
@@ -130,44 +131,39 @@ module DirectoryVersion =
                         return directoryVersion.RecursiveSize
                 }
 
-            member this.GetDirectoryVersionsRecursive() =
+            member this.GetDirectoryVersionsRecursive(forceRegenerate: bool) =
                 let stateManager = this.StateManager
                 task {
                     try
                         //logToConsole $"In GetDirectoryVersionsRecursive."
-                        let! cachedSubdirectoryVersions = Storage.RetrieveState<List<DirectoryVersion>> stateManager directoryVersionCacheStateName
-                        //let cachedSubdirectoryVersions = None
-                        match cachedSubdirectoryVersions with
+                        let cachedSubdirectoryVersions = 
+                            task {
+                                if not <| forceRegenerate then
+                                    return! Storage.RetrieveState<List<DirectoryVersion>> stateManager directoryVersionCacheStateName
+                                else
+                                    return None
+                            }
+                        match! cachedSubdirectoryVersions with
                         | Some subdirectoryVersions -> 
-                            logToConsole $"In DirectoryVersionActor.GetDirectoryVersionsRecursive({this.Id}). SubdirectoryVersions already cached."
+                            log.LogDebug("In DirectoryVersionActor.GetDirectoryVersionsRecursive({id}). Retrieved SubdirectoryVersions from cache.", this.Id)
                             return subdirectoryVersions
                         | None ->
-                            logToConsole $"In DirectoryVersionActor.GetDirectoryVersionsRecursive({this.Id}). SubdirectoryVersions not cached; generating the list."
+                            log.LogDebug("In DirectoryVersionActor.GetDirectoryVersionsRecursive({id}). SubdirectoryVersions will be generated. forceRegenerate: {forceRegenerate}", this.Id, forceRegenerate)
                             let subdirectoryVersions = ConcurrentQueue<DirectoryVersion>()
                             subdirectoryVersions.Enqueue(directoryVersion)
                             do! Parallel.ForEachAsync(directoryVersion.Directories, Constants.ParallelOptions, (fun directoryId ct ->
                                 ValueTask(task {
                                     let actorId = GetActorId directoryId
                                     let subdirectoryActor = this.ProxyFactory.CreateActorProxy<IDirectoryVersionActor>(actorId, ActorName.DirectoryVersion)
-                                    let! subdirectoryContents = subdirectoryActor.GetDirectoryVersionsRecursive()
+                                    let! subdirectoryContents = subdirectoryActor.GetDirectoryVersionsRecursive(forceRegenerate)
                                     for directoryVersion in subdirectoryContents do
                                         subdirectoryVersions.Enqueue(directoryVersion)
                                 })))
-                            //let tasks =
-                            //    directoryVersion.Directories
-                            //    |> Seq.map(fun directoryId ->
-                            //                    task {
-                            //                        let actorId = GetActorId directoryId
-                            //                        let subdirectoryActor = this.ProxyFactory.CreateActorProxy<IDirectoryVersionActor>(actorId, ActorName.Directory)
-                            //                        return! subdirectoryActor.GetDirectoryVersionsRecursive()
-                            //                    })
-                            //Task.WaitAll(tasks.Cast<Task>().ToArray())
-                            //tasks |> Seq.iter (fun task -> subdirectoryVersions.AddRange(task.Result))
                             let subdirectoryVersionsList = subdirectoryVersions.ToList()
                             do! Storage.SaveState stateManager directoryVersionCacheStateName subdirectoryVersionsList
-                            logToConsole $"In DirectoryVersionActor.GetDirectoryVersionsRecursive(); storing subdirectoryVersion list."
+                            log.LogDebug("In DirectoryVersionActor.GetDirectoryVersionsRecursive({id}); Storing subdirectoryVersion list.", this.Id)
                             let! _ = this.SetReminderToDeleteCachedState()
-                            logToConsole $"In DirectoryVersionActor.GetDirectoryVersionsRecursive(); set delete reminder."
+                            log.LogDebug("In DirectoryVersionActor.GetDirectoryVersionsRecursive({id}); Delete cached state reminder was set.", this.Id)
                             return subdirectoryVersionsList
                     with ex ->
                         log.LogError("{CurrentInstant}: Error in {methodName}. Exception: {exception}", getCurrentInstantExtended(), nameof(this.SetReminderToDeleteCachedState), createExceptionResponse ex)

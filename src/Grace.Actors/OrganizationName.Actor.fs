@@ -4,6 +4,7 @@ open Dapr.Actors
 open Dapr.Actors.Runtime
 open Grace.Actors.Constants
 open Grace.Actors.Interfaces
+open Grace.Actors.Services
 open Grace.Shared.Utilities
 open Microsoft.Extensions.Logging
 open NodaTime
@@ -21,7 +22,7 @@ module OrganizationName =
         inherit Actor(host)
 
         let actorName = ActorName.OrganizationName
-        let log = host.LoggerFactory.CreateLogger("OrganizationName.Actor")
+        let log = loggerFactory.CreateLogger("OrganizationName.Actor")
     
         let mutable cachedOrganizationId: string option = None
 
@@ -32,13 +33,14 @@ module OrganizationName =
             Task.CompletedTask
 
         override this.OnPostActorMethodAsync(context) =
-            let duration_ms = (getCurrentInstant().Minus(actorStartTime).TotalMilliseconds * 1000.0).ToString("F0")
-            log.LogInformation("{CurrentInstant}: Finished {ActorName}.{MethodName}; Id: {Id}; Duration: {duration}ms.", getCurrentInstantExtended(), actorName, context.MethodName, this.Id, duration_ms)
+            let duration_ms = (getCurrentInstant().Minus(actorStartTime).TotalMilliseconds).ToString("F3")
+            log.LogInformation("{CurrentInstant}: Finished {ActorName}.{MethodName}; OrganizationName: {OrganizationName}; OrganizationId: {OrganizationId}; Duration: {duration}ms.", 
+                getCurrentInstantExtended(), actorName, context.MethodName, this.Id, (if Option.isSome cachedOrganizationId then cachedOrganizationId.Value else "None"), duration_ms)
             logScope.Dispose()
             Task.CompletedTask
 
         interface IOrganizationNameActor with
-            member this.GetOrganizationId() = Task.FromResult(cachedOrganizationId)
+            member this.GetOrganizationId() = cachedOrganizationId |> returnTask
 
             member this.SetOrganizationId(organizationId: string) =
                 let mutable guid = Guid.Empty

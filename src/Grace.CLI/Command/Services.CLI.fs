@@ -371,7 +371,8 @@ module Services =
             // Get the previous GraceStatus index values into a Dictionary for faster lookup.
             let previousDirectoryVersions = Dictionary<RelativePath, LocalDirectoryVersion>()
             for kvp in previousGraceStatus.Index do   
-                previousDirectoryVersions.Add(kvp.Value.RelativePath, kvp.Value)
+                if not <| previousDirectoryVersions.TryAdd(kvp.Value.RelativePath, kvp.Value) then
+                    logToAnsiConsole Colors.Error $"createNewGraceStatusFile: Failed to add {kvp.Value.RelativePath} to previousDirectoryVersions."
 
             let! (subdirectoriesInRootDirectory, filesInRootDirectory, rootSha256Hash) = 
                 processDirectoryContents Constants.RootDirectoryPath previousDirectoryVersions newGraceStatus

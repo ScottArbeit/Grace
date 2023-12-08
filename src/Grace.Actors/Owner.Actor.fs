@@ -33,7 +33,7 @@ module Owner =
         inherit Actor(host)
 
         let actorName = Constants.ActorName.Owner
-        let log = host.LoggerFactory.CreateLogger("Owner.Actor")
+        let log = loggerFactory.CreateLogger("Owner.Actor")
         let mutable actorStartTime = Instant.MinValue
         let mutable logScope: IDisposable = null
         let mutable currentCommand = String.Empty

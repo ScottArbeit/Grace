@@ -46,7 +46,7 @@ module Diff =
         let dtoStateName = "DiffDtoState"
         let mutable diffDto: DiffDto = DiffDto.Default
         let actorName = Constants.ActorName.Diff
-        let log = host.LoggerFactory.CreateLogger("Diff.Actor")
+        let log = loggerFactory.CreateLogger("Diff.Actor")
         let mutable actorStartTime = Instant.MinValue
         let mutable logScope: IDisposable = null
 
@@ -97,7 +97,7 @@ module Diff =
                 let graceIndex = ServerGraceIndex()
                 let directory = this.ProxyFactory.CreateActorProxy<IDirectoryVersionActor>(DirectoryVersion.GetActorId(directoryId), ActorName.DirectoryVersion)
                 let! directoryCreatedAt = directory.GetCreatedAt()
-                let! directoryContents = directory.GetDirectoryVersionsRecursive()
+                let! directoryContents = directory.GetDirectoryVersionsRecursive(false)
                 //logToConsole $"In DiffActor.buildGraceIndex(): directoryContents.Count: {directoryContents.Count}"
                 for directoryVersion in directoryContents do 
                     graceIndex.TryAdd(directoryVersion.RelativePath, directoryVersion) |> ignore

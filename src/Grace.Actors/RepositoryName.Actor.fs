@@ -4,6 +4,7 @@ open Dapr.Actors
 open Dapr.Actors.Runtime
 open Grace.Actors.Constants
 open Grace.Actors.Interfaces
+open Grace.Actors.Services
 open Grace.Shared.Utilities
 open Microsoft.Extensions.Logging
 open NodaTime
@@ -22,7 +23,7 @@ module RepositoryName =
 
         let actorName = Constants.ActorName.RepositoryName
     
-        let log = host.LoggerFactory.CreateLogger(actorName)
+        let log = loggerFactory.CreateLogger(actorName)
 
         let mutable cachedRepositoryId: string option = None
 
@@ -33,13 +34,14 @@ module RepositoryName =
             Task.CompletedTask
 
         override this.OnPostActorMethodAsync(context) =
-            let duration_ms = (getCurrentInstant().Minus(actorStartTime).TotalMilliseconds * 1000.0).ToString("F0")
-            log.LogInformation("{CurrentInstant}: Finished {ActorName}.{MethodName}; Id: {Id}; Duration: {duration}ms.", getCurrentInstantExtended(), actorName, context.MethodName, this.Id, duration_ms)
+            let duration_ms = (getCurrentInstant().Minus(actorStartTime).TotalMilliseconds).ToString("F3")
+            log.LogInformation("{CurrentInstant}: Finished {ActorName}.{MethodName}; RepositoryName: {RepositoryName}; RepositoryId: {RepositoryId}; Duration: {duration}ms.", 
+                getCurrentInstantExtended(), actorName, context.MethodName, this.Id, (if Option.isSome cachedRepositoryId then cachedRepositoryId.Value else "None"), duration_ms)
             logScope.Dispose()
             Task.CompletedTask
 
         interface IRepositoryNameActor with
-            member this.GetRepositoryId() = Task.FromResult(cachedRepositoryId)
+            member this.GetRepositoryId() = cachedRepositoryId |> returnTask
 
             member this.SetRepositoryId(repositoryId: string) =
                 let mutable guid = Guid.Empty

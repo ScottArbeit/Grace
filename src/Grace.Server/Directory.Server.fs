@@ -135,7 +135,7 @@ module DirectoryVersion =
 
                 let query (context: HttpContext) (maxCount: int) (actorProxy: IDirectoryVersionActor) =
                     task {
-                        let! directoryVersions = actorProxy.GetDirectoryVersionsRecursive()
+                        let! directoryVersions = actorProxy.GetDirectoryVersionsRecursive(false)
                         return directoryVersions
                     }
 

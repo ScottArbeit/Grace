@@ -5,6 +5,7 @@ open Dapr.Actors.Runtime
 open Grace.Actors.Commands
 open Grace.Actors.Constants
 open Grace.Actors.Interfaces
+open Grace.Actors.Services
 open Grace.Shared
 open Grace.Shared.Client.Configuration
 open Grace.Shared.Dto.Reference
@@ -25,7 +26,7 @@ module Reference =
         inherit Actor (host)
 
         let actorName = ActorName.Reference
-        let log = host.LoggerFactory.CreateLogger("Reference.Actor")
+        let log = loggerFactory.CreateLogger("Reference.Actor")
         let dtoStateName = "ReferenceDtoState"
         let mutable referenceDto = None
         

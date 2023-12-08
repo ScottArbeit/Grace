@@ -296,9 +296,10 @@ module Diff =
                             let latestReference = 
                                 match getAReferenceResult with
                                 | Ok returnValue ->
+                                    // There should only be one reference, because we're using MaxCount = 1.
                                     let references = returnValue.ReturnValue
                                     if references.Count() > 0 then
-                                        //logToAnsiConsole Colors.Verbose $"Got latest reference: {references.First().ReferenceText}; {references.First().CreatedAt}; {references.First().Sha256Hash}."
+                                        logToAnsiConsole Colors.Verbose $"Got latest reference: {references.First().ReferenceText}; {references.First().CreatedAt}; {getShortenedSha256Hash (references.First().Sha256Hash)}; {references.First().DirectoryId}."
                                         references.First()
                                     else
                                         logToAnsiConsole Colors.Error $"Error getting latest reference. No matching references were found."
@@ -322,7 +323,7 @@ module Diff =
 
                             // Sending diff request to server.
                             t6.StartTask()
-                            //logToAnsiConsole Colors.Verbose $"latestReference.DirectoryId: {latestReference.DirectoryId}; rootDirectoryId: {rootDirectoryId}."
+                            logToAnsiConsole Colors.Verbose $"latestReference.DirectoryId: {latestReference.DirectoryId}; rootDirectoryId: {rootDirectoryId}."
                             let getDiffParameters = GetDiffParameters(DirectoryId1 = latestReference.DirectoryId, DirectoryId2 = rootDirectoryId)
                             let! getDiffResult = Diff.GetDiff(getDiffParameters)
                             match getDiffResult with

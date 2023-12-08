@@ -38,7 +38,7 @@ module Repository =
         inherit Actor(host)
 
         let actorName = ActorName.Repository
-        let log = host.LoggerFactory.CreateLogger("Repository.Actor")
+        let log = loggerFactory.CreateLogger("Repository.Actor")
         let mutable actorStartTime = Instant.MinValue
         let mutable logScope: IDisposable = null
         let mutable currentCommand = String.Empty

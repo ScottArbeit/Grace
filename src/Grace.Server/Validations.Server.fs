@@ -24,6 +24,8 @@ module Validations =
     let actorProxyFactory = ApplicationContext.actorProxyFactory
     let log = ApplicationContext.loggerFactory.CreateLogger("Validations.Server")
     let memoryCache = ApplicationContext.memoryCache
+    let boxedTrue = box true
+    let boxedFalse = box false
 
     module Owner =
 
@@ -117,10 +119,10 @@ module Validations =
                         let ownerActorProxy = actorProxyFactory.CreateActorProxy<IOwnerActor>(actorId, ActorName.Owner)
                         let! isDeleted = ownerActorProxy.IsDeleted()
                         if isDeleted then
-                            use newCacheEntry = memoryCache.CreateEntry($"{ownerGuid}deleted", Value = true, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
+                            use newCacheEntry = memoryCache.CreateEntry($"{ownerGuid}deleted", Value = boxedTrue, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
                             return Ok ()
                         else
-                            use newCacheEntry = memoryCache.CreateEntry($"{ownerGuid}deleted", Value = false, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
+                            use newCacheEntry = memoryCache.CreateEntry($"{ownerGuid}deleted", Value = boxedFalse, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
                             return Error error
                 | None -> return Error error
             } |> ValueTask<Result<unit, 'T>>
@@ -252,10 +254,10 @@ module Validations =
                         let organizationActorProxy = actorProxyFactory.CreateActorProxy<IOrganizationActor>(actorId, ActorName.Organization)
                         let! isDeleted = organizationActorProxy.IsDeleted()
                         if isDeleted then
-                            use newCacheEntry = memoryCache.CreateEntry($"{organizationGuid}deleted", Value = true, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
+                            use newCacheEntry = memoryCache.CreateEntry($"{organizationGuid}deleted", Value = boxedTrue, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
                             return Ok ()
                         else
-                            use newCacheEntry = memoryCache.CreateEntry($"{organizationGuid}deleted", Value = false, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
+                            use newCacheEntry = memoryCache.CreateEntry($"{organizationGuid}deleted", Value = boxedFalse, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
                             return Error error
                 | None -> return Error error
             } |> ValueTask<Result<unit, 'T>>
@@ -346,10 +348,10 @@ module Validations =
                         let repositoryActorProxy = actorProxyFactory.CreateActorProxy<IRepositoryActor>(actorId, ActorName.Repository)
                         let! isDeleted = repositoryActorProxy.IsDeleted()
                         if isDeleted then
-                            use newCacheEntry = memoryCache.CreateEntry($"{repositoryGuid}deleted", Value = true, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
+                            use newCacheEntry = memoryCache.CreateEntry($"{repositoryGuid}deleted", Value = boxedTrue, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
                             return Ok ()
                         else
-                            use newCacheEntry = memoryCache.CreateEntry($"{repositoryGuid}deleted", Value = false, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
+                            use newCacheEntry = memoryCache.CreateEntry($"{repositoryGuid}deleted", Value = boxedFalse, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
                             return Error error
                 | None -> return Error error
             } |> ValueTask<Result<unit, 'T>>

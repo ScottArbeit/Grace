@@ -955,6 +955,7 @@ module Services =
             | Unknown -> ()
             | AzureCosmosDb -> 
                 let mutable requestCharge = 0.0
+                let mutable clientElapsedTime = TimeSpan.Zero
 
                 // In order to build the IN clause, we need to create a parameter for each referenceId. (I tried just using string concatenation, it didn't work for some reason.)
                 // The query starts with:
@@ -982,12 +983,14 @@ module Services =
                 while iterator.HasMoreResults do
                     let! results = iterator.ReadNextAsync()
                     requestCharge <- requestCharge + results.RequestCharge
+                    clientElapsedTime <- clientElapsedTime + results.Diagnostics.GetClientElapsedTime()
                     results.Resource |> Seq.iter (fun refDto -> queryResults.Add(refDto.value.ReferenceId, refDto.value))
                 
                 // Add the results to the list in the same order as the supplied referenceIds.
                 referenceIds |> Seq.iter (fun referenceId -> referenceDtos.Add(queryResults[referenceId]))
 
                 Activity.Current.SetTag("referenceDtos.Count", $"{referenceDtos.Count}")
+                                .SetTag("clientElapsedTime", $"{clientElapsedTime}")
                                 .SetTag("totalRequestCharge", $"{requestCharge}") |> ignore
             | MongoDB -> ()
 

@@ -60,7 +60,7 @@ module Utilities =
 
     /// Gets the current instant as a string in ExtendedIso format.
     ///
-    /// Example: "2019-06-15T13:45:30.9040833Z".
+    /// Example: "2031-06-15T13:45:30.9040833Z".
     let getCurrentInstantExtended() = getCurrentInstant() |> formatInstantExtended
 
     /// Formats an instant as a string in General format.

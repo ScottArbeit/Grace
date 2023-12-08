@@ -30,7 +30,7 @@ module Branch =
         inherit Actor(host)
 
         let actorName = ActorName.Branch
-        let log = host.LoggerFactory.CreateLogger("Branch.Actor")
+        let log = loggerFactory.CreateLogger("Branch.Actor")
         let dtoStateName = "branchDtoState"
         let eventsStateName = "branchEventsState"
 
