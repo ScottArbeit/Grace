@@ -131,7 +131,7 @@ module Watch =
         // Ignore directory creation; need to think about this more... should we capture new empty directories?
         if updateNotInProgress() && isNotDirectory args.FullPath then
             let shouldIgnore = shouldIgnoreFile args.FullPath
-            logToAnsiConsole Colors.Verbose $"Should ignore {args.FullPath}: {shouldIgnore}."
+            //logToAnsiConsole Colors.Verbose $"Should ignore {args.FullPath}: {shouldIgnore}."
 
             if not <| shouldIgnore then
                 logToAnsiConsole Colors.Added $"I saw that {args.FullPath} was created."
@@ -140,7 +140,7 @@ module Watch =
     let OnChanged (args: FileSystemEventArgs) =
         if updateNotInProgress() && isNotDirectory args.FullPath then            
             let shouldIgnore = shouldIgnoreFile args.FullPath
-            logToAnsiConsole Colors.Verbose $"Should ignore {args.FullPath}: {shouldIgnore}."
+            //logToAnsiConsole Colors.Verbose $"Should ignore {args.FullPath}: {shouldIgnore}."
 
             if not <| shouldIgnore then
                 logToAnsiConsole Colors.Changed $"I saw that {args.FullPath} changed."
@@ -155,7 +155,7 @@ module Watch =
     let OnDeleted (args: FileSystemEventArgs) =
         if updateNotInProgress() && isNotDirectory args.FullPath then
             let shouldIgnore = shouldIgnoreFile args.FullPath
-            logToAnsiConsole Colors.Verbose $"Should ignore {args.FullPath}: {shouldIgnore}."
+            //logToAnsiConsole Colors.Verbose $"Should ignore {args.FullPath}: {shouldIgnore}."
 
             if not <| shouldIgnore then
                 logToAnsiConsole Colors.Deleted $"I saw that {args.FullPath} was deleted."
@@ -168,12 +168,12 @@ module Watch =
 
             if not <| shouldIgnoreOldFile then
                 logToAnsiConsole Colors.Changed $"I saw that {args.OldFullPath} was renamed to {args.FullPath}."
-                logToAnsiConsole Colors.Verbose $"Should ignore {args.OldFullPath}: {shouldIgnoreOldFile}. Should ignore {args.FullPath}: {shouldIgnoreNewFile}."
+                //logToAnsiConsole Colors.Verbose $"Should ignore {args.OldFullPath}: {shouldIgnoreOldFile}. Should ignore {args.FullPath}: {shouldIgnoreNewFile}."
                 logToAnsiConsole Colors.Changed $"Delete processing is not yet implemented."
                 
             if not <| shouldIgnoreNewFile then
                 logToAnsiConsole Colors.Changed $"I saw that {args.OldFullPath} was renamed to {args.FullPath}."
-                logToAnsiConsole Colors.Verbose $"Should ignore {args.OldFullPath}: {shouldIgnoreOldFile}. Should ignore {args.FullPath}: {shouldIgnoreNewFile}."
+                //logToAnsiConsole Colors.Verbose $"Should ignore {args.OldFullPath}: {shouldIgnoreOldFile}. Should ignore {args.FullPath}: {shouldIgnoreNewFile}."
                 filesToProcess.TryAdd(args.FullPath, ()) |> ignore
 
     let OnError (args: ErrorEventArgs) =

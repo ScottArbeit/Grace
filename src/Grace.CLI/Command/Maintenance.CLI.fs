@@ -329,11 +329,11 @@ module Maintenance =
                             AnsiConsole.MarkupLine($"[{Colors.Important}] Last Write Time             SHA-256            Size  Path{additionalSpaces}[/][{Colors.Deemphasized}](DirectoryVersionId)[/]")
                             AnsiConsole.MarkupLine($"[{Colors.Important}] ----------------------------------------------------{additionalImportantDashes}[/][{Colors.Deemphasized}]{additionalDeemphasizedDashes}[/]")
                         let rightAlignedDirectoryVersionId = (String.replicate (longestRelativePath - directoryVersion.RelativePath.Length) " ") + $"({directoryVersion.DirectoryId})"
-                        AnsiConsole.MarkupLine($"[{Colors.Highlighted}]{directoryVersion.LastWriteTimeUtc,27}  {getShortenedSha256Hash directoryVersion.Sha256Hash}  {directoryVersion.Size,13:N0}  /{directoryVersion.RelativePath}[/] [{Colors.Deemphasized}]{rightAlignedDirectoryVersionId}[/]")
+                        AnsiConsole.MarkupLine($"[{Colors.Highlighted}]{directoryVersion.LastWriteTimeUtc,27}  {getShortSha256Hash directoryVersion.Sha256Hash}  {directoryVersion.Size,13:N0}  /{directoryVersion.RelativePath}[/] [{Colors.Deemphasized}]{rightAlignedDirectoryVersionId}[/]")
                         if parseResult.HasOption(Options.listFiles) then
                             let sortedFiles = directoryVersion.Files.OrderBy(fun f -> f.RelativePath)
                             for file in sortedFiles do
-                                AnsiConsole.MarkupLine($"[{Colors.Verbose}]{file.LastWriteTimeUtc,27}  {getShortenedSha256Hash file.Sha256Hash}  {file.Size,13:N0}  |- {file.FileInfo.Name}[/]")
+                                AnsiConsole.MarkupLine($"[{Colors.Verbose}]{file.LastWriteTimeUtc,27}  {getShortSha256Hash file.Sha256Hash}  {file.Size,13:N0}  |- {file.FileInfo.Name}[/]")
                     )
             } :> Task)
 

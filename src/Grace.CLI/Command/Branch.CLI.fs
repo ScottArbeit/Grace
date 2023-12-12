@@ -1835,9 +1835,9 @@ module Branch =
                                         $"  None"
                                     else
                                         if parseResult |> verbose then
-                                            $"  {getShortenedSha256Hash referenceDto.Sha256Hash} - {ago referenceDto.CreatedAt} - {instantToLocalTime referenceDto.CreatedAt} [{Colors.Deemphasized}]- {referenceDto.ReferenceId} - {referenceDto.DirectoryId}[/]"
+                                            $"  {getShortSha256Hash referenceDto.Sha256Hash} - {ago referenceDto.CreatedAt} - {instantToLocalTime referenceDto.CreatedAt} [{Colors.Deemphasized}]- {referenceDto.ReferenceId} - {referenceDto.DirectoryId}[/]"
                                         else
-                                            $"  {getShortenedSha256Hash referenceDto.Sha256Hash} - {ago referenceDto.CreatedAt} - {instantToLocalTime referenceDto.CreatedAt} [{Colors.Deemphasized}]- {referenceDto.ReferenceId}[/]"
+                                            $"  {getShortSha256Hash referenceDto.Sha256Hash} - {ago referenceDto.CreatedAt} - {instantToLocalTime referenceDto.CreatedAt} [{Colors.Deemphasized}]- {referenceDto.ReferenceId}[/]"
 
                                 let permissions (branchDto: Dto.Branch.BranchDto) =
                                     let sb = StringBuilder()

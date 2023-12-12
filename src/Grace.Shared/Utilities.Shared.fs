@@ -83,7 +83,7 @@ module Utilities =
     let logToConsole message = printfn $"{getCurrentInstantExtended()} {Environment.CurrentManagedThreadId:X2} {message}"
 
     /// Gets the first eight characters of a SHA256 hash.
-    let getShortenedSha256Hash (sha256Hash: String) =
+    let getShortSha256Hash (sha256Hash: String) =
         if sha256Hash.Length >= 8 then
             sha256Hash.Substring(0, 8)
         else

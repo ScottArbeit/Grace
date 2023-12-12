@@ -98,8 +98,8 @@ module Branch =
                     | Some retrievedDto -> branchDto <- retrievedDto
                     | None -> branchDto <- BranchDto.Default
                 
-                let duration = getCurrentInstant().Minus(activateStartTime)
-                log.LogInformation("{CurrentInstant}: Activated {ActorType} {ActorId}. Retrieved from storage in {duration}ms.", getCurrentInstantExtended(), actorName, host.Id, duration.TotalMilliseconds.ToString("F3"))
+                let duration_ms = getCurrentInstant().Minus(activateStartTime).TotalMilliseconds.ToString("F3")
+                log.LogInformation("{CurrentInstant}: Activated {ActorType} {ActorId}. Retrieved from storage in {duration_ms}ms.", getCurrentInstantExtended(), actorName, host.Id, duration_ms)
             } :> Task
 
         member private this.SetMaintenanceReminder() =
@@ -130,9 +130,9 @@ module Branch =
         override this.OnPostActorMethodAsync(context) =
             let duration_ms = (getCurrentInstant().Minus(actorStartTime).TotalMilliseconds).ToString("F3")
             if String.IsNullOrEmpty(currentCommand) then
-                log.LogInformation("{CurrentInstant}: Finished {ActorName}.{MethodName}; Id: {Id}; Duration: {duration}ms.", getCurrentInstantExtended(), actorName, context.MethodName, this.Id, duration_ms)
+                log.LogInformation("{CurrentInstant}: Finished {ActorName}.{MethodName}; Id: {Id}; Duration: {duration_ms}ms.", getCurrentInstantExtended(), actorName, context.MethodName, this.Id, duration_ms)
             else
-                log.LogInformation("{CurrentInstant}: Finished {ActorName}.{MethodName}; Command: {Command}; Id: {Id}; Duration: {duration}ms.", getCurrentInstantExtended(), actorName, context.MethodName, currentCommand, this.Id, duration_ms)
+                log.LogInformation("{CurrentInstant}: Finished {ActorName}.{MethodName}; Command: {Command}; Id: {Id}; Duration: {duration_ms}ms.", getCurrentInstantExtended(), actorName, context.MethodName, currentCommand, this.Id, duration_ms)
             logScope.Dispose()
             Task.CompletedTask
 

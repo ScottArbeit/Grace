@@ -957,7 +957,7 @@ module Services =
                 let mutable requestCharge = 0.0
                 let mutable clientElapsedTime = TimeSpan.Zero
 
-                // In order to build the IN clause, we need to create a parameter for each referenceId. (I tried just using string concatenation, it didn't work for some reason.)
+                // In order to build the IN clause, we need to create a parameter for each referenceId. (I tried just using string concatenation, it didn't work for some reason. Anyway...)
                 // The query starts with:
                 let queryText = StringBuilder(@"SELECT TOP @maxCount c[""value""] FROM c WHERE c[""value""].Class = @class and c[""value""].ReferenceId IN (")
                 // Then we add a parameter for each referenceId.
@@ -968,7 +968,7 @@ module Services =
                 // Create the query definition.
                 let queryDefinition = QueryDefinition(queryText.ToString())
                                         .WithParameter("@maxCount", referenceIds.Count())
-                                        .WithParameter("@class", "ReferenceDto")
+                                        .WithParameter("@class", nameof(ReferenceDto))
 
                 // Add a .WithParameter for each referenceId.
                 referenceIds |> Seq.iteri (fun i referenceId -> queryDefinition.WithParameter($"@referenceId{i}", $"{referenceId}") |> ignore)
@@ -987,7 +987,12 @@ module Services =
                     results.Resource |> Seq.iter (fun refDto -> queryResults.Add(refDto.value.ReferenceId, refDto.value))
                 
                 // Add the results to the list in the same order as the supplied referenceIds.
-                referenceIds |> Seq.iter (fun referenceId -> referenceDtos.Add(queryResults[referenceId]))
+                referenceIds |> Seq.iter (fun referenceId -> 
+                    if referenceId <> ReferenceId.Empty then 
+                        referenceDtos.Add(queryResults[referenceId]) 
+                    else
+                        // In case the caller supplied an empty referenceId, add a default ReferenceDto.
+                        referenceDtos.Add(ReferenceDto.Default))
 
                 Activity.Current.SetTag("referenceDtos.Count", $"{referenceDtos.Count}")
                                 .SetTag("clientElapsedTime", $"{clientElapsedTime}")

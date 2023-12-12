@@ -35,7 +35,7 @@ module RepositoryName =
 
         override this.OnPostActorMethodAsync(context) =
             let duration_ms = (getCurrentInstant().Minus(actorStartTime).TotalMilliseconds).ToString("F3")
-            log.LogInformation("{CurrentInstant}: Finished {ActorName}.{MethodName}; RepositoryName: {RepositoryName}; RepositoryId: {RepositoryId}; Duration: {duration}ms.", 
+            log.LogInformation("{CurrentInstant}: Finished {ActorName}.{MethodName}; RepositoryName: {RepositoryName}; RepositoryId: {RepositoryId}; Duration: {duration_ms}ms.", 
                 getCurrentInstantExtended(), actorName, context.MethodName, this.Id, (if Option.isSome cachedRepositoryId then cachedRepositoryId.Value else "None"), duration_ms)
             logScope.Dispose()
             Task.CompletedTask

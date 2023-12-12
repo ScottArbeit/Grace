@@ -39,8 +39,8 @@ module Reference =
                     | Some retrievedDto -> referenceDto <- Some retrievedDto
                     | None -> ()
 
-                let duration = getCurrentInstant().Minus(activateStartTime)
-                log.LogInformation("{CurrentInstant}: Activated {ActorType} {ActorId}. Retrieved from storage in {duration}ms.", getCurrentInstantExtended(), actorName, host.Id, duration.TotalMilliseconds.ToString("F3"))
+                let duration_ms = getCurrentInstant().Minus(activateStartTime).TotalMilliseconds.ToString("F3")
+                log.LogInformation("{CurrentInstant}: Activated {ActorType} {ActorId}. Retrieved from storage in {duration_ms}ms.", getCurrentInstantExtended(), actorName, host.Id, duration_ms)
             } :> Task
 
         interface IReferenceActor with

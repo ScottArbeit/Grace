@@ -139,12 +139,13 @@ module Diff =
         else $"{diffLine.Position,6:D}: {diffLine.Text.EscapeMarkup()}"
 
     let private getMarkup (diffLine: DiffPiece) = 
-        if diffLine.Type = ChangeType.Deleted then Markup($"[{Colors.Deleted}]-{renderLine diffLine}[/]")
-        elif diffLine.Type = ChangeType.Inserted then Markup($"[{Colors.Added}]+{renderLine diffLine}[/]")
-        elif diffLine.Type = ChangeType.Modified then Markup($"[{Colors.Changed}]~{renderLine diffLine}[/]")
-        elif diffLine.Type = ChangeType.Imaginary then Markup($"[{Colors.Deemphasized}] {renderLine diffLine}[/]")
-        elif diffLine.Type = ChangeType.Unchanged then Markup($"[{Colors.Important}] {renderLine diffLine}[/]")
-        else Markup($"[{Colors.Important}] {diffLine.Text}[/]")
+        match diffLine.Type with
+        | ChangeType.Deleted -> Markup($"[{Colors.Deleted}]-{renderLine diffLine}[/]")
+        | ChangeType.Inserted -> Markup($"[{Colors.Added}]+{renderLine diffLine}[/]")
+        | ChangeType.Modified -> Markup($"[{Colors.Changed}]~{renderLine diffLine}[/]")
+        | ChangeType.Imaginary -> Markup($"[{Colors.Deemphasized}] {renderLine diffLine}[/]")
+        | ChangeType.Unchanged -> Markup($"[{Colors.Important}] {renderLine diffLine}[/]")
+        | _ -> Markup($"[{Colors.Important}] {diffLine.Text}[/]")
     
     /// Creates the text output for a diff to the most recent specific ReferenceType.
     type GetDiffByReferenceTypeParameters() =
@@ -299,7 +300,7 @@ module Diff =
                                     // There should only be one reference, because we're using MaxCount = 1.
                                     let references = returnValue.ReturnValue
                                     if references.Count() > 0 then
-                                        logToAnsiConsole Colors.Verbose $"Got latest reference: {references.First().ReferenceText}; {references.First().CreatedAt}; {getShortenedSha256Hash (references.First().Sha256Hash)}; {references.First().DirectoryId}."
+                                        //logToAnsiConsole Colors.Verbose $"Got latest reference: {references.First().ReferenceText}; {references.First().CreatedAt}; {getShortenedSha256Hash (references.First().Sha256Hash)}; {references.First().DirectoryId}."
                                         references.First()
                                     else
                                         logToAnsiConsole Colors.Error $"Error getting latest reference. No matching references were found."
@@ -323,7 +324,7 @@ module Diff =
 
                             // Sending diff request to server.
                             t6.StartTask()
-                            logToAnsiConsole Colors.Verbose $"latestReference.DirectoryId: {latestReference.DirectoryId}; rootDirectoryId: {rootDirectoryId}."
+                            //logToAnsiConsole Colors.Verbose $"latestReference.DirectoryId: {latestReference.DirectoryId}; rootDirectoryId: {rootDirectoryId}."
                             let getDiffParameters = GetDiffParameters(DirectoryId1 = latestReference.DirectoryId, DirectoryId2 = rootDirectoryId)
                             let! getDiffResult = Diff.GetDiff(getDiffParameters)
                             match getDiffResult with
@@ -341,13 +342,9 @@ module Diff =
                                     for fileDiff in diffDto.FileDiffs.OrderBy(fun fileDiff -> fileDiff.RelativePath) do
                                         //addToOutput ((new Rule($"[{Colors.Important}]{fileDiff.RelativePath}[/]")).LeftAligned())
                                         if fileDiff.CreatedAt1 > fileDiff.CreatedAt2 then
-                                            //addToOutput ((new Rule($"[{Colors.Important}]{fileDiff.RelativePath} | {fileDiff.CreatedAt1 |> instantToLocalTime} ({fileDiff.CreatedAt1 |> ago}) {fileDiff.FileSha1.Substring(0, 8)} | {fileDiff.CreatedAt2 |> instantToLocalTime} ({fileDiff.CreatedAt2 |> ago}) {fileDiff.FileSha2.Substring(0, 8)}[/]")).LeftAligned())
-                                            addToOutput ((new Rule($"[{Colors.Important}]{fileDiff.RelativePath} | {fileDiff.FileSha1.Substring(0, 8)} - {fileDiff.CreatedAt1 |> ago} | {fileDiff.FileSha2.Substring(0, 8)} - {fileDiff.CreatedAt2 |> ago}[/]")).LeftJustified())
-                                            //addToOutput (Markup($"[{Colors.Important}]   {fileDiff.CreatedAt1 |> instantToLocalTime} ({fileDiff.CreatedAt1 |> ago}) {fileDiff.FileSha1.Substring(0, 8)} vs. {fileDiff.CreatedAt2 |> instantToLocalTime} ({fileDiff.CreatedAt2 |> ago}) {fileDiff.FileSha2.Substring(0, 8)}[/]"))
+                                            addToOutput ((new Rule($"[{Colors.Important}]{fileDiff.RelativePath} | {getShortSha256Hash fileDiff.FileSha1} - {fileDiff.CreatedAt1 |> ago} | {getShortSha256Hash fileDiff.FileSha2} - {fileDiff.CreatedAt2 |> ago}[/]")).LeftJustified())
                                         else
-                                            //addToOutput ((new Rule($"[{Colors.Important}]{fileDiff.RelativePath} | {fileDiff.CreatedAt1 |> instantToLocalTime} ({fileDiff.CreatedAt1 |> ago}) {fileDiff.FileSha1.Substring(0, 8)} | {fileDiff.CreatedAt2 |> instantToLocalTime} ({fileDiff.CreatedAt2 |> ago}) {fileDiff.FileSha2.Substring(0, 8)}[/]")).LeftAligned())
-                                            addToOutput ((new Rule($"[{Colors.Important}]{fileDiff.RelativePath} | {fileDiff.FileSha2.Substring(0, 8)} - {fileDiff.CreatedAt2 |> ago} | {fileDiff.FileSha1.Substring(0, 8)} - {fileDiff.CreatedAt1 |> ago}[/]")).LeftJustified())
-                                            //addToOutput (Markup($"[{Colors.Important}]   {fileDiff.CreatedAt2 |> instantToLocalTime} ({fileDiff.CreatedAt2 |> ago}) {fileDiff.FileSha2.Substring(0, 8)} vs. {fileDiff.CreatedAt1 |> instantToLocalTime} ({fileDiff.CreatedAt1 |> ago}) {fileDiff.FileSha1.Substring(0, 8)}[/]"))
+                                            addToOutput ((new Rule($"[{Colors.Important}]{fileDiff.RelativePath} | {getShortSha256Hash fileDiff.FileSha2} - {fileDiff.CreatedAt2 |> ago} | {getShortSha256Hash fileDiff.FileSha1} - {fileDiff.CreatedAt1 |> ago}[/]")).LeftJustified())
 
                                         if fileDiff.IsBinary then
                                             addToOutput (Markup($"[{Colors.Important}]Binary file.[/]"))

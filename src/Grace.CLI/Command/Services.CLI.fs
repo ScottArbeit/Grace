@@ -868,7 +868,7 @@ module Services =
                         //   file in the working directory, and copy the version from the object cache to replace it.
                         if uint64 existingFileOnDisk.Length <> fileVersion.Size || 
                                 fileVersionFromPreviousGraceStatus.Sha256Hash <> fileVersion.Sha256Hash then
-                            //logToAnsiConsole Colors.Verbose $"Replacing {fileVersion.FullName}; previous length: {fileVersionFromPreviousGraceStatus.Size}; new length: {fileVersion.Size}."
+                            logToAnsiConsole Colors.Verbose $"Replacing {fileVersion.FullName}; previous length: {fileVersionFromPreviousGraceStatus.Size}; new length: {fileVersion.Size}."
                             existingFileOnDisk.Delete()
                             File.Copy(fileVersion.FullObjectPath, fileVersion.FullName)
                 else
