@@ -126,10 +126,10 @@ module Services =
     /// Gets the number of path segments for the longest relative path in GraceIndex.
     ///
     /// For example, "/src/Grace.Shared/Services.Shared.fs" has 3 path segments.
-    let getLongestRelativePath (graceStatus: GraceStatus) =
-        if graceStatus.Index.Values |> Seq.isEmpty then
+    let getLongestRelativePath (directoryVersions: IEnumerable<LocalDirectoryVersion>) =
+        if directoryVersions |> Seq.isEmpty then
             0
         else
-            logToConsole $"In getLongestRelativePath:"
-            graceStatus.Index.Values |> Seq.iter(fun localDirectoryVersion -> logToConsole $"  localDirectoryVersion.RelativePath: {localDirectoryVersion.RelativePath}; DirectoryId: {localDirectoryVersion.DirectoryId}")
-            graceStatus.Index.Values.Max(fun localDirectoryVersion -> localDirectoryVersion.RelativePath.Length)
+            //logToConsole $"In getLongestRelativePath:"
+            //graceStatus.Index.Values |> Seq.iter(fun localDirectoryVersion -> logToConsole $"  localDirectoryVersion.RelativePath: {localDirectoryVersion.RelativePath}; DirectoryId: {localDirectoryVersion.DirectoryId}")
+            Math.Max(30, directoryVersions.Max(fun localDirectoryVersion -> localDirectoryVersion.RelativePath.Length))

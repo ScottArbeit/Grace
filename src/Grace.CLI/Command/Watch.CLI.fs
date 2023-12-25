@@ -175,22 +175,22 @@ module Watch =
                         saveMessage.Remove(saveMessage.LastIndexOf(Environment.NewLine), Environment.NewLine.Length)
                 
                 // If there are changes either to files or just to directories, create a save reference.
-                //if (fileDifferences.Count > 0) || (newDirectoryVersions.Count > 0) then
-                let! saveReferenceResult = createSaveReference (getRootDirectoryVersion newGraceStatus) message correlationId
-                match saveReferenceResult with
-                | Ok returnValue ->
-                    let newGraceStatusWithUpdatedTime = {newGraceStatus with LastSuccessfulDirectoryVersionUpload = getCurrentInstant()}
-                    // Write the new Grace Status file to disk.
-                    do! writeGraceStatusFile newGraceStatusWithUpdatedTime
-                    //logToAnsiConsole Colors.Important $"Setting graceStatusHasChanged to false in updateGraceStatus(). Current value: {graceStatusHasChanged}."
-                    graceStatusHasChanged <- false  // We *just* changed it ourselves, so we don't have to re-process it in the timer loop.
-                    return Some newGraceStatusWithUpdatedTime
-                | Error error ->
-                    logToAnsiConsole Colors.Error $"{Markup.Escape(error.Error)}"
-                    return None
-                //else
+                if (differences.Count > 0) then
+                    match! createSaveReference (getRootDirectoryVersion newGraceStatus) message correlationId with
+                    | Ok returnValue ->
+                        let newGraceStatusWithUpdatedTime = {newGraceStatus with LastSuccessfulDirectoryVersionUpload = getCurrentInstant()}
+                        // Write the new Grace Status file to disk.
+                        do! writeGraceStatusFile newGraceStatusWithUpdatedTime
+                        //logToAnsiConsole Colors.Important $"Setting graceStatusHasChanged to false in updateGraceStatus(). Current value: {graceStatusHasChanged}."
+                        graceStatusHasChanged <- false  // We *just* changed it ourselves, so we don't have to re-process it in the timer loop.
+                        return Some newGraceStatusWithUpdatedTime
+                    | Error error ->
+                        logToAnsiConsole Colors.Error $"{Markup.Escape(error.Error)}"
+                        return None
+                else
+                    // There were no changes to process, so just return the existing GraceStatus.
                     //logToAnsiConsole Colors.Verbose "No fileDifferences or newDirectoryVersions to process; not updating GraceStatus."
-                    //return None
+                    return Some graceStatus
             | Error error ->
                 logToAnsiConsole Colors.Error $"{Markup.Escape(error.Error)}"
                 return None
@@ -200,14 +200,12 @@ module Watch =
     let copyFileToObjectDirectoryAndUploadToStorage fullPath correlationId = 
         task {
             //logToConsole $"*In fileChanged for {fullPath}."
-            let! fileVersionOption = copyToObjectDirectory fullPath
-            match fileVersionOption with
-                | Some fileVersion ->
-                    let! result = uploadToServerAsync fileVersion correlationId
-                    match result with
-                        | Ok correlationId -> logToAnsiConsole Colors.Verbose $"File {fileVersion.GetObjectFileName} has been uploaded to storage."
-                        | Error error -> logToAnsiConsole Colors.Error $"**Failed to upload {fileVersion.GetObjectFileName} to storage."
-                | None -> ()
+            match! copyToObjectDirectory fullPath with
+            | Some fileVersion ->
+                match! uploadToServerAsync fileVersion correlationId with
+                | Ok correlationId -> logToAnsiConsole Colors.Verbose $"File {fileVersion.GetObjectFileName} has been uploaded to storage."
+                | Error error -> logToAnsiConsole Colors.Error $"**Failed to upload {fileVersion.GetObjectFileName} to storage."
+            | None -> ()
         }
 
     /// Decompresses the GraceStatus information from the memory stream.
@@ -394,9 +392,12 @@ module Watch =
                         //
                         //   In .NET, when a computer has lots of available memory, and there's no signal from the OS that there's any memory pressure, GC doesn't happen much, if at all.
                         //   With no memory pressure, `grace watch` wouldn't bother releasing its unused heap after handling events like saves and auto-rebases, and it would look like it's taking up a lot of memory.
+                        //   Seeing that kind of memory usage could lead to uninformed people saying things like, "OMG, `grace watch` takes up so much memory!"
+                        //   For `grace watch`, which will only momentarily need memory to handle events, it *looks better* if we deliberately release the memory back to the OS.
+                        //   That means forcing a full GC.
                         //
-                        //   Seeing that kind of memory usage could lead to uninformed people saying things like, "OMG, `grace watch` takes up so much memory!" For something like `grace watch` that will 
-                        //   momentarily need memory to handle events, and then can release it quickly, well, it *looks better* if we do.
+                        //   What I've noticed, for whatever reason, is that it can take two full GCs to get the memory usage back down to where it was before the event handling.
+                        //   Running a full GC when there's nothing to clean up takes well less than a millisecond.
                         //
                         //   Anyway, forcing a full GC every minute will cause `grace watch` to stay as slim as possible, so it looks as lightweight as it actually is.
                         if previousGC < getCurrentInstant().Minus(Duration.FromMinutes(1.0)) then

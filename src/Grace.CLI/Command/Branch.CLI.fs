@@ -250,9 +250,9 @@ module Branch =
         member val public Pattern = String.Empty with get, set
         member val public ShowDirectories = true with get, set
         member val public ShowFiles = true with get, set
-    let printContents (parseResult: ParseResult) (graceStatus: GraceStatus) (directoryVersions: IEnumerable<DirectoryVersion>) =
-        let longestRelativePath = getLongestRelativePath graceStatus
-        logToAnsiConsole Colors.Verbose $"In printContents: getLongestRelativePath: {longestRelativePath}."
+    let printContents (parseResult: ParseResult) (directoryVersions: IEnumerable<DirectoryVersion>) =
+        let longestRelativePath = getLongestRelativePath (directoryVersions |> Seq.map (fun directoryVersion -> directoryVersion.ToLocalDirectoryVersion(DateTime.UtcNow)))
+        //logToAnsiConsole Colors.Verbose $"In printContents: getLongestRelativePath: {longestRelativePath}"
         let additionalSpaces = String.replicate (longestRelativePath - 2) " "
         let additionalImportantDashes = String.replicate (longestRelativePath + 3) "-"
         let additionalDeemphasizedDashes = String.replicate (38) "-"
@@ -261,7 +261,7 @@ module Branch =
             if i = 0 then 
                 AnsiConsole.MarkupLine($"[{Colors.Important}] Created At                  SHA-256            Size  Path{additionalSpaces}[/][{Colors.Deemphasized}](DirectoryVersionId)[/]")
                 AnsiConsole.MarkupLine($"[{Colors.Important}] ----------------------------------------------------{additionalImportantDashes}[/][{Colors.Deemphasized}]{additionalDeemphasizedDashes}[/]")
-            logToAnsiConsole Colors.Verbose $"In printContents: directoryVersion.RelativePath: {directoryVersion.RelativePath}."
+            //logToAnsiConsole Colors.Verbose $"In printContents: directoryVersion.RelativePath: {directoryVersion.RelativePath}"
             let rightAlignedDirectoryVersionId = (String.replicate (longestRelativePath - directoryVersion.RelativePath.Length) " ") + $"({directoryVersion.DirectoryId})"
             AnsiConsole.MarkupLine($"[{Colors.Highlighted}]{directoryVersion.CreatedAt.ToDateTimeUtc(),27}  {getShortSha256Hash directoryVersion.Sha256Hash}  {directoryVersion.Size,13:N0}  /{directoryVersion.RelativePath}[/] [{Colors.Deemphasized}]{rightAlignedDirectoryVersionId}[/]")
             //if parseResult.HasOption(Options.listFiles) then
@@ -314,7 +314,15 @@ module Branch =
                 | Ok returnValue ->
                     let! graceStatus = readGraceStatusFile()
                     let directoryVersions = returnValue.ReturnValue |> Seq.sortBy(fun dv -> dv.RelativePath)
-                    printContents parseResult graceStatus directoryVersions
+                    let directoryCount = directoryVersions.Count()
+                    let fileCount = directoryVersions.Select(fun directoryVersion -> directoryVersion.Files.Count).Sum()
+                    let totalFileSize = directoryVersions.Sum(fun directoryVersion -> directoryVersion.Files.Sum(fun f -> int64 f.Size))
+                    let rootDirectoryVersion = directoryVersions.First(fun d -> d.RelativePath = Constants.RootDirectoryPath)
+                    AnsiConsole.MarkupLine($"[{Colors.Important}]All values taken from the selected version of this branch from the server.[/]")
+                    AnsiConsole.MarkupLine($"[{Colors.Highlighted}]Number of directories: {directoryCount}.[/]")
+                    AnsiConsole.MarkupLine($"[{Colors.Highlighted}]Number of files: {fileCount}; total file size: {totalFileSize:N0}.[/]")
+                    AnsiConsole.MarkupLine($"[{Colors.Highlighted}]Root SHA-256 hash: {rootDirectoryVersion.Sha256Hash.Substring(0, 8)}[/]")
+                    printContents parseResult directoryVersions
                     return result |> renderOutput parseResult
                 | Error error ->
                     return result |> renderOutput parseResult

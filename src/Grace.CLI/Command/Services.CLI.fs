@@ -485,8 +485,7 @@ module Services =
         task {
             match! Storage.GetUploadUri fileVersion correlationId with
             | Ok returnValue ->
-                let! result = Storage.SaveFileToObjectStorage fileVersion (Uri(returnValue.ReturnValue)) correlationId
-                match result with
+                match! Storage.SaveFileToObjectStorage fileVersion (Uri(returnValue.ReturnValue)) correlationId with
                 | Ok message -> 
                     //printfn $"{message}"
                     return Ok message
@@ -539,6 +538,8 @@ module Services =
     let isFileChange difference = not (isDirectoryChange difference)
 
     /// Gets a list of new or updated LocalDirectoryVersions that reflect changes in the working directory.
+    /// 
+    /// If an empty list of differences is passed in, returns the same GraceStatus that was passed in, and an empty list of LocalDirectoryVersions.
     let getNewGraceStatusAndDirectoryVersions (previousGraceStatus: GraceStatus) (differences: List<FileSystemDifference>) =
         task {
             /// Holds DirectoryVersions that have already been changed, so we can make more changes to them if needed.
@@ -723,11 +724,14 @@ module Services =
             //for x in newDirectoryVersions do
             //    logToConsole $"{x.RelativePath}; {x.Sha256Hash.Substring(0, 8)}; Directories: {x.Directories.Count}; Files: {x.Files.Count}"
             //logToAnsiConsole Colors.Verbose $"newDirectoryVersions.Count: {newDirectoryVersions.Count}"
-            let rootExists = newGraceStatus.Index.Values.FirstOrDefault((fun dv -> dv.RelativePath = Constants.RootDirectoryPath), LocalDirectoryVersion.Default).DirectoryId <> Guid.Empty
-            if rootExists then
-                let newRootDirectoryVersion = getRootDirectoryVersion newGraceStatus
-                newGraceStatus <- {newGraceStatus with RootDirectoryId = newRootDirectoryVersion.DirectoryId; RootDirectorySha256Hash = newRootDirectoryVersion.Sha256Hash}
-            return (newGraceStatus, newDirectoryVersions)
+            if newDirectoryVersions.Count > 0 then
+                let rootExists = newGraceStatus.Index.Values.FirstOrDefault((fun dv -> dv.RelativePath = Constants.RootDirectoryPath), LocalDirectoryVersion.Default).DirectoryId <> Guid.Empty
+                if rootExists then
+                    let newRootDirectoryVersion = getRootDirectoryVersion newGraceStatus
+                    newGraceStatus <- {newGraceStatus with RootDirectoryId = newRootDirectoryVersion.DirectoryId; RootDirectorySha256Hash = newRootDirectoryVersion.Sha256Hash}
+                return (newGraceStatus, newDirectoryVersions)
+            else
+                return (previousGraceStatus, newDirectoryVersions)
         }
 
     /// Ensures that the provided directory versions are uploaded to Grace Server.
@@ -954,9 +958,9 @@ module Services =
     /// Generates a temporary file name within the ObjectDirectory, and returns the full file path.
     /// This file name will be used to copy modified files into before renaming them with their proper names and SHA256 values.
     let getTemporaryFilePath() =
-        Path.GetFullPath(Path.Combine(Environment.GetEnvironmentVariable("TEMP"), $"{Path.GetRandomFileName()}.gracetmp"))
+        Path.GetFullPath(Path.Combine(Path.GetTempPath(), $"{Path.GetRandomFileName()}.gracetmp"))
 
-    /// Copies a file to the Object Directory, including the SHA-256 hash in the file name.
+    /// Copies a file to the Object Directory, and returns a new FileVersion. The SHA-256 hash is computed and included in the object file name.
     let copyToObjectDirectory (filePath: FilePath) : Task<FileVersion option> =
         task {
             try
@@ -975,7 +979,9 @@ module Services =
                     use fileStream = File.Open(tempFilePath, FileMode.Open, FileAccess.Read, FileShare.Read)
                     let! sha256Hash = computeSha256ForFile fileStream relativeFilePath
                     //logToConsole $"filePath: {filePath}; tempFilePath: {tempFilePath}; SHA256: {sha256Hash}"
-                    fileStream.Dispose()
+
+                    // I'm going to rename this file below, using the SHA-256 hash, so I'll be polite and close the file stream here.
+                    fileStream.Dispose()    
 
                     // Get the new name for this version of the file, including the SHA-256 hash.
                     let relativeDirectoryPath = getLocalRelativeDirectory filePath (Current().RootDirectory)

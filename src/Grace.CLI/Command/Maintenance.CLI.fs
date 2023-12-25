@@ -318,7 +318,7 @@ module Maintenance =
                 AnsiConsole.MarkupLine($"[{Colors.Highlighted}]Number of files: {fileCount}; total file size: {totalFileSize:N0}.[/]")
                 AnsiConsole.MarkupLine($"[{Colors.Highlighted}]Root SHA-256 hash: {rootDirectoryVersion.Sha256Hash.Substring(0, 8)}[/]")
                 if parseResult.HasOption(Options.listDirectories) || parseResult.HasOption(Options.listFiles) then
-                    let longestRelativePath = getLongestRelativePath graceStatus
+                    let longestRelativePath = getLongestRelativePath graceStatus.Index.Values
                     let additionalSpaces = String.replicate (longestRelativePath - 2) " "
                     let additionalImportantDashes = String.replicate (longestRelativePath + 3) "-"
                     let additionalDeemphasizedDashes = String.replicate (38) "-"

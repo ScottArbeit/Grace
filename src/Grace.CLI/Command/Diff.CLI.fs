@@ -9,6 +9,7 @@ open Grace.SDK
 open Grace.Shared
 open Grace.Shared.Client.Configuration
 open Grace.Shared.Dto.Branch
+open Grace.Shared.Dto.Diff
 open Grace.Shared.Dto.Reference
 open Grace.Shared.Parameters.Branch
 open Grace.Shared.Parameters.Diff
@@ -146,7 +147,44 @@ module Diff =
         | ChangeType.Imaginary -> Markup($"[{Colors.Deemphasized}] {renderLine diffLine}[/]")
         | ChangeType.Unchanged -> Markup($"[{Colors.Important}] {renderLine diffLine}[/]")
         | _ -> Markup($"[{Colors.Important}] {diffLine.Text}[/]")
+
+    let markupList = List<IRenderable>()
+    let addToOutput (markup: IRenderable) =
+        markupList.Add markup
+
+    let renderInlineDiff (inlineDiff: List<DiffPiece[]>) =
+        for i = 0 to inlineDiff.Count - 1 do
+            for diffLine in inlineDiff[i] do
+                addToOutput(getMarkup diffLine)
+            if not <| (i = inlineDiff.Count - 1) then
+                addToOutput(Markup($"[{Colors.Deemphasized}]-------[/]"))
+            else
+                addToOutput(Markup(String.Empty))
     
+    let printDiffResults (diffDto: DiffDto) =
+        if diffDto.HasDifferences then
+            addToOutput (Markup($"[{Colors.Important}]Differences found.[/]"))
+            for diff in diffDto.Differences do
+                match diff.FileSystemEntryType with
+                | FileSystemEntryType.File ->
+                    addToOutput(Markup($"[{Colors.Important}]{getDistributedUnionCaseName diff.DifferenceType}[/] [{Colors.Highlighted}]{diff.RelativePath}[/]"))
+                | FileSystemEntryType.Directory ->
+                    if diff.DifferenceType <> DifferenceType.Change then
+                        addToOutput(Markup($"[{Colors.Important}]{getDistributedUnionCaseName diff.DifferenceType}[/] [{Colors.Highlighted}]{diff.RelativePath}[/]"))
+            for fileDiff in diffDto.FileDiffs.OrderBy(fun fileDiff -> fileDiff.RelativePath) do
+                //addToOutput ((new Rule($"[{Colors.Important}]{fileDiff.RelativePath}[/]")).LeftAligned())
+                if fileDiff.CreatedAt1 > fileDiff.CreatedAt2 then
+                    addToOutput ((new Rule($"[{Colors.Important}]{fileDiff.RelativePath} | {getShortSha256Hash fileDiff.FileSha1} - {fileDiff.CreatedAt1 |> ago} | {getShortSha256Hash fileDiff.FileSha2} - {fileDiff.CreatedAt2 |> ago}[/]")).LeftJustified())
+                else
+                    addToOutput ((new Rule($"[{Colors.Important}]{fileDiff.RelativePath} | {getShortSha256Hash fileDiff.FileSha2} - {fileDiff.CreatedAt2 |> ago} | {getShortSha256Hash fileDiff.FileSha1} - {fileDiff.CreatedAt1 |> ago}[/]")).LeftJustified())
+
+                if fileDiff.IsBinary then
+                    addToOutput (Markup($"[{Colors.Important}]Binary file.[/]"))
+                else
+                    renderInlineDiff fileDiff.InlineDiff
+        else
+            logToAnsiConsole Colors.Highlighted $"No differences found."
+
     /// Creates the text output for a diff to the most recent specific ReferenceType.
     type GetDiffByReferenceTypeParameters() =
         inherit CommonParameters()
@@ -160,7 +198,6 @@ module Diff =
             match validateIncomingParameters with
             | Ok _ ->
                 if parseResult |> hasOutput then
-                    let markupList = List<IRenderable>()
                     do! progress.Columns(progressColumns).StartAsync(fun progressContext ->
                         task {
                             let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Reading Grace index file.[/]")
@@ -325,18 +362,6 @@ module Diff =
                                     ReferenceDto.Default
                             t6.Value <- 100.0
 
-                            let addToOutput (markup: IRenderable) =
-                                markupList.Add markup
-
-                            let renderInlineDiff (inlineDiff: List<DiffPiece[]>) =
-                                for i = 0 to inlineDiff.Count - 1 do
-                                    for diffLine in inlineDiff[i] do
-                                        addToOutput(getMarkup diffLine)
-                                    if not <| (i = inlineDiff.Count - 1) then
-                                        addToOutput(Markup($"[{Colors.Deemphasized}]-------[/]"))
-                                    else
-                                        addToOutput(Markup(String.Empty))
-
                             // Sending diff request to server.
                             t7.StartTask()
                             //logToAnsiConsole Colors.Verbose $"latestReference.DirectoryId: {latestReference.DirectoryId}; rootDirectoryId: {rootDirectoryId}."
@@ -345,28 +370,7 @@ module Diff =
                             match getDiffResult with
                             | Ok returnValue ->
                                 let diffDto = returnValue.ReturnValue
-                                if diffDto.HasDifferences then
-                                    addToOutput (Markup($"[{Colors.Important}]Differences found.[/]"))
-                                    for diff in diffDto.Differences do
-                                        match diff.FileSystemEntryType with
-                                        | FileSystemEntryType.File ->
-                                            addToOutput(Markup($"[{Colors.Important}]{getDistributedUnionCaseName diff.DifferenceType}[/] [{Colors.Highlighted}]{diff.RelativePath}[/]"))
-                                        | FileSystemEntryType.Directory ->
-                                            if diff.DifferenceType <> DifferenceType.Change then
-                                                addToOutput(Markup($"[{Colors.Important}]{getDistributedUnionCaseName diff.DifferenceType}[/] [{Colors.Highlighted}]{diff.RelativePath}[/]"))
-                                    for fileDiff in diffDto.FileDiffs.OrderBy(fun fileDiff -> fileDiff.RelativePath) do
-                                        //addToOutput ((new Rule($"[{Colors.Important}]{fileDiff.RelativePath}[/]")).LeftAligned())
-                                        if fileDiff.CreatedAt1 > fileDiff.CreatedAt2 then
-                                            addToOutput ((new Rule($"[{Colors.Important}]{fileDiff.RelativePath} | {getShortSha256Hash fileDiff.FileSha1} - {fileDiff.CreatedAt1 |> ago} | {getShortSha256Hash fileDiff.FileSha2} - {fileDiff.CreatedAt2 |> ago}[/]")).LeftJustified())
-                                        else
-                                            addToOutput ((new Rule($"[{Colors.Important}]{fileDiff.RelativePath} | {getShortSha256Hash fileDiff.FileSha2} - {fileDiff.CreatedAt2 |> ago} | {getShortSha256Hash fileDiff.FileSha1} - {fileDiff.CreatedAt1 |> ago}[/]")).LeftJustified())
-
-                                        if fileDiff.IsBinary then
-                                            addToOutput (Markup($"[{Colors.Important}]Binary file.[/]"))
-                                        else
-                                            renderInlineDiff fileDiff.InlineDiff
-                                else
-                                    logToAnsiConsole Colors.Highlighted $"No differences found."
+                                printDiffResults diffDto
                             | Error error ->
                                 let s = StringExtensions.EscapeMarkup($"{error.Error}")
                                 logToAnsiConsole Colors.Error $"Error submitting diff: {s}"
@@ -449,7 +453,6 @@ module Diff =
                 match validateIncomingParameters with
                 | Ok _ ->
                     if parseResult |> hasOutput then
-                        let markupList = List<IRenderable>()
                         do! progress.Columns(progressColumns).StartAsync(fun progressContext ->
                             task {
                                 let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Reading Grace index file.[/]")
@@ -457,7 +460,8 @@ module Diff =
                                 let t2 = progressContext.AddTask($"[{Color.DodgerBlue1}]Creating new directory verions.[/]", autoStart = false)
                                 let t3 = progressContext.AddTask($"[{Color.DodgerBlue1}]Uploading changed files to object storage.[/]", autoStart = false)
                                 let t4 = progressContext.AddTask($"[{Color.DodgerBlue1}]Uploading new directory versions.[/]", autoStart = false)
-                                let t5 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending diff request to server.[/]", autoStart = false)
+                                let t5 = progressContext.AddTask($"[{Color.DodgerBlue1}]Creating a save reference.[/]", autoStart = false)
+                                let t6 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending diff request to server.[/]", autoStart = false)
 
                                 let mutable rootDirectoryId = DirectoryId.Empty
                                 let mutable rootDirectorySha256Hash = Sha256Hash String.Empty
@@ -471,6 +475,7 @@ module Diff =
                                     t2.Value <- 100.0
                                     t3.Value <- 100.0
                                     t4.Value <- 100.0
+                                    t5.Value <- 100.0
                                     rootDirectoryId <- graceWatchStatus.RootDirectoryId
                                     rootDirectorySha256Hash <- graceWatchStatus.RootDirectorySha256Hash
                                     previousDirectoryIds <- graceWatchStatus.DirectoryIds 
@@ -485,29 +490,59 @@ module Diff =
 
                                     t2.StartTask()
                                     let! (updatedGraceStatus, newDirectoryVersions) = getNewGraceStatusAndDirectoryVersions previousGraceStatus differences
+                                    do! writeGraceStatusFile updatedGraceStatus
                                     rootDirectoryId <- updatedGraceStatus.RootDirectoryId
                                     rootDirectorySha256Hash <- updatedGraceStatus.RootDirectorySha256Hash
                                     previousDirectoryIds <- updatedGraceStatus.Index.Keys.ToHashSet()
                                     t2.Value <- 100.0
 
                                     t3.StartTask()
-                                    let! uploadResult = uploadFilesToObjectStorage newFileVersions (getCorrelationId parseResult)
+                                    match! uploadFilesToObjectStorage newFileVersions (getCorrelationId parseResult) with
+                                    | Ok returnValue -> 
+                                        ()
+                                    | Error error ->
+                                        logToAnsiConsole Colors.Error $"Failed to upload changed files to object storage. {error}"
                                     t3.Value <- 100.0
 
                                     t4.StartTask()
-                                    let saveParameters = SaveDirectoryVersionsParameters()
-                                    saveParameters.DirectoryVersions <- newDirectoryVersions.Select(fun dv -> dv.ToDirectoryVersion).ToList()
-                                    let! uploadDirectoryVersions = Directory.SaveDirectoryVersions saveParameters
+                                    if (newDirectoryVersions.Count > 0) then
+                                        (task {
+                                            let saveDirectoryVersionsParameters = SaveDirectoryVersionsParameters()
+                                            saveDirectoryVersionsParameters.DirectoryVersions <- newDirectoryVersions.Select(fun dv -> dv.ToDirectoryVersion).ToList()
+
+                                            match! Directory.SaveDirectoryVersions saveDirectoryVersionsParameters with
+                                            | Ok returnValue -> 
+                                                ()
+                                            | Error error ->
+                                                logToAnsiConsole Colors.Error $"Failed to upload new directory versions. {error}"
+                                        }).Wait()
                                     t4.Value <- 100.0
 
+                                    t5.StartTask()
+                                    if newDirectoryVersions.Count > 0 then
+                                        (task {
+                                            match! createSaveReference (getRootDirectoryVersion updatedGraceStatus) $"Created during `grace diff sha` operation." (getCorrelationId parseResult) with
+                                            | Ok saveReference -> 
+                                                ()
+                                            | Error error ->
+                                                logToAnsiConsole Colors.Error $"Failed to create a save reference. {error}"
+                                        }).Wait()
+                                    t5.Value <- 100.0
+
                                 // Check for latest reference of the given type from the server.
-                                t5.StartTask()
+                                t6.StartTask()
                                 let getDiffBySha256HashParameters = GetDiffBySha256HashParameters(OwnerId = $"{Current().OwnerId}", 
                                                         OrganizationId = $"{Current().OrganizationId}", RepositoryId = $"{Current().RepositoryId}", 
-                                                        CorrelationId = parameters.CorrelationId)
-
-                               
-                                t5.Value <- 100.0
+                                                        CorrelationId = parameters.CorrelationId, Sha256Hash1 = parameters.Sha256Hash1,
+                                                        Sha256Hash2 = parameters.Sha256Hash2)
+                                match! Diff.GetDiffBySha256Hash(getDiffBySha256HashParameters) with
+                                | Ok returnValue ->
+                                    let diffDto = returnValue.ReturnValue
+                                    printDiffResults diffDto
+                                    t6.Value <- 100.0
+                                | Error error ->
+                                    logToAnsiConsole Colors.Error $"Failed to get diff by sha256 hash. {error}"
+                                t6.Value <- 100.0
                             })
 
                         for markup in markupList do
