@@ -58,68 +58,6 @@ module Watch =
     let mutable graceStatusMemoryStream: MemoryStream = null
     let mutable graceStatusHasChanged = false
     
-    /// Generates a temporary file name within the ObjectDirectory, and returns the full file path.
-    /// This file name will be used to copy modified files into before renaming them with their proper names and SHA256 values.
-    let getTemporaryFilePath() =
-        Path.GetFullPath(Path.Combine(Environment.GetEnvironmentVariable("TEMP"), $"{Path.GetRandomFileName()}.gracetmp"))
-
-    let copyToObjectDirectory (filePath: FilePath) : Task<FileVersion option> =
-        task {
-            try
-                if File.Exists($"{filePath}") then
-                    let filePath = $"{filePath}"
-                    // First, capture the file by copying it to a temp name
-                    let tempFilePath = getTemporaryFilePath()
-                    //logToConsole $"filePath: {filePath}; tempFilePath: {tempFilePath}"
-                    let mutable iteration = 0
-                    Constants.DefaultFileCopyRetryPolicy.Execute(fun () -> 
-                        //iteration <- iteration + 1
-                        //logToAnsiConsole Colors.Deemphasized $"Attempt #{iteration} to copy file to object directory..."
-                        File.Copy(sourceFileName = filePath, destFileName = tempFilePath, overwrite = true))
-
-                    // Now that we've copied it, compute the SHA-256 hash.
-                    let relativeFilePath = Path.GetRelativePath(Current().RootDirectory, filePath)
-                    use fileStream = File.Open(tempFilePath, FileMode.Open, FileAccess.Read, FileShare.Read)
-                    let! sha256Hash = computeSha256ForFile fileStream relativeFilePath
-                    //logToConsole $"filePath: {filePath}; tempFilePath: {tempFilePath}; SHA256: {sha256Hash}"
-                    fileStream.Dispose()
-
-                    // Get the new name for this version of the file, including the SHA-256 hash.
-                    let relativeDirectoryPath = getLocalRelativeDirectory filePath (Current().RootDirectory)
-                    let objectFileName = getObjectFileName filePath sha256Hash
-                    let objectDirectoryPath = Path.Combine(Current().ObjectDirectory, relativeDirectoryPath)
-                    let objectFilePath = Path.Combine(objectDirectoryPath, objectFileName)
-                    //logToConsole $"relativeDirectoryPath: {relativeDirectoryPath}; objectFileName: {objectFileName}; objectFilePath: {objectFilePath}"
-
-                    // If we don't already have this file, with this exact SHA256, make sure the directory exists, 
-                    //   and rename the temp file to the proper SHA256-enhanced name of the file.
-                    if not (File.Exists(objectFilePath)) then
-                        //logToConsole $"Before moving temp file to object storage..."
-                        Directory.CreateDirectory(objectDirectoryPath) |> ignore    // No-op if the directory already exists
-                        File.Move(tempFilePath, objectFilePath)
-                        //logToConsole $"After moving temp file to object storage..."
-                        let objectFilePathInfo = FileInfo(objectFilePath)
-                        //logToConsole $"After creating FileInfo; Exists: {objectFilePathInfo.Exists}; FullName = {objectFilePathInfo.FullName}..."
-                        use objectFileStream = objectFilePathInfo.Open(FileMode.Open, FileAccess.Read)
-                        //logToConsole $"After creating stream; .Length = {objectFileStream.Length}..."
-                        let! isBinary = isBinaryFile objectFileStream
-                        //logToConsole $"Finished copyToObjectDirectory for {filePath}; isBinary: {isBinary}; moved temp file to object directory."
-                        let relativePath = Path.GetRelativePath(Current().RootDirectory, filePath)
-                        return Some (FileVersion.Create (Current().RepositoryId) (RelativePath relativePath) (Sha256Hash $"{sha256Hash}") ("") isBinary (uint64 (objectFilePathInfo.Length)))
-                    else
-                    //   If we do already have this exact version of the file, just delete the temp file.
-                        File.Delete(tempFilePath)
-                        //logToConsole $"Finished copyToObjectDirectory for {filePath}; deleted temp file."
-                        return None
-                    //return result
-                else
-                    return None
-            with ex ->
-                logToAnsiConsole Colors.Error $"Exception: {ex.Message}"
-                logToAnsiConsole Colors.Error $"Stack trace: {ex.StackTrace}"
-                return None
-        }
-
     let fileDeleted filePath =
         logToConsole $"In Delete: filePath: {filePath}"
 
@@ -191,7 +129,7 @@ module Watch =
     let printDifferences (differences: List<FileSystemDifference>) =
         if differences.Count > 0 then logToAnsiConsole Colors.Verbose $"Differences detected since last save/checkpoint/commit:"
         for difference in differences.OrderBy(fun diff -> diff.RelativePath) do
-            logToAnsiConsole Colors.Verbose $"{getDistributedUnionCaseName difference.DifferenceType} {getDistributedUnionCaseName difference.FileSystemEntryType} {difference.RelativePath}"
+            logToAnsiConsole Colors.Verbose $"{getDistributedUnionCaseName difference.DifferenceType} for {getDistributedUnionCaseName difference.FileSystemEntryType} {difference.RelativePath}"
 
     /// Update the Grace Object Cache file with the new DirectoryVersions.
     let updateObjectCacheFile (newDirectoryVersions: List<LocalDirectoryVersion>) =
@@ -237,21 +175,22 @@ module Watch =
                         saveMessage.Remove(saveMessage.LastIndexOf(Environment.NewLine), Environment.NewLine.Length)
                 
                 // If there are changes either to files or just to directories, create a save reference.
-                if (fileDifferences.Count > 0) || (newDirectoryVersions.Count > 0) then
-                    let! saveReferenceResult = createSaveReference (getRootDirectoryVersion newGraceStatus) message correlationId
-                    match saveReferenceResult with
-                    | Ok returnValue ->
-                        let newGraceStatusWithUpdatedTime = {newGraceStatus with LastSuccessfulDirectoryVersionUpload = getCurrentInstant()}
-                        // Write the new Grace Status file to disk.
-                        do! writeGraceStatusFile newGraceStatusWithUpdatedTime
-                        //logToAnsiConsole Colors.Important $"Setting graceStatusHasChanged to false in updateGraceStatus(). Current value: {graceStatusHasChanged}."
-                        graceStatusHasChanged <- false  // We *just* changed it ourselves, so we don't have to re-process it in the timer loop.
-                        return Some newGraceStatusWithUpdatedTime
-                    | Error error ->
-                        logToAnsiConsole Colors.Error $"{Markup.Escape(error.Error)}"
-                        return None
-                else
+                //if (fileDifferences.Count > 0) || (newDirectoryVersions.Count > 0) then
+                let! saveReferenceResult = createSaveReference (getRootDirectoryVersion newGraceStatus) message correlationId
+                match saveReferenceResult with
+                | Ok returnValue ->
+                    let newGraceStatusWithUpdatedTime = {newGraceStatus with LastSuccessfulDirectoryVersionUpload = getCurrentInstant()}
+                    // Write the new Grace Status file to disk.
+                    do! writeGraceStatusFile newGraceStatusWithUpdatedTime
+                    //logToAnsiConsole Colors.Important $"Setting graceStatusHasChanged to false in updateGraceStatus(). Current value: {graceStatusHasChanged}."
+                    graceStatusHasChanged <- false  // We *just* changed it ourselves, so we don't have to re-process it in the timer loop.
+                    return Some newGraceStatusWithUpdatedTime
+                | Error error ->
+                    logToAnsiConsole Colors.Error $"{Markup.Escape(error.Error)}"
                     return None
+                //else
+                    //logToAnsiConsole Colors.Verbose "No fileDifferences or newDirectoryVersions to process; not updating GraceStatus."
+                    //return None
             | Error error ->
                 logToAnsiConsole Colors.Error $"{Markup.Escape(error.Error)}"
                 return None
@@ -330,7 +269,9 @@ module Watch =
                     match! (updateGraceStatus graceStatus correlationId) with
                     | Some newGraceStatus -> 
                         graceStatus <- newGraceStatus
-                    | None -> ()    // Something went wrong, don't update the in-memory Grace Status.
+                    | None -> 
+                        logToAnsiConsole Colors.Important $"Grace Status file was not updated."
+                        ()    // Something went wrong, don't update the in-memory Grace Status.
 
                 do! updateGraceWatchInterprocessFile graceStatus
                 graceStatus <- GraceStatus.Default
@@ -415,7 +356,7 @@ module Watch =
 
                     // Check for changes that occurred while not running.
                     logToAnsiConsole Colors.Verbose $"Scanning for differences."
-                    let! differences = scanForDifferences graceStatus
+                    let! differences = scanForDifferences graceStatus // <--- This always finds the directories with updated write times, but we never update GraceStatus below..
                     if differences.Count = 0 then
                         logToAnsiConsole Colors.Verbose $"Already up-to-date."
                     else
@@ -450,11 +391,14 @@ module Watch =
                         ticked <- tick
 
                         // About once a minute, do a full GC to be kind with our memory usage. This is for looks, not for function.
-                        //   In .NET, when a computer has lots of available memory, and therefore no memory pressure, GC basically doesn't happen, so `grace watch` doesn't bother releasing its unused heap back to the OS.
-                        //   Seeing a large memory footprint will make uninformed people say things like, "OMG, `grace watch` takes up so much memory!" In fact, it's just the GC not running because there's no
-                        //   signal from the OS that there's memory pressure. This is not a problem, and is actually a good thing for general performance, but it's not obvious to the uninformed.
-                        //   Been seeing the same thing since the 1990's; whenever someone says, "<This program> is taking up so much memory!" and you look at the machine, it's (almost) always fine.
-                        //   Forcing a GC every minute will cause `grace watch` to stay as slim as possible, so it looks as lightweight as it actually is.
+                        //
+                        //   In .NET, when a computer has lots of available memory, and there's no signal from the OS that there's any memory pressure, GC doesn't happen much, if at all.
+                        //   With no memory pressure, `grace watch` wouldn't bother releasing its unused heap after handling events like saves and auto-rebases, and it would look like it's taking up a lot of memory.
+                        //
+                        //   Seeing that kind of memory usage could lead to uninformed people saying things like, "OMG, `grace watch` takes up so much memory!" For something like `grace watch` that will 
+                        //   momentarily need memory to handle events, and then can release it quickly, well, it *looks better* if we do.
+                        //
+                        //   Anyway, forcing a full GC every minute will cause `grace watch` to stay as slim as possible, so it looks as lightweight as it actually is.
                         if previousGC < getCurrentInstant().Minus(Duration.FromMinutes(1.0)) then
                             //let memoryBeforeGC = Process.GetCurrentProcess().WorkingSet64
                             GC.Collect(2, GCCollectionMode.Forced, blocking = true, compacting = true)

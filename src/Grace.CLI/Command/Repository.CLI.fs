@@ -519,19 +519,24 @@ module Repository =
                         table.AddColumn(TableColumn(Markup($"[{Colors.Important}]Branch[/]")))
                              .AddColumn(TableColumn(Markup($"[{Colors.Important}]Updated at[/]")))
                              .AddColumn(TableColumn(Markup($"[{Colors.Important}]Branch Id[/]")))
+                             .AddColumn(TableColumn(Markup($"[{Colors.Important}]Based on latest promotion[/]")))
                              .AddColumn(TableColumn(Markup($"[{Colors.Important}]Parent branch[/]"))) |> ignore
                         let allBranches = returnValue.ReturnValue
                         let parents = allBranches.Select(fun branch -> {|
                             branchId = branch.BranchId
                             branchName = if branch.ParentBranchId = Constants.DefaultParentBranchId then "root"
-                                         else allBranches.Where(fun br -> br.BranchId = branch.ParentBranchId).Select(fun br -> br.BranchName).First() |})
+                                         else allBranches.Where(fun br -> br.BranchId = branch.ParentBranchId).Select(fun br -> br.BranchName).First()
+                            latestPromotion = if branch.ParentBranchId = Constants.DefaultParentBranchId then branch.LatestPromotion
+                                              else allBranches.Where(fun br -> br.BranchId = branch.ParentBranchId).Select(fun br -> br.LatestPromotion).First() |})
 
                         let branchesWithParentNames = allBranches.Join(parents, (fun branch -> branch.BranchId), (fun parent -> parent.branchId), 
-                            (fun branch parent -> {| branchId = branch.BranchId; branchName = branch.BranchName; updatedAt = branch.UpdatedAt; parentBranchName = parent.branchName |})).OrderBy(fun branch -> branch.parentBranchName, branch.branchName)
+                            (fun branch parent -> {| branchId = branch.BranchId; branchName = branch.BranchName; updatedAt = branch.UpdatedAt; parentBranchName = parent.branchName; basedOnLatestPromotion = (branch.BasedOn = parent.latestPromotion) |})).OrderBy(fun branch -> branch.parentBranchName, branch.branchName)
 
                         for br in branchesWithParentNames do
                             let updatedAt = match br.updatedAt with | Some t -> instantToLocalTime(t) | None -> String.Empty
-                            table.AddRow(br.branchName, updatedAt, $"[{Colors.Deemphasized}]{br.branchId}[/]", br.parentBranchName) |> ignore
+                            table.AddRow(br.branchName, updatedAt, $"[{Colors.Deemphasized}]{br.branchId}[/]", 
+                                (if br.basedOnLatestPromotion then $"[{Colors.Added}]Yes[/]" else $"[{Colors.Important}]No[/]"),
+                                br.parentBranchName) |> ignore
                         AnsiConsole.Write(table)
 
                     return intResult

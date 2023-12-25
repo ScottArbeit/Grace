@@ -20,6 +20,7 @@ open System.Threading.Tasks
 open NodaTime
 open System.Text.Json
 open System.Net.Http.Json
+open Grace.Shared.Dto.Reference
 
 module Branch =
 

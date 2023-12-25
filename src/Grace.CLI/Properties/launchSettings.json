@@ -83,11 +83,6 @@
       "commandLineArgs": "config write",
       "workingDirectory": "C:\\Temp"
     },
-    "grace switch -c Mika2": {
-      "commandName": "Project",
-      "commandLineArgs": "switch -c Mika2",
-      "workingDirectory": "D:\\Source\\GraceDemo\\Mika"
-    },
     "grace owner get": {
       "commandName": "Project",
       "commandLineArgs": "owner get --ownerName Owner4",
@@ -97,6 +92,16 @@
       "commandName": "Project",
       "commandLineArgs": "org create --output Verbose --ownerName Owner9FEDA --organizationName Org9FEDc --organizationId 9871826b-73f4-41a4-bf4b-dea42ea95bf1",
       "workingDirectory": "D:\\Source\\GraceDemo\\Ryan"
+    },
+    "grace watch - Chris": {
+      "commandName": "Project",
+      "commandLineArgs": "watch",
+      "workingDirectory": "D:\\Source\\GraceDemo\\Chris"
+    },
+    "grace switch -c Mika": {
+      "commandName": "Project",
+      "commandLineArgs": "switch -c Mika",
+      "workingDirectory": "D:\\Source\\GraceDemo\\Chris"
     }
   }
 }

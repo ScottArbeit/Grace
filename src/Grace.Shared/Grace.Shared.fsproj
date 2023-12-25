@@ -54,6 +54,7 @@
 		<PackageReference Include="FSharp.Control.TaskSeq" Version="0.3.0" />
 		<PackageReference Include="FSharp.SystemTextJson" Version="1.2.42" />
 		<PackageReference Include="FSharpPlus" Version="1.5.0" />
+		<PackageReference Include="Microsoft.Extensions.ObjectPool" Version="8.0.0" />
 		<PackageReference Include="MimeTypeMapOfficial" Version="1.0.17" />
 		<PackageReference Include="MimeTypes" Version="2.4.1">
 			<PrivateAssets>all</PrivateAssets>

@@ -9,6 +9,7 @@ open Spectre.Console
 open System
 open System.CommandLine
 open System.CommandLine.Parsing
+open System.Globalization
 open System.Text.Json
 open System.Threading.Tasks
 open Spectre.Console.Rendering
@@ -35,6 +36,11 @@ module Common =
     let addOption (option: Option) (command: Command) =
         command.AddOption(option)
         command
+
+    let public Language = CultureInfo.CurrentCulture.TwoLetterISOLanguageName
+
+    /// Gets the "... ago" text.
+    let ago = ago Language
 
     module Options =
         let correlationId = new Option<String>([|"--correlationId"; "-c"|], IsRequired = false, Description = "CorrelationId for end-to-end tracking <String>.", Arity = ArgumentArity.ExactlyOne)

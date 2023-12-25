@@ -207,7 +207,7 @@ module Diff =
                             task {
                                 let relativeDirectoryPath = getRelativeDirectory relativePath Constants.RootDirectoryPath
                                 //logToConsole $"In DiffActor.getFileStream(); relativePath: {relativePath}; relativeDirectoryPath: {relativeDirectoryPath}; graceIndex.Count: {graceIndex.Count}."
-                                let directory = graceIndex.Item(relativeDirectoryPath)
+                                let directory = graceIndex[relativeDirectoryPath]
                                 let fileVersion = directory.Files.First(fun f -> f.RelativePath = relativePath)
                                 let! uri = getReadSharedAccessSignature repositoryDto fileVersion
                                 logToConsole $"In DiffActor.getFileStream(); uri: {Result.get uri}."
@@ -239,8 +239,10 @@ module Diff =
                                                     return! diffTwoFiles fileStream2 fileStream1
                                             }
 
-                                        do! fileStream1.DisposeAsync()
-                                        do! fileStream2.DisposeAsync()
+                                        if not <| isNull(fileStream1) then
+                                            do! fileStream1.DisposeAsync()
+                                        if not <| isNull(fileStream2) then
+                                            do! fileStream2.DisposeAsync()
 
                                         // Create a FileDiff with the DiffPlex results and corresponding Sha256Hash values.
                                         let fileDiff = 

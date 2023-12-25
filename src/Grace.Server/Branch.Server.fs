@@ -806,6 +806,69 @@ module Branch =
                     return! context |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
             }
 
+    let ListContents: HttpHandler =
+        fun (next: HttpFunc) (context: HttpContext) ->
+            task {
+                let startTime = getCurrentInstant()
+                let graceIds = context.Items[nameof(GraceIds)] :?> GraceIds
+
+                try
+                    let validations (parameters: ListContentsParameters) (context: HttpContext) =
+                        [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
+                           String.isValidGraceName parameters.BranchName InvalidBranchName
+                           Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
+                           String.isEmptyOrValidSha256Hash parameters.Sha256Hash Sha256HashDoesNotExist
+                           Guid.isValidAndNotEmpty parameters.ReferenceId ReferenceIdDoesNotExist
+                           Owner.ownerExists parameters.OwnerId parameters.OwnerName OwnerDoesNotExist
+                           Organization.organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName OrganizationDoesNotExist
+                           Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName RepositoryDoesNotExist
+                           Branch.branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName BranchDoesNotExist |]
+
+                    let query (context: HttpContext) maxCount (actorProxy: IBranchActor) =
+                        task {
+                            let listContentsParameters = context.Items["ListContentsParameters"] :?> ListContentsParameters
+                            if String.IsNullOrEmpty(listContentsParameters.ReferenceId) && String.IsNullOrEmpty(listContentsParameters.Sha256Hash) then
+                                let! branchDto = actorProxy.Get()
+                                let! latestReference = getLatestReference branchDto.BranchId
+                                match latestReference with
+                                | Some latestReference ->
+                                    let referenceActorId = Reference.GetActorId branchDto.LatestSave
+                                    let referenceActorProxy = actorProxyFactory.CreateActorProxy<IReferenceActor>(referenceActorId, ActorName.Reference)
+                                    let! referenceDto = referenceActorProxy.Get()
+                                    let directoryActorId = DirectoryVersion.GetActorId referenceDto.DirectoryId
+                                    let directoryActorProxy = actorProxyFactory.CreateActorProxy<IDirectoryVersionActor>(directoryActorId, ActorName.DirectoryVersion)
+                                    let! contents = directoryActorProxy.GetDirectoryVersionsRecursive(false)
+                                    return contents
+                                | None ->
+                                    return List<DirectoryVersion>()
+                            elif not <| String.IsNullOrEmpty(listContentsParameters.ReferenceId) then
+                                let referenceActorId = Reference.GetActorId listContentsParameters.ReferenceId
+                                let referenceActorProxy = actorProxyFactory.CreateActorProxy<IReferenceActor>(referenceActorId, ActorName.Reference)
+                                let! referenceDto = referenceActorProxy.Get()
+                                let directoryActorId = DirectoryVersion.GetActorId referenceDto.DirectoryId
+                                let directoryActorProxy = actorProxyFactory.CreateActorProxy<IDirectoryVersionActor>(directoryActorId, ActorName.DirectoryVersion)
+                                let! contents = directoryActorProxy.GetDirectoryVersionsRecursive(false)
+                                return contents
+                            else // We have a Sha256Hash to look up
+                                let! directoryVersion = Services.getDirectoryBySha256Hash (Guid.Parse(graceIds.RepositoryId)) listContentsParameters.Sha256Hash
+                                let directoryActorId = DirectoryVersion.GetActorId directoryVersion.DirectoryId
+                                let directoryActorProxy = actorProxyFactory.CreateActorProxy<IDirectoryVersionActor>(directoryActorId, ActorName.DirectoryVersion)
+                                let! contents = directoryActorProxy.GetDirectoryVersionsRecursive(false)
+                                return contents
+                        }
+                
+                    let! parameters = context |> parse<ListContentsParameters>
+                    context.Items["ListContentsParameters"] <- parameters
+                    let! result = processQuery context parameters validations 1 query
+                    let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
+                    log.LogInformation("{CurrentInstant}: Finished {path}; BranchId: {branchId}; CorrelationId: {correlationId}; Duration: {duration_ms}ms.", getCurrentInstantExtended(), context.Request.Path, graceIds.BranchId, (getCorrelationId context), duration_ms)
+                    return result
+                with ex ->
+                    let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
+                    log.LogError(ex, "{CurrentInstant}: Error in {path}; BranchId: {branchId}; CorrelationId: {correlationId}; Duration: {duration_ms}ms.", getCurrentInstantExtended(), context.Request.Path, graceIds.BranchId, (getCorrelationId context), duration_ms)
+                    return! context |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
+            }
+
     let GetVersion: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {

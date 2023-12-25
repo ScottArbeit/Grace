@@ -234,11 +234,14 @@ module GraceCommand =
                         // Now we can invoke the command!
                         let! returnValue = command.InvokeAsync(args)
 
-                        // If this instance is `grace watch`, we'll delete the IPC file in the finally clause.
-                        // We'll write that to the log, before the last Rule() is written.
+                        // Stuff to do after the command has been invoked:
+
+                        // If this instance is `grace watch`, we'll actually delete the IPC file in the finally clause below, but
+                        //   we'll write the "we deleted the file" message to the console here, so it comes before the last Rule() is written.
                         if parseResult |> isGraceWatch then
                             logToAnsiConsole Colors.Important (getLocalizedString StringResourceName.InterprocessFileDeleted)
 
+                        // If we're writing output, write the final Rule() to the console.
                         if parseResult |> hasOutput then
                             let finishTime = getCurrentInstant()
                             let elapsed = finishTime - startTime

@@ -168,8 +168,9 @@ module Diff =
                             let t2 = progressContext.AddTask($"[{Color.DodgerBlue1}]Creating new directory verions.[/]", autoStart = false)
                             let t3 = progressContext.AddTask($"[{Color.DodgerBlue1}]Uploading changed files to object storage.[/]", autoStart = false)
                             let t4 = progressContext.AddTask($"[{Color.DodgerBlue1}]Uploading new directory versions.[/]", autoStart = false)
-                            let t5 = progressContext.AddTask($"[{Color.DodgerBlue1}]Getting {(getDistributedUnionCaseName referenceType).ToLowerInvariant()}.[/]", autoStart = false)
-                            let t6 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending diff request to server.[/]", autoStart = false)
+                            let t5 = progressContext.AddTask($"[{Color.DodgerBlue1}]Creating a save reference.[/]", autoStart = false)
+                            let t6 = progressContext.AddTask($"[{Color.DodgerBlue1}]Getting {(getDistributedUnionCaseName referenceType).ToLowerInvariant()}.[/]", autoStart = false)
+                            let t7 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending diff request to server.[/]", autoStart = false)
 
                             let mutable rootDirectoryId = DirectoryId.Empty
                             let mutable rootDirectorySha256Hash = Sha256Hash String.Empty
@@ -183,6 +184,7 @@ module Diff =
                                 t2.Value <- 100.0
                                 t3.Value <- 100.0
                                 t4.Value <- 100.0
+                                t5.Value <- 100.0
                                 rootDirectoryId <- graceWatchStatus.RootDirectoryId
                                 rootDirectorySha256Hash <- graceWatchStatus.RootDirectorySha256Hash
                                 previousDirectoryIds <- graceWatchStatus.DirectoryIds 
@@ -192,39 +194,52 @@ module Diff =
                                 t0.Value <- 100.0
                                 t1.StartTask()
                                 let! differences = scanForDifferences previousGraceStatus
+                                let! newFileVersions = copyUpdatedFilesToObjectCache t1 differences
                                 t1.Value <- 100.0
 
                                 t2.StartTask()
                                 let! (updatedGraceStatus, newDirectoryVersions) = getNewGraceStatusAndDirectoryVersions previousGraceStatus differences
+                                do! writeGraceStatusFile updatedGraceStatus
                                 rootDirectoryId <- updatedGraceStatus.RootDirectoryId
                                 rootDirectorySha256Hash <- updatedGraceStatus.RootDirectorySha256Hash
                                 previousDirectoryIds <- updatedGraceStatus.Index.Keys.ToHashSet()
                                 t2.Value <- 100.0
 
                                 t3.StartTask()
-                                let updatedRelativePaths = 
-                                    differences.Select(fun difference ->
-                                        match difference.DifferenceType with
-                                        | Add -> match difference.FileSystemEntryType with | FileSystemEntryType.File -> Some difference.RelativePath | FileSystemEntryType.Directory -> None
-                                        | Change -> match difference.FileSystemEntryType with | FileSystemEntryType.File -> Some difference.RelativePath | FileSystemEntryType.Directory -> None
-                                        | Delete -> None)
-                                        .Where(fun relativePathOption -> relativePathOption.IsSome)
-                                        .Select(fun relativePath -> relativePath.Value)
-
-                                let newFileVersions = updatedRelativePaths.Select(fun relativePath -> 
-                                    newDirectoryVersions.First(fun dv -> dv.Files.Exists(fun file -> file.RelativePath = relativePath)).Files.First(fun file -> file.RelativePath = relativePath))
-
-                                let! uploadResult = uploadFilesToObjectStorage newFileVersions (getCorrelationId parseResult)
+                                match! uploadFilesToObjectStorage newFileVersions (getCorrelationId parseResult) with
+                                | Ok returnValue -> 
+                                    ()
+                                | Error error ->
+                                    logToAnsiConsole Colors.Error $"Failed to upload changed files to object storage. {error}"
                                 t3.Value <- 100.0
 
                                 t4.StartTask()
-                                let saveParameters = SaveDirectoryVersionsParameters()
-                                saveParameters.DirectoryVersions <- newDirectoryVersions.Select(fun dv -> dv.ToDirectoryVersion).ToList()
-                                let! uploadDirectoryVersions = Directory.SaveDirectoryVersions saveParameters
+                                if (newDirectoryVersions.Count > 0) then
+                                    (task {
+                                        let saveDirectoryVersionsParameters = SaveDirectoryVersionsParameters()
+                                        saveDirectoryVersionsParameters.DirectoryVersions <- newDirectoryVersions.Select(fun dv -> dv.ToDirectoryVersion).ToList()
+
+                                        match! Directory.SaveDirectoryVersions saveDirectoryVersionsParameters with
+                                        | Ok returnValue -> 
+                                            ()
+                                        | Error error ->
+                                            logToAnsiConsole Colors.Error $"Failed to upload new directory versions. {error}"
+                                     }).Wait()
                                 t4.Value <- 100.0
 
+                                t5.StartTask()
+                                if newDirectoryVersions.Count > 0 then
+                                    (task {
+                                        match! createSaveReference (getRootDirectoryVersion updatedGraceStatus) $"Created during `grace diff {(getDistributedUnionCaseName referenceType).ToLowerInvariant()}` operation." (getCorrelationId parseResult) with
+                                        | Ok saveReference -> 
+                                            ()
+                                        | Error error ->
+                                            logToAnsiConsole Colors.Error $"Failed to create a save reference. {error}"
+                                    }).Wait()
+                                t5.Value <- 100.0
+
                             // Check for latest reference of the given type from the server.
-                            t5.StartTask()
+                            t6.StartTask()
                             let getReferencesParameters = GetReferencesParameters(
                                 OwnerId = parameters.OwnerId,
                                 OwnerName = parameters.OwnerName,
@@ -308,7 +323,7 @@ module Diff =
                                 | Error error -> 
                                     logToAnsiConsole Colors.Error $"Error getting latest reference: {Markup.Escape(error.Error)}."
                                     ReferenceDto.Default
-                            t5.Value <- 100.0
+                            t6.Value <- 100.0
 
                             let addToOutput (markup: IRenderable) =
                                 markupList.Add markup
@@ -323,7 +338,7 @@ module Diff =
                                         addToOutput(Markup(String.Empty))
 
                             // Sending diff request to server.
-                            t6.StartTask()
+                            t7.StartTask()
                             //logToAnsiConsole Colors.Verbose $"latestReference.DirectoryId: {latestReference.DirectoryId}; rootDirectoryId: {rootDirectoryId}."
                             let getDiffParameters = GetDiffParameters(DirectoryId1 = latestReference.DirectoryId, DirectoryId2 = rootDirectoryId)
                             let! getDiffResult = Diff.GetDiff(getDiffParameters)
@@ -357,7 +372,7 @@ module Diff =
                                 logToAnsiConsole Colors.Error $"Error submitting diff: {s}"
                                 if parseResult |> json || parseResult |> verbose then
                                     logToAnsiConsole Colors.Verbose (serialize error)
-                            t6.Increment(100.0)
+                            t7.Increment(100.0)
                             //AnsiConsole.MarkupLine($"[{Colors.Important}]Differences: {differences.Count}.[/]")
                             //AnsiConsole.MarkupLine($"[{Colors.Error}]{error.Error.EscapeMarkup()}[/]")
                         })
@@ -465,6 +480,7 @@ module Diff =
                                     t0.Value <- 100.0
                                     t1.StartTask()
                                     let! differences = scanForDifferences previousGraceStatus
+                                    let! newFileVersions = copyUpdatedFilesToObjectCache t1 differences
                                     t1.Value <- 100.0
 
                                     t2.StartTask()
@@ -475,18 +491,6 @@ module Diff =
                                     t2.Value <- 100.0
 
                                     t3.StartTask()
-                                    let updatedRelativePaths = 
-                                        differences.Select(fun difference ->
-                                            match difference.DifferenceType with
-                                            | Add -> match difference.FileSystemEntryType with | FileSystemEntryType.File -> Some difference.RelativePath | FileSystemEntryType.Directory -> None
-                                            | Change -> match difference.FileSystemEntryType with | FileSystemEntryType.File -> Some difference.RelativePath | FileSystemEntryType.Directory -> None
-                                            | Delete -> None)
-                                            .Where(fun relativePathOption -> relativePathOption.IsSome)
-                                            .Select(fun relativePath -> relativePath.Value)
-
-                                    let newFileVersions = updatedRelativePaths.Select(fun relativePath -> 
-                                        newDirectoryVersions.First(fun dv -> dv.Files.Exists(fun file -> file.RelativePath = relativePath)).Files.First(fun file -> file.RelativePath = relativePath))
-
                                     let! uploadResult = uploadFilesToObjectStorage newFileVersions (getCorrelationId parseResult)
                                     t3.Value <- 100.0
 

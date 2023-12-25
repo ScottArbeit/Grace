@@ -85,8 +85,10 @@ module Branch =
     type GetBranchParameters() = 
         inherit BranchQueryParameters()
 
-    type ListFilesParameters() =
+    type ListContentsParameters() =
         inherit BranchQueryParameters()
+        member val public Sha256Hash: Sha256Hash = String.Empty with get, set
+        member val public ReferenceId = String.Empty with get, set
         member val public Pattern = String.Empty with get, set
         member val public ShowDirectories = true with get, set
         member val public ShowFiles = true with get, set

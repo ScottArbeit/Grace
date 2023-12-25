@@ -1,4 +1,4 @@
-namespace Grace.Shared
+﻿namespace Grace.Shared
 
 open Grace.Shared.Resources
 open Microsoft.FSharp.NativeInterop
@@ -124,7 +124,7 @@ module Utilities =
     let serialize<'T> item =
         JsonSerializer.Serialize<'T>(item, Constants.JsonSerializerOptions)
 
-    /// Serializes a stream to JSON, using Grace's custom JsonSerializerOptions.
+    /// Serializes an object to JSON and writes it to a stream, using Grace's custom JsonSerializerOptions.
     let serializeAsync<'T> stream item =
         task {
             return! JsonSerializer.SerializeAsync<'T>(stream, item, Constants.JsonSerializerOptions)
@@ -134,7 +134,7 @@ module Utilities =
     let deserialize<'T> (s: string) =
         JsonSerializer.Deserialize<'T>(s, Constants.JsonSerializerOptions)
 
-    /// Deserializes a stream to a provided type, using Grace's custom JsonSerializerOptions.
+    /// Deserializes a stream of JSON to a provided type, using Grace's custom JsonSerializerOptions.
     let deserializeAsync<'T> stream =
         task {
             return! JsonSerializer.DeserializeAsync<'T>(stream, Constants.JsonSerializerOptions)
@@ -261,13 +261,14 @@ module Utilities =
           sb.Append($"{b:x2}") |> ignore
         sb.ToString()
 
+    /// Serializes any value to JSON using Grace's default JsonSerializerOptions, and then converts the JSON string to a byte array.
     let convertToByteArray<'T> (value: 'T) =
         let json = serialize value
         Encoding.UTF8.GetBytes json
 
     /// Converts a string of hexadecimal numbers to a byte array. For example, "ab1503" -> [0xab, 0x15, 0x03]
     ///
-    /// The hex string must have an even number of digits; for this function, "1a8" will throw an ArgumentException, but "01a8" will be converted to a byte array.
+    /// The hex string must have an even number of digits; for this function, "1a8" will throw an ArgumentException, but "01a8" is valid and will be converted to a byte array.
     ///
     /// Note: This is different from Encoding.UTF8.GetBytes().
     let stringAsByteArray (s: ReadOnlySpan<char>) =
@@ -341,34 +342,6 @@ module Utilities =
     //let inline (>>=!) (result: ValueTask<Result<'T, 'TError>>) (f: 'T -> ValueTask<Result<'U, 'TError>>) =
     //    bindTaskResult result f
 
-    /// Computes text for the time between two instants. You can pass the two instants in any order.
-    let elapsedBetween (instant1: Instant) (instant2: Instant) =
-        let since = if instant2 > instant1 then instant2.Minus(instant1) else instant1.Minus(instant2)
-        
-        let totalSeconds = since.TotalSeconds
-        let totalMinutes = since.TotalMinutes
-        let totalHours = since.TotalHours
-        let totalDays = since.TotalDays
-
-        if totalSeconds < 2 then $"1 second"
-        elif totalSeconds < 60 then $"{Math.Floor(totalSeconds):F0} seconds"
-        elif totalMinutes < 2 then $"1 minute"
-        elif totalMinutes < 60 then $"{Math.Floor(totalMinutes):F0} minutes"
-        elif totalHours < 2 then $"1 hour"
-        elif totalHours < 24 then $"{Math.Floor(totalHours):F0} hours"
-        elif totalDays < 2 then $"1 day"
-        elif totalDays < 30 then $"{Math.Floor(totalDays):F0} days"
-        elif totalDays < 60 then $"1 month"
-        elif totalDays < 365.25 then $"{Math.Floor(totalDays / 30.0):F0} months"
-        elif totalDays < 730.5 then $"1 year"
-        else $"{Math.Floor(totalDays / 365.25):F0} years"
-
-    /// Computes text for how long ago an instant was.
-    let ago (instant: Instant) = $"{elapsedBetween (getCurrentInstant()) instant} ago"
-
-    /// Computes text for how far apart two instants are.
-    let apart (instant1: Instant) (instant2: Instant) = $"{elapsedBetween instant1 instant2} apart"
-    
     /// Checks if a string begins with a path separator character.
     let pathContainsSeparator (path: string) =
         path.Contains(Path.DirectorySeparatorChar) || path.Contains(Path.AltDirectorySeparatorChar)

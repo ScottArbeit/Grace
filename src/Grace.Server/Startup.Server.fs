@@ -94,6 +94,7 @@ module Application =
                     route "/getSaves" Branch.GetSaves |> addMetadata typeof<Branch.GetReferenceParameters>
                     route "/getTags" (Branch.GetTags >=> mustBeLoggedIn) |> addMetadata typeof<Branch.GetReferenceParameters>
                     route "/getVersion" Branch.GetVersion |> addMetadata typeof<Branch.GetBranchVersionParameters>
+                    route "/listContents" Branch.ListContents |> addMetadata typeof<Branch.ListContentsParameters>
                     route "/promote" Branch.Promote |> addMetadata typeof<Branch.CreateReferenceParameters>
                     route "/rebase" Branch.Rebase |> addMetadata typeof<Branch.RebaseParameters>
                     route "/save" Branch.Save |> addMetadata typeof<Branch.CreateReferenceParameters>
