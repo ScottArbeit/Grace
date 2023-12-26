@@ -45,6 +45,7 @@ module Errors =
             | RepositoryDoesNotExist
             | SaveIsDisabled
             | Sha256HashDoesNotExist
+            | Sha256HashIsRequired
             | StringIsTooLong
             | TagIsDisabled
             | ValueMustBePositive
@@ -88,6 +89,7 @@ module Errors =
                 | RepositoryDoesNotExist -> getLocalizedString StringResourceName.RepositoryDoesNotExist
                 | SaveIsDisabled -> getLocalizedString StringResourceName.SaveIsDisabled
                 | Sha256HashDoesNotExist -> getLocalizedString StringResourceName.Sha256HashDoesNotExist
+                | Sha256HashIsRequired -> getLocalizedString StringResourceName.Sha256HashIsRequired
                 | StringIsTooLong -> getLocalizedString StringResourceName.StringIsTooLong
                 | TagIsDisabled -> getLocalizedString StringResourceName.TagIsDisabled
                 | ValueMustBePositive -> getLocalizedString StringResourceName.ValueMustBePositive

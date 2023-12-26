@@ -221,6 +221,9 @@ module Constants =
     /// The name of the inter-process communication file used by grace watch to share status with other invocations of Grace.
     let IpcFileName = "graceWatchStatus.json"
 
+    /// The name of the file to let `grace watch` know that `grace rebase` or `grace switch` is underway.
+    let UpdateInProgressFileName = "graceUpdateInProgress.txt"
+
     /// The default expiration time for a cache entry.
     let DefaultExpirationTime = TimeSpan.FromMinutes(5.0)
 

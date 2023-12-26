@@ -795,7 +795,7 @@ module Branch =
             let table = Table(Border = TableBorder.DoubleEdge)
             table.AddColumns([| TableColumn($"[{Colors.Important}]Type[/]"); TableColumn($"[{Colors.Important}]Message[/]"); TableColumn($"[{Colors.Important}]SHA-256[/]"); TableColumn($"[{Colors.Important}]When[/]", Alignment = Justify.Right); TableColumn($"[{Colors.Important}][/]") |]) |> ignore
             for row in sortedResults do
-                //printfn "%A" row
+                //logToAnsiConsole Colors.Verbose $"{serialize row}"
                 let sha256Hash = if parseResult.HasOption(Options.fullSha) then
                                      $"{row.Sha256Hash}"
                                  else
@@ -1143,7 +1143,6 @@ module Branch =
                             //logToAnsiConsole Colors.Verbose $"Succeeded calling updateGraceStatusWithNewDirectoryVersions."
 
                             let mutable isError = false
-                            let updatesInProgressFileName = getUpdateInProgressFileName()
 
                             // Identify files that we don't already have in object cache and download them.
                             for directoryVersion in graceStatusWithNewDirectoryVersionsFromServer.Index.Values do
@@ -1154,7 +1153,7 @@ module Branch =
 
                                         // Write the UpdatesInProgress file to let grace watch know to ignore these changes.
                                         // This file is deleted in the finally clause.
-                                        do! File.WriteAllTextAsync(updatesInProgressFileName, "This file won't exist for long.")
+                                        do! File.WriteAllTextAsync(updateInProgressFileName, "This file won't exist for long.")
 
                                         // Update working directory based on new GraceStatus.Index
                                         updateWorkingDirectory newGraceStatus graceStatusWithNewDirectoryVersionsFromServer newDirectoryVersions
@@ -1171,7 +1170,7 @@ module Branch =
                                         t |> setProgressTaskValue showOutput 100.0
                                     finally
                                         // Delete the UpdatesInProgress file.
-                                        File.Delete(updatesInProgressFileName)
+                                        File.Delete(updateInProgressFileName)
                                     
                                 | Error error -> 
                                     logToAnsiConsole Colors.Verbose $"Failed downloading files from object storage for {directoryVersion.RelativePath}."
@@ -1239,351 +1238,347 @@ module Branch =
     let private switchHandler parseResult (parameters: SwitchParameters) =
         task {
             try
-                try
-                    if parseResult |> verbose then printParseResult parseResult
-                    let validateIncomingParameters = CommonValidations parseResult parameters
-                    match validateIncomingParameters with
-                    | Ok _ -> 
-                        let getParameters = Parameters.Branch.GetBranchParameters( 
-                            OwnerId = parameters.OwnerId, OwnerName = parameters.OwnerName,
-                            OrganizationId = parameters.OrganizationId, OrganizationName = parameters.OrganizationName,
-                            RepositoryId = parameters.RepositoryId, RepositoryName = parameters.RepositoryName,
-                            BranchId = $"{Current().BranchId}", CorrelationId = parameters.CorrelationId)
-                        match! Branch.Get(getParameters) with
-                        | Ok currentBranch ->
-                            let mutable rootDirectoryId = DirectoryId.Empty
-                            let mutable rootDirectorySha256Hash = Sha256Hash String.Empty
-                            let mutable previousDirectoryIds: HashSet<DirectoryId> = null
+                if parseResult |> verbose then printParseResult parseResult
+                let validateIncomingParameters = CommonValidations parseResult parameters
+                match validateIncomingParameters with
+                | Ok _ -> 
+                    let getParameters = Parameters.Branch.GetBranchParameters( 
+                        OwnerId = parameters.OwnerId, OwnerName = parameters.OwnerName,
+                        OrganizationId = parameters.OrganizationId, OrganizationName = parameters.OrganizationName,
+                        RepositoryId = parameters.RepositoryId, RepositoryName = parameters.RepositoryName,
+                        BranchId = $"{Current().BranchId}", CorrelationId = parameters.CorrelationId)
+                    match! Branch.Get(getParameters) with
+                    | Ok currentBranch ->
+                        let mutable rootDirectoryId = DirectoryId.Empty
+                        let mutable rootDirectorySha256Hash = Sha256Hash String.Empty
+                        let mutable previousDirectoryIds: HashSet<DirectoryId> = null
 
-                            if parseResult |> hasOutput then
-                                return! progress.Columns(progressColumns)
-                                        .StartAsync(fun progressContext ->
-                                        task {
-                                            let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Reading Grace index file.[/]")
-                                            let t1 = progressContext.AddTask($"[{Color.DodgerBlue1}]Scanning working directory for changes.[/]", autoStart = false)
-                                            let t2 = progressContext.AddTask($"[{Color.DodgerBlue1}]Creating new directory verions.[/]", autoStart = false)
-                                            let t3 = progressContext.AddTask($"[{Color.DodgerBlue1}]Uploading changed files to object storage.[/]", autoStart = false)
-                                            let t4 = progressContext.AddTask($"[{Color.DodgerBlue1}]Uploading new directory versions.[/]", autoStart = false)
-                                            let t5 = progressContext.AddTask($"[{Color.DodgerBlue1}]Create a save reference.[/]", autoStart = false)
-                                            let t6 = progressContext.AddTask($"[{Color.DodgerBlue1}]Getting new branch version from the server.[/]", autoStart = false)
-                                            let t7 = progressContext.AddTask($"[{Color.DodgerBlue1}]Updating object cache and working directory.[/]", autoStart = false)
+                        if parseResult |> hasOutput then
+                            return! progress.Columns(progressColumns)
+                                    .StartAsync(fun progressContext ->
+                                    task {
+                                        let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Reading Grace index file.[/]")
+                                        let t1 = progressContext.AddTask($"[{Color.DodgerBlue1}]Scanning working directory for changes.[/]", autoStart = false)
+                                        let t2 = progressContext.AddTask($"[{Color.DodgerBlue1}]Creating new directory verions.[/]", autoStart = false)
+                                        let t3 = progressContext.AddTask($"[{Color.DodgerBlue1}]Uploading changed files to object storage.[/]", autoStart = false)
+                                        let t4 = progressContext.AddTask($"[{Color.DodgerBlue1}]Uploading new directory versions.[/]", autoStart = false)
+                                        let t5 = progressContext.AddTask($"[{Color.DodgerBlue1}]Create a save reference.[/]", autoStart = false)
+                                        let t6 = progressContext.AddTask($"[{Color.DodgerBlue1}]Getting new branch version from the server.[/]", autoStart = false)
+                                        let t7 = progressContext.AddTask($"[{Color.DodgerBlue1}]Updating object cache and working directory.[/]", autoStart = false)
 
-                                            t0.Increment(0.0)
-                                            let! previousGraceStatus = readGraceStatusFile()
-                                            let mutable newGraceStatus = previousGraceStatus
-                                            t0.Value <- 100.0
+                                        t0.Increment(0.0)
+                                        let! previousGraceStatus = readGraceStatusFile()
+                                        let mutable newGraceStatus = previousGraceStatus
+                                        t0.Value <- 100.0
 
-                                            if currentBranch.ReturnValue.SaveEnabled then
-                                                match! getGraceWatchStatus() with
-                                                | Some graceWatchStatus ->
-                                                    t1.Value <- 100.0
-                                                    t2.Value <- 100.0
-                                                    t3.Value <- 100.0
-                                                    t4.Value <- 100.0
-                                                    t5.Value <- 100.0
-                                                    rootDirectoryId <- graceWatchStatus.RootDirectoryId
-                                                    rootDirectorySha256Hash <- graceWatchStatus.RootDirectorySha256Hash
-                                                    previousDirectoryIds <- graceWatchStatus.DirectoryIds
-                                                | None ->
-                                                    t1.StartTask()
-                                                    let! differences = scanForDifferences previousGraceStatus
-                                                    t1.Value <- 100.0
+                                        if currentBranch.ReturnValue.SaveEnabled then
+                                            match! getGraceWatchStatus() with
+                                            | Some graceWatchStatus ->
+                                                t1.Value <- 100.0
+                                                t2.Value <- 100.0
+                                                t3.Value <- 100.0
+                                                t4.Value <- 100.0
+                                                t5.Value <- 100.0
+                                                rootDirectoryId <- graceWatchStatus.RootDirectoryId
+                                                rootDirectorySha256Hash <- graceWatchStatus.RootDirectorySha256Hash
+                                                previousDirectoryIds <- graceWatchStatus.DirectoryIds
+                                            | None ->
+                                                t1.StartTask()
+                                                let! differences = scanForDifferences previousGraceStatus
+                                                t1.Value <- 100.0
 
-                                                    t2.StartTask()
-                                                    let! (updatedGraceStatus, newDirectoryVersions) = getNewGraceStatusAndDirectoryVersions previousGraceStatus differences
-                                                    newGraceStatus <- updatedGraceStatus
-                                                    rootDirectoryId <- newGraceStatus.RootDirectoryId
-                                                    rootDirectorySha256Hash <- newGraceStatus.RootDirectorySha256Hash
-                                                    previousDirectoryIds <- newGraceStatus.Index.Keys.ToHashSet()
-                                                    t2.Value <- 100.0
+                                                t2.StartTask()
+                                                let! (updatedGraceStatus, newDirectoryVersions) = getNewGraceStatusAndDirectoryVersions previousGraceStatus differences
+                                                newGraceStatus <- updatedGraceStatus
+                                                rootDirectoryId <- newGraceStatus.RootDirectoryId
+                                                rootDirectorySha256Hash <- newGraceStatus.RootDirectorySha256Hash
+                                                previousDirectoryIds <- newGraceStatus.Index.Keys.ToHashSet()
+                                                t2.Value <- 100.0
 
-                                                    t3.StartTask()
-                                                    let updatedRelativePaths = 
-                                                        differences.Select(fun difference ->
-                                                            match difference.DifferenceType with
-                                                            | Add -> match difference.FileSystemEntryType with | FileSystemEntryType.File -> Some difference.RelativePath | FileSystemEntryType.Directory -> None
-                                                            | Change -> match difference.FileSystemEntryType with | FileSystemEntryType.File -> Some difference.RelativePath | FileSystemEntryType.Directory -> None
-                                                            | Delete -> None)
-                                                            .Where(fun relativePathOption -> relativePathOption.IsSome)
-                                                            .Select(fun relativePath -> relativePath.Value)
+                                                t3.StartTask()
+                                                let updatedRelativePaths = 
+                                                    differences.Select(fun difference ->
+                                                        match difference.DifferenceType with
+                                                        | Add -> match difference.FileSystemEntryType with | FileSystemEntryType.File -> Some difference.RelativePath | FileSystemEntryType.Directory -> None
+                                                        | Change -> match difference.FileSystemEntryType with | FileSystemEntryType.File -> Some difference.RelativePath | FileSystemEntryType.Directory -> None
+                                                        | Delete -> None)
+                                                        .Where(fun relativePathOption -> relativePathOption.IsSome)
+                                                        .Select(fun relativePath -> relativePath.Value)
 
-                                                    let newFileVersions = updatedRelativePaths.Select(fun relativePath -> 
-                                                        newDirectoryVersions.First(fun dv -> dv.Files.Exists(fun file -> file.RelativePath = relativePath)).Files.First(fun file -> file.RelativePath = relativePath))
+                                                let newFileVersions = updatedRelativePaths.Select(fun relativePath -> 
+                                                    newDirectoryVersions.First(fun dv -> dv.Files.Exists(fun file -> file.RelativePath = relativePath)).Files.First(fun file -> file.RelativePath = relativePath))
 
-                                                    let! uploadResult = uploadFilesToObjectStorage newFileVersions (getCorrelationId parseResult)
-                                                    t3.Value <- 100.0
+                                                let! uploadResult = uploadFilesToObjectStorage newFileVersions (getCorrelationId parseResult)
+                                                t3.Value <- 100.0
 
-                                                    t4.StartTask()
-                                                    let saveParameters = SaveDirectoryVersionsParameters()
-                                                    saveParameters.DirectoryVersions <- newDirectoryVersions.Select(fun dv -> dv.ToDirectoryVersion).ToList()
-                                                    let! uploadDirectoryVersions = Directory.SaveDirectoryVersions saveParameters
-                                                    t4.Value <- 100.0
+                                                t4.StartTask()
+                                                let saveParameters = SaveDirectoryVersionsParameters()
+                                                saveParameters.DirectoryVersions <- newDirectoryVersions.Select(fun dv -> dv.ToDirectoryVersion).ToList()
+                                                let! uploadDirectoryVersions = Directory.SaveDirectoryVersions saveParameters
+                                                t4.Value <- 100.0
 
-                                                    t5.StartTask()
-                                                    let! saveResult = createSaveReference newGraceStatus.Index[rootDirectoryId] $"Save created during branch switch." (getCorrelationId parseResult)
-                                                    match saveResult with 
-                                                    | Ok returnValue  -> ()
-                                                    | Error error ->
-                                                        logToAnsiConsole Colors.Error $"{error}"
-                                                    t5.Value <- 100.0
-                                                else
-                                                    // Save is not enabled on this branch, so we can skip all of the above.
-                                                    t1.Value <- 100.0
-                                                    t2.Value <- 100.0
-                                                    t3.Value <- 100.0
-                                                    t4.Value <- 100.0
-                                                    t5.Value <- 100.0
-                                                    // Get current values from the current branch based on finding no differences, because we're not creating a save or uploading anything.
-                                                    let! (updatedGraceStatus, newDirectoryVersions) = getNewGraceStatusAndDirectoryVersions previousGraceStatus (List<FileSystemDifference>())
-                                                    newGraceStatus <- updatedGraceStatus
-                                                    rootDirectoryId <- newGraceStatus.RootDirectoryId
-                                                    rootDirectorySha256Hash <- newGraceStatus.RootDirectorySha256Hash
-                                                    previousDirectoryIds <- newGraceStatus.Index.Keys.ToHashSet()
-                                            t6.StartTask()
-                                            // If we have a branch name or ID to switch to, cool, let's do it.
-                                            //logToAnsiConsole Colors.Verbose $"parameters.BranchName: {parameters.BranchName}; parameters.BranchId: {parameters.BranchId}."
-                                    
-                                            if (not <| String.IsNullOrEmpty(parameters.BranchId) && parseResult.FindResultFor(Options.branchId).IsImplicit = false)
-                                                || (not <| String.IsNullOrEmpty(parameters.BranchName) && parseResult.FindResultFor(Options.branchName).IsImplicit = false) then
-                                                // First, let's make sure we're not switching to the current branch, which is a no-op.
-                                                //if not <| ((parseResult.FindResultFor(Options.branchId).IsImplicit = false && parameters.BranchId = Current().BranchId.ToString())
-                                                //    || (parseResult.FindResultFor(Options.branchName).IsImplicit = false && parameters.BranchName = Current().BranchName.ToString())) then
-                                                //if not <| parseResult.FindResultFor(Options.branchId).IsImplicit 
-                                                    // Get branch information based on Id and name.
-                                                //logToAnsiConsole Colors.Verbose "Get branch information based on Id and name."
-                                                let getParameters = Parameters.Branch.GetBranchParameters( 
-                                                    OwnerId = parameters.OwnerId, OwnerName = parameters.OwnerName,
-                                                    OrganizationId = parameters.OrganizationId, OrganizationName = parameters.OrganizationName,
-                                                    RepositoryId = parameters.RepositoryId, RepositoryName = parameters.RepositoryName,
-                                                    CorrelationId = parameters.CorrelationId)
-                                                if not <| parseResult.FindResultFor(Options.branchId).IsImplicit then getParameters.BranchId <- parameters.BranchId
-                                                if not <| parseResult.FindResultFor(Options.branchName).IsImplicit then getParameters.BranchName <- parameters.BranchName
-                                                let! branchGetResult = Branch.Get(getParameters)
-                                                match branchGetResult with 
-                                                | Ok returnValue ->
-                                                    //logToAnsiConsole Colors.Verbose "Found branch information."
-                                                    let branchDto = returnValue.ReturnValue
-                                                    let getVersionParameters = 
-                                                        Parameters.Branch.GetBranchVersionParameters(BranchId = $"{branchDto.BranchId}",
-                                                            OwnerId = parameters.OwnerId, OwnerName = parameters.OwnerName,
-                                                            OrganizationId = parameters.OrganizationId, OrganizationName = parameters.OrganizationName,
-                                                            RepositoryId = $"{branchDto.RepositoryId}",
-                                                            ReferenceId = parameters.ReferenceId, Sha256Hash = parameters.Sha256Hash, CorrelationId = parameters.CorrelationId)
-                                                    //logToAnsiConsole Colors.Verbose "Calling GetVersion."
-                                                    let! result = Branch.GetVersion getVersionParameters
-                                                    t6.Value <- 100.0
-
-                                                    t7.StartTask()
-                                                    match result with
-                                                    | Ok returnValue ->
-                                                        //logToAnsiConsole Colors.Verbose "Succeeded calling Branch.GetVersion."
-                                                        let directoryIds = returnValue.ReturnValue
-                                                        let missingDirectoryIds = directoryIds.Where(fun directoryId -> not <| previousDirectoryIds.Contains(directoryId)).ToList()
-                                        
-                                                        // Get missing directory versions from server.
-                                                        let getByDirectoryIdParameters = Parameters.Directory.GetByDirectoryIdsParameters(RepositoryId = parameters.RepositoryId, DirectoryId = $"{rootDirectoryId}", DirectoryIds = missingDirectoryIds)
-                                                        match! Directory.GetByDirectoryIds getByDirectoryIdParameters with
-                                                        | Ok returnValue ->
-                                                            //logToAnsiConsole Colors.Verbose $"Succeeded calling Directory.GetByDirectoryIds."
-                                                            // Create a new version of GraceStatus that includes the new DirectoryVersions.
-                                                            let newDirectoryVersions = returnValue.ReturnValue
-                                                            let newerGraceStatus = updateGraceStatusWithNewDirectoryVersionsFromServer newGraceStatus newDirectoryVersions
-                                                            //logToAnsiConsole Colors.Verbose $"Succeeded calling updateGraceStatusWithNewDirectoryVersions."
-
-                                                            // Identify files that we don't already have in object cache and download them.
-                                                            for directoryVersion in newerGraceStatus.Index.Values do
-                                                                match! downloadFilesFromObjectStorage directoryVersion.Files (getCorrelationId parseResult) with
-                                                                | Ok _ -> 
-                                                                    //logToAnsiConsole Colors.Verbose $"Succeeded downloading files from object storage for {directoryVersion.RelativePath}."
-                                                                    ()
-                                                                | Error error -> 
-                                                                    logToAnsiConsole Colors.Verbose $"Failed downloading files from object storage for {directoryVersion.RelativePath}."
-                                                                    logToAnsiConsole Colors.Error $"{error}"
-
-                                                            // Write the UpdatesInProgress file to let grace watch know to ignore these changes.
-                                                            // This file is deleted in the finally clause.
-                                                            do! File.WriteAllTextAsync(getUpdateInProgressFileName(), "This file won't exist for long.")
-
-                                                            // Update working directory based on new GraceStatus.Index
-                                                            updateWorkingDirectory newGraceStatus newerGraceStatus newDirectoryVersions
-                                                            //logToAnsiConsole Colors.Verbose $"Succeeded calling updateWorkingDirectory."
-
-                                                            // Save the new Grace Status.
-                                                            do! writeGraceStatusFile newerGraceStatus
-
-                                                            // Update graceconfig.json.
-                                                            let configuration = Current()
-                                                            configuration.BranchId <- branchDto.BranchId
-                                                            configuration.BranchName <- branchDto.BranchName
-                                                            updateConfiguration configuration
-                                                        
-                                                            File.Delete(getUpdateInProgressFileName())
-                                                        | Error error -> 
-                                                            logToAnsiConsole Colors.Verbose $"Failed calling Directory.GetByDirectoryIds."
-                                                            logToAnsiConsole Colors.Error $"{error}"
-                                                    | Error error ->
-                                                        logToAnsiConsole Colors.Verbose "Failed calling GetVersion."
-                                                        logToAnsiConsole Colors.Error $"{error}"
-                                                    t7.Value <- 100
-                                                | Error error -> logToAnsiConsole Colors.Error $"{error}"
-                                    
-                                                return 0
-                                                //else
-                                                //    logToAnsiConsole Colors.Highlighted $"The specified branch is already the current branch."
-                                                //    t5.StopTask()
-                                                //    t6.StopTask()
-                                                //    return -1
+                                                t5.StartTask()
+                                                let! saveResult = createSaveReference newGraceStatus.Index[rootDirectoryId] $"Save created during branch switch." (getCorrelationId parseResult)
+                                                match saveResult with 
+                                                | Ok returnValue  -> ()
+                                                | Error error ->
+                                                    logToAnsiConsole Colors.Error $"{error}"
+                                                t5.Value <- 100.0
                                             else
-                                                logToAnsiConsole Colors.Error (BranchError.getErrorMessage BranchError.EitherBranchIdOrBranchNameRequired)
-                                                t6.StopTask()
-                                                t7.StopTask()
-                                                return -1
-                                        })
-                            else
-                                let! previousGraceStatus = readGraceStatusFile()
-                                let mutable newGraceStatus = previousGraceStatus
+                                                // Save is not enabled on this branch, so we can skip all of the above.
+                                                t1.Value <- 100.0
+                                                t2.Value <- 100.0
+                                                t3.Value <- 100.0
+                                                t4.Value <- 100.0
+                                                t5.Value <- 100.0
+                                                // Get current values from the current branch based on finding no differences, because we're not creating a save or uploading anything.
+                                                let! (updatedGraceStatus, newDirectoryVersions) = getNewGraceStatusAndDirectoryVersions previousGraceStatus (List<FileSystemDifference>())
+                                                newGraceStatus <- updatedGraceStatus
+                                                rootDirectoryId <- newGraceStatus.RootDirectoryId
+                                                rootDirectorySha256Hash <- newGraceStatus.RootDirectorySha256Hash
+                                                previousDirectoryIds <- newGraceStatus.Index.Keys.ToHashSet()
+                                        t6.StartTask()
+                                        // If we have a branch name or ID to switch to, cool, let's do it.
+                                        //logToAnsiConsole Colors.Verbose $"parameters.BranchName: {parameters.BranchName}; parameters.BranchId: {parameters.BranchId}."
+                                    
+                                        if (not <| String.IsNullOrEmpty(parameters.BranchId) && parseResult.FindResultFor(Options.branchId).IsImplicit = false)
+                                            || (not <| String.IsNullOrEmpty(parameters.BranchName) && parseResult.FindResultFor(Options.branchName).IsImplicit = false) then
+                                            // First, let's make sure we're not switching to the current branch, which is a no-op.
+                                            //if not <| ((parseResult.FindResultFor(Options.branchId).IsImplicit = false && parameters.BranchId = Current().BranchId.ToString())
+                                            //    || (parseResult.FindResultFor(Options.branchName).IsImplicit = false && parameters.BranchName = Current().BranchName.ToString())) then
+                                            //if not <| parseResult.FindResultFor(Options.branchId).IsImplicit 
+                                                // Get branch information based on Id and name.
+                                            //logToAnsiConsole Colors.Verbose "Get branch information based on Id and name."
+                                            let getParameters = Parameters.Branch.GetBranchParameters( 
+                                                OwnerId = parameters.OwnerId, OwnerName = parameters.OwnerName,
+                                                OrganizationId = parameters.OrganizationId, OrganizationName = parameters.OrganizationName,
+                                                RepositoryId = parameters.RepositoryId, RepositoryName = parameters.RepositoryName,
+                                                CorrelationId = parameters.CorrelationId)
+                                            if not <| parseResult.FindResultFor(Options.branchId).IsImplicit then getParameters.BranchId <- parameters.BranchId
+                                            if not <| parseResult.FindResultFor(Options.branchName).IsImplicit then getParameters.BranchName <- parameters.BranchName
+                                            let! branchGetResult = Branch.Get(getParameters)
+                                            match branchGetResult with 
+                                            | Ok returnValue ->
+                                                //logToAnsiConsole Colors.Verbose "Found branch information."
+                                                let branchDto = returnValue.ReturnValue
+                                                let getVersionParameters = 
+                                                    Parameters.Branch.GetBranchVersionParameters(BranchId = $"{branchDto.BranchId}",
+                                                        OwnerId = parameters.OwnerId, OwnerName = parameters.OwnerName,
+                                                        OrganizationId = parameters.OrganizationId, OrganizationName = parameters.OrganizationName,
+                                                        RepositoryId = $"{branchDto.RepositoryId}",
+                                                        ReferenceId = parameters.ReferenceId, Sha256Hash = parameters.Sha256Hash, CorrelationId = parameters.CorrelationId)
+                                                //logToAnsiConsole Colors.Verbose "Calling GetVersion."
+                                                let! result = Branch.GetVersion getVersionParameters
+                                                t6.Value <- 100.0
 
-                                if currentBranch.ReturnValue.SaveEnabled then
-                                    match! getGraceWatchStatus() with
-                                    | Some graceWatchStatus ->
-                                        rootDirectoryId <- graceWatchStatus.RootDirectoryId
-                                        rootDirectorySha256Hash <- graceWatchStatus.RootDirectorySha256Hash
-                                        previousDirectoryIds <- graceWatchStatus.DirectoryIds
-                                    | None ->
-                                        let! differences = scanForDifferences previousGraceStatus
+                                                t7.StartTask()
+                                                match result with
+                                                | Ok returnValue ->
+                                                    //logToAnsiConsole Colors.Verbose "Succeeded calling Branch.GetVersion."
+                                                    let directoryIds = returnValue.ReturnValue
+                                                    let missingDirectoryIds = directoryIds.Where(fun directoryId -> not <| previousDirectoryIds.Contains(directoryId)).ToList()
+                                        
+                                                    // Get missing directory versions from server.
+                                                    let getByDirectoryIdParameters = Parameters.Directory.GetByDirectoryIdsParameters(RepositoryId = parameters.RepositoryId, DirectoryId = $"{rootDirectoryId}", DirectoryIds = missingDirectoryIds)
+                                                    match! Directory.GetByDirectoryIds getByDirectoryIdParameters with
+                                                    | Ok returnValue ->
+                                                        //logToAnsiConsole Colors.Verbose $"Succeeded calling Directory.GetByDirectoryIds."
+                                                        // Create a new version of GraceStatus that includes the new DirectoryVersions.
+                                                        let newDirectoryVersions = returnValue.ReturnValue
+                                                        let newerGraceStatus = updateGraceStatusWithNewDirectoryVersionsFromServer newGraceStatus newDirectoryVersions
+                                                        //logToAnsiConsole Colors.Verbose $"Succeeded calling updateGraceStatusWithNewDirectoryVersions."
 
-                                        let! (updatedGraceStatus, newDirectoryVersions) = getNewGraceStatusAndDirectoryVersions previousGraceStatus differences
-                                        newGraceStatus <- updatedGraceStatus
-                                        rootDirectoryId <- newGraceStatus.RootDirectoryId
-                                        rootDirectorySha256Hash <- newGraceStatus.RootDirectorySha256Hash
-                                        previousDirectoryIds <- newGraceStatus.Index.Keys.ToHashSet()
+                                                        // Identify files that we don't already have in object cache and download them.
+                                                        for directoryVersion in newerGraceStatus.Index.Values do
+                                                            match! downloadFilesFromObjectStorage directoryVersion.Files (getCorrelationId parseResult) with
+                                                            | Ok _ -> 
+                                                                //logToAnsiConsole Colors.Verbose $"Succeeded downloading files from object storage for {directoryVersion.RelativePath}."
+                                                                ()
+                                                            | Error error -> 
+                                                                logToAnsiConsole Colors.Verbose $"Failed downloading files from object storage for {directoryVersion.RelativePath}."
+                                                                logToAnsiConsole Colors.Error $"{error}"
 
-                                        let updatedRelativePaths = 
-                                            differences.Select(fun difference ->
-                                                match difference.DifferenceType with
-                                                | Add -> match difference.FileSystemEntryType with | FileSystemEntryType.File -> Some difference.RelativePath | FileSystemEntryType.Directory -> None
-                                                | Change -> match difference.FileSystemEntryType with | FileSystemEntryType.File -> Some difference.RelativePath | FileSystemEntryType.Directory -> None
-                                                | Delete -> None)
-                                                .Where(fun relativePathOption -> relativePathOption.IsSome)
-                                                .Select(fun relativePath -> relativePath.Value)
+                                                        // Update working directory based on new GraceStatus.Index
+                                                        updateWorkingDirectory newGraceStatus newerGraceStatus newDirectoryVersions
+                                                        //logToAnsiConsole Colors.Verbose $"Succeeded calling updateWorkingDirectory."
 
-                                        let newFileVersions = updatedRelativePaths.Select(fun relativePath -> 
-                                            newDirectoryVersions.First(fun dv -> dv.Files.Exists(fun file -> file.RelativePath = relativePath)).Files.First(fun file -> file.RelativePath = relativePath))
+                                                        // Save the new Grace Status.
+                                                        do! writeGraceStatusFile newerGraceStatus
 
-                                        let! uploadResult = uploadFilesToObjectStorage newFileVersions (getCorrelationId parseResult)
+                                                        // Update graceconfig.json.
+                                                        let configuration = Current()
+                                                        configuration.BranchId <- branchDto.BranchId
+                                                        configuration.BranchName <- branchDto.BranchName
+                                                        updateConfiguration configuration
+                                                    | Error error -> 
+                                                        logToAnsiConsole Colors.Verbose $"Failed calling Directory.GetByDirectoryIds."
+                                                        logToAnsiConsole Colors.Error $"{error}"
+                                                | Error error ->
+                                                    logToAnsiConsole Colors.Verbose "Failed calling GetVersion."
+                                                    logToAnsiConsole Colors.Error $"{error}"
+                                                t7.Value <- 100
+                                            | Error error -> logToAnsiConsole Colors.Error $"{error}"
+                                    
+                                            return 0
+                                            //else
+                                            //    logToAnsiConsole Colors.Highlighted $"The specified branch is already the current branch."
+                                            //    t5.StopTask()
+                                            //    t6.StopTask()
+                                            //    return -1
+                                        else
+                                            logToAnsiConsole Colors.Error (BranchError.getErrorMessage BranchError.EitherBranchIdOrBranchNameRequired)
+                                            t6.StopTask()
+                                            t7.StopTask()
+                                            return -1
+                                    })
+                        else
+                            let! previousGraceStatus = readGraceStatusFile()
+                            let mutable newGraceStatus = previousGraceStatus
 
-                                        let saveParameters = SaveDirectoryVersionsParameters()
-                                        saveParameters.DirectoryVersions <- newDirectoryVersions.Select(fun dv -> dv.ToDirectoryVersion).ToList()
-                                        let! uploadDirectoryVersions = Directory.SaveDirectoryVersions saveParameters
+                            if currentBranch.ReturnValue.SaveEnabled then
+                                match! getGraceWatchStatus() with
+                                | Some graceWatchStatus ->
+                                    rootDirectoryId <- graceWatchStatus.RootDirectoryId
+                                    rootDirectorySha256Hash <- graceWatchStatus.RootDirectorySha256Hash
+                                    previousDirectoryIds <- graceWatchStatus.DirectoryIds
+                                | None ->
+                                    let! differences = scanForDifferences previousGraceStatus
 
-                                        let! saveResult = createSaveReference newGraceStatus.Index[rootDirectoryId] $"Save created during branch switch." (getCorrelationId parseResult)
-                                        match saveResult with 
-                                        | Ok returnValue  -> ()
-                                        | Error error ->
-                                            logToAnsiConsole Colors.Error $"{error}"
-                                else
-                                    // Save is not enabled on this branch, so we can skip all of the above.
-                                    // Get current values from the current branch based on finding no differences, because we're not creating a save or uploading anything.
-                                    let! (updatedGraceStatus, newDirectoryVersions) = getNewGraceStatusAndDirectoryVersions previousGraceStatus (List<FileSystemDifference>())
+                                    let! (updatedGraceStatus, newDirectoryVersions) = getNewGraceStatusAndDirectoryVersions previousGraceStatus differences
                                     newGraceStatus <- updatedGraceStatus
                                     rootDirectoryId <- newGraceStatus.RootDirectoryId
                                     rootDirectorySha256Hash <- newGraceStatus.RootDirectorySha256Hash
                                     previousDirectoryIds <- newGraceStatus.Index.Keys.ToHashSet()
+
+                                    let updatedRelativePaths = 
+                                        differences.Select(fun difference ->
+                                            match difference.DifferenceType with
+                                            | Add -> match difference.FileSystemEntryType with | FileSystemEntryType.File -> Some difference.RelativePath | FileSystemEntryType.Directory -> None
+                                            | Change -> match difference.FileSystemEntryType with | FileSystemEntryType.File -> Some difference.RelativePath | FileSystemEntryType.Directory -> None
+                                            | Delete -> None)
+                                            .Where(fun relativePathOption -> relativePathOption.IsSome)
+                                            .Select(fun relativePath -> relativePath.Value)
+
+                                    let newFileVersions = updatedRelativePaths.Select(fun relativePath -> 
+                                        newDirectoryVersions.First(fun dv -> dv.Files.Exists(fun file -> file.RelativePath = relativePath)).Files.First(fun file -> file.RelativePath = relativePath))
+
+                                    let! uploadResult = uploadFilesToObjectStorage newFileVersions (getCorrelationId parseResult)
+
+                                    let saveParameters = SaveDirectoryVersionsParameters()
+                                    saveParameters.DirectoryVersions <- newDirectoryVersions.Select(fun dv -> dv.ToDirectoryVersion).ToList()
+                                    let! uploadDirectoryVersions = Directory.SaveDirectoryVersions saveParameters
+
+                                    let! saveResult = createSaveReference newGraceStatus.Index[rootDirectoryId] $"Save created during branch switch." (getCorrelationId parseResult)
+                                    match saveResult with 
+                                    | Ok returnValue  -> ()
+                                    | Error error ->
+                                        logToAnsiConsole Colors.Error $"{error}"
+                            else
+                                // Save is not enabled on this branch, so we can skip all of the above.
+                                // Get current values from the current branch based on finding no differences, because we're not creating a save or uploading anything.
+                                let! (updatedGraceStatus, newDirectoryVersions) = getNewGraceStatusAndDirectoryVersions previousGraceStatus (List<FileSystemDifference>())
+                                newGraceStatus <- updatedGraceStatus
+                                rootDirectoryId <- newGraceStatus.RootDirectoryId
+                                rootDirectorySha256Hash <- newGraceStatus.RootDirectorySha256Hash
+                                previousDirectoryIds <- newGraceStatus.Index.Keys.ToHashSet()
                        
-                                // If we have a branch name or ID to switch to, cool, let's do it.
-                                //logToAnsiConsole Colors.Verbose $"parameters.BranchName: {parameters.BranchName}; parameters.BranchId: {parameters.BranchId}."
+                            // If we have a branch name or ID to switch to, cool, let's do it.
+                            //logToAnsiConsole Colors.Verbose $"parameters.BranchName: {parameters.BranchName}; parameters.BranchId: {parameters.BranchId}."
                         
-                                if (not <| String.IsNullOrEmpty(parameters.BranchId) && parseResult.FindResultFor(Options.branchId).IsImplicit = false)
-                                    || (not <| String.IsNullOrEmpty(parameters.BranchName) && parseResult.FindResultFor(Options.branchName).IsImplicit = false) then
-                                    // First, let's make sure we're not switching to the current branch, which is a no-op.
-                                    //if not <| ((parseResult.FindResultFor(Options.branchId).IsImplicit = false && parameters.BranchId = Current().BranchId.ToString())
-                                    //    || (parseResult.FindResultFor(Options.branchName).IsImplicit = false && parameters.BranchName = Current().BranchName.ToString())) then
-                                    //if not <| parseResult.FindResultFor(Options.branchId).IsImplicit 
-                                        // Get branch information based on Id and name.
-                                    //logToAnsiConsole Colors.Verbose "Get branch information based on Id and name."
-                                    let getParameters = Parameters.Branch.GetBranchParameters( 
-                                        OwnerId = parameters.OwnerId, OwnerName = parameters.OwnerName,
-                                        OrganizationId = parameters.OrganizationId, OrganizationName = parameters.OrganizationName,
-                                        RepositoryId = parameters.RepositoryId, RepositoryName = parameters.RepositoryName,
-                                        CorrelationId = parameters.CorrelationId)
-                                    if not <| parseResult.FindResultFor(Options.branchId).IsImplicit then getParameters.BranchId <- parameters.BranchId
-                                    if not <| parseResult.FindResultFor(Options.branchName).IsImplicit then getParameters.BranchName <- parameters.BranchName
-                                    let! branchGetResult = Branch.Get(getParameters)
-                                    match branchGetResult with 
+                            if (not <| String.IsNullOrEmpty(parameters.BranchId) && parseResult.FindResultFor(Options.branchId).IsImplicit = false)
+                                || (not <| String.IsNullOrEmpty(parameters.BranchName) && parseResult.FindResultFor(Options.branchName).IsImplicit = false) then
+                                // First, let's make sure we're not switching to the current branch, which is a no-op.
+                                //if not <| ((parseResult.FindResultFor(Options.branchId).IsImplicit = false && parameters.BranchId = Current().BranchId.ToString())
+                                //    || (parseResult.FindResultFor(Options.branchName).IsImplicit = false && parameters.BranchName = Current().BranchName.ToString())) then
+                                //if not <| parseResult.FindResultFor(Options.branchId).IsImplicit 
+                                    // Get branch information based on Id and name.
+                                //logToAnsiConsole Colors.Verbose "Get branch information based on Id and name."
+                                let getParameters = Parameters.Branch.GetBranchParameters( 
+                                    OwnerId = parameters.OwnerId, OwnerName = parameters.OwnerName,
+                                    OrganizationId = parameters.OrganizationId, OrganizationName = parameters.OrganizationName,
+                                    RepositoryId = parameters.RepositoryId, RepositoryName = parameters.RepositoryName,
+                                    CorrelationId = parameters.CorrelationId)
+                                if not <| parseResult.FindResultFor(Options.branchId).IsImplicit then getParameters.BranchId <- parameters.BranchId
+                                if not <| parseResult.FindResultFor(Options.branchName).IsImplicit then getParameters.BranchName <- parameters.BranchName
+                                let! branchGetResult = Branch.Get(getParameters)
+                                match branchGetResult with 
+                                | Ok returnValue ->
+                                    //logToAnsiConsole Colors.Verbose "Found branch information."
+                                    let branchDto = returnValue.ReturnValue
+                                    let getVersionParameters = 
+                                        Parameters.Branch.GetBranchVersionParameters(BranchId = $"{branchDto.BranchId}",
+                                            OwnerId = parameters.OwnerId, OwnerName = parameters.OwnerName,
+                                            OrganizationId = parameters.OrganizationId, OrganizationName = parameters.OrganizationName,
+                                            RepositoryId = $"{branchDto.RepositoryId}",
+                                            ReferenceId = parameters.ReferenceId, Sha256Hash = parameters.Sha256Hash, CorrelationId = parameters.CorrelationId)
+                                    //logToAnsiConsole Colors.Verbose "Calling GetVersion."
+                                    let! result = Branch.GetVersion getVersionParameters
+
+                                    match result with
                                     | Ok returnValue ->
-                                        //logToAnsiConsole Colors.Verbose "Found branch information."
-                                        let branchDto = returnValue.ReturnValue
-                                        let getVersionParameters = 
-                                            Parameters.Branch.GetBranchVersionParameters(BranchId = $"{branchDto.BranchId}",
-                                                OwnerId = parameters.OwnerId, OwnerName = parameters.OwnerName,
-                                                OrganizationId = parameters.OrganizationId, OrganizationName = parameters.OrganizationName,
-                                                RepositoryId = $"{branchDto.RepositoryId}",
-                                                ReferenceId = parameters.ReferenceId, Sha256Hash = parameters.Sha256Hash, CorrelationId = parameters.CorrelationId)
-                                        //logToAnsiConsole Colors.Verbose "Calling GetVersion."
-                                        let! result = Branch.GetVersion getVersionParameters
-
-                                        match result with
-                                        | Ok returnValue ->
-                                            //logToAnsiConsole Colors.Verbose "Succeeded calling Branch.GetVersion."
-                                            let directoryIds = returnValue.ReturnValue
-                                            let missingDirectoryIds = directoryIds.Where(fun directoryId -> not <| previousDirectoryIds.Contains(directoryId)).ToList()
+                                        //logToAnsiConsole Colors.Verbose "Succeeded calling Branch.GetVersion."
+                                        let directoryIds = returnValue.ReturnValue
+                                        let missingDirectoryIds = directoryIds.Where(fun directoryId -> not <| previousDirectoryIds.Contains(directoryId)).ToList()
                             
-                                            // Get missing directory versions from server.
-                                            let getByDirectoryIdParameters = Parameters.Directory.GetByDirectoryIdsParameters(RepositoryId = parameters.RepositoryId, DirectoryId = $"{rootDirectoryId}", DirectoryIds = missingDirectoryIds)
-                                            match! Directory.GetByDirectoryIds getByDirectoryIdParameters with
-                                            | Ok returnValue ->
-                                                //logToAnsiConsole Colors.Verbose $"Succeeded calling Directory.GetByDirectoryIds."
-                                                // Create a new version of GraceStatus that includes the new DirectoryVersions.
-                                                let newDirectoryVersions = returnValue.ReturnValue
-                                                let newerGraceStatus = updateGraceStatusWithNewDirectoryVersionsFromServer newGraceStatus newDirectoryVersions
-                                                //logToAnsiConsole Colors.Verbose $"Succeeded calling updateGraceStatusWithNewDirectoryVersions."
+                                        // Get missing directory versions from server.
+                                        let getByDirectoryIdParameters = Parameters.Directory.GetByDirectoryIdsParameters(RepositoryId = parameters.RepositoryId, DirectoryId = $"{rootDirectoryId}", DirectoryIds = missingDirectoryIds)
+                                        match! Directory.GetByDirectoryIds getByDirectoryIdParameters with
+                                        | Ok returnValue ->
+                                            //logToAnsiConsole Colors.Verbose $"Succeeded calling Directory.GetByDirectoryIds."
+                                            // Create a new version of GraceStatus that includes the new DirectoryVersions.
+                                            let newDirectoryVersions = returnValue.ReturnValue
+                                            let newerGraceStatus = updateGraceStatusWithNewDirectoryVersionsFromServer newGraceStatus newDirectoryVersions
+                                            //logToAnsiConsole Colors.Verbose $"Succeeded calling updateGraceStatusWithNewDirectoryVersions."
 
-                                                // Identify files that we don't already have in object cache and download them.
-                                                for directoryVersion in newerGraceStatus.Index.Values do
-                                                    match! downloadFilesFromObjectStorage directoryVersion.Files (getCorrelationId parseResult) with
-                                                    | Ok _ -> 
-                                                        //logToAnsiConsole Colors.Verbose $"Succeeded downloading files from object storage for {directoryVersion.RelativePath}."
-                                                        ()
-                                                    | Error error -> 
-                                                        logToAnsiConsole Colors.Verbose $"Failed downloading files from object storage for {directoryVersion.RelativePath}."
-                                                        logToAnsiConsole Colors.Error $"{error}"
+                                            // Identify files that we don't already have in object cache and download them.
+                                            for directoryVersion in newerGraceStatus.Index.Values do
+                                                match! downloadFilesFromObjectStorage directoryVersion.Files (getCorrelationId parseResult) with
+                                                | Ok _ -> 
+                                                    //logToAnsiConsole Colors.Verbose $"Succeeded downloading files from object storage for {directoryVersion.RelativePath}."
+                                                    ()
+                                                | Error error -> 
+                                                    logToAnsiConsole Colors.Verbose $"Failed downloading files from object storage for {directoryVersion.RelativePath}."
+                                                    logToAnsiConsole Colors.Error $"{error}"
 
-                                                // Update working directory based on new GraceStatus.Index
-                                                updateWorkingDirectory newGraceStatus newerGraceStatus newDirectoryVersions
-                                                //logToAnsiConsole Colors.Verbose $"Succeeded calling updateWorkingDirectory."
+                                            // Update working directory based on new GraceStatus.Index
+                                            updateWorkingDirectory newGraceStatus newerGraceStatus newDirectoryVersions
+                                            //logToAnsiConsole Colors.Verbose $"Succeeded calling updateWorkingDirectory."
 
-                                                // Save the new Grace Status.
-                                                do! writeGraceStatusFile newerGraceStatus
+                                            // Save the new Grace Status.
+                                            do! writeGraceStatusFile newerGraceStatus
 
-                                                // Update graceconfig.json.
-                                                let configuration = Current()
-                                                configuration.BranchId <- branchDto.BranchId
-                                                configuration.BranchName <- branchDto.BranchName
-                                                updateConfiguration configuration
-                                            | Error error -> 
-                                                logToAnsiConsole Colors.Verbose $"Failed calling Directory.GetByDirectoryIds."
-                                                logToAnsiConsole Colors.Error (Markup.Escape($"{error}"))
-                                        | Error error ->
-                                            logToAnsiConsole Colors.Verbose "Failed calling GetVersion."
+                                            // Update graceconfig.json.
+                                            let configuration = Current()
+                                            configuration.BranchId <- branchDto.BranchId
+                                            configuration.BranchName <- branchDto.BranchName
+                                            updateConfiguration configuration
+                                        | Error error -> 
+                                            logToAnsiConsole Colors.Verbose $"Failed calling Directory.GetByDirectoryIds."
                                             logToAnsiConsole Colors.Error (Markup.Escape($"{error}"))
-                                    | Error error -> logToAnsiConsole Colors.Error (Markup.Escape($"{error}"))
+                                    | Error error ->
+                                        logToAnsiConsole Colors.Verbose "Failed calling GetVersion."
+                                        logToAnsiConsole Colors.Error (Markup.Escape($"{error}"))
+                                | Error error -> logToAnsiConsole Colors.Error (Markup.Escape($"{error}"))
                         
-                                    return 0
-                                else
-                                    logToAnsiConsole Colors.Highlighted $"Not implemented yet."
-                                    return -1
-                        | Error error -> return -1
+                                return 0
+                            else
+                                logToAnsiConsole Colors.Highlighted $"Not implemented yet."
+                                return -1
                     | Error error -> return -1
-                with
-                    | ex -> return -1
-            finally
-                File.Delete(getUpdateInProgressFileName())
+                | Error error -> return -1
+            with
+                | ex -> return -1
         }
     let private Switch =
         CommandHandler.Create(fun (parseResult: ParseResult) (switchParameters: SwitchParameters) ->
             task {
-                let! result = switchHandler2 parseResult switchParameters
-                return result
+                try
+                    // Write the UpdatesInProgress file to let grace watch know to ignore these changes.
+                    do! File.WriteAllTextAsync(updateInProgressFileName, "`grace switch` is in progress.")
+                    let! result = switchHandler2 parseResult switchParameters
+                    return result
+                finally
+                    File.Delete(updateInProgressFileName)
             })
 
     type RebaseParameters() =
@@ -1606,9 +1601,10 @@ module Branch =
             // --------------------------------------------------------------------------------------------------------------------------------------
             
             // First, get the current branchDto so we have the latest promotion that it's based on.
-            let branchGetParameters = Parameters.Branch.GetBranchParameters(OwnerId = $"{Current().OwnerId}", 
-                OrganizationId = $"{Current().OrganizationId}", RepositoryId = $"{Current().RepositoryId}", BranchId = $"{Current().BranchId}",
-                CorrelationId = parameters.CorrelationId)
+            let branchGetParameters = Parameters.Branch.GetBranchParameters(OwnerId = parameters.OwnerId, OwnerName = parameters.OwnerName,
+                                OrganizationId = parameters.OrganizationId, OrganizationName = parameters.OrganizationName,
+                                RepositoryId = parameters.RepositoryId, RepositoryName = parameters.RepositoryName, 
+                                BranchId = parameters.BranchId, BranchName = parameters.BranchName, CorrelationId = parameters.CorrelationId)
             match! Branch.Get(branchGetParameters) with
             | Ok returnValue ->
                 let branchDto = returnValue.ReturnValue
@@ -1623,9 +1619,10 @@ module Branch =
                         return 0
                     else
                         // Now, get ReferenceDtos for current.BasedOn and parent.LatestPromotion so we have their DirectoryId's.
-                        let getReferencesByReferenceIdParameters = Parameters.Repository.GetReferencesByReferenceIdParameters(OwnerId = $"{Current().OwnerId}", 
-                            OrganizationId = $"{Current().OrganizationId}", RepositoryId = $"{Current().RepositoryId}", CorrelationId = parameters.CorrelationId,
-                            ReferenceIds = [| branchDto.BasedOn; branchDto.LatestCommit; parentBranchDto.LatestPromotion |])
+                        let getReferencesByReferenceIdParameters = Parameters.Repository.GetReferencesByReferenceIdParameters(OwnerId = parameters.OwnerId, OwnerName = parameters.OwnerName,
+                                OrganizationId = parameters.OrganizationId, OrganizationName = parameters.OrganizationName,
+                                RepositoryId = $"{branchDto.RepositoryId}", CorrelationId = parameters.CorrelationId,
+                                ReferenceIds = [| branchDto.BasedOn; branchDto.LatestCommit; parentBranchDto.LatestPromotion |])
                         match! Repository.GetReferencesByReferenceId(getReferencesByReferenceIdParameters) with
                         | Ok returnValue ->
                             let referenceDtos = returnValue.ReturnValue
@@ -1636,7 +1633,7 @@ module Branch =
                             // Get the latest reference from the current branch.
                             let getReferencesParameters = Parameters.Branch.GetReferencesParameters(OwnerId = parameters.OwnerId, OwnerName = parameters.OwnerName,
                                 OrganizationId = parameters.OrganizationId, OrganizationName = parameters.OrganizationName,
-                                RepositoryId = parameters.RepositoryId, RepositoryName = parameters.RepositoryName,
+                                RepositoryId = $"{branchDto.RepositoryId}", 
                                 BranchId = $"{branchDto.BranchId}", MaxCount = 1, CorrelationId = parameters.CorrelationId)
                             //logToAnsiConsole Colors.Verbose $"getReferencesParameters: {getReferencesParameters |> serialize)}"
                             match! Branch.GetReferences(getReferencesParameters) with
@@ -1649,7 +1646,9 @@ module Branch =
                                     task {
                                         if basedOn.DirectoryId <> DirectoryId.Empty then
                                             // First diff: parent promotion that current branch is based on vs. parent's latest promotion.
-                                            let diffParameters = Parameters.Diff.GetDiffParameters(DirectoryId1 = basedOn.DirectoryId, DirectoryId2 = parentLatestPromotion.DirectoryId, CorrelationId = parameters.CorrelationId)
+                                            let diffParameters = Parameters.Diff.GetDiffParameters(OwnerId = parameters.OwnerId, OwnerName = parameters.OwnerName,
+                                                OrganizationId = parameters.OrganizationId, OrganizationName = parameters.OrganizationName,
+                                                RepositoryId = $"{branchDto.RepositoryId}", DirectoryId1 = basedOn.DirectoryId, DirectoryId2 = parentLatestPromotion.DirectoryId, CorrelationId = parameters.CorrelationId)
                                             logToAnsiConsole Colors.Verbose $"First diff: {Markup.Escape(serialize diffParameters)}"
                                             let! firstDiff = Diff.GetDiff(diffParameters)
 
@@ -1660,7 +1659,9 @@ module Branch =
                                             | Error error -> logToAnsiConsole Colors.Error (Markup.Escape($"{error}"))
 
                                             // Second diff: latest reference on current branch vs. parent promotion that current branch is based on.
-                                            let diffParameters = Parameters.Diff.GetDiffParameters(DirectoryId1 = latestReference.DirectoryId, DirectoryId2 = basedOn.DirectoryId, CorrelationId = parameters.CorrelationId)
+                                            let diffParameters = Parameters.Diff.GetDiffParameters(OwnerId = parameters.OwnerId, OwnerName = parameters.OwnerName,
+                                                OrganizationId = parameters.OrganizationId, OrganizationName = parameters.OrganizationName,
+                                                RepositoryId = $"{branchDto.RepositoryId}", DirectoryId1 = latestReference.DirectoryId, DirectoryId2 = basedOn.DirectoryId, CorrelationId = parameters.CorrelationId)
                                             logToAnsiConsole Colors.Verbose $"Second diff: {Markup.Escape(serialize diffParameters)}"
                                             let! secondDiff = Diff.GetDiff(diffParameters)
 
@@ -1669,7 +1670,9 @@ module Branch =
                                         else
                                             // This should only happen when first creating a repository, when main has no promotions.
                                             // Only one diff possible: latest reference on current branch vs. parent's latest promotion.
-                                            let diffParameters = Parameters.Diff.GetDiffParameters(DirectoryId1 = latestReference.DirectoryId, DirectoryId2 = parentLatestPromotion.DirectoryId, CorrelationId = parameters.CorrelationId)
+                                            let diffParameters = Parameters.Diff.GetDiffParameters(OwnerId = parameters.OwnerId, OwnerName = parameters.OwnerName,
+                                                OrganizationId = parameters.OrganizationId, OrganizationName = parameters.OrganizationName,
+                                                RepositoryId = $"{branchDto.RepositoryId}", DirectoryId1 = latestReference.DirectoryId, DirectoryId2 = parentLatestPromotion.DirectoryId, CorrelationId = parameters.CorrelationId)
                                             logToAnsiConsole Colors.Verbose $"Initial diff: {Markup.Escape(serialize diffParameters)}"
                                             let! diff = Diff.GetDiff(diffParameters)
                                             let returnValue = Result.partition [diff]
@@ -1771,19 +1774,80 @@ module Branch =
                                                     AnsiConsole.MarkupLine($"[{Colors.Important}]fileVersion2.Sha256Hash: {fileVersion2.Value.Sha256Hash}; fileVersion2.LastWriteTimeUTC: {fileVersion2.Value.LastWriteTimeUtc}.[/]")
                                                     potentialPromotionConflicts <- true
 
+                                        /// Create new directory versions and updates Grace Status with them.
+                                        let getNewGraceStatusAndDirectoryVersions (showOutput, graceStatus, currentBranch: BranchDto, differences: IEnumerable<FileSystemDifference>) =
+                                            task {
+                                                if differences.Count() > 0 then
+                                                    let! (updatedGraceStatus, newDirectoryVersions) = getNewGraceStatusAndDirectoryVersions graceStatus differences
+                                                    return Ok (updatedGraceStatus, newDirectoryVersions)
+                                                else
+                                                    return Ok (graceStatus, List<LocalDirectoryVersion>())
+                                            }
+
+                                        /// Upload new DirectoryVersion records to the server.
+                                        let uploadNewDirectoryVersions (currentBranch: BranchDto) (newDirectoryVersions: List<LocalDirectoryVersion>) =
+                                            task {
+                                                if currentBranch.SaveEnabled && newDirectoryVersions.Any() then
+                                                    let saveParameters = SaveDirectoryVersionsParameters()
+                                                    saveParameters.DirectoryVersions <- newDirectoryVersions.Select(fun dv -> dv.ToDirectoryVersion).ToList()
+                                                    match! Directory.SaveDirectoryVersions saveParameters with
+                                                    | Ok returnValue ->
+                                                        return Ok ()
+                                                    | Error error ->
+                                                        return Error error
+                                                else
+                                                    return Ok ()
+                                            }
+
                                         if not <| potentialPromotionConflicts then
                                             // Yay! No promotion conflicts.
-                                            let rebaseParameters = Parameters.Branch.RebaseParameters(BranchId = $"{branchDto.BranchId}", RepositoryId = $"{branchDto.RepositoryId}",
+                                            let mutable newGraceStatus = graceStatus
+
+                                            // Update the GraceStatus file with the new file versions (and therefore new LocalDirectoryVersion's) we just put in place.
+                                            // filesToDownload is, conveniently, the list of files we're changing in the rebase.
+                                            match! getNewGraceStatusAndDirectoryVersions (parseResult |> hasOutput, graceStatus, branchDto, filesToDownload) with
+                                            | Ok (updatedGraceStatus, newDirectoryVersions) ->
+                                                // Ensure that previous DirectoryVersions for a given path are deleted from GraceStatus.
+                                                newDirectoryVersions |> Seq.iter (fun localDirectoryVersion -> 
+                                                    let directoryVersionsWithSameRelativePath = updatedGraceStatus.Index.Values.Where(fun dv -> dv.RelativePath = localDirectoryVersion.RelativePath)
+                                                    if directoryVersionsWithSameRelativePath.Count() > 1 then
+                                                        // Delete all but the most recent DirectoryVersion for this path.
+                                                        directoryVersionsWithSameRelativePath |> Seq.where (fun dv -> dv.DirectoryId <> localDirectoryVersion.DirectoryId) |> Seq.iter (fun dv -> 
+                                                            let mutable localDirectoryVersion = LocalDirectoryVersion.Default
+                                                            updatedGraceStatus.Index.Remove(dv.DirectoryId, &localDirectoryVersion) |> ignore
+                                                        )
+                                                )
+                                                let! result = uploadNewDirectoryVersions branchDto newDirectoryVersions
+                                                do! writeGraceStatusFile updatedGraceStatus
+                                                do! updateGraceWatchInterprocessFile updatedGraceStatus
+                                                newGraceStatus <- updatedGraceStatus
+                                                
+                                            | Error error -> logToAnsiConsole Colors.Error (Markup.Escape($"{error}"))
+
+                                            // Create a save reference to mark the state of the branch after rebase.
+                                            let rootDirectoryVersion = getRootDirectoryVersion newGraceStatus
+                                            let saveReferenceParameters = Parameters.Branch.CreateReferenceParameters(BranchId = $"{branchDto.BranchId}", RepositoryId = $"{branchDto.RepositoryId}",
                                                 OwnerId = parameters.OwnerId, OwnerName = parameters.OwnerName,
                                                 OrganizationId = parameters.OrganizationId, OrganizationName = parameters.OrganizationName,
-                                                BasedOn = parentLatestPromotion.ReferenceId)
-                                            match! Branch.Rebase(rebaseParameters) with
+                                                Sha256Hash = rootDirectoryVersion.Sha256Hash, DirectoryId = rootDirectoryVersion.DirectoryId,
+                                                Message = $"Save after rebase from {parentBranchDto.BranchName}; {getShortSha256Hash parentLatestPromotion.Sha256Hash} - {parentLatestPromotion.ReferenceText}.")
+                                            match! Branch.Save(saveReferenceParameters) with
                                             | Ok returnValue ->
-                                                AnsiConsole.MarkupLine($"[{Colors.Important}]Rebase succeeded.[/]")
-                                                AnsiConsole.MarkupLine($"[{Colors.Verbose}]({serialize returnValue})[/]")
-                                                return 0
-                                            | Error error ->
-                                                logToAnsiConsole Colors.Error (Markup.Escape($"{error}"))
+                                                // Add a rebase event to the branch.
+                                                let rebaseParameters = Parameters.Branch.RebaseParameters(BranchId = $"{branchDto.BranchId}", RepositoryId = $"{branchDto.RepositoryId}",
+                                                    OwnerId = parameters.OwnerId, OwnerName = parameters.OwnerName,
+                                                    OrganizationId = parameters.OrganizationId, OrganizationName = parameters.OrganizationName,
+                                                    BasedOn = parentLatestPromotion.ReferenceId)
+                                                match! Branch.Rebase(rebaseParameters) with
+                                                | Ok returnValue ->
+                                                    AnsiConsole.MarkupLine($"[{Colors.Important}]Rebase succeeded.[/]")
+                                                    AnsiConsole.MarkupLine($"[{Colors.Verbose}]({serialize returnValue})[/]")
+                                                    return 0
+                                                | Error error ->
+                                                    logToAnsiConsole Colors.Error (Markup.Escape($"{error}"))
+                                                    return -1
+                                            | Error error -> 
+                                                logToAnsiConsole Colors.Error (Markup.Escape($"{error}"))                                            
                                                 return -1
                                         else 
                                             AnsiConsole.MarkupLine($"[{Colors.Highlighted}]A potential promotion conflict was detected. Rebase not successful.[/]")
@@ -1811,9 +1875,14 @@ module Branch =
     let private Rebase =
         CommandHandler.Create(fun (parseResult: ParseResult) (rebaseParameters: RebaseParameters) ->
             task {
-                let! graceStatus = readGraceStatusFile()
-                let! result = rebaseHandler parseResult (rebaseParameters |> normalizeIdsAndNames parseResult) graceStatus
-                return result
+                try
+                    Directory.CreateDirectory(Path.GetDirectoryName(updateInProgressFileName)) |> ignore
+                    do! File.WriteAllTextAsync(updateInProgressFileName, "`grace rebase` is in progress.")
+                    let! graceStatus = readGraceStatusFile()
+                    let! result = rebaseHandler parseResult (rebaseParameters |> normalizeIdsAndNames parseResult) graceStatus
+                    return result
+                finally
+                    File.Delete(updateInProgressFileName)
             })
 
     type StatusParameters() =

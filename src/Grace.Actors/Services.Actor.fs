@@ -989,7 +989,8 @@ module Services =
                 // Add the results to the list in the same order as the supplied referenceIds.
                 referenceIds |> Seq.iter (fun referenceId -> 
                     if referenceId <> ReferenceId.Empty then 
-                        referenceDtos.Add(queryResults[referenceId]) 
+                        if queryResults.ContainsKey(referenceId) then
+                            referenceDtos.Add(queryResults[referenceId]) 
                     else
                         // In case the caller supplied an empty referenceId, add a default ReferenceDto.
                         referenceDtos.Add(ReferenceDto.Default))

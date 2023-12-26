@@ -428,15 +428,17 @@ module Services =
             | ObjectStorageProvider.Unknown ->
                 return Ok ()
             | AzureBlobStorage -> 
-                let anyErrors = files.ToArray()
+                let results = files.ToArray()
                                 |> Array.where (fun f -> not <| File.Exists(f.FullObjectPath))
                                 |> Array.Parallel.map (fun f -> 
                                     (task {
                                         return! Storage.GetFileFromObjectStorage f.ToFileVersion correlationId
                                     }).Result)
-                                |> Array.exists (fun result -> match result with | Ok _ -> false | Error _ -> true)
-                if anyErrors then
-                    return Error "Some files could not be downloaded from object storage."
+                let (results, errors) = results |> Array.partition (fun result -> match result with | Ok _ -> true | Error _ -> false)
+                if errors.Count() > 0 then
+                    let sb = StringBuilder($"Some files could not be downloaded from object storage.{Environment.NewLine}")
+                    errors |> Seq.iter(fun e -> match e with | Ok _ -> () | Error e -> sb.AppendLine(e.Error) |> ignore)
+                    return Error (sb.ToString())
                 else
                     return Ok ()
             | AWSS3 -> 
@@ -540,7 +542,7 @@ module Services =
     /// Gets a list of new or updated LocalDirectoryVersions that reflect changes in the working directory.
     /// 
     /// If an empty list of differences is passed in, returns the same GraceStatus that was passed in, and an empty list of LocalDirectoryVersions.
-    let getNewGraceStatusAndDirectoryVersions (previousGraceStatus: GraceStatus) (differences: List<FileSystemDifference>) =
+    let getNewGraceStatusAndDirectoryVersions (previousGraceStatus: GraceStatus) (differences: IEnumerable<FileSystemDifference>) =
         task {
             /// Holds DirectoryVersions that have already been changed, so we can make more changes to them if needed.
             let changedDirectoryVersions = ConcurrentDictionary<RelativePath, LocalDirectoryVersion>()
@@ -862,7 +864,7 @@ module Services =
         newGraceStatus
 
     /// Gets the file name used to indicate to `grace watch` that updates are in progress from another Grace command, and that it should ignore them.
-    let getUpdateInProgressFileName() = getNativeFilePath (Path.Combine(Environment.GetEnvironmentVariable("temp"), $"grace-UpdatesInProgress.txt"))
+    let updateInProgressFileName = getNativeFilePath (Path.Combine(Path.GetTempPath(), "Grace", Constants.UpdateInProgressFileName))
 
     /// Updates the working directory to match the contents of new DirectoryVersions.
     ///

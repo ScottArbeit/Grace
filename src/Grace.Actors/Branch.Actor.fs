@@ -131,9 +131,9 @@ module Branch =
         override this.OnPostActorMethodAsync(context) =
             let duration_ms = (getCurrentInstant().Minus(actorStartTime).TotalMilliseconds).ToString("F3")
             if String.IsNullOrEmpty(currentCommand) then
-                log.LogInformation("{CurrentInstant}: Finished {ActorName}.{MethodName}; Id: {Id}; Duration: {duration_ms}ms.", getCurrentInstantExtended(), actorName, context.MethodName, this.Id, duration_ms)
+                log.LogInformation("{CurrentInstant}: Finished {ActorName}.{MethodName}; Id: {Id}; Name: {Name}; Duration: {duration_ms}ms.", getCurrentInstantExtended(), actorName, context.MethodName, this.Id, branchDto.BranchName, duration_ms)
             else
-                log.LogInformation("{CurrentInstant}: Finished {ActorName}.{MethodName}; Command: {Command}; Id: {Id}; Duration: {duration_ms}ms.", getCurrentInstantExtended(), actorName, context.MethodName, currentCommand, this.Id, duration_ms)
+                log.LogInformation("{CurrentInstant}: Finished {ActorName}.{MethodName}; Command: {Command}; Id: {Id}; Name: {Name}; Duration: {duration_ms}ms.", getCurrentInstantExtended(), actorName, context.MethodName, currentCommand, this.Id, branchDto.BranchName, duration_ms)
             logScope.Dispose()
             Task.CompletedTask
 

@@ -62,7 +62,7 @@ module Watch =
         logToConsole $"In Delete: filePath: {filePath}"
 
     let isNotDirectory path = not <| Directory.Exists(path)      
-    let updateInProgress() = File.Exists(getUpdateInProgressFileName())
+    let updateInProgress() = File.Exists(updateInProgressFileName)
     let updateNotInProgress() = not <| updateInProgress()
 
     let OnCreated (args: FileSystemEventArgs) =
@@ -118,9 +118,30 @@ module Watch =
         let correlationId = Guid.NewGuid().ToString()
         logToAnsiConsole Colors.Error $"I saw that the FileSystemWatcher threw an exception: {args.GetException().Message}. grace watch should be restarted."
 
-    /// Creates a FileSystemWatcher for the given root directory.
-    let createFileSystemWatcher rootDirectory =
-        let fileSystemWatcher = new FileSystemWatcher(rootDirectory)
+    let OnGraceUpdateInProgressCreated (args: FileSystemEventArgs) =
+        if args.FullPath = updateInProgressFileName then
+            if updateInProgress() then
+                logToAnsiConsole Colors.Important $"Update is in progress from another Grace instance."
+            else
+                logToAnsiConsole Colors.Important $"{updateInProgressFileName} should already exist, but it doesn't."
+
+    let OnGraceUpdateInProgressChanged (args: FileSystemEventArgs) =
+        if args.FullPath = updateInProgressFileName then
+            if updateInProgress() then
+                logToAnsiConsole Colors.Important $"Update is in progress from another Grace instance."
+            else
+                logToAnsiConsole Colors.Important $"{updateInProgressFileName} should already exist, but it doesn't."
+
+    let OnGraceUpdateInProgressDeleted (args: FileSystemEventArgs) =
+        if args.FullPath = updateInProgressFileName then
+            if updateNotInProgress() then
+                logToAnsiConsole Colors.Important $"Update has finished in another Grace instance."
+            else
+                logToAnsiConsole Colors.Important $"{updateInProgressFileName} should have been deleted, but it hasn't yet."
+
+    /// Creates a FileSystemWatcher for the given path.
+    let createFileSystemWatcher path =
+        let fileSystemWatcher = new FileSystemWatcher(path)
         fileSystemWatcher.InternalBufferSize <- (64 * 1024)   // Default is 4K, choosing maximum of 64K for safety.
         fileSystemWatcher.IncludeSubdirectories <- true
         fileSystemWatcher.NotifyFilter <- NotifyFilters.DirectoryName ||| NotifyFilters.FileName ||| NotifyFilters.LastWrite ||| NotifyFilters.Security
@@ -288,13 +309,19 @@ module Watch =
             task {
                 try
                     // Create the FileSystemWatcher, but don't enable it yet.
-                    use fileSystemWatcher = createFileSystemWatcher (Current().RootDirectory)
-                    use created = Observable.FromEventPattern<FileSystemEventArgs>(fileSystemWatcher, "Created").Select(fun e -> e.EventArgs).Subscribe(OnCreated)
-                    use changed = Observable.FromEventPattern<FileSystemEventArgs>(fileSystemWatcher, "Changed").Select(fun e -> e.EventArgs).Subscribe(OnChanged)
-                    use deleted = Observable.FromEventPattern<FileSystemEventArgs>(fileSystemWatcher, "Deleted").Select(fun e -> e.EventArgs).Subscribe(OnDeleted)
-                    use renamed = Observable.FromEventPattern<RenamedEventArgs>(fileSystemWatcher, "Renamed")   .Select(fun e -> e.EventArgs).Subscribe(OnRenamed)
-                    use errored = Observable.FromEventPattern<ErrorEventArgs>(fileSystemWatcher, "Error")       .Select(fun e -> e.EventArgs).Subscribe(OnError)    // I want all of the errors.
+                    use rootDirectoryFileSystemWatcher = createFileSystemWatcher (Current().RootDirectory)
+                    use created = Observable.FromEventPattern<FileSystemEventArgs>(rootDirectoryFileSystemWatcher, "Created").Select(fun e -> e.EventArgs).Subscribe(OnCreated)
+                    use changed = Observable.FromEventPattern<FileSystemEventArgs>(rootDirectoryFileSystemWatcher, "Changed").Select(fun e -> e.EventArgs).Subscribe(OnChanged)
+                    use deleted = Observable.FromEventPattern<FileSystemEventArgs>(rootDirectoryFileSystemWatcher, "Deleted").Select(fun e -> e.EventArgs).Subscribe(OnDeleted)
+                    use renamed = Observable.FromEventPattern<RenamedEventArgs>(rootDirectoryFileSystemWatcher, "Renamed")   .Select(fun e -> e.EventArgs).Subscribe(OnRenamed)
+                    use errored = Observable.FromEventPattern<ErrorEventArgs>(rootDirectoryFileSystemWatcher, "Error")       .Select(fun e -> e.EventArgs).Subscribe(OnError)    // I want all of the errors.
                 
+                    Directory.CreateDirectory(Path.GetDirectoryName(updateInProgressFileName)) |> ignore
+                    use updateInProgressFileSystemWatcher = createFileSystemWatcher (Path.GetDirectoryName(updateInProgressFileName))
+                    use updateInProgressChanged = Observable.FromEventPattern<FileSystemEventArgs>(updateInProgressFileSystemWatcher, "Created").Select(fun e -> e.EventArgs).Subscribe(OnGraceUpdateInProgressCreated)
+                    use updateInProgressChanged = Observable.FromEventPattern<FileSystemEventArgs>(updateInProgressFileSystemWatcher, "Changed").Select(fun e -> e.EventArgs).Subscribe(OnGraceUpdateInProgressChanged)
+                    use updateInProgressDeleted = Observable.FromEventPattern<FileSystemEventArgs>(updateInProgressFileSystemWatcher, "Deleted").Select(fun e -> e.EventArgs).Subscribe(OnGraceUpdateInProgressDeleted)
+
                     // Load the Grace Index file.
                     let! status = readGraceStatusFile()
                     graceStatus <- status
@@ -303,7 +330,8 @@ module Watch =
                     do! updateGraceWatchInterprocessFile graceStatus
 
                     // Enable the FileSystemWatcher.
-                    fileSystemWatcher.EnableRaisingEvents <- true
+                    rootDirectoryFileSystemWatcher.EnableRaisingEvents <- true
+                    updateInProgressFileSystemWatcher.EnableRaisingEvents <- true
 
                     let timerTimeSpan = TimeSpan.FromSeconds(1.0)
                     logToAnsiConsole Colors.Verbose $"The change processor timer will tick every {timerTimeSpan.TotalSeconds:F1} seconds."

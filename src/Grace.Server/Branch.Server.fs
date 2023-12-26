@@ -209,6 +209,7 @@ module Branch =
                        String.isValidGraceName parameters.BranchName InvalidBranchName
                        String.isNotEmpty parameters.Message MessageIsRequired
                        String.maxLength parameters.Message 2048 StringIsTooLong
+                       String.isValidSha256Hash parameters.Sha256Hash Sha256HashIsRequired
                        Owner.ownerExists parameters.OwnerId parameters.OwnerName OwnerDoesNotExist
                        Organization.organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName OrganizationDoesNotExist
                        Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName RepositoryDoesNotExist
@@ -231,6 +232,7 @@ module Branch =
                        String.isValidGraceName parameters.BranchName InvalidBranchName
                        String.isNotEmpty parameters.Message MessageIsRequired
                        String.maxLength parameters.Message 2048 StringIsTooLong
+                       String.isValidSha256Hash parameters.Sha256Hash Sha256HashIsRequired
                        Owner.ownerExists parameters.OwnerId parameters.OwnerName OwnerDoesNotExist
                        Organization.organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName OrganizationDoesNotExist
                        Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName RepositoryDoesNotExist
@@ -253,6 +255,7 @@ module Branch =
                        String.isValidGraceName parameters.BranchName InvalidBranchName
                        Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
                        String.maxLength parameters.Message 2048 StringIsTooLong
+                       String.isValidSha256Hash parameters.Sha256Hash Sha256HashIsRequired
                        Owner.ownerExists parameters.OwnerId parameters.OwnerName OwnerDoesNotExist
                        Organization.organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName OrganizationDoesNotExist
                        Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName RepositoryDoesNotExist
@@ -275,6 +278,7 @@ module Branch =
                        String.isValidGraceName parameters.BranchName InvalidBranchName
                        Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
                        String.maxLength parameters.Message 4096 StringIsTooLong
+                       String.isValidSha256Hash parameters.Sha256Hash Sha256HashIsRequired
                        Owner.ownerExists parameters.OwnerId parameters.OwnerName OwnerDoesNotExist
                        Organization.organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName OrganizationDoesNotExist
                        Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName RepositoryDoesNotExist
@@ -297,6 +301,7 @@ module Branch =
                        String.isValidGraceName parameters.BranchName InvalidBranchName
                        Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
                        String.maxLength parameters.Message 2048 StringIsTooLong
+                       String.isValidSha256Hash parameters.Sha256Hash Sha256HashIsRequired
                        Owner.ownerExists parameters.OwnerId parameters.OwnerName OwnerDoesNotExist
                        Organization.organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName OrganizationDoesNotExist
                        Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName RepositoryDoesNotExist
@@ -832,10 +837,7 @@ module Branch =
                                 let! latestReference = getLatestReference branchDto.BranchId
                                 match latestReference with
                                 | Some latestReference ->
-                                    let referenceActorId = Reference.GetActorId branchDto.LatestSave
-                                    let referenceActorProxy = actorProxyFactory.CreateActorProxy<IReferenceActor>(referenceActorId, ActorName.Reference)
-                                    let! referenceDto = referenceActorProxy.Get()
-                                    let directoryActorId = DirectoryVersion.GetActorId referenceDto.DirectoryId
+                                    let directoryActorId = DirectoryVersion.GetActorId latestReference.DirectoryId
                                     let directoryActorProxy = actorProxyFactory.CreateActorProxy<IDirectoryVersionActor>(directoryActorId, ActorName.DirectoryVersion)
                                     let! contents = directoryActorProxy.GetDirectoryVersionsRecursive(false)
                                     return contents
