@@ -65,13 +65,18 @@ module Owner =
             let activateStartTime = getCurrentInstant()
             let stateManager = this.StateManager
             task {
+                let mutable message = String.Empty
                 let! retrievedDto = Storage.RetrieveState<OwnerDto> stateManager (dtoStateName)
                 match retrievedDto with
-                    | Some retrievedDto -> ownerDto <- retrievedDto
-                    | None -> ownerDto <- OwnerDto.Default
+                    | Some retrievedDto -> 
+                        ownerDto <- retrievedDto
+                        message <- "Retrieved from database."
+                    | None -> 
+                        ownerDto <- OwnerDto.Default
+                        message <- "Not found in database."
 
                 let duration_ms = getCurrentInstant().Minus(activateStartTime).TotalMilliseconds.ToString("F3")
-                log.LogInformation("{CurrentInstant}: Activated {ActorType} {ActorId}. Retrieved from storage in {duration_ms}ms.", getCurrentInstantExtended(), actorName, host.Id, duration_ms)
+                log.LogInformation("{CurrentInstant}: Activated {ActorType} {ActorId}. {message} Duration: {duration_ms}ms.", getCurrentInstantExtended(), actorName, host.Id, message, duration_ms)
             } :> Task
 
         member private this.SetMaintenanceReminder() =

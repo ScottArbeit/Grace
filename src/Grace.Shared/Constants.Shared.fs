@@ -147,7 +147,7 @@ module Constants =
     let BlobCacheControl = "public,max-age=86400,no-transform"
 
     /// The expiration time for a Shared Access Signature token, in minutes.
-    let SharedAccessSignatureExpiration = 15.0
+    let SharedAccessSignatureExpiration = 2.0
 
     /// The path that indicates the root directory of the repository.
     let RootDirectoryPath = "."

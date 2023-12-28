@@ -129,7 +129,7 @@ module Services =
                 let blobSasBuilder = BlobSasBuilder(permission, DateTimeOffset.UtcNow.Add(TimeSpan.FromMinutes(Constants.SharedAccessSignatureExpiration)))
                 blobSasBuilder.BlobName <- Path.Combine($"{fileVersion.RelativePath}", fileVersion.GetObjectFileName)
                 blobSasBuilder.BlobContainerName <- containerName
-                blobSasBuilder.StartsOn <- DateTimeOffset.UtcNow.Subtract(TimeSpan.FromMinutes(Constants.SharedAccessSignatureExpiration))
+                blobSasBuilder.StartsOn <- DateTimeOffset.UtcNow.Subtract(TimeSpan.FromSeconds(15.0))
                 let sasUriParameters = blobSasBuilder.ToSasQueryParameters(sharedKeyCredential)
                 return Ok $"{blobContainerClient.Uri}/{fileVersion.RelativePath}/{fileVersion.GetObjectFileName}?{sasUriParameters}"
             | Error error -> return Error error

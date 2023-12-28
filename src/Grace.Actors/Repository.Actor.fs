@@ -56,13 +56,18 @@ module Repository =
             let activateStartTime = getCurrentInstant()
             let stateManager = this.StateManager
             task {
+                let mutable message = String.Empty
                 let! retrievedDto = Storage.RetrieveState<RepositoryDto> stateManager dtoStateName
                 match retrievedDto with
-                    | Some retrievedDto -> repositoryDto <- retrievedDto
-                    | None -> repositoryDto <- RepositoryDto.Default
+                    | Some retrievedDto -> 
+                        repositoryDto <- retrievedDto
+                        message <- "Retrieved from database."
+                    | None -> 
+                        repositoryDto <- RepositoryDto.Default
+                        message <- "Not found in database."
 
                 let duration_ms = getCurrentInstant().Minus(activateStartTime).TotalMilliseconds.ToString("F3")
-                log.LogInformation("{CurrentInstant}: Activated {ActorType} {ActorId}. Retrieved from storage in {duration_ms}ms.", getCurrentInstantExtended(), actorName, host.Id, duration_ms)
+                log.LogInformation("{CurrentInstant}: Activated {ActorType} {ActorId}. {message} Duration: {duration_ms}ms.", getCurrentInstantExtended(), actorName, host.Id, message, duration_ms)
             } :> Task
 
         override this.OnPreActorMethodAsync(context) =

@@ -136,13 +136,18 @@ module Diff =
             let activateStartTime = getCurrentInstant()
             let stateManager = this.StateManager
             task {
+                let mutable message = String.Empty
                 let! retrievedDto = Storage.RetrieveState<DiffDto> stateManager dtoStateName
                 match retrievedDto with
-                    | Some retrievedDto -> diffDto <- retrievedDto
-                    | None -> diffDto <- DiffDto.Default
+                    | Some retrievedDto -> 
+                        diffDto <- retrievedDto
+                        message <- "Retrieved from database."
+                    | None -> 
+                        diffDto <- DiffDto.Default
+                        message <- "Not found in database."
 
                 let duration_ms = getCurrentInstant().Minus(activateStartTime).TotalMilliseconds.ToString("F3")
-                log.LogInformation("{CurrentInstant}: Activated {ActorType} {ActorId}. Retrieved from storage in {duration_ms}ms.", getCurrentInstantExtended(), actorName, host.Id, duration_ms)
+                log.LogInformation("{CurrentInstant}: Activated {ActorType} {ActorId}. {message} Duration: {duration_ms}ms.", getCurrentInstantExtended(), actorName, host.Id, message, duration_ms)
             } :> Task
 
         override this.OnPreActorMethodAsync(context) =
