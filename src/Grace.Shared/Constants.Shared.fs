@@ -69,7 +69,7 @@ module Constants =
     let GraceActorStorage = "actorstorage"
 
     /// The name of the Dapr service for Grace event pub/sub.
-    let GracePubSubService = "graceeventstream"
+    let GracePubSubService = "graceevents"
 
     /// The name of the event topic to publish to.
     let GraceEventStreamTopic = "graceeventstream"

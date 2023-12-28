@@ -135,8 +135,8 @@ module Organization =
                 
                     // Publish the event to the rest of the world.
                     let graceEvent = Events.GraceEvent.OrganizationEvent organizationEvent
-                    let message = graceEvent |> serialize
-                    do! daprClient.PublishEventAsync(GracePubSubService, GraceEventStreamTopic, message)
+                    let message = serialize graceEvent
+                    do! daprClient.PublishEventAsync(GracePubSubService, GraceEventStreamTopic, graceEvent)
 
                     // Update the Dto based on the current event.
                     organizationDto <- organizationDto |> updateDto organizationEvent.Event

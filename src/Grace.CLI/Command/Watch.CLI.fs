@@ -125,13 +125,6 @@ module Watch =
             else
                 logToAnsiConsole Colors.Important $"{updateInProgressFileName} should already exist, but it doesn't."
 
-    let OnGraceUpdateInProgressChanged (args: FileSystemEventArgs) =
-        if args.FullPath = updateInProgressFileName then
-            if updateInProgress() then
-                logToAnsiConsole Colors.Important $"Update is in progress from another Grace instance."
-            else
-                logToAnsiConsole Colors.Important $"{updateInProgressFileName} should already exist, but it doesn't."
-
     let OnGraceUpdateInProgressDeleted (args: FileSystemEventArgs) =
         if args.FullPath = updateInProgressFileName then
             if updateNotInProgress() then
@@ -319,7 +312,6 @@ module Watch =
                     Directory.CreateDirectory(Path.GetDirectoryName(updateInProgressFileName)) |> ignore
                     use updateInProgressFileSystemWatcher = createFileSystemWatcher (Path.GetDirectoryName(updateInProgressFileName))
                     use updateInProgressChanged = Observable.FromEventPattern<FileSystemEventArgs>(updateInProgressFileSystemWatcher, "Created").Select(fun e -> e.EventArgs).Subscribe(OnGraceUpdateInProgressCreated)
-                    use updateInProgressChanged = Observable.FromEventPattern<FileSystemEventArgs>(updateInProgressFileSystemWatcher, "Changed").Select(fun e -> e.EventArgs).Subscribe(OnGraceUpdateInProgressChanged)
                     use updateInProgressDeleted = Observable.FromEventPattern<FileSystemEventArgs>(updateInProgressFileSystemWatcher, "Deleted").Select(fun e -> e.EventArgs).Subscribe(OnGraceUpdateInProgressDeleted)
 
                     // Load the Grace Index file.

@@ -20,7 +20,7 @@ open Types
 
 module Reference =
 
-    let GetActorId (referenceId) = ActorId($"{referenceId}")
+    let GetActorId (referenceId: ReferenceId) = ActorId($"{referenceId}")
 
     type ReferenceActor(host: ActorHost) =
         inherit Actor (host)

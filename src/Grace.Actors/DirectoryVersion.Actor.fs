@@ -41,18 +41,22 @@ module DirectoryVersion =
             let activateStartTime = getCurrentInstant()
             let stateManager = this.StateManager
             task {
+                let mutable message = String.Empty
                 try
                     let! retrievedDto = Storage.RetrieveState<DirectoryVersion> stateManager dtoStateName
                     match retrievedDto with
-                        | Some retrievedDto -> directoryVersion <- retrievedDto
-                        | None -> ()
+                        | Some retrievedDto -> 
+                            directoryVersion <- retrievedDto
+                            message <- "Retrieved from database."
+                        | None ->
+                            message <- "Not found in database."
                 with ex ->
                     let exc = createExceptionResponse ex
                     log.LogError("{CurrentInstant} Error in {ActorType} {ActorId}.", getCurrentInstantExtended(), this.GetType().Name, host.Id)
                     log.LogError("{CurrentInstant} {ExceptionDetails}", getCurrentInstantExtended(), exc.ToString())
 
                 let duration_ms = getCurrentInstant().Minus(activateStartTime).TotalMilliseconds.ToString("F3")
-                log.LogInformation("{CurrentInstant}: Activated {ActorType} {ActorId}. Retrieved from storage in {duration_ms}ms.", getCurrentInstantExtended(), actorName, host.Id, duration_ms)
+                log.LogInformation("{CurrentInstant}: Activated {ActorType} {ActorId}. {message} Duration: {duration_ms}ms.", getCurrentInstantExtended(), actorName, host.Id, message, duration_ms)
             } :> Task
 
         override this.OnPreActorMethodAsync(context) =

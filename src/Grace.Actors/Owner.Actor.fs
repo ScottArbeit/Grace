@@ -139,8 +139,8 @@ module Owner =
 
                     // Publish the event to the rest of the world.
                     let graceEvent = Events.GraceEvent.OwnerEvent ownerEvent
-                    let message = graceEvent |> serialize
-                    do! daprClient.PublishEventAsync(GracePubSubService, GraceEventStreamTopic, message)
+                    let message = serialize graceEvent
+                    do! daprClient.PublishEventAsync(GracePubSubService, GraceEventStreamTopic, graceEvent)
 
                     let returnValue = GraceReturnValue.Create "Owner command succeeded." ownerEvent.Metadata.CorrelationId
                     returnValue.Properties.Add(nameof(OwnerId), $"{ownerDto.OwnerId}")

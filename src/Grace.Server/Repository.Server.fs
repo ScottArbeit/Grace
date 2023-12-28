@@ -47,7 +47,7 @@ module Repository =
 
     let actorProxyFactory = ApplicationContext.actorProxyFactory
 
-    let getActorProxy (context: HttpContext) (repositoryId: string) =
+    let getActorProxy (repositoryId: string) =
         let actorId = ActorId(repositoryId)
         actorProxyFactory.CreateActorProxy<IRepositoryActor>(actorId, ActorName.Repository)
 
@@ -72,7 +72,7 @@ module Repository =
 
                 let handleCommand repositoryId cmd  =
                     task {
-                        let actorProxy = getActorProxy context repositoryId
+                        let actorProxy = getActorProxy repositoryId
                 
                         let! result = actorProxy.Handle cmd (Services.createMetadata context)
                         match result with
@@ -126,7 +126,7 @@ module Repository =
                 if validationsPassed then
                     match! resolveRepositoryId parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName with
                     | Some repositoryId ->
-                        let actorProxy = getActorProxy context repositoryId
+                        let actorProxy = getActorProxy repositoryId
                         let! queryResult = query context maxCount actorProxy
                         return! context |> result200Ok (GraceReturnValue.Create queryResult (getCorrelationId context))
                     | None ->

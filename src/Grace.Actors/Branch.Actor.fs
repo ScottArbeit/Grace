@@ -24,6 +24,8 @@ open Grace.Shared.Dto.Reference
 
 module Branch =
 
+    let GetActorId (branchId: BranchId) = ActorId($"{branchId}")
+
     // Branch should support logical deletes with physical deletes set using a Dapr Timer based on a repository-level setting.
     // Branch Deletion should enumerate and delete each reference in the branch.
 
@@ -94,13 +96,18 @@ module Branch =
             let activateStartTime = getCurrentInstant()
             let stateManager = this.StateManager
             task {
+                let mutable message = String.Empty
                 let! retrievedDto = Storage.RetrieveState<BranchDto> stateManager dtoStateName
                 match retrievedDto with
-                    | Some retrievedDto -> branchDto <- retrievedDto
-                    | None -> branchDto <- BranchDto.Default
+                    | Some retrievedDto -> 
+                        branchDto <- retrievedDto
+                        message <- "Retrieved from database."
+                    | None -> 
+                        branchDto <- BranchDto.Default
+                        message <- "Not found in database."
                 
                 let duration_ms = getCurrentInstant().Minus(activateStartTime).TotalMilliseconds.ToString("F3")
-                log.LogInformation("{CurrentInstant}: Activated {ActorType} {ActorId}. Retrieved from storage in {duration_ms}ms.", getCurrentInstantExtended(), actorName, host.Id, duration_ms)
+                log.LogInformation("{CurrentInstant}: Activated {ActorType} {ActorId}. {message} Duration: {duration_ms}ms.", getCurrentInstantExtended(), actorName, host.Id, message, duration_ms)
             } :> Task
 
         member private this.SetMaintenanceReminder() =
@@ -153,8 +160,8 @@ module Branch =
 
                     // Publish the event to the rest of the world.
                     let graceEvent = Events.GraceEvent.BranchEvent branchEvent
-                    let message = graceEvent |> serialize
-                    do! daprClient.PublishEventAsync(Constants.GracePubSubService, Constants.GraceEventStreamTopic, message)
+                    let message = serialize graceEvent
+                    do! daprClient.PublishEventAsync(Constants.GracePubSubService, Constants.GraceEventStreamTopic, graceEvent)
                     
                     //let httpClient = getHttpClient branchEvent.Metadata.CorrelationId
                     //httpClient.BaseAddress <- Uri $"http://127.0.0.1:5000"

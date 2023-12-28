@@ -205,8 +205,8 @@ module Repository =
                     | Ok (branchId, referenceId) ->                   
                         // Publish the event to the rest of the world.
                         let graceEvent = Events.GraceEvent.RepositoryEvent repositoryEvent
-                        let message = graceEvent |> serialize
-                        do! daprClient.PublishEventAsync(GracePubSubService, GraceEventStreamTopic, message)
+                        let message = serialize graceEvent
+                        do! daprClient.PublishEventAsync(GracePubSubService, GraceEventStreamTopic, graceEvent)
 
                         let returnValue = GraceReturnValue.Create $"Repository command succeeded." repositoryEvent.Metadata.CorrelationId
                         returnValue.Properties.Add(nameof(OwnerId), $"{repositoryDto.OwnerId}")

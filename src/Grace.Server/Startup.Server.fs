@@ -1,6 +1,7 @@
 namespace Grace.Server
 
 open Azure.Monitor.OpenTelemetry.Exporter
+open Dapr
 open Dapr.Actors.Client
 open Dapr.Client
 open Giraffe
@@ -24,8 +25,6 @@ open Microsoft.Extensions.Configuration
 open Microsoft.Extensions.DependencyInjection
 open Microsoft.Extensions.Hosting
 open Microsoft.Extensions.Hosting.Internal
-open Swashbuckle.AspNetCore.Swagger
-open Swashbuckle.AspNetCore.SwaggerGen
 open Microsoft.OpenApi.Models
 open NodaTime
 open OpenTelemetry
@@ -34,6 +33,8 @@ open OpenTelemetry.Instrumentation.AspNetCore
 open OpenTelemetry.Metrics
 open OpenTelemetry.Resources
 open OpenTelemetry.Trace
+open Swashbuckle.AspNetCore.Swagger
+open Swashbuckle.AspNetCore.SwaggerGen
 open System
 open System.Linq
 open System.Reflection
@@ -383,8 +384,8 @@ module Application =
             // This line enables Azure SDK (i.e. CosmosDB) OpenTelemetry output, which is currently in experimental support. 
             //   When this is fully supported, we can remove it.
             AppContext.SetSwitch("Azure.Experimental.EnableActivitySource", true)
-
             app.UseW3CLogging()
+               .UseCloudEvents()
                .UseAuthentication()
                .UseStatusCodePages()
                .UseStaticFiles()

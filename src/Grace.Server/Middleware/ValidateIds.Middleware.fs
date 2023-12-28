@@ -57,10 +57,13 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
     /// Holds the property info for each parameter type.
     let propertyLookup = ConcurrentDictionary<Type, EntityProperties>()
 
+    /// Paths that we want to ignore, because they won't have Ids and Names in the body.
+    let ignorePaths = ["/healthz"; "/actors"; "/dapr"; "/notifications"]
+
     /// Gets the parameter type for the endpoint from the endpoint metadata created in Startup.Server.fs.
     let getBodyType (context: HttpContext) = 
         let path = context.Request.Path.ToString()
-        if not <| path.StartsWith("/healthz") && not <| path.StartsWith("/actors") && not <| path.StartsWith("/dapr") && not <| path.StartsWith("/notifications") then
+        if not <| (ignorePaths |> Seq.exists(fun ignorePath -> path.StartsWith(ignorePath, StringComparison.InvariantCultureIgnoreCase))) then
             let endpoint = context.GetEndpoint()
             if isNull(endpoint) then
                 log.LogDebug("{currentInstant}: Path: {context.Request.Path}; Endpoint: null.", getCurrentInstantExtended(), context.Request.Path)
@@ -256,7 +259,7 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
                 context.Request.Headers["X-MiddlewareTraceOut"] <- $"{middlewareTraceOutHeader}{nameof(ValidateIdsMiddleware)} --> ";
 
                 let elapsed = getCurrentInstant().Minus(startTime).TotalMilliseconds
-                if not <| path.StartsWith("/healthz") && not <| path.StartsWith("/actors") && not <| path.StartsWith("/dapr") && not <| path.StartsWith("/notifications") then
+                if not <| (ignorePaths |> Seq.exists(fun ignorePath -> path.StartsWith(ignorePath, StringComparison.InvariantCultureIgnoreCase))) then
                     log.LogDebug("{currentInstant}: Path: {path}; Elapsed: {elapsed}ms; Status code: {statusCode}; graceIds: {graceIds}",
                         getCurrentInstantExtended(), context.Request.Path, elapsed, context.Response.StatusCode, serialize graceIds)
 #endif

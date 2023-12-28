@@ -24,6 +24,8 @@ open Microsoft.AspNetCore.Http.Features
 
 module Notifications =
 
+    let actorProxyFactory = ApplicationContext.actorProxyFactory
+
     type IGraceClientConnection =
         abstract member RegisterParentBranch: BranchId -> BranchId -> Task
         abstract member NotifyOnPromotion: BranchId * BranchName * ReferenceId -> Task
@@ -84,43 +86,49 @@ module Notifications =
                     logToConsole $"No SignalR clients connected."
             } :> Task
 
-    [<Topic("graceEventStream", "graceeventstream")>]
+    /// Gets the ReferenceDto for the given ReferenceId.
+    let getReferenceDto referenceId =
+        task {
+            let referenceActorId = Reference.GetActorId referenceId
+            let referenceActorProxy = actorProxyFactory.CreateActorProxy<IReferenceActor>(referenceActorId, ActorName.Reference)
+            return! referenceActorProxy.Get()
+        }
+
+    /// Gets the BranchDto for the given BranchId.
+    let getBranchDto branchId =
+        task {
+            let branchActorId = Branch.GetActorId branchId
+            let branchActorProxy = actorProxyFactory.CreateActorProxy<IBranchActor>(branchActorId, ActorName.Branch)
+            return! branchActorProxy.Get()
+        }
+
+    [<Topic("graceevents", "graceeventstream")>]
     let Post: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 logToConsole $"In Notifications.Post."
                 
                 let hubContext = context.GetService<IHubContext<NotificationHub, IGraceClientConnection>>()
-                let actorProxyFactory = context.GetService<IActorProxyFactory>()
-                let actorProxyOptions = context.GetService<ActorProxyOptions>()
 
-                let! body = context.ReadBodyFromRequestAsync()
-                logToConsole $"{body}"
+                let! graceEvent = context.BindJsonAsync<GraceEvent>()
+                //logToConsole $"{serialize graceEvent}"
+                
 
                 let diffTwoDirectoryVersions directoryId1 directoryId2 =
                     task {
                         let diffActorId = Diff.GetActorId directoryId1 directoryId2
-                        let diffActorProxy = actorProxyFactory.CreateActorProxy<IDiffActor>(diffActorId, ActorName.Diff, actorProxyOptions)
+                        let diffActorProxy = actorProxyFactory.CreateActorProxy<IDiffActor>(diffActorId, ActorName.Diff)
                         let! x = diffActorProxy.Populate()
                         ()
                     }
-
-                let cloudEvent = body |> deserialize<CloudEvent<string>>
-                //let graceEvent = deserialize<GraceEvent> body
-                let graceEvent = cloudEvent.Data |> deserialize<GraceEvent>
             
                 match graceEvent with
                 | BranchEvent branchEvent ->
                     logToConsole $"Received BranchEvent: {getDiscriminatedUnionFullName branchEvent.Event} {Environment.NewLine}{branchEvent.Metadata}"
                     match branchEvent.Event with
                     | Branch.Promoted (referenceId, directoryId, sha256Hash, referenceText) -> 
-                        let referenceActorId = Reference.GetActorId referenceId
-                        let referenceActorProxy = actorProxyFactory.CreateActorProxy<IReferenceActor>(referenceActorId, ActorName.Reference, actorProxyOptions)
-                        let! referenceDto = referenceActorProxy.Get()
-
-                        let branchActorId = ActorId($"{referenceDto.BranchId}")
-                        let branchActorProxy = actorProxyFactory.CreateActorProxy<IBranchActor>(branchActorId, ActorName.Branch, actorProxyOptions)
-                        let! branchDto = branchActorProxy.Get()
+                        let! referenceDto = getReferenceDto referenceId
+                        let! branchDto = getBranchDto referenceDto.BranchId
 
                         do! hubContext.Clients.Group($"{branchDto.BranchId}").NotifyOnPromotion(branchDto.BranchId, branchDto.BranchName, referenceId)
 
@@ -130,14 +138,9 @@ module Notifications =
                             do! diffTwoDirectoryVersions latestTwoPromotions[0].DirectoryId latestTwoPromotions[1].DirectoryId
                     
                     | Branch.Committed (referenceId, directoryId, sha256Hash, referenceText) ->
-                        let referenceActorId = Reference.GetActorId referenceId
-                        let referenceActorProxy = actorProxyFactory.CreateActorProxy<IReferenceActor>(referenceActorId, ActorName.Reference, actorProxyOptions)
-                        let! referenceDto = referenceActorProxy.Get()
-
-                        let branchActorId = ActorId($"{referenceDto.BranchId}")
-                        let branchActorProxy = actorProxyFactory.CreateActorProxy<IBranchActor>(branchActorId, ActorName.Branch, actorProxyOptions)
-                        let! branchDto = branchActorProxy.Get()
-                        let! parentBranchDto = branchActorProxy.GetParentBranch()
+                        let! referenceDto = getReferenceDto referenceId
+                        let! branchDto = getBranchDto referenceDto.BranchId
+                        let! parentBranchDto = getBranchDto branchDto.ParentBranchId
 
                         do! hubContext.Clients.Group($"{branchDto.ParentBranchId}").NotifyOnCommit(branchDto.BranchName, parentBranchDto.BranchName, parentBranchDto.ParentBranchId, referenceId)
 
@@ -152,14 +155,9 @@ module Notifications =
                         | None -> ()
                         
                     | Branch.Checkpointed (referenceId, directoryId, sha256Hash, referenceText) ->
-                        let referenceActorId = Reference.GetActorId referenceId
-                        let referenceActorProxy = actorProxyFactory.CreateActorProxy<IReferenceActor>(referenceActorId, ActorName.Reference, actorProxyOptions)
-                        let! referenceDto = referenceActorProxy.Get()
-
-                        let branchActorId = ActorId($"{referenceDto.BranchId}")
-                        let branchActorProxy = actorProxyFactory.CreateActorProxy<IBranchActor>(branchActorId, ActorName.Branch, actorProxyOptions)
-                        let! branchDto = branchActorProxy.Get()
-                        let! parentBranchDto = branchActorProxy.GetParentBranch()
+                        let! referenceDto = getReferenceDto referenceId
+                        let! branchDto = getBranchDto referenceDto.BranchId
+                        let! parentBranchDto = getBranchDto branchDto.ParentBranchId
 
                         do! hubContext.Clients.Group($"{branchDto.ParentBranchId}").NotifyOnCheckpoint(branchDto.BranchName, parentBranchDto.BranchName, parentBranchDto.ParentBranchId, referenceId)
 
@@ -174,14 +172,9 @@ module Notifications =
                         | None -> ()
 
                     | Branch.Saved (referenceId, directoryId, sha256Hash, referenceText) ->
-                        let actorId = Reference.GetActorId referenceId
-                        let referenceActorProxy = actorProxyFactory.CreateActorProxy<IReferenceActor>(actorId, ActorName.Reference, actorProxyOptions)
-                        let! referenceDto = referenceActorProxy.Get()
-
-                        let branchActorId = ActorId($"{referenceDto.BranchId}")
-                        let branchActorProxy = actorProxyFactory.CreateActorProxy<IBranchActor>(branchActorId, ActorName.Branch, actorProxyOptions)
-                        let! branchDto = branchActorProxy.Get()
-                        let! parentBranchDto = branchActorProxy.GetParentBranch()
+                        let! referenceDto = getReferenceDto referenceId
+                        let! branchDto = getBranchDto referenceDto.BranchId
+                        let! parentBranchDto = getBranchDto branchDto.ParentBranchId
                         
                         do! hubContext.Clients.Group($"{branchDto.ParentBranchId}").NotifyOnSave(branchDto.BranchName, parentBranchDto.BranchName, parentBranchDto.ParentBranchId, referenceId)
 

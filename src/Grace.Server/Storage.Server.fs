@@ -57,7 +57,7 @@ module Storage =
             task {
                 try
                     let! fileVersion = context.BindJsonAsync<FileVersion>()
-                    let repositoryActor = Repository.getActorProxy context $"{fileVersion.RepositoryId}"
+                    let repositoryActor = Repository.getActorProxy $"{fileVersion.RepositoryId}"
                     let! repositoryDto = repositoryActor.Get()
                     match! getReadSharedAccessSignature repositoryDto fileVersion with
                     | Ok downloadUri ->
@@ -78,13 +78,12 @@ module Storage =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 try
-                    logToConsole $"In GetUploadUri..."
                     let! fileVersion = context.BindJsonAsync<FileVersion>()
-                    let repositoryActor = Repository.getActorProxy context $"{fileVersion.RepositoryId}"
+                    let repositoryActor = Repository.getActorProxy $"{fileVersion.RepositoryId}"
                     let! repositoryDto = repositoryActor.Get()
                     let! uploadUri = getWriteSharedAccessSignature repositoryDto fileVersion
                     context.SetStatusCode StatusCodes.Status200OK
-                    logToConsole $"fileVersion.RelativePath: {fileVersion.RelativePath}; uploadUri: {uploadUri}"
+                    log.LogDebug("In GetUploadUri(): fileVersion.RelativePath: {relativePath}; uploadUri: {uploadUri}", fileVersion.RelativePath, uploadUri)
                     return! context.WriteStringAsync $"{uploadUri}"
                 with ex ->
                     context.SetStatusCode StatusCodes.Status500InternalServerError
@@ -100,7 +99,7 @@ module Storage =
                     let! fileVersions = context.BindJsonAsync<List<FileVersion>>()
                     Activity.Current.SetTag("fileVersions.Count", $"{fileVersions.Count}") |> ignore
                     if fileVersions.Count > 0 then
-                        let repositoryActor = Repository.getActorProxy context $"{fileVersions[0].RepositoryId}"
+                        let repositoryActor = Repository.getActorProxy $"{fileVersions[0].RepositoryId}"
                         let! repositoryDto = repositoryActor.Get()
 
                         let uploadMetadata = ConcurrentQueue<UploadMetadata>()

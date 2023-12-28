@@ -844,7 +844,7 @@ module Branch =
                                 | None ->
                                     return List<DirectoryVersion>()
                             elif not <| String.IsNullOrEmpty(listContentsParameters.ReferenceId) then
-                                let referenceActorId = Reference.GetActorId listContentsParameters.ReferenceId
+                                let referenceActorId = ActorId(listContentsParameters.ReferenceId)
                                 let referenceActorProxy = actorProxyFactory.CreateActorProxy<IReferenceActor>(referenceActorId, ActorName.Reference)
                                 let! referenceDto = referenceActorProxy.Get()
                                 let directoryActorId = DirectoryVersion.GetActorId referenceDto.DirectoryId
@@ -931,7 +931,7 @@ module Branch =
                             | None -> () // This should never happen because it would get caught in validations.
                         elif not <| String.IsNullOrEmpty(parameters.ReferenceId) then
                             logToConsole $"In Branch.GetVersion: parameters.ReferenceId: {parameters.ReferenceId}"
-                            let referenceActorId = Reference.GetActorId(parameters.ReferenceId)
+                            let referenceActorId = ActorId(parameters.ReferenceId)
                             let referenceActorProxy = ApplicationContext.actorProxyFactory.CreateActorProxy<IReferenceActor>(referenceActorId, ActorName.Reference)
                             let! referenceDto = referenceActorProxy.Get()
                             logToConsole $"referenceDto.ReferenceId: {referenceDto.ReferenceId}"
