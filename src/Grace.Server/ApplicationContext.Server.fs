@@ -14,11 +14,13 @@ open Microsoft.Extensions.Caching.Memory
 open Microsoft.Extensions.Configuration
 open Microsoft.Extensions.DependencyInjection
 open Microsoft.Extensions.Logging
+open NodaTime
 open System
 open System.Collections.Concurrent
 open System.Collections.Generic
 open System.Globalization
 open System.Linq
+open System.Threading
 open System.Threading.Tasks
 open System.Net.Http
 open System
@@ -76,25 +78,33 @@ module ApplicationContext =
             let mutable isReady = false
 
             // Wait for the Dapr gRPC port to be ready.
+            logToConsole $"""----------------------------------------------------------------------------------------------
+                                Pausing to check for an active gRPC connection with the Dapr sidecar.
+                                  Grace Server cannot accept requests until we know that we can talk to Dapr.
+                                  Grace Server will wait for 1 minute for Dapr to be ready.
+                                  If no connection is made, Grace Server will exit, allowing the container to be restarted.
+                                -----------------------------------------------------------------------------------------------"""
             let mutable gRPCPort: int = 50001   // This is Dapr's default gRPC port.
             let grpcPortString = Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.DaprGrpcPort)
-            Int32.TryParse(grpcPortString, &gRPCPort) |> ignore
-            let mutable counter = 0
-            while not <| isReady do
-                do! Task.Delay(TimeSpan.FromSeconds(2.0))
-                logToConsole $"Checking if gRPC port {gRPCPort} is ready."
-                let tcpListeners = Net.NetworkInformation.IPGlobalProperties.GetIPGlobalProperties().GetActiveTcpListeners()
-                if tcpListeners.Length > 0 then logToConsole "Active TCP listeners:"
-                for t in tcpListeners do
-                    logToConsole $"{t.Address}:{t.Port} {t.AddressFamily}."
-                if tcpListeners.Any(fun tcpListener -> tcpListener.Port = gRPCPort) then
-                    logToConsole $"gRPC port is ready."
-                    isReady <- true
-                else
-                    counter <- counter + 1
-                    if counter > 1800 then
-                        logToConsole $"gRPC port is not ready after {counter} seconds. Exiting."
-                        Environment.Exit(1)
+            if Int32.TryParse(grpcPortString, &gRPCPort) then
+                let startTime = getCurrentInstant()
+                while not <| isReady do
+                    do! Task.Delay(TimeSpan.FromSeconds(2.0))
+                    logToConsole $"Checking for an active TcpListner on gRPC port {gRPCPort}."
+                    let tcpListeners = Net.NetworkInformation.IPGlobalProperties.GetIPGlobalProperties().GetActiveTcpListeners()
+                    //if tcpListeners.Length > 0 then logToConsole "Active TCP listeners:"
+                    //for t in tcpListeners do
+                    //    logToConsole $"{t.Address}:{t.Port} {t.AddressFamily}."
+                    if tcpListeners.Any(fun tcpListener -> tcpListener.Port = gRPCPort) then
+                        logToConsole $"gRPC port is ready."
+                        isReady <- true
+                    else
+                        if getCurrentInstant().Minus(startTime) > Duration.FromMinutes(1.0)  then
+                            logToConsole $"gRPC port is not ready after 60 seconds. Exiting."
+                            Environment.Exit(-1)
+            else
+                logToConsole $"Could not parse gRPC port {grpcPortString} as a port number. Exiting."
+                Environment.Exit(-1)
             
             let storageKey = Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.AzureStorageKey)
             sharedKeyCredential <- StorageSharedKeyCredential(DefaultObjectStorageAccount, storageKey)
@@ -132,7 +142,11 @@ module ApplicationContext =
             let cosmosContainer = containerResponse.Container
 
             // Create a MemoryCache instance.
-            memoryCache <- new MemoryCache(MemoryCacheOptions(), loggerFactory)
+            let memoryCacheOptions = MemoryCacheOptions()
+            memoryCacheOptions.SizeLimit <- 100L * 1024L * 1024L
+            memoryCacheOptions.TrackStatistics <- true
+            memoryCacheOptions.TrackLinkedCacheEntries <- true
+            memoryCache <- new MemoryCache(memoryCacheOptions, loggerFactory)
 
             // Inject the CosmosClient and CosmosContainer into Actor Services.
             Grace.Actors.Services.setCosmosClient cosmosClient

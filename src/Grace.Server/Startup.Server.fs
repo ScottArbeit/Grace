@@ -253,7 +253,7 @@ module Application =
             actorProxyOptions.HttpEndpoint <- $"{Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.DaprServerUri)}:{Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.DaprHttpPort)}"
             actorProxyOptions.JsonSerializerOptions <- Constants.JsonSerializerOptions
             actorProxyOptions.RequestTimeout <- TimeSpan.FromSeconds(20.0)
-            logToConsole $"actorProxyOptions.HttpEndpoint: {actorProxyOptions.HttpEndpoint}"
+            //logToConsole $"actorProxyOptions.HttpEndpoint: {actorProxyOptions.HttpEndpoint}"
             let actorProxyFactory = new ActorProxyFactory(actorProxyOptions)
             ApplicationContext.setActorProxyFactory actorProxyFactory
             ApplicationContext.setActorStateStorageProvider ActorStateStorageProvider.AzureCosmosDb
