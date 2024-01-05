@@ -334,7 +334,7 @@ Grace is written primarily in [F#](https://learn.microsoft.com/en-us/dotnet/fsha
 - **Grace.SDK** is a .NET class library that is a platform-specific projection of the Web API; it is used by Grace.CLI and wraps the HTTPS calls to Grace Server.
 - **Grace.Actors** holds the code for the Actors in the system; it is used exclusively by Grace.Server.
 - **Grace.Shared** is where all common code goes; it is used by all of the other **Grace.*** projects.
-- _(future)_ **Grace.MAUI** will contain a native GUI for Grace for Windows, Android, MacOS, and iOS (and hopefully Linux).
+- _(future)_ **Grace.Avalonia** will contain a native GUI for Grace for Windows, Android, MacOS, and iOS (and hopefully Linux).
 - _(future)_ **Grace.Blazor** will be an ASP.NET Core project containing a web UI for Grace.
 - **CosmosJsonSerializer** is a custom JSON serializer class, used when deploying Grace with Azure Cosmos DB.
 
@@ -356,7 +356,7 @@ flowchart LR
     subgraph Clients
     Grace.CLI-->Grace.SDK
     Grace.SDK-.->|HTTPS|Grace.Server
-    MAUI["(future) Grace.MAUI"]-->|"(just started)"|Grace.SDK
+    Avalonia["(future) Grace.Avalonia"]-->|"(not yet started)"|Grace.SDK
     Blazor["(future) Grace.Blazor"]-->|"(not yet started)"|Grace.SDK
     end
 
@@ -372,7 +372,7 @@ flowchart LR
     Grace.Server-->Grace.Shared
     Grace.CLI-->Grace.Shared
     Grace.SDK-->Grace.Shared
-    MAUI["(future) Grace.MAUI"]-->|"(just started)"|Grace.Shared
+    Avalonia["(future) Grace.Avalonia"]-->|"(not yet started)"|Grace.Shared
     Blazor["(future) Grace.Blazor"]-->|"(not yet started)"|Grace.Shared
 ```
 
