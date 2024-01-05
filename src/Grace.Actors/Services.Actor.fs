@@ -56,6 +56,7 @@ module Services =
     let mutable actorProxyFactory: IActorProxyFactory = null
     let setActorProxyFactory proxyFactory =
         actorProxyFactory <- proxyFactory
+    let ActorProxyFactory() = actorProxyFactory
 
     let mutable actorStateStorageProvider: ActorStateStorageProvider = ActorStateStorageProvider.Unknown
     let setActorStateStorageProvider storageProvider =

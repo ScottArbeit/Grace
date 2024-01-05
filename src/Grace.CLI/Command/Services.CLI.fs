@@ -279,7 +279,7 @@ module Services =
                             match fileSystemEntryType with
                             | FileSystemEntryType.Directory -> 
                                 // If it's a directory, just add it to the differences list.
-                                logToAnsiConsole Colors.Verbose $"scanForDifferences: Difference in directory: {relativePath}; lastWriteTimeUtc: {lastWriteTimeUtc}; knownLastWriteTimeUtc: {knownLastWriteTimeUtc}."
+                                //logToAnsiConsole Colors.Verbose $"scanForDifferences: Difference in directory: {relativePath}; lastWriteTimeUtc: {lastWriteTimeUtc}; knownLastWriteTimeUtc: {knownLastWriteTimeUtc}."
                                 differences.Push(FileSystemDifference.Create Change fileSystemEntryType relativePath)
                             | FileSystemEntryType.File -> 
                                 // If this is a file, then check that the contents have actually changed.
@@ -564,7 +564,7 @@ module Services =
                         // This is an existing directory; so we need to update it.
                         let updatedDirectoryVersion = processChangedDirectoryVersion newGraceStatus existingDirectoryVersion
                         newGraceStatus.Index.AddOrUpdate(updatedDirectoryVersion.DirectoryId, (fun _ -> updatedDirectoryVersion), (fun _ _ -> updatedDirectoryVersion)) |> ignore
-                        logToAnsiConsole Colors.Verbose $"Updated directory {difference.RelativePath} in GraceIndex."
+                        //logToAnsiConsole Colors.Verbose $"Updated directory {difference.RelativePath} in GraceIndex."
                     else
                         // This is a new directory relative path. We need to create a new LocalDirectoryVersion instance and add it to Grace Index.
                         let directoryInfo = DirectoryInfo(Path.Combine(Current().RootDirectory, difference.RelativePath))
@@ -574,7 +574,7 @@ module Services =
                     
                         // Add the newly-created LocalDirectoryVersion to the GraceIndex.
                         newGraceStatus.Index.AddOrUpdate(localDirectoryVersion.DirectoryId, (fun _ -> localDirectoryVersion), (fun _ _ -> localDirectoryVersion)) |> ignore
-                        logToAnsiConsole Colors.Verbose $"Added/updated directory {difference.RelativePath} in GraceIndex."
+                        //logToAnsiConsole Colors.Verbose $"Added/updated directory {difference.RelativePath} in GraceIndex."
 
                         // Add this DirectoryVersion for further processing.
                         changedDirectoryVersions.AddOrUpdate(difference.RelativePath, (fun _ -> localDirectoryVersion), (fun _ _ -> localDirectoryVersion)) |> ignore

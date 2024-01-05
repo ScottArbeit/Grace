@@ -1615,7 +1615,8 @@ module Branch =
                     let parentBranchDto = returnValue.ReturnValue
 
                     if branchDto.BasedOn = parentBranchDto.LatestPromotion then
-                        printfn $"The current branch is already based on the latest promotion."
+                        AnsiConsole.MarkupLine("The current branch is already based on the latest promotion in the parent branch.")
+                        AnsiConsole.MarkupLine("Run `grace status` to see more.")
                         return 0
                     else
                         // Now, get ReferenceDtos for current.BasedOn and parent.LatestPromotion so we have their DirectoryId's.
@@ -1639,7 +1640,7 @@ module Branch =
                             match! Branch.GetReferences(getReferencesParameters) with
                             | Ok returnValue ->
                                 let latestReference = if returnValue.ReturnValue.Count() > 0 then returnValue.ReturnValue.First() else ReferenceDto.Default
-                                logToAnsiConsole Colors.Verbose $"latestReference: {serialize latestReference}"
+                                //logToAnsiConsole Colors.Verbose $"latestReference: {serialize latestReference}"
                                 // Now we have all of the references we need, so we have DirectoryId's to do diffs with.
 
                                 let! (diffs, errors) =
@@ -1649,20 +1650,14 @@ module Branch =
                                             let diffParameters = Parameters.Diff.GetDiffParameters(OwnerId = parameters.OwnerId, OwnerName = parameters.OwnerName,
                                                 OrganizationId = parameters.OrganizationId, OrganizationName = parameters.OrganizationName,
                                                 RepositoryId = $"{branchDto.RepositoryId}", DirectoryId1 = basedOn.DirectoryId, DirectoryId2 = parentLatestPromotion.DirectoryId, CorrelationId = parameters.CorrelationId)
-                                            logToAnsiConsole Colors.Verbose $"First diff: {Markup.Escape(serialize diffParameters)}"
+                                            //logToAnsiConsole Colors.Verbose $"First diff: {Markup.Escape(serialize diffParameters)}"
                                             let! firstDiff = Diff.GetDiff(diffParameters)
-
-                                            match firstDiff with
-                                            | Ok returnValue ->
-                                                let diff = returnValue.ReturnValue
-                                                logToAnsiConsole Colors.Verbose $"diff: {Markup.Escape(serialize diff)}"
-                                            | Error error -> logToAnsiConsole Colors.Error (Markup.Escape($"{error}"))
 
                                             // Second diff: latest reference on current branch vs. parent promotion that current branch is based on.
                                             let diffParameters = Parameters.Diff.GetDiffParameters(OwnerId = parameters.OwnerId, OwnerName = parameters.OwnerName,
                                                 OrganizationId = parameters.OrganizationId, OrganizationName = parameters.OrganizationName,
                                                 RepositoryId = $"{branchDto.RepositoryId}", DirectoryId1 = latestReference.DirectoryId, DirectoryId2 = basedOn.DirectoryId, CorrelationId = parameters.CorrelationId)
-                                            logToAnsiConsole Colors.Verbose $"Second diff: {Markup.Escape(serialize diffParameters)}"
+                                            //logToAnsiConsole Colors.Verbose $"Second diff: {Markup.Escape(serialize diffParameters)}"
                                             let! secondDiff = Diff.GetDiff(diffParameters)
 
                                             let returnValue = Result.partition [firstDiff; secondDiff]
@@ -1673,7 +1668,7 @@ module Branch =
                                             let diffParameters = Parameters.Diff.GetDiffParameters(OwnerId = parameters.OwnerId, OwnerName = parameters.OwnerName,
                                                 OrganizationId = parameters.OrganizationId, OrganizationName = parameters.OrganizationName,
                                                 RepositoryId = $"{branchDto.RepositoryId}", DirectoryId1 = latestReference.DirectoryId, DirectoryId2 = parentLatestPromotion.DirectoryId, CorrelationId = parameters.CorrelationId)
-                                            logToAnsiConsole Colors.Verbose $"Initial diff: {Markup.Escape(serialize diffParameters)}"
+                                            //logToAnsiConsole Colors.Verbose $"Initial diff: {Markup.Escape(serialize diffParameters)}"
                                             let! diff = Diff.GetDiff(diffParameters)
                                             let returnValue = Result.partition [diff]
                                             return returnValue
@@ -1728,14 +1723,14 @@ module Branch =
                                             filesToDownload 
                                                 |> Seq.where (fun fileToDownload -> parentLatestPromotionLookup.ContainsKey($"{fileToDownload.RelativePath}")) 
                                                 |> Seq.map (fun fileToDownload -> parentLatestPromotionLookup[$"{fileToDownload.RelativePath}"])
-                                        logToAnsiConsole Colors.Verbose $"fileVersionsToDownload: {fileVersionsToDownload.Count()}"
-                                        for f in fileVersionsToDownload do
-                                            logToAnsiConsole Colors.Verbose  $"relativePath: {f.RelativePath}"
+                                        //logToAnsiConsole Colors.Verbose $"fileVersionsToDownload: {fileVersionsToDownload.Count()}"
+                                        //for f in fileVersionsToDownload do
+                                        //    logToAnsiConsole Colors.Verbose  $"relativePath: {f.RelativePath}"
 
                                         // Download those FileVersions from object storage, and copy them into the working directory.
                                         match! downloadFilesFromObjectStorage fileVersionsToDownload parameters.CorrelationId with
                                         | Ok _ -> 
-                                            logToAnsiConsole Colors.Verbose $"Succeeded in downloadFilesFromObjectStorage."
+                                            //logToAnsiConsole Colors.Verbose $"Succeeded in downloadFilesFromObjectStorage."
                                             fileVersionsToDownload |> Seq.iter (fun file -> 
                                                 logToAnsiConsole Colors.Verbose $"Copying {file.RelativePath} from {file.FullObjectPath} to {file.FullName}."
                                                 // Delete the existing file in the working directory.

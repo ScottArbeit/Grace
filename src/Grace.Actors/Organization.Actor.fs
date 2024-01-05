@@ -167,7 +167,7 @@ module Organization =
                 do! Parallel.ForEachAsync(repositories, Constants.ParallelOptions, (fun repository ct ->
                     ValueTask(task {
                         if repository.DeletedAt |> Option.isNone then
-                            let repositoryActor = this.ProxyFactory.CreateActorProxy<IRepositoryActor> (ActorId($"{repository.RepositoryId}"), Constants.ActorName.Repository)
+                            let repositoryActor = actorProxyFactory.CreateActorProxy<IRepositoryActor> (ActorId($"{repository.RepositoryId}"), Constants.ActorName.Repository)
                             let! result = repositoryActor.Handle (Commands.Repository.DeleteLogical (true, $"Cascaded from deleting organization. ownerId: {organizationDto.OwnerId}; organizationId: {organizationDto.OrganizationId}; organizationName: {organizationDto.OrganizationName}; deleteReason: {deleteReason}")) metadata
                             results.Enqueue(result)
                     })))

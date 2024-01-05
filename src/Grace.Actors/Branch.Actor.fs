@@ -215,7 +215,7 @@ module Branch =
                     task {
                         let referenceId: ReferenceId = ReferenceId.NewGuid()
                         let actorId = Reference.GetActorId referenceId
-                        let referenceActor = this.ProxyFactory.CreateActorProxy<IReferenceActor>(actorId, Constants.ActorName.Reference)
+                        let referenceActor = actorProxyFactory.CreateActorProxy<IReferenceActor>(actorId, Constants.ActorName.Reference)
                         let! referenceDto = referenceActor.Create(referenceId, branchDto.BranchId, directoryId, sha256Hash, referenceType, referenceText)
                         //branchDto.References.Add(referenceDto.CreatedAt, referenceDto)
                         return referenceId

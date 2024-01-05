@@ -143,7 +143,7 @@ module ApplicationContext =
 
             // Create a MemoryCache instance.
             let memoryCacheOptions = MemoryCacheOptions()
-            memoryCacheOptions.SizeLimit <- 100L * 1024L * 1024L
+            //memoryCacheOptions.SizeLimit <- 100L * 1024L * 1024L
             memoryCacheOptions.TrackStatistics <- true
             memoryCacheOptions.TrackLinkedCacheEntries <- true
             memoryCache <- new MemoryCache(memoryCacheOptions, loggerFactory)

@@ -6,6 +6,7 @@ open Dapr.Actors.Runtime
 open Dapr.Client
 open Grace.Actors.Constants
 open Grace.Actors.Interfaces
+open Grace.Actors.Services
 open Grace.Shared
 open Grace.Shared.Types
 open Grace.Shared.Utilities
@@ -55,15 +56,15 @@ module ContainerName =
                         else
                             let repositoryId = Guid.Parse(host.Id.GetId())
                             let repositoryActorId = ActorId($"{repositoryId}")
-                            let repositoryActorProxy = this.ProxyFactory.CreateActorProxy<IRepositoryActor>(repositoryActorId, ActorName.Repository)
+                            let repositoryActorProxy = ActorProxyFactory().CreateActorProxy<IRepositoryActor>(repositoryActorId, ActorName.Repository)
                             let! repositoryDto = repositoryActorProxy.Get()
 
                             let organizationActorId = ActorId($"{repositoryDto.OrganizationId}")
-                            let organizationActorProxy = this.ProxyFactory.CreateActorProxy<IOrganizationActor>(organizationActorId, ActorName.Organization)
+                            let organizationActorProxy = actorProxyFactory.CreateActorProxy<IOrganizationActor>(organizationActorId, ActorName.Organization)
                             let! organizationDto = organizationActorProxy.Get()
     
                             let ownerActorId = ActorId($"{repositoryDto.OwnerId}")
-                            let ownerActorProxy = this.ProxyFactory.CreateActorProxy<IOwnerActor>(ownerActorId, ActorName.Owner)
+                            let ownerActorProxy = actorProxyFactory.CreateActorProxy<IOwnerActor>(ownerActorId, ActorName.Owner)
                             let! ownerDto = ownerActorProxy.Get()
     
                             containerName <- $"{ownerDto.OwnerName}-{organizationDto.OrganizationName}-{repositoryDto.RepositoryName}".ToLowerInvariant()

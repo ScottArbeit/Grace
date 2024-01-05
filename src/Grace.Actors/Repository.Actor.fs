@@ -240,7 +240,7 @@ module Repository =
                 do! Parallel.ForEachAsync(branches, Constants.ParallelOptions, (fun branch ct ->
                     ValueTask(task {
                         if branch.DeletedAt |> Option.isNone then
-                            let branchActor = this.ProxyFactory.CreateActorProxy<IBranchActor> (ActorId($"{branch.BranchId}"), Constants.ActorName.Branch)
+                            let branchActor = actorProxyFactory.CreateActorProxy<IBranchActor> (ActorId($"{branch.BranchId}"), Constants.ActorName.Branch)
                             let! result = branchActor.Handle (Commands.Branch.DeleteLogical (true, $"Cascaded from deleting repository. ownerId: {repositoryDto.OwnerId}; organizationId: {repositoryDto.OrganizationId}; repositoryId: {repositoryDto.RepositoryId}; repositoryName: {repositoryDto.RepositoryName}; deleteReason: {deleteReason}")) metadata
                             results.Enqueue(result)
                     })))

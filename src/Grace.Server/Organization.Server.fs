@@ -25,7 +25,7 @@ open Grace.Shared.Services
 
 module Organization =
 
-    type Validations<'T when 'T :> OrganizationParameters> = 'T -> HttpContext -> ValueTask<Result<unit, OrganizationError>> array
+    type Validations<'T when 'T :> OrganizationParameters> = 'T -> ValueTask<Result<unit, OrganizationError>> array
 
     let activitySource = new ActivitySource("Organization")
 
@@ -57,7 +57,7 @@ module Organization =
                             return! context |> result400BadRequest {graceError with Properties = getPropertiesAsDictionary parameters}
                     }
 
-                let validationResults = validations parameters context
+                let validationResults = validations parameters
                 let! validationsPassed = validationResults |> allPass
                 log.LogDebug("{currentInstant}: In Organization.Server.processCommand: validationsPassed: {validationsPassed}.", getCurrentInstantExtended(), validationsPassed)
 
@@ -93,7 +93,7 @@ module Organization =
         task {
             use activity = activitySource.StartActivity("processQuery", ActivityKind.Server)
             try
-                let validationResults = validations parameters context
+                let validationResults = validations parameters
                 let! validationsPassed = validationResults |> allPass
                 if validationsPassed then
                     match! resolveOrganizationId parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName with
@@ -116,7 +116,7 @@ module Organization =
     let Create: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
-                let validations (parameters: CreateOrganizationParameters) (context: HttpContext) =
+                let validations (parameters: CreateOrganizationParameters) =
                     [| Guid.isValidAndNotEmpty parameters.OwnerId InvalidOwnerId
                        String.isValidGraceName parameters.OwnerName InvalidOwnerName
                        Input.eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
@@ -145,7 +145,7 @@ module Organization =
     let SetName: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
-                let validations (parameters: SetOrganizationNameParameters) (context: HttpContext) =
+                let validations (parameters: SetOrganizationNameParameters) =
                     [| Guid.isValidAndNotEmpty parameters.OwnerId InvalidOwnerId
                        String.isValidGraceName parameters.OwnerName InvalidOwnerName
                        Input.eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
@@ -168,7 +168,7 @@ module Organization =
     let SetType: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
-                let validations (parameters: SetOrganizationTypeParameters) (context: HttpContext) =
+                let validations (parameters: SetOrganizationTypeParameters) =
                     [| Guid.isValidAndNotEmpty parameters.OwnerId InvalidOwnerId
                        String.isValidGraceName parameters.OwnerName InvalidOwnerName
                        Input.eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
@@ -190,7 +190,7 @@ module Organization =
     let SetSearchVisibility: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
-                let validations (parameters: SetOrganizationSearchVisibilityParameters) (context: HttpContext) =
+                let validations (parameters: SetOrganizationSearchVisibilityParameters) =
                     [| Guid.isValidAndNotEmpty parameters.OwnerId InvalidOwnerId
                        String.isValidGraceName parameters.OwnerName InvalidOwnerName
                        Input.eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
@@ -213,7 +213,7 @@ module Organization =
     let SetDescription: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
-                let validations (parameters: SetOrganizationDescriptionParameters) (context: HttpContext) =
+                let validations (parameters: SetOrganizationDescriptionParameters) =
                     [| Guid.isValidAndNotEmpty parameters.OwnerId InvalidOwnerId
                        String.isValidGraceName parameters.OwnerName InvalidOwnerName
                        Input.eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
@@ -236,7 +236,7 @@ module Organization =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 try
-                    let validations (parameters: ListRepositoriesParameters) (context: HttpContext) =
+                    let validations (parameters: ListRepositoriesParameters) =
                         [| Guid.isValidAndNotEmpty parameters.OwnerId InvalidOwnerId
                            String.isValidGraceName parameters.OwnerName InvalidOwnerName
                            Input.eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
@@ -262,7 +262,7 @@ module Organization =
     let Delete: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
-                let validations (parameters: DeleteOrganizationParameters) (context: HttpContext) =
+                let validations (parameters: DeleteOrganizationParameters) =
                     [| Guid.isValidAndNotEmpty parameters.OwnerId InvalidOwnerId
                        String.isValidGraceName parameters.OwnerName InvalidOwnerName
                        Input.eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
@@ -284,7 +284,7 @@ module Organization =
     let Undelete: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
-                let validations (parameters: OrganizationParameters) (context: HttpContext) =
+                let validations (parameters: OrganizationParameters) =
                     [| Guid.isValidAndNotEmpty parameters.OwnerId InvalidOwnerId
                        String.isValidGraceName parameters.OwnerName InvalidOwnerName
                        Input.eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
@@ -307,7 +307,7 @@ module Organization =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 try
-                    let validations (parameters: GetOrganizationParameters) (context: HttpContext) =
+                    let validations (parameters: GetOrganizationParameters) =
                         [| Guid.isValidAndNotEmpty parameters.OwnerId InvalidOwnerId
                            String.isValidGraceName parameters.OwnerName InvalidOwnerName
                            Input.eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired

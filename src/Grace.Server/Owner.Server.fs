@@ -29,7 +29,7 @@ open System.Threading.Tasks
 
 module Owner =
 
-    type Validations<'T when 'T :> OwnerParameters> = 'T -> HttpContext -> ValueTask<Result<unit, OwnerError>> array
+    type Validations<'T when 'T :> OwnerParameters> = 'T -> ValueTask<Result<unit, OwnerError>> array
 
     let log = ApplicationContext.loggerFactory.CreateLogger("Owner.Server")
 
@@ -62,7 +62,7 @@ module Owner =
                             return! context |> result400BadRequest {graceError with Properties = getPropertiesAsDictionary parameters}
                     }
 
-                let validationResults = validations parameters context
+                let validationResults = validations parameters
                 let! validationsPassed = validationResults |> allPass
                 log.LogDebug("{currentInstant}: In Owner.Server.processCommand: validationsPassed: {validationsPassed}.", getCurrentInstantExtended(), validationsPassed)
 
@@ -100,7 +100,7 @@ module Owner =
         task {
             use activity = activitySource.StartActivity("processQuery", ActivityKind.Server)
             try
-                let validationResults = validations parameters context
+                let validationResults = validations parameters
                 let! validationsPassed = validationResults |> allPass
                 if validationsPassed then
                     match! resolveOwnerId parameters.OwnerId parameters.OwnerName with
@@ -123,7 +123,7 @@ module Owner =
     let Create: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
-                let validations (parameters: CreateOwnerParameters) (context: HttpContext) =
+                let validations (parameters: CreateOwnerParameters) =
                     [| String.isNotEmpty parameters.OwnerId OwnerIdIsRequired
                        Guid.isValidAndNotEmpty parameters.OwnerId InvalidOwnerId
                        String.isNotEmpty parameters.OwnerName OwnerNameIsRequired
@@ -143,7 +143,7 @@ module Owner =
     let SetName: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
-                let validations (parameters: SetOwnerNameParameters) (context: HttpContext) =
+                let validations (parameters: SetOwnerNameParameters) =
                     [| Guid.isValidAndNotEmpty parameters.OwnerId InvalidOwnerId
                        String.isValidGraceName parameters.OwnerName InvalidOwnerName
                        Input.eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
@@ -164,7 +164,7 @@ module Owner =
     let SetType: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
-                let validations (parameters: SetOwnerTypeParameters) (context: HttpContext) =
+                let validations (parameters: SetOwnerTypeParameters) =
                     [| Guid.isValidAndNotEmpty parameters.OwnerId InvalidOwnerId
                        String.isValidGraceName parameters.OwnerName InvalidOwnerName
                        Input.eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
@@ -183,7 +183,7 @@ module Owner =
     let SetSearchVisibility: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
-                let validations (parameters: SetOwnerSearchVisibilityParameters) (context: HttpContext) =
+                let validations (parameters: SetOwnerSearchVisibilityParameters) =
                     [| Guid.isValidAndNotEmpty parameters.OwnerId InvalidOwnerId
                        String.isValidGraceName parameters.OwnerName InvalidOwnerName
                        Input.eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
@@ -201,7 +201,7 @@ module Owner =
     let SetDescription: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
-                let validations (parameters: SetOwnerDescriptionParameters) (context: HttpContext) =
+                let validations (parameters: SetOwnerDescriptionParameters) =
                     [| Guid.isValidAndNotEmpty parameters.OwnerId InvalidOwnerId
                        String.isValidGraceName parameters.OwnerName InvalidOwnerName
                        Input.eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
@@ -220,7 +220,7 @@ module Owner =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 try
-                    let validations (parameters: ListOrganizationsParameters) (context: HttpContext) =
+                    let validations (parameters: ListOrganizationsParameters) =
                         [| Guid.isValidAndNotEmpty parameters.OwnerId InvalidOwnerId |]
 
                     let query (context: HttpContext) (maxCount: int) (actorProxy: IOwnerActor) =
@@ -239,7 +239,7 @@ module Owner =
     let Delete: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
-                let validations (parameters: DeleteOwnerParameters) (context: HttpContext) =
+                let validations (parameters: DeleteOwnerParameters) =
                     [| Guid.isValidAndNotEmpty parameters.OwnerId InvalidOwnerId
                        String.isValidGraceName parameters.OwnerName InvalidOwnerName
                        Input.eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
@@ -257,7 +257,7 @@ module Owner =
     let Undelete: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
-                let validations (parameters: OwnerParameters) (context: HttpContext) =
+                let validations (parameters: OwnerParameters) =
                     [| Guid.isValidAndNotEmpty parameters.OwnerId InvalidOwnerId
                        String.isValidGraceName parameters.OwnerName InvalidOwnerName
                        Input.eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
@@ -275,7 +275,7 @@ module Owner =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 try
-                    let validations (parameters: GetOwnerParameters) (context: HttpContext) =
+                    let validations (parameters: GetOwnerParameters) =
                         [| Guid.isValidAndNotEmpty parameters.OwnerId InvalidOwnerId
                            String.isValidGraceName parameters.OwnerName InvalidOwnerName
                            Input.eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired

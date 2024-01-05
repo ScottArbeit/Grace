@@ -169,7 +169,7 @@ module Owner =
                 do! Parallel.ForEachAsync(organizations, Constants.ParallelOptions, (fun organization ct ->
                     ValueTask(task {
                         if organization.DeletedAt |> Option.isNone then
-                            let organizationActor = this.ProxyFactory.CreateActorProxy<IOrganizationActor> (ActorId($"{organization.OrganizationId}"), Constants.ActorName.Organization)
+                            let organizationActor = actorProxyFactory.CreateActorProxy<IOrganizationActor> (ActorId($"{organization.OrganizationId}"), Constants.ActorName.Organization)
                             let! result = organizationActor.Handle (Commands.Organization.DeleteLogical (true, $"Cascaded from deleting owner. ownerId: {ownerDto.OwnerId}; ownerName: {ownerDto.OwnerName}; deleteReason: {deleteReason}")) metadata
                             results.Enqueue(result)
                     })))

@@ -69,6 +69,16 @@ module GraceCommand =
 
     /// The character sequences that Grace will recognize as a request for help.
     let helpOptions = [| "-h"; "/h"; "--help"; "-?"; "/?" |]
+
+    /// Gathers the available options for the current command and all its parents, which are applied hierarchically.
+    [<TailCall>]
+    let rec gatherAllOptions (command: Command) (allOptions: List<Option>) = 
+        allOptions.AddRange(command.Options)
+        let parentCommand = command.Parents.OfType<Command>().FirstOrDefault()
+        if not <| isNull parentCommand then
+            gatherAllOptions parentCommand allOptions
+        else
+            allOptions
         
     let Build =
         // Create the root of the command tree.
@@ -112,6 +122,7 @@ module GraceCommand =
 
         // Build the whole thing into a command system.        
         let commandLineBuilder = CommandLineBuilder(rootCommand)
+
         commandLineBuilder
             .UseHelp(fun helpContext ->
                 // This is where we configure how help is displayed by Grace.
@@ -130,15 +141,6 @@ module GraceCommand =
                     helpContext.HelpBuilder.CustomizeLayout(fun layoutContext ->
                         HelpBuilder.Default.GetLayout().Where(fun section -> not <| section.Method.Name.Contains("Synopsis", StringComparison.InvariantCultureIgnoreCase))
                     )
-
-                /// Gathers the available options for the current command and all its parents, which are applied hierarchically.
-                let rec gatherAllOptions (command: Command) (allOptions: List<Option>) = 
-                    allOptions.AddRange(command.Options)
-                    let parentCommand = command.Parents.OfType<Command>().FirstOrDefault()
-                    if not <| isNull parentCommand then
-                        gatherAllOptions parentCommand allOptions
-                    else
-                        allOptions
 
                 // We're passing a new List<Option> here, because we're going to be adding to it recursively in gatherAllOptions.
                 let allOptions = gatherAllOptions helpContext.Command (List<Option>())

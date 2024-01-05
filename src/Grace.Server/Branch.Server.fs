@@ -30,7 +30,7 @@ open System.Threading.Tasks
 
 module Branch =
 
-    type Validations<'T when 'T :> BranchParameters> = 'T -> HttpContext -> ValueTask<Result<unit, BranchError>> array
+    type Validations<'T when 'T :> BranchParameters> = 'T -> ValueTask<Result<unit, BranchError>> array
     
     let activitySource = new ActivitySource("Branch")
 
@@ -42,7 +42,7 @@ module Branch =
         let actorId = ActorId($"{branchId}")
         actorProxyFactory.CreateActorProxy<IBranchActor>(actorId, ActorName.Branch)
 
-    let commonValidations<'T when 'T :> BranchParameters> (parameters: 'T) (context: HttpContext) =
+    let commonValidations<'T when 'T :> BranchParameters> (parameters: 'T) =
         [| Guid.isValidAndNotEmpty parameters.OwnerId InvalidOwnerId
            String.isValidGraceName parameters.OwnerName InvalidOwnerName
            Input.eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
@@ -77,7 +77,7 @@ module Branch =
                             return! context |> result400BadRequest {graceError with Properties = getPropertiesAsDictionary parameters}
                     }
 
-                let validationResults = Array.append (commonValidations parameters context) (validations parameters context)
+                let validationResults = Array.append (commonValidations parameters) (validations parameters)
                 let! validationsPassed = validationResults |> allPass
                 log.LogDebug("{currentInstant}: In Branch.Server.processCommand: validationsPassed: {validationsPassed}.", getCurrentInstantExtended(), validationsPassed)
 
@@ -114,7 +114,7 @@ module Branch =
         task {
             use activity = activitySource.StartActivity("processQuery", ActivityKind.Server)
             try
-                let validationResults = Array.append (commonValidations parameters context) (validations parameters context)
+                let validationResults = Array.append (commonValidations parameters) (validations parameters)
                 let! validationsPassed = validationResults |> allPass
                 if validationsPassed then
                     match! resolveBranchId parameters.RepositoryId parameters.BranchId parameters.BranchName with
@@ -138,7 +138,7 @@ module Branch =
     let Create: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
-                let validations (parameters: CreateBranchParameters) (context: HttpContext) =
+                let validations (parameters: CreateBranchParameters) =
                     [| String.isNotEmpty parameters.BranchId BranchIdIsRequired
                        Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
                        String.isNotEmpty parameters.BranchName BranchNameIsRequired
@@ -183,7 +183,7 @@ module Branch =
     let Rebase: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
-                let validations (parameters: RebaseParameters) (context: HttpContext) =
+                let validations (parameters: RebaseParameters) =
                     [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
                        String.isValidGraceName parameters.BranchName InvalidBranchName
                        Branch.referenceIdExists parameters.BasedOn ReferenceIdDoesNotExist
@@ -204,7 +204,7 @@ module Branch =
     let Promote: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
-                let validations (parameters: CreateReferenceParameters) (context: HttpContext) =
+                let validations (parameters: CreateReferenceParameters) =
                     [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
                        String.isValidGraceName parameters.BranchName InvalidBranchName
                        String.isNotEmpty parameters.Message MessageIsRequired
@@ -227,7 +227,7 @@ module Branch =
     let Commit: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
-                let validations (parameters: CreateReferenceParameters) (context: HttpContext) =
+                let validations (parameters: CreateReferenceParameters) =
                     [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
                        String.isValidGraceName parameters.BranchName InvalidBranchName
                        String.isNotEmpty parameters.Message MessageIsRequired
@@ -250,7 +250,7 @@ module Branch =
     let Checkpoint: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
-                let validations (parameters: CreateReferenceParameters) (context: HttpContext) =
+                let validations (parameters: CreateReferenceParameters) =
                     [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
                        String.isValidGraceName parameters.BranchName InvalidBranchName
                        Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
@@ -273,7 +273,7 @@ module Branch =
     let Save: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
-                let validations (parameters: CreateReferenceParameters) (context: HttpContext) =
+                let validations (parameters: CreateReferenceParameters) =
                     [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
                        String.isValidGraceName parameters.BranchName InvalidBranchName
                        Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
@@ -296,7 +296,7 @@ module Branch =
     let Tag: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
-                let validations (parameters: CreateReferenceParameters) (context: HttpContext) =
+                let validations (parameters: CreateReferenceParameters) =
                     [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
                        String.isValidGraceName parameters.BranchName InvalidBranchName
                        Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
@@ -319,7 +319,7 @@ module Branch =
     let EnablePromotion: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
-                let validations (parameters: EnableFeatureParameters) (context: HttpContext) =
+                let validations (parameters: EnableFeatureParameters) =
                     [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
                        String.isValidGraceName parameters.BranchName InvalidBranchName
                        Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
@@ -339,7 +339,7 @@ module Branch =
     let EnableCommit: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
-                let validations (parameters: EnableFeatureParameters) (context: HttpContext) =
+                let validations (parameters: EnableFeatureParameters) =
                     [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
                        String.isValidGraceName parameters.BranchName InvalidBranchName
                        Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
@@ -359,7 +359,7 @@ module Branch =
     let EnableCheckpoint: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
-                let validations (parameters: EnableFeatureParameters) (context: HttpContext) =
+                let validations (parameters: EnableFeatureParameters) =
                     [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
                        String.isValidGraceName parameters.BranchName InvalidBranchName
                        Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
@@ -379,7 +379,7 @@ module Branch =
     let EnableSave: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
-                let validations (parameters: EnableFeatureParameters) (context: HttpContext) =
+                let validations (parameters: EnableFeatureParameters) =
                     [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
                        String.isValidGraceName parameters.BranchName InvalidBranchName
                        Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
@@ -399,7 +399,7 @@ module Branch =
     let EnableTag: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
-                let validations (parameters: EnableFeatureParameters) (context: HttpContext) =
+                let validations (parameters: EnableFeatureParameters) =
                     [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
                        String.isValidGraceName parameters.BranchName InvalidBranchName
                        Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
@@ -419,7 +419,7 @@ module Branch =
     let Delete: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
-                let validations (parameters: DeleteBranchParameters) (context: HttpContext) =
+                let validations (parameters: DeleteBranchParameters) =
                     [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
                        String.isValidGraceName parameters.BranchName InvalidBranchName
                        Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
@@ -443,7 +443,7 @@ module Branch =
                 let graceIds = context.Items[nameof(GraceIds)] :?> GraceIds
 
                 try
-                    let validations (parameters: GetBranchParameters) (context: HttpContext) =
+                    let validations (parameters: GetBranchParameters) =
                         [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
                            String.isValidGraceName parameters.BranchName InvalidBranchName
                            Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
@@ -477,7 +477,7 @@ module Branch =
                 let graceIds = context.Items[nameof(GraceIds)] :?> GraceIds
 
                 try
-                    let validations (parameters: BranchParameters) (context: HttpContext) =
+                    let validations (parameters: BranchParameters) =
                         [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
                            String.isValidGraceName parameters.BranchName InvalidBranchName
                            Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
@@ -511,7 +511,7 @@ module Branch =
                 let graceIds = context.Items[nameof(GraceIds)] :?> GraceIds
 
                 try
-                    let validations (parameters: GetReferenceParameters) (context: HttpContext) =
+                    let validations (parameters: GetReferenceParameters) =
                         [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
                            String.isValidGraceName parameters.BranchName InvalidBranchName
                            Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
@@ -548,7 +548,7 @@ module Branch =
                 let graceIds = context.Items[nameof(GraceIds)] :?> GraceIds
 
                 try
-                    let validations (parameters: GetReferencesParameters) (context: HttpContext) =
+                    let validations (parameters: GetReferencesParameters) =
                         [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
                            String.isValidGraceName parameters.BranchName InvalidBranchName
                            Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
@@ -584,7 +584,7 @@ module Branch =
                 let graceIds = context.Items[nameof(GraceIds)] :?> GraceIds
 
                 try
-                    let validations (parameters: GetDiffsForReferenceTypeParameters) (context: HttpContext) =
+                    let validations (parameters: GetDiffsForReferenceTypeParameters) =
                         [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
                            String.isValidGraceName parameters.BranchName InvalidBranchName
                            Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
@@ -638,7 +638,7 @@ module Branch =
                 let graceIds = context.Items[nameof(GraceIds)] :?> GraceIds
 
                 try
-                    let validations (parameters: GetReferencesParameters) (context: HttpContext) =
+                    let validations (parameters: GetReferencesParameters) =
                         [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
                            String.isValidGraceName parameters.BranchName InvalidBranchName
                            Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
@@ -674,7 +674,7 @@ module Branch =
                 let graceIds = context.Items[nameof(GraceIds)] :?> GraceIds
 
                 try
-                    let validations (parameters: GetReferencesParameters) (context: HttpContext) =
+                    let validations (parameters: GetReferencesParameters) =
                         [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
                            String.isValidGraceName parameters.BranchName InvalidBranchName
                            Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
@@ -710,7 +710,7 @@ module Branch =
                 let graceIds = context.Items[nameof(GraceIds)] :?> GraceIds
 
                 try
-                    let validations (parameters: GetReferencesParameters) (context: HttpContext) =
+                    let validations (parameters: GetReferencesParameters) =
                         [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
                            String.isValidGraceName parameters.BranchName InvalidBranchName
                            Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
@@ -746,7 +746,7 @@ module Branch =
                 let graceIds = context.Items[nameof(GraceIds)] :?> GraceIds
 
                 try
-                    let validations (parameters: GetReferencesParameters) (context: HttpContext) =
+                    let validations (parameters: GetReferencesParameters) =
                         [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
                            String.isValidGraceName parameters.BranchName InvalidBranchName
                            Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
@@ -783,7 +783,7 @@ module Branch =
                 let graceIds = context.Items[nameof(GraceIds)] :?> GraceIds
 
                 try
-                    let validations (parameters: GetReferencesParameters) (context: HttpContext) =
+                    let validations (parameters: GetReferencesParameters) =
                         [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
                            String.isValidGraceName parameters.BranchName InvalidBranchName
                            Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
@@ -818,7 +818,7 @@ module Branch =
                 let graceIds = context.Items[nameof(GraceIds)] :?> GraceIds
 
                 try
-                    let validations (parameters: ListContentsParameters) (context: HttpContext) =
+                    let validations (parameters: ListContentsParameters) =
                         [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
                            String.isValidGraceName parameters.BranchName InvalidBranchName
                            Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
@@ -878,7 +878,7 @@ module Branch =
                 let graceIds = context.Items[nameof(GraceIds)] :?> GraceIds
 
                 try
-                    let validations (parameters: GetBranchVersionParameters) (context: HttpContext) =
+                    let validations (parameters: GetBranchVersionParameters) =
                         [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
                            String.isValidGraceName parameters.BranchName InvalidBranchName
                            Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired

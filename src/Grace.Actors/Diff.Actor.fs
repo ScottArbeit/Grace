@@ -95,7 +95,7 @@ module Diff =
         member private this.buildGraceIndex (directoryId: DirectoryId) =
             task {
                 let graceIndex = ServerGraceIndex()
-                let directory = this.ProxyFactory.CreateActorProxy<IDirectoryVersionActor>(DirectoryVersion.GetActorId(directoryId), ActorName.DirectoryVersion)
+                let directory = ActorProxyFactory().CreateActorProxy<IDirectoryVersionActor>(DirectoryVersion.GetActorId(directoryId), ActorName.DirectoryVersion)
                 let! directoryCreatedAt = directory.GetCreatedAt()
                 let! directoryContents = directory.GetDirectoryVersionsRecursive(false)
                 //logToConsole $"In DiffActor.buildGraceIndex(): directoryContents.Count: {directoryContents.Count}"
@@ -108,7 +108,7 @@ module Diff =
         member private this.getFileStream (fileVersion: FileVersion) (url: UriWithSharedAccessSignature) =
             task {
                 let repositoryActorId = Repository.GetActorId(fileVersion.RepositoryId)
-                let repositoryActorProxy = this.ProxyFactory.CreateActorProxy<IRepositoryActor>(repositoryActorId, ActorName.Repository)
+                let repositoryActorProxy = actorProxyFactory.CreateActorProxy<IRepositoryActor>(repositoryActorId, ActorName.Repository)
                 let! objectStorageProvider = repositoryActorProxy.GetObjectStorageProvider()
                 match objectStorageProvider with
                 | AWSS3 -> return new MemoryStream() :> Stream
@@ -200,7 +200,7 @@ module Diff =
                             task {
                                 if differences.Count > 0 then
                                     let repositoryActorId = ActorId($"{repositoryId1}")
-                                    let repositoryActorProxy = this.ProxyFactory.CreateActorProxy<IRepositoryActor>(repositoryActorId, ActorName.Repository)
+                                    let repositoryActorProxy = actorProxyFactory.CreateActorProxy<IRepositoryActor>(repositoryActorId, ActorName.Repository)
                                     let! repositoryDtoFromActor = repositoryActorProxy.Get()
                                     return repositoryDtoFromActor
                                 else

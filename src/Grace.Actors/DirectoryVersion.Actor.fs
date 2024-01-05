@@ -118,7 +118,7 @@ module DirectoryVersion =
                             |> Seq.map(fun directoryId ->
                                             task {
                                                 let actorId = GetActorId directoryId
-                                                let subdirectoryActor = this.ProxyFactory.CreateActorProxy<IDirectoryVersionActor>(actorId, ActorName.DirectoryVersion)
+                                                let subdirectoryActor = actorProxyFactory.CreateActorProxy<IDirectoryVersionActor>(actorId, ActorName.DirectoryVersion)
                                                 return! subdirectoryActor.GetSizeRecursive()
                                             })
                         Task.WaitAll(tasks.Cast<Task>().ToArray())
@@ -158,7 +158,7 @@ module DirectoryVersion =
                             do! Parallel.ForEachAsync(directoryVersion.Directories, Constants.ParallelOptions, (fun directoryId ct ->
                                 ValueTask(task {
                                     let actorId = GetActorId directoryId
-                                    let subdirectoryActor = this.ProxyFactory.CreateActorProxy<IDirectoryVersionActor>(actorId, ActorName.DirectoryVersion)
+                                    let subdirectoryActor = actorProxyFactory.CreateActorProxy<IDirectoryVersionActor>(actorId, ActorName.DirectoryVersion)
                                     let! subdirectoryContents = subdirectoryActor.GetDirectoryVersionsRecursive(forceRegenerate)
                                     for directoryVersion in subdirectoryContents do
                                         subdirectoryVersions.Enqueue(directoryVersion)
