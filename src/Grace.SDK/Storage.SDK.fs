@@ -43,7 +43,7 @@ module Storage =
 
                     let blobClient = BlobClient(Uri(blobUriWithSasToken))
                     let relativeDirectory = if fileVersion.RelativeDirectory = Constants.RootDirectoryPath then String.Empty else getNativeFilePath fileVersion.RelativeDirectory
-                    let tempFilePath = Path.Combine(Environment.GetEnvironmentVariable("temp"), relativeDirectory, fileVersion.GetObjectFileName)
+                    let tempFilePath = Path.Combine(Path.GetTempPath(), relativeDirectory, fileVersion.GetObjectFileName)
                     let objectFilePath = Path.Combine(Current().ObjectDirectory, fileVersion.RelativePath, fileVersion.GetObjectFileName)
                     let tempFileInfo = FileInfo(tempFilePath)
                     let objectFileInfo = FileInfo(objectFilePath)
