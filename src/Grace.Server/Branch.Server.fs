@@ -469,6 +469,41 @@ module Branch =
                     return! context |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
             }
 
+    /// Gets the events handled by this branch.
+    let GetEvents: HttpHandler =
+        fun (next: HttpFunc) (context: HttpContext) ->
+            task {
+                let startTime = getCurrentInstant()
+                let graceIds = context.Items[nameof(GraceIds)] :?> GraceIds
+
+                try
+                    let validations (parameters: GetBranchParameters) =
+                        [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
+                           String.isValidGraceName parameters.BranchName InvalidBranchName
+                           Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
+                           Owner.ownerExists parameters.OwnerId parameters.OwnerName OwnerDoesNotExist
+                           Organization.organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName OrganizationDoesNotExist
+                           Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName RepositoryDoesNotExist
+                           Branch.branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName BranchDoesNotExist |]
+
+                    let query (context: HttpContext) maxCount (actorProxy: IBranchActor) =
+                        task {
+                            let! branchEvents = actorProxy.GetEvents()
+                            return branchEvents.Select(fun branchEvent -> serialize branchEvent)
+                            //return List<Events.Branch.BranchEvent>()
+                        }
+
+                    let! parameters = context |> parse<GetBranchParameters>
+                    let! result = processQuery context parameters validations 1 query
+                    let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
+                    log.LogInformation("{CurrentInstant}: Finished {path}; BranchId: {branchId}; CorrelationId: {correlationId}; Duration: {duration_ms}ms.", getCurrentInstantExtended(), context.Request.Path, graceIds.BranchId, (getCorrelationId context), duration_ms)
+                    return result
+                with ex ->
+                    let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
+                    log.LogError(ex, "{CurrentInstant}: Error in {path}; BranchId: {branchId}; CorrelationId: {correlationId}; Duration: {duration_ms}ms.", getCurrentInstantExtended(), context.Request.Path, graceIds.BranchId, (getCorrelationId context), duration_ms)
+                    return! context |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
+            }
+
     /// Gets details about the parent branch of the provided branch.
     let GetParentBranch: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->

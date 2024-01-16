@@ -58,6 +58,8 @@ module Interfaces =
         abstract member Exists: unit -> Task<bool>
         /// Retrieves the current state of the branch.
         abstract member Get: unit -> Task<BranchDto>
+        /// Retrieves the list of events handled by this branch.
+        abstract member GetEvents: unit -> Task<IList<Events.Branch.BranchEvent>>
         /// Retrieves the most recent commit from this branch.
         abstract member GetLatestCommit: unit -> Task<ReferenceId>
         /// Retrieves the most recent promotion from this branch.

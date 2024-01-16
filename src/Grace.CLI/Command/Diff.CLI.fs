@@ -167,10 +167,10 @@ module Diff =
             for diff in diffDto.Differences do
                 match diff.FileSystemEntryType with
                 | FileSystemEntryType.File ->
-                    addToOutput(Markup($"[{Colors.Important}]{getDistributedUnionCaseName diff.DifferenceType}[/] [{Colors.Highlighted}]{diff.RelativePath}[/]"))
+                    addToOutput(Markup($"[{Colors.Important}]{getDiscriminatedUnionCaseName diff.DifferenceType}[/] [{Colors.Highlighted}]{diff.RelativePath}[/]"))
                 | FileSystemEntryType.Directory ->
                     if diff.DifferenceType <> DifferenceType.Change then
-                        addToOutput(Markup($"[{Colors.Important}]{getDistributedUnionCaseName diff.DifferenceType}[/] [{Colors.Highlighted}]{diff.RelativePath}[/]"))
+                        addToOutput(Markup($"[{Colors.Important}]{getDiscriminatedUnionCaseName diff.DifferenceType}[/] [{Colors.Highlighted}]{diff.RelativePath}[/]"))
             for fileDiff in diffDto.FileDiffs.OrderBy(fun fileDiff -> fileDiff.RelativePath) do
                 //addToOutput ((new Rule($"[{Colors.Important}]{fileDiff.RelativePath}[/]")).LeftAligned())
                 if fileDiff.CreatedAt1 > fileDiff.CreatedAt2 then
@@ -206,7 +206,7 @@ module Diff =
                             let t3 = progressContext.AddTask($"[{Color.DodgerBlue1}]Uploading changed files to object storage.[/]", autoStart = false)
                             let t4 = progressContext.AddTask($"[{Color.DodgerBlue1}]Uploading new directory versions.[/]", autoStart = false)
                             let t5 = progressContext.AddTask($"[{Color.DodgerBlue1}]Creating a save reference.[/]", autoStart = false)
-                            let t6 = progressContext.AddTask($"[{Color.DodgerBlue1}]Getting {(getDistributedUnionCaseName referenceType).ToLowerInvariant()}.[/]", autoStart = false)
+                            let t6 = progressContext.AddTask($"[{Color.DodgerBlue1}]Getting {(getDiscriminatedUnionCaseName referenceType).ToLowerInvariant()}.[/]", autoStart = false)
                             let t7 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending diff request to server.[/]", autoStart = false)
 
                             let mutable rootDirectoryId = DirectoryId.Empty
@@ -267,7 +267,7 @@ module Diff =
                                 t5.StartTask()
                                 if newDirectoryVersions.Count > 0 then
                                     (task {
-                                        match! createSaveReference (getRootDirectoryVersion updatedGraceStatus) $"Created during `grace diff {(getDistributedUnionCaseName referenceType).ToLowerInvariant()}` operation." (getCorrelationId parseResult) with
+                                        match! createSaveReference (getRootDirectoryVersion updatedGraceStatus) $"Created during `grace diff {(getDiscriminatedUnionCaseName referenceType).ToLowerInvariant()}` operation." (getCorrelationId parseResult) with
                                         | Ok saveReference -> 
                                             ()
                                         | Error error ->

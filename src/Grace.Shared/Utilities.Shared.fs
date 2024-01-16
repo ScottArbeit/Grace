@@ -100,7 +100,7 @@ module Utilities =
     /// Converts just the case name of a discriminated union to a string.
     ///
     /// Example: Animal.Dog -> "Dog"
-    let getDistributedUnionCaseName (x:'T) = 
+    let getDiscriminatedUnionCaseName (x:'T) = 
         let discriminatedUnionType = typeof<'T>
         let (case, _ ) = FSharpValue.GetUnionFields(x, discriminatedUnionType)
         $"{case.Name}"

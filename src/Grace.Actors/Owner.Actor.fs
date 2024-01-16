@@ -254,7 +254,7 @@ module Owner =
                     }
 
                 task {
-                    currentCommand <- getDistributedUnionCaseName command
+                    currentCommand <- getDiscriminatedUnionCaseName command
                     match! isValid command metadata with
                     | Ok command -> return! processCommand command metadata
                     | Error error -> return Error error

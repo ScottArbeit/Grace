@@ -43,6 +43,7 @@ module Branch =
         let mutable actorStartTime = Instant.MinValue
         let mutable logScope: IDisposable = null
         let mutable currentCommand = String.Empty
+        let mutable correlationId = String.Empty
 
         /// Indicates that the actor is in an undefined state, and should be reset.
         let mutable isDisposed = false
@@ -87,8 +88,7 @@ module Branch =
                     let! retrievedEvents = (Storage.RetrieveState<List<BranchEvent>> stateManager eventsStateName)
                     branchEvents <- match retrievedEvents with
                                            | Some retrievedEvents -> retrievedEvents; 
-                                           | None -> List<BranchEvent>()
-            
+                                           | None -> List<BranchEvent>()            
                 return branchEvents
             }
 
@@ -138,9 +138,9 @@ module Branch =
         override this.OnPostActorMethodAsync(context) =
             let duration_ms = (getCurrentInstant().Minus(actorStartTime).TotalMilliseconds).ToString("F3")
             if String.IsNullOrEmpty(currentCommand) then
-                log.LogInformation("{CurrentInstant}: Finished {ActorName}.{MethodName}; Id: {Id}; Name: {Name}; Duration: {duration_ms}ms.", getCurrentInstantExtended(), actorName, context.MethodName, this.Id, branchDto.BranchName, duration_ms)
+                log.LogInformation("{CurrentInstant}: Finished {ActorName}.{MethodName}; Id: {Id}; Name: {Name}; CorrelationId: {correlationId}; Duration: {duration_ms}ms.", getCurrentInstantExtended(), actorName, context.MethodName, this.Id, branchDto.BranchName, correlationId, duration_ms)
             else
-                log.LogInformation("{CurrentInstant}: Finished {ActorName}.{MethodName}; Command: {Command}; Id: {Id}; Name: {Name}; Duration: {duration_ms}ms.", getCurrentInstantExtended(), actorName, context.MethodName, currentCommand, this.Id, branchDto.BranchName, duration_ms)
+                log.LogInformation("{CurrentInstant}: Finished {ActorName}.{MethodName}; Command: {Command}; Id: {Id}; Name: {Name}; CorrelationId: {correlationId}; Duration: {duration_ms}ms.", getCurrentInstantExtended(), actorName, context.MethodName, currentCommand, this.Id, branchDto.BranchName, correlationId, duration_ms)
             logScope.Dispose()
             Task.CompletedTask
 
@@ -190,6 +190,14 @@ module Branch =
             this.RegisterReminderAsync(ReminderType.PhysicalDeletion, convertToByteArray deleteReason, Constants.DefaultPhysicalDeletionReminderTime, TimeSpan.FromMilliseconds(-1)).Result |> ignore
 
         interface IBranchActor with
+
+            member this.GetEvents() = 
+                task {
+                    //correlationId <- correlation
+                    let! branchEvents = this.BranchEvents()
+                    return branchEvents :> IList<BranchEvent>
+                }
+
             member this.Exists() =
                 not <| (branchDto.BranchId = BranchDto.Default.BranchId) |> returnTask
 
@@ -291,7 +299,8 @@ module Branch =
                     }
 
                 task {
-                    currentCommand <- getDistributedUnionCaseName command
+                    currentCommand <- getDiscriminatedUnionCaseName command
+                    correlationId <- metadata.CorrelationId
                     match! isValid command metadata with
                     | Ok command -> return! processCommand command metadata 
                     | Error error -> return Error error
@@ -328,13 +337,13 @@ module Branch =
                         let! deletedDtoState = stateManager.TryRemoveStateAsync(dtoStateName)
                         let! deletedEventsState = stateManager.TryRemoveStateAsync(eventsStateName)
 
-                        // Mark the actor as disposed, in case someone tries to use it before Dapr GC's it.
-                        isDisposed <- true
-
                         log.LogInformation("{currentInstant}: Deleted physical state for branch; RepositoryId: {repositoryId}; BranchId: {branchId}; BranchName: {branchName}; ParentBranchId: {parentBranchId}; deletedDtoState: {deletedDtoState}; deletedEventsState: {deletedEventsState}.", 
                             getCurrentInstantExtended(), branchDto.RepositoryId, branchDto.BranchId, branchDto.BranchName, branchDto.ParentBranchId, deletedDtoState, deletedEventsState)
 
                         // Set all values to default.
                         branchDto <- BranchDto.Default
+
+                        // Mark the actor as disposed, in case someone tries to use it before Dapr GC's it.
+                        isDisposed <- true
                     } :> Task
                 | _ -> failwith "Unknown reminder type."

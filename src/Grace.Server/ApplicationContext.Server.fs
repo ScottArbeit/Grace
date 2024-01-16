@@ -81,7 +81,7 @@ module ApplicationContext =
             logToConsole $"""----------------------------------------------------------------------------------------------
                                 Pausing to check for an active gRPC connection with the Dapr sidecar.
                                   Grace Server cannot accept requests until we know that we can talk to Dapr.
-                                  Grace Server will wait for 1 minute for Dapr to be ready.
+                                  Grace Server will wait for 30 seconds for Dapr to be ready.
                                   If no connection is made, Grace Server will exit, allowing the container to be restarted.
                                 -----------------------------------------------------------------------------------------------"""
             let mutable gRPCPort: int = 50001   // This is Dapr's default gRPC port.
@@ -99,8 +99,8 @@ module ApplicationContext =
                         logToConsole $"gRPC port is ready."
                         isReady <- true
                     else
-                        if getCurrentInstant().Minus(startTime) > Duration.FromMinutes(1.0)  then
-                            logToConsole $"gRPC port is not ready after 60 seconds. Exiting."
+                        if getCurrentInstant().Minus(startTime) > Duration.FromSeconds(30.0)  then
+                            logToConsole $"gRPC port is not ready after 30 seconds. Exiting."
                             Environment.Exit(-1)
             else
                 logToConsole $"Could not parse gRPC port {grpcPortString} as a port number. Exiting."

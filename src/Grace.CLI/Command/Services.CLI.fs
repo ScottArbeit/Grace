@@ -980,12 +980,12 @@ module Services =
 
                     // Now that we've copied it, compute the SHA-256 hash.
                     let relativeFilePath = Path.GetRelativePath(Current().RootDirectory, filePath)
-                    use fileStream = File.Open(tempFilePath, FileMode.Open, FileAccess.Read, FileShare.Read)
-                    let! sha256Hash = computeSha256ForFile fileStream relativeFilePath
+                    use tempFileStream = File.Open(tempFilePath, FileMode.Open, FileAccess.Read, FileShare.Read)
+                    let! sha256Hash = computeSha256ForFile tempFileStream relativeFilePath
                     //logToConsole $"filePath: {filePath}; tempFilePath: {tempFilePath}; SHA256: {sha256Hash}"
 
                     // I'm going to rename this file below, using the SHA-256 hash, so I'll be polite and close the file stream here.
-                    fileStream.Dispose()    
+                    tempFileStream.Dispose()    
 
                     // Get the new name for this version of the file, including the SHA-256 hash.
                     let relativeDirectoryPath = getLocalRelativeDirectory filePath (Current().RootDirectory)

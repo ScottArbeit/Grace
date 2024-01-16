@@ -39,6 +39,14 @@ module Events =
             Metadata: EventMetadata
         }
 
+    /// Defines the events for the DirectoryVersion actor.
+    module DirectoryVersion =
+        /// Defines the events for the DirectoryVersion actor.
+        [<KnownType("GetKnownTypes")>]
+        type DirectoryVersionEventType =
+            | Created of directoryVersion: DirectoryVersion
+            | PhysicalDeleted
+
     /// Defines the events for the Organization actor.
     module Organization =
         /// Defines the events for the Organization actor.

@@ -759,7 +759,7 @@ module Services =
                 let queryDefinition = QueryDefinition("""SELECT TOP @maxCount c["value"].Class, c["value"].ReferenceId, c["value"].BranchId, c["value"].DirectoryId, c["value"].Sha256Hash, c["value"].ReferenceType, c["value"].ReferenceText, c["value"].CreatedAt FROM c WHERE c["value"].BranchId = @branchId AND STRINGEQUALS(c["value"].ReferenceType, @referenceType, true) AND c["value"].Class = @class ORDER BY c["value"].CreatedAt DESC""")
                                         .WithParameter("@maxCount", maxCount)
                                         .WithParameter("@branchId", $"{branchId}")
-                                        .WithParameter("@referenceType", getDistributedUnionCaseName referenceType)
+                                        .WithParameter("@referenceType", getDiscriminatedUnionCaseName referenceType)
                                         .WithParameter("@class", "ReferenceDto")
                 let iterator = cosmosContainer.GetItemQueryIterator<ReferenceDto>(queryDefinition, requestOptions = queryRequestOptions)
                 while iterator.HasMoreResults do
@@ -817,7 +817,7 @@ module Services =
                 let requestCharge = StringBuilder()
                 let queryDefinition = QueryDefinition("""SELECT TOP 1 c["value"] FROM c WHERE c["value"].BranchId = @branchId AND c["value"].Class = @class AND STRINGEQUALS(c["value"].ReferenceType, @referenceType, true) ORDER BY c["value"].CreatedAt DESC""")
                                         .WithParameter("@branchId", $"{branchId}")
-                                        .WithParameter("@referenceType", getDistributedUnionCaseName referenceType)
+                                        .WithParameter("@referenceType", getDiscriminatedUnionCaseName referenceType)
                                         .WithParameter("@class", nameof(ReferenceDto))
                 let iterator = cosmosContainer.GetItemQueryIterator<ReferenceDtoValue>(queryDefinition, requestOptions = queryRequestOptions)
                 let mutable referenceDto = ReferenceDto.Default

@@ -85,6 +85,7 @@ module Application =
                     route "/enableSave" Branch.EnableSave |> addMetadata typeof<Branch.EnableFeatureParameters>
                     route "/enableTag" Branch.EnableTag |> addMetadata typeof<Branch.EnableFeatureParameters>
                     route "/get" Branch.Get |> addMetadata typeof<Branch.GetBranchParameters>
+                    route "/getEvents" Branch.GetEvents |> addMetadata typeof<Branch.GetBranchParameters>
                     route "/getCheckpoints" Branch.GetCheckpoints |> addMetadata typeof<Branch.GetBranchParameters>
                     route "/getCommits" Branch.GetCommits |> addMetadata typeof<Branch.GetBranchParameters>
                     route "/getDiffsForReferenceType" Branch.GetDiffsForReferenceType |> addMetadata typeof<Branch.GetDiffsForReferenceTypeParameters>

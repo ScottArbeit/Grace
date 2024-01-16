@@ -51,7 +51,7 @@ module Branch =
     /// Parameters for the various /branch/enable[feature] endpoints.
     type EnableFeatureParameters() =
         inherit BranchParameters()
-        member val public Enabled = true with get, set
+        member val public Enabled = false with get, set
 
     /// Parameters for the /branch/delete endpoint.
     type DeleteBranchParameters() =
@@ -84,6 +84,7 @@ module Branch =
     /// Parameters for the /branch/get endpoint.
     type GetBranchParameters() = 
         inherit BranchQueryParameters()
+        member val public IncludeDeleted = false with get, set
 
     type ListContentsParameters() =
         inherit BranchQueryParameters()

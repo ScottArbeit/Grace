@@ -143,7 +143,7 @@ module Watch =
     let printDifferences (differences: List<FileSystemDifference>) =
         if differences.Count > 0 then logToAnsiConsole Colors.Verbose $"Differences detected since last save/checkpoint/commit:"
         for difference in differences.OrderBy(fun diff -> diff.RelativePath) do
-            logToAnsiConsole Colors.Verbose $"{getDistributedUnionCaseName difference.DifferenceType} for {getDistributedUnionCaseName difference.FileSystemEntryType} {difference.RelativePath}"
+            logToAnsiConsole Colors.Verbose $"{getDiscriminatedUnionCaseName difference.DifferenceType} for {getDiscriminatedUnionCaseName difference.FileSystemEntryType} {difference.RelativePath}"
 
     /// Update the Grace Object Cache file with the new DirectoryVersions.
     let updateObjectCacheFile (newDirectoryVersions: List<LocalDirectoryVersion>) =

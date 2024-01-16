@@ -139,7 +139,7 @@ module DirectoryVersion =
                 let stateManager = this.StateManager
                 task {
                     try
-                        //logToConsole $"In GetDirectoryVersionsRecursive."
+                        // Check if the subdirectory versions have already been generated and cached.
                         let cachedSubdirectoryVersions = 
                             task {
                                 if not <| forceRegenerate then
@@ -147,10 +147,13 @@ module DirectoryVersion =
                                 else
                                     return None
                             }
+
+                        // If they have, return them.
                         match! cachedSubdirectoryVersions with
                         | Some subdirectoryVersions -> 
                             log.LogDebug("In DirectoryVersionActor.GetDirectoryVersionsRecursive({id}). Retrieved SubdirectoryVersions from cache.", this.Id)
                             return subdirectoryVersions
+                        // If they haven't, generate them by calling each subdirectory in parallel.
                         | None ->
                             log.LogDebug("In DirectoryVersionActor.GetDirectoryVersionsRecursive({id}). SubdirectoryVersions will be generated. forceRegenerate: {forceRegenerate}", this.Id, forceRegenerate)
                             let subdirectoryVersions = ConcurrentQueue<DirectoryVersion>()
@@ -177,8 +180,7 @@ module DirectoryVersion =
             member this.Create (newDirectoryVersion: DirectoryVersion) correlationId =
                 let stateManager = this.StateManager
                 task {
-                    // If the CreatedDate isn't set to Instant.MinValue, we know it's already populated..
-                    if directoryVersion.CreatedAt > Instant.MinValue then
+                    if directoryVersion.CreatedAt > DirectoryVersion.Default.CreatedAt then
                         return Error (GraceError.Create (DirectoryError.getErrorMessage DirectoryAlreadyExists) correlationId)
                     elif newDirectoryVersion.Size <> uint64 (newDirectoryVersion.Files.Sum(fun file -> int64 file.Size)) then
                         return Error (GraceError.Create (DirectoryError.getErrorMessage InvalidSize) correlationId)

@@ -20,6 +20,7 @@ open Grace.Shared.Validation.Errors.Branch
 open NodaTime
 open NodaTime.TimeZones
 open Spectre.Console
+open Spectre.Console.Json
 open System
 open System.Collections.Concurrent
 open System.Collections.Generic
@@ -78,6 +79,8 @@ module Branch =
         let referenceId = new Option<String>([|"--referenceId"|], IsRequired = false, Description = "The reference ID to switch to <Guid>.", Arity = ArgumentArity.ExactlyOne)
         let sha256Hash = new Option<String>([|"--sha256Hash"|], IsRequired = false, Description = "The full or partial SHA-256 hash value of the version to switch to.", Arity = ArgumentArity.ExactlyOne)
         let enabled = new Option<bool>("--enabled", IsRequired = false, Description = "True to enable the feature; false to disable it.", Arity = ArgumentArity.ZeroOrOne)
+        let includeDeleted = new Option<bool>([|"--include-deleted"; "-d"|], IsRequired = false, Description = "Include deleted branches in the result. [default: false]")
+        let showEvents = new Option<bool>([|"--show-events"; "-e"|], IsRequired = false, Description = "Include actor events in the result. [default: false]")
         let initialPermissions = new Option<ReferenceType array>("--initialPermissions", IsRequired = false, Description = "A list of reference types allowed in this branch.", Arity = ArgumentArity.ZeroOrOne, getDefaultValue = (fun _ -> [| Commit; Checkpoint; Save; Tag |]))
         let toBranchId = new Option<String>([|"--toBranchId"; "-d"|], IsRequired = false, Description = "The ID of the branch to switch to <Guid>.", Arity = ArgumentArity.ExactlyOne)
         let toBranchName = new Option<String>([|"--toBranchName"; "-c"|], IsRequired = false, Description = "The name of the branch to switch to.", Arity = ArgumentArity.ExactlyOne)
@@ -156,7 +159,7 @@ module Branch =
         else
             Error (GraceError.Create (BranchError.getErrorMessage BranchNameIsRequired) (commonParameters.CorrelationId))
 
-    /// Adjusts parameters to account for whether Id's or Name's were specified by the user.
+    /// Adjusts parameters to account for whether Id's or Name's were specified by the user, or should be taken from default values.
     let normalizeIdsAndNames<'T when 'T :> CommonParameters> (parseResult: ParseResult) (parameters: 'T) =
         // If the name was specified on the command line, but the id wasn't, then we should only send the name, and we set the id to String.Empty.
         if parseResult.CommandResult.FindResultFor(Options.ownerId).IsImplicit && not <| isNull(parseResult.CommandResult.FindResultFor(Options.ownerName)) && not <| parseResult.CommandResult.FindResultFor(Options.ownerName).IsImplicit then
@@ -687,73 +690,176 @@ module Branch =
             })
 
     type EnableFeatureCommand = EnableFeatureParameters -> Task<GraceResult<string>>
-    type EnableFeaturesParameters() =
+    type EnableFeatureParams() =
         inherit CommonParameters()
-        member val public Enabled = true with get, set
-    let enableFeatureHandler (parseResult: ParseResult) (parameters: EnableFeaturesParameters) (command: EnableFeatureCommand) (commandType: string) =
+        member val public Enabled = false with get, set
+    let enableFeatureHandler (parseResult: ParseResult) (parameters: EnableFeatureParams) (command: EnableFeatureCommand) (commandType: string) =
         task {
-            return Ok (GraceReturnValue.Create "Not yet implemented." (getCorrelationId parseResult))
+            let sdkParameters = 
+                Parameters.Branch.EnableFeatureParameters(BranchId = parameters.BranchId, BranchName = parameters.BranchName, 
+                    OwnerId = parameters.OwnerId, OwnerName = parameters.OwnerName,
+                    OrganizationId = parameters.OrganizationId, OrganizationName = parameters.OrganizationName,
+                    RepositoryId = parameters.RepositoryId, RepositoryName = parameters.RepositoryName,
+                    Enabled = parameters.Enabled, CorrelationId = parameters.CorrelationId)
+            let! enableFeatureResult = command sdkParameters
+            match enableFeatureResult with
+            | Ok returnValue -> 
+                return Ok (GraceReturnValue.Create (returnValue.ReturnValue) (getCorrelationId parseResult))
+            | Error error ->
+                return Error error
         }
 
     let private EnablePromotion =
-        CommandHandler.Create(fun (parseResult: ParseResult) (enableFeaturesParameters: EnableFeaturesParameters) ->
+        CommandHandler.Create(fun (parseResult: ParseResult) (enableFeaturesParams: EnableFeatureParams) ->
             task {
                 let command (parameters: EnableFeatureParameters) =
                     task {
                         return! Branch.EnablePromotion(parameters)
                     }
                     
-                let! result = enableFeatureHandler parseResult (enableFeaturesParameters |> normalizeIdsAndNames parseResult) command "promotion"
+                let! result = enableFeatureHandler parseResult (enableFeaturesParams |> normalizeIdsAndNames parseResult) command "promotion"
                 return result |> renderOutput parseResult
             })
 
     let private EnableCommit =
-        CommandHandler.Create(fun (parseResult: ParseResult) (enableFeaturesParameters: EnableFeaturesParameters) ->
+        CommandHandler.Create(fun (parseResult: ParseResult) (enableFeaturesParams: EnableFeatureParams) ->
             task {
                 let command (parameters: EnableFeatureParameters) =
                     task {
                         return! Branch.EnableCommit(parameters)
                     }
 
-                let! result = enableFeatureHandler parseResult (enableFeaturesParameters |> normalizeIdsAndNames parseResult) command "commit"
+                let! result = enableFeatureHandler parseResult (enableFeaturesParams |> normalizeIdsAndNames parseResult) command "commit"
                 return result |> renderOutput parseResult
             })
 
     let private EnableCheckpoint =
-        CommandHandler.Create(fun (parseResult: ParseResult) (enableFeaturesParameters: EnableFeaturesParameters) ->
+        CommandHandler.Create(fun (parseResult: ParseResult) (enableFeaturesParams: EnableFeatureParams) ->
             task {
                 let command (parameters: EnableFeatureParameters) =
                     task {
                         return! Branch.EnableCheckpoint(parameters)
                     }
 
-                let! result = enableFeatureHandler parseResult (enableFeaturesParameters |> normalizeIdsAndNames parseResult) command "checkpoint"
+                let! result = enableFeatureHandler parseResult (enableFeaturesParams |> normalizeIdsAndNames parseResult) command "checkpoint"
                 return result |> renderOutput parseResult
             })
 
     let private EnableSave =
-        CommandHandler.Create(fun (parseResult: ParseResult) (enableFeaturesParameters: EnableFeaturesParameters) ->
+        CommandHandler.Create(fun (parseResult: ParseResult) (enableFeaturesParams: EnableFeatureParams) ->
             task {
                 let command (parameters: EnableFeatureParameters) =
                     task {
                         return! Branch.EnableSave(parameters)
                     }
 
-                let! result = enableFeatureHandler parseResult (enableFeaturesParameters |> normalizeIdsAndNames parseResult) command "save"
+                let! result = enableFeatureHandler parseResult (enableFeaturesParams |> normalizeIdsAndNames parseResult) command "save"
                 return result |> renderOutput parseResult
             })
 
     let private EnableTag =
-        CommandHandler.Create(fun (parseResult: ParseResult) (enableFeaturesParameters: EnableFeaturesParameters) ->
+        CommandHandler.Create(fun (parseResult: ParseResult) (enableFeaturesParams: EnableFeatureParams) ->
             task {
                 let command (parameters: EnableFeatureParameters) =
                     task {
                         return! Branch.EnableTag(parameters)
                     }
 
-                let! result = enableFeatureHandler parseResult (enableFeaturesParameters |> normalizeIdsAndNames parseResult) command "tag"
+                let! result = enableFeatureHandler parseResult (enableFeaturesParams |> normalizeIdsAndNames parseResult) command "tag"
                 return result |> renderOutput parseResult
             })
+
+    // Get subcommand
+    type GetParameters() =
+        inherit CommonParameters()
+        member val public IncludeDeleted: bool = false with get, set
+        member val public ShowEvents: bool = false with get, set
+    let private getHandler (parseResult: ParseResult) (parameters: GetParameters) =
+        task {
+            try
+                if parseResult |> verbose then printParseResult parseResult
+                let validateIncomingParameters = CommonValidations parseResult parameters
+                match validateIncomingParameters with
+                | Ok _ -> 
+                    let sdkParameters = Parameters.Branch.GetBranchParameters(OwnerId = parameters.OwnerId, OwnerName = parameters.OwnerName, 
+                        OrganizationId = parameters.OrganizationId, OrganizationName = parameters.OrganizationName,
+                        RepositoryId = parameters.RepositoryId, RepositoryName = parameters.RepositoryName,
+                        BranchId = parameters.BranchId, BranchName = parameters.BranchName, 
+                        IncludeDeleted = parameters.IncludeDeleted, CorrelationId = parameters.CorrelationId)
+                    if parseResult |> hasOutput then
+                        return! progress.Columns(progressColumns)
+                                .StartAsync(fun progressContext ->
+                                task {
+                                    let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")                                    
+                                    let! result = Branch.Get(sdkParameters)
+                                    t0.Increment(100.0)
+                                    return result
+                                })
+                    else
+                        return! Branch.Get(sdkParameters)
+                | Error error -> return Error error
+            with
+                | ex -> return Error (GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
+        }
+
+    let private getEventsHandler (parseResult: ParseResult) (parameters: GetParameters) =
+        task {
+            try
+                let validateIncomingParameters = CommonValidations parseResult parameters
+                match validateIncomingParameters with
+                | Ok _ -> 
+                    let sdkParameters = Parameters.Branch.GetBranchParameters(OwnerId = parameters.OwnerId, OwnerName = parameters.OwnerName, 
+                        OrganizationId = parameters.OrganizationId, OrganizationName = parameters.OrganizationName,
+                        RepositoryId = parameters.RepositoryId, RepositoryName = parameters.RepositoryName,
+                        BranchId = parameters.BranchId, BranchName = parameters.BranchName, 
+                        IncludeDeleted = parameters.IncludeDeleted, CorrelationId = parameters.CorrelationId)
+                    if parseResult |> hasOutput then
+                        return! progress.Columns(progressColumns)
+                                .StartAsync(fun progressContext ->
+                                task {
+                                    let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")                                    
+                                    let! result = Branch.GetEvents(sdkParameters)
+                                    t0.Increment(100.0)
+                                    return result
+                                })
+                    else
+                        return! Branch.GetEvents(sdkParameters)
+                | Error error -> return Error error
+            with
+                | ex -> return Error (GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
+        }
+
+    let private Get =
+        CommandHandler.Create(fun (parseResult: ParseResult) (getParameters: GetParameters) ->
+            task {                
+                let! result = getHandler parseResult (getParameters |> normalizeIdsAndNames parseResult)
+                //return result |> renderOutput parseResult
+                match result with
+                | Ok graceReturnValue ->
+                    let jsonText = JsonText(serialize graceReturnValue.ReturnValue)
+                    AnsiConsole.Write(jsonText)
+                    AnsiConsole.WriteLine()
+
+                    if getParameters.ShowEvents then
+                        let! eventsResult = getEventsHandler parseResult (getParameters |> normalizeIdsAndNames parseResult)
+                        match eventsResult with
+                        | Ok graceReturnValue ->
+                            let sb = new StringBuilder()
+                            for line in graceReturnValue.ReturnValue do
+                                sb.AppendLine($"{Markup.Escape(line)},") |> ignore
+                                AnsiConsole.MarkupLine $"[{Colors.Verbose}]{Markup.Escape(line)}[/]"
+                            sb.Remove(sb.Length - 1, 1) |> ignore
+                            //AnsiConsole.Write(sb.ToString())
+                            AnsiConsole.WriteLine()
+                            return 0
+                        | Error graceError ->
+                            return Error graceError |> renderOutput parseResult
+                    else
+                        return 0
+                | Error graceError ->
+                    return Error graceError |> renderOutput parseResult
+            })
+
 
     type GetReferenceQuery = GetReferencesParameters -> Task<GraceResult<IEnumerable<ReferenceDto>>>
     type GetRefParameters() =
@@ -803,7 +909,7 @@ module Branch =
                 let localCreatedAtTime = row.CreatedAt.ToDateTimeUtc().ToLocalTime()
                 let x = 8
                 let referenceTime = $"""{localCreatedAtTime.ToString("g", CultureInfo.CurrentUICulture)}"""
-                table.AddRow([| $"{getDistributedUnionCaseName(row.ReferenceType)}"; $"{row.ReferenceText}"; sha256Hash; ago row.CreatedAt; $"[{Colors.Deemphasized}]{referenceTime}[/]" |]) |> ignore
+                table.AddRow([| $"{getDiscriminatedUnionCaseName(row.ReferenceType)}"; $"{row.ReferenceText}"; sha256Hash; ago row.CreatedAt; $"[{Colors.Deemphasized}]{referenceTime}[/]" |]) |> ignore
             AnsiConsole.Write(table)
         
     let private GetReferences =
@@ -2111,7 +2217,7 @@ module Branch =
         switchCommand.Handler <- Switch
         branchCommand.AddCommand(switchCommand)
 
-        let statusCommand = new Command("status", Description = "Displays status information about the current repository and branch.") |> addOption Options.referenceId |> addCommonOptions
+        let statusCommand = new Command("status", Description = "Displays status information about the current repository and branch.") |> addCommonOptions
         statusCommand.Handler <- Status
         branchCommand.AddCommand(statusCommand)
 
@@ -2166,6 +2272,10 @@ module Branch =
         let setNameCommand = new Command("set-name", Description = "Change the name of the branch.") |> addOption Options.newName |> addCommonOptions
         setNameCommand.Handler <- SetName
         branchCommand.AddCommand(setNameCommand)
+
+        let getCommand = new Command("get", Description = "Gets details for the branch.") |> addOption Options.includeDeleted |> addOption Options.showEvents |> addCommonOptions
+        getCommand.Handler <- Get
+        branchCommand.AddCommand(getCommand)
 
         let getReferencesCommand = new Command("get-references", Description = "Retrieves a list of the most recent references from the branch.") |> addCommonOptions |> addOption Options.maxCount |> addOption Options.fullSha
         getReferencesCommand.Handler <- GetReferences

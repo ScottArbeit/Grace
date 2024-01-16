@@ -139,6 +139,10 @@ type Branch() =
     static member public Get(parameters: GetBranchParameters) =
         postServer<GetBranchParameters, BranchDto>(parameters |> ensureCorrelationIdIsSet, $"branch/{nameof(Branch.Get)}")
 
+    /// Gets the events handled by a branch.
+    static member public GetEvents(parameters: GetBranchParameters) =
+        postServer<GetBranchParameters, IEnumerable<string>>(parameters |> ensureCorrelationIdIsSet, $"branch/{nameof(Branch.GetEvents)}")
+
     /// Gets the metadata for the parent branch.
     static member public GetParentBranch(parameters: BranchParameters) =
         postServer<BranchParameters, BranchDto>(parameters |> ensureCorrelationIdIsSet, $"branch/{nameof(Branch.GetParentBranch)}")

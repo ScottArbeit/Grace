@@ -19,6 +19,7 @@ module Types =
     type BranchId = Guid
     type BranchName = string
     type ContainerName = string
+    type CorrelationId = string
     type DirectoryId = Guid    
     type FilePath = string    
     type GraceIgnoreEntry = string
