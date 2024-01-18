@@ -977,14 +977,17 @@ module Branch =
             task {                
                 let query (parameters: GetReferencesParameters) = 
                     task {
-                        let! checkpointResult = Branch.GetCheckpoints(parameters)
-                        let! commitResult = Branch.GetCommits(parameters)
-                        match checkpointResult with
-                        | GraceResult.Ok checkpoints ->
-                            match commitResult with
-                            | Ok commits -> return GraceResult.Ok (GraceReturnValue.Create (checkpoints.ReturnValue.Concat(commits.ReturnValue).OrderByDescending(fun ref -> ref.CreatedAt).Take(getReferencesParameters.MaxCount)) (getCorrelationId parseResult))
-                            | GraceResult.Error error -> return GraceResult.Error error 
-                        | GraceResult.Error error -> return GraceResult.Error error 
+                        let checkpointResult = Branch.GetCheckpoints(parameters)
+                        let commitResult = Branch.GetCommits(parameters)
+                        Task.WaitAll(checkpointResult, commitResult)
+                        match checkpointResult.Result, commitResult.Result with
+                        | Ok checkpoints, Ok commits ->
+                            let allReferences = checkpoints.ReturnValue.Concat(commits.ReturnValue)
+                                                                       .OrderByDescending(fun ref -> ref.CreatedAt)
+                                                                       .Take(getReferencesParameters.MaxCount)
+                            return Ok (GraceReturnValue.Create allReferences (getCorrelationId parseResult))
+                        | Error error, _ -> return Error error
+                        | _, Error error -> return Error error
                     }
 
                 let! result = getReferenceHandler parseResult (getReferencesParameters |> normalizeIdsAndNames parseResult) query

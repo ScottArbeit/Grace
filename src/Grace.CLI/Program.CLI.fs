@@ -109,7 +109,7 @@ module GraceCommand =
             context.Output.WriteLine("  For more help, or to give us feedback, please create an issue in our repo at https://github.com/scottarbeit/grace."))
 
         /// Handles command aliases by removing the alias and substituting the full Grace command before execution.
-        let aliasHandler (context: InvocationContext) =
+        let aliasHandlerMiddleware (context: InvocationContext) =
             let tokens = context.ParseResult.Tokens.Select(fun token -> token.Value).ToList()
             if tokens.Count > 0 then
                 let firstToken = tokens[0]
@@ -180,9 +180,8 @@ module GraceCommand =
                     HelpBuilder.Default.GetLayout().Append(feedbackSection)
                 )
             )
+            .AddMiddleware(aliasHandlerMiddleware, MiddlewareOrder.ExceptionHandler)
             .UseDefaults()
-            .RegisterWithDotnetSuggest()
-            .AddMiddleware(aliasHandler, MiddlewareOrder.ExceptionHandler)
             .UseParseErrorReporting()
             .Build()
 
