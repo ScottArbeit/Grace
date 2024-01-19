@@ -35,7 +35,6 @@ open System.Security.Cryptography
 open System.Threading.Tasks
 open System.Text
 open System.Text.Json
-open FSharpPlus.Data.NonEmptySeq
 
 module Branch =
 
@@ -977,8 +976,8 @@ module Branch =
             task {                
                 let query (parameters: GetReferencesParameters) = 
                     task {
-                        let checkpointResult = Branch.GetCheckpoints(parameters)
                         let commitResult = Branch.GetCommits(parameters)
+                        let checkpointResult = Branch.GetCheckpoints(parameters)
                         Task.WaitAll(checkpointResult, commitResult)
                         match checkpointResult.Result, commitResult.Result with
                         | Ok checkpoints, Ok commits ->

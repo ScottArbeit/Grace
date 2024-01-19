@@ -80,9 +80,12 @@ module ApplicationContext =
             // Wait for the Dapr gRPC port to be ready.
             logToConsole $"""----------------------------------------------------------------------------------------------
                                 Pausing to check for an active gRPC connection with the Dapr sidecar.
-                                  Grace Server cannot accept requests until we know that we can talk to Dapr.
-                                  Grace Server will wait for 30 seconds for Dapr to be ready.
-                                  If no connection is made, Grace Server will exit, allowing the container to be restarted.
+                                  Grace Server should not complete startup and accept requests until we know that we can
+                                  talk to Dapr, so Grace Server will wait for 30 seconds for Dapr to be ready.
+                                  If no connection is made, that almost always means that something happened trying
+                                  to start the Dapr sidecar, and Kubernetes is going to detect that and restart it,
+                                  so we'll just exit and allow Kubernetes to restart Grace Server as well.
+                                  It usually fixes the problem after one restart.
                                 -----------------------------------------------------------------------------------------------"""
             let mutable gRPCPort: int = 50001   // This is Dapr's default gRPC port.
             let grpcPortString = Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.DaprGrpcPort)
