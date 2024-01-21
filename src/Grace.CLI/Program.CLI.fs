@@ -44,22 +44,29 @@ module Configuration =
 
 module GraceCommand =
 
+    let mutable private caseInsensitive = true
+    
     type OptionToUpdate = {optionName: string; command: string; display: string; displayOnCreate: string}
 
     /// Built-in aliases for Grace commands.
     let private aliases = 
         let aliases = Dictionary<string, string seq>()
+        aliases.Add("aliases", ["alias"; "list"])
         aliases.Add("branches", ["repository"; "get-branches"])
         aliases.Add("checkpoint", ["branch"; "checkpoint"])
         aliases.Add("checkpoints", ["branch"; "get-checkpoints"])
         aliases.Add("commit", ["branch"; "commit"])
         aliases.Add("commits", ["branch"; "get-commits"])
+        aliases.Add("dir", ["maint"; "list-contents"])
+        aliases.Add("ls", ["maint"; "list-contents"])
         aliases.Add("promote", ["branch"; "promote"])
         aliases.Add("promotions", ["branch"; "get-promotions"])
         aliases.Add("rebase", ["branch"; "rebase"])
         aliases.Add("refs", ["branch"; "get-references"])
         aliases.Add("save", ["branch"; "save"])
-        aliases.Add("saves", ["branch"; "get-references"])
+        aliases.Add("saves", ["branch"; "get-saves"])
+        aliases.Add("sdir", ["branch"; "list-contents"])
+        aliases.Add("sls", ["branch"; "list-contents"])
         aliases.Add("status", ["branch"; "status"])
         aliases.Add("switch", ["branch"; "switch"])
         aliases.Add("tag", ["branch"; "tag"])
@@ -69,6 +76,14 @@ module GraceCommand =
 
     /// The character sequences that Grace will recognize as a request for help.
     let helpOptions = [| "-h"; "/h"; "--help"; "-?"; "/?" |]
+
+    /// Prints the aliases for Grace commands.
+    let printAliases () =
+        let table = Table(Border = TableBorder.DoubleEdge)
+        table.LeftAligned()
+             .AddColumns([| TableColumn($"[{Colors.Important}]Alias[/]"); TableColumn($"[{Colors.Important}]Grace command[/]") |]) |> ignore
+        aliases |> Seq.iter (fun alias -> table.AddRow($"grace {alias.Key}", $"grace {alias.Value.First()} {alias.Value.Last()}") |> ignore)
+        AnsiConsole.Write(table)
 
     /// Gathers the available options for the current command and all its parents, which are applied hierarchically.
     [<TailCall>]
@@ -102,23 +117,33 @@ module GraceCommand =
         rootCommand.AddCommand(Config.Build)
         rootCommand.AddCommand(Maintenance.Build)
 
+        let Alias = Command("alias", "Display aliases for Grace commands.")
+        let ListAliases = Command("list", "Display aliases for Grace commands.")
+        ListAliases.SetHandler(printAliases)
+        Alias.AddCommand(ListAliases)
+        rootCommand.AddCommand(Alias)
+
         /// The feedback section is printed at the end of any CLI request for help.
         let feedbackSection: HelpSectionDelegate = HelpSectionDelegate(fun context -> 
             context.Output.WriteLine()
             context.Output.WriteLine("More help and feedback:")
-            context.Output.WriteLine("  For more help, or to give us feedback, please create an issue in our repo at https://github.com/scottarbeit/grace."))
+            context.Output.WriteLine("  For more help, or to give us feedback, please join us in Discussions, or create an issue in our repo, at https://github.com/scottarbeit/grace."))
 
         /// If the command has no arguments - the user just typed `grace` - then we'll show the help screen and avoid showing an error message by adding a token that asks for help.
         let noErrorIfNoArgumentsMiddleware (context: InvocationContext) =
             if context.ParseResult.Tokens.Count = 0 then
                 context.ParseResult <- context.Parser.Parse(helpOptions[0])
 
+        let decideIfThisInstanceShouldBeCaseInsensitiveMiddleware (context: InvocationContext) =
+            if Environment.OSVersion.Platform <> PlatformID.Win32NT then
+                caseInsensitive <- false
+
         /// Handles command aliases by removing the alias and substituting the full Grace command before execution.
         let aliasHandlerMiddleware (context: InvocationContext) =
             let tokens = context.ParseResult.Tokens.Select(fun token -> token.Value).ToList()
             if tokens.Count > 0 then
                 let firstToken = 
-                    if Environment.OSVersion.Platform = PlatformID.Win32NT then
+                    if caseInsensitive then
                         tokens[0].ToLowerInvariant()
                     else
                         tokens[0]
@@ -131,7 +156,7 @@ module GraceCommand =
 
         /// Converts tokens to the exact casing defined in their options, enabling case-insensitive parsing on Windows.
         let caseInsensitiveMiddleware (context: InvocationContext) =
-            if Environment.OSVersion.Platform = PlatformID.Win32NT then
+            if caseInsensitive then
                 let commandOptions = context.ParseResult.CommandResult.Command.Options |> Seq.append context.ParseResult.RootCommandResult.Command.Options
                 let allAliases = commandOptions |> Seq.collect (fun option -> option.Aliases)
                 
@@ -181,9 +206,8 @@ module GraceCommand =
                         // There are no tokens, so we'll just return an empty array.
                         Array.empty<string>
                     | 1 -> 
-                        // This is probably user error; if it were a valid alias, we would have already converted it to noun-verb form.
-                        // We'll just leave it alone.
-                        tokens
+                        // This could be a command like `grace branch`, which is a valid request for help. I'll convert the token to lower-case to match Grace's command structure.
+                        [| tokens[0].ToLowerInvariant() |]
                     | _ ->
                         // We've already converted aliases to their noun-verb form, so we know the first two tokens should be converted to lower-case to match Grace's command structure.
                         // The rest of the tokens are either options or values, and will be converted to their exact casing based on the option definitions.
@@ -259,6 +283,7 @@ module GraceCommand =
                 )
             )
             .AddMiddleware(noErrorIfNoArgumentsMiddleware, MiddlewareOrder.ExceptionHandler)
+            .AddMiddleware(decideIfThisInstanceShouldBeCaseInsensitiveMiddleware, MiddlewareOrder.ExceptionHandler)
             .AddMiddleware(aliasHandlerMiddleware, MiddlewareOrder.ExceptionHandler)
             .AddMiddleware(caseInsensitiveMiddleware, MiddlewareOrder.ExceptionHandler)
             .UseDefaults()

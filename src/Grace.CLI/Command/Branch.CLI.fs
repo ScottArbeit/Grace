@@ -873,31 +873,50 @@ module Branch =
                 let validateIncomingParameters = CommonValidations parseResult parameters
                 match validateIncomingParameters with
                 | Ok _ -> 
-                    let sdkParameters = Parameters.Branch.GetReferencesParameters(BranchId = parameters.BranchId, BranchName = parameters.BranchName, 
-                                            OwnerId = parameters.OwnerId, OwnerName = parameters.OwnerName,
-                                            OrganizationId = parameters.OrganizationId, OrganizationName = parameters.OrganizationName,
-                                            RepositoryId = parameters.RepositoryId, RepositoryName = parameters.RepositoryName,
-                                            MaxCount = parameters.MaxCount, CorrelationId = parameters.CorrelationId)
+                    let getBranchParameters = Parameters.Branch.GetBranchParameters(BranchId = parameters.BranchId, BranchName = parameters.BranchName, 
+                                                                                    OwnerId = parameters.OwnerId, OwnerName = parameters.OwnerName,
+                                                                                    OrganizationId = parameters.OrganizationId, OrganizationName = parameters.OrganizationName,
+                                                                                    RepositoryId = parameters.RepositoryId, RepositoryName = parameters.RepositoryName, CorrelationId = parameters.CorrelationId)
+
+                    let getReferencesParameters = Parameters.Branch.GetReferencesParameters(BranchId = parameters.BranchId, BranchName = parameters.BranchName, 
+                                                                                            OwnerId = parameters.OwnerId, OwnerName = parameters.OwnerName,
+                                                                                            OrganizationId = parameters.OrganizationId, OrganizationName = parameters.OrganizationName,
+                                                                                            RepositoryId = parameters.RepositoryId, RepositoryName = parameters.RepositoryName,
+                                                                                            MaxCount = parameters.MaxCount, CorrelationId = parameters.CorrelationId)
                     if parseResult |> hasOutput then
                         return! progress.Columns(progressColumns)
                                 .StartAsync(fun progressContext ->
                                     task {
                                         let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
-                                        let! result = query sdkParameters 
+                                        let branchDtoResult = Branch.Get(getBranchParameters)
+                                        let getReferencesResult = query getReferencesParameters
+                                        Task.WaitAll([| branchDtoResult :> Task; getReferencesResult :> Task |])
                                         t0.Increment(100.0)
-                                        return result
+                                        match (branchDtoResult.Result, getReferencesResult.Result) with
+                                        | (Ok branchDto, Ok references) ->
+                                            return Ok (GraceReturnValue.Create (branchDto.ReturnValue, references.ReturnValue.ToArray()) (parameters.CorrelationId))
+                                        | (Error error, _) -> return Error error
+                                        | (_, Error error) -> return Error error
                                     })
                     else
-                        return! query sdkParameters 
+                        let branchDtoResult = Branch.Get(getBranchParameters)
+                        let getReferencesResult = query getReferencesParameters
+                        Task.WaitAll([| branchDtoResult :> Task; getReferencesResult :> Task |])
+                        match (branchDtoResult.Result, getReferencesResult.Result) with
+                        | (Ok branchDto, Ok references) ->
+                            return Ok (GraceReturnValue.Create(branchDto.ReturnValue, references.ReturnValue.ToArray()) (parameters.CorrelationId))
+                        | (Error error, _) -> return Error error
+                        | (_, Error error) -> return Error error
                 | Error error -> return Error error
             with
                 | ex -> return Error (GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
         }
 
-    let private writeReferenceOutput (parseResult: ParseResult) (references: IEnumerable<ReferenceDto>) =
+    let private printReferences (parseResult: ParseResult) (branchDto: BranchDto) (references: ReferenceDto array) (referenceTypes: string) =
         if references.Count() > 0 then
-            let sortedResults = references.OrderByDescending(fun row -> row.CreatedAt)
+            let sortedResults = references |> Array.sortByDescending (fun row -> row.CreatedAt)
             let table = Table(Border = TableBorder.DoubleEdge)
+            table.ShowHeaders <- true
             table.AddColumns([| TableColumn($"[{Colors.Important}]Type[/]"); TableColumn($"[{Colors.Important}]Message[/]"); TableColumn($"[{Colors.Important}]SHA-256[/]"); TableColumn($"[{Colors.Important}]When[/]", Alignment = Justify.Right); TableColumn($"[{Colors.Important}][/]") |]) |> ignore
             for row in sortedResults do
                 //logToAnsiConsole Colors.Verbose $"{serialize row}"
@@ -906,9 +925,10 @@ module Branch =
                                  else
                                      $"{row.Sha256Hash}".Substring(0, 8)
                 let localCreatedAtTime = row.CreatedAt.ToDateTimeUtc().ToLocalTime()
-                let x = 8
                 let referenceTime = $"""{localCreatedAtTime.ToString("g", CultureInfo.CurrentUICulture)}"""
                 table.AddRow([| $"{getDiscriminatedUnionCaseName(row.ReferenceType)}"; $"{row.ReferenceText}"; sha256Hash; ago row.CreatedAt; $"[{Colors.Deemphasized}]{referenceTime}[/]" |]) |> ignore
+
+            AnsiConsole.MarkupLine($"[{Colors.Important}]{referenceTypes} in branch {branchDto.BranchName}:[/]")
             AnsiConsole.Write(table)
         
     let private GetReferences =
@@ -922,10 +942,11 @@ module Branch =
                 let! result = getReferenceHandler parseResult (getReferencesParameters |> normalizeIdsAndNames parseResult) query
                 match result with
                 | Ok graceReturnValue ->
+                    let (branchDto, references) = graceReturnValue.ReturnValue
                     let intReturn = result |> renderOutput parseResult
                     if parseResult |> hasOutput then
-                        writeReferenceOutput parseResult graceReturnValue.ReturnValue
-                        AnsiConsole.MarkupLine($"[{Colors.Important}]Returned {graceReturnValue.ReturnValue.Count()} rows.[/]")
+                        printReferences parseResult branchDto references "References"
+                        AnsiConsole.MarkupLine($"[{Colors.Important}]Returned {references.Length} rows.[/]")
                     return intReturn
                 | Error error ->
                     return result |> renderOutput parseResult
@@ -942,10 +963,11 @@ module Branch =
                 let! result = getReferenceHandler parseResult (getReferencesParameters |> normalizeIdsAndNames parseResult) query
                 match result with
                 | Ok graceReturnValue ->
+                    let (branchDto, references) = graceReturnValue.ReturnValue
                     let intReturn = result |> renderOutput parseResult
                     if parseResult |> hasOutput then
-                        writeReferenceOutput parseResult graceReturnValue.ReturnValue
-                        AnsiConsole.MarkupLine($"[{Colors.Important}]Returned {graceReturnValue.ReturnValue.Count()} rows.[/]")
+                        printReferences parseResult branchDto references "Promotions"
+                        AnsiConsole.MarkupLine($"[{Colors.Important}]Returned {references.Length} rows.[/]")
                     return intReturn
                 | Error error ->
                     return result |> renderOutput parseResult
@@ -962,10 +984,11 @@ module Branch =
                 let! result = getReferenceHandler parseResult (getReferencesParameters |> normalizeIdsAndNames parseResult) query
                 match result with
                 | Ok graceReturnValue ->
+                    let (branchDto, references) = graceReturnValue.ReturnValue
                     let intReturn = result |> renderOutput parseResult
                     if parseResult |> hasOutput then
-                        writeReferenceOutput parseResult graceReturnValue.ReturnValue
-                        AnsiConsole.MarkupLine($"[{Colors.Important}]Returned {graceReturnValue.ReturnValue.Count()} rows.[/]")
+                        printReferences parseResult branchDto references "Commits"
+                        AnsiConsole.MarkupLine($"[{Colors.Important}]Returned {references.Length} rows.[/]")
                     return intReturn
                 | Error error ->
                     return result |> renderOutput parseResult
@@ -992,10 +1015,11 @@ module Branch =
                 let! result = getReferenceHandler parseResult (getReferencesParameters |> normalizeIdsAndNames parseResult) query
                 match result with
                 | Ok graceReturnValue ->
+                    let (branchDto, references) = graceReturnValue.ReturnValue
                     let intReturn = result |> renderOutput parseResult
                     if parseResult |> hasOutput then
-                        writeReferenceOutput parseResult graceReturnValue.ReturnValue
-                        AnsiConsole.MarkupLine($"[{Colors.Important}]Returned {graceReturnValue.ReturnValue.Count()} rows.[/]")
+                        printReferences parseResult branchDto references "Checkpoints"
+                        AnsiConsole.MarkupLine($"[{Colors.Important}]Returned {references.Length} rows.[/]")
                     return intReturn
                 | Error error ->
                     return result |> renderOutput parseResult
@@ -1012,10 +1036,11 @@ module Branch =
                 let! result = getReferenceHandler parseResult (getReferencesParameters |> normalizeIdsAndNames parseResult) query
                 match result with
                 | Ok graceReturnValue ->
+                    let (branchDto, references) = graceReturnValue.ReturnValue
                     let intReturn = result |> renderOutput parseResult
                     if parseResult |> hasOutput then
-                        writeReferenceOutput parseResult graceReturnValue.ReturnValue
-                        AnsiConsole.MarkupLine($"[{Colors.Important}]Returned {graceReturnValue.ReturnValue.Count()} rows.[/]")
+                        printReferences parseResult branchDto references "Saves"
+                        AnsiConsole.MarkupLine($"[{Colors.Important}]Returned {references.Length} rows.[/]")
                     return intReturn
                 | Error error ->
                     return result |> renderOutput parseResult
@@ -1032,10 +1057,11 @@ module Branch =
                 let! result = getReferenceHandler parseResult (getReferencesParameters |> normalizeIdsAndNames parseResult) query
                 match result with
                 | Ok graceReturnValue ->
+                    let (branchDto, references) = graceReturnValue.ReturnValue
                     let intReturn = result |> renderOutput parseResult
                     if parseResult |> hasOutput then
-                        writeReferenceOutput parseResult graceReturnValue.ReturnValue
-                        AnsiConsole.MarkupLine($"[{Colors.Important}]Returned {graceReturnValue.ReturnValue.Count()} rows.[/]")
+                        printReferences parseResult branchDto references "Tags"
+                        AnsiConsole.MarkupLine($"[{Colors.Important}]Returned {references.Length} rows.[/]")
                     return intReturn
                 | Error error ->
                     return result |> renderOutput parseResult
@@ -2061,6 +2087,7 @@ module Branch =
                                     sb.ToString()
 
                                 let table = Table(Border = TableBorder.DoubleEdge)
+                                table.ShowHeaders <- false
                                 table.AddColumns(String.replicate (Current().OwnerName.Length) "_", String.replicate (Current().OwnerName.Length) "_")  // Using Current().OwnerName.Length is aesthetically pleasing, there's no deeper reason for it.
                                      .AddRow($"[{Colors.Important}]Owner[/]", $"[{Colors.Important}]{Current().OwnerName}[/] [{Colors.Deemphasized}]- {Current().OwnerId}[/]")
                                      .AddRow($"[{Colors.Important}]Organization[/]", $"[{Colors.Important}]{Current().OrganizationName}[/] [{Colors.Deemphasized}]- {Current().OrganizationId}[/]")
