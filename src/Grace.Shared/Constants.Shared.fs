@@ -213,7 +213,7 @@ module Constants =
     let ParallelOptions = ParallelOptions(MaxDegreeOfParallelism = Environment.ProcessorCount * 4)
 
     /// Default directory size magic value.
-    let InitialDirectorySize = uint64 Int64.MaxValue
+    let InitialDirectorySize = int64 -1
 
     /// The default root branch Id for a repository.
     let DefaultParentBranchId = Guid("38EC9A98-00B0-4FA3-8CC5-ACFB04E445A7") // There's nothing special about this Guid. I just generated it one day.

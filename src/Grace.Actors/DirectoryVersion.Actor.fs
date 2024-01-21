@@ -182,7 +182,7 @@ module DirectoryVersion =
                 task {
                     if directoryVersion.CreatedAt > DirectoryVersion.Default.CreatedAt then
                         return Error (GraceError.Create (DirectoryError.getErrorMessage DirectoryAlreadyExists) correlationId)
-                    elif newDirectoryVersion.Size <> uint64 (newDirectoryVersion.Files.Sum(fun file -> int64 file.Size)) then
+                    elif newDirectoryVersion.Size <> newDirectoryVersion.Files.Sum(fun file -> int64 file.Size) then
                         return Error (GraceError.Create (DirectoryError.getErrorMessage InvalidSize) correlationId)
                     else
                         do! Storage.SaveState stateManager dtoStateName newDirectoryVersion

@@ -176,7 +176,7 @@ module Services =
                 let! shaValue = computeSha256ForFile stream relativePath         
                 //logToConsole $"fileRelativePath: {fileRelativePath}; Sha256Hash: {shaValue}."
                 return Some (LocalFileVersion.Create (Current().RepositoryId) (RelativePath (normalizeFilePath relativePath)) (Sha256Hash shaValue) 
-                    isBinary (uint64 fileInfo.Length) (getCurrentInstant()) true fileInfo.LastWriteTimeUtc)
+                    isBinary fileInfo.Length (getCurrentInstant()) true fileInfo.LastWriteTimeUtc)
             else
                 return None
         }
@@ -601,7 +601,7 @@ module Services =
                     | Some fileVersion -> directoryVersion.Files.Add(fileVersion)
                     | None -> ()
 
-                    let updatedWithNewSize = {directoryVersion with Size = uint64 (directoryVersion.Files.Sum(fun file -> int64 (file.Size)))}
+                    let updatedWithNewSize = {directoryVersion with Size = directoryVersion.Files.Sum(fun file -> int64 (file.Size))}
 
                     // Add this directoryVersion for further processing.
                     changedDirectoryVersions.AddOrUpdate(directoryVersion.RelativePath, (fun _ -> updatedWithNewSize), (fun _ _ -> updatedWithNewSize)) |> ignore
@@ -641,7 +641,7 @@ module Services =
 
                             // Add new version of this file to the cache.
                             directoryVersion.Files.Add(fileVersion)
-                            let updatedWithNewSize = {directoryVersion with Size = uint64 (directoryVersion.Files.Sum(fun file -> int64 (file.Size)))}
+                            let updatedWithNewSize = {directoryVersion with Size = directoryVersion.Files.Sum(fun file -> int64 (file.Size))}
 
                             // Add this directoryVersion for further processing.
                             changedDirectoryVersions.AddOrUpdate(directoryVersion.RelativePath, (fun _ -> updatedWithNewSize), (fun _ _ -> updatedWithNewSize)) |> ignore
@@ -662,7 +662,7 @@ module Services =
                         // Remove this file from the cache.
                         let index = directoryVersion.Files.FindIndex(fun file -> file.RelativePath = difference.RelativePath)
                         directoryVersion.Files.RemoveAt(index)
-                        let updatedWithNewSize = {directoryVersion with Size = uint64 (directoryVersion.Files.Sum(fun file -> int64 (file.Size)))}
+                        let updatedWithNewSize = {directoryVersion with Size = directoryVersion.Files.Sum(fun file -> int64 (file.Size))}
                         
                         // Add this directoryVersion for further processing.
                         changedDirectoryVersions.AddOrUpdate(directoryVersion.RelativePath, (fun _ -> updatedWithNewSize), (fun _ _ -> updatedWithNewSize)) |> ignore
@@ -889,7 +889,7 @@ module Services =
                         let fileVersionFromPreviousGraceStatus = findFileVersionFromPreviousGraceStatus.First()
                         // If the length is different, or the Sha256Hash is changing in the new version, we'll delete the
                         //   file in the working directory, and copy the version from the object cache to replace it.
-                        if uint64 existingFileOnDisk.Length <> fileVersion.Size || 
+                        if existingFileOnDisk.Length <> fileVersion.Size || 
                                 fileVersionFromPreviousGraceStatus.Sha256Hash <> fileVersion.Sha256Hash then
                             logToAnsiConsole Colors.Verbose $"Replacing {fileVersion.FullName}; previous length: {fileVersionFromPreviousGraceStatus.Size}; new length: {fileVersion.Size}."
                             existingFileOnDisk.Delete()
@@ -1008,7 +1008,7 @@ module Services =
                         let! isBinary = isBinaryFile objectFileStream
                         //logToConsole $"Finished copyToObjectDirectory for {filePath}; isBinary: {isBinary}; moved temp file to object directory."
                         let relativePath = Path.GetRelativePath(Current().RootDirectory, filePath)
-                        return Some (FileVersion.Create (Current().RepositoryId) (RelativePath relativePath) (Sha256Hash $"{sha256Hash}") ("") isBinary (uint64 (objectFilePathInfo.Length)))
+                        return Some (FileVersion.Create (Current().RepositoryId) (RelativePath relativePath) (Sha256Hash $"{sha256Hash}") ("") isBinary (objectFilePathInfo.Length))
                     else
                     //   If we do already have this exact version of the file, just delete the temp file.
                         File.Delete(tempFilePath)

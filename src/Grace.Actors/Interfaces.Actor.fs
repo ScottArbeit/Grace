@@ -111,9 +111,9 @@ module Interfaces =
         /// Returns the Sha256 hash value for this directory.
         abstract member GetSha256Hash: unit -> Task<Sha256Hash>
         /// Returns the total size of files contained in this directory. This does not include files in subdirectories; use GetSizeRecursive() for that value.
-        abstract member GetSize: unit -> Task<uint64>
+        abstract member GetSize: unit -> Task<int64>
         /// Returns the total size of files contained in this directory and all subdirectories.
-        abstract member GetSizeRecursive: unit -> Task<uint64>
+        abstract member GetSizeRecursive: unit -> Task<int64>
         /// Returns a list of DirectoryVersion objects for all subdirectories.
         abstract member GetDirectoryVersionsRecursive: forceRegenerate: bool -> Task<List<DirectoryVersion>>
         /// Saves a DirectoryVersion instance as the state of this actor.

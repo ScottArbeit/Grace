@@ -29,8 +29,12 @@ module Maintenance =
         inherit ParameterBase()
 
     module private Options =
-        let listDirectories = new Option<bool>("--listDirectories", IsRequired = false, Description = "Show a list of directories in the Grace Index. [default: false]")
-        let listFiles = new Option<bool>("--listFiles", IsRequired = false, Description = "Show a list of files in the Grace Index. Implies --listDirectories. [default: false]")
+        let listDirectories = new Option<bool>("--listDirectories", IsRequired = false, Description = "Show a list of directories in the Grace Index. [default: true]", Arity = ArgumentArity.ExactlyOne)
+        listDirectories.SetDefaultValue(true)
+        let listFiles = new Option<bool>("--listFiles", IsRequired = false, Description = "Show a list of files in the Grace Index. Implies --listDirectories. [default: true]", Arity = ArgumentArity.ExactlyOne)
+        listFiles.SetDefaultValue(true)
+        let path = new Option<string>("path", IsRequired = false, Description = "The relative path to list. Wildcards ? and * are permitted. [default: *.*]", Arity = ArgumentArity.ExactlyOne)
+        path.SetDefaultValue("*.*")
 
     let private UpdateIndex = 
         CommandHandler.Create(fun (parseResult: ParseResult) (parameters: CommonParameters) ->
@@ -317,7 +321,29 @@ module Maintenance =
                 AnsiConsole.MarkupLine($"[{Colors.Highlighted}]Number of directories: {directoryCount}.[/]")
                 AnsiConsole.MarkupLine($"[{Colors.Highlighted}]Number of files: {fileCount}; total file size: {totalFileSize:N0}.[/]")
                 AnsiConsole.MarkupLine($"[{Colors.Highlighted}]Root SHA-256 hash: {rootDirectoryVersion.Sha256Hash.Substring(0, 8)}[/]")
-                if parseResult.HasOption(Options.listDirectories) || parseResult.HasOption(Options.listFiles) then
+            } :> Task)
+
+    type ListContentsParameters() =
+        inherit CommonParameters()
+        member val public ListDirectories = true with get, set
+        member val public ListFiles = true with get, set
+        member val public Path = String.Empty with get, set
+    
+    let private ListContents =
+        CommandHandler.Create(fun (parseResult: ParseResult) (parameters: ListContentsParameters) ->
+            task {
+                if parseResult |> verbose then printParseResult parseResult
+
+                let! graceStatus = readGraceStatusFile()
+                let directoryCount = graceStatus.Index.Count
+                let fileCount = graceStatus.Index.Values.Select(fun directoryVersion -> directoryVersion.Files.Count).Sum()
+                let totalFileSize = graceStatus.Index.Values.Sum(fun directoryVersion -> directoryVersion.Files.Sum(fun f -> int64 f.Size))
+                let rootDirectoryVersion = graceStatus.Index.Values.First(fun d -> d.RelativePath = Constants.RootDirectoryPath)
+                AnsiConsole.MarkupLine($"[{Colors.Important}]All values taken from the local Grace status file.[/]")
+                AnsiConsole.MarkupLine($"[{Colors.Highlighted}]Number of directories: {directoryCount}.[/]")
+                AnsiConsole.MarkupLine($"[{Colors.Highlighted}]Number of files: {fileCount}; total file size: {totalFileSize:N0}.[/]")
+                AnsiConsole.MarkupLine($"[{Colors.Highlighted}]Root SHA-256 hash: {rootDirectoryVersion.Sha256Hash.Substring(0, 8)}[/]")
+                if parameters.ListDirectories then
                     let longestRelativePath = getLongestRelativePath graceStatus.Index.Values
                     let additionalSpaces = String.replicate (longestRelativePath - 2) " "
                     let additionalImportantDashes = String.replicate (longestRelativePath + 3) "-"
@@ -326,14 +352,14 @@ module Maintenance =
                     sortedDirectoryVersions |> Seq.iteri (fun i directoryVersion ->
                         AnsiConsole.WriteLine()
                         if i = 0 then 
-                            AnsiConsole.MarkupLine($"[{Colors.Important}] Last Write Time             SHA-256            Size  Path{additionalSpaces}[/][{Colors.Deemphasized}](DirectoryVersionId)[/]")
-                            AnsiConsole.MarkupLine($"[{Colors.Important}] ----------------------------------------------------{additionalImportantDashes}[/][{Colors.Deemphasized}]{additionalDeemphasizedDashes}[/]")
+                            AnsiConsole.MarkupLine($"[{Colors.Important}]Last Write Time              SHA-256            Size  Path{additionalSpaces}[/][{Colors.Deemphasized}] (DirectoryVersionId)[/]")
+                            AnsiConsole.MarkupLine($"[{Colors.Important}]-----------------------------------------------------{additionalImportantDashes}[/][{Colors.Deemphasized}] {additionalDeemphasizedDashes}[/]")
                         let rightAlignedDirectoryVersionId = (String.replicate (longestRelativePath - directoryVersion.RelativePath.Length) " ") + $"({directoryVersion.DirectoryId})"
-                        AnsiConsole.MarkupLine($"[{Colors.Highlighted}]{directoryVersion.LastWriteTimeUtc,27}  {getShortSha256Hash directoryVersion.Sha256Hash}  {directoryVersion.Size,13:N0}  /{directoryVersion.RelativePath}[/] [{Colors.Deemphasized}]{rightAlignedDirectoryVersionId}[/]")
-                        if parseResult.HasOption(Options.listFiles) then
+                        AnsiConsole.MarkupLine($"[{Colors.Highlighted}]{formatDateTimeAligned directoryVersion.LastWriteTimeUtc}   {getShortSha256Hash directoryVersion.Sha256Hash}  {directoryVersion.Size,13:N0}  /{directoryVersion.RelativePath}[/] [{Colors.Deemphasized}] {rightAlignedDirectoryVersionId}[/]")
+                        if parameters.ListFiles then
                             let sortedFiles = directoryVersion.Files.OrderBy(fun f -> f.RelativePath)
                             for file in sortedFiles do
-                                AnsiConsole.MarkupLine($"[{Colors.Verbose}]{file.LastWriteTimeUtc,27}  {getShortSha256Hash file.Sha256Hash}  {file.Size,13:N0}  |- {file.FileInfo.Name}[/]")
+                                AnsiConsole.MarkupLine($"[{Colors.Verbose}]{formatDateTimeAligned file.LastWriteTimeUtc}   {getShortSha256Hash file.Sha256Hash}  {file.Size,13:N0}  |- {file.FileInfo.Name}[/]")
                     )
             } :> Task)
 
@@ -349,8 +375,12 @@ module Maintenance =
         scanCommand.Handler <- Scan
         maintenanceCommand.AddCommand(scanCommand)
 
-        let statsCommand = new Command("stats", Description = "Displays statistics about the current working directory.") |> addOption Options.listDirectories |> addOption Options.listFiles
+        let statsCommand = new Command("stats", Description = "Displays statistics about the current working directory.")
         statsCommand.Handler <- Stats
         maintenanceCommand.AddCommand(statsCommand)
+
+        let listContentsCommand = new Command("list-contents", Description = "List directories and files from the Grace Status file.") |> addOption Options.listDirectories |> addOption Options.listFiles
+        listContentsCommand.Handler <- ListContents
+        maintenanceCommand.AddCommand(listContentsCommand)
     
         maintenanceCommand

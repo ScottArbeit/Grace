@@ -117,11 +117,11 @@ module Services =
 
     /// Gets the total size of the files contained within this specific directory. This does not include the size of any subdirectories.
     let getDirectorySize (files: IList<FileVersion>) =
-        files |> Seq.fold(fun (size: uint64) file -> size + file.Size ) 0UL
+        files |> Seq.fold(fun (size: int64) file -> size + file.Size ) 0L
 
     /// Gets the total size of the files contained within this specific directory. This does not include the size of any subdirectories.
     let getLocalDirectorySize (files: IList<LocalFileVersion>) =
-        files |> Seq.fold(fun (size: uint64) file -> size + file.Size) 0UL
+        files |> Seq.fold(fun (size: int64) file -> size + file.Size) 0L
 
     /// Gets the number of path segments for the longest relative path in GraceIndex.
     ///

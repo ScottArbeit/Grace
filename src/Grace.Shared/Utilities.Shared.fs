@@ -79,6 +79,17 @@ module Utilities =
     /// Gets the current instant in local time as a string in short date/time format, using the CurrentUICulture.
     let getCurrentInstantLocal() = getCurrentInstant() |> instantToLocalTime
 
+    /// Ensures that the DateTime is printed in exactly the same number of characters, so the output is aligned.
+    let formatDateTimeAligned (dateTime: DateTime) =
+        let datePart = dateTime.ToString("ddd yyyy-MM-dd")
+        let timePart = dateTime.ToString("h:mm:ss tt")
+        let formattedTimePart = if timePart.Length = 10 then " " + timePart else timePart
+        sprintf "%s %s" datePart formattedTimePart
+
+    /// Ensures that the Instant is printed in exactly the same number of characters, so the output is aligned.
+    let formatInstantAligned (instant: Instant) =
+        formatDateTimeAligned (instant.ToDateTimeUtc())
+
     /// Logs the message to the console, with the current instant and thread ID.
     let logToConsole message = printfn $"{getCurrentInstantExtended()} {Environment.CurrentManagedThreadId:X2} {message}"
 

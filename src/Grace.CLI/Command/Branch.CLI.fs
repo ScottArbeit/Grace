@@ -261,15 +261,15 @@ module Branch =
         directoryVersions |> Seq.iteri (fun i directoryVersion ->
             AnsiConsole.WriteLine()
             if i = 0 then 
-                AnsiConsole.MarkupLine($"[{Colors.Important}] Created At                  SHA-256            Size  Path{additionalSpaces}[/][{Colors.Deemphasized}](DirectoryVersionId)[/]")
-                AnsiConsole.MarkupLine($"[{Colors.Important}] ----------------------------------------------------{additionalImportantDashes}[/][{Colors.Deemphasized}]{additionalDeemphasizedDashes}[/]")
+                AnsiConsole.MarkupLine($"[{Colors.Important}]Created At                   SHA-256            Size  Path{additionalSpaces}[/][{Colors.Deemphasized}] (DirectoryVersionId)[/]")
+                AnsiConsole.MarkupLine($"[{Colors.Important}]-----------------------------------------------------{additionalImportantDashes}[/][{Colors.Deemphasized}] {additionalDeemphasizedDashes}[/]")
             //logToAnsiConsole Colors.Verbose $"In printContents: directoryVersion.RelativePath: {directoryVersion.RelativePath}"
             let rightAlignedDirectoryVersionId = (String.replicate (longestRelativePath - directoryVersion.RelativePath.Length) " ") + $"({directoryVersion.DirectoryId})"
-            AnsiConsole.MarkupLine($"[{Colors.Highlighted}]{directoryVersion.CreatedAt.ToDateTimeUtc(),27}  {getShortSha256Hash directoryVersion.Sha256Hash}  {directoryVersion.Size,13:N0}  /{directoryVersion.RelativePath}[/] [{Colors.Deemphasized}]{rightAlignedDirectoryVersionId}[/]")
+            AnsiConsole.MarkupLine($"[{Colors.Highlighted}]{formatInstantAligned directoryVersion.CreatedAt}   {getShortSha256Hash directoryVersion.Sha256Hash}  {directoryVersion.Size,13:N0}  /{directoryVersion.RelativePath}[/] [{Colors.Deemphasized}] {rightAlignedDirectoryVersionId}[/]")
             //if parseResult.HasOption(Options.listFiles) then
             let sortedFiles = directoryVersion.Files.OrderBy(fun f -> f.RelativePath)
             for file in sortedFiles do
-                AnsiConsole.MarkupLine($"[{Colors.Verbose}]{file.CreatedAt.ToDateTimeUtc(),27}  {getShortSha256Hash file.Sha256Hash}  {file.Size,13:N0}  |- {file.RelativePath.Split('/').LastOrDefault()}[/]")
+                AnsiConsole.MarkupLine($"[{Colors.Verbose}]{formatInstantAligned file.CreatedAt}   {getShortSha256Hash file.Sha256Hash}  {file.Size,13:N0}  |- {file.RelativePath.Split('/').LastOrDefault()}[/]")
         )
     let private listContentsHandler (parseResult: ParseResult) (listContentsParameters: ListContentsParameters) =
         task {
@@ -318,7 +318,7 @@ module Branch =
                     let directoryVersions = returnValue.ReturnValue |> Seq.sortBy(fun dv -> dv.RelativePath)
                     let directoryCount = directoryVersions.Count()
                     let fileCount = directoryVersions.Select(fun directoryVersion -> directoryVersion.Files.Count).Sum()
-                    let totalFileSize = directoryVersions.Sum(fun directoryVersion -> directoryVersion.Files.Sum(fun f -> int64 f.Size))
+                    let totalFileSize = directoryVersions.Sum(fun directoryVersion -> directoryVersion.Files.Sum(fun f -> f.Size))
                     let rootDirectoryVersion = directoryVersions.First(fun d -> d.RelativePath = Constants.RootDirectoryPath)
                     AnsiConsole.MarkupLine($"[{Colors.Important}]All values taken from the selected version of this branch from the server.[/]")
                     AnsiConsole.MarkupLine($"[{Colors.Highlighted}]Number of directories: {directoryCount}.[/]")

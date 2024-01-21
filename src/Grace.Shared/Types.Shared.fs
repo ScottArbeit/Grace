@@ -125,11 +125,11 @@ module Types =
             RelativePath: RelativePath
             Sha256Hash: Sha256Hash
             IsBinary: bool
-            Size: uint64
+            Size: int64
             CreatedAt: Instant
             BlobUri: string
         }
-        static member Create (repositoryId: RepositoryId) (relativePath: RelativePath) (sha256Hash: Sha256Hash) (blobUri: string) (isBinary: bool) (size: uint64) =
+        static member Create (repositoryId: RepositoryId) (relativePath: RelativePath) (sha256Hash: Sha256Hash) (blobUri: string) (isBinary: bool) (size: int64) =
             { Class = "FileVersion"; RepositoryId = repositoryId; RelativePath = RelativePath (normalizeFilePath $"{relativePath}"); 
                 Sha256Hash = sha256Hash; BlobUri = blobUri; IsBinary = isBinary; Size = size; CreatedAt = getCurrentInstant() }
 
@@ -153,14 +153,14 @@ module Types =
             RelativePath: RelativePath
             Sha256Hash: Sha256Hash
             IsBinary: bool
-            Size: uint64
+            Size: int64
             CreatedAt: Instant
             UploadedToObjectStorage: bool
             LastWriteTimeUtc: DateTime
         }
         static member GetKnownTypes() = GetKnownTypes<LocalFileVersion>()
         static member Create (repositoryId: RepositoryId) (relativePath: RelativePath) (sha256Hash: Sha256Hash) (isBinary: bool)
-            (size: uint64) (createdAt: Instant) (uploadedToObjectStorage: bool) (lastWriteTimeUtc: DateTime) =
+            (size: int64) (createdAt: Instant) (uploadedToObjectStorage: bool) (lastWriteTimeUtc: DateTime) =
             {   
                 Class = "LocalFileVersion"
                 RepositoryId = repositoryId
@@ -195,8 +195,8 @@ module Types =
             Sha256Hash: Sha256Hash
             Directories: List<DirectoryId>
             Files: List<FileVersion>
-            Size: uint64
-            RecursiveSize: uint64
+            Size: int64
+            RecursiveSize: int64
             CreatedAt: Instant
         }
         static member GetKnownTypes() = GetKnownTypes<DirectoryVersion>()
@@ -207,7 +207,7 @@ module Types =
                 RecursiveSize = Constants.InitialDirectorySize; CreatedAt = Instant.MinValue}
 
         static member Create (directoryId: DirectoryId) (repositoryId: RepositoryId) (relativePath: RelativePath) 
-            (sha256Hash: Sha256Hash) (directories: List<DirectoryId>) (files: List<FileVersion>) (size: uint64) =
+            (sha256Hash: Sha256Hash) (directories: List<DirectoryId>) (files: List<FileVersion>) (size: int64) =
             {Class = "DirectoryVersion"; DirectoryId = directoryId; RepositoryId = repositoryId; 
                 RelativePath = relativePath; Sha256Hash = sha256Hash; 
                 Directories = directories; Files = files; Size = size; 
@@ -231,8 +231,8 @@ module Types =
             Sha256Hash: Sha256Hash
             Directories: List<DirectoryId>
             Files: List<LocalFileVersion>
-            Size: uint64
-            RecursiveSize: uint64
+            Size: int64
+            RecursiveSize: int64
             CreatedAt: Instant
             LastWriteTimeUtc: DateTime
         }
@@ -242,7 +242,7 @@ module Types =
                 Sha256Hash = Sha256Hash String.Empty; Directories = List<DirectoryId>(); Files = List<LocalFileVersion>(); Size = Constants.InitialDirectorySize; 
                 RecursiveSize = Constants.InitialDirectorySize; CreatedAt = Instant.MinValue; LastWriteTimeUtc = DateTime.UtcNow}
         
-        static member Create (directoryId: DirectoryId) (repositoryId: RepositoryId) (relativePath: RelativePath) (sha256Hash: Sha256Hash) (directories: List<DirectoryId>) (files: List<LocalFileVersion>) (size: uint64) (lastWriteTimeUtc: DateTime) =
+        static member Create (directoryId: DirectoryId) (repositoryId: RepositoryId) (relativePath: RelativePath) (sha256Hash: Sha256Hash) (directories: List<DirectoryId>) (files: List<LocalFileVersion>) (size: int64) (lastWriteTimeUtc: DateTime) =
             {Class = "LocalDirectoryVersion"; DirectoryId = directoryId; RepositoryId = repositoryId; RelativePath = relativePath; 
                 Sha256Hash = sha256Hash; Directories = directories; Files = files; Size = size; 
                 RecursiveSize = Constants.InitialDirectorySize; CreatedAt = getCurrentInstant(); LastWriteTimeUtc = lastWriteTimeUtc}
