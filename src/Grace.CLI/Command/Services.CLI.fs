@@ -961,7 +961,8 @@ module Services =
     /// Generates a temporary file name within the ObjectDirectory, and returns the full file path.
     /// This file name will be used to copy modified files into before renaming them with their proper names and SHA256 values.
     let getTemporaryFilePath() =
-        Path.GetFullPath(Path.Combine(Path.GetTempPath(), "Grace", $"{Path.GetRandomFileName()}.gracetmp"))
+        let tempDirectory = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), "Grace"))
+        Path.GetFullPath(Path.Combine(tempDirectory.FullName, $"{Path.GetRandomFileName()}.gracetmp"))
 
     /// Copies a file to the Object Directory, and returns a new FileVersion. The SHA-256 hash is computed and included in the object file name.
     let copyToObjectDirectory (filePath: FilePath) : Task<FileVersion option> =
@@ -970,7 +971,6 @@ module Services =
                 if File.Exists(filePath) then
                     // First, capture the file by copying it to a temp name
                     let tempFilePath = getTemporaryFilePath()
-                    let tempDirectoryInfo = Directory.CreateDirectory(tempFilePath)
                     //logToConsole $"filePath: {filePath}; tempFilePath: {tempFilePath}"
                     let mutable iteration = 0
                     Constants.DefaultFileCopyRetryPolicy.Execute(fun () -> 
