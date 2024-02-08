@@ -391,6 +391,7 @@ module Application =
                .UseStatusCodePages()
                .UseStaticFiles()
                .UseRouting()
+               .UseMiddleware<LogRequestHeadersMiddleware>()
                .UseMiddleware<CorrelationIdMiddleware>()
                .UseMiddleware<HttpSecurityHeadersMiddleware>()
                .UseMiddleware<ValidateIdsMiddleware>()

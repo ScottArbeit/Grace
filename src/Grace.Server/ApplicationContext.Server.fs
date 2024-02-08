@@ -76,16 +76,18 @@ module ApplicationContext =
     let Set = 
         task {
             let mutable isReady = false
+            let secondsToWaitForDaprToBeReady = 30.0
 
             // Wait for the Dapr gRPC port to be ready.
             logToConsole $"""----------------------------------------------------------------------------------------------
                                 Pausing to check for an active gRPC connection with the Dapr sidecar.
-                                  Grace Server should not complete startup and accept requests until we know that we can
-                                  talk to Dapr, so Grace Server will wait for 30 seconds for Dapr to be ready.
-                                  If no connection is made, that almost always means that something happened trying
-                                  to start the Dapr sidecar, and Kubernetes is going to detect that and restart it,
-                                  so we'll just exit and allow Kubernetes to restart Grace Server as well.
-                                  It usually fixes the problem after one restart.
+                                -----------------------------------------------------------------------------------------------
+                                Grace Server should not complete startup and accept requests until we know that we can
+                                talk to Dapr, so Grace Server will wait for {secondsToWaitForDaprToBeReady} seconds for Dapr to be ready.
+                                If no connection is made, that almost always means that something happened trying
+                                to start the Dapr sidecar, and Kubernetes is going to restart it.
+                                We'll also exit and allow Kubernetes to restart Grace Server; by the time it restarts,
+                                the Dapr sidecar will be up and running, and we'll connect right away.
                                 -----------------------------------------------------------------------------------------------"""
             let mutable gRPCPort: int = 50001   // This is Dapr's default gRPC port.
             let grpcPortString = Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.DaprGrpcPort)
@@ -102,8 +104,8 @@ module ApplicationContext =
                         logToConsole $"gRPC port is ready."
                         isReady <- true
                     else
-                        if getCurrentInstant().Minus(startTime) > Duration.FromSeconds(30.0)  then
-                            logToConsole $"gRPC port is not ready after 30 seconds. Exiting."
+                        if getCurrentInstant().Minus(startTime) > Duration.FromSeconds(secondsToWaitForDaprToBeReady)  then
+                            logToConsole $"gRPC port is not ready after {secondsToWaitForDaprToBeReady} seconds. Exiting."
                             Environment.Exit(-1)
             else
                 logToConsole $"Could not parse gRPC port {grpcPortString} as a port number. Exiting."

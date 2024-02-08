@@ -153,31 +153,37 @@ module Errors =
                 | Some error -> DiffError.getErrorMessage error
                 | None -> String.Empty
 
-    module Directory =
-        type DirectoryError =
+    module DirectoryVersion =
+        type DirectoryVersionError =
             | DirectoryAlreadyExists
             | DirectoryDoesNotExist
+            | FileNotFoundInObjectStorage
+            | FileSha256HashDoesNotMatch
             | InvalidDirectoryId
             | InvalidRepositoryId
             | InvalidSize
             | RelativePathMustNotBeEmpty
             | RepositoryDoesNotExist
             | Sha256HashIsRequired
+            | Sha256HashDoesNotMatch
 
-            static member getErrorMessage (directoryError: DirectoryError): string =
+            static member getErrorMessage (directoryError: DirectoryVersionError): string =
                 match directoryError with
                 | DirectoryAlreadyExists -> getLocalizedString StringResourceName.DirectoryAlreadyExists
                 | DirectoryDoesNotExist -> getLocalizedString StringResourceName.DirectoryDoesNotExist
+                | FileNotFoundInObjectStorage -> getLocalizedString StringResourceName.FileNotFoundInObjectStorage
+                | FileSha256HashDoesNotMatch -> getLocalizedString StringResourceName.FileSha256HashDoesNotMatch
                 | InvalidDirectoryId -> getLocalizedString StringResourceName.InvalidDirectoryId
                 | InvalidRepositoryId -> getLocalizedString StringResourceName.InvalidRepositoryId
                 | InvalidSize -> getLocalizedString StringResourceName.InvalidSize
                 | RelativePathMustNotBeEmpty -> getLocalizedString StringResourceName.RelativePathMustNotBeEmpty
                 | RepositoryDoesNotExist -> getLocalizedString StringResourceName.RepositoryDoesNotExist
                 | Sha256HashIsRequired -> getLocalizedString StringResourceName.Sha256HashIsRequired
+                | Sha256HashDoesNotMatch -> getLocalizedString StringResourceName.Sha256HashDoesNotMatch
 
-            static member getErrorMessage (directoryError: DirectoryError option): string =
+            static member getErrorMessage (directoryError: DirectoryVersionError option): string =
                 match directoryError with
-                | Some error -> DirectoryError.getErrorMessage error
+                | Some error -> DirectoryVersionError.getErrorMessage error
                 | None -> String.Empty
 
     module Owner =
@@ -408,6 +414,7 @@ module Errors =
             | FilesMustNotBeEmpty
             | NotImplemented
             | ObjectStorageException
+            | UnknownObjectStorageProvider
 
             static member getErrorMessage (storageError: StorageError): string =
                 match storageError with
@@ -417,6 +424,7 @@ module Errors =
                 | FilesMustNotBeEmpty -> getLocalizedString StringResourceName.FilesMustNotBeEmpty
                 | NotImplemented -> getLocalizedString StringResourceName.NotImplemented
                 | ObjectStorageException -> getLocalizedString StringResourceName.ObjectStorageException
+                | UnknownObjectStorageProvider -> getLocalizedString StringResourceName.UnknownObjectStorageProvider
 
             static member getErrorMessage (storageError: StorageError option): string =
                 match storageError with

@@ -405,6 +405,8 @@ module Text =
         | FailedUploadingFilesToObjectStorage
         | FailedWhileApplyingEvent
         | FailedWhileSavingEvent
+        | FileNotFoundInObjectStorage
+        | FileSha256HashDoesNotMatch
         | FilesMustNotBeEmpty
         | GettingLatestVersion
         | GettingCurrentBranch
@@ -484,9 +486,11 @@ module Text =
         | SearchVisibilityIsRequired
         | ServerRequestsMustIncludeXCorrelationIdHeader
         | Sha256HashDoesNotExist
+        | Sha256HashDoesNotMatch
         | Sha256HashIsRequired
         | StringIsTooLong
         | TagIsDisabled
+        | UnknownObjectStorageProvider
         | UpdatingWorkingDirectory
         | UploadingFiles
         | ValueMustBePositive

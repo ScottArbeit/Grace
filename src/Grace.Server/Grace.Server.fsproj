@@ -39,12 +39,13 @@
 		<Compile Include="Middleware\HttpSecurityHeaders.Middleware.fs" />
 		<Compile Include="Middleware\CorrelationId.Middleware.fs" />
 		<Compile Include="Middleware\ValidateIds.Middleware.fs" />
+		<Compile Include="Middleware\LogRequestHeaders.Middleware.fs" />
 		<Compile Include="Owner.Server.fs" />
 		<Compile Include="Organization.Server.fs" />
 		<Compile Include="Repository.Server.fs" />
 		<Compile Include="Branch.Server.fs" />
 		<Compile Include="Reference.Server.fs" />
-		<Compile Include="Directory.Server.fs" />
+		<Compile Include="DirectoryVersion.Server.fs" />
 		<Compile Include="Diff.Server.fs" />
 		<Compile Include="Storage.Server.fs" />
 		<Compile Include="Notifications.Server.fs" />

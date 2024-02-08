@@ -10,7 +10,7 @@ open Grace.Shared
 open Grace.Shared.Services
 open Grace.Shared.Types
 open Grace.Shared.Utilities
-open Grace.Shared.Validation.Errors.Directory
+open Grace.Shared.Validation.Errors.DirectoryVersion
 open Microsoft.Extensions.Logging
 open NodaTime
 open System
@@ -181,9 +181,9 @@ module DirectoryVersion =
                 let stateManager = this.StateManager
                 task {
                     if directoryVersion.CreatedAt > DirectoryVersion.Default.CreatedAt then
-                        return Error (GraceError.Create (DirectoryError.getErrorMessage DirectoryAlreadyExists) correlationId)
+                        return Error (GraceError.Create (DirectoryVersionError.getErrorMessage DirectoryAlreadyExists) correlationId)
                     elif newDirectoryVersion.Size <> newDirectoryVersion.Files.Sum(fun file -> int64 file.Size) then
-                        return Error (GraceError.Create (DirectoryError.getErrorMessage InvalidSize) correlationId)
+                        return Error (GraceError.Create (DirectoryVersionError.getErrorMessage InvalidSize) correlationId)
                     else
                         do! Storage.SaveState stateManager dtoStateName newDirectoryVersion
                         directoryVersion <- newDirectoryVersion

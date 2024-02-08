@@ -865,7 +865,7 @@ module Services =
         newGraceStatus
 
     /// Gets the file name used to indicate to `grace watch` that updates are in progress from another Grace command, and that it should ignore them.
-    let updateInProgressFileName = getNativeFilePath (Path.Combine(Path.GetTempPath(), "Grace", Constants.UpdateInProgressFileName))
+    let updateInProgressFileName = getNativeFilePath (Path.Combine(Path.GetTempPath(), "Grace", Current().BranchName, Constants.UpdateInProgressFileName))
 
     /// Updates the working directory to match the contents of new DirectoryVersions.
     ///
@@ -961,7 +961,7 @@ module Services =
     /// Generates a temporary file name within the ObjectDirectory, and returns the full file path.
     /// This file name will be used to copy modified files into before renaming them with their proper names and SHA256 values.
     let getTemporaryFilePath() =
-        let tempDirectory = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), "Grace"))
+        let tempDirectory = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), "Grace", Current().BranchName))
         Path.GetFullPath(Path.Combine(tempDirectory.FullName, $"{Path.GetRandomFileName()}.gracetmp"))
 
     /// Copies a file to the Object Directory, and returns a new FileVersion. The SHA-256 hash is computed and included in the object file name.

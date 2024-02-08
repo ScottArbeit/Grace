@@ -31,6 +31,7 @@ open System.Diagnostics
 
 module Storage =
 
+    /// Checks if a file version exists in the object storage provider.
     let fileExists (repositoryDto: RepositoryDto) (fileVersion: FileVersion) (context: HttpContext) =
         task {
             match repositoryDto.ObjectStorageProvider with
@@ -52,6 +53,27 @@ module Storage =
                     return false
         }
 
+    /// Gets the metadata stored in the object storage provider for the specified file.
+    let getFileMetadata (repositoryDto: RepositoryDto) (fileVersion: FileVersion) (context: HttpContext) =
+        task {
+            match repositoryDto.ObjectStorageProvider with
+                | AzureBlobStorage ->
+                    let! blobClient = getAzureBlobClient repositoryDto fileVersion
+                    match blobClient with
+                    | Ok blobClient ->
+                        let! azureResponse = blobClient.GetPropertiesAsync()
+                        let blobProperties = azureResponse.Value
+                        return Ok (blobProperties.Metadata :?> IReadOnlyDictionary<string, string>)
+                    | Error error -> return Error error
+                | AWSS3 -> return Error (StorageError.getErrorMessage NotImplemented)
+                | GoogleCloudStorage -> return Error (StorageError.getErrorMessage NotImplemented)
+                | ObjectStorageProvider.Unknown ->
+                    logToConsole $"Error: Unknown ObjectStorageProvider in getFileMetadata for repository {repositoryDto.RepositoryId} - {repositoryDto.RepositoryName}."
+                    logToConsole (sprintf "%A" repositoryDto)
+                    return Error (StorageError.getErrorMessage StorageError.UnknownObjectStorageProvider)
+        }
+
+    /// Gets a download URI for the specified file version that can be used by a Grace client.
     let GetDownloadUri: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
@@ -74,6 +96,7 @@ module Storage =
                     return! context.WriteTextAsync $"Error in {context.Request.Path} at {DateTime.Now.ToLongTimeString()}."
             }
 
+    /// Gets an upload URI for the specified file version that can be used by a Grace client.
     let GetUploadUri: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {

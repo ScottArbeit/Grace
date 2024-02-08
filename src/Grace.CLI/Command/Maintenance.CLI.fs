@@ -5,9 +5,9 @@ open Grace.CLI.Services
 open Grace.SDK
 open Grace.Shared
 open Grace.Shared.Client.Configuration
+open Grace.Shared.Validation.Errors
 open Grace.Shared.Types
 open Grace.Shared.Utilities
-open Grace.Shared.Validation.Errors
 open Spectre.Console
 open System
 open System.Collections.Concurrent
@@ -179,11 +179,10 @@ module Maintenance =
                                 let directoryVersionGroups = group.Chunk(chunkSize)
                                 do! Parallel.ForEachAsync(directoryVersionGroups, Constants.ParallelOptions, (fun directoryVersionGroup ct ->
                                     ValueTask(task {
-                                        let param = SaveDirectoryVersionsParameters()
-                                        param.DirectoryVersions <- directoryVersionGroup.Select(fun dv -> dv.ToDirectoryVersion).ToList()
-                                        param.CorrelationId <- getCorrelationId parseResult
-                                        let! sdvResult = Directory.SaveDirectoryVersions param
-                                        match sdvResult with
+                                        let saveDirectoryVersionsParameters = SaveDirectoryVersionsParameters(
+                                                                                DirectoryVersions = directoryVersionGroup.Select(fun dv -> dv.ToDirectoryVersion).ToList(), 
+                                                                                CorrelationId = getCorrelationId parseResult)
+                                        match! Directory.SaveDirectoryVersions saveDirectoryVersionsParameters with
                                         | Ok result -> succeeded.Enqueue(result)
                                         | Error error -> errors.Enqueue(error)
                                         t6.Increment(incrementAmount * double directoryVersionGroup.Length)
