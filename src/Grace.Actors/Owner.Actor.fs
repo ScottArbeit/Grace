@@ -187,15 +187,15 @@ module Owner =
             this.RegisterReminderAsync(ReminderType.PhysicalDeletion, convertToByteArray deleteReason, Constants.DefaultPhysicalDeletionReminderTime, TimeSpan.FromMilliseconds(-1)).Result |> ignore
 
         interface IOwnerActor with
-            member this.Exists() = ownerDto.UpdatedAt.IsSome |> returnTask
+            member this.Exists (correlationId) = ownerDto.UpdatedAt.IsSome |> returnTask
 
-            member this.IsDeleted() = ownerDto.DeletedAt.IsSome |> returnTask
+            member this.IsDeleted (correlationId) = ownerDto.DeletedAt.IsSome |> returnTask
 
-            member this.Get() = ownerDto |> returnTask
+            member this.Get (correlationId) = ownerDto |> returnTask
 
-            member this.OrganizationExists organizationName = ownerDto.Organizations.ContainsValue(OrganizationName organizationName) |> returnTask
+            member this.OrganizationExists organizationName correlationId = ownerDto.Organizations.ContainsValue(OrganizationName organizationName) |> returnTask
 
-            member this.ListOrganizations() = ownerDto.Organizations :> IReadOnlyDictionary<OrganizationId, OrganizationName> |> returnTask
+            member this.ListOrganizations (correlationId) = ownerDto.Organizations :> IReadOnlyDictionary<OrganizationId, OrganizationName> |> returnTask
 
             member this.Handle command metadata =
                 let isValid command (metadata: EventMetadata) =

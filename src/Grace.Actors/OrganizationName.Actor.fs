@@ -40,9 +40,9 @@ module OrganizationName =
             Task.CompletedTask
 
         interface IOrganizationNameActor with
-            member this.GetOrganizationId() = cachedOrganizationId |> returnTask
+            member this.GetOrganizationId correlationId = cachedOrganizationId |> returnTask
 
-            member this.SetOrganizationId(organizationId: string) =
+            member this.SetOrganizationId(organizationId: string) correlationId =
                 let mutable guid = Guid.Empty
                 if Guid.TryParse(organizationId, &guid) && guid <> Guid.Empty then
                     cachedOrganizationId <- Some organizationId

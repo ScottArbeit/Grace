@@ -184,20 +184,20 @@ module Organization =
             this.RegisterReminderAsync(ReminderType.PhysicalDeletion, convertToByteArray deleteReason, Constants.DefaultPhysicalDeletionReminderTime, TimeSpan.FromMilliseconds(-1)).Result |> ignore
 
         interface IOrganizationActor with
-            member this.Exists() =
+            member this.Exists (correlationId) =
                 Task.FromResult(if organizationDto.UpdatedAt.IsSome then true else false)
 
-            member this.IsDeleted() =
+            member this.IsDeleted (correlationId) =
                 Task.FromResult(if organizationDto.DeletedAt.IsSome then true else false)
 
-            member this.Get() =
+            member this.Get (correlationId) =
                 Task.FromResult(organizationDto)
 
-            member this.RepositoryExists repositoryName = 
+            member this.RepositoryExists repositoryName correlationId = 
                 log.LogInformation("Inside F(x)")
                 Task.FromResult(false)
 
-            member this.ListRepositories() =
+            member this.ListRepositories (correlationId) =
                 Task.FromResult(organizationDto.Repositories :> IReadOnlyDictionary<RepositoryId, RepositoryName>)
 
             member this.Handle (command: OrganizationCommand) metadata =

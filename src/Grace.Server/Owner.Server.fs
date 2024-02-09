@@ -23,6 +23,7 @@ open Microsoft.Azure.Cosmos
 open Microsoft.Extensions.Logging
 open NodaTime
 open System
+open System.Collections.Generic
 open System.Diagnostics
 open System.Linq
 open System.Threading.Tasks
@@ -68,7 +69,7 @@ module Owner =
 
                 if validationsPassed then
                     let! cmd = command parameters
-                    let! ownerId = resolveOwnerId parameters.OwnerId parameters.OwnerName
+                    let! ownerId = resolveOwnerId parameters.OwnerId parameters.OwnerName (getCorrelationId context)
 
                     match ownerId, commandName = nameof(Create) with
                     | Some ownerId, _ ->
@@ -103,7 +104,7 @@ module Owner =
                 let validationResults = validations parameters
                 let! validationsPassed = validationResults |> allPass
                 if validationsPassed then
-                    match! resolveOwnerId parameters.OwnerId parameters.OwnerName with
+                    match! resolveOwnerId parameters.OwnerId parameters.OwnerName (getCorrelationId context) with
                     | Some ownerId ->
                         let actorProxy = getActorProxy context ownerId
                         let! queryResult = query context maxCount actorProxy
@@ -128,8 +129,8 @@ module Owner =
                        Guid.isValidAndNotEmpty parameters.OwnerId InvalidOwnerId
                        String.isNotEmpty parameters.OwnerName OwnerNameIsRequired
                        String.isValidGraceName parameters.OwnerName InvalidOwnerName
-                       Owner.ownerIdDoesNotExist parameters.OwnerId OwnerIdAlreadyExists
-                       Owner.ownerNameDoesNotExist parameters.OwnerName OwnerNameAlreadyExists |]
+                       Owner.ownerIdDoesNotExist parameters.OwnerId parameters.CorrelationId OwnerIdAlreadyExists
+                       Owner.ownerNameDoesNotExist parameters.OwnerName parameters.CorrelationId OwnerNameAlreadyExists |]
 
                 let command (parameters: CreateOwnerParameters) = 
                     let ownerIdGuid = Guid.Parse(parameters.OwnerId)
@@ -149,9 +150,9 @@ module Owner =
                        Input.eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
                        String.isNotEmpty parameters.NewName OwnerNameIsRequired
                        String.isValidGraceName parameters.NewName InvalidOwnerName
-                       Owner.ownerExists parameters.OwnerId parameters.OwnerName OwnerDoesNotExist
-                       Owner.ownerIsNotDeleted parameters.OwnerId parameters.OwnerName OwnerIsDeleted
-                       Owner.ownerNameDoesNotExist parameters.NewName OwnerNameAlreadyExists |]
+                       Owner.ownerExists parameters.OwnerId parameters.OwnerName parameters.CorrelationId OwnerDoesNotExist
+                       Owner.ownerIsNotDeleted parameters.OwnerId parameters.OwnerName parameters.CorrelationId OwnerIsDeleted
+                       Owner.ownerNameDoesNotExist parameters.NewName parameters.CorrelationId OwnerNameAlreadyExists |]
 
                 let command (parameters: SetOwnerNameParameters) = 
                     SetName (OwnerName parameters.NewName) |> returnValueTask
@@ -170,8 +171,8 @@ module Owner =
                        Input.eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
                        String.isNotEmpty parameters.OwnerType OwnerTypeIsRequired
                        DiscriminatedUnion.isMemberOf<OwnerType, OwnerError> parameters.OwnerType InvalidOwnerType
-                       Owner.ownerExists parameters.OwnerId parameters.OwnerName OwnerDoesNotExist
-                       Owner.ownerIsNotDeleted parameters.OwnerId parameters.OwnerName OwnerIsDeleted |]
+                       Owner.ownerExists parameters.OwnerId parameters.OwnerName parameters.CorrelationId OwnerDoesNotExist
+                       Owner.ownerIsNotDeleted parameters.OwnerId parameters.OwnerName parameters.CorrelationId OwnerIsDeleted |]
 
                 let command (parameters: SetOwnerTypeParameters) = OwnerCommand.SetType (Utilities.discriminatedUnionFromString<OwnerType>(parameters.OwnerType).Value) |> returnValueTask
 
@@ -188,8 +189,8 @@ module Owner =
                        String.isValidGraceName parameters.OwnerName InvalidOwnerName
                        Input.eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
                        DiscriminatedUnion.isMemberOf<SearchVisibility, OwnerError> parameters.SearchVisibility InvalidSearchVisibility
-                       Owner.ownerExists parameters.OwnerId parameters.OwnerName OwnerDoesNotExist
-                       Owner.ownerIsNotDeleted parameters.OwnerId parameters.OwnerName OwnerIsDeleted |]
+                       Owner.ownerExists parameters.OwnerId parameters.OwnerName parameters.CorrelationId OwnerDoesNotExist
+                       Owner.ownerIsNotDeleted parameters.OwnerId parameters.OwnerName parameters.CorrelationId OwnerIsDeleted |]
 
                 let command (parameters: SetOwnerSearchVisibilityParameters) = OwnerCommand.SetSearchVisibility (Utilities.discriminatedUnionFromString<SearchVisibility>(parameters.SearchVisibility).Value) |> returnValueTask
 
@@ -206,8 +207,8 @@ module Owner =
                        String.isValidGraceName parameters.OwnerName InvalidOwnerName
                        Input.eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
                        String.isNotEmpty parameters.Description DescriptionIsRequired
-                       Owner.ownerExists parameters.OwnerId parameters.OwnerName OwnerDoesNotExist
-                       Owner.ownerIsNotDeleted parameters.OwnerId parameters.OwnerName OwnerIsDeleted |]
+                       Owner.ownerExists parameters.OwnerId parameters.OwnerName parameters.CorrelationId OwnerDoesNotExist
+                       Owner.ownerIsNotDeleted parameters.OwnerId parameters.OwnerName parameters.CorrelationId OwnerIsDeleted |]
 
                 let command (parameters: SetOwnerDescriptionParameters) = OwnerCommand.SetDescription (parameters.Description) |> returnValueTask
 
@@ -225,7 +226,7 @@ module Owner =
 
                     let query (context: HttpContext) (maxCount: int) (actorProxy: IOwnerActor) =
                         task {
-                            let! organizations = actorProxy.ListOrganizations()
+                            let! organizations = actorProxy.ListOrganizations (getCorrelationId context)
                             return! context.WriteJsonAsync(organizations)
                         }
 
@@ -244,8 +245,8 @@ module Owner =
                        String.isValidGraceName parameters.OwnerName InvalidOwnerName
                        Input.eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
                        String.isNotEmpty parameters.DeleteReason DeleteReasonIsRequired
-                       Owner.ownerExists parameters.OwnerId parameters.OwnerName OwnerDoesNotExist
-                       Owner.ownerIsNotDeleted parameters.OwnerId parameters.OwnerName OwnerIsDeleted |]
+                       Owner.ownerExists parameters.OwnerId parameters.OwnerName parameters.CorrelationId OwnerDoesNotExist
+                       Owner.ownerIsNotDeleted parameters.OwnerId parameters.OwnerName parameters.CorrelationId OwnerIsDeleted |]
 
                 let command (parameters: DeleteOwnerParameters) = OwnerCommand.DeleteLogical (parameters.Force, parameters.DeleteReason) |> returnValueTask
 
@@ -261,8 +262,8 @@ module Owner =
                     [| Guid.isValidAndNotEmpty parameters.OwnerId InvalidOwnerId
                        String.isValidGraceName parameters.OwnerName InvalidOwnerName
                        Input.eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
-                       Owner.ownerExists parameters.OwnerId parameters.OwnerName OwnerDoesNotExist
-                       Owner.ownerIsDeleted parameters.OwnerId parameters.OwnerName OwnerIsNotDeleted |]
+                       Owner.ownerExists parameters.OwnerId parameters.OwnerName parameters.CorrelationId OwnerDoesNotExist
+                       Owner.ownerIsDeleted parameters.OwnerId parameters.OwnerName parameters.CorrelationId OwnerIsNotDeleted |]
 
                 let command (parameters: OwnerParameters) = OwnerCommand.Undelete |> returnValueTask
 
@@ -279,12 +280,12 @@ module Owner =
                         [| Guid.isValidAndNotEmpty parameters.OwnerId InvalidOwnerId
                            String.isValidGraceName parameters.OwnerName InvalidOwnerName
                            Input.eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
-                           Owner.ownerExists parameters.OwnerId parameters.OwnerName OwnerDoesNotExist
-                           Owner.ownerIsNotDeleted parameters.OwnerId parameters.OwnerName OwnerIsDeleted |]
+                           Owner.ownerExists parameters.OwnerId parameters.OwnerName parameters.CorrelationId OwnerDoesNotExist
+                           Owner.ownerIsNotDeleted parameters.OwnerId parameters.OwnerName parameters.CorrelationId OwnerIsDeleted |]
 
                     let query (context: HttpContext) (maxCount: int) (actorProxy: IOwnerActor) =
                         task {
-                            return! actorProxy.Get()
+                            return! actorProxy.Get (getCorrelationId context)
                         }
 
                     let! parameters = context |> parse<GetOwnerParameters>

@@ -37,7 +37,7 @@ module Services =
     type QueryResult<'T, 'U when 'T :> IActor> = HttpContext -> int -> 'T -> Task<'U>
 
     /// Gets the CorrelationId from HttpContext.Items.
-    let getCorrelationId (context: HttpContext) = (context.Items[Constants.CorrelationId] :?> string)
+    let getCorrelationId (context: HttpContext) : CorrelationId = (context.Items[Constants.CorrelationId] :?> string)
 
     /// Gets the GraceIds record from HttpContext.Items.
     let getGraceIds (context: HttpContext) =

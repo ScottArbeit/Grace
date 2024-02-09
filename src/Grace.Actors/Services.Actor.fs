@@ -100,12 +100,12 @@ module Services =
         }
 
     /// Gets an Azure Blob Storage client instance for the given repository and file version.
-    let getAzureBlobClient (repositoryDto: RepositoryDto) (fileVersion: FileVersion) = 
+    let getAzureBlobClient (repositoryDto: RepositoryDto) (fileVersion: FileVersion) (correlationId: CorrelationId) = 
         task {
             //logToConsole $"* In getAzureBlobClient; repositoryId: {repositoryDto.RepositoryId}; fileVersion: {fileVersion.RelativePath}."
             let containerNameActorId = ActorId($"{repositoryDto.RepositoryId}")
             let containerNameActorProxy = actorProxyFactory.CreateActorProxy<IContainerNameActor>(containerNameActorId, ActorName.ContainerName)
-            let! containerName = containerNameActorProxy.GetContainerName()
+            let! containerName = containerNameActorProxy.GetContainerName correlationId
             match containerName with
             | Ok containerName ->
                 let! containerClient = getContainerClient repositoryDto.StorageAccountName containerName
@@ -116,12 +116,12 @@ module Services =
         }
 
     /// Creates a full URI for a specific file version.
-    let private createAzureBlobSasUri (repositoryDto: RepositoryDto) (fileVersion: FileVersion) (permission: BlobSasPermissions) =
+    let private createAzureBlobSasUri (repositoryDto: RepositoryDto) (fileVersion: FileVersion) (permission: BlobSasPermissions) (correlationId: CorrelationId) =
         task {
             //logToConsole $"In createAzureBlobSasUri; fileVersion.RelativePath: {fileVersion.RelativePath}."
             let containerNameActorId = ActorId($"{repositoryDto.RepositoryId}")
             let containerNameActorProxy = actorProxyFactory.CreateActorProxy<IContainerNameActor>(containerNameActorId, ActorName.ContainerName)
-            let! containerName = containerNameActorProxy.GetContainerName()
+            let! containerName = containerNameActorProxy.GetContainerName correlationId
             //logToConsole $"containerName: {containerName}."
             match containerName with
             | Ok containerName ->
@@ -137,11 +137,11 @@ module Services =
         }
 
     /// Gets a shared access signature for reading from the object storage provider.
-    let getReadSharedAccessSignature (repositoryDto: RepositoryDto) (fileVersion: FileVersion) =
+    let getReadSharedAccessSignature (repositoryDto: RepositoryDto) (fileVersion: FileVersion) (correlationId: CorrelationId) =
         task {
             match repositoryDto.ObjectStorageProvider with
                 | AzureBlobStorage ->
-                    let! sas = createAzureBlobSasUri repositoryDto fileVersion (BlobSasPermissions.Read ||| BlobSasPermissions.List)
+                    let! sas = createAzureBlobSasUri repositoryDto fileVersion (BlobSasPermissions.Read ||| BlobSasPermissions.List) correlationId
                     match sas with
                     | Ok sas -> return Ok (sas.ToString())
                     | Error error -> return Error error
@@ -154,14 +154,14 @@ module Services =
         }
 
     /// Gets a shared access signature for writing to the object storage provider.
-    let getWriteSharedAccessSignature (repositoryDto: RepositoryDto) (fileVersion: FileVersion) =
+    let getWriteSharedAccessSignature (repositoryDto: RepositoryDto) (fileVersion: FileVersion) (correlationId: CorrelationId) =
         task {
             match repositoryDto.ObjectStorageProvider with
                 | AWSS3 ->
                     return Uri("http://localhost:3500")
                 | AzureBlobStorage ->
                     // Adding read permission to allow for calls to .ExistsAsync().
-                    let! sas = createAzureBlobSasUri repositoryDto fileVersion (BlobSasPermissions.Create ||| BlobSasPermissions.Write ||| BlobSasPermissions.Move  ||| BlobSasPermissions.Tag ||| BlobSasPermissions.Read)
+                    let! sas = createAzureBlobSasUri repositoryDto fileVersion (BlobSasPermissions.Create ||| BlobSasPermissions.Write ||| BlobSasPermissions.Move  ||| BlobSasPermissions.Tag ||| BlobSasPermissions.Read) correlationId
                     match sas with 
                     | Ok sas -> 
                         //logToConsole $"In Actor.Services.getWriteSharedAccessSignature; {sas}"
@@ -176,7 +176,7 @@ module Services =
         }
 
     /// Gets the OwnerId by checking for the existence of OwnerId if provided, or searching by OwnerName.
-    let resolveOwnerId (ownerId: string) (ownerName: string) =
+    let resolveOwnerId (ownerId: string) (ownerName: string) (correlationId: CorrelationId) =
         task {
             let mutable ownerGuid = Guid.Empty
             if not <| String.IsNullOrEmpty(ownerId) && Guid.TryParse(ownerId, &ownerGuid) then
@@ -186,7 +186,7 @@ module Services =
                     return Some ownerId
                 else
                     let actorProxy = actorProxyFactory.CreateActorProxy<IOwnerActor>(ActorId(ownerId), ActorName.Owner)
-                    let! exists = actorProxy.Exists()
+                    let! exists = actorProxy.Exists correlationId
                     if exists then
                         use newCacheEntry = memoryCache.CreateEntry(ownerGuid, Value = null, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
                         return Some ownerId
@@ -196,7 +196,7 @@ module Services =
                 return None
             else
                 let ownerNameActorProxy = actorProxyFactory.CreateActorProxy<IOwnerNameActor>(ActorId(ownerName), ActorName.OwnerName)
-                match! ownerNameActorProxy.GetOwnerId() with
+                match! ownerNameActorProxy.GetOwnerId correlationId with
                 | Some ownerId -> return Some ownerId
                 | None ->
                     match actorStateStorageProvider with
@@ -212,7 +212,7 @@ module Services =
                             if String.IsNullOrEmpty(ownerId) then
                                 return None
                             else
-                                do! ownerNameActorProxy.SetOwnerId(ownerId)
+                                do! ownerNameActorProxy.SetOwnerId ownerId correlationId
                                 ownerGuid <- Guid.Parse(ownerId)
                                 use newCacheEntry = memoryCache.CreateEntry(ownerGuid, Value = null, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
                                 return Some ownerId
@@ -221,10 +221,10 @@ module Services =
         }
 
     /// Gets the OrganizationId by either returning OrganizationId if provided, or searching by OrganizationName.
-    let resolveOrganizationId (ownerId: string) (ownerName: string) (organizationId: string) (organizationName: string) =
+    let resolveOrganizationId (ownerId: string) (ownerName: string) (organizationId: string) (organizationName: string) (correlationId: CorrelationId) =
         task {
             let mutable organizationGuid = Guid.Empty
-            match! resolveOwnerId ownerId ownerName with
+            match! resolveOwnerId ownerId ownerName correlationId with
             | Some ownerId ->
                 if not <| String.IsNullOrEmpty(organizationId) && Guid.TryParse(organizationId, &organizationGuid) then
                     let mutable x = obj
@@ -233,7 +233,7 @@ module Services =
                         return Some organizationId
                     else
                         let actorProxy = actorProxyFactory.CreateActorProxy<IOrganizationActor>(ActorId(organizationId), ActorName.Organization)
-                        let! exists = actorProxy.Exists()
+                        let! exists = actorProxy.Exists correlationId
                         if exists then
                             use newCacheEntry = memoryCache.CreateEntry(organizationGuid, Value = null, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
                             return Some organizationId
@@ -243,7 +243,7 @@ module Services =
                     return None
                 else
                     let organizationNameActorProxy = actorProxyFactory.CreateActorProxy<IOrganizationNameActor>(ActorId(organizationName), ActorName.OrganizationName)
-                    match! organizationNameActorProxy.GetOrganizationId() with
+                    match! organizationNameActorProxy.GetOrganizationId correlationId with
                     | Some ownerId -> return Some ownerId
                     | None ->
                         match actorStateStorageProvider with
@@ -260,7 +260,7 @@ module Services =
                                 if String.IsNullOrEmpty(organizationId) then
                                     return None
                                 else
-                                    do! organizationNameActorProxy.SetOrganizationId(organizationId)
+                                    do! organizationNameActorProxy.SetOrganizationId organizationId correlationId
                                     organizationGuid <- Guid.Parse(organizationId)
                                     use newCacheEntry = memoryCache.CreateEntry(organizationGuid, Value = null, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
                                     return Some organizationId
@@ -270,12 +270,12 @@ module Services =
         }
 
     /// Gets the RepositoryId by returning RepositoryId if provided, or searching by RepositoryName within the provided owner and organization.
-    let resolveRepositoryId (ownerId: string) (ownerName: string) (organizationId: string) (organizationName: string) (repositoryId: string) (repositoryName: string) =
+    let resolveRepositoryId (ownerId: string) (ownerName: string) (organizationId: string) (organizationName: string) (repositoryId: string) (repositoryName: string) (correlationId: CorrelationId) =
         task {
             let mutable repositoryGuid = Guid.Empty
-            match! resolveOwnerId ownerId ownerName with
+            match! resolveOwnerId ownerId ownerName correlationId with
             | Some ownerId ->
-                match! resolveOrganizationId ownerId String.Empty organizationId organizationName with
+                match! resolveOrganizationId ownerId String.Empty organizationId organizationName correlationId with
                 | Some organizationId ->
                     if not <| String.IsNullOrEmpty(repositoryId) && Guid.TryParse(repositoryId, &repositoryGuid) then
                         let mutable x = obj
@@ -284,7 +284,7 @@ module Services =
                             return Some repositoryId
                         else
                             let actorProxy = actorProxyFactory.CreateActorProxy<IRepositoryActor>(ActorId(repositoryId), ActorName.Repository)
-                            let! exists = actorProxy.Exists()
+                            let! exists = actorProxy.Exists correlationId
                             if exists then
                                 use newCacheEntry = memoryCache.CreateEntry(repositoryGuid, Value = null, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
                                 return Some repositoryId
@@ -294,7 +294,7 @@ module Services =
                         return None
                     else
                         let repositoryNameActorProxy = actorProxyFactory.CreateActorProxy<IRepositoryNameActor>(ActorId(repositoryName), ActorName.RepositoryName)
-                        match! repositoryNameActorProxy.GetRepositoryId() with
+                        match! repositoryNameActorProxy.GetRepositoryId correlationId with
                         | Some repositoryId -> return Some repositoryId
                         | None ->
                             match actorStateStorageProvider with
@@ -312,7 +312,7 @@ module Services =
                                     if String.IsNullOrEmpty(repositoryId) then
                                         return None
                                     else
-                                        do! repositoryNameActorProxy.SetRepositoryId(repositoryId)
+                                        do! repositoryNameActorProxy.SetRepositoryId repositoryId correlationId
                                         repositoryGuid <- Guid.Parse(repositoryId)
                                         use newCacheEntry = memoryCache.CreateEntry(repositoryGuid, Value = null, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
                                         return Some repositoryId
@@ -322,11 +322,11 @@ module Services =
             | None -> return None
         }
 
-    let resolveRepositoryId_Linq (ownerId: string) (ownerName: string) (organizationId: string) (organizationName: string) (repositoryId: string) (repositoryName: string) =
+    let resolveRepositoryId_Linq (ownerId: string) (ownerName: string) (organizationId: string) (organizationName: string) (repositoryId: string) (repositoryName: string) (correlationId: CorrelationId) =
         task {
-            match! resolveOwnerId ownerId ownerName with
+            match! resolveOwnerId ownerId ownerName correlationId with
             | Some ownerId ->
-                match! resolveOrganizationId ownerId String.Empty organizationId organizationName with
+                match! resolveOrganizationId ownerId String.Empty organizationId organizationName correlationId with
                 | Some organizationId ->
                     if not <| String.IsNullOrEmpty(repositoryId) then
                         return Some repositoryId
@@ -334,7 +334,7 @@ module Services =
                         return None
                     else
                         let actorProxy = actorProxyFactory.CreateActorProxy<IRepositoryNameActor>(ActorId(repositoryName), ActorName.RepositoryName)
-                        match! actorProxy.GetRepositoryId() with
+                        match! actorProxy.GetRepositoryId correlationId with
                         | Some ownerId -> return Some ownerId
                         | None ->
                             match actorStateStorageProvider with
@@ -361,7 +361,7 @@ module Services =
                                 if String.IsNullOrEmpty(retrievedRepositoryId) then
                                     return None
                                 else
-                                    do! actorProxy.SetRepositoryId(retrievedRepositoryId)
+                                    do! actorProxy.SetRepositoryId retrievedRepositoryId correlationId
                                     return Some retrievedRepositoryId
                             | MongoDB -> return None
                 | None -> return None
@@ -369,7 +369,7 @@ module Services =
         }
 
     /// Gets the BranchId by returning BranchId if provided, or searching by BranchName within the provided repository.
-    let resolveBranchId repositoryId branchId branchName =
+    let resolveBranchId repositoryId branchId branchName (correlationId: CorrelationId) =
         task {            
             let mutable branchGuid = Guid.Empty
             if not <| String.IsNullOrEmpty(branchId) then
@@ -379,7 +379,7 @@ module Services =
                     return Some branchId
                 else
                     let actorProxy = actorProxyFactory.CreateActorProxy<IBranchActor>(ActorId(branchId), ActorName.Branch)
-                    let! exists = actorProxy.Exists()
+                    let! exists = actorProxy.Exists correlationId
                     if exists then
                         use newCacheEntry = memoryCache.CreateEntry(branchGuid, Value = null, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
                         return Some branchId
@@ -389,8 +389,8 @@ module Services =
                 return None
             else
                 let branchNameActorProxy = actorProxyFactory.CreateActorProxy<IBranchNameActor>(GetBranchNameActorId repositoryId branchName, ActorName.BranchName)
-                match! branchNameActorProxy.GetBranchId() with
-                | Some branchId -> return Some branchId
+                match! branchNameActorProxy.GetBranchId correlationId with
+                | Some branchId -> return Some $"{branchId}"
                 | None ->
                     match actorStateStorageProvider with
                     | Unknown -> return None
@@ -406,8 +406,8 @@ module Services =
                             if String.IsNullOrEmpty(branchId) then
                                 return None
                             else
-                                do! branchNameActorProxy.SetBranchId(branchId)
                                 branchGuid <- Guid.Parse(branchId)
+                                do! branchNameActorProxy.SetBranchId branchGuid correlationId
                                 use newCacheEntry = memoryCache.CreateEntry(branchGuid, Value = null, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
                                 return Some branchId
                         else return None
@@ -493,13 +493,13 @@ module Services =
         }
 
     /// Checks if the specified organization name is unique for the specified owner.
-    let organizationNameIsUnique<'T> (ownerId: string) (ownerName: string) (organizationName: string) =
+    let organizationNameIsUnique<'T> (ownerId: string) (ownerName: string) (organizationName: string) (correlationId: CorrelationId) =
         task {
             match actorStateStorageProvider with
             | Unknown -> return Ok false
             | AzureCosmosDb -> 
                 try
-                    match! resolveOwnerId ownerId ownerName with
+                    match! resolveOwnerId ownerId ownerName correlationId with
                     | Some ownerId ->
                         let queryDefinition = QueryDefinition("""SELECT c["value"].OrganizationId FROM c WHERE c["value"].OwnerId = @ownerId AND c["value"].OrganizationName = @organizationName AND c["value"].Class = @class""")
                                                 .WithParameter("@ownerId", ownerId)
@@ -525,13 +525,13 @@ module Services =
         }
 
     /// Checks if the specified repository name is unique for the specified organization.
-    let repositoryNameIsUnique<'T> (ownerId: string) (ownerName: string) (organizationId: string) (organizationName: string) (repositoryName: string) =
+    let repositoryNameIsUnique<'T> (ownerId: string) (ownerName: string) (organizationId: string) (organizationName: string) (repositoryName: string) (correlationId: CorrelationId) =
         task {
             match actorStateStorageProvider with
             | Unknown -> return Ok false
             | AzureCosmosDb -> 
                 try
-                    match! resolveOrganizationId ownerId ownerName organizationId organizationName with
+                    match! resolveOrganizationId ownerId ownerName organizationId organizationName correlationId with
                     | Some organizationId ->
                         let queryDefinition = QueryDefinition("""SELECT c["value"].RepositoryId FROM c WHERE c["value"].OrganizationId = @organizationId AND c["value"].RepositoryName = @repositoryName AND c["value"].Class = @class""")
                                                 .WithParameter("@organizationId", organizationId)
@@ -879,7 +879,7 @@ module Services =
         }
 
     /// Gets a Root DirectoryVersion by searching using a Sha256Hash value.
-    let getRootDirectoryBySha256Hash (repositoryId: RepositoryId) (sha256Hash: Sha256Hash) = 
+    let getRootDirectoryBySha256Hash (repositoryId: RepositoryId) (sha256Hash: Sha256Hash) correlationId = 
         task {
             let mutable directoryVersion = DirectoryVersion.Default
             match actorStateStorageProvider with
@@ -910,17 +910,17 @@ module Services =
         }
 
     /// Gets a Root DirectoryVersion by searching using a Sha256Hash value.
-    let getRootDirectoryByReferenceId (repositoryId: RepositoryId) (referenceId: ReferenceId) = 
+    let getRootDirectoryByReferenceId (repositoryId: RepositoryId) (referenceId: ReferenceId) correlationId = 
         task {
             let referenceActorId = ActorId($"{referenceId}")
             let referenceActorProxy = actorProxyFactory.CreateActorProxy<IReferenceActor>(referenceActorId, ActorName.Reference)
-            let! referenceDto = referenceActorProxy.Get()
+            let! referenceDto = referenceActorProxy.Get correlationId
 
-            return! getRootDirectoryBySha256Hash repositoryId referenceDto.Sha256Hash
+            return! getRootDirectoryBySha256Hash repositoryId referenceDto.Sha256Hash correlationId
         }
 
     /// Checks if all of the supplied DirectoryIds exist.
-    let directoryIdsExist (repositoryId: RepositoryId) (directoryIds: IEnumerable<DirectoryId>) = 
+    let directoryIdsExist (repositoryId: RepositoryId) (directoryIds: IEnumerable<DirectoryId>) correlationId = 
         task {
             match actorStateStorageProvider with
             | Unknown -> return false

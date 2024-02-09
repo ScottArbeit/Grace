@@ -55,26 +55,26 @@ module Interfaces =
         /// Validates incoming commands and converts them to events that are stored in the database.
         abstract member Handle : command: Branch.BranchCommand -> eventMetadata: EventMetadata -> Task<GraceResult<string>>
         /// Validates that a branch with this BranchId exists.
-        abstract member Exists: unit -> Task<bool>
+        abstract member Exists: correlationId: CorrelationId -> Task<bool>
         /// Retrieves the current state of the branch.
-        abstract member Get: unit -> Task<BranchDto>
+        abstract member Get: correlationId: CorrelationId -> Task<BranchDto>
         /// Retrieves the list of events handled by this branch.
-        abstract member GetEvents: unit -> Task<IList<Events.Branch.BranchEvent>>
+        abstract member GetEvents: correlationId: CorrelationId -> Task<IList<Events.Branch.BranchEvent>>
         /// Retrieves the most recent commit from this branch.
-        abstract member GetLatestCommit: unit -> Task<ReferenceId>
+        abstract member GetLatestCommit: correlationId: CorrelationId -> Task<ReferenceId>
         /// Retrieves the most recent promotion from this branch.
-        abstract member GetLatestPromotion: unit -> Task<ReferenceId>
+        abstract member GetLatestPromotion: correlationId: CorrelationId -> Task<ReferenceId>
         /// Retrieves the parent branch for a given branch.
-        abstract member GetParentBranch: unit -> Task<BranchDto>
+        abstract member GetParentBranch: correlationId: CorrelationId -> Task<BranchDto>
 
     /// Defines the operations for the BranchName actor.
     [<Interface>]
     type IBranchNameActor =
         inherit IActor
         /// Sets the BranchId that matches the BranchName.
-        abstract member SetBranchId: branchName: string -> Task
+        abstract member SetBranchId: branchId: BranchId -> correlationId: CorrelationId -> Task
         /// Returns the BranchId for the given BranchName.
-        abstract member GetBranchId: unit -> Task<string option>
+        abstract member GetBranchId: correlationId: CorrelationId -> Task<BranchId option>
 
     /// Defines the operations for the Commit actor.
     [<Interface>]
@@ -83,58 +83,58 @@ module Interfaces =
         /// Retrieves the container name for the RepositoryId specified for the actor.
         ///
         /// The container name is $"{ownerName}-{organizationName}-{repositoryName}".
-        abstract member GetContainerName: unit -> Task<Result<ContainerName, string>>
+        abstract member GetContainerName: correlationId: CorrelationId -> Task<Result<ContainerName, string>>
     
     /// Defines the operations for the Diff actor.
     [<Interface>]
     type IDiffActor = 
         inherit IActor
         /// Populates the contents of the diff.
-        abstract member Populate: unit -> Task<bool>
+        abstract member Populate: correlationId: CorrelationId -> Task<bool>
         /// Gets the results of the diff.
-        abstract member GetDiff: unit -> Task<DiffDto>
+        abstract member GetDiff: correlationId: CorrelationId -> Task<DiffDto>
 
     ///Defines the operations for the DirectoryVersion actor.
     [<Interface>]
     type IDirectoryVersionActor =
         inherit IActor
         /// Returns true if the actor instance already exists.
-        abstract member Exists: unit -> Task<bool>
+        abstract member Exists: correlationId: CorrelationId -> Task<bool>
         /// Returns the DirectoryVersion instance for this directory.
-        abstract member Get: unit -> Task<DirectoryVersion>
+        abstract member Get: correlationId: CorrelationId -> Task<DirectoryVersion>
         /// Returns the list of subdirectories contained in this directory.
-        abstract member GetCreatedAt: unit -> Task<Instant>
+        abstract member GetCreatedAt: correlationId: CorrelationId -> Task<Instant>
         /// Returns the list of subdirectories contained in this directory.
-        abstract member GetDirectories: unit -> Task<List<DirectoryId>>
+        abstract member GetDirectories: correlationId: CorrelationId -> Task<List<DirectoryId>>
         /// Returns the list of files contained in this directory.
-        abstract member GetFiles: unit -> Task<List<FileVersion>>
+        abstract member GetFiles: correlationId: CorrelationId -> Task<List<FileVersion>>
         /// Returns the Sha256 hash value for this directory.
-        abstract member GetSha256Hash: unit -> Task<Sha256Hash>
+        abstract member GetSha256Hash: correlationId: CorrelationId -> Task<Sha256Hash>
         /// Returns the total size of files contained in this directory. This does not include files in subdirectories; use GetSizeRecursive() for that value.
-        abstract member GetSize: unit -> Task<int64>
+        abstract member GetSize: correlationId: CorrelationId -> Task<int64>
         /// Returns the total size of files contained in this directory and all subdirectories.
-        abstract member GetSizeRecursive: unit -> Task<int64>
+        abstract member GetSizeRecursive: correlationId: CorrelationId -> Task<int64>
         /// Returns a list of DirectoryVersion objects for all subdirectories.
-        abstract member GetDirectoryVersionsRecursive: forceRegenerate: bool -> Task<List<DirectoryVersion>>
+        abstract member GetDirectoryVersionsRecursive: forceRegenerate: bool -> correlationId: CorrelationId -> Task<List<DirectoryVersion>>
         /// Saves a DirectoryVersion instance as the state of this actor.
-        abstract member Create: directoryContents: DirectoryVersion -> correlationId: string -> Task<GraceResult<string>>
+        abstract member Create: directoryContents: DirectoryVersion -> correlationId: CorrelationId -> Task<GraceResult<string>>
         /// Delete the DirectoryVersion and all subdirectories and files.
-        abstract member Delete: correlationId: string -> Task<GraceResult<string>>
+        abstract member Delete: correlationId: CorrelationId -> Task<GraceResult<string>>
 
     ///Defines the operations for the Organization actor.
     [<Interface>]
     type IOrganizationActor =
         inherit IActor
         /// Returns true if an organization with this ActorId already exists in the database.
-        abstract member Exists: unit -> Task<bool>
+        abstract member Exists: correlationId: CorrelationId -> Task<bool>
         /// Returns true if an organization with this ActorId has been deleted.
-        abstract member IsDeleted: unit -> Task<bool>
+        abstract member IsDeleted: correlationId: CorrelationId -> Task<bool>
         /// Returns true if an repository with this name exists for this owner.
-        abstract member RepositoryExists: repositoryName: string -> Task<bool>
+        abstract member RepositoryExists: repositoryName: RepositoryName -> correlationId: CorrelationId -> Task<bool>
         /// Returns the current state of the organization.
-        abstract member Get: unit -> Task<OrganizationDto>
+        abstract member Get: correlationId: CorrelationId -> Task<OrganizationDto>
         /// Returns a list of the repositories under this organization.
-        abstract member ListRepositories: unit -> Task<IReadOnlyDictionary<RepositoryId, RepositoryName>>
+        abstract member ListRepositories: correlationId: CorrelationId -> Task<IReadOnlyDictionary<RepositoryId, RepositoryName>>
         /// Validates incoming commands and converts them to events that are stored in the database.
         abstract member Handle: command: Organization.OrganizationCommand -> eventMetadata: EventMetadata -> Task<GraceResult<string>>
 
@@ -143,24 +143,24 @@ module Interfaces =
     type IOrganizationNameActor =
         inherit IActor
         /// Returns true if an organization with this organization name already exists in the database.
-        abstract member SetOrganizationId: organizationName: string -> Task
+        abstract member SetOrganizationId: organizationName: OrganizationName -> correlationId: CorrelationId -> Task
         /// Returns the OrganizationId for the given OrganizationName.
-        abstract member GetOrganizationId: unit -> Task<string option>
+        abstract member GetOrganizationId: correlationId: CorrelationId -> Task<string option>
 
     /// Defines the operations for the Owner actor.
     [<Interface>]
     type IOwnerActor =
         inherit IActor
         /// Returns true if an owner with this ActorId already exists in the database.
-        abstract member Exists: unit -> Task<bool>
+        abstract member Exists: correlationId: CorrelationId -> Task<bool>
         /// Returns true if an owner with this ActorId has been deleted.
-        abstract member IsDeleted: unit -> Task<bool>
+        abstract member IsDeleted: correlationId: CorrelationId -> Task<bool>
         /// Returns true if an organization with this name exists for this owner.
-        abstract member OrganizationExists: organizationName: string -> Task<bool>
+        abstract member OrganizationExists: organizationName: string -> correlationId: CorrelationId -> Task<bool>
         /// Returns the current state of the owner.
-        abstract member Get: unit -> Task<OwnerDto>
+        abstract member Get: correlationId: CorrelationId -> Task<OwnerDto>
         /// Returns a list of the organizations under this owner.
-        abstract member ListOrganizations: unit -> Task<IReadOnlyDictionary<OrganizationId, OrganizationName>>
+        abstract member ListOrganizations: correlationId: CorrelationId -> Task<IReadOnlyDictionary<OrganizationId, OrganizationName>>
         /// Validates incoming commands and converts them to events that are stored in the database.
         abstract member Handle : command: Owner.OwnerCommand -> eventMetadata: EventMetadata -> Task<GraceResult<string>>
 
@@ -169,40 +169,41 @@ module Interfaces =
     type IOwnerNameActor =
         inherit IActor
         /// Sets the OwnerId for a given OwnerName.
-        abstract member SetOwnerId: ownerName: string -> Task
+        abstract member SetOwnerId: ownerName: OwnerName -> correlationId: CorrelationId -> Task
         /// Returns the OwnerId for the given OwnerName.
-        abstract member GetOwnerId: unit -> Task<string option>
+        abstract member GetOwnerId: correlationId: CorrelationId -> Task<string option>
 
     /// Defines the operations for the Reference actor.
     [<Interface>]
     type IReferenceActor =
         inherit IActor
-        abstract member Exists: unit -> Task<bool>
-        abstract member Get: unit -> Task<ReferenceDto>
-        abstract member GetReferenceType: unit -> Task<ReferenceType>
+        abstract member Exists: correlationId: CorrelationId -> Task<bool>
+        abstract member Get: correlationId: CorrelationId -> Task<ReferenceDto>
+        abstract member GetReferenceType: correlationId: CorrelationId -> Task<ReferenceType>
         abstract member Create: referenceId: ReferenceId 
                                 * branchId: BranchId 
                                 * directoryId: DirectoryId 
                                 * sha256Hash: Sha256Hash
                                 * referenceType: ReferenceType 
-                                * referenceText: ReferenceText 
+                                * referenceText: ReferenceText
+                                -> correlationId: CorrelationId
                                 -> Task<ReferenceDto>
-        abstract member Delete: correlationId: string -> Task<GraceResult<string>>
+        abstract member Delete: correlationId: CorrelationId -> Task<GraceResult<string>>
 
     /// Defines the operations for the Repository actor.
     [<Interface>]
     type IRepositoryActor =
         inherit IActor
         /// Returns true if this actor already exists in the database, otherwise false.
-        abstract member Exists: unit -> Task<bool>
+        abstract member Exists: correlationId: CorrelationId -> Task<bool>
         /// Returns true if the repository has been created but is empty; otherwise false.
-        abstract member IsEmpty: unit -> Task<bool>
+        abstract member IsEmpty: correlationId: CorrelationId -> Task<bool>
         /// Returns true if this repository has been deleted.
-        abstract member IsDeleted: unit -> Task<bool>
+        abstract member IsDeleted: correlationId: CorrelationId -> Task<bool>
         /// Returns a record with the current state of the repository.
-        abstract member Get: unit -> Task<RepositoryDto>
+        abstract member Get: correlationId: CorrelationId -> Task<RepositoryDto>
         /// Returns the object storage provider for this repository.
-        abstract member GetObjectStorageProvider: unit -> Task<ObjectStorageProvider>
+        abstract member GetObjectStorageProvider: correlationId: CorrelationId -> Task<ObjectStorageProvider>
         /// Processes commands by checking that they're valid, and then converting them into events.
         abstract member Handle : command: Repository.RepositoryCommand -> eventMetadata: EventMetadata -> Task<GraceResult<string>>
 
@@ -211,6 +212,6 @@ module Interfaces =
     type IRepositoryNameActor =
         inherit IActor
         /// Sets the RepositoryId that matches the RepositoryName.
-        abstract member SetRepositoryId: repositoryName: string -> Task
+        abstract member SetRepositoryId: repositoryName: RepositoryName -> correlationId: CorrelationId -> Task
         /// Returns the RepositoryId for the given RepositoryName.
-        abstract member GetRepositoryId: unit -> Task<string option>
+        abstract member GetRepositoryId: correlationId: CorrelationId -> Task<string option>

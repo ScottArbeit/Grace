@@ -122,12 +122,12 @@ module Diff =
                     let validations (parameters: PopulateParameters) =
                         [| Guid.isNotEmpty parameters.DirectoryId1 DiffError.InvalidDirectoryId
                            Guid.isNotEmpty parameters.DirectoryId2 DiffError.InvalidDirectoryId
-                           Directory.directoryIdExists parameters.DirectoryId1 DiffError.DirectoryDoesNotExist
-                           Directory.directoryIdExists parameters.DirectoryId2 DiffError.DirectoryDoesNotExist |]
+                           Directory.directoryIdExists parameters.DirectoryId1 parameters.CorrelationId DiffError.DirectoryDoesNotExist
+                           Directory.directoryIdExists parameters.DirectoryId2 parameters.CorrelationId DiffError.DirectoryDoesNotExist |]
 
                     let query (context: HttpContext) _ (actorProxy: IDiffActor) =
                         task {
-                            let! populated = actorProxy.Populate()
+                            let! populated = actorProxy.Populate (getCorrelationId context)
                             return populated
                         }
 
@@ -145,12 +145,12 @@ module Diff =
                     let validations (parameters: GetDiffParameters) =
                         [| Guid.isNotEmpty parameters.DirectoryId1 DiffError.InvalidDirectoryId
                            Guid.isNotEmpty parameters.DirectoryId2 DiffError.InvalidDirectoryId
-                           Directory.directoryIdExists parameters.DirectoryId1 DiffError.DirectoryDoesNotExist
-                           Directory.directoryIdExists parameters.DirectoryId2 DiffError.DirectoryDoesNotExist |]
+                           Directory.directoryIdExists parameters.DirectoryId1 parameters.CorrelationId DiffError.DirectoryDoesNotExist
+                           Directory.directoryIdExists parameters.DirectoryId2 parameters.CorrelationId DiffError.DirectoryDoesNotExist |]
 
                     let query (context: HttpContext) _ (actorProxy: IDiffActor) =
                         task {
-                            let! diff = actorProxy.GetDiff()
+                            let! diff = actorProxy.GetDiff (getCorrelationId context)
                             return diff
                         }
 
@@ -174,7 +174,7 @@ module Diff =
 
                     let query (context: HttpContext) _ (actorProxy: IDiffActor) =
                         task {
-                            let! diff = actorProxy.GetDiff()
+                            let! diff = actorProxy.GetDiff (getCorrelationId context)
                             return diff
                         }
 

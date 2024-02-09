@@ -41,9 +41,9 @@ module RepositoryName =
             Task.CompletedTask
 
         interface IRepositoryNameActor with
-            member this.GetRepositoryId() = cachedRepositoryId |> returnTask
+            member this.GetRepositoryId (correlationId) = cachedRepositoryId |> returnTask
 
-            member this.SetRepositoryId(repositoryId: string) =
+            member this.SetRepositoryId (repositoryId: string) correlationId =
                 let mutable guid = Guid.Empty
                 if Guid.TryParse(repositoryId, &guid) && guid <> Guid.Empty then
                     cachedRepositoryId <- Some repositoryId

@@ -191,17 +191,17 @@ module Branch =
 
         interface IBranchActor with
 
-            member this.GetEvents() = 
+            member this.GetEvents (correlationId) = 
                 task {
                     //correlationId <- correlation
                     let! branchEvents = this.BranchEvents()
                     return branchEvents :> IList<BranchEvent>
                 }
 
-            member this.Exists() =
+            member this.Exists (correlationId) =
                 not <| (branchDto.BranchId = BranchDto.Default.BranchId) |> returnTask
 
-            member this.Handle (command: BranchCommand) (metadata: EventMetadata) =
+            member this.Handle command metadata =
                 let isValid (command: BranchCommand) (metadata: EventMetadata) =
                     task {
                         let! branchEvents = this.BranchEvents()
@@ -224,7 +224,7 @@ module Branch =
                         let referenceId: ReferenceId = ReferenceId.NewGuid()
                         let actorId = Reference.GetActorId referenceId
                         let referenceActor = actorProxyFactory.CreateActorProxy<IReferenceActor>(actorId, Constants.ActorName.Reference)
-                        let! referenceDto = referenceActor.Create(referenceId, branchDto.BranchId, directoryId, sha256Hash, referenceType, referenceText)
+                        let! referenceDto = referenceActor.Create(referenceId, branchDto.BranchId, directoryId, sha256Hash, referenceType, referenceText) metadata.CorrelationId
                         //branchDto.References.Add(referenceDto.CreatedAt, referenceDto)
                         return referenceId
                     }
@@ -306,18 +306,18 @@ module Branch =
                     | Error error -> return Error error
                 }
 
-            member this.Get() = branchDto |> returnTask
+            member this.Get (correlationId) = branchDto |> returnTask
 
-            member this.GetParentBranch() = 
+            member this.GetParentBranch (correlationId) = 
                 task {
                     let actorId = ActorId($"{branchDto.ParentBranchId}")
                     let branchActorProxy = this.Host.ProxyFactory.CreateActorProxy<IBranchActor>(actorId, ActorName.Branch)
-                    return! branchActorProxy.Get()
+                    return! branchActorProxy.Get correlationId
                 }
 
-            member this.GetLatestCommit() = branchDto.LatestCommit |> returnTask
+            member this.GetLatestCommit (correlationId) = branchDto.LatestCommit |> returnTask
 
-            member this.GetLatestPromotion() = branchDto.LatestPromotion |> returnTask
+            member this.GetLatestPromotion (correlationId) = branchDto.LatestPromotion |> returnTask
 
         interface IRemindable with
             override this.ReceiveReminderAsync(reminderName, state, dueTime, period) =

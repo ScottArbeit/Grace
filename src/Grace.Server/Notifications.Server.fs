@@ -87,19 +87,19 @@ module Notifications =
             } :> Task
 
     /// Gets the ReferenceDto for the given ReferenceId.
-    let getReferenceDto referenceId =
+    let getReferenceDto referenceId correlationId =
         task {
             let referenceActorId = Reference.GetActorId referenceId
             let referenceActorProxy = actorProxyFactory.CreateActorProxy<IReferenceActor>(referenceActorId, ActorName.Reference)
-            return! referenceActorProxy.Get()
+            return! referenceActorProxy.Get correlationId
         }
 
     /// Gets the BranchDto for the given BranchId.
-    let getBranchDto branchId =
+    let getBranchDto branchId correlationId =
         task {
             let branchActorId = Branch.GetActorId branchId
             let branchActorProxy = actorProxyFactory.CreateActorProxy<IBranchActor>(branchActorId, ActorName.Branch)
-            return! branchActorProxy.Get()
+            return! branchActorProxy.Get correlationId
         }
 
     [<Topic("graceevents", "graceeventstream")>]
@@ -118,17 +118,18 @@ module Notifications =
                     task {
                         let diffActorId = Diff.GetActorId directoryId1 directoryId2
                         let diffActorProxy = actorProxyFactory.CreateActorProxy<IDiffActor>(diffActorId, ActorName.Diff)
-                        let! x = diffActorProxy.Populate()
+                        let! x = diffActorProxy.Populate (getCorrelationId context)
                         ()
                     }
             
                 match graceEvent with
                 | BranchEvent branchEvent ->
+                    let correlationId = branchEvent.Metadata.CorrelationId
                     logToConsole $"Received BranchEvent: {getDiscriminatedUnionFullName branchEvent.Event} {Environment.NewLine}{branchEvent.Metadata}"
                     match branchEvent.Event with
                     | Branch.Promoted (referenceId, directoryId, sha256Hash, referenceText) -> 
-                        let! referenceDto = getReferenceDto referenceId
-                        let! branchDto = getBranchDto referenceDto.BranchId
+                        let! referenceDto = getReferenceDto referenceId correlationId
+                        let! branchDto = getBranchDto referenceDto.BranchId correlationId
 
                         do! hubContext.Clients.Group($"{branchDto.BranchId}").NotifyOnPromotion(branchDto.BranchId, branchDto.BranchName, referenceId)
 
@@ -138,9 +139,9 @@ module Notifications =
                             do! diffTwoDirectoryVersions latestTwoPromotions[0].DirectoryId latestTwoPromotions[1].DirectoryId
                     
                     | Branch.Committed (referenceId, directoryId, sha256Hash, referenceText) ->
-                        let! referenceDto = getReferenceDto referenceId
-                        let! branchDto = getBranchDto referenceDto.BranchId
-                        let! parentBranchDto = getBranchDto branchDto.ParentBranchId
+                        let! referenceDto = getReferenceDto referenceId correlationId
+                        let! branchDto = getBranchDto referenceDto.BranchId correlationId
+                        let! parentBranchDto = getBranchDto branchDto.ParentBranchId correlationId
 
                         do! hubContext.Clients.Group($"{branchDto.ParentBranchId}").NotifyOnCommit(branchDto.BranchName, parentBranchDto.BranchName, parentBranchDto.ParentBranchId, referenceId)
 
@@ -155,9 +156,9 @@ module Notifications =
                         | None -> ()
                         
                     | Branch.Checkpointed (referenceId, directoryId, sha256Hash, referenceText) ->
-                        let! referenceDto = getReferenceDto referenceId
-                        let! branchDto = getBranchDto referenceDto.BranchId
-                        let! parentBranchDto = getBranchDto branchDto.ParentBranchId
+                        let! referenceDto = getReferenceDto referenceId correlationId
+                        let! branchDto = getBranchDto referenceDto.BranchId correlationId
+                        let! parentBranchDto = getBranchDto branchDto.ParentBranchId correlationId
 
                         do! hubContext.Clients.Group($"{branchDto.ParentBranchId}").NotifyOnCheckpoint(branchDto.BranchName, parentBranchDto.BranchName, parentBranchDto.ParentBranchId, referenceId)
 
@@ -172,9 +173,9 @@ module Notifications =
                         | None -> ()
 
                     | Branch.Saved (referenceId, directoryId, sha256Hash, referenceText) ->
-                        let! referenceDto = getReferenceDto referenceId
-                        let! branchDto = getBranchDto referenceDto.BranchId
-                        let! parentBranchDto = getBranchDto branchDto.ParentBranchId
+                        let! referenceDto = getReferenceDto referenceId correlationId
+                        let! branchDto = getBranchDto referenceDto.BranchId correlationId
+                        let! parentBranchDto = getBranchDto branchDto.ParentBranchId correlationId
                         
                         do! hubContext.Clients.Group($"{branchDto.ParentBranchId}").NotifyOnSave(branchDto.BranchName, parentBranchDto.BranchName, parentBranchDto.ParentBranchId, referenceId)
 

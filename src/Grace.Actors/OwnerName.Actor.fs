@@ -41,9 +41,9 @@ module OwnerName =
             Task.CompletedTask
 
         interface IOwnerNameActor with
-            member this.GetOwnerId() = cachedOwnerId |> returnTask
+            member this.GetOwnerId (correlationId) = cachedOwnerId |> returnTask
 
-            member this.SetOwnerId(ownerId: string) =
+            member this.SetOwnerId (ownerId: string) correlationId =
                 let mutable guid = Guid.Empty
                 if Guid.TryParse(ownerId, &guid) && guid <> Guid.Empty then
                     cachedOwnerId <- Some ownerId

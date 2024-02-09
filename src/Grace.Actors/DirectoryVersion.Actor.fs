@@ -92,23 +92,23 @@ module DirectoryVersion =
                 | _ -> Task.CompletedTask
 
         interface IDirectoryVersionActor with
-            member this.Exists() = (directoryVersion.CreatedAt > Instant.MinValue) |> returnTask
+            member this.Exists (correlationId) = (directoryVersion.CreatedAt > Instant.MinValue) |> returnTask
 
-            member this.Delete(correlationId) = GraceResult.Error (GraceError.Create "Not implemented" correlationId) |> returnTask
+            member this.Delete (correlationId) = GraceResult.Error (GraceError.Create "Not implemented" correlationId) |> returnTask
 
-            member this.Get() = directoryVersion |> returnTask
+            member this.Get (correlationId) = directoryVersion |> returnTask
 
-            member this.GetCreatedAt() = directoryVersion.CreatedAt |> returnTask
+            member this.GetCreatedAt (correlationId) = directoryVersion.CreatedAt |> returnTask
 
-            member this.GetDirectories() = directoryVersion.Directories |> returnTask
+            member this.GetDirectories (correlationId) = directoryVersion.Directories |> returnTask
 
-            member this.GetFiles() = directoryVersion.Files |> returnTask
+            member this.GetFiles (correlationId) = directoryVersion.Files |> returnTask
 
-            member this.GetSha256Hash() = directoryVersion.Sha256Hash |> returnTask
+            member this.GetSha256Hash (correlationId) = directoryVersion.Sha256Hash |> returnTask
 
-            member this.GetSize() = directoryVersion.Size |> returnTask
+            member this.GetSize (correlationId) = directoryVersion.Size |> returnTask
 
-            member this.GetSizeRecursive() = 
+            member this.GetSizeRecursive (correlationId) = 
                 let stateManager = this.StateManager
                 task {
                     if directoryVersion.RecursiveSize = Constants.InitialDirectorySize then
@@ -119,7 +119,7 @@ module DirectoryVersion =
                                             task {
                                                 let actorId = GetActorId directoryId
                                                 let subdirectoryActor = actorProxyFactory.CreateActorProxy<IDirectoryVersionActor>(actorId, ActorName.DirectoryVersion)
-                                                return! subdirectoryActor.GetSizeRecursive()
+                                                return! subdirectoryActor.GetSizeRecursive correlationId
                                             })
                         Task.WaitAll(tasks.Cast<Task>().ToArray())
                         let recursiveSize =
@@ -135,7 +135,7 @@ module DirectoryVersion =
                         return directoryVersion.RecursiveSize
                 }
 
-            member this.GetDirectoryVersionsRecursive(forceRegenerate: bool) =
+            member this.GetDirectoryVersionsRecursive (forceRegenerate: bool) correlationId =
                 let stateManager = this.StateManager
                 task {
                     try
@@ -162,7 +162,7 @@ module DirectoryVersion =
                                 ValueTask(task {
                                     let actorId = GetActorId directoryId
                                     let subdirectoryActor = actorProxyFactory.CreateActorProxy<IDirectoryVersionActor>(actorId, ActorName.DirectoryVersion)
-                                    let! subdirectoryContents = subdirectoryActor.GetDirectoryVersionsRecursive(forceRegenerate)
+                                    let! subdirectoryContents = subdirectoryActor.GetDirectoryVersionsRecursive forceRegenerate correlationId
                                     for directoryVersion in subdirectoryContents do
                                         subdirectoryVersions.Enqueue(directoryVersion)
                                 })))

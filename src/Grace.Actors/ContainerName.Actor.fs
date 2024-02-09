@@ -48,7 +48,7 @@ module ContainerName =
             Task.CompletedTask
 
         interface IContainerNameActor with
-            member this.GetContainerName() =
+            member this.GetContainerName(correlationId) =
                 task {
                     try
                         if not <| String.IsNullOrEmpty(containerName) then
@@ -57,15 +57,15 @@ module ContainerName =
                             let repositoryId = Guid.Parse(host.Id.GetId())
                             let repositoryActorId = ActorId($"{repositoryId}")
                             let repositoryActorProxy = ActorProxyFactory().CreateActorProxy<IRepositoryActor>(repositoryActorId, ActorName.Repository)
-                            let! repositoryDto = repositoryActorProxy.Get()
+                            let! repositoryDto = repositoryActorProxy.Get correlationId
 
                             let organizationActorId = ActorId($"{repositoryDto.OrganizationId}")
                             let organizationActorProxy = actorProxyFactory.CreateActorProxy<IOrganizationActor>(organizationActorId, ActorName.Organization)
-                            let! organizationDto = organizationActorProxy.Get()
+                            let! organizationDto = organizationActorProxy.Get correlationId
     
                             let ownerActorId = ActorId($"{repositoryDto.OwnerId}")
                             let ownerActorProxy = actorProxyFactory.CreateActorProxy<IOwnerActor>(ownerActorId, ActorName.Owner)
-                            let! ownerDto = ownerActorProxy.Get()
+                            let! ownerDto = ownerActorProxy.Get correlationId
     
                             containerName <- $"{ownerDto.OwnerName}-{organizationDto.OrganizationName}-{repositoryDto.RepositoryName}".ToLowerInvariant()
                             return Ok containerName

@@ -23,7 +23,7 @@ module BranchName =
     
         let log = loggerFactory.CreateLogger("BranchName.Actor")
 
-        let mutable cachedBranchId: string option = None
+        let mutable cachedBranchId: Guid option = None
 
         override this.OnPreActorMethodAsync(context) =
             actorStartTime <- getCurrentInstant()
@@ -38,10 +38,8 @@ module BranchName =
             Task.CompletedTask
 
         interface IBranchNameActor with
-            member this.GetBranchId() = Task.FromResult(cachedBranchId)
+            member this.GetBranchId correlationId = Task.FromResult(cachedBranchId)
 
-            member this.SetBranchId(branchId: string) =
-                let mutable guid = Guid.Empty
-                if Guid.TryParse(branchId, &guid) && guid <> Guid.Empty then
-                    cachedBranchId <- Some branchId
+            member this.SetBranchId branchId correlationId =
+                cachedBranchId <- Some branchId
                 Task.CompletedTask

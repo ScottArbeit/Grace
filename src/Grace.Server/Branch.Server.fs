@@ -83,7 +83,7 @@ module Branch =
 
                 if validationsPassed then
                     let! cmd = command parameters
-                    let! branchId = resolveBranchId graceIds.RepositoryId parameters.BranchId parameters.BranchName
+                    let! branchId = resolveBranchId graceIds.RepositoryId parameters.BranchId parameters.BranchName parameters.CorrelationId
                     match branchId, commandName = nameof(Create) with
                     | Some branchId, _ ->
                         // If Id is Some, then we know we have a valid Id.
@@ -117,7 +117,7 @@ module Branch =
                 let validationResults = Array.append (commonValidations parameters) (validations parameters)
                 let! validationsPassed = validationResults |> allPass
                 if validationsPassed then
-                    match! resolveBranchId parameters.RepositoryId parameters.BranchId parameters.BranchName with
+                    match! resolveBranchId parameters.RepositoryId parameters.BranchId parameters.BranchName parameters.CorrelationId with
                     | Some branchId ->
                         let actorProxy = getActorProxy context branchId
                         let! queryResult = query context maxCount actorProxy
@@ -145,19 +145,19 @@ module Branch =
                        String.isValidGraceName parameters.BranchName InvalidBranchName
                        Guid.isValidAndNotEmpty parameters.ParentBranchId InvalidBranchId
                        String.isValidGraceName parameters.ParentBranchName InvalidBranchName
-                       Owner.ownerExists parameters.OwnerId parameters.OwnerName OwnerDoesNotExist
-                       Organization.organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName OrganizationDoesNotExist
-                       Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName RepositoryDoesNotExist
-                       Branch.branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.ParentBranchId parameters.ParentBranchName ParentBranchDoesNotExist
-                       Branch.branchNameDoesNotExist parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchName BranchNameAlreadyExists |]
+                       Owner.ownerExists parameters.OwnerId parameters.OwnerName parameters.CorrelationId OwnerDoesNotExist
+                       Organization.organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.CorrelationId OrganizationDoesNotExist
+                       Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.CorrelationId RepositoryDoesNotExist
+                       Branch.branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.ParentBranchId parameters.ParentBranchName parameters.CorrelationId ParentBranchDoesNotExist
+                       Branch.branchNameDoesNotExist parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchName parameters.CorrelationId BranchNameAlreadyExists |]
 
                 let command (parameters: CreateBranchParameters) = 
                     task {
-                        match! (resolveBranchId parameters.RepositoryId parameters.ParentBranchId parameters.ParentBranchName) with
+                        match! (resolveBranchId parameters.RepositoryId parameters.ParentBranchId parameters.ParentBranchName parameters.CorrelationId) with
                         | Some parentBranchId -> 
                             let parentBranchActorId = ActorId(parentBranchId)
                             let parentBranchActorProxy = ApplicationContext.actorProxyFactory.CreateActorProxy<IBranchActor>(parentBranchActorId, ActorName.Branch)
-                            let! parentBranch = parentBranchActorProxy.Get()
+                            let! parentBranch = parentBranchActorProxy.Get parameters.CorrelationId
                             return Create(
                                 (Guid.Parse(parameters.BranchId)), 
                                 (BranchName parameters.BranchName),
@@ -186,12 +186,12 @@ module Branch =
                 let validations (parameters: RebaseParameters) =
                     [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
                        String.isValidGraceName parameters.BranchName InvalidBranchName
-                       Branch.referenceIdExists parameters.BasedOn ReferenceIdDoesNotExist
-                       Owner.ownerExists parameters.OwnerId parameters.OwnerName OwnerDoesNotExist
-                       Organization.organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName OrganizationDoesNotExist
-                       Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName RepositoryDoesNotExist
-                       Branch.branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName ParentBranchDoesNotExist
-                       Branch.branchAllowsReferenceType parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName ReferenceType.Commit CommitIsDisabled |]
+                       Branch.referenceIdExists parameters.BasedOn parameters.CorrelationId ReferenceIdDoesNotExist
+                       Owner.ownerExists parameters.OwnerId parameters.OwnerName parameters.CorrelationId OwnerDoesNotExist
+                       Organization.organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.CorrelationId OrganizationDoesNotExist
+                       Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.CorrelationId RepositoryDoesNotExist
+                       Branch.branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName parameters.CorrelationId ParentBranchDoesNotExist
+                       Branch.branchAllowsReferenceType parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName ReferenceType.Commit parameters.CorrelationId CommitIsDisabled |]
 
                 let command (parameters: RebaseParameters) = 
                     Rebase(parameters.BasedOn) |> returnValueTask
@@ -210,11 +210,11 @@ module Branch =
                        String.isNotEmpty parameters.Message MessageIsRequired
                        String.maxLength parameters.Message 2048 StringIsTooLong
                        String.isValidSha256Hash parameters.Sha256Hash Sha256HashIsRequired
-                       Owner.ownerExists parameters.OwnerId parameters.OwnerName OwnerDoesNotExist
-                       Organization.organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName OrganizationDoesNotExist
-                       Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName RepositoryDoesNotExist
-                       Branch.branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName ParentBranchDoesNotExist
-                       Branch.branchAllowsReferenceType parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName ReferenceType.Promotion PromotionIsDisabled |]
+                       Owner.ownerExists parameters.OwnerId parameters.OwnerName parameters.CorrelationId OwnerDoesNotExist
+                       Organization.organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.CorrelationId OrganizationDoesNotExist
+                       Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.CorrelationId RepositoryDoesNotExist
+                       Branch.branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName parameters.CorrelationId ParentBranchDoesNotExist
+                       Branch.branchAllowsReferenceType parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName ReferenceType.Promotion parameters.CorrelationId PromotionIsDisabled |]
 
                 let command (parameters: CreateReferenceParameters) = 
                     Promote(parameters.DirectoryId, parameters.Sha256Hash, ReferenceText parameters.Message) |> returnValueTask
@@ -233,11 +233,11 @@ module Branch =
                        String.isNotEmpty parameters.Message MessageIsRequired
                        String.maxLength parameters.Message 2048 StringIsTooLong
                        String.isValidSha256Hash parameters.Sha256Hash Sha256HashIsRequired
-                       Owner.ownerExists parameters.OwnerId parameters.OwnerName OwnerDoesNotExist
-                       Organization.organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName OrganizationDoesNotExist
-                       Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName RepositoryDoesNotExist
-                       Branch.branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName BranchDoesNotExist
-                       Branch.branchAllowsReferenceType parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName ReferenceType.Commit CommitIsDisabled |]
+                       Owner.ownerExists parameters.OwnerId parameters.OwnerName parameters.CorrelationId OwnerDoesNotExist
+                       Organization.organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.CorrelationId OrganizationDoesNotExist
+                       Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.CorrelationId RepositoryDoesNotExist
+                       Branch.branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName parameters.CorrelationId BranchDoesNotExist
+                       Branch.branchAllowsReferenceType parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName ReferenceType.Commit parameters.CorrelationId CommitIsDisabled |]
 
                 let command (parameters: CreateReferenceParameters) = 
                     BranchCommand.Commit(parameters.DirectoryId, parameters.Sha256Hash, ReferenceText parameters.Message) |> returnValueTask
@@ -256,11 +256,11 @@ module Branch =
                        Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
                        String.maxLength parameters.Message 2048 StringIsTooLong
                        String.isValidSha256Hash parameters.Sha256Hash Sha256HashIsRequired
-                       Owner.ownerExists parameters.OwnerId parameters.OwnerName OwnerDoesNotExist
-                       Organization.organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName OrganizationDoesNotExist
-                       Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName RepositoryDoesNotExist
-                       Branch.branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName BranchDoesNotExist
-                       Branch.branchAllowsReferenceType parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName ReferenceType.Checkpoint CheckpointIsDisabled |]
+                       Owner.ownerExists parameters.OwnerId parameters.OwnerName parameters.CorrelationId OwnerDoesNotExist
+                       Organization.organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.CorrelationId OrganizationDoesNotExist
+                       Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.CorrelationId RepositoryDoesNotExist
+                       Branch.branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName parameters.CorrelationId BranchDoesNotExist
+                       Branch.branchAllowsReferenceType parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName ReferenceType.Checkpoint parameters.CorrelationId CheckpointIsDisabled |]
 
                 let command (parameters: CreateReferenceParameters) = 
                     BranchCommand.Checkpoint(parameters.DirectoryId, parameters.Sha256Hash, ReferenceText parameters.Message) |> returnValueTask
@@ -279,11 +279,11 @@ module Branch =
                        Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
                        String.maxLength parameters.Message 4096 StringIsTooLong
                        String.isValidSha256Hash parameters.Sha256Hash Sha256HashIsRequired
-                       Owner.ownerExists parameters.OwnerId parameters.OwnerName OwnerDoesNotExist
-                       Organization.organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName OrganizationDoesNotExist
-                       Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName RepositoryDoesNotExist
-                       Branch.branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName BranchDoesNotExist
-                       Branch.branchAllowsReferenceType parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName ReferenceType.Save SaveIsDisabled |]
+                       Owner.ownerExists parameters.OwnerId parameters.OwnerName parameters.CorrelationId OwnerDoesNotExist
+                       Organization.organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.CorrelationId OrganizationDoesNotExist
+                       Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.CorrelationId RepositoryDoesNotExist
+                       Branch.branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName parameters.CorrelationId BranchDoesNotExist
+                       Branch.branchAllowsReferenceType parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName ReferenceType.Save parameters.CorrelationId SaveIsDisabled |]
 
                 let command (parameters: CreateReferenceParameters) = 
                     BranchCommand.Save(parameters.DirectoryId, parameters.Sha256Hash, ReferenceText parameters.Message) |> returnValueTask
@@ -302,11 +302,11 @@ module Branch =
                        Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
                        String.maxLength parameters.Message 2048 StringIsTooLong
                        String.isValidSha256Hash parameters.Sha256Hash Sha256HashIsRequired
-                       Owner.ownerExists parameters.OwnerId parameters.OwnerName OwnerDoesNotExist
-                       Organization.organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName OrganizationDoesNotExist
-                       Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName RepositoryDoesNotExist
-                       Branch.branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName BranchDoesNotExist
-                       Branch.branchAllowsReferenceType parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName ReferenceType.Tag TagIsDisabled |]
+                       Owner.ownerExists parameters.OwnerId parameters.OwnerName parameters.CorrelationId OwnerDoesNotExist
+                       Organization.organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.CorrelationId OrganizationDoesNotExist
+                       Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.CorrelationId RepositoryDoesNotExist
+                       Branch.branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName parameters.CorrelationId BranchDoesNotExist
+                       Branch.branchAllowsReferenceType parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName ReferenceType.Tag parameters.CorrelationId TagIsDisabled |]
 
                 let command (parameters: CreateReferenceParameters) = 
                     BranchCommand.Tag(parameters.DirectoryId, parameters.Sha256Hash, ReferenceText parameters.Message) |> returnValueTask
@@ -323,10 +323,10 @@ module Branch =
                     [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
                        String.isValidGraceName parameters.BranchName InvalidBranchName
                        Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
-                       Owner.ownerExists parameters.OwnerId parameters.OwnerName OwnerDoesNotExist
-                       Organization.organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName OrganizationDoesNotExist
-                       Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName RepositoryDoesNotExist
-                       Branch.branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName BranchDoesNotExist |]
+                       Owner.ownerExists parameters.OwnerId parameters.OwnerName parameters.CorrelationId OwnerDoesNotExist
+                       Organization.organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.CorrelationId OrganizationDoesNotExist
+                       Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.CorrelationId RepositoryDoesNotExist
+                       Branch.branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName parameters.CorrelationId BranchDoesNotExist |]
 
                 let command (parameters: EnableFeatureParameters) = 
                     EnablePromotion(parameters.Enabled) |> returnValueTask
@@ -343,10 +343,10 @@ module Branch =
                     [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
                        String.isValidGraceName parameters.BranchName InvalidBranchName
                        Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
-                       Owner.ownerExists parameters.OwnerId parameters.OwnerName OwnerDoesNotExist
-                       Organization.organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName OrganizationDoesNotExist
-                       Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName RepositoryDoesNotExist
-                       Branch.branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName BranchDoesNotExist |]
+                       Owner.ownerExists parameters.OwnerId parameters.OwnerName parameters.CorrelationId OwnerDoesNotExist
+                       Organization.organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.CorrelationId OrganizationDoesNotExist
+                       Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.CorrelationId RepositoryDoesNotExist
+                       Branch.branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName parameters.CorrelationId BranchDoesNotExist |]
                        
                 let command (parameters: EnableFeatureParameters) = 
                     EnableCommit(parameters.Enabled) |> returnValueTask
@@ -363,10 +363,10 @@ module Branch =
                     [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
                        String.isValidGraceName parameters.BranchName InvalidBranchName
                        Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
-                       Owner.ownerExists parameters.OwnerId parameters.OwnerName OwnerDoesNotExist
-                       Organization.organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName OrganizationDoesNotExist
-                       Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName RepositoryDoesNotExist
-                       Branch.branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName BranchDoesNotExist |]
+                       Owner.ownerExists parameters.OwnerId parameters.OwnerName parameters.CorrelationId OwnerDoesNotExist
+                       Organization.organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.CorrelationId OrganizationDoesNotExist
+                       Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.CorrelationId RepositoryDoesNotExist
+                       Branch.branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName parameters.CorrelationId BranchDoesNotExist |]
 
                 let command (parameters: EnableFeatureParameters) = 
                     EnableCheckpoint(parameters.Enabled) |> returnValueTask
@@ -383,10 +383,10 @@ module Branch =
                     [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
                        String.isValidGraceName parameters.BranchName InvalidBranchName
                        Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
-                       Owner.ownerExists parameters.OwnerId parameters.OwnerName OwnerDoesNotExist
-                       Organization.organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName OrganizationDoesNotExist
-                       Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName RepositoryDoesNotExist
-                       Branch.branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName ParentBranchDoesNotExist |]
+                       Owner.ownerExists parameters.OwnerId parameters.OwnerName parameters.CorrelationId OwnerDoesNotExist
+                       Organization.organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.CorrelationId OrganizationDoesNotExist
+                       Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.CorrelationId RepositoryDoesNotExist
+                       Branch.branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName parameters.CorrelationId ParentBranchDoesNotExist |]
 
                 let command (parameters: EnableFeatureParameters) = 
                     EnableSave(parameters.Enabled) |> returnValueTask
@@ -403,10 +403,10 @@ module Branch =
                     [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
                        String.isValidGraceName parameters.BranchName InvalidBranchName
                        Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
-                       Owner.ownerExists parameters.OwnerId parameters.OwnerName OwnerDoesNotExist
-                       Organization.organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName OrganizationDoesNotExist
-                       Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName RepositoryDoesNotExist
-                       Branch.branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName BranchDoesNotExist |]
+                       Owner.ownerExists parameters.OwnerId parameters.OwnerName parameters.CorrelationId OwnerDoesNotExist
+                       Organization.organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.CorrelationId OrganizationDoesNotExist
+                       Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.CorrelationId RepositoryDoesNotExist
+                       Branch.branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName parameters.CorrelationId BranchDoesNotExist |]
 
                 let command (parameters: EnableFeatureParameters) = 
                     EnableTag(parameters.Enabled) |> returnValueTask
@@ -423,10 +423,10 @@ module Branch =
                     [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
                        String.isValidGraceName parameters.BranchName InvalidBranchName
                        Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
-                       Owner.ownerExists parameters.OwnerId parameters.OwnerName OwnerDoesNotExist
-                       Organization.organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName OrganizationDoesNotExist
-                       Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName RepositoryDoesNotExist
-                       Branch.branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName BranchDoesNotExist |]
+                       Owner.ownerExists parameters.OwnerId parameters.OwnerName parameters.CorrelationId OwnerDoesNotExist
+                       Organization.organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.CorrelationId OrganizationDoesNotExist
+                       Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.CorrelationId RepositoryDoesNotExist
+                       Branch.branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName parameters.CorrelationId BranchDoesNotExist |]
 
                 let command (parameters: DeleteBranchParameters) = 
                     DeleteLogical (parameters.Force, parameters.DeleteReason) |> returnValueTask
@@ -447,14 +447,14 @@ module Branch =
                         [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
                            String.isValidGraceName parameters.BranchName InvalidBranchName
                            Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
-                           Owner.ownerExists parameters.OwnerId parameters.OwnerName OwnerDoesNotExist
-                           Organization.organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName OrganizationDoesNotExist
-                           Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName RepositoryDoesNotExist
-                           Branch.branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName BranchDoesNotExist |]
+                           Owner.ownerExists parameters.OwnerId parameters.OwnerName parameters.CorrelationId OwnerDoesNotExist
+                           Organization.organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.CorrelationId OrganizationDoesNotExist
+                           Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.CorrelationId RepositoryDoesNotExist
+                           Branch.branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName parameters.CorrelationId BranchDoesNotExist |]
 
                     let query (context: HttpContext) maxCount (actorProxy: IBranchActor) =
                         task {
-                            let! branchDto = actorProxy.Get()
+                            let! branchDto = actorProxy.Get (getCorrelationId context)
                             return branchDto
                         }
 
@@ -481,14 +481,14 @@ module Branch =
                         [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
                            String.isValidGraceName parameters.BranchName InvalidBranchName
                            Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
-                           Owner.ownerExists parameters.OwnerId parameters.OwnerName OwnerDoesNotExist
-                           Organization.organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName OrganizationDoesNotExist
-                           Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName RepositoryDoesNotExist
-                           Branch.branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName BranchDoesNotExist |]
+                           Owner.ownerExists parameters.OwnerId parameters.OwnerName parameters.CorrelationId OwnerDoesNotExist
+                           Organization.organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.CorrelationId OrganizationDoesNotExist
+                           Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.CorrelationId RepositoryDoesNotExist
+                           Branch.branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName parameters.CorrelationId BranchDoesNotExist |]
 
                     let query (context: HttpContext) maxCount (actorProxy: IBranchActor) =
                         task {
-                            let! branchEvents = actorProxy.GetEvents()
+                            let! branchEvents = actorProxy.GetEvents (getCorrelationId context)
                             return branchEvents.Select(fun branchEvent -> serialize branchEvent)
                             //return List<Events.Branch.BranchEvent>()
                         }
@@ -516,14 +516,14 @@ module Branch =
                         [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
                            String.isValidGraceName parameters.BranchName InvalidBranchName
                            Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
-                           Owner.ownerExists parameters.OwnerId parameters.OwnerName OwnerDoesNotExist
-                           Organization.organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName OrganizationDoesNotExist
-                           Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName RepositoryDoesNotExist
-                           Branch.branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName ParentBranchDoesNotExist |]
+                           Owner.ownerExists parameters.OwnerId parameters.OwnerName parameters.CorrelationId OwnerDoesNotExist
+                           Organization.organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.CorrelationId OrganizationDoesNotExist
+                           Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.CorrelationId RepositoryDoesNotExist
+                           Branch.branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName parameters.CorrelationId ParentBranchDoesNotExist |]
 
                     let query (context: HttpContext) maxCount (actorProxy: IBranchActor) =
                         task {
-                            let! parentBranchDto = actorProxy.GetParentBranch()
+                            let! parentBranchDto = actorProxy.GetParentBranch (getCorrelationId context)
                             return parentBranchDto
                         }
 
@@ -550,16 +550,16 @@ module Branch =
                         [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
                            String.isValidGraceName parameters.BranchName InvalidBranchName
                            Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
-                           Owner.ownerExists parameters.OwnerId parameters.OwnerName OwnerDoesNotExist
-                           Organization.organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName OrganizationDoesNotExist
-                           Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName RepositoryDoesNotExist
-                           Branch.branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName BranchDoesNotExist |]
+                           Owner.ownerExists parameters.OwnerId parameters.OwnerName parameters.CorrelationId OwnerDoesNotExist
+                           Organization.organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.CorrelationId OrganizationDoesNotExist
+                           Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.CorrelationId RepositoryDoesNotExist
+                           Branch.branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName parameters.CorrelationId BranchDoesNotExist |]
 
                     let query (context: HttpContext) maxCount (actorProxy: IBranchActor) =
                         task {
                             let referenceActorId = ActorId(context.Items["ReferenceId"] :?> string)
                             let referenceActorProxy = ApplicationContext.actorProxyFactory.CreateActorProxy<IReferenceActor>(referenceActorId, ActorName.Reference)
-                            let! referenceDto = referenceActorProxy.Get()
+                            let! referenceDto = referenceActorProxy.Get (getCorrelationId context)
                             return referenceDto
                         }
 
@@ -588,14 +588,14 @@ module Branch =
                            String.isValidGraceName parameters.BranchName InvalidBranchName
                            Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
                            Number.isPositiveOrZero parameters.MaxCount ValueMustBePositive
-                           Owner.ownerExists parameters.OwnerId parameters.OwnerName OwnerDoesNotExist
-                           Organization.organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName OrganizationDoesNotExist
-                           Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName RepositoryDoesNotExist
-                           Branch.branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName BranchDoesNotExist |]
+                           Owner.ownerExists parameters.OwnerId parameters.OwnerName parameters.CorrelationId OwnerDoesNotExist
+                           Organization.organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.CorrelationId OrganizationDoesNotExist
+                           Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.CorrelationId RepositoryDoesNotExist
+                           Branch.branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName parameters.CorrelationId BranchDoesNotExist |]
 
                     let query (context: HttpContext) (maxCount: int) (actorProxy: IBranchActor) =
                         task {
-                            let! branchDto = actorProxy.Get()
+                            let! branchDto = actorProxy.Get (getCorrelationId context)
                             let! results = getReferences branchDto.BranchId maxCount
                             return results
                         }
@@ -626,15 +626,15 @@ module Branch =
                            Number.isPositiveOrZero parameters.MaxCount ValueMustBePositive
                            String.isNotEmpty parameters.ReferenceType ReferenceTypeMustBeProvided
                            DiscriminatedUnion.isMemberOf<ReferenceType, BranchError> parameters.ReferenceType InvalidReferenceType
-                           Owner.ownerExists parameters.OwnerId parameters.OwnerName OwnerDoesNotExist
-                           Organization.organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName OrganizationDoesNotExist
-                           Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName RepositoryDoesNotExist
-                           Branch.branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName BranchDoesNotExist |]
+                           Owner.ownerExists parameters.OwnerId parameters.OwnerName parameters.CorrelationId OwnerDoesNotExist
+                           Organization.organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.CorrelationId OrganizationDoesNotExist
+                           Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.CorrelationId RepositoryDoesNotExist
+                           Branch.branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName parameters.CorrelationId BranchDoesNotExist |]
 
                     let query (context: HttpContext) (maxCount: int) (actorProxy: IBranchActor) =
                         task {
                             let diffDtos = ConcurrentBag<DiffDto>()
-                            let! branchDto = actorProxy.Get()
+                            let! branchDto = actorProxy.Get (getCorrelationId context)
                             let referenceType = (context.Items[nameof(ReferenceType)] :?> String) |> discriminatedUnionFromString<ReferenceType>
                             let! references = getReferencesByType referenceType.Value branchDto.BranchId maxCount
 
@@ -645,7 +645,7 @@ module Branch =
                                 ValueTask(task {
                                     let diffActorId = Diff.GetActorId sortedRefs[i].DirectoryId sortedRefs[i + 1].DirectoryId
                                     let diffActorProxy = ApplicationContext.actorProxyFactory.CreateActorProxy<IDiffActor>(diffActorId, ActorName.Diff)
-                                    let! diffDto = diffActorProxy.GetDiff()
+                                    let! diffDto = diffActorProxy.GetDiff (getCorrelationId context)
                                     diffDtos.Add(diffDto)
                                 })
                             ))
@@ -678,14 +678,14 @@ module Branch =
                            String.isValidGraceName parameters.BranchName InvalidBranchName
                            Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
                            Number.isPositiveOrZero parameters.MaxCount ValueMustBePositive
-                           Owner.ownerExists parameters.OwnerId parameters.OwnerName OwnerDoesNotExist
-                           Organization.organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName OrganizationDoesNotExist
-                           Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName RepositoryDoesNotExist
-                           Branch.branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName BranchDoesNotExist |]
+                           Owner.ownerExists parameters.OwnerId parameters.OwnerName parameters.CorrelationId OwnerDoesNotExist
+                           Organization.organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.CorrelationId OrganizationDoesNotExist
+                           Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.CorrelationId RepositoryDoesNotExist
+                           Branch.branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName parameters.CorrelationId BranchDoesNotExist |]
 
                     let query (context: HttpContext) maxCount (actorProxy: IBranchActor) =
                         task {
-                            let! branchDto = actorProxy.Get()
+                            let! branchDto = actorProxy.Get (getCorrelationId context)
                             let! results = getPromotions branchDto.BranchId maxCount
                             return results
                         }
@@ -714,14 +714,14 @@ module Branch =
                            String.isValidGraceName parameters.BranchName InvalidBranchName
                            Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
                            Number.isPositiveOrZero parameters.MaxCount ValueMustBePositive
-                           Owner.ownerExists parameters.OwnerId parameters.OwnerName OwnerDoesNotExist
-                           Organization.organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName OrganizationDoesNotExist
-                           Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName RepositoryDoesNotExist
-                           Branch.branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName BranchDoesNotExist |]
+                           Owner.ownerExists parameters.OwnerId parameters.OwnerName parameters.CorrelationId OwnerDoesNotExist
+                           Organization.organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.CorrelationId OrganizationDoesNotExist
+                           Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.CorrelationId RepositoryDoesNotExist
+                           Branch.branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName parameters.CorrelationId BranchDoesNotExist |]
 
                     let query (context: HttpContext) maxCount (actorProxy: IBranchActor) =
                         task {
-                            let! branchDto = actorProxy.Get()
+                            let! branchDto = actorProxy.Get (getCorrelationId context)
                             let! results = getCommits branchDto.BranchId maxCount
                             return results
                         }
@@ -750,14 +750,14 @@ module Branch =
                            String.isValidGraceName parameters.BranchName InvalidBranchName
                            Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
                            Number.isPositiveOrZero parameters.MaxCount ValueMustBePositive
-                           Owner.ownerExists parameters.OwnerId parameters.OwnerName OwnerDoesNotExist
-                           Organization.organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName OrganizationDoesNotExist
-                           Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName RepositoryDoesNotExist
-                           Branch.branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName BranchDoesNotExist |]
+                           Owner.ownerExists parameters.OwnerId parameters.OwnerName parameters.CorrelationId OwnerDoesNotExist
+                           Organization.organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.CorrelationId OrganizationDoesNotExist
+                           Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.CorrelationId RepositoryDoesNotExist
+                           Branch.branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName parameters.CorrelationId BranchDoesNotExist |]
                            
                     let query (context: HttpContext) maxCount (actorProxy: IBranchActor) =
                         task {
-                            let! branchDto = actorProxy.Get()
+                            let! branchDto = actorProxy.Get (getCorrelationId context)
                             let! results = getCheckpoints branchDto.BranchId maxCount
                             return results
                         }
@@ -786,15 +786,15 @@ module Branch =
                            String.isValidGraceName parameters.BranchName InvalidBranchName
                            Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
                            Number.isPositiveOrZero parameters.MaxCount ValueMustBePositive
-                           Owner.ownerExists parameters.OwnerId parameters.OwnerName OwnerDoesNotExist
-                           Organization.organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName OrganizationDoesNotExist
-                           Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName RepositoryDoesNotExist
-                           Branch.branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName BranchDoesNotExist |]
+                           Owner.ownerExists parameters.OwnerId parameters.OwnerName parameters.CorrelationId OwnerDoesNotExist
+                           Organization.organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.CorrelationId OrganizationDoesNotExist
+                           Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.CorrelationId RepositoryDoesNotExist
+                           Branch.branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName parameters.CorrelationId BranchDoesNotExist |]
 
 
                     let query (context: HttpContext) maxCount (actorProxy: IBranchActor) =
                         task {
-                            let! branchDto = actorProxy.Get()
+                            let! branchDto = actorProxy.Get (getCorrelationId context)
                             let! results = getSaves branchDto.BranchId maxCount
                             return results
                         }
@@ -823,14 +823,14 @@ module Branch =
                            String.isValidGraceName parameters.BranchName InvalidBranchName
                            Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
                            Number.isPositiveOrZero parameters.MaxCount ValueMustBePositive
-                           Owner.ownerExists parameters.OwnerId parameters.OwnerName OwnerDoesNotExist
-                           Organization.organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName OrganizationDoesNotExist
-                           Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName RepositoryDoesNotExist
-                           Branch.branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName BranchDoesNotExist |]
+                           Owner.ownerExists parameters.OwnerId parameters.OwnerName parameters.CorrelationId OwnerDoesNotExist
+                           Organization.organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.CorrelationId OrganizationDoesNotExist
+                           Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.CorrelationId RepositoryDoesNotExist
+                           Branch.branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName parameters.CorrelationId BranchDoesNotExist |]
 
                     let query (context: HttpContext) maxCount (actorProxy: IBranchActor) =
                         task {
-                            let! branchDto = actorProxy.Get()
+                            let! branchDto = actorProxy.Get (getCorrelationId context)
                             let! results = getTags branchDto.BranchId maxCount
                             return results
                         }
@@ -859,38 +859,38 @@ module Branch =
                            Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
                            String.isEmptyOrValidSha256Hash parameters.Sha256Hash Sha256HashDoesNotExist
                            Guid.isValidAndNotEmpty parameters.ReferenceId ReferenceIdDoesNotExist
-                           Owner.ownerExists parameters.OwnerId parameters.OwnerName OwnerDoesNotExist
-                           Organization.organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName OrganizationDoesNotExist
-                           Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName RepositoryDoesNotExist
-                           Branch.branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName BranchDoesNotExist |]
+                           Owner.ownerExists parameters.OwnerId parameters.OwnerName parameters.CorrelationId OwnerDoesNotExist
+                           Organization.organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.CorrelationId OrganizationDoesNotExist
+                           Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.CorrelationId RepositoryDoesNotExist
+                           Branch.branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName parameters.CorrelationId BranchDoesNotExist |]
 
                     let query (context: HttpContext) maxCount (actorProxy: IBranchActor) =
                         task {
                             let listContentsParameters = context.Items["ListContentsParameters"] :?> ListContentsParameters
                             if String.IsNullOrEmpty(listContentsParameters.ReferenceId) && String.IsNullOrEmpty(listContentsParameters.Sha256Hash) then
-                                let! branchDto = actorProxy.Get()
+                                let! branchDto = actorProxy.Get (getCorrelationId context)
                                 let! latestReference = getLatestReference branchDto.BranchId
                                 match latestReference with
                                 | Some latestReference ->
                                     let directoryActorId = DirectoryVersion.GetActorId latestReference.DirectoryId
                                     let directoryActorProxy = actorProxyFactory.CreateActorProxy<IDirectoryVersionActor>(directoryActorId, ActorName.DirectoryVersion)
-                                    let! contents = directoryActorProxy.GetDirectoryVersionsRecursive(false)
+                                    let! contents = directoryActorProxy.GetDirectoryVersionsRecursive false (getCorrelationId context)
                                     return contents
                                 | None ->
                                     return List<DirectoryVersion>()
                             elif not <| String.IsNullOrEmpty(listContentsParameters.ReferenceId) then
                                 let referenceActorId = ActorId(listContentsParameters.ReferenceId)
                                 let referenceActorProxy = actorProxyFactory.CreateActorProxy<IReferenceActor>(referenceActorId, ActorName.Reference)
-                                let! referenceDto = referenceActorProxy.Get()
+                                let! referenceDto = referenceActorProxy.Get (getCorrelationId context)
                                 let directoryActorId = DirectoryVersion.GetActorId referenceDto.DirectoryId
                                 let directoryActorProxy = actorProxyFactory.CreateActorProxy<IDirectoryVersionActor>(directoryActorId, ActorName.DirectoryVersion)
-                                let! contents = directoryActorProxy.GetDirectoryVersionsRecursive(false)
+                                let! contents = directoryActorProxy.GetDirectoryVersionsRecursive false (getCorrelationId context)
                                 return contents
                             else // We have a Sha256Hash to look up
                                 let! directoryVersion = Services.getDirectoryBySha256Hash (Guid.Parse(graceIds.RepositoryId)) listContentsParameters.Sha256Hash
                                 let directoryActorId = DirectoryVersion.GetActorId directoryVersion.DirectoryId
                                 let directoryActorProxy = actorProxyFactory.CreateActorProxy<IDirectoryVersionActor>(directoryActorId, ActorName.DirectoryVersion)
-                                let! contents = directoryActorProxy.GetDirectoryVersionsRecursive(false)
+                                let! contents = directoryActorProxy.GetDirectoryVersionsRecursive false (getCorrelationId context)
                                 return contents
                         }
                 
@@ -919,10 +919,10 @@ module Branch =
                            Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
                            String.isEmptyOrValidSha256Hash parameters.Sha256Hash Sha256HashDoesNotExist
                            Guid.isValidAndNotEmpty parameters.ReferenceId ReferenceIdDoesNotExist
-                           Owner.ownerExists parameters.OwnerId parameters.OwnerName OwnerDoesNotExist
-                           Organization.organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName OrganizationDoesNotExist
-                           Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName RepositoryDoesNotExist
-                           Branch.branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName BranchDoesNotExist |]
+                           Owner.ownerExists parameters.OwnerId parameters.OwnerName parameters.CorrelationId OwnerDoesNotExist
+                           Organization.organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.CorrelationId OrganizationDoesNotExist
+                           Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.CorrelationId RepositoryDoesNotExist
+                           Branch.branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName parameters.CorrelationId BranchDoesNotExist |]
 
                     let query (context: HttpContext) maxCount (actorProxy: IBranchActor) =
                         task {
@@ -931,15 +931,15 @@ module Branch =
                             let! rootDirectoryVersion =
                                 task {
                                     if not <| String.IsNullOrEmpty(parameters.Sha256Hash) then
-                                        return! getRootDirectoryBySha256Hash repositoryId parameters.Sha256Hash
+                                        return! getRootDirectoryBySha256Hash repositoryId parameters.Sha256Hash (getCorrelationId context)
                                     elif not <| String.IsNullOrEmpty(parameters.ReferenceId) then
-                                        return! getRootDirectoryByReferenceId repositoryId (Guid.Parse(parameters.ReferenceId))
+                                        return! getRootDirectoryByReferenceId repositoryId (Guid.Parse(parameters.ReferenceId)) (getCorrelationId context)
                                     else 
-                                        let! branchDto = actorProxy.Get()
+                                        let! branchDto = actorProxy.Get (getCorrelationId context)
                                         let! latestReference = getLatestReference branchDto.BranchId
                                         match latestReference with
                                         | Some referenceDto -> 
-                                            return! getRootDirectoryBySha256Hash repositoryId referenceDto.Sha256Hash
+                                            return! getRootDirectoryBySha256Hash repositoryId referenceDto.Sha256Hash (getCorrelationId context)
                                         | None ->
                                             return DirectoryVersion.Default
                                 }
@@ -947,7 +947,7 @@ module Branch =
                             if rootDirectoryVersion.DirectoryId <> DirectoryVersion.Default.DirectoryId then
                                 let directoryVersionActorId = ActorId($"{rootDirectoryVersion.DirectoryId}")
                                 let directoryVersionActorProxy = ApplicationContext.actorProxyFactory.CreateActorProxy<IDirectoryVersionActor>(directoryVersionActorId, ActorName.DirectoryVersion)
-                                let! directoryVersions = directoryVersionActorProxy.GetDirectoryVersionsRecursive(false)
+                                let! directoryVersions = directoryVersionActorProxy.GetDirectoryVersionsRecursive false (getCorrelationId context)
                                 let directoryIds = directoryVersions.Select(fun dv -> dv.DirectoryId).ToList()
                                 return directoryIds
                             else
@@ -955,20 +955,20 @@ module Branch =
                         }
 
                     let! parameters = context |> parse<GetBranchVersionParameters>
-                    let! repositoryId = resolveRepositoryId parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName
+                    let! repositoryId = resolveRepositoryId parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.CorrelationId
                     match repositoryId with
                     | Some repositoryId ->
                         parameters.RepositoryId <- repositoryId                            
                         if not <| String.IsNullOrEmpty(parameters.BranchId) || not <| String.IsNullOrEmpty(parameters.BranchName) then
                             logToConsole $"In Branch.GetVersion: parameters.BranchId: {parameters.BranchId}; parameters.BranchName: {parameters.BranchName}"
-                            match! resolveBranchId repositoryId parameters.BranchId parameters.BranchName with
+                            match! resolveBranchId repositoryId parameters.BranchId parameters.BranchName parameters.CorrelationId with
                             | Some branchId -> parameters.BranchId <- branchId
                             | None -> () // This should never happen because it would get caught in validations.
                         elif not <| String.IsNullOrEmpty(parameters.ReferenceId) then
                             logToConsole $"In Branch.GetVersion: parameters.ReferenceId: {parameters.ReferenceId}"
                             let referenceActorId = ActorId(parameters.ReferenceId)
                             let referenceActorProxy = ApplicationContext.actorProxyFactory.CreateActorProxy<IReferenceActor>(referenceActorId, ActorName.Reference)
-                            let! referenceDto = referenceActorProxy.Get()
+                            let! referenceDto = referenceActorProxy.Get (getCorrelationId context)
                             logToConsole $"referenceDto.ReferenceId: {referenceDto.ReferenceId}"
                             parameters.BranchId <- $"{referenceDto.BranchId}"
                         elif not <| String.IsNullOrEmpty(parameters.Sha256Hash) then

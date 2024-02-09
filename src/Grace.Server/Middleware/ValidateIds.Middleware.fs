@@ -94,6 +94,7 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
 
             try
                 let path = context.Request.Path.ToString()
+                let correlationId = getCorrelationId context
                 let mutable requestBodyType: Type = null
                 let mutable graceIds = GraceIds.Default
                 let mutable notFound = false
@@ -169,7 +170,7 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
                                 graceIds <- {graceIds with OwnerId = ownerId; HasOwner = true}
                             else
                                 // Resolve the OwnerId based on the provided Id and Name.
-                                match! resolveOwnerId ownerId ownerName with
+                                match! resolveOwnerId ownerId ownerName correlationId with
                                 | Some resolvedOwnerId ->
                                     graceIds <- {graceIds with OwnerId = resolvedOwnerId; HasOwner = true}
                                 | None ->
@@ -186,7 +187,7 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
                                 graceIds <- {graceIds with OrganizationId = organizationId; HasOrganization = true}
                             else
                                 // Resolve the OrganizationId based on the provided Id and Name.
-                                match! resolveOrganizationId ownerId ownerName organizationId organizationName with
+                                match! resolveOrganizationId ownerId ownerName organizationId organizationName correlationId with
                                 | Some resolvedOrganizationId ->
                                     graceIds <- {graceIds with OrganizationId = resolvedOrganizationId; HasOrganization = true}
                                 | None -> 
@@ -203,7 +204,7 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
                                 graceIds <- {graceIds with RepositoryId = repositoryId; HasRepository = true}
                             else
                                 // Resolve the RepositoryId based on the provided Id and Name.
-                                match! resolveRepositoryId ownerId ownerName organizationId organizationName repositoryId repositoryName with
+                                match! resolveRepositoryId ownerId ownerName organizationId organizationName repositoryId repositoryName correlationId with
                                 | Some resolvedRepositoryId ->
                                     graceIds <- {graceIds with RepositoryId = resolvedRepositoryId; HasRepository = true}
                                 | None ->
@@ -220,10 +221,10 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
                                 graceIds <- {graceIds with BranchId = branchId; HasBranch = true}
                             else
                                 // Resolve the BranchId based on the provided Id and Name.
-                                match! resolveBranchId graceIds.RepositoryId branchId branchName with
+                                match! resolveBranchId graceIds.RepositoryId branchId branchName correlationId with
                                 | Some resolvedBranchId ->
                                     // Check to see if the Branch exists.
-                                    match! Branch.branchExists ownerId ownerName organizationId organizationName repositoryId repositoryName resolvedBranchId branchName Branch.BranchError.BranchDoesNotExist with
+                                    match! Branch.branchExists ownerId ownerName organizationId organizationName repositoryId repositoryName resolvedBranchId branchName correlationId Branch.BranchError.BranchDoesNotExist with
                                     | Ok _ ->
                                         graceIds <- {graceIds with BranchId = resolvedBranchId; HasBranch = true}
                                     | Error error ->

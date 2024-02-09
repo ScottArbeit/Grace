@@ -36,7 +36,7 @@ module Storage =
         task {
             match repositoryDto.ObjectStorageProvider with
                 | AzureBlobStorage ->
-                    let! blobClient = getAzureBlobClient repositoryDto fileVersion
+                    let! blobClient = getAzureBlobClient repositoryDto fileVersion (getCorrelationId context)
                     match blobClient with
                     | Ok blobClient ->
                         let! azureResponse = blobClient.ExistsAsync()
@@ -58,7 +58,7 @@ module Storage =
         task {
             match repositoryDto.ObjectStorageProvider with
                 | AzureBlobStorage ->
-                    let! blobClient = getAzureBlobClient repositoryDto fileVersion
+                    let! blobClient = getAzureBlobClient repositoryDto fileVersion (getCorrelationId context)
                     match blobClient with
                     | Ok blobClient ->
                         let! azureResponse = blobClient.GetPropertiesAsync()
@@ -80,8 +80,8 @@ module Storage =
                 try
                     let! fileVersion = context.BindJsonAsync<FileVersion>()
                     let repositoryActor = Repository.getActorProxy $"{fileVersion.RepositoryId}"
-                    let! repositoryDto = repositoryActor.Get()
-                    match! getReadSharedAccessSignature repositoryDto fileVersion with
+                    let! repositoryDto = repositoryActor.Get (getCorrelationId context)
+                    match! getReadSharedAccessSignature repositoryDto fileVersion (getCorrelationId context) with
                     | Ok downloadUri ->
                         context.SetStatusCode StatusCodes.Status200OK
                         //context.GetLogger().LogTrace("fileVersion: {fileVersion.RelativePath}; downloadUri: {downloadUri}", [| fileVersion.RelativePath, downloadUri |])
@@ -103,8 +103,8 @@ module Storage =
                 try
                     let! fileVersion = context.BindJsonAsync<FileVersion>()
                     let repositoryActor = Repository.getActorProxy $"{fileVersion.RepositoryId}"
-                    let! repositoryDto = repositoryActor.Get()
-                    let! uploadUri = getWriteSharedAccessSignature repositoryDto fileVersion
+                    let! repositoryDto = repositoryActor.Get (getCorrelationId context)
+                    let! uploadUri = getWriteSharedAccessSignature repositoryDto fileVersion (getCorrelationId context)
                     context.SetStatusCode StatusCodes.Status200OK
                     log.LogDebug("In GetUploadUri(): fileVersion.RelativePath: {relativePath}; uploadUri: {uploadUri}", fileVersion.RelativePath, uploadUri)
                     return! context.WriteStringAsync $"{uploadUri}"
@@ -123,14 +123,14 @@ module Storage =
                     Activity.Current.SetTag("fileVersions.Count", $"{fileVersions.Count}") |> ignore
                     if fileVersions.Count > 0 then
                         let repositoryActor = Repository.getActorProxy $"{fileVersions[0].RepositoryId}"
-                        let! repositoryDto = repositoryActor.Get()
+                        let! repositoryDto = repositoryActor.Get (getCorrelationId context)
 
                         let uploadMetadata = ConcurrentQueue<UploadMetadata>()
                         do! Parallel.ForEachAsync(fileVersions, Constants.ParallelOptions, (fun fileVersion ct ->
                             ValueTask(task {
                                 let! fileExists = fileExists repositoryDto fileVersion context
                                 if not <| fileExists then
-                                    let! blobUriWithSasToken = getWriteSharedAccessSignature repositoryDto fileVersion
+                                    let! blobUriWithSasToken = getWriteSharedAccessSignature repositoryDto fileVersion (getCorrelationId context)
                                     uploadMetadata.Enqueue({BlobUriWithSasToken = blobUriWithSasToken; Sha256Hash = fileVersion.Sha256Hash})
                             })))
                         Activity.Current.SetTag("uploadMetadata.Count", $"{uploadMetadata.Count}") |> ignore

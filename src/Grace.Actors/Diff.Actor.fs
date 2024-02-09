@@ -92,12 +92,12 @@ module Diff =
             }
 
         /// Builds a ServerGraceIndex from a root DirectoryId.
-        member private this.buildGraceIndex (directoryId: DirectoryId) =
+        member private this.buildGraceIndex (directoryId: DirectoryId) correlationId =
             task {
                 let graceIndex = ServerGraceIndex()
                 let directory = ActorProxyFactory().CreateActorProxy<IDirectoryVersionActor>(DirectoryVersion.GetActorId(directoryId), ActorName.DirectoryVersion)
-                let! directoryCreatedAt = directory.GetCreatedAt()
-                let! directoryContents = directory.GetDirectoryVersionsRecursive(false)
+                let! directoryCreatedAt = directory.GetCreatedAt correlationId
+                let! directoryContents = directory.GetDirectoryVersionsRecursive false correlationId
                 //logToConsole $"In DiffActor.buildGraceIndex(): directoryContents.Count: {directoryContents.Count}"
                 for directoryVersion in directoryContents do 
                     graceIndex.TryAdd(directoryVersion.RelativePath, directoryVersion) |> ignore
@@ -105,11 +105,11 @@ module Diff =
             }
         
         /// Gets a Stream from object storage for a specific FileVersion, using a generated Uri.
-        member private this.getFileStream (fileVersion: FileVersion) (url: UriWithSharedAccessSignature) =
+        member private this.getFileStream (fileVersion: FileVersion) (url: UriWithSharedAccessSignature) correlationId =
             task {
                 let repositoryActorId = Repository.GetActorId(fileVersion.RepositoryId)
                 let repositoryActorProxy = actorProxyFactory.CreateActorProxy<IRepositoryActor>(repositoryActorId, ActorName.Repository)
-                let! objectStorageProvider = repositoryActorProxy.GetObjectStorageProvider()
+                let! objectStorageProvider = repositoryActorProxy.GetObjectStorageProvider correlationId
                 match objectStorageProvider with
                 | AWSS3 -> return new MemoryStream() :> Stream
                 | AzureBlobStorage ->
@@ -169,7 +169,7 @@ module Diff =
                 Some diffDto |> returnValueTask
 
         interface IDiffActor with
-            member this.Populate() =
+            member this.Populate (correlationId) =
                 // If it's already populated, skip this.
                 if diffDto.DirectoryId1 <> DiffDto.Default.DirectoryId1 then (true |> returnTask)
                 else
@@ -180,8 +180,8 @@ module Diff =
 
                     try
                         // Build a GraceIndex for each DirectoryId.
-                        let! (graceIndex1, createdAt1, repositoryId1) = this.buildGraceIndex directoryId1
-                        let! (graceIndex2, createdAt2, repositoryId2) = this.buildGraceIndex directoryId2
+                        let! (graceIndex1, createdAt1, repositoryId1) = this.buildGraceIndex directoryId1 correlationId
+                        let! (graceIndex2, createdAt2, repositoryId2) = this.buildGraceIndex directoryId2 correlationId
                         //logToConsole $"In DiffActor.Populate(); createdAt1: {createdAt1}; createdAt2: {createdAt2}."
                         
                         // Compare the GraceIndices.
@@ -201,7 +201,7 @@ module Diff =
                                 if differences.Count > 0 then
                                     let repositoryActorId = ActorId($"{repositoryId1}")
                                     let repositoryActorProxy = actorProxyFactory.CreateActorProxy<IRepositoryActor>(repositoryActorId, ActorName.Repository)
-                                    let! repositoryDtoFromActor = repositoryActorProxy.Get()
+                                    let! repositoryDtoFromActor = repositoryActorProxy.Get correlationId
                                     return repositoryDtoFromActor
                                 else
                                     return RepositoryDto.Default
@@ -214,9 +214,9 @@ module Diff =
                                 //logToConsole $"In DiffActor.getFileStream(); relativePath: {relativePath}; relativeDirectoryPath: {relativeDirectoryPath}; graceIndex.Count: {graceIndex.Count}."
                                 let directory = graceIndex[relativeDirectoryPath]
                                 let fileVersion = directory.Files.First(fun f -> f.RelativePath = relativePath)
-                                let! uri = getReadSharedAccessSignature repositoryDto fileVersion
+                                let! uri = getReadSharedAccessSignature repositoryDto fileVersion correlationId
                                 logToConsole $"In DiffActor.getFileStream(); uri: {Result.get uri}."
-                                let! stream = this.getFileStream fileVersion (Result.get uri)
+                                let! stream = this.getFileStream fileVersion (Result.get uri) correlationId
                                 return (stream, fileVersion)
                             }
 
@@ -288,11 +288,11 @@ module Diff =
                         return false
                 }
 
-            member this.GetDiff() =
+            member this.GetDiff (correlationId) =
                 task {
                     if diffDto.DirectoryId1 = DiffDto.Default.DirectoryId1 then
                         //logToConsole $"In Actor.GetDiff(), not yet populated."
-                        let! populated = (this :> IDiffActor).Populate()
+                        let! populated = (this :> IDiffActor).Populate correlationId
                         //logToConsole $"In Actor.GetDiff(), now populated."
                         return diffDto
                     else
