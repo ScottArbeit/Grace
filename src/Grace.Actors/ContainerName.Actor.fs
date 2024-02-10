@@ -25,32 +25,36 @@ module ContainerName =
     type ContainerNameActor(host: ActorHost) =
         inherit Actor(host)
 
-        let mutable methodStartTime: Instant = Instant.MinValue
+        let mutable actorStartTime: Instant = Instant.MinValue
         let mutable containerName: ContainerName = String.Empty
         let mutable azureContainerClient: BlobContainerClient = null
 
         let actorName = ActorName.ContainerName
         let log = host.LoggerFactory.CreateLogger(actorName)
 
+        member val private correlationId: CorrelationId = String.Empty with get, set
+
         override this.OnActivateAsync() =
             log.LogInformation("{CurrentInstant} Activated {ActorType} {ActorId}.", getCurrentInstantExtended(), this.GetType().Name, host.Id)
             Task.CompletedTask
 
         override this.OnPreActorMethodAsync context =
-            methodStartTime <- getCurrentInstant()
+            this.correlationId <- String.Empty
+            actorStartTime <- getCurrentInstant()
             //logger.LogInformation $"Entering ContainerNameActor.{context.MethodName}."
             Task.CompletedTask
 
         override this.OnPostActorMethodAsync context =
-            let methodDuration = getCurrentInstant().Minus(methodStartTime)
-            Activity.Current.SetTag("ContainerNameActor method elapsed time", $"{methodDuration.TotalMilliseconds}ms") |> ignore
+            let duration_ms = (getCurrentInstant().Minus(actorStartTime).TotalMilliseconds).ToString("F3")
+            log.LogInformation("{CurrentInstant}: Finished {ActorName}.{MethodName}; Id: {Id}; CorrelationId: {correlationId}; Duration: {duration_ms}ms.", getCurrentInstantExtended(), actorName, context.MethodName, this.Id, this.correlationId, duration_ms)
             //logger.LogInformation $"ContainerNameActor.{context.MethodName} took {methodDuration.TotalMilliseconds}ms."
             Task.CompletedTask
 
         interface IContainerNameActor with
-            member this.GetContainerName(correlationId) =
+            member this.GetContainerName correlationId =
                 task {
                     try
+                        this.correlationId <- correlationId
                         if not <| String.IsNullOrEmpty(containerName) then
                             return Ok containerName
                         else

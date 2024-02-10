@@ -37,6 +37,8 @@ module DirectoryVersion =
         let mutable actorStartTime = Instant.MinValue
         let mutable logScope: IDisposable = null
 
+        member val private correlationId: CorrelationId = String.Empty with get, set
+
         override this.OnActivateAsync() =
             let activateStartTime = getCurrentInstant()
             let stateManager = this.StateManager
@@ -60,6 +62,7 @@ module DirectoryVersion =
             } :> Task
 
         override this.OnPreActorMethodAsync(context) =
+            this.correlationId <- String.Empty
             actorStartTime <- getCurrentInstant()
             logScope <- log.BeginScope("Actor {actorName}", actorName)
             log.LogTrace("{CurrentInstant}: Started {ActorName}.{MethodName} Id: {Id}.", getCurrentInstantExtended(), actorName, context.MethodName, this.Id)
@@ -67,7 +70,7 @@ module DirectoryVersion =
 
         override this.OnPostActorMethodAsync(context) =
             let duration_ms = (getCurrentInstant().Minus(actorStartTime).TotalMilliseconds).ToString("F3")
-            log.LogInformation("{CurrentInstant}: Finished {ActorName}.{MethodName}; Id: {Id}; Duration: {duration_ms}ms.", getCurrentInstantExtended(), actorName, context.MethodName, this.Id, duration_ms)
+            log.LogInformation("{CurrentInstant}: Finished {ActorName}.{MethodName}; Id: {Id}; CorrelationId: {correlationId}; Duration: {duration_ms}ms.", getCurrentInstantExtended(), actorName, context.MethodName, this.Id, this.correlationId, duration_ms)
             logScope.Dispose()
             Task.CompletedTask
 
@@ -92,23 +95,40 @@ module DirectoryVersion =
                 | _ -> Task.CompletedTask
 
         interface IDirectoryVersionActor with
-            member this.Exists (correlationId) = (directoryVersion.CreatedAt > Instant.MinValue) |> returnTask
+            member this.Exists correlationId = 
+                this.correlationId <- correlationId
+                (directoryVersion.CreatedAt > Instant.MinValue) |> returnTask
 
-            member this.Delete (correlationId) = GraceResult.Error (GraceError.Create "Not implemented" correlationId) |> returnTask
+            member this.Delete correlationId =
+                this.correlationId <- correlationId
+                GraceResult.Error (GraceError.Create "Not implemented" correlationId) |> returnTask
 
-            member this.Get (correlationId) = directoryVersion |> returnTask
+            member this.Get correlationId = 
+                this.correlationId <- correlationId
+                directoryVersion |> returnTask
 
-            member this.GetCreatedAt (correlationId) = directoryVersion.CreatedAt |> returnTask
+            member this.GetCreatedAt correlationId = 
+                this.correlationId <- correlationId
+                directoryVersion.CreatedAt |> returnTask
 
-            member this.GetDirectories (correlationId) = directoryVersion.Directories |> returnTask
+            member this.GetDirectories correlationId = 
+                this.correlationId <- correlationId
+                directoryVersion.Directories |> returnTask
 
-            member this.GetFiles (correlationId) = directoryVersion.Files |> returnTask
+            member this.GetFiles correlationId = 
+                this.correlationId <- correlationId
+                directoryVersion.Files |> returnTask
 
-            member this.GetSha256Hash (correlationId) = directoryVersion.Sha256Hash |> returnTask
+            member this.GetSha256Hash correlationId = 
+                this.correlationId <- correlationId
+                directoryVersion.Sha256Hash |> returnTask
 
-            member this.GetSize (correlationId) = directoryVersion.Size |> returnTask
+            member this.GetSize correlationId = 
+                this.correlationId <- correlationId
+                directoryVersion.Size |> returnTask
 
-            member this.GetSizeRecursive (correlationId) = 
+            member this.GetSizeRecursive correlationId = 
+                this.correlationId <- correlationId
                 let stateManager = this.StateManager
                 task {
                     if directoryVersion.RecursiveSize = Constants.InitialDirectorySize then
@@ -136,6 +156,7 @@ module DirectoryVersion =
                 }
 
             member this.GetDirectoryVersionsRecursive (forceRegenerate: bool) correlationId =
+                this.correlationId <- correlationId
                 let stateManager = this.StateManager
                 task {
                     try
@@ -178,6 +199,7 @@ module DirectoryVersion =
                 }
 
             member this.Create (newDirectoryVersion: DirectoryVersion) correlationId =
+                this.correlationId <- correlationId
                 let stateManager = this.StateManager
                 task {
                     if directoryVersion.CreatedAt > DirectoryVersion.Default.CreatedAt then

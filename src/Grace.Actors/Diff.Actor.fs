@@ -91,9 +91,12 @@ module Diff =
                 return differences
             }
 
+        member val private correlationId: CorrelationId = String.Empty with get, set
+
         /// Builds a ServerGraceIndex from a root DirectoryId.
         member private this.buildGraceIndex (directoryId: DirectoryId) correlationId =
             task {
+                this.correlationId <- correlationId
                 let graceIndex = ServerGraceIndex()
                 let directory = ActorProxyFactory().CreateActorProxy<IDirectoryVersionActor>(DirectoryVersion.GetActorId(directoryId), ActorName.DirectoryVersion)
                 let! directoryCreatedAt = directory.GetCreatedAt correlationId
@@ -107,6 +110,7 @@ module Diff =
         /// Gets a Stream from object storage for a specific FileVersion, using a generated Uri.
         member private this.getFileStream (fileVersion: FileVersion) (url: UriWithSharedAccessSignature) correlationId =
             task {
+                this.correlationId <- correlationId
                 let repositoryActorId = Repository.GetActorId(fileVersion.RepositoryId)
                 let repositoryActorProxy = actorProxyFactory.CreateActorProxy<IRepositoryActor>(repositoryActorId, ActorName.Repository)
                 let! objectStorageProvider = repositoryActorProxy.GetObjectStorageProvider correlationId
@@ -151,6 +155,7 @@ module Diff =
             } :> Task
 
         override this.OnPreActorMethodAsync(context) =
+            this.correlationId <- String.Empty
             actorStartTime <- getCurrentInstant()
             logScope <- log.BeginScope("Actor {actorName}", actorName)
             log.LogTrace("{CurrentInstant}: Started {ActorName}.{MethodName} Id: {Id}.", getCurrentInstantExtended(), actorName, context.MethodName, this.Id)
@@ -158,7 +163,7 @@ module Diff =
 
         override this.OnPostActorMethodAsync(context) =
             let duration_ms = (getCurrentInstant().Minus(actorStartTime).TotalMilliseconds).ToString("F3")
-            log.LogInformation("{CurrentInstant}: Finished {ActorName}.{MethodName}; Id: {Id}; Duration: {duration_ms}ms.", getCurrentInstantExtended(), actorName, context.MethodName, this.Id, duration_ms)
+            log.LogInformation("{CurrentInstant}: Finished {ActorName}.{MethodName}; Id: {Id}; CorrelationId: {correlationId}; Duration: {duration_ms}ms.", getCurrentInstantExtended(), actorName, context.MethodName, this.Id, this.correlationId, duration_ms)
             logScope.Dispose()
             Task.CompletedTask
 
@@ -169,7 +174,9 @@ module Diff =
                 Some diffDto |> returnValueTask
 
         interface IDiffActor with
-            member this.Populate (correlationId) =
+            member this.Populate correlationId =
+                this.correlationId <- correlationId
+
                 // If it's already populated, skip this.
                 if diffDto.DirectoryId1 <> DiffDto.Default.DirectoryId1 then (true |> returnTask)
                 else
@@ -288,8 +295,9 @@ module Diff =
                         return false
                 }
 
-            member this.GetDiff (correlationId) =
+            member this.GetDiff correlationId =
                 task {
+                    this.correlationId <- correlationId
                     if diffDto.DirectoryId1 = DiffDto.Default.DirectoryId1 then
                         //logToConsole $"In Actor.GetDiff(), not yet populated."
                         let! populated = (this :> IDiffActor).Populate correlationId

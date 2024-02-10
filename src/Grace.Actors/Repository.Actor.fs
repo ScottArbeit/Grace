@@ -52,6 +52,8 @@ module Repository =
         let mutable repositoryDto = RepositoryDto.Default
         let mutable repositoryEvents: List<RepositoryEvent> = null
 
+        member val private correlationId: CorrelationId = String.Empty with get, set
+
         override this.OnActivateAsync() =
             let activateStartTime = getCurrentInstant()
             let stateManager = this.StateManager
@@ -71,6 +73,7 @@ module Repository =
             } :> Task
 
         override this.OnPreActorMethodAsync(context) =
+            this.correlationId <- String.Empty
             actorStartTime <- getCurrentInstant()
             logScope <- log.BeginScope("Actor {actorName}", actorName)
             currentCommand <- String.Empty
@@ -81,15 +84,14 @@ module Repository =
             if isDisposed then
                 this.OnActivateAsync().Wait()
                 isDisposed <- false
-
             Task.CompletedTask
-            
+
         override this.OnPostActorMethodAsync(context) =
             let duration_ms = (getCurrentInstant().Minus(actorStartTime).TotalMilliseconds).ToString("F3")
             if String.IsNullOrEmpty(currentCommand) then
-                log.LogInformation("{CurrentInstant}: Finished {ActorName}.{MethodName}; Id: {Id}; Duration: {duration_ms}ms.", getCurrentInstantExtended(), actorName, context.MethodName, this.Id, duration_ms)
+                log.LogInformation("{CurrentInstant}: Finished {ActorName}.{MethodName}; Id: {Id}; CorrelationId: {correlationId}; Duration: {duration_ms}ms.", getCurrentInstantExtended(), actorName, context.MethodName, this.Id, this.correlationId, duration_ms)
             else
-                log.LogInformation("{CurrentInstant}: Finished {ActorName}.{MethodName}; Command: {Command}; Id: {Id}; Duration: {duration_ms}ms.", getCurrentInstantExtended(), actorName, context.MethodName, currentCommand, this.Id, duration_ms)
+                log.LogInformation("{CurrentInstant}: Finished {ActorName}.{MethodName}; Command: {Command}; Id: {Id}; CorrelationId: {correlationId}; Duration: {duration_ms}ms.", getCurrentInstantExtended(), actorName, context.MethodName, currentCommand, this.Id, this.correlationId, duration_ms)
             logScope.Dispose()
             Task.CompletedTask
 
@@ -349,15 +351,25 @@ module Repository =
                 }
 
         interface IRepositoryActor with
-            member this.Get (correlationId) = repositoryDto |> returnTask
+            member this.Get correlationId = 
+                this.correlationId <- correlationId
+                repositoryDto |> returnTask
 
-            member this.GetObjectStorageProvider (correlationId) = repositoryDto.ObjectStorageProvider |> returnTask
+            member this.GetObjectStorageProvider correlationId = 
+                this.correlationId <- correlationId
+                repositoryDto.ObjectStorageProvider |> returnTask
 
-            member this.Exists (correlationId) = repositoryDto.UpdatedAt.IsSome |> returnTask
+            member this.Exists correlationId = 
+                this.correlationId <- correlationId
+                repositoryDto.UpdatedAt.IsSome |> returnTask
 
-            member this.IsEmpty (correlationId) = repositoryDto.InitializedAt.IsNone |> returnTask
+            member this.IsEmpty correlationId = 
+                this.correlationId <- correlationId
+                repositoryDto.InitializedAt.IsNone |> returnTask
 
-            member this.IsDeleted (correlationId) = repositoryDto.DeletedAt.IsSome |> returnTask
+            member this.IsDeleted correlationId = 
+                this.correlationId <- correlationId
+                repositoryDto.DeletedAt.IsSome |> returnTask
 
             member this.Handle command metadata =
                 let isValid command (metadata: EventMetadata) =
@@ -427,6 +439,7 @@ module Repository =
                     }
 
                 task {
+                    this.correlationId <- metadata.CorrelationId
                     currentCommand <- getDiscriminatedUnionCaseName command
                     match! isValid command metadata with
                     | Ok command -> return! processCommand command metadata

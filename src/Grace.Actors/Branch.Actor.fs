@@ -43,7 +43,6 @@ module Branch =
         let mutable actorStartTime = Instant.MinValue
         let mutable logScope: IDisposable = null
         let mutable currentCommand = String.Empty
-        let mutable correlationId = String.Empty
 
         /// Indicates that the actor is in an undefined state, and should be reset.
         let mutable isDisposed = false
@@ -81,6 +80,8 @@ module Branch =
 
             {newBranchDto with UpdatedAt = Some (getCurrentInstant())}
 
+        member val private correlationId: CorrelationId = String.Empty with get, set
+
         member private this.BranchEvents() =
             let stateManager = this.StateManager
             task {
@@ -107,7 +108,7 @@ module Branch =
                         message <- "Not found in database."
                 
                 let duration_ms = getCurrentInstant().Minus(activateStartTime).TotalMilliseconds.ToString("F3")
-                log.LogInformation("{CurrentInstant}: Activated {ActorType} {ActorId}. {message} Duration: {duration_ms}ms.", getCurrentInstantExtended(), actorName, host.Id, message, duration_ms)
+                log.LogInformation("{CurrentInstant}: Activated {ActorType} {ActorId}. BranchName: {BranchName}; {message} Duration: {duration_ms}ms.", getCurrentInstantExtended(), actorName, host.Id, branchDto.BranchName, message, duration_ms)
             } :> Task
 
         member private this.SetMaintenanceReminder() =
@@ -123,6 +124,7 @@ module Branch =
             } :> Task
 
         override this.OnPreActorMethodAsync(context) =
+            this.correlationId <- String.Empty
             actorStartTime <- getCurrentInstant()
             logScope <- log.BeginScope("Actor {actorName}", actorName)
             currentCommand <- String.Empty
@@ -138,9 +140,9 @@ module Branch =
         override this.OnPostActorMethodAsync(context) =
             let duration_ms = (getCurrentInstant().Minus(actorStartTime).TotalMilliseconds).ToString("F3")
             if String.IsNullOrEmpty(currentCommand) then
-                log.LogInformation("{CurrentInstant}: Finished {ActorName}.{MethodName}; Id: {Id}; Name: {Name}; CorrelationId: {correlationId}; Duration: {duration_ms}ms.", getCurrentInstantExtended(), actorName, context.MethodName, this.Id, branchDto.BranchName, correlationId, duration_ms)
+                log.LogInformation("{CurrentInstant}: Finished {ActorName}.{MethodName}; Id: {Id}; BranchName: {BranchName}; CorrelationId: {correlationId}; Duration: {duration_ms}ms.", getCurrentInstantExtended(), actorName, context.MethodName, this.Id, branchDto.BranchName, this.correlationId, duration_ms)
             else
-                log.LogInformation("{CurrentInstant}: Finished {ActorName}.{MethodName}; Command: {Command}; Id: {Id}; Name: {Name}; CorrelationId: {correlationId}; Duration: {duration_ms}ms.", getCurrentInstantExtended(), actorName, context.MethodName, currentCommand, this.Id, branchDto.BranchName, correlationId, duration_ms)
+                log.LogInformation("{CurrentInstant}: Finished {ActorName}.{MethodName}; Command: {Command}; Id: {Id}; BranchName: {BranchName}; CorrelationId: {correlationId}; Duration: {duration_ms}ms.", getCurrentInstantExtended(), actorName, context.MethodName, currentCommand, this.Id, branchDto.BranchName, this.correlationId, duration_ms)
             logScope.Dispose()
             Task.CompletedTask
 
@@ -191,14 +193,15 @@ module Branch =
 
         interface IBranchActor with
 
-            member this.GetEvents (correlationId) = 
+            member this.GetEvents correlationId = 
                 task {
-                    //correlationId <- correlation
+                    this.correlationId <- correlationId
                     let! branchEvents = this.BranchEvents()
                     return branchEvents :> IList<BranchEvent>
                 }
 
-            member this.Exists (correlationId) =
+            member this.Exists correlationId =
+                this.correlationId <- correlationId
                 not <| (branchDto.BranchId = BranchDto.Default.BranchId) |> returnTask
 
             member this.Handle command metadata =
@@ -300,24 +303,31 @@ module Branch =
 
                 task {
                     currentCommand <- getDiscriminatedUnionCaseName command
-                    correlationId <- metadata.CorrelationId
+                    this.correlationId <- metadata.CorrelationId
                     match! isValid command metadata with
                     | Ok command -> return! processCommand command metadata 
                     | Error error -> return Error error
                 }
 
-            member this.Get (correlationId) = branchDto |> returnTask
+            member this.Get correlationId = 
+                this.correlationId <- correlationId
+                branchDto |> returnTask
 
-            member this.GetParentBranch (correlationId) = 
+            member this.GetParentBranch correlationId = 
                 task {
+                    this.correlationId <- correlationId
                     let actorId = ActorId($"{branchDto.ParentBranchId}")
                     let branchActorProxy = this.Host.ProxyFactory.CreateActorProxy<IBranchActor>(actorId, ActorName.Branch)
                     return! branchActorProxy.Get correlationId
                 }
 
-            member this.GetLatestCommit (correlationId) = branchDto.LatestCommit |> returnTask
+            member this.GetLatestCommit correlationId = 
+                this.correlationId <- correlationId
+                branchDto.LatestCommit |> returnTask
 
-            member this.GetLatestPromotion (correlationId) = branchDto.LatestPromotion |> returnTask
+            member this.GetLatestPromotion correlationId = 
+                this.correlationId <- correlationId
+                branchDto.LatestPromotion |> returnTask
 
         interface IRemindable with
             override this.ReceiveReminderAsync(reminderName, state, dueTime, period) =

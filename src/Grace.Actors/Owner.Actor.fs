@@ -61,6 +61,8 @@ module Owner =
 
             {newOwnerDto with UpdatedAt = Some (getCurrentInstant())}
 
+        member val private correlationId: CorrelationId = String.Empty with get, set
+
         override this.OnActivateAsync() =
             let activateStartTime = getCurrentInstant()
             let stateManager = this.StateManager
@@ -92,6 +94,7 @@ module Owner =
             }
 
         override this.OnPreActorMethodAsync(context) =
+            this.correlationId <- String.Empty
             if context.CallType = ActorCallType.ReminderMethod then
                 log.LogInformation("{CurrentInstant}: Reminder {ActorName}.{MethodName} Id: {Id}.", getCurrentInstantExtended(), actorName, context.MethodName, this.Id)
             actorStartTime <- getCurrentInstant()
@@ -109,9 +112,9 @@ module Owner =
         override this.OnPostActorMethodAsync(context) =
             let duration_ms = (getCurrentInstant().Minus(actorStartTime).TotalMilliseconds).ToString("F3")
             if String.IsNullOrEmpty(currentCommand) then
-                log.LogInformation("{CurrentInstant}: Finished {ActorName}.{MethodName}; Id: {Id}; Duration: {duration_ms}ms.", getCurrentInstantExtended(), actorName, context.MethodName, this.Id, duration_ms)
+                log.LogInformation("{CurrentInstant}: Finished {ActorName}.{MethodName}; Id: {Id}; CorrelationId: {correlationId}; Duration: {duration_ms}ms.", getCurrentInstantExtended(), actorName, context.MethodName, this.Id, this.correlationId, duration_ms)
             else
-                log.LogInformation("{CurrentInstant}: Finished {ActorName}.{MethodName}; Command: {Command}; Id: {Id}; Duration: {duration_ms}ms.", getCurrentInstantExtended(), actorName, context.MethodName, currentCommand, this.Id, duration_ms)    
+                log.LogInformation("{CurrentInstant}: Finished {ActorName}.{MethodName}; Command: {Command}; Id: {Id}; CorrelationId: {correlationId}; Duration: {duration_ms}ms.", getCurrentInstantExtended(), actorName, context.MethodName, currentCommand, this.Id, this.correlationId, duration_ms)
             logScope.Dispose()
             Task.CompletedTask
             
@@ -187,15 +190,25 @@ module Owner =
             this.RegisterReminderAsync(ReminderType.PhysicalDeletion, convertToByteArray deleteReason, Constants.DefaultPhysicalDeletionReminderTime, TimeSpan.FromMilliseconds(-1)).Result |> ignore
 
         interface IOwnerActor with
-            member this.Exists (correlationId) = ownerDto.UpdatedAt.IsSome |> returnTask
+            member this.Exists correlationId = 
+                this.correlationId <- correlationId
+                ownerDto.UpdatedAt.IsSome |> returnTask
 
-            member this.IsDeleted (correlationId) = ownerDto.DeletedAt.IsSome |> returnTask
+            member this.IsDeleted correlationId = 
+                this.correlationId <- correlationId
+                ownerDto.DeletedAt.IsSome |> returnTask
 
-            member this.Get (correlationId) = ownerDto |> returnTask
+            member this.Get correlationId = 
+                this.correlationId <- correlationId
+                ownerDto |> returnTask
 
-            member this.OrganizationExists organizationName correlationId = ownerDto.Organizations.ContainsValue(OrganizationName organizationName) |> returnTask
+            member this.OrganizationExists organizationName correlationId = 
+                this.correlationId <- correlationId
+                ownerDto.Organizations.ContainsValue(OrganizationName organizationName) |> returnTask
 
-            member this.ListOrganizations (correlationId) = ownerDto.Organizations :> IReadOnlyDictionary<OrganizationId, OrganizationName> |> returnTask
+            member this.ListOrganizations correlationId = 
+                this.correlationId <- correlationId
+                ownerDto.Organizations :> IReadOnlyDictionary<OrganizationId, OrganizationName> |> returnTask
 
             member this.Handle command metadata =
                 let isValid command (metadata: EventMetadata) =
@@ -254,6 +267,7 @@ module Owner =
                     }
 
                 task {
+                    this.correlationId <- metadata.CorrelationId
                     currentCommand <- getDiscriminatedUnionCaseName command
                     match! isValid command metadata with
                     | Ok command -> return! processCommand command metadata

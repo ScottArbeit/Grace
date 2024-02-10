@@ -26,10 +26,14 @@ module Reference =
         inherit Actor (host)
 
         let actorName = ActorName.Reference
+        let mutable actorStartTime = Instant.MinValue
         let log = loggerFactory.CreateLogger("Reference.Actor")
+        let mutable logScope: IDisposable = null
         let dtoStateName = "ReferenceDtoState"
         let mutable referenceDto = None
         
+        member val private correlationId: CorrelationId = String.Empty with get, set
+
         override this.OnActivateAsync() =
             let activateStartTime = getCurrentInstant()
             let stateManager = this.StateManager
@@ -47,12 +51,35 @@ module Reference =
                 log.LogInformation("{CurrentInstant}: Activated {ActorType} {ActorId}. {message} Duration: {duration_ms}ms.", getCurrentInstantExtended(), actorName, host.Id, message, duration_ms)
             } :> Task
 
+        override this.OnPreActorMethodAsync(context) =
+            this.correlationId <- String.Empty
+            actorStartTime <- getCurrentInstant()
+            logScope <- log.BeginScope("Actor {actorName}", actorName)
+            log.LogTrace("{CurrentInstant}: Started {ActorName}.{MethodName} ReferenceId: {Id}.", getCurrentInstantExtended(), actorName, context.MethodName, this.Id)
+            Task.CompletedTask
+        
+        override this.OnPostActorMethodAsync(context) =
+            let duration_ms = (getCurrentInstant().Minus(actorStartTime).TotalMilliseconds).ToString("F3")
+            log.LogInformation("{CurrentInstant}: Finished {ActorName}.{MethodName}; ReferenceId: {ReferenceId}; CorrelationID: {correlationID}; Duration: {duration_ms}ms.", 
+                getCurrentInstantExtended(), actorName, context.MethodName, this.Id, this.correlationId, duration_ms)
+            logScope.Dispose()
+            Task.CompletedTask
+
         interface IReferenceActor with
-            member this.Exists (correlationId) = (if referenceDto.IsSome then true else false) |> returnTask
-            member this.Get (correlationId) = Task.FromResult(referenceDto.Value)
-            member this.GetReferenceType (correlationId) = Task.FromResult(referenceDto.Value.ReferenceType)
+            member this.Exists correlationId = 
+                this.correlationId <- correlationId
+                (if referenceDto.IsSome then true else false) |> returnTask
+
+            member this.Get correlationId = 
+                this.correlationId <- correlationId
+                referenceDto.Value |> returnTask
+
+            member this.GetReferenceType correlationId = 
+                this.correlationId <- correlationId
+                referenceDto.Value.ReferenceType |> returnTask
 
             member this.Create(referenceId, branchId, directoryId, sha256Hash, referenceType, referenceText) correlationId =
+                this.correlationId <- correlationId
                 let stateManager = this.StateManager
                 task {
                     referenceDto <- Some {ReferenceDto.Default with
