@@ -288,10 +288,10 @@ module Application =
                           |> ignore)
                            //.StartWithHost()
                            //.AddZipkinExporter()
-                .WithLogging().ConfigureResource(fun resourceBuilder -> 
-                    resourceBuilder.AddService(Constants.GraceServerAppId)
-                                   .AddTelemetrySdk()
-                                   .AddAttributes(globalOpenTelemetryAttributes) |> ignore)
+                //.WithLogging().ConfigureResource(fun resourceBuilder -> 
+                //    resourceBuilder.AddService(Constants.GraceServerAppId)
+                //                   .AddTelemetrySdk()
+                //                   .AddAttributes(globalOpenTelemetryAttributes) |> ignore)
                 |> ignore
             
             services.AddAuthentication() |> ignore

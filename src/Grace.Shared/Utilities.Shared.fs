@@ -18,6 +18,7 @@ open System.Net.Http
 open System.Net.Security
 open System.Net
 open System
+open System.Reflection
 
 #nowarn "9"
 
@@ -125,8 +126,10 @@ module Utilities =
         |_ -> None
 
     /// Gets the cases of a discriminated union as an array of strings.
-    let listCases (T: Type) =
-        FSharpType.GetUnionCases T |> Array.map (fun c -> c.Name)
+    ///
+    /// Example: listCases<Animal> -> [| "Dog"; "Cat" |]
+    let listCases<'T>() =
+        FSharpType.GetUnionCases typeof<'T> |> Array.map (fun c -> c.Name)
 
     /// Gets the cases of discriminated union for serialization.
     let GetKnownTypes<'T>() = typeof<'T>.GetNestedTypes(BindingFlags.Public ||| BindingFlags.NonPublic) |> Array.filter FSharpType.IsUnion
@@ -462,3 +465,9 @@ module Utilities =
     let getObjectFileName (relativePath: string) (sha256Hash: string) = 
         let file = FileInfo(relativePath)
         $"{file.Name.Replace(file.Extension, String.Empty)}_{sha256Hash}{file.Extension}"
+
+    /// Returns a 14-character randomly-generated NanoId value.
+    ///
+    /// 14 characters is more than sufficient to prevent collisions for correlation Id's for any reasonable future use of Grace. 21 gives the same uniqueness guarantees as UUID v4.
+    let generateCorrelationId () =
+        NanoidDotNet.Nanoid.Generate(size = 14)

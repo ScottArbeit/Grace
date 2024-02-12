@@ -71,10 +71,10 @@ module Interfaces =
     [<Interface>]
     type IBranchNameActor =
         inherit IActor
-        /// Sets the BranchId that matches the BranchName.
-        abstract member SetBranchId: branchId: BranchId -> correlationId: CorrelationId -> Task
         /// Returns the BranchId for the given BranchName.
         abstract member GetBranchId: correlationId: CorrelationId -> Task<BranchId option>
+        /// Sets the BranchId that matches the BranchName.
+        abstract member SetBranchId: branchId: BranchId -> correlationId: CorrelationId -> Task
 
     /// Defines the operations for the Commit actor.
     [<Interface>]

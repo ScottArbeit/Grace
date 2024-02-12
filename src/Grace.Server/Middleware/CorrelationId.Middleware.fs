@@ -22,7 +22,7 @@ type CorrelationIdMiddleware(next: RequestDelegate) =
             if context.Request.Headers.ContainsKey(Constants.CorrelationIdHeaderKey) then
                 context.Request.Headers[Constants.CorrelationIdHeaderKey].ToString()
             else
-                Guid.NewGuid().ToString()
+                generateCorrelationId()
         context.Items.Add(Constants.CorrelationId, correlationId)
         context.Response.Headers.Add(Constants.CorrelationIdHeaderKey, correlationId)
 

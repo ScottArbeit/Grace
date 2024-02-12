@@ -388,30 +388,35 @@ module Services =
             elif String.IsNullOrEmpty(branchName) then
                 return None
             else
-                let branchNameActorProxy = actorProxyFactory.CreateActorProxy<IBranchNameActor>(GetBranchNameActorId repositoryId branchName, ActorName.BranchName)
-                match! branchNameActorProxy.GetBranchId correlationId with
-                | Some branchId -> return Some $"{branchId}"
-                | None ->
-                    match actorStateStorageProvider with
-                    | Unknown -> return None
-                    | AzureCosmosDb -> 
-                        let queryDefinition = QueryDefinition("""SELECT c["value"].BranchId FROM c WHERE STRINGEQUALS(c["value"].BranchName, @branchName, true) AND c["value"].RepositoryId = @repositoryId AND c["value"].Class = @class""")
-                                                .WithParameter("@repositoryId", repositoryId)
-                                                .WithParameter("@branchName", branchName)
-                                                .WithParameter("@class", "BranchDto")
-                        let iterator = DefaultRetryPolicy.Execute(fun () -> cosmosContainer.GetItemQueryIterator<branchIdRecord>(queryDefinition))
-                        if iterator.HasMoreResults then
-                            let! currentResultSet = iterator.ReadNextAsync()
-                            let branchId = currentResultSet.FirstOrDefault({branchId = String.Empty}).branchId
-                            if String.IsNullOrEmpty(branchId) then
-                                return None
-                            else
-                                branchGuid <- Guid.Parse(branchId)
-                                do! branchNameActorProxy.SetBranchId branchGuid correlationId
-                                use newCacheEntry = memoryCache.CreateEntry(branchGuid, Value = null, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
-                                return Some branchId
-                        else return None
-                    | MongoDB -> return None
+                let cached = memoryCache.TryGetValue($"BN:{branchName}", &branchGuid)
+                if cached then
+                    return Some $"{branchGuid}"
+                else
+                    let branchNameActorProxy = actorProxyFactory.CreateActorProxy<IBranchNameActor>(GetBranchNameActorId repositoryId branchName, ActorName.BranchName)
+                    match! branchNameActorProxy.GetBranchId correlationId with
+                    | Some branchId -> return Some $"{branchId}"
+                    | None ->
+                        match actorStateStorageProvider with
+                        | Unknown -> return None
+                        | AzureCosmosDb -> 
+                            let queryDefinition = QueryDefinition("""SELECT c["value"].BranchId FROM c WHERE STRINGEQUALS(c["value"].BranchName, @branchName, true) AND c["value"].RepositoryId = @repositoryId AND c["value"].Class = @class""")
+                                                    .WithParameter("@repositoryId", repositoryId)
+                                                    .WithParameter("@branchName", branchName)
+                                                    .WithParameter("@class", "BranchDto")
+                            let iterator = DefaultRetryPolicy.Execute(fun () -> cosmosContainer.GetItemQueryIterator<branchIdRecord>(queryDefinition))
+                            if iterator.HasMoreResults then
+                                let! currentResultSet = iterator.ReadNextAsync()
+                                let branchId = currentResultSet.FirstOrDefault({branchId = String.Empty}).branchId
+                                if String.IsNullOrEmpty(branchId) then
+                                    return None
+                                else
+                                    branchGuid <- Guid.Parse(branchId)
+                                    do! branchNameActorProxy.SetBranchId branchGuid correlationId
+                                    use newCacheEntry = memoryCache.CreateEntry(branchGuid, Value = null, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
+                                    use newCacheEntry2 = memoryCache.CreateEntry($"BN:{branchName}", Value = branchGuid, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
+                                    return Some branchId
+                            else return None
+                        | MongoDB -> return None
         }
         
     let resolveBranchIdLinq (repositoryId: string) (branchId: string) (branchName: string) =

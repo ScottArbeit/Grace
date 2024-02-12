@@ -36,27 +36,28 @@ module ApplicationContext =
     let mutable loggerFactory: ILoggerFactory = null
     let mutable memoryCache: IMemoryCache = null
 
-    /// <summary>
     /// Sets the Application global configuration.
-    /// </summary>
-    /// <param name="config">The configuration to set.</param>
     let setConfiguration (config: IConfiguration) =
         logToConsole $"In setConfiguration: isNull(config): {isNull(config)}."
         configuration <- config
         //configuration.AsEnumerable() |> Seq.iter (fun kvp -> logToConsole $"{kvp.Key}: {kvp.Value}")
 
+    /// Sets the ActorProxyFactory for the application.
     let setActorProxyFactory proxyFactory =
         actorProxyFactory <- proxyFactory
         Grace.Actors.Services.setActorProxyFactory proxyFactory
 
+    /// Sets the ActorStateStorageProvider for the application.
     let setActorStateStorageProvider actorStateStorage =
         actorStateStorageProvider <- actorStateStorage
         Grace.Actors.Services.setActorStateStorageProvider actorStateStorageProvider
 
+    /// Sets the ILoggerFactory for the application.
     let setLoggerFactory logFactory =
         loggerFactory <- logFactory
         Grace.Actors.Services.setLoggerFactory loggerFactory
 
+    /// Holds information about each Azure Storage Account used by the application.
     type StorageAccount =
         {
             StorageAccountName: string;
@@ -65,6 +66,7 @@ module ApplicationContext =
 
     let daprHttpEndpoint = $"{Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.DaprServerUri)}:{Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.DaprHttpPort)}"
     let daprGrpcEndpoint = $"{Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.DaprServerUri)}:{Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.DaprGrpcPort)}"
+    
     logToConsole $"daprHttpEndpoint: {daprHttpEndpoint}; daprGrpcEndpoint: {daprGrpcEndpoint}"
     let daprClient = DaprClientBuilder().UseJsonSerializationOptions(Constants.JsonSerializerOptions).UseHttpEndpoint(daprHttpEndpoint).UseGrpcEndpoint(daprGrpcEndpoint).Build()
     

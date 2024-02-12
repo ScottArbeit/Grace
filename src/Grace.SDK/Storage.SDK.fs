@@ -127,14 +127,20 @@ module Storage =
                     | ObjectStorageProvider.Unknown -> return Error (GraceError.Create (StorageError.getErrorMessage NotImplemented) correlationId)
                     | ObjectStorageProvider.AzureBlobStorage ->
                         try
+                            // Creating an HttpClientTransport so we can use our custom HttpClientFactory here.
                             use transport = new HttpClientTransport(getHttpClient correlationId)
+                            
                             let blobClientOptions = BlobClientOptions(Transport = transport)
+                            // I might regret this setting. Time will tell.
                             blobClientOptions.Retry.NetworkTimeout <- TimeSpan.FromMinutes(60.0)
+
+                            // Check if this blob already exists in the storage account.
                             let blockBlobClient = BlockBlobClient(blobUriWithSasToken, blobClientOptions)
-                            //logToConsole $"In Storage.SDK.SaveFileToObjectStorageWithMetadata; Uri: {blobUriWithSasToken}"
                             let! blobAlreadyExists = blockBlobClient.ExistsAsync()
+
+                            // If it doesn't exist, upload it.
                             if not <| (blobAlreadyExists.Value) then
-                                let storageTransferOptions = StorageTransferOptions(MaximumConcurrency = Environment.ProcessorCount * 4)
+                                let storageTransferOptions = StorageTransferOptions(MaximumConcurrency = Constants.ParallelOptions.MaxDegreeOfParallelism)
                                 let blobUploadOptions = BlobUploadOptions(Metadata = metadata, Tags = metadata, TransferOptions = storageTransferOptions)
                                 blobUploadOptions.HttpHeaders <- BlobHttpHeaders(
                                     ContentType = getContentType fileInfo (fileVersion.IsBinary), 

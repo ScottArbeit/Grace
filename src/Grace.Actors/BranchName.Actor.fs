@@ -42,6 +42,7 @@ module BranchName =
             Task.CompletedTask
 
         interface IBranchNameActor with
+
             member this.GetBranchId correlationId = 
                 this.correlationId <- correlationId
                 Task.FromResult(cachedBranchId)

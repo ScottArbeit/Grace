@@ -9,6 +9,7 @@ open Grace.Shared.Converters
 open Grace.Shared.Resources.Text
 open Grace.Shared.Types
 open Grace.Shared.Utilities
+open Grace.Shared.Validation
 open Microsoft.Extensions.Logging
 open NodaTime
 open NodaTime.Text
@@ -26,9 +27,6 @@ open System.Globalization
 open System.IO
 open System.Linq
 open System.Threading.Tasks
-open Grace.Shared.Validation
-open Grace.Shared.Resources.Text
-open System.ComponentModel.DataAnnotations
 
 module Configuration =
     
@@ -322,9 +320,11 @@ module GraceCommand =
                     // If we don't, we're just going to print an error message and exit.
                     if configurationFileExists() then
                         parseResult <- command.Parse(args)
+
                         if parseResult |> hasOutput then
                             if parseResult |> verbose then
                                 AnsiConsole.Write((new Rule($"[{Colors.Important}]Started: {startTime.ToString(InstantPattern.ExtendedIso.PatternText, CultureInfo.InvariantCulture)}.[/]")).RightJustified())
+                                printParseResult parseResult
                             else
                                 AnsiConsole.Write(new Rule())
 

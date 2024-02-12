@@ -70,7 +70,7 @@ module Branch =
         let message = new Option<String>([|"--message"; "-m"|], IsRequired = false, Description = "The text to store with this reference.", Arity = ArgumentArity.ExactlyOne)
         let messageRequired = new Option<String>([|"--message"; "-m"|], IsRequired = true, Description = "The text to store with this reference.", Arity = ArgumentArity.ExactlyOne)
         let referenceType = (new Option<String>("--referenceType", IsRequired = false, Description = "The type of reference.", Arity = ArgumentArity.ExactlyOne))
-                                .FromAmong(Utilities.listCases(typeof<ReferenceType>))
+                                .FromAmong(listCases<ReferenceType>())
         let doNotSwitch = new Option<bool>("--doNotSwitch", IsRequired = false, Description = "Do not switch to the new branch as the current branch.", Arity = ArgumentArity.ZeroOrOne)
         let fullSha = new Option<bool>("--fullSha", IsRequired = false, Description = "Show the full SHA-256 value in output.", Arity = ArgumentArity.ZeroOrOne)
         let maxCount = new Option<int>("--maxCount", IsRequired = false, Description = "The maximum number of results to return.", Arity = ArgumentArity.ExactlyOne)
@@ -2048,7 +2048,7 @@ module Branch =
                             OwnerId = parameters.OwnerId, OwnerName = parameters.OwnerName,
                             OrganizationId = parameters.OrganizationId, OrganizationName = parameters.OrganizationName,
                             RepositoryId = parameters.RepositoryId, RepositoryName = parameters.RepositoryName,
-                            ReferenceIds = referenceIds)
+                            ReferenceIds = referenceIds, CorrelationId = parameters.CorrelationId)
                         match! Repository.GetReferencesByReferenceId(getReferencesByIdParameters) with
                         | Ok returnValue -> 
                             let referenceDtos = returnValue.ReturnValue

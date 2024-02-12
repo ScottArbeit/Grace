@@ -8,8 +8,8 @@
 		<PublishReadyToRun>true</PublishReadyToRun>
 	</PropertyGroup>
 	<ItemGroup>
-		<PackageReference Include="Azure.Core" Version="1.35.0" />
-		<PackageReference Include="Microsoft.Azure.Cosmos" Version="3.36.0" />
+		<PackageReference Include="Azure.Core" Version="1.37.0" />
+		<PackageReference Include="Microsoft.Azure.Cosmos" Version="3.39.0-preview.1" />
 	</ItemGroup>
 
 </Project>

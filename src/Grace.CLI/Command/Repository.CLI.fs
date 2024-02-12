@@ -48,12 +48,12 @@ module Repository =
         let repositoryName = new Option<String>([|"--repositoryName"; "-n"|], IsRequired = false, Description = "The name of the repository. [default: current repository]", Arity = ArgumentArity.ExactlyOne)
         let requiredRepositoryName = new Option<String>([|"--repositoryName"; "-n"|], IsRequired = true, Description = "The name of the repository.", Arity = ArgumentArity.ExactlyOne)
         let visibility = (new Option<RepositoryVisibility>("--visibility", IsRequired = true, Description = "The visibility of the repository.", Arity = ArgumentArity.ExactlyOne))
-                            .FromAmong (Utilities.listCases(typeof<RepositoryVisibility>))
+                            .FromAmong (listCases<RepositoryVisibility>())
         let status = (new Option<String>("--status", IsRequired = true, Description = "The status of the repository.", Arity = ArgumentArity.ExactlyOne))
-                            .FromAmong(Utilities.listCases(typeof<RepositoryStatus>))
+                            .FromAmong(listCases<RepositoryStatus>())
         let recordSaves = new Option<bool>("--recordSaves", IsRequired = true, Description = "True to record all saves; false to turn it off.", Arity = ArgumentArity.ExactlyOne)
         let defaultServerApiVersion = (new Option<String>("--defaultServerApiVersion", IsRequired = true, Description = "The default version of the server API that clients should use when accessing this repository.", Arity = ArgumentArity.ExactlyOne))
-                                            .FromAmong(Utilities.listCases(typeof<Constants.ServerApiVersions>))
+                                            .FromAmong(listCases<Constants.ServerApiVersions>())
         let saveDays = new Option<double>("--saveDays", IsRequired = true, Description = "How many days to keep saves. [default: 7.0]", Arity = ArgumentArity.ExactlyOne)
         let checkpointDays = new Option<double>("--checkpointDays", IsRequired = true, Description = "How many days to keep checkpoints. [default: 365.0]", Arity = ArgumentArity.ExactlyOne)
         let newName = new Option<String>("--newName", IsRequired = true, Description = "The new name for the repository.", Arity = ArgumentArity.ExactlyOne)
@@ -62,9 +62,7 @@ module Repository =
         let force = new Option<bool>("--force", IsRequired = false, Description = "Deletes repository even if there are links to other repositories.", Arity = ArgumentArity.ExactlyOne)
         let doNotSwitch = new Option<bool>("--doNotSwitch", IsRequired = false, Description = "Do not switch to the new repository as the current repository.", Arity = ArgumentArity.ZeroOrOne)
         let directory = new Option<String>("--directory", IsRequired = false, Description = "The directory to use when initializing the repository. [default: current directory]", Arity = ArgumentArity.ExactlyOne)
-        //enabled.SetDefaultValue(false)
         let includeDeleted = new Option<bool>("--includeDeleted", IsRequired = false, Description = "True to include deleted branches; false to exclude them.", Arity = ArgumentArity.ZeroOrOne)
-        //includeDeleted.SetDefaultValue(false)
 
     let mustBeAValidGuid (parseResult: ParseResult) (parameters: CommonParameters) (option: Option) (value: string) (error: RepositoryError) =
         let mutable guid = Guid.Empty

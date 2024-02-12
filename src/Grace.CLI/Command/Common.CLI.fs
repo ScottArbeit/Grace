@@ -44,16 +44,16 @@ module Common =
 
     module Options =
         let correlationId = new Option<String>([|"--correlationId"; "-c"|], IsRequired = false, Description = "CorrelationId for end-to-end tracking <String>.", Arity = ArgumentArity.ExactlyOne)
-        correlationId.SetDefaultValue(Guid.NewGuid().ToString())
+        correlationId.SetDefaultValue(generateCorrelationId())
 
         let output = (new Option<String>([|"--output"; "-o"|], IsRequired = false, Description = "The style of output.", Arity = ArgumentArity.ExactlyOne))
-                            .FromAmong(listCases(typeof<OutputFormat>))
+                            .FromAmong(listCases<OutputFormat>())
         output.SetDefaultValue("Normal")
 
     let isOutputFormat (outputFormat: OutputFormat) (parseResult: ParseResult) =
         if parseResult.HasOption(Options.output) then
             let format = parseResult.FindResultFor(Options.output).GetValueOrDefault<String>()
-            format = getDiscriminatedUnionFullName(outputFormat).Replace($"{nameof(OutputFormat)}.","")
+            String.Equals(format, getDiscriminatedUnionCaseName(outputFormat), StringComparison.CurrentCultureIgnoreCase)
         else
             if outputFormat = OutputFormat.Normal then true else false
 
