@@ -30,9 +30,11 @@ module Errors =
             | InvalidOrganizationName
             | InvalidOwnerId
             | InvalidOwnerName
+            | InvalidReferenceId
             | InvalidReferenceType
             | InvalidRepositoryId
             | InvalidRepositoryName
+            | InvalidSha256Hash
             | PromotionIsDisabled
             | PromotionNotAvailableBecauseThereAreNoPromotableReferences
             | MessageIsRequired
@@ -74,9 +76,11 @@ module Errors =
                 | InvalidOrganizationName -> getLocalizedString StringResourceName.InvalidOrganizationName
                 | InvalidOwnerId -> getLocalizedString StringResourceName.InvalidOwnerId
                 | InvalidOwnerName -> getLocalizedString StringResourceName.InvalidOwnerName
+                | InvalidReferenceId -> getLocalizedString StringResourceName.InvalidReferenceId
                 | InvalidReferenceType -> getLocalizedString StringResourceName.InvalidReferenceType
                 | InvalidRepositoryId -> getLocalizedString StringResourceName.InvalidRepositoryId
                 | InvalidRepositoryName -> getLocalizedString StringResourceName.InvalidRepositoryName
+                | InvalidSha256Hash -> getLocalizedString StringResourceName.InvalidSha256Hash
                 | PromotionIsDisabled -> getLocalizedString StringResourceName.PromotionIsDisabled
                 | PromotionNotAvailableBecauseThereAreNoPromotableReferences -> getLocalizedString StringResourceName.PromotionNotAvailableBecauseThereAreNoPromotableReferences
                 | MessageIsRequired -> getLocalizedString StringResourceName.MessageIsRequired
@@ -157,6 +161,8 @@ module Errors =
         type DirectoryVersionError =
             | DirectoryAlreadyExists
             | DirectoryDoesNotExist
+            | DirectorySha256HashAlreadyExists
+            | FailedWhileApplyingEvent
             | FileNotFoundInObjectStorage
             | FileSha256HashDoesNotMatch
             | InvalidDirectoryId
@@ -171,6 +177,8 @@ module Errors =
                 match directoryError with
                 | DirectoryAlreadyExists -> getLocalizedString StringResourceName.DirectoryAlreadyExists
                 | DirectoryDoesNotExist -> getLocalizedString StringResourceName.DirectoryDoesNotExist
+                | DirectorySha256HashAlreadyExists -> getLocalizedString StringResourceName.DirectorySha256HashAlreadyExists
+                | FailedWhileApplyingEvent -> getLocalizedString StringResourceName.FailedWhileApplyingEvent
                 | FileNotFoundInObjectStorage -> getLocalizedString StringResourceName.FileNotFoundInObjectStorage
                 | FileSha256HashDoesNotMatch -> getLocalizedString StringResourceName.FileSha256HashDoesNotMatch
                 | InvalidDirectoryId -> getLocalizedString StringResourceName.InvalidDirectoryId

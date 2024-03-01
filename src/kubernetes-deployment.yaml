@@ -45,6 +45,15 @@ spec:
   - name: https
     port: 5001
     targetPort: https-grace
+  - name: zipkin
+    port: 9412
+    targetPort: 9412
+  - name: prometheus
+    port: 9090
+    targetPort: 9090
+  - name: grafana
+    port: 3000
+    targetPort: 3000
   selector:
     app: grace-server
 
@@ -72,10 +81,14 @@ spec:
         dapr.io/enabled: "true"
         dapr.io/app-id: "grace-server"
         dapr.io/app-port: "5000"
+        dapr.io/enable-metrics: "true"
+        #dapr.io/env: "GOMEMLIMIT=700MiB"
         dapr.io/log-level: "debug"
+        dapr.io/metrics-exporter-type: "prometheus"
+        dapr.io/metrics-port: "9090"  # Ensure this matches the port exposed by the Prometheus exporter in the OpenTelemetry Collector configuration
         #dapr.io/placement-host-address: "127.0.0.1:50005"
-        dapr.io/sidecar-cpu-limit: "0.5"
-        dapr.io/sidecar-memory-limit: "512Mi"
+        dapr.io/sidecar-cpu-limit: "1.0"
+        dapr.io/sidecar-memory-limit: "768Mi"
         dapr.io/sidecar-cpu-request: "0.25"
         dapr.io/sidecar-memory-request: "256Mi"
     spec:
@@ -87,6 +100,12 @@ spec:
       - name: secret-volume
         secret:
           secretName: gracedevcert
+      - name: otel-collector-config
+        configMap:
+          name: otel-collector-config
+      - name: prometheus-config
+        configMap:
+          name: prometheus-config
       containers:
       - name: grace-server
         image: scottarbeit/grace-server:latest 
@@ -101,6 +120,9 @@ spec:
         volumeMounts:
         - name: secret-volume
           mountPath: /etc/certificates
+          readOnly: true
+        - name: otel-collector-config
+          mountPath: /etc/otel/config.yaml
           readOnly: true
         # volumeMounts:
         #   - name: dapr-config
@@ -142,5 +164,75 @@ spec:
             secretKeyRef:
               name: cosmoscontainername
               key: cosmoscontainername
-
----
+      - name: opentelemetry-collector
+        image: otel/opentelemetry-collector:latest
+        env:
+        - name: Azure_Monitor_Connection_String
+          valueFrom:
+            secretKeyRef:
+              name: azuremonitorconnectionstring
+              key: azuremonitorconnectionstring
+        ports:
+        - containerPort: 4317 # gRPC port for traces
+          protocol: TCP
+        - containerPort: 4318 # HTTP port for traces and metrics
+          protocol: TCP
+        - containerPort: 55681 # HTTP port for logs (OTLP/HTTP)
+          protocol: TCP
+        volumeMounts:
+        - name: otel-collector-config
+          mountPath: /etc/otel/collector
+          readOnly: true
+        resources:
+          limits:
+            cpu: "2.0"
+            memory: "1Gi"
+          requests:
+            cpu: "0.25"
+            memory: "256Mi"
+      - name: zipkin
+        image: openzipkin/zipkin:latest
+        ports:
+        - containerPort: 9412
+          name: zipkin
+          protocol: TCP
+        env:
+          - name: SERVER_PORT
+            value: "9412"
+        resources:
+          limits:
+            cpu: "2.0"
+            memory: "1Gi"
+          requests:
+            cpu: "0.25"
+            memory: "256Mi"
+      # - name: prometheus
+      #   image: prom/prometheus:latest
+      #   ports:
+      #   - containerPort: 9090
+      #     name: prometheus
+      #     protocol: TCP
+      #   volumeMounts:
+      #   - name: prometheus-config
+      #     mountPath: /etc/prometheus
+      #     readOnly: true
+      #   resources:
+      #     limits:
+      #       cpu: "2.0"
+      #       memory: "1Gi"
+      #     requests:
+      #       cpu: "0.25"
+      #       memory: "400Mi"
+      - name: grafana
+        image: grafana/grafana:latest
+        ports:
+        - containerPort: 3000
+          name: grafana
+          protocol: TCP
+        resources:
+          limits:
+            cpu: "2.0"
+            memory: "1Gi"
+          requests:
+            cpu: "0.25"
+            memory: "400Mi"

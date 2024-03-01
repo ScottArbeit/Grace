@@ -203,6 +203,7 @@ module Notifications =
                             ()
                     | Branch.Tagged (referenceId, directoryId, sha256Hash, referenceText) -> ()
                     | _ -> ()
+                | DirectoryVersionEvent directoryVersionEvent -> logToConsole $"Received DirectoryVersionEvent: {getDiscriminatedUnionFullName directoryVersionEvent.Event} {Environment.NewLine}{directoryVersionEvent.Metadata}"
                 | OrganizationEvent organizationEvent -> logToConsole $"Received OrganizationEvent: {getDiscriminatedUnionFullName organizationEvent.Event} {Environment.NewLine}{organizationEvent.Metadata}"
                 | OwnerEvent ownerEvent -> logToConsole $"Received OwnerEvent: {getDiscriminatedUnionFullName ownerEvent.Event} {Environment.NewLine}{ownerEvent.Metadata}"
                 | RepositoryEvent repositoryEvent -> logToConsole $"Received RepositoryEvent: {getDiscriminatedUnionFullName repositoryEvent.Event} {Environment.NewLine}{repositoryEvent.Metadata}"

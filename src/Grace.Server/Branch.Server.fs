@@ -29,6 +29,7 @@ open System.Text.Json
 open System.Threading.Tasks
 
 module Branch =
+    open Grace.Shared.Services
 
     type Validations<'T when 'T :> BranchParameters> = 'T -> ValueTask<Result<unit, BranchError>> array
     
@@ -121,7 +122,13 @@ module Branch =
                     | Some branchId ->
                         let actorProxy = getActorProxy context branchId
                         let! queryResult = query context maxCount actorProxy
-                        let! returnValue = context |> result200Ok (GraceReturnValue.Create queryResult (getCorrelationId context))
+                        let graceReturnValue = GraceReturnValue.Create queryResult (getCorrelationId context)
+                        let graceIds = context.Items[nameof(GraceIds)] :?> GraceIds
+                        graceReturnValue.Properties.Add("OwnerId", $"{graceIds.OwnerId}")
+                        graceReturnValue.Properties.Add("OrganizationId", $"{graceIds.OrganizationId}")
+                        graceReturnValue.Properties.Add("RepositoryId", $"{graceIds.RepositoryId}")
+                        graceReturnValue.Properties.Add("BranchId", $"{graceIds.BranchId}")
+                        let! returnValue = context |> result200Ok graceReturnValue
                         return returnValue
                     | None ->
                         return! context |> result400BadRequest (GraceError.Create (BranchError.getErrorMessage BranchDoesNotExist) (getCorrelationId context))
@@ -846,6 +853,73 @@ module Branch =
                     return! context |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
             }
 
+    let GetRecursiveSize: HttpHandler =
+        fun (next: HttpFunc) (context: HttpContext) ->
+            task {
+                let startTime = getCurrentInstant()
+                let graceIds = context.Items[nameof(GraceIds)] :?> GraceIds
+
+                try
+                    let validations (parameters: ListContentsParameters) =
+                        [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
+                           String.isValidGraceName parameters.BranchName InvalidBranchName
+                           Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
+                           String.isEmptyOrValidSha256Hash parameters.Sha256Hash InvalidSha256Hash
+                           Guid.isValidAndNotEmpty parameters.ReferenceId InvalidReferenceId
+                           Owner.ownerExists parameters.OwnerId parameters.OwnerName parameters.CorrelationId OwnerDoesNotExist
+                           Organization.organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.CorrelationId OrganizationDoesNotExist
+                           Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.CorrelationId RepositoryDoesNotExist
+                           Branch.branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName parameters.CorrelationId BranchDoesNotExist |]
+
+                    let query (context: HttpContext) maxCount (actorProxy: IBranchActor) =
+                        task {
+                            let listContentsParameters = context.Items["ListContentsParameters"] :?> ListContentsParameters
+                            if String.IsNullOrEmpty(listContentsParameters.ReferenceId) && String.IsNullOrEmpty(listContentsParameters.Sha256Hash) then
+                                // If we don't have a referenceId or sha256Hash, we'll get the contents of the most recent reference in the branch.
+                                let! branchDto = actorProxy.Get (getCorrelationId context)
+                                let! latestReference = getLatestReference branchDto.BranchId
+                                match latestReference with
+                                | Some latestReference ->
+                                    let directoryActorId = DirectoryVersion.GetActorId latestReference.DirectoryId
+                                    let directoryActorProxy = actorProxyFactory.CreateActorProxy<IDirectoryVersionActor>(directoryActorId, ActorName.DirectoryVersion)
+                                    let! directoryVersion = directoryActorProxy.Get (getCorrelationId context)
+                                    let! recursiveSize = directoryActorProxy.GetRecursiveSize (getCorrelationId context)
+                                    return recursiveSize
+                                | None ->
+                                    return Constants.InitialDirectorySize
+                            elif not <| String.IsNullOrEmpty(listContentsParameters.ReferenceId) then
+                                // We have a ReferenceId, so we'll get the DirectoryVersion from that reference.
+                                let referenceActorId = ActorId(listContentsParameters.ReferenceId)
+                                let referenceActorProxy = actorProxyFactory.CreateActorProxy<IReferenceActor>(referenceActorId, ActorName.Reference)
+                                let! referenceDto = referenceActorProxy.Get (getCorrelationId context)
+                                let directoryActorId = DirectoryVersion.GetActorId referenceDto.DirectoryId
+                                let directoryActorProxy = actorProxyFactory.CreateActorProxy<IDirectoryVersionActor>(directoryActorId, ActorName.DirectoryVersion)
+                                let! recursiveSize = directoryActorProxy.GetRecursiveSize (getCorrelationId context)
+                                return recursiveSize
+                            else 
+                                // By process of elimination, we have a Sha256Hash, so we'll retrieve the DirectoryVersion using that..
+                                match! Services.getDirectoryBySha256Hash (Guid.Parse(graceIds.RepositoryId)) listContentsParameters.Sha256Hash (getCorrelationId context) with
+                                | Some directoryVersion ->
+                                    let directoryActorId = DirectoryVersion.GetActorId directoryVersion.DirectoryId
+                                    let directoryActorProxy = actorProxyFactory.CreateActorProxy<IDirectoryVersionActor>(directoryActorId, ActorName.DirectoryVersion)
+                                    let! recursiveSize = directoryActorProxy.GetRecursiveSize (getCorrelationId context)
+                                    return recursiveSize
+                                | None ->
+                                    return Constants.InitialDirectorySize
+                        }
+                
+                    let! parameters = context |> parse<ListContentsParameters>
+                    context.Items["ListContentsParameters"] <- parameters
+                    let! result = processQuery context parameters validations 1 query
+                    let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
+                    log.LogInformation("{CurrentInstant}: Finished {path}; BranchId: {branchId}; CorrelationId: {correlationId}; Duration: {duration_ms}ms.", getCurrentInstantExtended(), context.Request.Path, graceIds.BranchId, (getCorrelationId context), duration_ms)
+                    return result
+                with ex ->
+                    let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
+                    log.LogError(ex, "{CurrentInstant}: Error in {path}; BranchId: {branchId}; CorrelationId: {correlationId}; Duration: {duration_ms}ms.", getCurrentInstantExtended(), context.Request.Path, graceIds.BranchId, (getCorrelationId context), duration_ms)
+                    return! context |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
+            }
+
     let ListContents: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
@@ -857,8 +931,8 @@ module Branch =
                         [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
                            String.isValidGraceName parameters.BranchName InvalidBranchName
                            Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
-                           String.isEmptyOrValidSha256Hash parameters.Sha256Hash Sha256HashDoesNotExist
-                           Guid.isValidAndNotEmpty parameters.ReferenceId ReferenceIdDoesNotExist
+                           String.isEmptyOrValidSha256Hash parameters.Sha256Hash InvalidSha256Hash
+                           Guid.isValidAndNotEmpty parameters.ReferenceId InvalidReferenceId
                            Owner.ownerExists parameters.OwnerId parameters.OwnerName parameters.CorrelationId OwnerDoesNotExist
                            Organization.organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.CorrelationId OrganizationDoesNotExist
                            Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.CorrelationId RepositoryDoesNotExist
@@ -868,17 +942,20 @@ module Branch =
                         task {
                             let listContentsParameters = context.Items["ListContentsParameters"] :?> ListContentsParameters
                             if String.IsNullOrEmpty(listContentsParameters.ReferenceId) && String.IsNullOrEmpty(listContentsParameters.Sha256Hash) then
+                                // If we don't have a referenceId or sha256Hash, we'll get the contents of the most recent reference in the branch.
                                 let! branchDto = actorProxy.Get (getCorrelationId context)
                                 let! latestReference = getLatestReference branchDto.BranchId
                                 match latestReference with
                                 | Some latestReference ->
                                     let directoryActorId = DirectoryVersion.GetActorId latestReference.DirectoryId
                                     let directoryActorProxy = actorProxyFactory.CreateActorProxy<IDirectoryVersionActor>(directoryActorId, ActorName.DirectoryVersion)
+                                    let! directoryVersion = directoryActorProxy.Get (getCorrelationId context)
                                     let! contents = directoryActorProxy.GetDirectoryVersionsRecursive false (getCorrelationId context)
                                     return contents
                                 | None ->
                                     return List<DirectoryVersion>()
                             elif not <| String.IsNullOrEmpty(listContentsParameters.ReferenceId) then
+                                // We have a ReferenceId, so we'll get the DirectoryVersion from that reference.
                                 let referenceActorId = ActorId(listContentsParameters.ReferenceId)
                                 let referenceActorProxy = actorProxyFactory.CreateActorProxy<IReferenceActor>(referenceActorId, ActorName.Reference)
                                 let! referenceDto = referenceActorProxy.Get (getCorrelationId context)
@@ -886,12 +963,16 @@ module Branch =
                                 let directoryActorProxy = actorProxyFactory.CreateActorProxy<IDirectoryVersionActor>(directoryActorId, ActorName.DirectoryVersion)
                                 let! contents = directoryActorProxy.GetDirectoryVersionsRecursive false (getCorrelationId context)
                                 return contents
-                            else // We have a Sha256Hash to look up
-                                let! directoryVersion = Services.getDirectoryBySha256Hash (Guid.Parse(graceIds.RepositoryId)) listContentsParameters.Sha256Hash
-                                let directoryActorId = DirectoryVersion.GetActorId directoryVersion.DirectoryId
-                                let directoryActorProxy = actorProxyFactory.CreateActorProxy<IDirectoryVersionActor>(directoryActorId, ActorName.DirectoryVersion)
-                                let! contents = directoryActorProxy.GetDirectoryVersionsRecursive false (getCorrelationId context)
-                                return contents
+                            else 
+                                // By process of elimination, we have a Sha256Hash, so we'll retrieve the DirectoryVersion using that..
+                                match! Services.getDirectoryBySha256Hash (Guid.Parse(graceIds.RepositoryId)) listContentsParameters.Sha256Hash (getCorrelationId context) with
+                                | Some directoryVersion ->
+                                    let directoryActorId = DirectoryVersion.GetActorId directoryVersion.DirectoryId
+                                    let directoryActorProxy = actorProxyFactory.CreateActorProxy<IDirectoryVersionActor>(directoryActorId, ActorName.DirectoryVersion)
+                                    let! contents = directoryActorProxy.GetDirectoryVersionsRecursive false (getCorrelationId context)
+                                    return contents
+                                | None ->
+                                    return List<DirectoryVersion>()
                         }
                 
                     let! parameters = context |> parse<ListContentsParameters>

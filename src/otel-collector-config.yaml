@@ -1,0 +1,43 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: otel-collector-config
+data:
+  otel-collector-config.yaml: |
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+          http:
+
+    processors:
+      batch:
+      memory_limiter:
+        check_interval: 5s
+        limit_mib: 4000
+        spike_limit_mib: 500
+
+    exporters:
+      prometheus:
+        endpoint: "0.0.0.0:9090"
+        namespace: grace_server
+      zipkin:
+        endpoint: "http://zipkin:9412/api/v2/spans"
+      azuremonitor:
+        endpoint: "https://dc.services.visualstudio.com/v2/track"
+        instrumentation_key: "${Azure_Monitor_Connection_String}"
+
+    extensions:
+      health_check:
+
+    service:
+      extensions: [health_check]
+      pipelines:
+        traces:
+          receivers: [otlp]
+          processors: [batch, memory_limiter]
+          exporters: [azuremonitor, zipkin]
+        metrics:
+          receivers: [otlp]
+          processors: [batch, memory_limiter]
+          exporters: [prometheus, azuremonitor]

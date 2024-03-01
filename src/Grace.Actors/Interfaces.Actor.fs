@@ -110,16 +110,16 @@ module Interfaces =
         abstract member GetFiles: correlationId: CorrelationId -> Task<List<FileVersion>>
         /// Returns the Sha256 hash value for this directory.
         abstract member GetSha256Hash: correlationId: CorrelationId -> Task<Sha256Hash>
-        /// Returns the total size of files contained in this directory. This does not include files in subdirectories; use GetSizeRecursive() for that value.
+        /// Returns the total size of files contained in this directory. This does not include files in subdirectories; for that, use GetSizeRecursive().
         abstract member GetSize: correlationId: CorrelationId -> Task<int64>
-        /// Returns the total size of files contained in this directory and all subdirectories.
-        abstract member GetSizeRecursive: correlationId: CorrelationId -> Task<int64>
         /// Returns a list of DirectoryVersion objects for all subdirectories.
         abstract member GetDirectoryVersionsRecursive: forceRegenerate: bool -> correlationId: CorrelationId -> Task<List<DirectoryVersion>>
-        /// Saves a DirectoryVersion instance as the state of this actor.
-        abstract member Create: directoryContents: DirectoryVersion -> correlationId: CorrelationId -> Task<GraceResult<string>>
+        /// Returns the total size of files contained in this directory and all subdirectories.
+        abstract member GetRecursiveSize: correlationId: CorrelationId -> Task<int64>
         /// Delete the DirectoryVersion and all subdirectories and files.
         abstract member Delete: correlationId: CorrelationId -> Task<GraceResult<string>>
+        /// Validates incoming commands and converts them to events that are stored in the database.
+        abstract member Handle : command: DirectoryVersion.DirectoryVersionCommand -> eventMetadata: EventMetadata -> Task<GraceResult<string>>
 
     ///Defines the operations for the Organization actor.
     [<Interface>]

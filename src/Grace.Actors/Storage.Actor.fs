@@ -14,12 +14,12 @@ open System.Threading.Tasks
 module Storage =
 
     /// Retrieves the actor's state from storage.
-    let RetrieveState<'T> (stateManager: IActorStateManager) (dtoStateName: string) =
+    let RetrieveState<'T> (stateManager: IActorStateManager) (actorStateName: string) =
         task {
             return! DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> 
                 task {
                     try
-                        let! conditionalValue = stateManager.TryGetStateAsync<'T>(dtoStateName)
+                        let! conditionalValue = stateManager.TryGetStateAsync<'T>(actorStateName)
                         return if conditionalValue.HasValue then
                                   Some conditionalValue.Value
                                else
@@ -32,18 +32,15 @@ module Storage =
         }
 
     /// Saves the actor's state to storage.
-    let SaveState<'T> (stateManager: IActorStateManager) (dtoStateName: string) dto = 
+    let SaveState<'T> (stateManager: IActorStateManager) actorStateName actorState = 
         task {
-            do! DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> stateManager.SetStateAsync<'T>(dtoStateName, dto))
+            do! DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> stateManager.SetStateAsync<'T>(actorStateName, actorState))
         } :> Task
 
     /// Deletes the actor's state from storage.
-    let DeleteState (stateManager: IActorStateManager) (dtoStateName: string) = 
+    let DeleteState (stateManager: IActorStateManager) actorStateName = 
         task {
-            //return! DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> 
-                //task {
-                    return! stateManager.TryRemoveStateAsync(dtoStateName)
-                //})
+            return! stateManager.TryRemoveStateAsync(actorStateName)
         }
 
     //module AzureBlobStorage =

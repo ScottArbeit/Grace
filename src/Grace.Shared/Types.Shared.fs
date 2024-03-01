@@ -196,26 +196,25 @@ module Types =
             Directories: List<DirectoryId>
             Files: List<FileVersion>
             Size: int64
-            RecursiveSize: int64
             CreatedAt: Instant
         }
         static member GetKnownTypes() = GetKnownTypes<DirectoryVersion>()
         static member Default = 
-            {Class = "DirectoryVersion"; DirectoryId = Guid.Empty; RepositoryId = Guid.Empty; 
+            {Class = nameof(DirectoryVersion); DirectoryId = Guid.Empty; RepositoryId = Guid.Empty; 
                 RelativePath = RelativePath String.Empty; Sha256Hash = Sha256Hash String.Empty; 
                 Directories = List<DirectoryId>(); Files = List<FileVersion>(); Size = Constants.InitialDirectorySize; 
-                RecursiveSize = Constants.InitialDirectorySize; CreatedAt = Instant.MinValue}
+                CreatedAt = Instant.MinValue}
 
         static member Create (directoryId: DirectoryId) (repositoryId: RepositoryId) (relativePath: RelativePath) 
             (sha256Hash: Sha256Hash) (directories: List<DirectoryId>) (files: List<FileVersion>) (size: int64) =
-            {Class = "DirectoryVersion"; DirectoryId = directoryId; RepositoryId = repositoryId; 
+            {Class =  nameof(DirectoryVersion); DirectoryId = directoryId; RepositoryId = repositoryId; 
                 RelativePath = relativePath; Sha256Hash = sha256Hash; 
                 Directories = directories; Files = files; Size = size; 
-                RecursiveSize = Constants.InitialDirectorySize; CreatedAt = getCurrentInstant()}
+                CreatedAt = getCurrentInstant()}
 
         member this.ToLocalDirectoryVersion lastWriteTimeUtc =
             LocalDirectoryVersion.Create this.DirectoryId this.RepositoryId this.RelativePath this.Sha256Hash this.Directories
-                (this.Files.Select(fun f -> f.ToLocalFileVersion lastWriteTimeUtc).ToList()) this.Size lastWriteTimeUtc        
+                (this.Files.Select(fun f -> f.ToLocalFileVersion lastWriteTimeUtc).ToList()) this.Size lastWriteTimeUtc
         
     /// A LocalDirectoryVersion represents a version of a directory in a repository with unique contents, and therefore with a unique SHA-256 hash.
     ///
@@ -232,7 +231,6 @@ module Types =
             Directories: List<DirectoryId>
             Files: List<LocalFileVersion>
             Size: int64
-            RecursiveSize: int64
             CreatedAt: Instant
             LastWriteTimeUtc: DateTime
         }
@@ -240,12 +238,12 @@ module Types =
         static member Default = 
             {Class = "LocalDirectoryVersion"; RepositoryId = Guid.Empty; DirectoryId = Guid.Empty; RelativePath = RelativePath String.Empty; 
                 Sha256Hash = Sha256Hash String.Empty; Directories = List<DirectoryId>(); Files = List<LocalFileVersion>(); Size = Constants.InitialDirectorySize; 
-                RecursiveSize = Constants.InitialDirectorySize; CreatedAt = Instant.MinValue; LastWriteTimeUtc = DateTime.UtcNow}
+                CreatedAt = Instant.MinValue; LastWriteTimeUtc = DateTime.UtcNow}
         
         static member Create (directoryId: DirectoryId) (repositoryId: RepositoryId) (relativePath: RelativePath) (sha256Hash: Sha256Hash) (directories: List<DirectoryId>) (files: List<LocalFileVersion>) (size: int64) (lastWriteTimeUtc: DateTime) =
             {Class = "LocalDirectoryVersion"; DirectoryId = directoryId; RepositoryId = repositoryId; RelativePath = relativePath; 
                 Sha256Hash = sha256Hash; Directories = directories; Files = files; Size = size; 
-                RecursiveSize = Constants.InitialDirectorySize; CreatedAt = getCurrentInstant(); LastWriteTimeUtc = lastWriteTimeUtc}
+                CreatedAt = getCurrentInstant(); LastWriteTimeUtc = lastWriteTimeUtc}
 
         /// Converts a LocalDirectoryVersion to a DirectoryVersion.
         member this.ToDirectoryVersion =
@@ -294,8 +292,8 @@ module Types =
         | Deleted
         static member GetKnownTypes() = GetKnownTypes<RepositoryStatus>()
 
-    /// Defines the type of the list of validations used in server endpoints.
-    //type Validations<'T, 'U> = 'T -> Result<bool, 'U> list
+    // /// Defines the type of the list of validations used in server endpoints.
+    // type Validations<'T, 'U> = 'T -> Result<bool, 'U> list
 
     /// Defines the specific permissions that can be granted to a user or group on a directory.
     [<KnownType("GetKnownTypes")>]

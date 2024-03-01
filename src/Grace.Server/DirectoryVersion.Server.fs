@@ -3,6 +3,7 @@
 open Dapr.Actors
 open Dapr.Actors.Client
 open Giraffe
+open Grace.Actors.Commands
 open Grace.Actors.Constants
 open Grace.Actors.DirectoryVersion
 open Grace.Actors.Interfaces
@@ -91,14 +92,14 @@ module DirectoryVersion =
                 let validations (parameters: CreateParameters) =
                     [| Guid.isValidAndNotEmpty $"{parameters.DirectoryVersion.DirectoryId}" DirectoryVersionError.InvalidDirectoryId
                        Guid.isValidAndNotEmpty $"{parameters.DirectoryVersion.RepositoryId}" DirectoryVersionError.InvalidRepositoryId
+                       
                        Repository.repositoryIdExists $"{parameters.DirectoryVersion.RepositoryId}" parameters.CorrelationId DirectoryVersionError.RepositoryDoesNotExist |]
 
                 let command (parameters: CreateParameters) (context: HttpContext) =
                     task {
                         let actorId = GetActorId parameters.DirectoryVersion.DirectoryId
                         let actorProxy = ApplicationContext.actorProxyFactory.CreateActorProxy<IDirectoryVersionActor>(actorId, ActorName.DirectoryVersion)
-                        let correlationId = context.Items[Constants.CorrelationIdHeaderKey] :?> string
-                        return! actorProxy.Create parameters.DirectoryVersion correlationId
+                        return! actorProxy.Handle (DirectoryVersion.Create parameters.DirectoryVersion) (Services.createMetadata context)
                     }
 
                 return! processCommand context validations command
@@ -112,7 +113,7 @@ module DirectoryVersion =
                     [| Guid.isValidAndNotEmpty $"{parameters.RepositoryId}" DirectoryVersionError.InvalidRepositoryId
                        Guid.isValidAndNotEmpty $"{parameters.DirectoryId}" DirectoryVersionError.InvalidDirectoryId
                        Repository.repositoryIdExists $"{parameters.RepositoryId}" parameters.CorrelationId DirectoryVersionError.RepositoryDoesNotExist
-                       Directory.directoryIdExists (Guid.Parse(parameters.DirectoryId)) parameters.CorrelationId DirectoryVersionError.DirectoryDoesNotExist |]
+                       DirectoryVersion.directoryIdExists (Guid.Parse(parameters.DirectoryId)) parameters.CorrelationId DirectoryVersionError.DirectoryDoesNotExist |]
 
                 let query (context: HttpContext) (maxCount: int) (actorProxy: IDirectoryVersionActor) =
                     task {
@@ -132,7 +133,7 @@ module DirectoryVersion =
                     [| Guid.isValidAndNotEmpty $"{parameters.RepositoryId}" DirectoryVersionError.InvalidRepositoryId
                        Guid.isValidAndNotEmpty $"{parameters.DirectoryId}" DirectoryVersionError.InvalidDirectoryId
                        Repository.repositoryIdExists $"{parameters.RepositoryId}" parameters.CorrelationId DirectoryVersionError.RepositoryDoesNotExist
-                       Directory.directoryIdExists (Guid.Parse(parameters.DirectoryId)) parameters.CorrelationId DirectoryVersionError.DirectoryDoesNotExist |]
+                       DirectoryVersion.directoryIdExists (Guid.Parse(parameters.DirectoryId)) parameters.CorrelationId DirectoryVersionError.DirectoryDoesNotExist |]
 
                 let query (context: HttpContext) (maxCount: int) (actorProxy: IDirectoryVersionActor) =
                     task {
@@ -151,7 +152,7 @@ module DirectoryVersion =
                 let validations (parameters: GetByDirectoryIdsParameters) =
                     [| Guid.isValidAndNotEmpty $"{parameters.RepositoryId}" DirectoryVersionError.InvalidRepositoryId
                        Repository.repositoryIdExists $"{parameters.RepositoryId}" parameters.CorrelationId DirectoryVersionError.RepositoryDoesNotExist
-                       Directory.directoryIdsExist parameters.DirectoryIds parameters.CorrelationId DirectoryVersionError.DirectoryDoesNotExist |]
+                       DirectoryVersion.directoryIdsExist parameters.DirectoryIds parameters.CorrelationId DirectoryVersionError.DirectoryDoesNotExist |]
 
                 let query (context: HttpContext) (maxCount: int) (actorProxy: IDirectoryVersionActor) =
                     task {
@@ -181,8 +182,11 @@ module DirectoryVersion =
                 let query (context: HttpContext) (maxCount: int) (actorProxy: IDirectoryVersionActor) =
                     task {
                         let parameters = context.Items[nameof(GetBySha256HashParameters)] :?> GetBySha256HashParameters
-                        let! directoryVersion = getDirectoryBySha256Hash (Guid.Parse(parameters.RepositoryId)) (Sha256Hash parameters.Sha256Hash)
-                        return directoryVersion
+                        match! getDirectoryBySha256Hash (Guid.Parse(parameters.RepositoryId)) (Sha256Hash parameters.Sha256Hash) (getCorrelationId context) with
+                        | Some directoryVersion ->
+                            return directoryVersion
+                        | None ->
+                            return DirectoryVersion.Default
                     }
 
                 let! parameters = context |> parse<GetBySha256HashParameters>
@@ -216,7 +220,7 @@ module DirectoryVersion =
                                 let actorProxy = ApplicationContext.actorProxyFactory.CreateActorProxy<IDirectoryVersionActor>(actorId, ActorName.DirectoryVersion)
                                 let! exists = actorProxy.Exists parameters.CorrelationId
                                 if not <| exists then
-                                    let! createResult = actorProxy.Create dv correlationId
+                                    let! createResult = actorProxy.Handle (DirectoryVersion.Create dv) (createMetadata context)
                                     results.Enqueue(createResult)
                             })
                         ))

@@ -28,6 +28,16 @@ module Commands =
             | Undelete
             static member GetKnownTypes() = GetKnownTypes<BranchCommand>()
 
+    module DirectoryVersion =
+        [<KnownType("GetKnownTypes")>]
+        type DirectoryVersionCommand =
+            | Create of directoryVersion: DirectoryVersion
+            | SetRecursiveSize of recursizeSize: int64
+            | DeleteLogical of deleteReason: string
+            | DeletePhysical
+            | Undelete
+            static member GetKnownTypes() = GetKnownTypes<DirectoryVersionCommand>()
+
     module Organization =
         [<KnownType("GetKnownTypes")>]
         type OrganizationCommand =

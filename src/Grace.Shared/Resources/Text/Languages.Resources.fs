@@ -390,6 +390,7 @@ module Text =
         | DescriptionIsRequired
         | DirectoryAlreadyExists
         | DirectoryDoesNotExist
+        | DirectorySha256HashAlreadyExists
         | DuplicateCorrelationId
         | EitherBranchIdOrBranchNameIsRequired
         | EitherOrganizationIdOrOrganizationNameIsRequired
@@ -427,6 +428,7 @@ module Text =
         | InvalidOwnerId
         | InvalidOwnerName
         | InvalidOwnerType
+        | InvalidReferenceId
         | InvalidReferenceType
         | InvalidRepositoryId
         | InvalidRepositoryName

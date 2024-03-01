@@ -155,6 +155,10 @@ type Branch() =
     static member public ListContents(parameters: ListContentsParameters) =
         postServer<ListContentsParameters, IEnumerable<DirectoryVersion>>(parameters |> ensureCorrelationIdIsSet, $"branch/{nameof(Branch.ListContents)}")
 
+    /// Gets the recursive size of a branch.
+    static member public GetRecursiveSize(parameters: ListContentsParameters) =
+        postServer<ListContentsParameters, int64>(parameters |> ensureCorrelationIdIsSet, $"branch/{nameof(Branch.GetRecursiveSize)}")
+
     /// Delete the branch.
     static member public Delete(parameters: DeleteBranchParameters) =
         postServer<DeleteBranchParameters, string>(parameters |> ensureCorrelationIdIsSet, $"branch/{nameof(Branch.Delete)}")

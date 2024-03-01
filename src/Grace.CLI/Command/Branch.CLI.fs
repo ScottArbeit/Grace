@@ -245,6 +245,62 @@ module Branch =
                 return result |> renderOutput parseResult
             })
 
+    type GetRecursiveSizeParameters() =
+        inherit CommonParameters()
+        member val public Sha256Hash: Sha256Hash = String.Empty with get, set
+        member val public ReferenceId = String.Empty with get, set
+        member val public Pattern = String.Empty with get, set
+        member val public ShowDirectories = true with get, set
+        member val public ShowFiles = true with get, set
+    let getRecursiveSizeHandler (parseResult: ParseResult) (getRecursiveSizeParameters: GetRecursiveSizeParameters) =
+        task {
+            try
+                if parseResult |> verbose then printParseResult parseResult
+                let validateIncomingParameters = CommonValidations parseResult getRecursiveSizeParameters
+                match validateIncomingParameters with
+                | Ok _ -> 
+                    let sdkParameters = Parameters.Branch.ListContentsParameters(
+                        RepositoryId = getRecursiveSizeParameters.RepositoryId,
+                        RepositoryName = getRecursiveSizeParameters.RepositoryName,
+                        OwnerId = getRecursiveSizeParameters.OwnerId,
+                        OwnerName = getRecursiveSizeParameters.OwnerName,
+                        OrganizationId = getRecursiveSizeParameters.OrganizationId,
+                        OrganizationName = getRecursiveSizeParameters.OrganizationName,
+                        BranchId = getRecursiveSizeParameters.BranchId,
+                        BranchName = getRecursiveSizeParameters.BranchName,
+                        Sha256Hash = getRecursiveSizeParameters.Sha256Hash,
+                        ReferenceId = getRecursiveSizeParameters.ReferenceId,
+                        Pattern = getRecursiveSizeParameters.Pattern,
+                        ShowDirectories = getRecursiveSizeParameters.ShowDirectories,
+                        ShowFiles = getRecursiveSizeParameters.ShowFiles,
+                        CorrelationId = getRecursiveSizeParameters.CorrelationId)
+                    if parseResult |> hasOutput then
+                        return! progress.Columns(progressColumns)
+                                .StartAsync(fun progressContext ->
+                                task {
+                                    let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
+                                    let! result = Branch.GetRecursiveSize(sdkParameters)
+                                    t0.Increment(100.0)
+                                    return result
+                                })
+                    else
+                        return! Branch.GetRecursiveSize(sdkParameters)
+                | Error error -> return Error error
+            with ex ->
+                return Error (GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
+        }
+    let private GetRecursiveSize =
+        CommandHandler.Create(fun (parseResult: ParseResult) (getRecursiveSizeParameters: GetRecursiveSizeParameters) ->
+            task {                
+                let! result = getRecursiveSizeHandler parseResult getRecursiveSizeParameters
+                match result with
+                | Ok returnValue -> 
+                    AnsiConsole.MarkupLine $"[{Colors.Highlighted}]Total file size: {returnValue.ReturnValue:N0}[/]"
+                | Error error ->
+                    AnsiConsole.MarkupLine $"[{Colors.Error}]{error}[/]"
+                return result |> renderOutput parseResult
+            })
+
     type ListContentsParameters() =
         inherit CommonParameters()
         member val public Sha256Hash: Sha256Hash = String.Empty with get, set
@@ -894,7 +950,9 @@ module Branch =
                                         t0.Increment(100.0)
                                         match (branchDtoResult.Result, getReferencesResult.Result) with
                                         | (Ok branchDto, Ok references) ->
-                                            return Ok (GraceReturnValue.Create (branchDto.ReturnValue, references.ReturnValue.ToArray()) (parameters.CorrelationId))
+                                            let graceReturnValue = GraceReturnValue.Create (branchDto.ReturnValue, references.ReturnValue.ToArray()) (parameters.CorrelationId)
+                                            references.Properties |> Seq.iter (fun kvp -> graceReturnValue.Properties.Add(kvp.Key, kvp.Value))
+                                            return Ok graceReturnValue
                                         | (Error error, _) -> return Error error
                                         | (_, Error error) -> return Error error
                                     })
@@ -923,7 +981,7 @@ module Branch =
                 let sha256Hash = if parseResult.HasOption(Options.fullSha) then
                                      $"{row.Sha256Hash}"
                                  else
-                                     $"{row.Sha256Hash}".Substring(0, 8)
+                                     $"{getShortSha256Hash row.Sha256Hash}"
                 let localCreatedAtTime = row.CreatedAt.ToDateTimeUtc().ToLocalTime()
                 let referenceTime = $"""{localCreatedAtTime.ToString("g", CultureInfo.CurrentUICulture)}"""
                 table.AddRow([| $"{getDiscriminatedUnionCaseName(row.ReferenceType)}"; $"{row.ReferenceText}"; sha256Hash; ago row.CreatedAt; $"[{Colors.Deemphasized}]{referenceTime}[/]" |]) |> ignore
@@ -943,11 +1001,10 @@ module Branch =
                 match result with
                 | Ok graceReturnValue ->
                     let (branchDto, references) = graceReturnValue.ReturnValue
-                    let intReturn = result |> renderOutput parseResult
                     if parseResult |> hasOutput then
                         printReferences parseResult branchDto references "References"
                         AnsiConsole.MarkupLine($"[{Colors.Important}]Returned {references.Length} rows.[/]")
-                    return intReturn
+                    return result |> renderOutput parseResult
                 | Error error ->
                     return result |> renderOutput parseResult
             })
@@ -2277,6 +2334,10 @@ module Branch =
         let listContentsCommand = new Command("list-contents", Description = "List directories and files in the current branch.") |> addOption Options.referenceId |> addOption Options.sha256Hash |> addCommonOptions
         listContentsCommand.Handler <- ListContents
         branchCommand.AddCommand(listContentsCommand)
+
+        let getRecursiveSizeCommand = new Command("get-recursive-size", Description = "Get the recursive size of the current branch.") |> addOption Options.referenceId |> addOption Options.sha256Hash |> addCommonOptions
+        getRecursiveSizeCommand.Handler <- GetRecursiveSize
+        branchCommand.AddCommand(getRecursiveSizeCommand)
 
         let enablePromotionCommand = new Command("enable-promotion", Description = "Enable or disable promotions on this branch.") |> addOption Options.enabled |> addCommonOptions
         enablePromotionCommand.Handler <- EnablePromotion

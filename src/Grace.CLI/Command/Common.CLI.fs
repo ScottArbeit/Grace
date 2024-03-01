@@ -95,7 +95,10 @@ module Common =
             | Json -> AnsiConsole.WriteLine(Markup.Escape($"{graceReturnValue}"))
             | Minimal -> ()     //AnsiConsole.MarkupLine($"""[{Colors.Highlighted}]{Markup.Escape($"{graceReturnValue.ReturnValue}")}[/]""")
             | Silent -> ()
-            | Verbose -> AnsiConsole.MarkupLine($"""[{Colors.Verbose}]{Markup.Escape($"{graceReturnValue}")}[/]""")
+            | Verbose -> AnsiConsole.WriteLine()
+                         AnsiConsole.MarkupLine($"""[{Colors.Verbose}]EventTime: {graceReturnValue.EventTime}[/]""")
+                         AnsiConsole.MarkupLine($"""[{Colors.Verbose}]CorrelationId: {graceReturnValue.CorrelationId}[/]""")
+                         AnsiConsole.MarkupLine($"""[{Colors.Verbose}]Properties: {Markup.Escape(serialize graceReturnValue.Properties)}[/]""")
                          AnsiConsole.WriteLine()
             | Normal -> ()      // Return unit because in the Normal case, we expect to print output within each command.
             0

@@ -45,7 +45,18 @@ module Events =
         [<KnownType("GetKnownTypes")>]
         type DirectoryVersionEventType =
             | Created of directoryVersion: DirectoryVersion
+            | RecursiveSizeSet of recursiveSize: int64
+            | LogicalDeleted of deleteReason: string
             | PhysicalDeleted
+            | Undeleted
+
+        /// Record that holds the event type and metadata for a DirectoryVersion event.
+        type DirectoryVersionEvent = {
+            /// The DirectoryVersionEventType case that describes the event.
+            Event: DirectoryVersionEventType
+            /// The EventMetadata for the event. EventMetadata includes the Timestamp, CorrelationId, Principal, and a Properties dictionary.
+            Metadata: EventMetadata
+        }
 
     /// Defines the events for the Organization actor.
     module Organization =
@@ -134,6 +145,7 @@ module Events =
     [<KnownType("GetKnownTypes")>]
     type GraceEvent =
         | BranchEvent of Branch.BranchEvent
+        | DirectoryVersionEvent of DirectoryVersion.DirectoryVersionEvent
         | OrganizationEvent of Organization.OrganizationEvent
         | OwnerEvent of Owner.OwnerEvent
         | RepositoryEvent of Repository.RepositoryEvent

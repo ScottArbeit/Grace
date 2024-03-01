@@ -28,6 +28,7 @@ type EntityProperties =
         RepositoryName: PropertyInfo option
         BranchId: PropertyInfo option
         BranchName: PropertyInfo option
+        CorrelationId: PropertyInfo option
     }
 
     static member Default =
@@ -40,6 +41,7 @@ type EntityProperties =
             RepositoryName = None
             BranchId = None
             BranchName = None
+            CorrelationId = None
         }
 
 /// Examines the body of the incoming request to validate the Ids and Names in the request, and ensure that we know the right Ids. Having the Ids already figured out saves work for the rest of the pipeline.
@@ -51,10 +53,10 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
 
     let log = ApplicationContext.loggerFactory.CreateLogger("ValidateIds.Middleware")
 
-    /// Holds the parameter type for each endpoint.
+    /// Holds the request body type for each endpoint.
     let typeLookup = ConcurrentDictionary<String, Type>()
 
-    /// Holds the property info for each parameter type.
+    /// Holds the property info for each request body type.
     let propertyLookup = ConcurrentDictionary<Type, EntityProperties>()
 
     /// Paths that we want to ignore, because they won't have Ids and Names in the body.
@@ -66,17 +68,17 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
         if not <| (ignorePaths |> Seq.exists(fun ignorePath -> path.StartsWith(ignorePath, StringComparison.InvariantCultureIgnoreCase))) then
             let endpoint = context.GetEndpoint()
             if isNull(endpoint) then
-                log.LogDebug("{currentInstant}: Path: {context.Request.Path}; Endpoint: null.", getCurrentInstantExtended(), context.Request.Path)
+                log.LogDebug("{currentInstant}: Path: {path}; Endpoint: null.", getCurrentInstantExtended(), path)
                 None
             elif endpoint.Metadata.Count > 0 then
                 let requestBodyType = endpoint.Metadata 
                                         |> Seq.tryFind (fun metadataItem -> metadataItem.GetType().FullName = "System.RuntimeType") // The types that we add in Startup.Server.fs show up here as "System.RuntimeType".
                                         |> Option.map (fun metadataItem -> metadataItem :?> Type)                                   // Convert the metadata item to a Type.
                 if requestBodyType |> Option.isSome then 
-                    log.LogDebug("{currentInstant}: Path: {context.Request.Path}; Endpoint: {endpoint.DisplayName}; RequestBodyType: {requestBodyType.Value.Name}.", getCurrentInstantExtended(), context.Request.Path, endpoint.DisplayName, requestBodyType.Value.Name)
+                    log.LogDebug("{currentInstant}: Path: {path}; Endpoint: {endpoint.DisplayName}; RequestBodyType: {requestBodyType.Value.Name}.", getCurrentInstantExtended(), path, endpoint.DisplayName, requestBodyType.Value.Name)
                 requestBodyType
             else
-                log.LogDebug("{currentInstant}: Path: {context.Request.Path}; endpoint.Metadata.Count = 0.", getCurrentInstantExtended(), context.Request.Path)
+                log.LogDebug("{currentInstant}: Path: {path}; endpoint.Metadata.Count = 0.", getCurrentInstantExtended(), path)
                 None            
         else
             None
@@ -109,8 +111,8 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
                     | None ->
                         typeLookup.TryAdd(path, null) |> ignore
 
-                // If we have a parameter type for the endpoint, parse the body of the request to get the Ids and Names.
-                // If the parameter type is null, it's an endpoint like /healthz where we don't take these parameters.
+                // If we have a request body type for the endpoint, parse the body of the request to get the Ids and Names.
+                // If the request body type is null, it's an endpoint (like /healthz) where we don't take these parameters.
                 if not <| isNull(requestBodyType) then
                     context.Request.EnableBuffering()
                     match! context |> parseType requestBodyType with
@@ -136,9 +138,10 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
                                     RepositoryName =    findProperty (nameof(RepositoryName))
                                     BranchId =          findProperty (nameof(BranchId))
                                     BranchName =        findProperty (nameof(BranchName))
+                                    CorrelationId =     findProperty (nameof(CorrelationId))
                                 }
 
-                            // Cache the results.
+                            // Cache the property list for this request body type.
                             propertyLookup.TryAdd(requestBodyType, entityProperties) |> ignore
 
                         // let sb = StringBuilder()
@@ -153,12 +156,9 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
                         let mutable repositoryName = String.Empty
                         let mutable branchId = String.Empty
                         let mutable branchName = String.Empty
-                    
-                        let serializedRequestBody = serialize requestBody
 
-                        context.Items.Add("Request.Body", serializedRequestBody)
-                        log.LogDebug("{currentInstant}: requestBodyType: {requestBodyType}; Request body: {requestBody}", getCurrentInstantExtended(), requestBodyType.Name, serializedRequestBody)
-                    
+                        log.LogDebug("{currentInstant}: requestBodyType: {requestBodyType}; Request body: {requestBody}", getCurrentInstantExtended(), requestBodyType.Name, serialize requestBody)
+
                         // Get Owner information.
                         if Option.isSome entityProperties.OwnerId && Option.isSome entityProperties.OwnerName then
                             // Get the values from the request body.
@@ -240,12 +240,12 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
 
                     // Reset the Body to the beginning so that it can be read again later in the pipeline.
                     context.Request.Body.Seek(0L, IO.SeekOrigin.Begin) |> ignore
-                
+
                 if badRequest then
-                    log.LogDebug("{currentInstant}: Bad request. Request body: {requestBody}", getCurrentInstantExtended(), context.Items["Request.Body"])
+                    log.LogDebug("{currentInstant}: Bad request. CorrelationId: {correlationId}", getCurrentInstantExtended(), correlationId)
                     context.Items.Add("BadRequest", true)
                 elif notFound then
-                    log.LogDebug("{currentInstant}: The provided entity Id's and/or Names were not found in the database. This is normal for Create commands. RequestBody: {requestBody}", getCurrentInstantExtended(), context.Items["Request.Body"])
+                    log.LogDebug("{currentInstant}: The provided entity Id's and/or Names were not found in the database. This is normal for Create commands. CorrelationId: {correlationId}", getCurrentInstantExtended(), correlationId)
                     context.Items.Add("EntitiesNotFound", true)
     // -----------------------------------------------------------------------------------------------------
 

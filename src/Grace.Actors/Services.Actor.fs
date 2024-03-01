@@ -27,6 +27,9 @@ open System.Diagnostics
 open System.IO
 open System.Linq
 open System.Net
+open System.Net.Http
+open System.Net.Http.Json
+open System.Net.Security
 open System.Text
 open System.Threading.Tasks
 
@@ -710,15 +713,28 @@ module Services =
         #if DEBUG
             let failed = List<string>()
             try
+                // (MaxDegreeOfParallelism = 4) fits under the free 1,000 RU limit for CosmosDB without getting throttled.
+                let parallelOptions = ParallelOptions(MaxDegreeOfParallelism = 4)
+
+                let itemRequestOptions = ItemRequestOptions()
+                itemRequestOptions.AddRequestHeaders <- fun headers -> headers.Add(Constants.CorrelationIdHeaderKey, "Deleting all records from CosmosDB")
+
                 let queryDefinition = QueryDefinition("SELECT c.id, c.partitionKey FROM c ORDER BY c.partitionKey")
                 let iterator = cosmosContainer.GetItemQueryIterator<DocumentIdentifier>(queryDefinition, requestOptions = queryRequestOptions)
                 while iterator.HasMoreResults do
+                    let startTime = getCurrentInstant()
                     let! results = iterator.ReadNextAsync()
-                    for document in results.Resource do
-                        let! deleteResponse = cosmosContainer.DeleteItemAsync(document.id, PartitionKey(document.partitionKey))
-                        if deleteResponse.StatusCode <> HttpStatusCode.NoContent then
-                            failed.Add(document.id)
-                            logToConsole $"Failed to delete id {document.id}."
+                    logToConsole $"In Services.deleteAllFromCosmosDB(): results.Resource.Count: {results.Resource.Count()}."
+                    do! Parallel.ForEachAsync(results.Resource, parallelOptions, (fun document ct ->
+                        ValueTask(task {
+                            let! deleteResponse = cosmosContainer.DeleteItemAsync(document.id, PartitionKey(document.partitionKey), itemRequestOptions)
+                            if deleteResponse.StatusCode <> HttpStatusCode.NoContent then
+                                failed.Add(document.id)
+                                logToConsole $"Failed to delete id {document.id}."
+                        })))
+                    let rps = float (results.Resource.Count()) / (getCurrentInstant().Minus(startTime).TotalSeconds)
+                    let duration_s = getCurrentInstant().Minus(startTime).TotalSeconds
+                    logToConsole $"In Services.deleteAllFromCosmosDB(): duration (s): {duration_s:F3}; requests/second: {rps:F3}; failed.Count: {failed.Count}."
                 return failed
             with ex ->
                 failed.Add((createExceptionResponse ex).``exception``)
@@ -857,7 +873,7 @@ module Services =
     let getLatestTag = getLatestReferenceByType ReferenceType.Tag
 
     /// Gets a DirectoryVersion by searching using a Sha256Hash value.
-    let getDirectoryBySha256Hash (repositoryId: RepositoryId) (sha256Hash: Sha256Hash) = 
+    let getDirectoryBySha256Hash (repositoryId: RepositoryId) (sha256Hash: Sha256Hash) correlationId = 
         task {
             let mutable directoryVersion = DirectoryVersion.Default
             match actorStateStorageProvider with
@@ -880,7 +896,10 @@ module Services =
                                 .SetTag("requestCharge", $"{requestCharge.Remove(requestCharge.Length - 2, 2)}") |> ignore
             | MongoDB -> ()
 
-            return directoryVersion
+            if directoryVersion.DirectoryId <> DirectoryVersion.Default.DirectoryId then
+                return Some directoryVersion
+            else
+                return None
         }
 
     /// Gets a Root DirectoryVersion by searching using a Sha256Hash value.

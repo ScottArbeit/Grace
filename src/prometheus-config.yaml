@@ -1,14 +1,47 @@
 apiVersion: v1
-kind: Service
+kind: ConfigMap
 metadata:
-  name: dapr-prometheus-server
-  namespace: dapr-monitoring
-spec:
-  selector:
-    app: dapr-prometheus-server
-  ports:
-    - protocol: TCP
-      port: 9090
-      targetPort: 9090
-      name: http-prometheus
-  type: LoadBalancer
+  name: prometheus-config
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s  # Set the scrape interval to every 15 seconds.
+      evaluation_interval: 15s  # Evaluate rules every 15 seconds.
+
+    scrape_configs:
+      # Scrape configuration for the OpenTelemetry Collector
+      - job_name: 'opentelemetry-collector'
+        static_configs:
+          - targets: ['otel-collector:4318']  # Assuming the OpenTelemetry Collector is named 'otel-collector' and exposes metrics on port 4318
+
+      # Scrape configuration for your application
+      - job_name: 'my-application'
+        kubernetes_sd_configs:
+          - role: pod
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+            action: keep
+            regex: true
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+            action: replace
+            target_label: __metrics_path__
+            regex: (.+)
+          - source_labels: [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
+            action: replace
+            regex: ([^:]+)(?::\d+)?;(\d+)
+            replacement: $1:$2
+            target_label: __address__
+
+      # Scrape configuration for Dapr sidecars (if applicable)
+      - job_name: 'dapr'
+        kubernetes_sd_configs:
+          - role: pod
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_label_dapr_io_enabled]
+            action: keep
+            regex: true
+          - source_labels: [__address__, __meta_kubernetes_pod_annotation_dapr_io_metrics_port]
+            action: replace
+            regex: ([^:]+)(?::\d+)?;(\d+)
+            replacement: $1:$2
+            target_label: __address__

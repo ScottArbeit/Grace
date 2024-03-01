@@ -122,8 +122,8 @@ module Diff =
                     let validations (parameters: PopulateParameters) =
                         [| Guid.isNotEmpty parameters.DirectoryId1 DiffError.InvalidDirectoryId
                            Guid.isNotEmpty parameters.DirectoryId2 DiffError.InvalidDirectoryId
-                           Directory.directoryIdExists parameters.DirectoryId1 parameters.CorrelationId DiffError.DirectoryDoesNotExist
-                           Directory.directoryIdExists parameters.DirectoryId2 parameters.CorrelationId DiffError.DirectoryDoesNotExist |]
+                           DirectoryVersion.directoryIdExists parameters.DirectoryId1 parameters.CorrelationId DiffError.DirectoryDoesNotExist
+                           DirectoryVersion.directoryIdExists parameters.DirectoryId2 parameters.CorrelationId DiffError.DirectoryDoesNotExist |]
 
                     let query (context: HttpContext) _ (actorProxy: IDiffActor) =
                         task {
@@ -145,8 +145,8 @@ module Diff =
                     let validations (parameters: GetDiffParameters) =
                         [| Guid.isNotEmpty parameters.DirectoryId1 DiffError.InvalidDirectoryId
                            Guid.isNotEmpty parameters.DirectoryId2 DiffError.InvalidDirectoryId
-                           Directory.directoryIdExists parameters.DirectoryId1 parameters.CorrelationId DiffError.DirectoryDoesNotExist
-                           Directory.directoryIdExists parameters.DirectoryId2 parameters.CorrelationId DiffError.DirectoryDoesNotExist |]
+                           DirectoryVersion.directoryIdExists parameters.DirectoryId1 parameters.CorrelationId DiffError.DirectoryDoesNotExist
+                           DirectoryVersion.directoryIdExists parameters.DirectoryId2 parameters.CorrelationId DiffError.DirectoryDoesNotExist |]
 
                     let query (context: HttpContext) _ (actorProxy: IDiffActor) =
                         task {

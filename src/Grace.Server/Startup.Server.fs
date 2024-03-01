@@ -91,6 +91,7 @@ module Application =
                     route "/getDiffsForReferenceType" Branch.GetDiffsForReferenceType |> addMetadata typeof<Branch.GetDiffsForReferenceTypeParameters>
                     route "/getParentBranch" Branch.GetParentBranch |> addMetadata typeof<Branch.GetBranchParameters>
                     route "/getPromotions" Branch.GetPromotions |> addMetadata typeof<Branch.GetReferenceParameters>
+                    route "/getRecursiveSize" Branch.GetRecursiveSize |> addMetadata typeof<Branch.ListContentsParameters>
                     route "/getReference" Branch.GetReference |> addMetadata typeof<Branch.GetReferenceParameters>
                     route "/getReferences" Branch.GetReferences |> addMetadata typeof<Branch.GetReferencesParameters>
                     route "/getSaves" Branch.GetSaves |> addMetadata typeof<Branch.GetReferenceParameters>

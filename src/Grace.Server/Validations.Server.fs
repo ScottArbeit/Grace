@@ -504,7 +504,7 @@ module Validations =
                     return Ok ()
             } |> ValueTask<Result<unit, 'T>>
 
-    module Directory =
+    module DirectoryVersion =
         /// Validates that the given DirectoryId exists in the database.
         let directoryIdExists<'T> (directoryId: Guid) correlationId (error: 'T) =
             task {
@@ -540,21 +540,14 @@ module Validations =
                     return Error error
             } |> ValueTask<Result<unit, 'T>>
 
-        /// Validates that the branch exists in the database.
-        let sha256HashExists<'T> repositoryId branchId branchName sha256Hash correlationId (error: 'T) =
+        /// Validates that a directory version with the provided Sha256Hash exists in a repository.
+        let sha256HashExists<'T> repositoryId sha256Hash correlationId (error: 'T) =
             task {
-                let mutable guid = Guid.Empty
-                match! resolveBranchId repositoryId branchId branchName correlationId with
-                | Some branchId ->
-                    if Guid.TryParse(branchId, &guid) then
-                        let actorId = ActorId($"{guid}")
-                        let branchActorProxy = actorProxyFactory.CreateActorProxy<IBranchActor>(actorId, ActorName.Branch)
-                        let! exists = branchActorProxy.Exists correlationId
-                        if exists || guid = Grace.Shared.Constants.DefaultParentBranchId then
-                            return Ok ()
-                        else
-                            return Error error
-                    else
-                        return Error error
-                | None -> return Error error
+                let actorId = ActorId($"{repositoryId}")
+                let repositoryActorProxy = actorProxyFactory.CreateActorProxy<IRepositoryActor>(actorId, ActorName.Repository)
+                match! getDirectoryBySha256Hash repositoryId sha256Hash correlationId with
+                | Some directoryVersion ->
+                    return Ok ()
+                | None ->
+                    return Error error
             } |> ValueTask<Result<unit, 'T>>

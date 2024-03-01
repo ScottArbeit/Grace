@@ -87,8 +87,7 @@ module Services =
 
                 //log.LogDebug("{currentInstant}: In returnResult: StatusCode: {statusCode}; result: {result}", getCurrentInstantExtended(), statusCode, serialize result)
 
-                // .WriteJsonAsync() uses Grace's Constants.JsonSerializerOptions through DI.
-                return! context.WriteJsonAsync(result)
+                return! context.WriteJsonAsync(result)  // .WriteJsonAsync() uses Grace's JsonSerializerOptions.
             with ex ->
                 let exceptionResponse = Utilities.createExceptionResponse ex
                 return! context.WriteJsonAsync(GraceError.Create (serialize exceptionResponse) (getCorrelationId context))
@@ -114,29 +113,3 @@ module Services =
 
     /// Adds common attributes to the current OpenTelemetry activity, and returns the result with a 500 Internal server error status.
     let result500ServerError<'T> = returnResult<'T> StatusCodes.Status500InternalServerError
-
-    /// Validates that the owner exists in the database.
-    //let confirmOwnerId<'T> context ownerId ownerName =
-    //    task {
-    //        let mutable ownerGuid = Guid.Empty
-
-    //        match! resolveOwnerId ownerId ownerName with
-    //        | Some ownerId ->
-    //            if Guid.TryParse(ownerId, &ownerGuid) then
-    //                let mutable x = null
-    //                let cached = memoryCache.TryGetValue(ownerGuid, &x)
-    //                if cached then
-    //                    return Ok ownerGuid
-    //                else
-    //                    let actorId = Owner.GetActorId(ownerGuid)
-    //                    let ownerActorProxy = actorProxyFactory.CreateActorProxy<IOwnerActor>(actorId, ActorName.Owner)
-    //                    let! exists = ownerActorProxy.Exists()
-    //                    if exists then
-    //                        use newCacheEntry = memoryCache.CreateEntry(ownerGuid, Value = null, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
-    //                        return Ok ownerGuid
-    //                    else
-    //                        return Error (GraceError.Create (getLocalizedString OwnerDoesNotExist) (getCorrelationId context))
-    //            else
-    //                return Ok ownerGuid
-    //        | None -> return Error (GraceError.Create (getLocalizedString OwnerDoesNotExist) (getCorrelationId context))
-    //    }

@@ -227,6 +227,9 @@ module Constants =
     /// The default expiration time for a cache entry.
     let DefaultExpirationTime = TimeSpan.FromMinutes(5.0)
 
+    /// The custom alphabet to use when generating a CorrelationId. This alphabet is URL-safe. Consists of "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz~._-".
+    let CorrelationIdAlphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz~._-"
+
 module Results =
     let Ok = 0
     let Exception = -1

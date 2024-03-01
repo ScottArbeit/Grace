@@ -19,6 +19,7 @@ open System.Net.Security
 open System.Net
 open System
 open System.Reflection
+open Constants
 
 #nowarn "9"
 
@@ -466,8 +467,8 @@ module Utilities =
         let file = FileInfo(relativePath)
         $"{file.Name.Replace(file.Extension, String.Empty)}_{sha256Hash}{file.Extension}"
 
-    /// Returns a 14-character randomly-generated NanoId value.
-    ///
-    /// 14 characters is more than sufficient to prevent collisions for correlation Id's for any reasonable future use of Grace. 21 gives the same uniqueness guarantees as UUID v4.
+    /// Returns a 12-character randomly-generated NanoId value, using a custom alphabet.
     let generateCorrelationId () =
-        NanoidDotNet.Nanoid.Generate(size = 14)
+        // According to https://alex7kom.github.io/nano-nanoid-cc/?alphabet=~._-0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz&size=12&speed=1000&speedUnit=second
+        //   if we generate 1000 Id's per second, we'll need 4 months before we have a 1% chance of a collision, and even if we do, it will be in different owners/orgs/repos etc.
+        NanoidDotNet.Nanoid.Generate(CorrelationIdAlphabet, size = 12)

@@ -82,16 +82,14 @@ module Owner =
             } :> Task
 
         member private this.SetMaintenanceReminder() =
-            this.RegisterReminderAsync(ReminderType.Maintenance, Array.empty<byte>, TimeSpan.FromDays(7.0), TimeSpan.FromDays(7.0))
+            this.RegisterReminderAsync(ReminderType.Maintenance, Array.empty<byte>, TimeSpan.FromDays(7.0), TimeSpan.FromDays(7.0)).Wait()
 
         member private this.UnregisterMaintenanceReminder() =
-            this.UnregisterReminderAsync(ReminderType.Maintenance)
+            this.UnregisterReminderAsync(ReminderType.Maintenance).Wait()
 
         member private this.OnFirstWrite() =
-            task {
-                //let! _ = DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> this.SetMaintenanceReminder())
-                ()
-            }
+            //this.SetMaintenanceReminder()
+            ()
 
         override this.OnPreActorMethodAsync(context) =
             this.correlationId <- String.Empty
@@ -137,7 +135,7 @@ module Owner =
                 try
                     let! ownerEvents = this.OwnerEvents()
                     if ownerEvents.Count = 0 then
-                        do! this.OnFirstWrite()
+                        this.OnFirstWrite()
 
                     ownerEvents.Add(ownerEvent)
                     do! DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> stateManager.SetStateAsync(eventsStateName, ownerEvents))

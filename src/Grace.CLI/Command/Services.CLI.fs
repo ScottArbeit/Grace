@@ -865,7 +865,10 @@ module Services =
         newGraceStatus
 
     /// Gets the file name used to indicate to `grace watch` that updates are in progress from another Grace command, and that it should ignore them.
-    let updateInProgressFileName = getNativeFilePath (Path.Combine(Path.GetTempPath(), "Grace", Current().BranchName, Constants.UpdateInProgressFileName))
+    let updateInProgressFileName = 
+        let directory = Path.Combine(Path.GetTempPath(), "Grace", Current().BranchName)
+        Directory.CreateDirectory(directory) |> ignore
+        getNativeFilePath (Path.Combine(Path.GetTempPath(), "Grace", Current().BranchName, Constants.UpdateInProgressFileName))
 
     /// Updates the working directory to match the contents of new DirectoryVersions.
     ///
