@@ -73,13 +73,17 @@ module Repository =
                 let handleCommand repositoryId cmd  =
                     task {
                         let actorProxy = getActorProxy repositoryId
-                
-                        let! result = actorProxy.Handle cmd (Services.createMetadata context)
-                        match result with
+                        match! actorProxy.Handle cmd (createMetadata context) with
                         | Ok graceReturn ->
+                            match getGraceIds context with
+                            | Some graceIds ->
+                                graceReturn.Properties.Add(nameof(OwnerId), graceIds.OwnerId)
+                                graceReturn.Properties.Add(nameof(OrganizationId), graceIds.OrganizationId)
+                                graceReturn.Properties.Add(nameof(RepositoryId), graceIds.RepositoryId)
+                            | None -> ()
                             return! context |> result200Ok graceReturn
                         | Error graceError ->
-                            log.LogDebug("{currentInstant}: In Repository.Server.handleCommand: error from actorProxy.Handle: {error}", getCurrentInstantExtended(), (graceError.ToString()))
+                            log.LogDebug("{currentInstant}: In Branch.Server.handleCommand: error from actorProxy.Handle: {error}", getCurrentInstantExtended(), (graceError.ToString()))
                             return! context |> result400BadRequest {graceError with Properties = getPropertiesAsDictionary parameters}
                     }
 
@@ -128,7 +132,14 @@ module Repository =
                     | Some repositoryId ->
                         let actorProxy = getActorProxy repositoryId
                         let! queryResult = query context maxCount actorProxy
-                        return! context |> result200Ok (GraceReturnValue.Create queryResult (getCorrelationId context))
+                        let graceReturnValue = GraceReturnValue.Create queryResult (getCorrelationId context)
+                        match getGraceIds context with
+                        | Some graceIds ->
+                            graceReturnValue.Properties.Add(nameof(OwnerId), graceIds.OwnerId)
+                            graceReturnValue.Properties.Add(nameof(OrganizationId), graceIds.OrganizationId)
+                            graceReturnValue.Properties.Add(nameof(RepositoryId), graceIds.RepositoryId)
+                        | None -> ()
+                        return! context |> result200Ok graceReturnValue
                     | None ->
                         return! context |> result400BadRequest (GraceError.Create (RepositoryError.getErrorMessage RepositoryIdDoesNotExist) (getCorrelationId context))
                 else

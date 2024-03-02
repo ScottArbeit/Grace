@@ -47,15 +47,17 @@ module Organization =
                 let handleCommand organizationId cmd  =
                     task {
                         let actorProxy = getActorProxy context organizationId
-
-                        let! result = actorProxy.Handle cmd (Services.createMetadata context)
-                        match result with
+                        match! actorProxy.Handle cmd (createMetadata context) with
                         | Ok graceReturn ->
+                            match getGraceIds context with
+                            | Some graceIds ->
+                                graceReturn.Properties.Add(nameof(OwnerId), graceIds.OwnerId)
+                                graceReturn.Properties.Add(nameof(OrganizationId), graceIds.OrganizationId)
+                            | None -> ()
                             return! context |> result200Ok graceReturn
                         | Error graceError ->
-                            log.LogDebug("{currentInstant}: In Organization.Server.handleCommand: error from actorProxy.Handle: {error}", getCurrentInstantExtended(), (graceError.ToString()))
-                            return! context |> result400BadRequest {graceError with Properties = getPropertiesAsDictionary parameters}
-                    }
+                            log.LogDebug("{currentInstant}: In Branch.Server.handleCommand: error from actorProxy.Handle: {error}", getCurrentInstantExtended(), (graceError.ToString()))
+                            return! context |> result400BadRequest {graceError with Properties = getPropertiesAsDictionary parameters}                    }
 
                 let validationResults = validations parameters
                 let! validationsPassed = validationResults |> allPass
@@ -100,7 +102,13 @@ module Organization =
                     | Some organizationId ->
                         let actorProxy = getActorProxy context organizationId
                         let! queryResult = query context maxCount actorProxy
-                        return! context |> result200Ok (GraceReturnValue.Create queryResult (getCorrelationId context))
+                        let graceReturnValue = GraceReturnValue.Create queryResult (getCorrelationId context)
+                        match getGraceIds context with
+                        | Some graceIds ->
+                            graceReturnValue.Properties.Add(nameof(OwnerId), graceIds.OwnerId)
+                            graceReturnValue.Properties.Add(nameof(OrganizationId), graceIds.OrganizationId)
+                        | None -> ()
+                        return! context |> result200Ok graceReturnValue
                     | None ->
                         return! context |> result400BadRequest (GraceError.Create (OrganizationError.getErrorMessage OrganizationDoesNotExist) (getCorrelationId context))
                 else

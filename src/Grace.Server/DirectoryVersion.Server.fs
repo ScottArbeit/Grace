@@ -74,8 +74,15 @@ module DirectoryVersion =
                 if validationsPassed then
                     let actorProxy = getActorProxy context parameters.DirectoryId
                     let! queryResult = query context maxCount actorProxy
-                    let! returnValue = context |> result200Ok (GraceReturnValue.Create queryResult (getCorrelationId context))
-                    return returnValue
+                    let graceReturnValue = GraceReturnValue.Create queryResult (getCorrelationId context)
+                    match getGraceIds context with
+                    | Some graceIds ->
+                        graceReturnValue.Properties.Add(nameof(OwnerId), graceIds.OwnerId)
+                        graceReturnValue.Properties.Add(nameof(OrganizationId), graceIds.OrganizationId)
+                        graceReturnValue.Properties.Add(nameof(RepositoryId), graceIds.RepositoryId)
+                        graceReturnValue.Properties.Add(nameof(BranchId), graceIds.BranchId)
+                    | None -> ()
+                    return! context |> result200Ok graceReturnValue
                 else
                     let! error = validationResults |> getFirstError
                     let graceError = GraceError.Create (DirectoryVersionError.getErrorMessage error) (getCorrelationId context)

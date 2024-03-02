@@ -68,18 +68,23 @@ module Branch =
                 let handleCommand branchId cmd  =
                     task {
                         let actorProxy = getActorProxy context branchId
-                
-                        let! result = actorProxy.Handle cmd (createMetadata context)
-                        match result with
+                        match! actorProxy.Handle cmd (createMetadata context) with
                         | Ok graceReturn ->
+                            match getGraceIds context with
+                            | Some graceIds ->
+                                graceReturn.Properties.Add(nameof(OwnerId), graceIds.OwnerId)
+                                graceReturn.Properties.Add(nameof(OrganizationId), graceIds.OrganizationId)
+                                graceReturn.Properties.Add(nameof(RepositoryId), graceIds.RepositoryId)
+                                graceReturn.Properties.Add(nameof(BranchId), graceIds.BranchId)
+                            | None -> ()
                             return! context |> result200Ok graceReturn
                         | Error graceError ->
                             log.LogDebug("{currentInstant}: In Branch.Server.handleCommand: error from actorProxy.Handle: {error}", getCurrentInstantExtended(), (graceError.ToString()))
                             return! context |> result400BadRequest {graceError with Properties = getPropertiesAsDictionary parameters}
                     }
 
-                let validationResults = Array.append (commonValidations parameters) (validations parameters)
-                let! validationsPassed = validationResults |> allPass
+                let combinedValidations = Array.append (commonValidations parameters) (validations parameters)
+                let! validationsPassed = combinedValidations |> allPass
                 log.LogDebug("{currentInstant}: In Branch.Server.processCommand: validationsPassed: {validationsPassed}.", getCurrentInstantExtended(), validationsPassed)
 
                 if validationsPassed then
@@ -98,7 +103,7 @@ module Branch =
                         log.LogDebug("{currentInstant}: In Branch.Server.processCommand: resolveBranchId failed. Branch does not exist. repositoryId: {repositoryId}; repositoryName: {repositoryName}.", getCurrentInstantExtended(), parameters.RepositoryId, parameters.RepositoryName)
                         return! context |> result400BadRequest (GraceError.Create (BranchError.getErrorMessage RepositoryDoesNotExist) (getCorrelationId context))
                 else
-                    let! error = validationResults |> getFirstError
+                    let! error = combinedValidations |> getFirstError
                     let errorMessage = BranchError.getErrorMessage error
                     log.LogDebug("{currentInstant}: error: {error}", getCurrentInstantExtended(), errorMessage)
                     let graceError = GraceError.CreateWithMetadata errorMessage (getCorrelationId context) (getPropertiesAsDictionary parameters)
@@ -123,13 +128,14 @@ module Branch =
                         let actorProxy = getActorProxy context branchId
                         let! queryResult = query context maxCount actorProxy
                         let graceReturnValue = GraceReturnValue.Create queryResult (getCorrelationId context)
-                        let graceIds = context.Items[nameof(GraceIds)] :?> GraceIds
-                        graceReturnValue.Properties.Add("OwnerId", $"{graceIds.OwnerId}")
-                        graceReturnValue.Properties.Add("OrganizationId", $"{graceIds.OrganizationId}")
-                        graceReturnValue.Properties.Add("RepositoryId", $"{graceIds.RepositoryId}")
-                        graceReturnValue.Properties.Add("BranchId", $"{graceIds.BranchId}")
-                        let! returnValue = context |> result200Ok graceReturnValue
-                        return returnValue
+                        match getGraceIds context with
+                        | Some graceIds ->
+                            graceReturnValue.Properties.Add(nameof(OwnerId), graceIds.OwnerId)
+                            graceReturnValue.Properties.Add(nameof(OrganizationId), graceIds.OrganizationId)
+                            graceReturnValue.Properties.Add(nameof(RepositoryId), graceIds.RepositoryId)
+                            graceReturnValue.Properties.Add(nameof(BranchId), graceIds.BranchId)
+                        | None -> ()
+                        return! context |> result200Ok graceReturnValue
                     | None ->
                         return! context |> result400BadRequest (GraceError.Create (BranchError.getErrorMessage BranchDoesNotExist) (getCorrelationId context))
                 else

@@ -53,13 +53,15 @@ module Owner =
                 let handleCommand ownerId cmd  =
                     task {
                         let actorProxy = getActorProxy context ownerId
-
-                        let! result = actorProxy.Handle cmd (Services.createMetadata context)
-                        match result with
+                        match! actorProxy.Handle cmd (createMetadata context) with
                         | Ok graceReturn ->
+                            match getGraceIds context with
+                            | Some graceIds ->
+                                graceReturn.Properties.Add(nameof(OwnerId), graceIds.OwnerId)
+                            | None -> ()
                             return! context |> result200Ok graceReturn
                         | Error graceError ->
-                            log.LogDebug("{currentInstant}: In Owner.Server.handleCommand: error from actorProxy.Handle: {error}", getCurrentInstantExtended(), (graceError.ToString()))
+                            log.LogDebug("{currentInstant}: In Branch.Server.handleCommand: error from actorProxy.Handle: {error}", getCurrentInstantExtended(), (graceError.ToString()))
                             return! context |> result400BadRequest {graceError with Properties = getPropertiesAsDictionary parameters}
                     }
 
@@ -108,7 +110,12 @@ module Owner =
                     | Some ownerId ->
                         let actorProxy = getActorProxy context ownerId
                         let! queryResult = query context maxCount actorProxy
-                        return! context |> result200Ok (GraceReturnValue.Create queryResult (getCorrelationId context))
+                        let graceReturnValue = GraceReturnValue.Create queryResult (getCorrelationId context)
+                        match getGraceIds context with
+                        | Some graceIds ->
+                            graceReturnValue.Properties.Add(nameof(OwnerId), graceIds.OwnerId)
+                        | None -> ()
+                        return! context |> result200Ok graceReturnValue
                     | None -> 
                         return! context |> result400BadRequest (GraceError.Create (OwnerError.getErrorMessage OwnerDoesNotExist) (getCorrelationId context))
                 else
