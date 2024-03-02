@@ -110,9 +110,9 @@ module Organization =
         override this.OnPostActorMethodAsync(context) =
             let duration_ms = (getCurrentInstant().Minus(actorStartTime).TotalMilliseconds).ToString("F3")
             if String.IsNullOrEmpty(currentCommand) then
-                log.LogInformation("{CurrentInstant}: Finished {ActorName}.{MethodName}; Id: {Id}; CorrelationId: {correlationId}; Duration: {duration_ms}ms.", getCurrentInstantExtended(), actorName, context.MethodName, this.Id, this.correlationId, duration_ms)
+                log.LogInformation("{CurrentInstant}: CorrelationId: {correlationId}; Finished {ActorName}.{MethodName}; Id: {Id}; Duration: {duration_ms}ms.", getCurrentInstantExtended(), this.correlationId, actorName, context.MethodName, this.Id, duration_ms)
             else
-                log.LogInformation("{CurrentInstant}: Finished {ActorName}.{MethodName}; Command: {Command}; Id: {Id}; CorrelationId: {correlationId}; Duration: {duration_ms}ms.", getCurrentInstantExtended(), actorName, context.MethodName, currentCommand, this.Id, this.correlationId, duration_ms)
+                log.LogInformation("{CurrentInstant}: CorrelationId: {correlationId}; Finished {ActorName}.{MethodName}; Command: {Command}; Id: {Id}; Duration: {duration_ms}ms.", getCurrentInstantExtended(), this.correlationId, actorName, context.MethodName, currentCommand, this.Id, duration_ms)
             logScope.Dispose()
             Task.CompletedTask
             
@@ -183,7 +183,7 @@ module Organization =
                 | Some error -> return Error error
             }
 
-        member private this.SchedulePhysicalDeletion(deleteReason) =
+        member private this.SchedulePhysicalDeletion(deleteReason, correlationId) =
             this.RegisterReminderAsync(ReminderType.PhysicalDeletion, convertToByteArray deleteReason, Constants.DefaultPhysicalDeletionReminderTime, TimeSpan.FromMilliseconds(-1)).Result |> ignore
 
         interface IOrganizationActor with
@@ -248,7 +248,7 @@ module Organization =
                                             // Delete the repositories.
                                             match! this.LogicalDeleteRepositories(repositories, metadata, deleteReason) with
                                             | Ok _ -> 
-                                                this.SchedulePhysicalDeletion(deleteReason)
+                                                this.SchedulePhysicalDeletion(deleteReason, metadata.CorrelationId)
                                                 return Ok (LogicalDeleted (force, deleteReason))
                                             | Error error -> return Error error
                                     | OrganizationCommand.DeletePhysical ->
@@ -283,6 +283,9 @@ module Organization =
                     } :> Task
                 | ReminderType.PhysicalDeletion ->
                     task {
+                        // Get values from state.
+                        let (deleteReason, correlationId) = convertFromByteArray<string * string> state
+                        
                         log.LogInformation("Received PhysicalDeletion reminder for organization; OrganizationId: {organizationId}; OrganizationName: {organizationName}; OwnerId: {ownerId}.", organizationDto.OrganizationId, organizationDto.OrganizationName, organizationDto.OwnerId)
 
                         // Physically delete the actor state.
@@ -292,8 +295,8 @@ module Organization =
                         // Mark the actor as disposed, in case someone tries to use it before Dapr GC's it.
                         isDisposed <- true
 
-                        log.LogInformation("{currentInstant}: Deleted physical state for organization; OrganizationId: {organizationId}; OrganizationName: {organizationName}; OwnerId: {ownerId}; deletedDtoState: {deletedDtoState}; deletedEventsState: {deletedEventsState}.", 
-                            getCurrentInstantExtended(), organizationDto.OrganizationId, organizationDto.OrganizationName, organizationDto.OwnerId, deletedDtoState, deletedEventsState)
+                        log.LogInformation("{currentInstant}: CorrelationId: {correlationId}; Deleted physical state for organization; OrganizationId: {organizationId}; OrganizationName: {organizationName}; OwnerId: {ownerId}; deleteReason: {deleteReason}; deletedDtoState: {deletedDtoState}; deletedEventsState: {deletedEventsState}.", 
+                            getCurrentInstantExtended(), correlationId, organizationDto.OrganizationId, organizationDto.OrganizationName, organizationDto.OwnerId, deleteReason, deletedDtoState, deletedEventsState)
 
                         // Set all values to default.
                         organizationDto <- OrganizationDto.Default

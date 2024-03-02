@@ -468,11 +468,11 @@ module Branch =
                     let! parameters = context |> parse<GetBranchParameters>
                     let! result = processQuery context parameters validations 1 query
                     let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
-                    log.LogInformation("{CurrentInstant}: Finished {path}; BranchId: {branchId}; CorrelationId: {correlationId}; Duration: {duration_ms}ms.", getCurrentInstantExtended(), context.Request.Path, graceIds.BranchId, (getCorrelationId context), duration_ms)
+                    log.LogInformation("{CurrentInstant}: CorrelationId: {correlationId}; Finished {path}; BranchId: {branchId}; Duration: {duration_ms}ms.", getCurrentInstantExtended(), (getCorrelationId context), context.Request.Path, graceIds.BranchId, duration_ms)
                     return result
                 with ex ->
                     let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
-                    log.LogError(ex, "{CurrentInstant}: Error in {path}; BranchId: {branchId}; CorrelationId: {correlationId}; Duration: {duration_ms}ms.", getCurrentInstantExtended(), context.Request.Path, graceIds.BranchId, (getCorrelationId context), duration_ms)
+                    log.LogError(ex, "{CurrentInstant}: CorrelationId: {correlationId}; Error in {path}; BranchId: {branchId}; Duration: {duration_ms}ms.", getCurrentInstantExtended(), (getCorrelationId context), context.Request.Path, graceIds.BranchId, duration_ms)
                     return! context |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
             }
 
@@ -503,11 +503,11 @@ module Branch =
                     let! parameters = context |> parse<GetBranchParameters>
                     let! result = processQuery context parameters validations 1 query
                     let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
-                    log.LogInformation("{CurrentInstant}: Finished {path}; BranchId: {branchId}; CorrelationId: {correlationId}; Duration: {duration_ms}ms.", getCurrentInstantExtended(), context.Request.Path, graceIds.BranchId, (getCorrelationId context), duration_ms)
+                    log.LogInformation("{CurrentInstant}: CorrelationId: {correlationId}; Finished {path}; BranchId: {branchId}; Duration: {duration_ms}ms.", getCurrentInstantExtended(), (getCorrelationId context), context.Request.Path, graceIds.BranchId, duration_ms)
                     return result
                 with ex ->
                     let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
-                    log.LogError(ex, "{CurrentInstant}: Error in {path}; BranchId: {branchId}; CorrelationId: {correlationId}; Duration: {duration_ms}ms.", getCurrentInstantExtended(), context.Request.Path, graceIds.BranchId, (getCorrelationId context), duration_ms)
+                    log.LogError(ex, "{CurrentInstant}: CorrelationId: {correlationId}; Error in {path}; BranchId: {branchId}; Duration: {duration_ms}ms.", getCurrentInstantExtended(), (getCorrelationId context), context.Request.Path, graceIds.BranchId, duration_ms)
                     return! context |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
             }
 
@@ -537,11 +537,11 @@ module Branch =
                     let! parameters = context |> parse<BranchParameters>
                     let! result = processQuery context parameters validations 1 query
                     let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
-                    log.LogInformation("{CurrentInstant}: Finished {path}; BranchId: {branchId}; CorrelationId: {correlationId}; Duration: {duration_ms}ms.", getCurrentInstantExtended(), context.Request.Path, graceIds.BranchId, (getCorrelationId context), duration_ms)
+                    log.LogInformation("{CurrentInstant}: CorrelationId: {correlationId}; Finished {path}; BranchId: {branchId}; Duration: {duration_ms}ms.", getCurrentInstantExtended(), (getCorrelationId context), context.Request.Path, graceIds.BranchId, duration_ms)
                     return result
                 with ex ->
                     let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
-                    log.LogError(ex, "{CurrentInstant}: Error in {path}; BranchId: {branchId}; CorrelationId: {correlationId}; Duration: {duration_ms}ms.", getCurrentInstantExtended(), context.Request.Path, graceIds.BranchId, (getCorrelationId context), duration_ms)
+                    log.LogError(ex, "{CurrentInstant}: CorrelationId: {correlationId}; Error in {path}; BranchId: {branchId}; Duration: {duration_ms}ms.", getCurrentInstantExtended(), (getCorrelationId context), context.Request.Path, graceIds.BranchId, duration_ms)
                     return! context |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
             }
 
@@ -574,11 +574,11 @@ module Branch =
                     context.Items.Add("ReferenceId", parameters.ReferenceId)
                     let! result = processQuery context parameters validations 1 query
                     let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
-                    log.LogInformation("{CurrentInstant}: Finished {path}; BranchId: {branchId}; CorrelationId: {correlationId}; Duration: {duration_ms}ms.", getCurrentInstantExtended(), context.Request.Path, graceIds.BranchId, (getCorrelationId context), duration_ms)
+                    log.LogInformation("{CurrentInstant}: CorrelationId: {correlationId}; Finished {path}; BranchId: {branchId}; Duration: {duration_ms}ms.", getCurrentInstantExtended(), (getCorrelationId context), context.Request.Path, graceIds.BranchId, duration_ms)
                     return result
                 with ex ->
                     let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
-                    log.LogError(ex, "{CurrentInstant}: Error in {path}; BranchId: {branchId}; CorrelationId: {correlationId}; Duration: {duration_ms}ms.", getCurrentInstantExtended(), context.Request.Path, graceIds.BranchId, (getCorrelationId context), duration_ms)
+                    log.LogError(ex, "{CurrentInstant}: CorrelationId: {correlationId}; Error in {path}; BranchId: {branchId}; Duration: {duration_ms}ms.", getCurrentInstantExtended(), (getCorrelationId context), context.Request.Path, graceIds.BranchId, duration_ms)
                     return! context |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
             }
 
@@ -610,11 +610,11 @@ module Branch =
                     let! parameters = context |> parse<GetReferencesParameters>
                     let! result = processQuery context parameters validations (parameters.MaxCount) query
                     let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
-                    log.LogInformation("{CurrentInstant}: Finished {path}; BranchId: {branchId}; CorrelationId: {correlationId}; Duration: {duration_ms}ms.", getCurrentInstantExtended(), context.Request.Path, graceIds.BranchId, (getCorrelationId context), duration_ms)
+                    log.LogInformation("{CurrentInstant}: CorrelationId: {correlationId}; Finished {path}; BranchId: {branchId}; Duration: {duration_ms}ms.", getCurrentInstantExtended(), (getCorrelationId context), context.Request.Path, graceIds.BranchId, duration_ms)
                     return result
                 with ex ->
                     let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
-                    log.LogError(ex, "{CurrentInstant}: Error in {path}; BranchId: {branchId}; CorrelationId: {correlationId}; Duration: {duration_ms}ms.", getCurrentInstantExtended(), context.Request.Path, graceIds.BranchId, (getCorrelationId context), duration_ms)
+                    log.LogError(ex, "{CurrentInstant}: CorrelationId: {correlationId}; Error in {path}; BranchId: {branchId}; Duration: {duration_ms}ms.", getCurrentInstantExtended(), (getCorrelationId context), context.Request.Path, graceIds.BranchId, duration_ms)
                     return! context |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
             }
 
@@ -664,11 +664,11 @@ module Branch =
                     context.Items.Add(nameof(ReferenceType), parameters.ReferenceType)
                     let! result = processQuery context parameters validations (parameters.MaxCount) query
                     let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
-                    log.LogInformation("{CurrentInstant}: Finished {path}; BranchId: {branchId}; CorrelationId: {correlationId}; Duration: {duration_ms}ms.", getCurrentInstantExtended(), context.Request.Path, graceIds.BranchId, (getCorrelationId context), duration_ms)
+                    log.LogInformation("{CurrentInstant}: CorrelationId: {correlationId}; Finished {path}; BranchId: {branchId}; Duration: {duration_ms}ms.", getCurrentInstantExtended(), (getCorrelationId context), context.Request.Path, graceIds.BranchId, duration_ms)
                     return result
                 with ex ->
                     let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
-                    log.LogError(ex, "{CurrentInstant}: Error in {path}; BranchId: {branchId}; CorrelationId: {correlationId}; Duration: {duration_ms}ms.", getCurrentInstantExtended(), context.Request.Path, graceIds.BranchId, (getCorrelationId context), duration_ms)
+                    log.LogError(ex, "{CurrentInstant}: CorrelationId: {correlationId}; Error in {path}; BranchId: {branchId}; Duration: {duration_ms}ms.", getCurrentInstantExtended(), (getCorrelationId context), context.Request.Path, graceIds.BranchId, duration_ms)
                     return! context |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
             }
 
@@ -700,11 +700,11 @@ module Branch =
                     let! parameters = context |> parse<GetReferencesParameters>
                     let! result = processQuery context parameters validations (parameters.MaxCount) query
                     let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
-                    log.LogInformation("{CurrentInstant}: Finished {path}; BranchId: {branchId}; CorrelationId: {correlationId}; Duration: {duration_ms}ms.", getCurrentInstantExtended(), context.Request.Path, graceIds.BranchId, (getCorrelationId context), duration_ms)
+                    log.LogInformation("{CurrentInstant}: CorrelationId: {correlationId}; Finished {path}; BranchId: {branchId}; Duration: {duration_ms}ms.", getCurrentInstantExtended(), (getCorrelationId context), context.Request.Path, graceIds.BranchId, duration_ms)
                     return result
                 with ex ->
                     let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
-                    log.LogError(ex, "{CurrentInstant}: Error in {path}; BranchId: {branchId}; CorrelationId: {correlationId}; Duration: {duration_ms}ms.", getCurrentInstantExtended(), context.Request.Path, graceIds.BranchId, (getCorrelationId context), duration_ms)
+                    log.LogError(ex, "{CurrentInstant}: CorrelationId: {correlationId}; Error in {path}; BranchId: {branchId}; Duration: {duration_ms}ms.", getCurrentInstantExtended(), (getCorrelationId context), context.Request.Path, graceIds.BranchId, duration_ms)
                     return! context |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
             }
 
@@ -736,11 +736,11 @@ module Branch =
                     let! parameters = context |> parse<GetReferencesParameters>
                     let! result = processQuery context parameters validations (parameters.MaxCount) query
                     let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
-                    log.LogInformation("{CurrentInstant}: Finished {path}; BranchId: {branchId}; CorrelationId: {correlationId}; Duration: {duration_ms}ms.", getCurrentInstantExtended(), context.Request.Path, graceIds.BranchId, (getCorrelationId context), duration_ms)
+                    log.LogInformation("{CurrentInstant}: CorrelationId: {correlationId}; Finished {path}; BranchId: {branchId}; Duration: {duration_ms}ms.", getCurrentInstantExtended(), (getCorrelationId context), context.Request.Path, graceIds.BranchId, duration_ms)
                     return result
                 with ex ->
                     let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
-                    log.LogError(ex, "{CurrentInstant}: Error in {path}; BranchId: {branchId}; CorrelationId: {correlationId}; Duration: {duration_ms}ms.", getCurrentInstantExtended(), context.Request.Path, graceIds.BranchId, (getCorrelationId context), duration_ms)
+                    log.LogError(ex, "{CurrentInstant}: CorrelationId: {correlationId}; Error in {path}; BranchId: {branchId}; Duration: {duration_ms}ms.", getCurrentInstantExtended(), (getCorrelationId context), context.Request.Path, graceIds.BranchId, duration_ms)
                     return! context |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
             }
 
@@ -772,11 +772,11 @@ module Branch =
                     let! parameters = context |> parse<GetReferencesParameters>
                     let! result = processQuery context parameters validations (parameters.MaxCount) query
                     let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
-                    log.LogInformation("{CurrentInstant}: Finished {path}; BranchId: {branchId}; CorrelationId: {correlationId}; Duration: {duration_ms}ms.", getCurrentInstantExtended(), context.Request.Path, graceIds.BranchId, (getCorrelationId context), duration_ms)
+                    log.LogInformation("{CurrentInstant}: CorrelationId: {correlationId}; Finished {path}; BranchId: {branchId}; Duration: {duration_ms}ms.", getCurrentInstantExtended(), (getCorrelationId context), context.Request.Path, graceIds.BranchId, duration_ms)
                     return result
                 with ex ->
                     let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
-                    log.LogError(ex, "{CurrentInstant}: Error in {path}; BranchId: {branchId}; CorrelationId: {correlationId}; Duration: {duration_ms}ms.", getCurrentInstantExtended(), context.Request.Path, graceIds.BranchId, (getCorrelationId context), duration_ms)
+                    log.LogError(ex, "{CurrentInstant}: CorrelationId: {correlationId}; Error in {path}; BranchId: {branchId}; Duration: {duration_ms}ms.", getCurrentInstantExtended(), (getCorrelationId context), context.Request.Path, graceIds.BranchId, duration_ms)
                     return! context |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
             }
 
@@ -809,11 +809,11 @@ module Branch =
                     let! parameters = context |> parse<GetReferencesParameters>
                     let! result = processQuery context parameters validations (parameters.MaxCount) query
                     let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
-                    log.LogInformation("{CurrentInstant}: Finished {path}; BranchId: {branchId}; CorrelationId: {correlationId}; Duration: {duration_ms}ms.", getCurrentInstantExtended(), context.Request.Path, graceIds.BranchId, (getCorrelationId context), duration_ms)
+                    log.LogInformation("{CurrentInstant}: CorrelationId: {correlationId}; Finished {path}; BranchId: {branchId}; Duration: {duration_ms}ms.", getCurrentInstantExtended(), (getCorrelationId context), context.Request.Path, graceIds.BranchId, duration_ms)
                     return result
                 with ex ->
                     let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
-                    log.LogError(ex, "{CurrentInstant}: Error in {path}; BranchId: {branchId}; CorrelationId: {correlationId}; Duration: {duration_ms}ms.", getCurrentInstantExtended(), context.Request.Path, graceIds.BranchId, (getCorrelationId context), duration_ms)
+                    log.LogError(ex, "{CurrentInstant}: CorrelationId: {correlationId}; Error in {path}; BranchId: {branchId}; Duration: {duration_ms}ms.", getCurrentInstantExtended(), (getCorrelationId context), context.Request.Path, graceIds.BranchId, duration_ms)
                     return! context |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
             }
 
@@ -845,11 +845,11 @@ module Branch =
                     let! parameters = context |> parse<GetReferencesParameters>
                     let! result = processQuery context parameters validations (parameters.MaxCount) query
                     let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
-                    log.LogInformation("{CurrentInstant}: Finished {path}; BranchId: {branchId}; CorrelationId: {correlationId}; Duration: {duration_ms}ms.", getCurrentInstantExtended(), context.Request.Path, graceIds.BranchId, (getCorrelationId context), duration_ms)
+                    log.LogInformation("{CurrentInstant}: CorrelationId: {correlationId}; Finished {path}; BranchId: {branchId}; Duration: {duration_ms}ms.", getCurrentInstantExtended(), (getCorrelationId context), context.Request.Path, graceIds.BranchId, duration_ms)
                     return result
                 with ex ->
                     let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
-                    log.LogError(ex, "{CurrentInstant}: Error in {path}; BranchId: {branchId}; CorrelationId: {correlationId}; Duration: {duration_ms}ms.", getCurrentInstantExtended(), context.Request.Path, graceIds.BranchId, (getCorrelationId context), duration_ms)
+                    log.LogError(ex, "{CurrentInstant}: CorrelationId: {correlationId}; Error in {path}; BranchId: {branchId}; Duration: {duration_ms}ms.", getCurrentInstantExtended(), (getCorrelationId context), context.Request.Path, graceIds.BranchId, duration_ms)
                     return! context |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
             }
 
@@ -912,11 +912,11 @@ module Branch =
                     context.Items["ListContentsParameters"] <- parameters
                     let! result = processQuery context parameters validations 1 query
                     let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
-                    log.LogInformation("{CurrentInstant}: Finished {path}; BranchId: {branchId}; CorrelationId: {correlationId}; Duration: {duration_ms}ms.", getCurrentInstantExtended(), context.Request.Path, graceIds.BranchId, (getCorrelationId context), duration_ms)
+                    log.LogInformation("{CurrentInstant}: CorrelationId: {correlationId}; Finished {path}; BranchId: {branchId}; Duration: {duration_ms}ms.", getCurrentInstantExtended(), (getCorrelationId context), context.Request.Path, graceIds.BranchId, duration_ms)
                     return result
                 with ex ->
                     let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
-                    log.LogError(ex, "{CurrentInstant}: Error in {path}; BranchId: {branchId}; CorrelationId: {correlationId}; Duration: {duration_ms}ms.", getCurrentInstantExtended(), context.Request.Path, graceIds.BranchId, (getCorrelationId context), duration_ms)
+                    log.LogError(ex, "{CurrentInstant}: CorrelationId: {correlationId}; Error in {path}; BranchId: {branchId}; Duration: {duration_ms}ms.", getCurrentInstantExtended(), (getCorrelationId context), context.Request.Path, graceIds.BranchId, duration_ms)
                     return! context |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
             }
 
@@ -979,11 +979,11 @@ module Branch =
                     context.Items["ListContentsParameters"] <- parameters
                     let! result = processQuery context parameters validations 1 query
                     let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
-                    log.LogInformation("{CurrentInstant}: Finished {path}; BranchId: {branchId}; CorrelationId: {correlationId}; Duration: {duration_ms}ms.", getCurrentInstantExtended(), context.Request.Path, graceIds.BranchId, (getCorrelationId context), duration_ms)
+                    log.LogInformation("{CurrentInstant}: CorrelationId: {correlationId}; Finished {path}; BranchId: {branchId}; Duration: {duration_ms}ms.", getCurrentInstantExtended(), (getCorrelationId context), context.Request.Path, graceIds.BranchId, duration_ms)
                     return result
                 with ex ->
                     let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
-                    log.LogError(ex, "{CurrentInstant}: Error in {path}; BranchId: {branchId}; CorrelationId: {correlationId}; Duration: {duration_ms}ms.", getCurrentInstantExtended(), context.Request.Path, graceIds.BranchId, (getCorrelationId context), duration_ms)
+                    log.LogError(ex, "{CurrentInstant}: CorrelationId: {correlationId}; Error in {path}; BranchId: {branchId}; Duration: {duration_ms}ms.", getCurrentInstantExtended(), (getCorrelationId context), context.Request.Path, graceIds.BranchId, duration_ms)
                     return! context |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
             }
 
@@ -1068,6 +1068,6 @@ module Branch =
                     return! processQuery context parameters validations 1 query
                 with ex ->
                     let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
-                    log.LogError(ex, "{CurrentInstant}: Error in {path}; BranchId: {branchId}; CorrelationId: {correlationId}; Duration: {duration_ms}ms.", getCurrentInstantExtended(), context.Request.Path, graceIds.BranchId, (getCorrelationId context), duration_ms)
+                    log.LogError(ex, "{CurrentInstant}: CorrelationId: {correlationId}; Error in {path}; BranchId: {branchId}; Duration: {duration_ms}ms.", getCurrentInstantExtended(), (getCorrelationId context), context.Request.Path, graceIds.BranchId, duration_ms)
                     return! context |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
             }

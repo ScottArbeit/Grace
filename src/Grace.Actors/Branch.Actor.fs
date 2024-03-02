@@ -140,9 +140,9 @@ module Branch =
         override this.OnPostActorMethodAsync(context) =
             let duration_ms = (getCurrentInstant().Minus(actorStartTime).TotalMilliseconds).ToString("F3")
             if String.IsNullOrEmpty(currentCommand) then
-                log.LogInformation("{CurrentInstant}: Finished {ActorName}.{MethodName}; Id: {Id}; BranchName: {BranchName}; CorrelationId: {correlationId}; Duration: {duration_ms}ms.", getCurrentInstantExtended(), actorName, context.MethodName, this.Id, branchDto.BranchName, this.correlationId, duration_ms)
+                log.LogInformation("{CurrentInstant}: CorrelationId: {correlationId}; Finished {ActorName}.{MethodName}; Id: {Id}; BranchName: {BranchName}; Duration: {duration_ms}ms.", getCurrentInstantExtended(), this.correlationId, actorName, context.MethodName, this.Id, branchDto.BranchName, duration_ms)
             else
-                log.LogInformation("{CurrentInstant}: Finished {ActorName}.{MethodName}; Command: {Command}; Id: {Id}; BranchName: {BranchName}; CorrelationId: {correlationId}; Duration: {duration_ms}ms.", getCurrentInstantExtended(), actorName, context.MethodName, currentCommand, this.Id, branchDto.BranchName, this.correlationId, duration_ms)
+                log.LogInformation("{CurrentInstant}: CorrelationId: {correlationId}; Finished {ActorName}.{MethodName}; Command: {Command}; Id: {Id}; BranchName: {BranchName}; Duration: {duration_ms}ms.", getCurrentInstantExtended(), this.correlationId, actorName, context.MethodName, currentCommand, this.Id, branchDto.BranchName, duration_ms)
             logScope.Dispose()
             Task.CompletedTask
 
@@ -188,7 +188,7 @@ module Branch =
                     return Error graceError
             }
 
-        member private this.SchedulePhysicalDeletion(deleteReason) =
+        member private this.SchedulePhysicalDeletion(deleteReason, correlationId) =
             this.RegisterReminderAsync(ReminderType.PhysicalDeletion, convertToByteArray deleteReason, Constants.DefaultPhysicalDeletionReminderTime, TimeSpan.FromMilliseconds(-1)).Result |> ignore
 
         interface IBranchActor with
@@ -289,7 +289,7 @@ module Branch =
                                     | EnableTag enabled -> return EnabledTag enabled
                                     | RemoveReference referenceId -> return ReferenceRemoved referenceId
                                     | DeleteLogical (force, deleteReason) ->
-                                        this.SchedulePhysicalDeletion(deleteReason)
+                                        this.SchedulePhysicalDeletion(deleteReason, metadata.CorrelationId)
                                         return LogicalDeleted (force, deleteReason)
                                     | DeletePhysical ->
                                         isDisposed <- true
@@ -340,6 +340,9 @@ module Branch =
                     } :> Task
                 | ReminderType.PhysicalDeletion ->
                     task {
+                        // Get values from state.
+                        let (deleteReason, correlationId) = convertFromByteArray<string * string> state
+
                         // Delete the references for this branch.
 
 
@@ -347,8 +350,8 @@ module Branch =
                         let! deletedDtoState = stateManager.TryRemoveStateAsync(dtoStateName)
                         let! deletedEventsState = stateManager.TryRemoveStateAsync(eventsStateName)
 
-                        log.LogInformation("{currentInstant}: Deleted physical state for branch; RepositoryId: {repositoryId}; BranchId: {branchId}; BranchName: {branchName}; ParentBranchId: {parentBranchId}; deletedDtoState: {deletedDtoState}; deletedEventsState: {deletedEventsState}.", 
-                            getCurrentInstantExtended(), branchDto.RepositoryId, branchDto.BranchId, branchDto.BranchName, branchDto.ParentBranchId, deletedDtoState, deletedEventsState)
+                        log.LogInformation("{currentInstant}: CorrelationId: {correlationId}; Deleted physical state for branch; RepositoryId: {repositoryId}; BranchId: {branchId}; BranchName: {branchName}; ParentBranchId: {parentBranchId}; deleteReason: {deleteReason}; deletedDtoState: {deletedDtoState}; deletedEventsState: {deletedEventsState}.", 
+                            getCurrentInstantExtended(), correlationId, branchDto.RepositoryId, branchDto.BranchId, branchDto.BranchName, branchDto.ParentBranchId, deleteReason, deletedDtoState, deletedEventsState)
 
                         // Set all values to default.
                         branchDto <- BranchDto.Default

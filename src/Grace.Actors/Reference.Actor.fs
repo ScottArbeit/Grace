@@ -61,7 +61,7 @@ module Reference =
         override this.OnPostActorMethodAsync(context) =
             let duration_ms = (getCurrentInstant().Minus(actorStartTime).TotalMilliseconds).ToString("F3")
             log.LogInformation("{CurrentInstant}: Finished {ActorName}.{MethodName}; ReferenceId: {ReferenceId}; CorrelationID: {correlationID}; Duration: {duration_ms}ms.", 
-                getCurrentInstantExtended(), actorName, context.MethodName, this.Id, this.correlationId, duration_ms)
+                getCurrentInstantExtended(), this.correlationId, actorName, context.MethodName, this.Id, duration_ms)
             logScope.Dispose()
             Task.CompletedTask
 

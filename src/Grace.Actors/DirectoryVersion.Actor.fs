@@ -113,9 +113,9 @@ module DirectoryVersion =
         override this.OnPostActorMethodAsync(context) =
             let duration_ms = (getCurrentInstant().Minus(actorStartTime).TotalMilliseconds).ToString("F3")
             if String.IsNullOrEmpty(currentCommand) then
-                log.LogInformation("{CurrentInstant}: Finished {ActorName}.{MethodName}; Id: {Id}; CorrelationId: {correlationId}; Duration: {duration_ms}ms.", getCurrentInstantExtended(), actorName, context.MethodName, this.Id, this.correlationId, duration_ms)
+                log.LogInformation("{CurrentInstant}: CorrelationId: {correlationId}; Finished {ActorName}.{MethodName}; Id: {Id}; Duration: {duration_ms}ms.", getCurrentInstantExtended(), this.correlationId, actorName, context.MethodName, this.Id, duration_ms)
             else
-                log.LogInformation("{CurrentInstant}: Finished {ActorName}.{MethodName}; Command: {Command}; Id: {Id}; CorrelationId: {correlationId}; Duration: {duration_ms}ms.", getCurrentInstantExtended(), actorName, context.MethodName, currentCommand, this.Id, this.correlationId, duration_ms)
+                log.LogInformation("{CurrentInstant}: CorrelationId: {correlationId}; Finished {ActorName}.{MethodName}; Command: {Command}; Id: {Id}; Duration: {duration_ms}ms.", getCurrentInstantExtended(), this.correlationId, actorName, context.MethodName, currentCommand, this.Id, duration_ms)
             logScope.Dispose()
             Task.CompletedTask
 
@@ -132,7 +132,7 @@ module DirectoryVersion =
             //    log.LogError("{CurrentInstant}: Error in {methodName}. Exception: {exception}", getCurrentInstantExtended(), nameof(this.SetReminderToDeleteCachedState), createExceptionResponse ex)
 
         /// Sets a Dapr Actor reminder to perform a physical deletion of this owner.
-        member private this.SchedulePhysicalDeletion(deleteReason) =
+        member private this.SchedulePhysicalDeletion(deleteReason, correlationId) =
             this.RegisterReminderAsync(ReminderType.PhysicalDeletion, convertToByteArray deleteReason, Constants.DefaultPhysicalDeletionReminderTime, TimeSpan.FromMilliseconds(-1)).Wait()
 
         member private this.ApplyEvent directoryVersionEvent =
@@ -276,7 +276,7 @@ module DirectoryVersion =
                                     | SetRecursiveSize recursiveSize ->
                                         return Ok (RecursiveSizeSet recursiveSize)
                                     | DeleteLogical deleteReason ->
-                                        this.SchedulePhysicalDeletion(deleteReason)
+                                        this.SchedulePhysicalDeletion(deleteReason, metadata.CorrelationId)
                                         return Ok (LogicalDeleted deleteReason)
                                     | DeletePhysical ->
                                         isDisposed <- true

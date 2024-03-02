@@ -281,6 +281,11 @@ module Utilities =
         let json = serialize value
         Encoding.UTF8.GetBytes json
 
+    /// Deserializes a byte array to a value of type 'T' using Grace's default JsonSerializerOptions.
+    let convertFromByteArray<'T> (bytes: ReadOnlySpan<byte>) =
+        let json = Encoding.UTF8.GetString(bytes)
+        deserialize<'T> json
+
     /// Converts a string of hexadecimal numbers to a byte array. For example, "ab1503" -> [0xab, 0x15, 0x03]
     ///
     /// The hex string must have an even number of digits; for this function, "1a8" will throw an ArgumentException, but "01a8" is valid and will be converted to a byte array.

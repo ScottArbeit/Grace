@@ -89,9 +89,9 @@ module Repository =
         override this.OnPostActorMethodAsync(context) =
             let duration_ms = (getCurrentInstant().Minus(actorStartTime).TotalMilliseconds).ToString("F3")
             if String.IsNullOrEmpty(currentCommand) then
-                log.LogInformation("{CurrentInstant}: Finished {ActorName}.{MethodName}; Id: {Id}; CorrelationId: {correlationId}; Duration: {duration_ms}ms.", getCurrentInstantExtended(), actorName, context.MethodName, this.Id, this.correlationId, duration_ms)
+                log.LogInformation("{CurrentInstant}: CorrelationId: {correlationId}; Finished {ActorName}.{MethodName}; Id: {Id}; Duration: {duration_ms}ms.", getCurrentInstantExtended(), this.correlationId, actorName, context.MethodName, this.Id, duration_ms)
             else
-                log.LogInformation("{CurrentInstant}: Finished {ActorName}.{MethodName}; Command: {Command}; Id: {Id}; CorrelationId: {correlationId}; Duration: {duration_ms}ms.", getCurrentInstantExtended(), actorName, context.MethodName, currentCommand, this.Id, this.correlationId, duration_ms)
+                log.LogInformation("{CurrentInstant}: CorrelationId: {correlationId}; Finished {ActorName}.{MethodName}; Command: {Command}; Id: {Id}; Duration: {duration_ms}ms.", getCurrentInstantExtended(), this.correlationId, actorName, context.MethodName, currentCommand, this.Id, duration_ms)
             logScope.Dispose()
             Task.CompletedTask
 
@@ -256,7 +256,7 @@ module Repository =
             }
 
         /// Schedule an actor reminder to delete the repository from the database.
-        member private this.SchedulePhysicalDeletion(deleteReason) =
+        member private this.SchedulePhysicalDeletion(deleteReason, correlationId) =
             this.RegisterReminderAsync(ReminderType.PhysicalDeletion, convertToByteArray deleteReason, Constants.DefaultPhysicalDeletionReminderTime, TimeSpan.FromMilliseconds(-1)).Result |> ignore
 
         interface IExportable<RepositoryEvent> with
@@ -389,7 +389,7 @@ module Repository =
                                     | None -> return Error (GraceError.Create (RepositoryError.getErrorMessage RepositoryIdDoesNotExist) metadata.CorrelationId)
                     }
 
-                let processCommand command metadata =
+                let processCommand command (metadata: EventMetadata) =
                     task {
                         try
                             let! event =
@@ -415,7 +415,7 @@ module Repository =
                                         // Get the list of branches that aren't already deleted.
                                         let! branches = getBranches repositoryDto.RepositoryId Int32.MaxValue false
 
-                                        this.SchedulePhysicalDeletion(deleteReason)
+                                        this.SchedulePhysicalDeletion(deleteReason, metadata.CorrelationId)
 
                                         // If any branches are not already deleted, and we're not forcing the deletion, then throw an exception.
                                         if not <| force && branches.Count > 0 && branches.Any(fun branch -> branch.DeletedAt |> Option.isNone) then
@@ -424,7 +424,7 @@ module Repository =
                                         else
                                             // We have --force specified, so delete the branches that aren't already deleted.
                                             match! this.LogicalDeleteBranches(branches, metadata, deleteReason) with
-                                            | Ok _ -> this.SchedulePhysicalDeletion(deleteReason)
+                                            | Ok _ -> this.SchedulePhysicalDeletion(deleteReason, metadata.CorrelationId)
                                             | Error error -> raise (ApplicationException($"{error}"))
                                             return LogicalDeleted (force, deleteReason)
                                     | DeletePhysical ->
@@ -457,6 +457,9 @@ module Repository =
                     } :> Task
                 | ReminderType.PhysicalDeletion ->
                     task {
+                        // Get values from state.
+                        let (deleteReason, correlationId) = convertFromByteArray<string * string> state
+
                         // Physically delete the actor state.
                         let! deletedDtoState = stateManager.TryRemoveStateAsync(dtoStateName)
                         let! deletedEventsState = stateManager.TryRemoveStateAsync(eventsStateName)
@@ -464,8 +467,8 @@ module Repository =
                         // Mark the actor as disposed, in case someone tries to use it before Dapr GC's it.
                         isDisposed <- true
 
-                        log.LogInformation("{currentInstant}: Deleted physical state for repository; RepositoryId: {}; RepositoryName: {}; OrganizationId: {organizationId}; OwnerId: {ownerId}; deletedDtoState: {deletedDtoState}; deletedEventsState: {deletedEventsState}.",
-                            getCurrentInstantExtended(), repositoryDto.RepositoryId, repositoryDto.RepositoryName, repositoryDto.OrganizationId, repositoryDto.OwnerId, deletedDtoState, deletedEventsState)
+                        log.LogInformation("{currentInstant}: CorrelationId: {correlationId}; Deleted physical state for repository; RepositoryId: {}; RepositoryName: {}; OrganizationId: {organizationId}; OwnerId: {ownerId}; deleteReason: {deleteReason}; deletedDtoState: {deletedDtoState}; deletedEventsState: {deletedEventsState}.",
+                            getCurrentInstantExtended(), correlationId, repositoryDto.RepositoryId, repositoryDto.RepositoryName, repositoryDto.OrganizationId, repositoryDto.OwnerId, deleteReason, deletedDtoState, deletedEventsState)
 
                         // Set all values to default.
                         repositoryDto <- RepositoryDto.Default

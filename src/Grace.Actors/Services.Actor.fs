@@ -81,6 +81,7 @@ module Services =
     let setMemoryCache (cache: IMemoryCache) =
         memoryCache <- cache
 
+    let log = Lazy<ILogger>(fun () -> loggerFactory.CreateLogger("Services.Actor"))
     let linqSerializerOptions = CosmosLinqSerializerOptions(PropertyNamingPolicy = CosmosPropertyNamingPolicy.CamelCase)
 
     /// Custom QueryRequestOptions that requests Index Metrics only in DEBUG build.
@@ -904,8 +905,7 @@ module Services =
                     Activity.Current.SetTag("indexMetrics", $"{indexMetrics.Remove(indexMetrics.Length - 2, 2)}")
                                     .SetTag("requestCharge", $"{requestCharge.Remove(requestCharge.Length - 2, 2)}") |> ignore
                 with ex ->
-                    let log = loggerFactory.CreateLogger("Services.Actor")
-                    log.LogError(ex, "{currentInstant}: Exception in Services.getDirectoryBySha256Hash(). QueryDefinition: {queryDefinition}", getCurrentInstantExtended(), (serialize queryDefinition))
+                    log.Value.LogError(ex, "{currentInstant}: Exception in Services.getDirectoryBySha256Hash(). QueryDefinition: {queryDefinition}", getCurrentInstantExtended(), (serialize queryDefinition))
             | MongoDB -> ()
 
             if directoryVersion.DirectoryId <> DirectoryVersion.Default.DirectoryId then
@@ -945,9 +945,8 @@ module Services =
                     Activity.Current.SetTag("indexMetrics", $"{indexMetrics.Remove(indexMetrics.Length - 2, 2)}")
                                     .SetTag("requestCharge", $"{requestCharge.Remove(requestCharge.Length - 2, 2)}") |> ignore
                 with ex ->
-                    let log = loggerFactory.CreateLogger("Services.Actor")
                     let parameters = queryDefinition.GetQueryParameters() |> Seq.fold (fun (state: StringBuilder) (struct (k, v)) -> state.Append($"{k} = {v}; ")) (StringBuilder())
-                    log.LogError(ex, "{currentInstant}: Exception in Services.getRootDirectoryBySha256Hash(). QueryText: {queryText}. Parameters: {parameters}", getCurrentInstantExtended(), (queryDefinition.QueryText), parameters.ToString())
+                    log.Value.LogError(ex, "{currentInstant}: Exception in Services.getRootDirectoryBySha256Hash(). QueryText: {queryText}. Parameters: {parameters}", getCurrentInstantExtended(), (queryDefinition.QueryText), parameters.ToString())
             | MongoDB -> ()
 
             if directoryVersion.DirectoryId <> DirectoryVersion.Default.DirectoryId then

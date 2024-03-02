@@ -110,9 +110,9 @@ module Owner =
         override this.OnPostActorMethodAsync(context) =
             let duration_ms = (getCurrentInstant().Minus(actorStartTime).TotalMilliseconds).ToString("F3")
             if String.IsNullOrEmpty(currentCommand) then
-                log.LogInformation("{CurrentInstant}: Finished {ActorName}.{MethodName}; Id: {Id}; CorrelationId: {correlationId}; Duration: {duration_ms}ms.", getCurrentInstantExtended(), actorName, context.MethodName, this.Id, this.correlationId, duration_ms)
+                log.LogInformation("{CurrentInstant}: CorrelationId: {correlationId}; Finished {ActorName}.{MethodName}; Id: {Id}; Duration: {duration_ms}ms.", getCurrentInstantExtended(), this.correlationId, actorName, context.MethodName, this.Id, duration_ms)
             else
-                log.LogInformation("{CurrentInstant}: Finished {ActorName}.{MethodName}; Command: {Command}; Id: {Id}; CorrelationId: {correlationId}; Duration: {duration_ms}ms.", getCurrentInstantExtended(), actorName, context.MethodName, currentCommand, this.Id, this.correlationId, duration_ms)
+                log.LogInformation("{CurrentInstant}: CorrelationId: {correlationId}; Finished {ActorName}.{MethodName}; Command: {Command}; Id: {Id}; Duration: {duration_ms}ms.", getCurrentInstantExtended(), this.correlationId, actorName, context.MethodName, currentCommand, this.Id, duration_ms)
             logScope.Dispose()
             Task.CompletedTask
             
@@ -184,8 +184,8 @@ module Owner =
             }
 
         /// Sets a Dapr Actor reminder to perform a physical deletion of this owner.
-        member private this.SchedulePhysicalDeletion(deleteReason) =
-            this.RegisterReminderAsync(ReminderType.PhysicalDeletion, convertToByteArray deleteReason, Constants.DefaultPhysicalDeletionReminderTime, TimeSpan.FromMilliseconds(-1)).Result |> ignore
+        member private this.SchedulePhysicalDeletion(deleteReason, correlationId) =
+            this.RegisterReminderAsync(ReminderType.PhysicalDeletion, convertToByteArray (deleteReason, correlationId), Constants.DefaultPhysicalDeletionReminderTime, TimeSpan.FromMilliseconds(-1)).Result |> ignore
 
         interface IOwnerActor with
             member this.Exists correlationId = 
@@ -248,7 +248,7 @@ module Owner =
                                             // Delete the organizations.
                                             match! this.LogicalDeleteOrganizations(organizations, metadata, deleteReason) with
                                             | Ok _ -> 
-                                                this.SchedulePhysicalDeletion(deleteReason)
+                                                this.SchedulePhysicalDeletion(deleteReason, metadata.CorrelationId)
                                                 return Ok (LogicalDeleted (force, deleteReason))
                                             | Error error -> return Error error
                                     | OwnerCommand.DeletePhysical ->
@@ -283,14 +283,17 @@ module Owner =
                     } :> Task
                 | ReminderType.PhysicalDeletion ->
                     task {
+                        // Get values from state.
+                        let (deleteReason, correlationId) = convertFromByteArray<string * string> state
+
                         // Delete saved state for this actor.
                         let! deletedDtoState = stateManager.TryRemoveStateAsync(dtoStateName)
                         let! deletedEventsState = stateManager.TryRemoveStateAsync(eventsStateName)
 
                         // Mark the actor as disposed, in case someone tries to use it before Dapr GC's it.
                         isDisposed <- true
-                        log.LogInformation("{currentInstant}: Deleted physical state for owner; OwnerId: {ownerId}; OwnerName: {ownerName}; deletedDtoState: {deletedDtoState}; deletedEventsState: {deletedEventsState}.", 
-                            getCurrentInstantExtended(), ownerDto.OwnerId, ownerDto.OwnerName, deletedDtoState, deletedEventsState)
+                        log.LogInformation("{currentInstant}: CorrelationId: {correlationId}; Deleted physical state for owner; OwnerId: {ownerId}; OwnerName: {ownerName}; deleteReason: {deleteReason}; deletedDtoState: {deletedDtoState}; deletedEventsState: {deletedEventsState}.", 
+                            getCurrentInstantExtended(), correlationId, ownerDto.OwnerId, ownerDto.OwnerName, deleteReason, deletedDtoState, deletedEventsState)
 
                         // Set all values to default.
                         ownerDto <- OwnerDto.Default
