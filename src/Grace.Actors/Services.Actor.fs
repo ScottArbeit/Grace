@@ -7,6 +7,7 @@ open Dapr.Actors
 open Dapr.Actors.Client
 open Dapr.Client
 open Grace.Actors.Constants
+open Grace.Actors.Events
 open Grace.Actors.Interfaces
 open Grace.Shared
 open Grace.Shared.Constants
@@ -34,7 +35,6 @@ open System.Text
 open System.Threading.Tasks
 
 module Services =
-
     type ServerGraceIndex = Dictionary<RelativePath, DirectoryVersion>
     type ownerIdRecord = {ownerId: string}
     type organizationIdRecord = {organizationId: string}
@@ -467,6 +467,8 @@ module Services =
         member val public value = BranchDto.Default with get, set
     type ReferenceDtoValue() =
         member val public value = ReferenceDto.Default with get, set
+    type DirectoryVersionEventValue() =
+        member val public event: DirectoryVersion.DirectoryVersionEvent = {Event = DirectoryVersion.DirectoryVersionEventType.PhysicalDeleted; Metadata = (EventMetadata.New String.Empty String.Empty)} with get, set
     type DirectoryVersionValue() =
         member val public value = DirectoryVersion.Default with get, set
 
@@ -881,19 +883,29 @@ module Services =
             | AzureCosmosDb -> 
                 let indexMetrics = StringBuilder()
                 let requestCharge = StringBuilder()
-                let queryDefinition = QueryDefinition("""SELECT TOP 1 c["value"] FROM c WHERE c["value"].RepositoryId = @repositoryId AND STARTSWITH(c["value"].Sha256Hash, @sha256Hash, true) AND c["value"].Class = @class""")
+                let queryDefinition = QueryDefinition("""SELECT TOP 1 event FROM c JOIN event IN c["value"] 
+                                                            WHERE STARTSWITH(event.Event.created.Sha256Hash, @sha256Hash, true)
+                                                                AND event.Event.created.RepositoryId = @repositoryId
+                                                                AND event.Event.created.Class = @class""")
+                //let queryDefinition = QueryDefinition("""SELECT TOP 1 c["value"] FROM c WHERE c["value"].RepositoryId = @repositoryId AND STARTSWITH(c["value"].Sha256Hash, @sha256Hash, true) AND c["value"].Class = @class""")
                                         .WithParameter("@sha256Hash", $"{sha256Hash}")
                                         .WithParameter("@repositoryId", $"{repositoryId}")
                                         .WithParameter("@class", "DirectoryVersion")
-                let iterator = cosmosContainer.GetItemQueryIterator<DirectoryVersionValue>(queryDefinition, requestOptions = queryRequestOptions)
-                while iterator.HasMoreResults do
-                    let! results = DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> iterator.ReadNextAsync())
-                    indexMetrics.Append($"{results.IndexMetrics}, ") |> ignore
-                    requestCharge.Append($"{results.RequestCharge}, ") |> ignore
-                    if results.Count > 0 then
-                        directoryVersion <- results.Resource.FirstOrDefault().value
-                Activity.Current.SetTag("indexMetrics", $"{indexMetrics.Remove(indexMetrics.Length - 2, 2)}")
-                                .SetTag("requestCharge", $"{requestCharge.Remove(requestCharge.Length - 2, 2)}") |> ignore
+                try
+                    let iterator = cosmosContainer.GetItemQueryIterator<DirectoryVersionEventValue>(queryDefinition, requestOptions = queryRequestOptions)
+                    while iterator.HasMoreResults do
+                        let! results = DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> iterator.ReadNextAsync())
+                        indexMetrics.Append($"{results.IndexMetrics}, ") |> ignore
+                        requestCharge.Append($"{results.RequestCharge}, ") |> ignore
+                        if results.Resource.Count() > 0 then
+                            directoryVersion <- match results.Resource.FirstOrDefault().event.Event with
+                                                | DirectoryVersion.DirectoryVersionEventType.Created directoryVersion -> directoryVersion
+                                                | _ -> DirectoryVersion.Default
+                    Activity.Current.SetTag("indexMetrics", $"{indexMetrics.Remove(indexMetrics.Length - 2, 2)}")
+                                    .SetTag("requestCharge", $"{requestCharge.Remove(requestCharge.Length - 2, 2)}") |> ignore
+                with ex ->
+                    let log = loggerFactory.CreateLogger("Services.Actor")
+                    log.LogError(ex, "{currentInstant}: Exception in Services.getDirectoryBySha256Hash(). QueryDefinition: {queryDefinition}", getCurrentInstantExtended(), (serialize queryDefinition))
             | MongoDB -> ()
 
             if directoryVersion.DirectoryId <> DirectoryVersion.Default.DirectoryId then
@@ -911,26 +923,37 @@ module Services =
             | AzureCosmosDb -> 
                 let indexMetrics = StringBuilder()
                 let requestCharge = StringBuilder()
-                let queryDefinition = QueryDefinition($"""SELECT TOP 1 c["value"] FROM c WHERE c["value"].RepositoryId = @repositoryId AND STARTSWITH(c["value"].Sha256Hash, @sha256Hash, true) AND c["value"].RelativePath = @relativePath AND c["value"].Class = @class""")
+                let queryDefinition = QueryDefinition($"""SELECT TOP 1 event FROM c JOIN event in c["value"]
+                                                            WHERE STARTSWITH(event.Event.created.Sha256Hash, @sha256Hash, true)
+                                                                AND event.Event.created.RepositoryId = @repositoryId
+                                                                AND event.Event.created.RelativePath = @relativePath
+                                                                AND event.Event.created.Class = @class""")
                                         .WithParameter("@sha256Hash", $"{sha256Hash}")
                                         .WithParameter("@repositoryId", $"{repositoryId}")
                                         .WithParameter("@relativePath", $"{Constants.RootDirectoryPath}")
                                         .WithParameter("@class", "DirectoryVersion")
-                logToConsole $"{queryDefinition.QueryText}"
-                for (s, o) in queryDefinition.GetQueryParameters() do
-                    logToConsole $"{s}: {o}"
-                let iterator = cosmosContainer.GetItemQueryIterator<DirectoryVersionValue>(queryDefinition, requestOptions = queryRequestOptions)
-                while iterator.HasMoreResults do
-                    let! results = iterator.ReadNextAsync()
-                    indexMetrics.Append($"{results.IndexMetrics}, ") |> ignore
-                    requestCharge.Append($"{results.RequestCharge}, ") |> ignore
-                    if results.Count > 0 then
-                        directoryVersion <- results.Resource.FirstOrDefault().value
-                Activity.Current.SetTag("indexMetrics", $"{indexMetrics.Remove(indexMetrics.Length - 2, 2)}")
-                                .SetTag("requestCharge", $"{requestCharge.Remove(requestCharge.Length - 2, 2)}") |> ignore
+                try
+                    let iterator = cosmosContainer.GetItemQueryIterator<DirectoryVersionEventValue>(queryDefinition, requestOptions = queryRequestOptions)
+                    while iterator.HasMoreResults do
+                        let! results = iterator.ReadNextAsync()
+                        indexMetrics.Append($"{results.IndexMetrics}, ") |> ignore
+                        requestCharge.Append($"{results.RequestCharge}, ") |> ignore
+                        if results.Resource.Count() > 0 then
+                            directoryVersion <- match results.Resource.FirstOrDefault().event.Event with
+                                                    | DirectoryVersion.DirectoryVersionEventType.Created directoryVersion -> directoryVersion
+                                                    | _ -> DirectoryVersion.Default
+                    Activity.Current.SetTag("indexMetrics", $"{indexMetrics.Remove(indexMetrics.Length - 2, 2)}")
+                                    .SetTag("requestCharge", $"{requestCharge.Remove(requestCharge.Length - 2, 2)}") |> ignore
+                with ex ->
+                    let log = loggerFactory.CreateLogger("Services.Actor")
+                    let parameters = queryDefinition.GetQueryParameters() |> Seq.fold (fun (state: StringBuilder) (struct (k, v)) -> state.Append($"{k} = {v}; ")) (StringBuilder())
+                    log.LogError(ex, "{currentInstant}: Exception in Services.getRootDirectoryBySha256Hash(). QueryText: {queryText}. Parameters: {parameters}", getCurrentInstantExtended(), (queryDefinition.QueryText), parameters.ToString())
             | MongoDB -> ()
 
-            return directoryVersion
+            if directoryVersion.DirectoryId <> DirectoryVersion.Default.DirectoryId then
+                return Some directoryVersion
+            else
+                return None
         }
 
     /// Gets a Root DirectoryVersion by searching using a Sha256Hash value.

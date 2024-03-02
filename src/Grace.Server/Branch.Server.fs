@@ -965,7 +965,7 @@ module Branch =
                                 return contents
                             else 
                                 // By process of elimination, we have a Sha256Hash, so we'll retrieve the DirectoryVersion using that..
-                                match! Services.getDirectoryBySha256Hash (Guid.Parse(graceIds.RepositoryId)) listContentsParameters.Sha256Hash (getCorrelationId context) with
+                                match! getRootDirectoryBySha256Hash (Guid.Parse(graceIds.RepositoryId)) listContentsParameters.Sha256Hash (getCorrelationId context) with
                                 | Some directoryVersion ->
                                     let directoryActorId = DirectoryVersion.GetActorId directoryVersion.DirectoryId
                                     let directoryActorProxy = actorProxyFactory.CreateActorProxy<IDirectoryVersionActor>(directoryActorId, ActorName.DirectoryVersion)
@@ -1022,16 +1022,17 @@ module Branch =
                                         | Some referenceDto -> 
                                             return! getRootDirectoryBySha256Hash repositoryId referenceDto.Sha256Hash (getCorrelationId context)
                                         | None ->
-                                            return DirectoryVersion.Default
+                                            return None
                                 }
 
-                            if rootDirectoryVersion.DirectoryId <> DirectoryVersion.Default.DirectoryId then
+                            match rootDirectoryVersion with
+                            | Some rootDirectoryVersion ->
                                 let directoryVersionActorId = ActorId($"{rootDirectoryVersion.DirectoryId}")
                                 let directoryVersionActorProxy = ApplicationContext.actorProxyFactory.CreateActorProxy<IDirectoryVersionActor>(directoryVersionActorId, ActorName.DirectoryVersion)
                                 let! directoryVersions = directoryVersionActorProxy.GetDirectoryVersionsRecursive false (getCorrelationId context)
                                 let directoryIds = directoryVersions.Select(fun dv -> dv.DirectoryId).ToList()
                                 return directoryIds
-                            else
+                            | None ->
                                 return List<DirectoryId>()
                         }
 
