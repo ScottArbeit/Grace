@@ -95,10 +95,10 @@ module Common =
                 let endTime = getCurrentInstant()
                 if response.IsSuccessStatusCode then
                     let! graceReturn = response.Content.ReadFromJsonAsync<GraceReturnValue<'U>>(Constants.JsonSerializerOptions)
-                    return Ok graceReturn |> enhance ("ServerElapsedTime", $"{(endTime - startTime).TotalMilliseconds:F3} ms")
+                    return Ok graceReturn |> enhance ("ServerResponseTime", $"{(endTime - startTime).TotalMilliseconds:F3} ms")
                 else
                     let! graceError = response.Content.ReadFromJsonAsync<GraceError>(Constants.JsonSerializerOptions)
-                    return Error graceError |> enhance ("ServerElapsedTime", $"{(endTime - startTime).TotalMilliseconds:F3} ms")
+                    return Error graceError |> enhance ("ServerResponseTime", $"{(endTime - startTime).TotalMilliseconds:F3} ms")
             with ex ->
                 let exceptionResponse = Utilities.createExceptionResponse ex
                 return Error (GraceError.Create (serialize exceptionResponse) parameters.CorrelationId)
@@ -125,7 +125,7 @@ module Common =
                     let! graceReturnValue = response.Content.ReadFromJsonAsync<GraceReturnValue<'U>>(Constants.JsonSerializerOptions)
                     //let! blah = response.Content.ReadAsStringAsync()
                     //let graceReturnValue = JsonSerializer.Deserialize<GraceReturnValue<'U>>(blah, Constants.JsonSerializerOptions)
-                    return Ok graceReturnValue |> enhance ("ServerElapsedTime", $"{(endTime - startTime).TotalMilliseconds:F3} ms")
+                    return Ok graceReturnValue |> enhance ("ServerResponseTime", $"{(endTime - startTime).TotalMilliseconds:F3} ms")
                 else
                     if response.StatusCode = HttpStatusCode.NotFound then
                         return Error (GraceError.Create $"Server endpoint {route} not found." parameters.CorrelationId)
@@ -134,7 +134,7 @@ module Common =
                         //logToConsole $"responseAsString: {responseAsString}"
                         //let graceError = GraceError.Create responseAsString parameters.CorrelationId
                         let! graceError = response.Content.ReadFromJsonAsync<GraceError>(Constants.JsonSerializerOptions)
-                        return Error graceError |> enhance ("ServerElapsedTime", $"{(endTime - startTime).TotalMilliseconds:F3} ms") |> enhance ("StatusCode", $"{response.StatusCode}")
+                        return Error graceError |> enhance ("ServerResponseTime", $"{(endTime - startTime).TotalMilliseconds:F3} ms") |> enhance ("StatusCode", $"{response.StatusCode}")
             with ex ->
                 let exceptionResponse = Utilities.createExceptionResponse ex
                 return Error (GraceError.Create ($"{exceptionResponse}") parameters.CorrelationId)

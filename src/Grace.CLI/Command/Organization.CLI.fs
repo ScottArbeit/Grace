@@ -181,8 +181,7 @@ module Organization =
                 | Ok graceReturnValue ->
                     let jsonText = JsonText(serialize graceReturnValue.ReturnValue)
                     AnsiConsole.Write(jsonText)
-                    AnsiConsole.WriteLine()
-                    return 0
+                    return Ok graceReturnValue |> renderOutput parseResult
                 | Error graceError ->
                     return Error graceError |> renderOutput parseResult
             })
