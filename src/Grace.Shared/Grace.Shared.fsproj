@@ -7,7 +7,7 @@
 		<Description>The shared core module for Grace.</Description>
 		<GenerateDocumentationFile>true</GenerateDocumentationFile>
 		<AccelerateBuildsInVisualStudio>true</AccelerateBuildsInVisualStudio>
-		<NoWarn>67;1057</NoWarn>
+		<NoWarn>67;1057,3391</NoWarn>
 		<WarningsAsErrors>FS0025</WarningsAsErrors>
 		<Platforms>AnyCPU;x64</Platforms>
 		<OtherFlags>--test:GraphBasedChecking</OtherFlags>

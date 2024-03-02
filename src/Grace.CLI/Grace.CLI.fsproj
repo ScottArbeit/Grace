@@ -12,7 +12,7 @@
 		<GenerateDocumentationFile>true</GenerateDocumentationFile>
 		<AccelerateBuildsInVisualStudio>true</AccelerateBuildsInVisualStudio>
 		<WarningsAsErrors>FS0025</WarningsAsErrors>
-		<NoWarn>67;NETSDK1057</NoWarn>
+		<NoWarn>67;1057,3391</NoWarn>
 		<Platforms>AnyCPU</Platforms>
 		<FSharpPreferNetFrameworkTools>False</FSharpPreferNetFrameworkTools>
 		<OtherFlags>--test:GraphBasedChecking</OtherFlags>

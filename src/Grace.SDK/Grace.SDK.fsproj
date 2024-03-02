@@ -8,7 +8,7 @@
 		<AccelerateBuildsInVisualStudio>true</AccelerateBuildsInVisualStudio>
 		<WarnOn>3390;$(WarnOn)</WarnOn>
 		<WarningsAsErrors>FS0025</WarningsAsErrors>
-		<NoWarn>NETSDK1057</NoWarn>
+		<NoWarn>1057,3391</NoWarn>
 		<Platforms>AnyCPU</Platforms>
 		<OtherFlags>--test:GraphBasedChecking</OtherFlags>
 		<OtherFlags>--test:ParallelOptimization</OtherFlags>

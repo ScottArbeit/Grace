@@ -16,7 +16,7 @@
 		<WarningsAsErrors>FS0025</WarningsAsErrors>
 		<GenerateDocumentationFile>false</GenerateDocumentationFile>
 		<AccelerateBuildsInVisualStudio>true</AccelerateBuildsInVisualStudio>
-		<NoWarn>NETSDK1057</NoWarn>
+		<NoWarn>1057,3391</NoWarn>
 		<UseAppHost>false</UseAppHost>
 		<PackageProjectUrl>https://github.com/ScottArbeit/Grace</PackageProjectUrl>
 		<OtherFlags>--test:GraphBasedChecking</OtherFlags>
