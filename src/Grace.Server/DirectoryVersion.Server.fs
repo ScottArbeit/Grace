@@ -51,8 +51,8 @@ module DirectoryVersion =
                 if validationsPassed then
                     let! cmd = command parameters context
                     match cmd with
-                    | Ok graceReturn -> 
-                        return! context |> result200Ok graceReturn
+                    | Ok graceReturnValue -> 
+                        return! context |> result200Ok graceReturnValue
                     | Error graceError -> return! context |> result400BadRequest graceError
                 else
                     let! error = validationResults |> getFirstError
@@ -77,10 +77,10 @@ module DirectoryVersion =
                     let graceReturnValue = GraceReturnValue.Create queryResult (getCorrelationId context)
                     match getGraceIds context with
                     | Some graceIds ->
-                        graceReturnValue.Properties.Add(nameof(OwnerId), graceIds.OwnerId)
-                        graceReturnValue.Properties.Add(nameof(OrganizationId), graceIds.OrganizationId)
-                        graceReturnValue.Properties.Add(nameof(RepositoryId), graceIds.RepositoryId)
-                        graceReturnValue.Properties.Add(nameof(BranchId), graceIds.BranchId)
+                        graceReturnValue.Properties[nameof(OwnerId)] <- graceIds.OwnerId
+                        graceReturnValue.Properties[nameof(OrganizationId)] <- graceIds.OrganizationId
+                        graceReturnValue.Properties[nameof(RepositoryId)] <- graceIds.RepositoryId
+                        graceReturnValue.Properties[nameof(BranchId)] <- graceIds.BranchId
                     | None -> ()
                     return! context |> result200Ok graceReturnValue
                 else

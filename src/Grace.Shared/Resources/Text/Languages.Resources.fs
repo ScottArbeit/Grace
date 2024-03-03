@@ -396,6 +396,7 @@ module Text =
         | EitherOrganizationIdOrOrganizationNameIsRequired
         | EitherOwnerIdOrOwnerNameIsRequired
         | EitherRepositoryIdOrRepositoryNameIsRequired
+        | EitherToBranchIdOrToBranchNameIsRequired
         | ExceptionCaught
         | FailedCommunicatingWithObjectStorage
         | FailedCreatingInitialBranch

@@ -54,12 +54,12 @@ module Owner =
                     task {
                         let actorProxy = getActorProxy context ownerId
                         match! actorProxy.Handle cmd (createMetadata context) with
-                        | Ok graceReturn ->
+                        | Ok graceReturnValue ->
                             match getGraceIds context with
                             | Some graceIds ->
-                                graceReturn.Properties.Add(nameof(OwnerId), graceIds.OwnerId)
+                                graceReturnValue.Properties[nameof(OwnerId)] <- graceIds.OwnerId
                             | None -> ()
-                            return! context |> result200Ok graceReturn
+                            return! context |> result200Ok graceReturnValue
                         | Error graceError ->
                             log.LogDebug("{currentInstant}: In Branch.Server.handleCommand: error from actorProxy.Handle: {error}", getCurrentInstantExtended(), (graceError.ToString()))
                             return! context |> result400BadRequest {graceError with Properties = getPropertiesAsDictionary parameters}
@@ -113,7 +113,7 @@ module Owner =
                         let graceReturnValue = GraceReturnValue.Create queryResult (getCorrelationId context)
                         match getGraceIds context with
                         | Some graceIds ->
-                            graceReturnValue.Properties.Add(nameof(OwnerId), graceIds.OwnerId)
+                            graceReturnValue.Properties[nameof(OwnerId)] <- graceIds.OwnerId
                         | None -> ()
                         return! context |> result200Ok graceReturnValue
                     | None -> 

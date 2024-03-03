@@ -34,6 +34,7 @@ module en_US =
             | EitherOrganizationIdOrOrganizationNameIsRequired -> "Either a OrganizationId or a OrganizationName must be provided. If both are provided, OrganizationId will be used."
             | EitherOwnerIdOrOwnerNameIsRequired -> "Either an OwnerId or an OwnerName must be provided. If both are provided, OwnerId will be used."
             | EitherRepositoryIdOrRepositoryNameIsRequired -> "Either a RepositoryId, or a RepositoryName, must be provided. If both are provided, RepositoryId will be used."
+            | EitherToBranchIdOrToBranchNameIsRequired -> "Either a ToBranchId or a ToBranchName must be provided. If both are provided, ToBranchId will be used."
             | ExceptionCaught -> "An exception was caught while processing the request."
             | FailedCommunicatingWithObjectStorage -> "A failure occurred when communicating with object storage."
             | FailedCreatingInitialBranch -> "A server error occurred while attempting to create the initial branch."

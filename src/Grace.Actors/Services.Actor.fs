@@ -199,29 +199,34 @@ module Services =
             elif String.IsNullOrEmpty(ownerName) then
                 return None
             else
-                let ownerNameActorProxy = actorProxyFactory.CreateActorProxy<IOwnerNameActor>(ActorId(ownerName), ActorName.OwnerName)
-                match! ownerNameActorProxy.GetOwnerId correlationId with
-                | Some ownerId -> return Some ownerId
-                | None ->
-                    match actorStateStorageProvider with
-                    | Unknown -> return None
-                    | AzureCosmosDb -> 
-                        let queryDefinition = QueryDefinition("""SELECT c["value"].OwnerId FROM c WHERE STRINGEQUALS(c["value"].OwnerName, @ownerName, true) AND c["value"].Class = @class""")
-                                                .WithParameter("@ownerName", ownerName)
-                                                .WithParameter("@class", "OwnerDto")
-                        let iterator = DefaultRetryPolicy.Execute(fun () -> cosmosContainer.GetItemQueryIterator<ownerIdRecord>(queryDefinition))
-                        if iterator.HasMoreResults then
-                            let! currentResultSet = iterator.ReadNextAsync()
-                            let ownerId = currentResultSet.FirstOrDefault({ownerId = String.Empty}).ownerId
-                            if String.IsNullOrEmpty(ownerId) then
-                                return None
-                            else
-                                do! ownerNameActorProxy.SetOwnerId ownerId correlationId
-                                ownerGuid <- Guid.Parse(ownerId)
-                                use newCacheEntry = memoryCache.CreateEntry(ownerGuid, Value = null, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
-                                return Some ownerId
-                        else return None
-                    | MongoDB -> return None
+                let cached = memoryCache.TryGetValue($"OwN:{ownerName}", &ownerGuid)
+                if cached then
+                    return Some (ownerGuid.ToString())
+                else
+                    let ownerNameActorProxy = actorProxyFactory.CreateActorProxy<IOwnerNameActor>(ActorId(ownerName), ActorName.OwnerName)
+                    match! ownerNameActorProxy.GetOwnerId correlationId with
+                    | Some ownerId -> return Some ownerId
+                    | None ->
+                        match actorStateStorageProvider with
+                        | Unknown -> return None
+                        | AzureCosmosDb -> 
+                            let queryDefinition = QueryDefinition("""SELECT c["value"].OwnerId FROM c WHERE STRINGEQUALS(c["value"].OwnerName, @ownerName, true) AND c["value"].Class = @class""")
+                                                    .WithParameter("@ownerName", ownerName)
+                                                    .WithParameter("@class", "OwnerDto")
+                            let iterator = DefaultRetryPolicy.Execute(fun () -> cosmosContainer.GetItemQueryIterator<ownerIdRecord>(queryDefinition))
+                            if iterator.HasMoreResults then
+                                let! currentResultSet = iterator.ReadNextAsync()
+                                let ownerId = currentResultSet.FirstOrDefault({ownerId = String.Empty}).ownerId
+                                if String.IsNullOrEmpty(ownerId) then
+                                    return None
+                                else
+                                    do! ownerNameActorProxy.SetOwnerId ownerId correlationId
+                                    ownerGuid <- Guid.Parse(ownerId)
+                                    use newCacheEntry = memoryCache.CreateEntry(ownerGuid, Value = null, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
+                                    use newCacheEntry2 = memoryCache.CreateEntry($"OwN:{ownerName}", Value = ownerGuid, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
+                                    return Some ownerId
+                            else return None
+                        | MongoDB -> return None
         }
 
     /// Gets the OrganizationId by either returning OrganizationId if provided, or searching by OrganizationName.
@@ -246,30 +251,35 @@ module Services =
                 elif String.IsNullOrEmpty(organizationName) then
                     return None
                 else
-                    let organizationNameActorProxy = actorProxyFactory.CreateActorProxy<IOrganizationNameActor>(ActorId(organizationName), ActorName.OrganizationName)
-                    match! organizationNameActorProxy.GetOrganizationId correlationId with
-                    | Some ownerId -> return Some ownerId
-                    | None ->
-                        match actorStateStorageProvider with
-                        | Unknown -> return None
-                        | AzureCosmosDb -> 
-                            let queryDefinition = QueryDefinition("""SELECT c["value"].OrganizationId FROM c WHERE STRINGEQUALS(c["value"].OrganizationName, @organizationName, true) AND c["value"].OwnerId = @ownerId AND c["value"].Class = @class""")
-                                                    .WithParameter("@organizationName", organizationName)
-                                                    .WithParameter("@ownerId", ownerId)
-                                                    .WithParameter("@class", "OrganizationDto")
-                            let iterator = DefaultRetryPolicy.Execute(fun () -> cosmosContainer.GetItemQueryIterator<organizationIdRecord>(queryDefinition))
-                            if iterator.HasMoreResults then
-                                let! currentResultSet = iterator.ReadNextAsync()
-                                let organizationId = currentResultSet.FirstOrDefault({organizationId = String.Empty}).organizationId
-                                if String.IsNullOrEmpty(organizationId) then
-                                    return None
-                                else
-                                    do! organizationNameActorProxy.SetOrganizationId organizationId correlationId
-                                    organizationGuid <- Guid.Parse(organizationId)
-                                    use newCacheEntry = memoryCache.CreateEntry(organizationGuid, Value = null, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
-                                    return Some organizationId
-                            else return None
-                        | MongoDB -> return None
+                    let cached = memoryCache.TryGetValue($"OrN:{organizationName}", &organizationGuid)
+                    if cached then
+                        return Some (organizationGuid.ToString())
+                    else
+                        let organizationNameActorProxy = actorProxyFactory.CreateActorProxy<IOrganizationNameActor>(ActorId(organizationName), ActorName.OrganizationName)
+                        match! organizationNameActorProxy.GetOrganizationId correlationId with
+                        | Some ownerId -> return Some ownerId
+                        | None ->
+                            match actorStateStorageProvider with
+                            | Unknown -> return None
+                            | AzureCosmosDb -> 
+                                let queryDefinition = QueryDefinition("""SELECT c["value"].OrganizationId FROM c WHERE STRINGEQUALS(c["value"].OrganizationName, @organizationName, true) AND c["value"].OwnerId = @ownerId AND c["value"].Class = @class""")
+                                                        .WithParameter("@organizationName", organizationName)
+                                                        .WithParameter("@ownerId", ownerId)
+                                                        .WithParameter("@class", "OrganizationDto")
+                                let iterator = DefaultRetryPolicy.Execute(fun () -> cosmosContainer.GetItemQueryIterator<organizationIdRecord>(queryDefinition))
+                                if iterator.HasMoreResults then
+                                    let! currentResultSet = iterator.ReadNextAsync()
+                                    let organizationId = currentResultSet.FirstOrDefault({organizationId = String.Empty}).organizationId
+                                    if String.IsNullOrEmpty(organizationId) then
+                                        return None
+                                    else
+                                        do! organizationNameActorProxy.SetOrganizationId organizationId correlationId
+                                        organizationGuid <- Guid.Parse(organizationId)
+                                        use newCacheEntry = memoryCache.CreateEntry(organizationGuid, Value = null, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
+                                        use newCacheEntry2 = memoryCache.CreateEntry($"OrN:{organizationName}", Value = organizationGuid, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
+                                        return Some organizationId
+                                else return None
+                            | MongoDB -> return None
             | None -> return None
         }
 
@@ -297,77 +307,36 @@ module Services =
                     elif String.IsNullOrEmpty(repositoryName) then
                         return None
                     else
-                        let repositoryNameActorProxy = actorProxyFactory.CreateActorProxy<IRepositoryNameActor>(ActorId(repositoryName), ActorName.RepositoryName)
-                        match! repositoryNameActorProxy.GetRepositoryId correlationId with
-                        | Some repositoryId -> return Some repositoryId
-                        | None ->
-                            match actorStateStorageProvider with
-                            | Unknown -> return None
-                            | AzureCosmosDb -> 
-                                let queryDefinition = QueryDefinition("""SELECT c["value"].RepositoryId FROM c WHERE STRINGEQUALS(c["value"].RepositoryName, @repositoryName) AND c["value"].OwnerId = @ownerId AND c["value"].OrganizationId = @organizationId AND c["value"].Class = @class""")
-                                                        .WithParameter("@repositoryName", repositoryName)
-                                                        .WithParameter("@organizationId", organizationId)
-                                                        .WithParameter("@ownerId", ownerId)
-                                                        .WithParameter("@class", "RepositoryDto")
-                                let iterator = cosmosContainer.GetItemQueryIterator<repositoryIdRecord>(queryDefinition)
-                                if iterator.HasMoreResults then
-                                    let! currentResultSet = iterator.ReadNextAsync()
-                                    let repositoryId = currentResultSet.FirstOrDefault({repositoryId = String.Empty}).repositoryId
-                                    if String.IsNullOrEmpty(repositoryId) then
-                                        return None
-                                    else
-                                        do! repositoryNameActorProxy.SetRepositoryId repositoryId correlationId
-                                        repositoryGuid <- Guid.Parse(repositoryId)
-                                        use newCacheEntry = memoryCache.CreateEntry(repositoryGuid, Value = null, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
-                                        return Some repositoryId
-                                else return None
-                            | MongoDB -> return None
-                | None -> return None
-            | None -> return None
-        }
-
-    let resolveRepositoryId_Linq (ownerId: string) (ownerName: string) (organizationId: string) (organizationName: string) (repositoryId: string) (repositoryName: string) (correlationId: CorrelationId) =
-        task {
-            match! resolveOwnerId ownerId ownerName correlationId with
-            | Some ownerId ->
-                match! resolveOrganizationId ownerId String.Empty organizationId organizationName correlationId with
-                | Some organizationId ->
-                    if not <| String.IsNullOrEmpty(repositoryId) then
-                        return Some repositoryId
-                    elif String.IsNullOrEmpty(repositoryName) then
-                        return None
-                    else
-                        let actorProxy = actorProxyFactory.CreateActorProxy<IRepositoryNameActor>(ActorId(repositoryName), ActorName.RepositoryName)
-                        match! actorProxy.GetRepositoryId correlationId with
-                        | Some ownerId -> return Some ownerId
-                        | None ->
-                            match actorStateStorageProvider with
-                            | Unknown -> return None
-                            | AzureCosmosDb -> 
-                                let indexMetrics = StringBuilder()
-                                let requestCharge = StringBuilder()
-                                let query = cosmosContainer.GetItemLinqQueryable<RepositoryDto>(linqSerializerOptions = linqSerializerOptions, requestOptions = queryRequestOptions)
-                                                .Where(fun repo -> repo.RepositoryName = (RepositoryName repositoryName) &&
-                                                                   repo.OrganizationId = Guid.Parse(organizationId) && 
-                                                                   repo.OwnerId = Guid.Parse(ownerId) &&
-                                                                   repo.Class = "RepositoryDto")
-                                                .Select(fun repo -> $"{repo.RepositoryId}")
-                                                .Take(1)
-                                                .ToFeedIterator()
-                                let mutable retrievedRepositoryId = String.Empty
-                                while query.HasMoreResults do
-                                    let! results = DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> query.ReadNextAsync())
-                                    retrievedRepositoryId <- results.Resource.FirstOrDefault(String.Empty)
-                                    indexMetrics.Append($"{results.IndexMetrics}, ") |> ignore
-                                    requestCharge.Append($"{results.RequestCharge}, ") |> ignore
-                                Activity.Current.SetTag("indexMetrics", $"{indexMetrics.Remove(indexMetrics.Length - 2, 2)}")
-                                                .SetTag("requestCharge", $"{requestCharge.Remove(requestCharge.Length - 2, 2)}") |> ignore
-                                if String.IsNullOrEmpty(retrievedRepositoryId) then
-                                    return None
-                                else
-                                    do! actorProxy.SetRepositoryId retrievedRepositoryId correlationId
-                                    return Some retrievedRepositoryId
-                            | MongoDB -> return None
+                        let cached = memoryCache.TryGetValue($"ReN:{repositoryName}", &repositoryGuid)
+                        if cached then
+                            return Some (repositoryGuid.ToString())
+                        else
+                            let repositoryNameActorProxy = actorProxyFactory.CreateActorProxy<IRepositoryNameActor>(ActorId(repositoryName), ActorName.RepositoryName)
+                            match! repositoryNameActorProxy.GetRepositoryId correlationId with
+                            | Some repositoryId -> return Some repositoryId
+                            | None ->
+                                match actorStateStorageProvider with
+                                | Unknown -> return None
+                                | AzureCosmosDb -> 
+                                    let queryDefinition = QueryDefinition("""SELECT c["value"].RepositoryId FROM c WHERE STRINGEQUALS(c["value"].RepositoryName, @repositoryName) AND c["value"].OwnerId = @ownerId AND c["value"].OrganizationId = @organizationId AND c["value"].Class = @class""")
+                                                            .WithParameter("@repositoryName", repositoryName)
+                                                            .WithParameter("@organizationId", organizationId)
+                                                            .WithParameter("@ownerId", ownerId)
+                                                            .WithParameter("@class", "RepositoryDto")
+                                    let iterator = cosmosContainer.GetItemQueryIterator<repositoryIdRecord>(queryDefinition)
+                                    if iterator.HasMoreResults then
+                                        let! currentResultSet = iterator.ReadNextAsync()
+                                        let repositoryId = currentResultSet.FirstOrDefault({repositoryId = String.Empty}).repositoryId
+                                        if String.IsNullOrEmpty(repositoryId) then
+                                            return None
+                                        else
+                                            do! repositoryNameActorProxy.SetRepositoryId repositoryId correlationId
+                                            repositoryGuid <- Guid.Parse(repositoryId)
+                                            use newCacheEntry = memoryCache.CreateEntry(repositoryGuid, Value = null, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
+                                            use newCacheEntry2 = memoryCache.CreateEntry($"ReN:{repositoryName}", Value = repositoryGuid, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
+                                            return Some repositoryId
+                                    else return None
+                                | MongoDB -> return None
                 | None -> return None
             | None -> return None
         }
@@ -392,7 +361,7 @@ module Services =
             elif String.IsNullOrEmpty(branchName) then
                 return None
             else
-                let cached = memoryCache.TryGetValue($"BN:{branchName}", &branchGuid)
+                let cached = memoryCache.TryGetValue($"BrN:{branchName}", &branchGuid)
                 if cached then
                     return Some $"{branchGuid}"
                 else
@@ -417,49 +386,12 @@ module Services =
                                     branchGuid <- Guid.Parse(branchId)
                                     do! branchNameActorProxy.SetBranchId branchGuid correlationId
                                     use newCacheEntry = memoryCache.CreateEntry(branchGuid, Value = null, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
-                                    use newCacheEntry2 = memoryCache.CreateEntry($"BN:{branchName}", Value = branchGuid, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
+                                    use newCacheEntry2 = memoryCache.CreateEntry($"BrN:{branchName}", Value = branchGuid, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
                                     return Some branchId
                             else return None
                         | MongoDB -> return None
         }
         
-    let resolveBranchIdLinq (repositoryId: string) (branchId: string) (branchName: string) =
-        task {
-            if not <| String.IsNullOrEmpty(branchId) then
-                return Some branchId
-            elif String.IsNullOrEmpty(branchName) then
-                return None
-            else
-                match actorStateStorageProvider with
-                | Unknown -> return None
-                | AzureCosmosDb -> 
-                    let indexMetrics = StringBuilder()
-                    let requestCharge = StringBuilder()
-                    let query = cosmosContainer.GetItemLinqQueryable<BranchDto>(linqSerializerOptions = linqSerializerOptions, requestOptions = queryRequestOptions)
-                                    //.Where(fun branch -> branch.RepositoryId = repositoryId &&
-                                    //                     branch.BranchName = branchName &&
-                                    //                     branch.Class = "BranchDto")
-                                    .Where(fun branch -> branch.RepositoryId = Guid.Parse(repositoryId) &&
-                                                         branch.BranchName = (BranchName branchName) &&
-                                                         branch.Class = "BranchDto")
-                                    .Select(fun branch -> $"{branch.BranchId}")
-                                    .Take(1)
-                                    .ToFeedIterator()
-                    let mutable retrievedBranchId = String.Empty
-                    while query.HasMoreResults do
-                        let! results = DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> query.ReadNextAsync())
-                        retrievedBranchId <- results.Resource.FirstOrDefault(String.Empty)
-                        indexMetrics.Append($"{results.IndexMetrics}, ") |> ignore
-                        requestCharge.Append($"{results.RequestCharge}, ") |> ignore
-                    Activity.Current.SetTag("indexMetrics", $"{indexMetrics.Remove(indexMetrics.Length - 2, 2)}")
-                                    .SetTag("requestCharge", $"{requestCharge.Remove(requestCharge.Length - 2, 2)}") |> ignore
-                    if String.IsNullOrEmpty(retrievedBranchId) then
-                        return None
-                    else
-                        return Some retrievedBranchId
-                | MongoDB -> return None
-        }
-
     type OrganizationDtoValue() =
         member val public value = OrganizationDto.Default with get, set
     type RepositoryDtoValue() =

@@ -37,6 +37,7 @@ open System.Text
 open System.Text.Json
 
 module Branch =
+    open Grace.Shared.Validation.Common.Input
 
     type CommonParameters() = 
         inherit ParameterBase()
@@ -98,6 +99,12 @@ module Branch =
 
     let mustBeAValidGraceName (parseResult: ParseResult) (parameters: CommonParameters) (option: Option) (value: string) (error: BranchError) =
         if parseResult.CommandResult.FindResultFor(option) <> null && not <| Constants.GraceNameRegex.IsMatch(value) then 
+            Error (GraceError.Create (BranchError.getErrorMessage error) (parameters.CorrelationId))
+        else
+            Ok (parseResult, parameters)
+
+    let eitherIdOrNameMustBeProvided (parseResult: ParseResult) (parameters: CommonParameters) (optionId: Option) (optionName: Option) (error: BranchError) =
+        if isNull(parseResult.CommandResult.FindResultFor(optionId)) && isNull(parseResult.CommandResult.FindResultFor(optionName)) then
             Error (GraceError.Create (BranchError.getErrorMessage error) (parameters.CorrelationId))
         else
             Ok (parseResult, parameters)
@@ -201,7 +208,7 @@ module Branch =
                 match validateIncomingParameters with
                 | Ok _ -> 
                     let branchId = if parseResult.FindResultFor(Options.branchId).IsImplicit then Guid.NewGuid().ToString() else createParameters.BranchId
-                    let parameters = Parameters.Branch.CreateBranchParameters(
+                    let parameters = CreateBranchParameters(
                         RepositoryId = createParameters.RepositoryId,
                         RepositoryName = createParameters.RepositoryName,
                         OwnerId = createParameters.OwnerId,
@@ -227,7 +234,7 @@ module Branch =
                         return! Branch.Create(parameters)
                 | Error error -> return Error error
             with
-                | ex -> return Error (GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
+                | ex -> return Error (GraceError.Create $"{createExceptionResponse ex}" (parseResult |> getCorrelationId))
         }
     let private Create =
         CommandHandler.Create(fun (parseResult: ParseResult) (createParameters: CreateParameters) ->
@@ -287,7 +294,7 @@ module Branch =
                         return! Branch.GetRecursiveSize(sdkParameters)
                 | Error error -> return Error error
             with ex ->
-                return Error (GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
+                return Error (GraceError.Create $"{createExceptionResponse ex}" (parseResult |> getCorrelationId))
         }
     let private GetRecursiveSize =
         CommandHandler.Create(fun (parseResult: ParseResult) (getRecursiveSizeParameters: GetRecursiveSizeParameters) ->
@@ -362,7 +369,7 @@ module Branch =
                         return! Branch.ListContents(sdkParameters)
                 | Error error -> return Error error
             with ex ->
-                return Error (GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
+                return Error (GraceError.Create $"{createExceptionResponse ex}" (parseResult |> getCorrelationId))
         }
     let private ListContents =
         CommandHandler.Create(fun (parseResult: ParseResult) (listFileParameters: ListContentsParameters) ->
@@ -411,7 +418,7 @@ module Branch =
                         return! Branch.SetName(parameters)
                 | Error error -> return Error error
             with
-                | ex -> return Error (GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
+                | ex -> return Error (GraceError.Create $"{createExceptionResponse ex}" (parseResult |> getCorrelationId))
         }
     let private SetName =
         CommandHandler.Create(fun (parseResult: ParseResult) (setNameParameters: SetNameParameters) ->
@@ -854,9 +861,8 @@ module Branch =
                         return! Branch.Get(sdkParameters)
                 | Error error -> return Error error
             with
-                | ex -> return Error (GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
+                | ex -> return Error (GraceError.Create $"{createExceptionResponse ex}" (parseResult |> getCorrelationId))
         }
-
     let private getEventsHandler (parseResult: ParseResult) (parameters: GetParameters) =
         task {
             try
@@ -881,9 +887,8 @@ module Branch =
                         return! Branch.GetEvents(sdkParameters)
                 | Error error -> return Error error
             with
-                | ex -> return Error (GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
+                | ex -> return Error (GraceError.Create $"{createExceptionResponse ex}" (parseResult |> getCorrelationId))
         }
-
     let private Get =
         CommandHandler.Create(fun (parseResult: ParseResult) (getParameters: GetParameters) ->
             task {                
@@ -967,7 +972,7 @@ module Branch =
                         | (_, Error error) -> return Error error
                 | Error error -> return Error error
             with
-                | ex -> return Error (GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
+                | ex -> return Error (GraceError.Create $"{createExceptionResponse ex}" (parseResult |> getCorrelationId))
         }
 
     let private printReferences (parseResult: ParseResult) (branchDto: BranchDto) (references: ReferenceDto array) (referenceTypes: string) =
@@ -1145,7 +1150,10 @@ module Branch =
 
                 // Validate the incoming parameters.
                 let validateIncomingParameters (showOutput, parseResult: ParseResult, parameters: CommonParameters) =
-                    match CommonValidations parseResult parameters with
+                    let ``Either ToBranchId or ToBranchName must be provided`` (parseResult: ParseResult, commonParameters: CommonParameters) =
+                        eitherIdOrNameMustBeProvided parseResult commonParameters Options.toBranchId Options.toBranchName EitherToBranchIdOrToBranchNameIsRequired
+
+                    match CommonValidations parseResult parameters >>= ``Either ToBranchId or ToBranchName must be provided`` with
                     | Ok result -> Ok (showOutput, parseResult, parameters) |> returnTask
                     | Error error -> Error error |> returnTask
 
@@ -1396,7 +1404,10 @@ module Branch =
                         match result with
                             | Ok _ -> return 0
                             | Error error ->
-                                logToAnsiConsole Colors.Error $"{error}"
+                                if parseResult |> verbose then
+                                    AnsiConsole.MarkupLine($"[{Colors.Error}]{error}[/]")
+                                else
+                                    AnsiConsole.MarkupLine($"[{Colors.Error}]{error.Error}[/]")
                                 return -1
                     }
 
@@ -2231,7 +2242,7 @@ module Branch =
                         return! Branch.Delete(deleteParameters)
                 | Error error -> return Error error
             with
-                | ex -> return Error (GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
+                | ex -> return Error (GraceError.Create $"{createExceptionResponse ex}" (parseResult |> getCorrelationId))
         }
     let private Delete =
         CommandHandler.Create(fun (parseResult: ParseResult) (deleteParameters: DeleteParameters) ->
@@ -2263,7 +2274,7 @@ module Branch =
     //                    return! Owner.Undelete(parameters)
     //            | Error error -> return Error error
     //        with
-    //            | ex -> return Error (GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
+    //            | ex -> return Error (GraceError.Create $"{createExceptionResponse ex}" (parseResult |> getCorrelationId))
     //    }
     //let private Undelete =
     //    CommandHandler.Create(fun (parseResult: ParseResult) (undeleteParameters: UndeleteParameters) ->

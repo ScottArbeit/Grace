@@ -21,6 +21,7 @@ module Errors =
             | EitherOrganizationIdOrOrganizationNameRequired
             | EitherOwnerIdOrOwnerNameRequired
             | EitherRepositoryIdOrRepositoryNameIsRequired
+            | EitherToBranchIdOrToBranchNameIsRequired
             | FailedToRetrieveBranch
             | FailedWhileApplyingEvent
             | IndexFileNotFound
@@ -67,6 +68,7 @@ module Errors =
                 | EitherOrganizationIdOrOrganizationNameRequired -> getLocalizedString StringResourceName.EitherOrganizationIdOrOrganizationNameIsRequired
                 | EitherOwnerIdOrOwnerNameRequired -> getLocalizedString StringResourceName.EitherOwnerIdOrOwnerNameIsRequired
                 | EitherRepositoryIdOrRepositoryNameIsRequired -> getLocalizedString StringResourceName.EitherRepositoryIdOrRepositoryNameIsRequired
+                | EitherToBranchIdOrToBranchNameIsRequired -> getLocalizedString StringResourceName.EitherToBranchIdOrToBranchNameIsRequired
                 | FailedToRetrieveBranch -> getLocalizedString StringResourceName.FailedToRetrieveBranch
                 | FailedWhileApplyingEvent -> getLocalizedString StringResourceName.FailedWhileApplyingEvent
                 | IndexFileNotFound -> getLocalizedString StringResourceName.IndexFileNotFound

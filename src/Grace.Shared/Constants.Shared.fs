@@ -225,7 +225,7 @@ module Constants =
     let UpdateInProgressFileName = "graceUpdateInProgress.txt"
 
     /// The default expiration time for a cache entry.
-    let DefaultExpirationTime = TimeSpan.FromMinutes(5.0)
+    let DefaultExpirationTime = TimeSpan.FromMinutes(2.0)
 
     /// The custom alphabet to use when generating a CorrelationId. This alphabet is URL-safe. Consists of "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz~._-".
     let CorrelationIdAlphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz~._-"
