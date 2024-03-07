@@ -93,11 +93,13 @@ module Branch =
         member val public Pattern = String.Empty with get, set
         member val public ShowDirectories = true with get, set
         member val public ShowFiles = true with get, set
+        member val public ForceRecompute = false with get, set
 
     /// Parameters for the /branch/switch endpoint.
     type SwitchParameters() = 
         inherit BranchQueryParameters()
 
     /// Parameters for the /branch/getVersion endpoint.
-    type GetBranchVersionParameters() =
+    type GetBranchVersionParameters() = 
         inherit BranchQueryParameters()
+        member val public IncludeDeleted = false with get, set

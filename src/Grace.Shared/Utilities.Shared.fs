@@ -155,8 +155,8 @@ module Utilities =
             return! JsonSerializer.DeserializeAsync<'T>(stream, Constants.JsonSerializerOptions)
         }
 
-    /// Create JsonContent from the provided object, using Grace JsonSerializerOptions.
-    let jsonContent<'T> item =
+    /// Create JsonContent from the provided object, using Grace's custom JsonSerializerOptions.
+    let createJsonContent<'T> item =
         JsonContent.Create(item, options = Constants.JsonSerializerOptions)
 
     /// Retrieves the localized version of a system resource string.

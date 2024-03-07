@@ -22,6 +22,7 @@ module Common =
         member val public Json: bool = false with get, set
         member val public OutputFormat: string = String.Empty with get, set
 
+    /// The output format for the command.
     type OutputFormat =
         | Normal
         | Json
@@ -33,6 +34,7 @@ module Common =
         | UpdateProgress of ProgressTask * float
         | Command of (ParseResult * 'a -> Task<'b>)
 
+    /// Adds an option (i.e. parameter) to a command, so you can do cool stuff like `|> addOption Options.someOption |> addOption Options.anotherOption`.
     let addOption (option: Option) (command: Command) =
         command.AddOption(option)
         command
@@ -50,6 +52,7 @@ module Common =
                             .FromAmong(listCases<OutputFormat>())
         output.SetDefaultValue("Normal")
 
+    /// Checks if the output format from the command line is a specific format.
     let isOutputFormat (outputFormat: OutputFormat) (parseResult: ParseResult) =
         if parseResult.HasOption(Options.output) then
             let format = parseResult.FindResultFor(Options.output).GetValueOrDefault<String>()
@@ -57,11 +60,22 @@ module Common =
         else
             if outputFormat = OutputFormat.Normal then true else false
 
+    /// Checks if the output format from the command line is Json.
     let json parseResult = parseResult |> isOutputFormat Json
+
+    /// Checks if the output format from the command line is Minimal.
     let minimal parseResult = parseResult |> isOutputFormat Minimal
+
+    /// Checks if the output format from the command line is Normal.
     let normal parseResult = parseResult |> isOutputFormat Normal
+
+    /// Checks if the output format from the command line is Silent.
     let silent parseResult = parseResult |> isOutputFormat Silent
+
+    /// Checks if the output format from the command line is Verbose.
     let verbose parseResult = parseResult |> isOutputFormat Verbose
+
+    /// Checks if the output format from the command line is either Normal or Verbose; i.e. it has output.
     let hasOutput parseResult = parseResult |> normal || parseResult |> verbose
 
     let startProgressTask showOutput (t: ProgressTask) = if showOutput then t.StartTask()

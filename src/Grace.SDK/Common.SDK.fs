@@ -119,7 +119,7 @@ module Common =
                 let serverUriWithRoute = Uri($"{Current().ServerUri}/{route}")
                 //logToConsole $"serverUriWithRoute: {serverUriWithRoute}"
                 let startTime = getCurrentInstant()
-                let! response = httpClient.PostAsync(serverUriWithRoute, jsonContent parameters)
+                let! response = httpClient.PostAsync(serverUriWithRoute, createJsonContent parameters)
                 let endTime = getCurrentInstant()
                 if response.IsSuccessStatusCode then
                     let! graceReturnValue = response.Content.ReadFromJsonAsync<GraceReturnValue<'U>>(Constants.JsonSerializerOptions)

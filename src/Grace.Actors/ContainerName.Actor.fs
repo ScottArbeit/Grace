@@ -41,13 +41,12 @@ module ContainerName =
         override this.OnPreActorMethodAsync context =
             this.correlationId <- String.Empty
             actorStartTime <- getCurrentInstant()
-            //logger.LogInformation $"Entering ContainerNameActor.{context.MethodName}."
+            //log.LogDebug $"Entering ContainerNameActor.{context.MethodName}."
             Task.CompletedTask
 
         override this.OnPostActorMethodAsync context =
             let duration_ms = (getCurrentInstant().Minus(actorStartTime).TotalMilliseconds).ToString("F3")
             log.LogInformation("{CurrentInstant}: CorrelationId: {correlationId}; Finished {ActorName}.{MethodName}; Id: {Id}; Duration: {duration_ms}ms.", getCurrentInstantExtended(), this.correlationId, actorName, context.MethodName, this.Id, duration_ms)
-            //logger.LogInformation $"ContainerNameActor.{context.MethodName} took {methodDuration.TotalMilliseconds}ms."
             Task.CompletedTask
 
         interface IContainerNameActor with
@@ -59,15 +58,15 @@ module ContainerName =
                             return Ok containerName
                         else
                             let repositoryId = Guid.Parse(host.Id.GetId())
-                            let repositoryActorId = ActorId($"{repositoryId}")
+                            let repositoryActorId = Repository.GetActorId repositoryId
                             let repositoryActorProxy = ActorProxyFactory().CreateActorProxy<IRepositoryActor>(repositoryActorId, ActorName.Repository)
                             let! repositoryDto = repositoryActorProxy.Get correlationId
 
-                            let organizationActorId = ActorId($"{repositoryDto.OrganizationId}")
+                            let organizationActorId = Organization.GetActorId repositoryDto.OrganizationId
                             let organizationActorProxy = actorProxyFactory.CreateActorProxy<IOrganizationActor>(organizationActorId, ActorName.Organization)
                             let! organizationDto = organizationActorProxy.Get correlationId
     
-                            let ownerActorId = ActorId($"{repositoryDto.OwnerId}")
+                            let ownerActorId = Owner.GetActorId repositoryDto.OwnerId
                             let ownerActorProxy = actorProxyFactory.CreateActorProxy<IOwnerActor>(ownerActorId, ActorName.Owner)
                             let! ownerDto = ownerActorProxy.Get correlationId
     

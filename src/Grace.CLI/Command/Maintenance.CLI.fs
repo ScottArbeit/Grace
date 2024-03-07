@@ -59,11 +59,13 @@ module Maintenance =
 
                             // Compute the new Grace status file, based on the contents of the working directory.
                             t1.StartTask()
-                            let! graceStatus = createNewGraceStatusFile previousGraceStatus
+                            if parseResult |> verbose then logToAnsiConsole Colors.Verbose "Computing new Grace index file."
+                            let! graceStatus = createNewGraceStatusFile previousGraceStatus parseResult
+                            if parseResult |> verbose then logToAnsiConsole Colors.Verbose "Done computing new Grace index file."
                             t1.Value <- 100.0
 
                             // Write the new Grace status file to disk.
-                            t2.StartTask()
+                            t2.StartTask() 
                             do! writeGraceStatusFile graceStatus
                             t2.Value <- 100.0
 
@@ -113,6 +115,8 @@ module Maintenance =
                             match Current().ObjectStorageProvider with
                             | ObjectStorageProvider.Unknown -> ()
                             | AzureBlobStorage -> 
+                                if parseResult |> verbose then logToAnsiConsole Colors.Verbose "Uploading files to Azure Blob Storage."
+                                
                                 // Breaking the uploads into chunks allows us to interleave checking to see if files are already uploaded with actually uploading them when they don't.
                                 let chunkSize = 32
                                 let fileVersionGroups = fileVersions.Chunk(chunkSize)
@@ -151,9 +155,10 @@ module Maintenance =
                                     })))
 
                                 if errors.Count = 0 then
+                                    if parseResult |> verbose then logToAnsiConsole Colors.Verbose "All files uploaded successfully."
                                     ()
                                 else
-                                    AnsiConsole.MarkupLine($"{errors.Count} errors occurred.")
+                                    AnsiConsole.MarkupLine($"{errors.Count} errors occurred while uploading files to object storage.")
                                     let mutable error = GraceError.Create String.Empty String.Empty
                                     while not <| errors.IsEmpty do
                                         if errors.TryDequeue(&error) then AnsiConsole.MarkupLine($"[{Colors.Error}]{error.Error.EscapeMarkup()}[/]")
@@ -163,6 +168,7 @@ module Maintenance =
 
                             // Ensure all directory versions are uploaded to Grace Server.
                             t6.StartTask()
+                            if parseResult |> verbose then logToAnsiConsole Colors.Verbose "Uploading new directory versions to the server."
                             let chunkSize = 16
                             let succeeded = ConcurrentQueue<GraceReturnValue<string>>()
                             let errors = ConcurrentQueue<GraceError>()
@@ -207,7 +213,7 @@ module Maintenance =
                     AnsiConsole.MarkupLine $"[{Colors.Highlighted}]Root SHA-256 hash: {rootDirectoryVersion.Sha256Hash.Substring(0, 8)}[/]"
                 else
                     let! previousGraceStatus = readGraceStatusFile()
-                    let! graceStatus = createNewGraceStatusFile previousGraceStatus
+                    let! graceStatus = createNewGraceStatusFile previousGraceStatus parseResult
                     do! writeGraceStatusFile graceStatus
                     
                     let fileVersions = ConcurrentDictionary<RelativePath, LocalFileVersion>()

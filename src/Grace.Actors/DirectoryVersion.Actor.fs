@@ -133,7 +133,7 @@ module DirectoryVersion =
 
         /// Sets a Dapr Actor reminder to perform a physical deletion of this owner.
         member private this.SchedulePhysicalDeletion(deleteReason, correlationId) =
-            this.RegisterReminderAsync(ReminderType.PhysicalDeletion, convertToByteArray deleteReason, Constants.DefaultPhysicalDeletionReminderTime, TimeSpan.FromMilliseconds(-1)).Wait()
+            this.RegisterReminderAsync(ReminderType.PhysicalDeletion, convertToByteArray (deleteReason, correlationId), Constants.DefaultPhysicalDeletionReminderTime, TimeSpan.FromMilliseconds(-1)).Wait()
 
         member private this.ApplyEvent directoryVersionEvent =
             let stateManager = this.StateManager
@@ -169,6 +169,12 @@ module DirectoryVersion =
                 match reminderName with
                 | ReminderType.DeleteCachedState ->
                     task {
+                        try // Temporary hack while some existing reminders with an older state are still in the system.
+                            // Get values from state.ds
+                            let (deleteReason, correlationId) = convertFromByteArray<string * string> state
+                            this.correlationId <- correlationId
+                        with ex ->
+                            ()
                         let! deleteSucceeded = Storage.DeleteState stateManager directoryVersionCacheStateName
                         ()
                     } :> Task
@@ -177,7 +183,8 @@ module DirectoryVersion =
         interface IDirectoryVersionActor with
             member this.Exists correlationId = 
                 this.correlationId <- correlationId
-                (directoryVersionDto.DirectoryVersion.CreatedAt > Instant.MinValue) |> returnTask
+                logToConsole $"In DirectoryVersion.Exists. directoryVersionDto.DirectoryVersion.DirectoryId: {directoryVersionDto.DirectoryVersion.DirectoryId}."
+                (directoryVersionDto.DirectoryVersion.DirectoryId <> DirectoryVersion.Default.DirectoryId) |> returnTask
 
             member this.Delete correlationId =
                 this.correlationId <- correlationId
@@ -255,9 +262,11 @@ module DirectoryVersion =
                     task {
                         match command with 
                         | DirectoryVersionCommand.Create directoryVersion ->
-                            match! getDirectoryBySha256Hash directoryVersion.RepositoryId directoryVersion.Sha256Hash metadata.CorrelationId with
-                            | Some directoryVersion -> return Error (GraceError.Create (DirectoryVersionError.getErrorMessage DirectoryVersionError.DirectorySha256HashAlreadyExists) metadata.CorrelationId)
-                            | None -> return Ok command
+                            if directoryVersionEvents.Any(fun e -> match e.Event with | Created _ -> true | _ -> false) then
+                                return Error (GraceError.Create (DirectoryVersionError.getErrorMessage DirectoryVersionError.DirectoryAlreadyExists) metadata.CorrelationId)
+                            else
+                                return Ok command
+
                         | _ -> 
                             if directoryVersionDto.DirectoryVersion.CreatedAt = DirectoryVersion.Default.CreatedAt then
                                 return Error (GraceError.Create (DirectoryVersionError.getErrorMessage DirectoryDoesNotExist) metadata.CorrelationId)

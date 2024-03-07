@@ -97,9 +97,13 @@ module DirectoryVersion =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let validations (parameters: CreateParameters) =
-                    [| Guid.isValidAndNotEmpty $"{parameters.DirectoryVersion.DirectoryId}" DirectoryVersionError.InvalidDirectoryId
+                    [| String.isNotEmpty $"{parameters.DirectoryVersion.DirectoryId}" DirectoryVersionError.InvalidDirectoryId
+                       Guid.isValidAndNotEmpty $"{parameters.DirectoryVersion.DirectoryId}" DirectoryVersionError.InvalidDirectoryId
+                       String.isNotEmpty $"{parameters.DirectoryVersion.RepositoryId}" DirectoryVersionError.InvalidRepositoryId
                        Guid.isValidAndNotEmpty $"{parameters.DirectoryVersion.RepositoryId}" DirectoryVersionError.InvalidRepositoryId
-                       
+                       String.isNotEmpty $"{parameters.DirectoryVersion.RelativePath}" DirectoryVersionError.RelativePathMustNotBeEmpty
+                       String.isNotEmpty $"{parameters.DirectoryVersion.Sha256Hash}" DirectoryVersionError.Sha256HashIsRequired
+                       String.isValidSha256Hash $"{parameters.DirectoryVersion.Sha256Hash}" DirectoryVersionError.InvalidSha256Hash
                        Repository.repositoryIdExists $"{parameters.DirectoryVersion.RepositoryId}" parameters.CorrelationId DirectoryVersionError.RepositoryDoesNotExist |]
 
                 let command (parameters: CreateParameters) (context: HttpContext) =
@@ -209,9 +213,12 @@ module DirectoryVersion =
                     let mutable allValidations: ValueTask<Result<unit, DirectoryVersionError>> array = Array.Empty()
                     for directoryVersion in parameters.DirectoryVersions do
                         let validations = 
-                            [| Guid.isValidAndNotEmpty $"{directoryVersion.DirectoryId}" DirectoryVersionError.InvalidDirectoryId
+                            [| String.isNotEmpty $"{directoryVersion.DirectoryId}" DirectoryVersionError.InvalidDirectoryId
+                               Guid.isValidAndNotEmpty $"{directoryVersion.DirectoryId}" DirectoryVersionError.InvalidDirectoryId
+                               String.isNotEmpty $"{directoryVersion.RepositoryId}" DirectoryVersionError.InvalidRepositoryId
                                Guid.isValidAndNotEmpty $"{directoryVersion.RepositoryId}" DirectoryVersionError.InvalidRepositoryId
                                String.isNotEmpty $"{directoryVersion.Sha256Hash}" DirectoryVersionError.Sha256HashIsRequired 
+                               String.isValidSha256Hash $"{directoryVersion.Sha256Hash}" DirectoryVersionError.InvalidSha256Hash
                                String.isNotEmpty $"{directoryVersion.RelativePath}" DirectoryVersionError.RelativePathMustNotBeEmpty
                                Repository.repositoryIdExists $"{directoryVersion.RepositoryId}" parameters.CorrelationId DirectoryVersionError.RepositoryDoesNotExist |]
                         allValidations <- Array.append allValidations validations
@@ -223,11 +230,13 @@ module DirectoryVersion =
                         let results = ConcurrentQueue<GraceResult<string>>()
                         do! Parallel.ForEachAsync(parameters.DirectoryVersions, Constants.ParallelOptions, (fun dv ct ->
                             ValueTask(task {
+                                // Check if the directory version exists. If it doesn't, create it.
                                 let actorId = GetActorId dv.DirectoryId
-                                let actorProxy = ApplicationContext.actorProxyFactory.CreateActorProxy<IDirectoryVersionActor>(actorId, ActorName.DirectoryVersion)
-                                let! exists = actorProxy.Exists parameters.CorrelationId
+                                let directoryVersionActor = ApplicationContext.actorProxyFactory.CreateActorProxy<IDirectoryVersionActor>(actorId, ActorName.DirectoryVersion)
+                                let! exists = directoryVersionActor.Exists parameters.CorrelationId
+                                logToConsole $"In SaveDirectoryVersions: {dv.DirectoryId} exists: {exists}"
                                 if not <| exists then
-                                    let! createResult = actorProxy.Handle (DirectoryVersion.Create dv) (createMetadata context)
+                                    let! createResult = directoryVersionActor.Handle (DirectoryVersion.Create dv) (createMetadata context)
                                     results.Enqueue(createResult)
                             })
                         ))

@@ -23,7 +23,7 @@ type Repository() =
             let ownerParameters = Parameters.Owner.CreateOwnerParameters()
             ownerParameters.OwnerId <- ownerId
             ownerParameters.OwnerName <- $"TestOwner{rnd.Next(1000)}"
-            let! response = Services.Client.PostAsync("/owner/create", jsonContent ownerParameters)
+            let! response = Services.Client.PostAsync("/owner/create", createJsonContent ownerParameters)
             let! content = response.Content.ReadAsStringAsync()
             //Console.WriteLine($"{content}");
             response.EnsureSuccessStatusCode() |> ignore
@@ -32,7 +32,7 @@ type Repository() =
             organizationParameters.OwnerId <- ownerId
             organizationParameters.OrganizationId <- organizationId
             organizationParameters.OrganizationName <- $"TestOrganization{rnd.Next(1000)}"
-            let! response = Services.Client.PostAsync("/organization/create", jsonContent organizationParameters)
+            let! response = Services.Client.PostAsync("/organization/create", createJsonContent organizationParameters)
             let! content = response.Content.ReadAsStringAsync()
             //Console.WriteLine($"{content}");
             response.EnsureSuccessStatusCode() |> ignore
@@ -45,7 +45,7 @@ type Repository() =
                     repositoryParameters.RepositoryId <- repositoryId
                     repositoryParameters.RepositoryName <- $"TestRepository{rnd.Next(100000):X4}"
                     //Console.WriteLine(serialize repositoryParameters)
-                    let! response = Services.Client.PostAsync("/repository/create", jsonContent repositoryParameters)
+                    let! response = Services.Client.PostAsync("/repository/create", createJsonContent repositoryParameters)
                     let! content = response.Content.ReadAsStringAsync()
                     //Console.WriteLine($"{content}");
                     response.EnsureSuccessStatusCode() |> ignore
@@ -63,7 +63,7 @@ type Repository() =
                     repositoryDeleteParameters.OrganizationId <- organizationId
                     repositoryDeleteParameters.RepositoryId <- repositoryId
                     repositoryDeleteParameters.DeleteReason <- "Deleting test repository"
-                    let! response = Services.Client.PostAsync("/repository/delete", jsonContent repositoryDeleteParameters)
+                    let! response = Services.Client.PostAsync("/repository/delete", createJsonContent repositoryDeleteParameters)
                     let! content = response.Content.ReadAsStringAsync()
                     //Console.WriteLine($"{content}");
                     response.EnsureSuccessStatusCode() |> ignore
@@ -74,12 +74,12 @@ type Repository() =
             organizationDeleteParameters.OwnerId <- ownerId
             organizationDeleteParameters.OrganizationId <- organizationId
             organizationDeleteParameters.DeleteReason <- "Deleting test organization"
-            let! response = Services.Client.PostAsync("/organization/delete", jsonContent organizationDeleteParameters)
+            let! response = Services.Client.PostAsync("/organization/delete", createJsonContent organizationDeleteParameters)
 
             let ownerDeleteParameters = Parameters.Owner.DeleteOwnerParameters()
             ownerDeleteParameters.OwnerId <- ownerId
             ownerDeleteParameters.DeleteReason <- "Deleting test owner"
-            let! response = Services.Client.PostAsync("/owner/delete", jsonContent ownerDeleteParameters)
+            let! response = Services.Client.PostAsync("/owner/delete", createJsonContent ownerDeleteParameters)
 
             let! content = response.Content.ReadAsStringAsync()
             //Console.WriteLine($"{content}");
@@ -97,7 +97,7 @@ type Repository() =
             parameters.OrganizationId <- organizationId
             parameters.RepositoryId <- repositoryIds[(rnd.Next(0, numberOfRepositories))]
             
-            let! response = Services.Client.PostAsync("/repository/setDescription", jsonContent parameters)
+            let! response = Services.Client.PostAsync("/repository/setDescription", createJsonContent parameters)
             let! content = response.Content.ReadAsStringAsync()
             //Console.WriteLine($"{content}");
             response.EnsureSuccessStatusCode() |> ignore
@@ -114,7 +114,7 @@ type Repository() =
             parameters.OrganizationId <- organizationId
             parameters.RepositoryId <- "not a guid"
            
-            let! response = Services.Client.PostAsync("/repository/setDescription", jsonContent parameters)
+            let! response = Services.Client.PostAsync("/repository/setDescription", createJsonContent parameters)
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
             let! content = response.Content.ReadAsStringAsync()
             //Console.WriteLine($"{content}");
@@ -131,7 +131,7 @@ type Repository() =
             parameters.OrganizationId <- organizationId
             parameters.RepositoryId <- repositoryIds[(rnd.Next(0, numberOfRepositories))]
             
-            let! response = Services.Client.PostAsync("/repository/setSaveDays", jsonContent parameters)
+            let! response = Services.Client.PostAsync("/repository/setSaveDays", createJsonContent parameters)
             let! content = response.Content.ReadAsStringAsync()
             //Console.WriteLine($"{content}");
             response.EnsureSuccessStatusCode() |> ignore
@@ -148,7 +148,7 @@ type Repository() =
             parameters.OrganizationId <- organizationId
             parameters.RepositoryId <- repositoryIds[(rnd.Next(0, numberOfRepositories))]
             
-            let! response = Services.Client.PostAsync("/repository/setSaveDays", jsonContent parameters)
+            let! response = Services.Client.PostAsync("/repository/setSaveDays", createJsonContent parameters)
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
             let! content = response.Content.ReadAsStringAsync()
             //Console.WriteLine($"{content}");
@@ -165,7 +165,7 @@ type Repository() =
             parameters.OrganizationId <- organizationId
             parameters.RepositoryId <- repositoryIds[(rnd.Next(0, numberOfRepositories))]
             
-            let! response = Services.Client.PostAsync("/repository/setCheckpointDays", jsonContent parameters)
+            let! response = Services.Client.PostAsync("/repository/setCheckpointDays", createJsonContent parameters)
             let! content = response.Content.ReadAsStringAsync()
             //Console.WriteLine($"{content}");
             response.EnsureSuccessStatusCode() |> ignore
@@ -182,7 +182,7 @@ type Repository() =
             parameters.OrganizationId <- organizationId
             parameters.RepositoryId <- repositoryIds[(rnd.Next(0, numberOfRepositories))]
             
-            let! response = Services.Client.PostAsync("/repository/setCheckpointDays", jsonContent parameters)
+            let! response = Services.Client.PostAsync("/repository/setCheckpointDays", createJsonContent parameters)
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
             let! content = response.Content.ReadAsStringAsync()
             //Console.WriteLine($"{content}");
@@ -198,7 +198,7 @@ type Repository() =
             parameters.OrganizationId <- organizationId
             parameters.RepositoryId <- repositoryIds[(rnd.Next(0, numberOfRepositories))]
             
-            let! response = Services.Client.PostAsync("/repository/getBranches", jsonContent parameters)
+            let! response = Services.Client.PostAsync("/repository/getBranches", createJsonContent parameters)
             let! content = response.Content.ReadAsStringAsync()
             //Console.WriteLine($"{content}");
             response.EnsureSuccessStatusCode() |> ignore
@@ -214,7 +214,7 @@ type Repository() =
             parameters.OrganizationId <- organizationId
             parameters.RepositoryId <- repositoryIds[(rnd.Next(0, numberOfRepositories))]
             
-            let! response = Services.Client.PostAsync("/repository/getBranches", jsonContent parameters)
+            let! response = Services.Client.PostAsync("/repository/getBranches", createJsonContent parameters)
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
             let! content = response.Content.ReadAsStringAsync()
             //Console.WriteLine($"{content}");
@@ -231,7 +231,7 @@ type Repository() =
             parameters.RepositoryId <- repositoryIds[(rnd.Next(0, numberOfRepositories))]
             parameters.Status <- "Active"
             
-            let! response = Services.Client.PostAsync("/repository/setStatus", jsonContent parameters)
+            let! response = Services.Client.PostAsync("/repository/setStatus", createJsonContent parameters)
             let! content = response.Content.ReadAsStringAsync()
             //Console.WriteLine($"{content}");
             response.EnsureSuccessStatusCode() |> ignore
@@ -248,7 +248,7 @@ type Repository() =
             parameters.RepositoryId <- repositoryIds[(rnd.Next(0, numberOfRepositories))]
             parameters.Status <- "Active"
             
-            let! response = Services.Client.PostAsync("/repository/setStatus", jsonContent parameters)
+            let! response = Services.Client.PostAsync("/repository/setStatus", createJsonContent parameters)
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
             let! content = response.Content.ReadAsStringAsync()
             //Console.WriteLine($"{content}");
@@ -265,7 +265,7 @@ type Repository() =
             parameters.RepositoryId <- repositoryIds[(rnd.Next(0, numberOfRepositories))]
             parameters.Visibility <- "Public"
             
-            let! response = Services.Client.PostAsync("/repository/setVisibility", jsonContent parameters)
+            let! response = Services.Client.PostAsync("/repository/setVisibility", createJsonContent parameters)
             let! content = response.Content.ReadAsStringAsync()
             //Console.WriteLine($"{content}");
             response.EnsureSuccessStatusCode() |> ignore
@@ -282,7 +282,7 @@ type Repository() =
             parameters.RepositoryId <- repositoryIds[(rnd.Next(0, numberOfRepositories))]
             parameters.Visibility <- "Not a visibility value"
             
-            let! response = Services.Client.PostAsync("/repository/setVisibility", jsonContent parameters)
+            let! response = Services.Client.PostAsync("/repository/setVisibility", createJsonContent parameters)
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
             let! content = response.Content.ReadAsStringAsync()
             //Console.WriteLine($"{content}");

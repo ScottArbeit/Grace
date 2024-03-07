@@ -169,6 +169,7 @@ module Errors =
             | FileSha256HashDoesNotMatch
             | InvalidDirectoryId
             | InvalidRepositoryId
+            | InvalidSha256Hash
             | InvalidSize
             | RelativePathMustNotBeEmpty
             | RepositoryDoesNotExist
@@ -185,6 +186,7 @@ module Errors =
                 | FileSha256HashDoesNotMatch -> getLocalizedString StringResourceName.FileSha256HashDoesNotMatch
                 | InvalidDirectoryId -> getLocalizedString StringResourceName.InvalidDirectoryId
                 | InvalidRepositoryId -> getLocalizedString StringResourceName.InvalidRepositoryId
+                | InvalidSha256Hash -> getLocalizedString StringResourceName.InvalidSha256Hash
                 | InvalidSize -> getLocalizedString StringResourceName.InvalidSize
                 | RelativePathMustNotBeEmpty -> getLocalizedString StringResourceName.RelativePathMustNotBeEmpty
                 | RepositoryDoesNotExist -> getLocalizedString StringResourceName.RepositoryDoesNotExist

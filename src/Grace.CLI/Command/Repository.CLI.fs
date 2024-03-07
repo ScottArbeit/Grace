@@ -254,7 +254,7 @@ module Repository =
 
                                             // Compute the new Grace status file, based on the contents of the working directory.
                                             t1.StartTask()
-                                            let! graceStatus = createNewGraceStatusFile previousGraceStatus
+                                            let! graceStatus = createNewGraceStatusFile previousGraceStatus parseResult
                                             t1.Value <- 100.0
 
                                             // Write the new Grace status file to disk.

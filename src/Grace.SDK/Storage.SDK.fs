@@ -34,14 +34,15 @@ module Storage =
             try
                 match Current().ObjectStorageProvider with
                 | AzureBlobStorage ->
+                    // Get the URI to use when downloading the file. This includes a SAS token.
                     let httpClient = getHttpClient correlationId
                     let serviceUrl = $"{Current().ServerUri}/storage/getDownloadUri"
-                    let jsonContent = jsonContent fileVersion
+                    let jsonContent = createJsonContent fileVersion
                     let! response = httpClient.PostAsync(serviceUrl, jsonContent)
                     let! blobUriWithSasToken = response.Content.ReadAsStringAsync()
                     //logToConsole $"response.StatusCode: {response.StatusCode}; blobUriWithSasToken: {blobUriWithSasToken}"
 
-                    let blobClient = BlobClient(Uri(blobUriWithSasToken))
+
                     let relativeDirectory = if fileVersion.RelativeDirectory = Constants.RootDirectoryPath then String.Empty else getNativeFilePath fileVersion.RelativeDirectory
                     let tempFilePath = Path.Combine(Path.GetTempPath(), relativeDirectory, fileVersion.GetObjectFileName)
                     let objectFilePath = Path.Combine(Current().ObjectDirectory, fileVersion.RelativePath, fileVersion.GetObjectFileName)
@@ -50,6 +51,9 @@ module Storage =
                     Directory.CreateDirectory(tempFileInfo.Directory.FullName) |> ignore
                     Directory.CreateDirectory(objectFileInfo.Directory.FullName) |> ignore
                     //logToConsole $"tempFilePath: {tempFilePath}; objectFilePath: {objectFilePath}"
+
+                    // Download the file from object storage.
+                    let blobClient = BlobClient(Uri(blobUriWithSasToken))
                     let! azureResponse = blobClient.DownloadToAsync(tempFilePath)
                     if not <| azureResponse.IsError then
                         File.Move(tempFilePath, objectFilePath, overwrite = true)
@@ -72,12 +76,15 @@ module Storage =
                         return Ok (GraceReturnValue.Create "Retrieved all files from object storage." correlationId)
                     else 
                         tempFileInfo.Delete()
-                        return Error (GraceError.Create (StorageError.getErrorMessage FailedCommunicatingWithObjectStorage) correlationId)
+                        let error = GraceError.Create (StorageError.getErrorMessage FailedCommunicatingWithObjectStorage) correlationId
+                        error.Properties.Add("StatusCode", $"HTTP {azureResponse.Status}")
+                        error.Properties.Add("ReasonPhrase", $"Reason: {azureResponse.ReasonPhrase}")
+                        return Error error
                 | AWSS3 -> return Error (GraceError.Create (StorageError.getErrorMessage NotImplemented) correlationId)
                 | GoogleCloudStorage -> return Error (GraceError.Create (StorageError.getErrorMessage NotImplemented) correlationId)
                 | ObjectStorageProvider.Unknown -> return Error (GraceError.Create (StorageError.getErrorMessage NotImplemented) correlationId)
             with ex ->
-                logToConsole $"Exception handling {fileVersion.RelativePath}: {createExceptionResponse ex}"
+                logToConsole $"Exception downloading {fileVersion.RelativePath}: {ex.Message}"
                 return Error (GraceError.Create (StorageError.getErrorMessage ObjectStorageException) correlationId)
         }
 
@@ -89,7 +96,7 @@ module Storage =
                     | AzureBlobStorage ->
                         let httpClient = getHttpClient correlationId
                         let serviceUrl = $"{Current().ServerUri}/storage/filesExistInObjectStorage"
-                        let jsonContent = jsonContent fileVersions
+                        let jsonContent = createJsonContent fileVersions
                         let! response = httpClient.PostAsync(serviceUrl, jsonContent)
                         if response.IsSuccessStatusCode then
                             let! uploadMetadata = response.Content.ReadFromJsonAsync<GraceReturnValue<List<UploadMetadata>>>(Constants.JsonSerializerOptions)
@@ -204,7 +211,7 @@ module Storage =
                     | ObjectStorageProvider.AzureBlobStorage ->
                         let httpClient = getHttpClient correlationId
                         let serviceUrl = $"{Current().ServerUri}/storage/getUploadUri"
-                        let jsonContent = jsonContent fileVersion
+                        let jsonContent = createJsonContent fileVersion
                         let! response = httpClient.PostAsync(serviceUrl, jsonContent)
                         let! blobUriWithSasToken = response.Content.ReadAsStringAsync()
                         //logToConsole $"blobUriWithSasToken: {blobUriWithSasToken}"
@@ -225,7 +232,7 @@ module Storage =
                     | ObjectStorageProvider.AzureBlobStorage ->
                         let httpClient = getHttpClient correlationId
                         let serviceUrl = $"{Current().ServerUri}/storage/getDownloadUri"
-                        let jsonContent = jsonContent fileVersion
+                        let jsonContent = createJsonContent fileVersion
                         let! response = httpClient.PostAsync(serviceUrl, jsonContent)
                         let! blobUriWithSasToken = response.Content.ReadAsStringAsync()
                         //logToConsole $"blobUriWithSasToken: {blobUriWithSasToken}"

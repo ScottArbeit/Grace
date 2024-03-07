@@ -956,7 +956,7 @@ module Branch =
                                     let directoryActorId = DirectoryVersion.GetActorId latestReference.DirectoryId
                                     let directoryActorProxy = actorProxyFactory.CreateActorProxy<IDirectoryVersionActor>(directoryActorId, ActorName.DirectoryVersion)
                                     let! directoryVersion = directoryActorProxy.Get (getCorrelationId context)
-                                    let! contents = directoryActorProxy.GetDirectoryVersionsRecursive false (getCorrelationId context)
+                                    let! contents = directoryActorProxy.GetDirectoryVersionsRecursive listContentsParameters.ForceRecompute (getCorrelationId context)
                                     return contents
                                 | None ->
                                     return List<DirectoryVersion>()
@@ -967,7 +967,7 @@ module Branch =
                                 let! referenceDto = referenceActorProxy.Get (getCorrelationId context)
                                 let directoryActorId = DirectoryVersion.GetActorId referenceDto.DirectoryId
                                 let directoryActorProxy = actorProxyFactory.CreateActorProxy<IDirectoryVersionActor>(directoryActorId, ActorName.DirectoryVersion)
-                                let! contents = directoryActorProxy.GetDirectoryVersionsRecursive false (getCorrelationId context)
+                                let! contents = directoryActorProxy.GetDirectoryVersionsRecursive listContentsParameters.ForceRecompute  (getCorrelationId context)
                                 return contents
                             else 
                                 // By process of elimination, we have a Sha256Hash, so we'll retrieve the DirectoryVersion using that..
@@ -975,7 +975,7 @@ module Branch =
                                 | Some directoryVersion ->
                                     let directoryActorId = DirectoryVersion.GetActorId directoryVersion.DirectoryId
                                     let directoryActorProxy = actorProxyFactory.CreateActorProxy<IDirectoryVersionActor>(directoryActorId, ActorName.DirectoryVersion)
-                                    let! contents = directoryActorProxy.GetDirectoryVersionsRecursive false (getCorrelationId context)
+                                    let! contents = directoryActorProxy.GetDirectoryVersionsRecursive listContentsParameters.ForceRecompute  (getCorrelationId context)
                                     return contents
                                 | None ->
                                     return List<DirectoryVersion>()
@@ -1004,8 +1004,8 @@ module Branch =
                         [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
                            String.isValidGraceName parameters.BranchName InvalidBranchName
                            Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
-                           String.isEmptyOrValidSha256Hash parameters.Sha256Hash Sha256HashDoesNotExist
-                           Guid.isValidAndNotEmpty parameters.ReferenceId ReferenceIdDoesNotExist
+                           String.isEmptyOrValidSha256Hash parameters.Sha256Hash InvalidSha256Hash
+                           Guid.isValidAndNotEmpty parameters.ReferenceId InvalidReferenceId
                            Owner.ownerExists parameters.OwnerId parameters.OwnerName parameters.CorrelationId OwnerDoesNotExist
                            Organization.organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.CorrelationId OrganizationDoesNotExist
                            Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.CorrelationId RepositoryDoesNotExist
