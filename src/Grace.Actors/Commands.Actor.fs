@@ -81,8 +81,6 @@ module Commands =
             | SetCheckpointDays of duration: double
             | SetName of repositoryName: RepositoryName
             | SetDescription of description: string
-            | EnableSingleStepPromotion of enabled: bool
-            | EnableComplexPromotion of enabled: bool
             | DeleteLogical of force: bool * deleteReason: string
             | DeletePhysical
             | Undelete

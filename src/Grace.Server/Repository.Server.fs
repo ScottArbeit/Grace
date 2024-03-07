@@ -236,38 +236,6 @@ module Repository =
                 return! processCommand context validations command
             }
 
-    /// Enables single-step promotion for the repository. (Currently unused, the only branching model is single-step.)
-    let EnableSingleStepPromotion: HttpHandler =
-        fun (next: HttpFunc) (context: HttpContext) -> 
-            task {
-                let validations (parameters: EnablePromotionTypeParameters) =
-                    [| Input.eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherRepositoryIdOrRepositoryNameRequired
-                       Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.CorrelationId RepositoryDoesNotExist
-                       Repository.repositoryIsNotDeleted parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.CorrelationId RepositoryIsDeleted |]
-                
-                let command (parameters: EnablePromotionTypeParameters) = 
-                    EnableSingleStepPromotion (parameters.Enabled) |> returnValueTask
-                
-                context.Items.Add("Command", nameof(EnableSingleStepPromotion))
-                return! processCommand context validations command
-            }
-
-    /// Enables complex promotion for the repository. (Currently unused.)
-    let EnableComplexPromotion: HttpHandler =
-        fun (next: HttpFunc) (context: HttpContext) -> 
-            task {
-                let validations (parameters: EnablePromotionTypeParameters) =
-                    [| Input.eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherRepositoryIdOrRepositoryNameRequired
-                       Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.CorrelationId RepositoryDoesNotExist
-                       Repository.repositoryIsNotDeleted parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.CorrelationId RepositoryIsDeleted |]
-                
-                let command (parameters: EnablePromotionTypeParameters) = 
-                    EnableComplexPromotion (parameters.Enabled) |> returnValueTask
-                
-                context.Items.Add("Command", nameof(EnableComplexPromotion))
-                return! processCommand context validations command
-            }
-
     /// Sets the status of the repository (Public, Private).
     let SetStatus: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) -> 

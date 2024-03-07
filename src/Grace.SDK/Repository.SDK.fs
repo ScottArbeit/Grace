@@ -77,14 +77,6 @@ type Repository() =
     static member public SetCheckpointDays(parameters: SetCheckpointDaysParameters) =
         postServer<SetCheckpointDaysParameters, String>(parameters |> ensureCorrelationIdIsSet, $"repository/{nameof(Repository.SetCheckpointDays)}")
 
-    // /// Enables or disables single-step promotion.
-    //static member public EnableSingleStepPromotion (parameters: EnablePromotionTypeParameters) =
-    //    postServer<EnablePromotionTypeParameters, String>(parameters |> ensureCorrelationIdIsSet, $"repository/{nameof(Repository.EnableSingleStepPromotion)}")
-
-    // /// Enables or disables complex promotion.
-    //static member public EnableComplexPromotion (parameters: EnablePromotionTypeParameters) =
-    //    postServer<EnablePromotionTypeParameters, String>(parameters |> ensureCorrelationIdIsSet, $"repository/{nameof(Repository.EnableComplexPromotion)}")
-
     /// <summary>
     /// Sets the default number of days to keep checkpoints.
     /// </summary>

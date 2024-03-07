@@ -189,8 +189,6 @@ module Dto =
                 DefaultBranchName: BranchName
                 SaveDays: double
                 CheckpointDays: double
-                EnabledSingleStepPromotion: bool
-                EnabledComplexPromotion: bool
                 Description: string
                 RecordSaves: bool
                 CreatedAt: Instant
@@ -216,8 +214,6 @@ module Dto =
                 DefaultBranchName = BranchName Constants.InitialBranchName
                 SaveDays = 7.0
                 CheckpointDays = 365.0
-                EnabledSingleStepPromotion = true
-                EnabledComplexPromotion = false
                 Description = String.Empty
                 RecordSaves = true
                 CreatedAt = getCurrentInstant()

@@ -165,8 +165,6 @@ module Application =
                 POST [
                     route "/create" Repository.Create |> addMetadata typeof<Repository.CreateRepositoryParameters>
                     route "/delete" Repository.Delete |> addMetadata typeof<Repository.DeleteRepositoryParameters>
-                    //route "/enableSingleStepPromotion" Repository.EnableSingleStepPromotion |> addMetadata typeof<Repository.EnablePromotionTypeParameters>
-                    //route "/enableComplexPromotion" Repository.EnableComplexPromotion |> addMetadata typeof<Repository.EnablePromotionTypeParameters>
                     route "/exists" Repository.Exists |> addMetadata typeof<Repository.RepositoryParameters>
                     route "/get" Repository.Get |> addMetadata typeof<Repository.RepositoryParameters>
                     route "/getBranches" Repository.GetBranches |> addMetadata typeof<Repository.GetBranchesParameters>

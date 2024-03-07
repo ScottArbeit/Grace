@@ -317,7 +317,7 @@ module Branch =
         member val public Pattern = String.Empty with get, set
         member val public ShowDirectories = true with get, set
         member val public ShowFiles = true with get, set
-        member val public ForceRecompute = true with get, set
+        member val public ForceRecompute = false with get, set
     let printContents (parseResult: ParseResult) (directoryVersions: IEnumerable<DirectoryVersion>) =
         let longestRelativePath = getLongestRelativePath (directoryVersions |> Seq.map (fun directoryVersion -> directoryVersion.ToLocalDirectoryVersion(DateTime.UtcNow)))
         //logToAnsiConsole Colors.Verbose $"In printContents: getLongestRelativePath: {longestRelativePath}"

@@ -29,6 +29,10 @@ module OrganizationName =
 
         member val private correlationId: CorrelationId = String.Empty with get, set
 
+        override this.OnActivateAsync() =
+            log.LogInformation("{CurrentInstant} Activated {ActorType} {ActorId}.", getCurrentInstantExtended(), this.GetType().Name, host.Id)
+            Task.CompletedTask
+
         override this.OnPreActorMethodAsync(context) =
             this.correlationId <- String.Empty
             actorStartTime <- getCurrentInstant()

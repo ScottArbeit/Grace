@@ -790,12 +790,6 @@ module Repository =
                                 task {
                                     let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
                                     let! result = command enablePromotionTypeParameters
-                                    //let! result = 
-                                    //    task {
-                                    //        match promotionType with
-                                    //        | SingleStep -> return! Repository.EnableSingleStepPromotion(enablePromotionTypeParameters)
-                                    //        | Complex -> return! Repository.EnableComplexPromotion(enablePromotionTypeParameters)
-                                    //    }
                                     t0.Increment(100.0)
                                     return result
                                 })
@@ -805,30 +799,6 @@ module Repository =
             with ex ->
                 return Error (GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
         }
-
-    //let private EnableSingleStepPromotion =
-    //    CommandHandler.Create(fun (parseResult: ParseResult) (enablePromotionParameters: EnablePromotionParameters) ->
-    //        task {
-    //            let command (parameters: EnablePromotionTypeParameters) =
-    //                task {
-    //                    return! Repository.EnableSingleStepPromotion(parameters)
-    //                }
-
-    //            let! result = enablePromotionTypeHandler parseResult enablePromotionParameters command PromotionType.SingleStep
-    //            return result |> renderOutput parseResult
-    //        })
-
-    //let private EnableComplexPromotion =
-    //    CommandHandler.Create(fun (parseResult: ParseResult) (enablePromotionParameters: EnablePromotionParameters) ->
-    //        task {
-    //            let command (parameters: EnablePromotionTypeParameters) =
-    //                task {
-    //                    return! Repository.EnableComplexPromotion(parameters)
-    //                }
-
-    //            let! result = enablePromotionTypeHandler parseResult enablePromotionParameters command PromotionType.Complex
-    //            return result |> renderOutput parseResult
-    //        })
 
     // Set-DefaultServerApiVersion subcommand
     type DefaultServerApiVersionParameters() = 
@@ -1066,14 +1036,6 @@ module Repository =
         let setCheckpointDaysCommand = new Command("set-checkpointdays", Description = "Set how long to keep checkpoints in the repository.") |> addOption Options.checkpointDays |> addCommonOptions
         setCheckpointDaysCommand.Handler <- SetCheckpointDays
         repositoryCommand.AddCommand(setCheckpointDaysCommand)
-
-        //let enableSingleStepPromotionCommand = new Command("enable-single-step-promotion", Description = "Enables or disables single-step promotions in the repository.") |> addOption Options.enabled |> addCommonOptions
-        //enableSingleStepPromotionCommand.Handler <- EnableSingleStepPromotion
-        //repositoryCommand.AddCommand(enableSingleStepPromotionCommand)
-
-        //let enableComplexPromotionCommand = new Command("enable-complex-promotion", Description = "Enables or disables complex promotions in the repository.") |> addOption Options.enabled |> addCommonOptions
-        //enableComplexPromotionCommand.Handler <- EnableComplexPromotion
-        //repositoryCommand.AddCommand(enableComplexPromotionCommand)
 
         let setNameCommand = new Command("set-name", Description = "Set the name of the repository.") |> addOption Options.newName |> addCommonOptions
         setNameCommand.Handler <- SetName

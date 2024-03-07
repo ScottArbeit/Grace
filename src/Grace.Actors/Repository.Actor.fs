@@ -129,8 +129,6 @@ module Repository =
                 | DefaultBranchNameSet defaultBranchName -> {currentRepositoryDto with DefaultBranchName = defaultBranchName}
                 | SaveDaysSet days -> {currentRepositoryDto with SaveDays = days}
                 | CheckpointDaysSet days -> {currentRepositoryDto with CheckpointDays = days}
-                | EnabledSingleStepPromotion enabled -> {currentRepositoryDto with EnabledSingleStepPromotion = enabled}
-                | EnabledComplexPromotion enabled -> {currentRepositoryDto with EnabledComplexPromotion = enabled}
                 | NameSet repositoryName -> {currentRepositoryDto with RepositoryName = repositoryName}
                 | DescriptionSet description -> {currentRepositoryDto with Description = description}
                 | LogicalDeleted _ -> {currentRepositoryDto with DeletedAt = Some (getCurrentInstant())}
@@ -407,8 +405,6 @@ module Repository =
                                     | SetDefaultBranchName defaultBranchName -> return DefaultBranchNameSet defaultBranchName
                                     | SetSaveDays days -> return SaveDaysSet days
                                     | SetCheckpointDays days -> return CheckpointDaysSet days
-                                    | EnableSingleStepPromotion enabled -> return EnabledSingleStepPromotion enabled
-                                    | EnableComplexPromotion enabled -> return EnabledComplexPromotion enabled
                                     | SetName repositoryName -> return NameSet repositoryName
                                     | SetDescription description -> return DescriptionSet description
                                     | DeleteLogical (force, deleteReason) ->
