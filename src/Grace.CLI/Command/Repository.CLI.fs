@@ -47,6 +47,7 @@ module Repository =
         let repositoryId = new Option<String>([|"--repositoryId"; "-r"|], IsRequired = false, Description = "The repository's ID <Guid>.", Arity = ArgumentArity.ExactlyOne, getDefaultValue = (fun _ -> $"{Current().RepositoryId}"))
         let repositoryName = new Option<String>([|"--repositoryName"; "-n"|], IsRequired = false, Description = "The name of the repository. [default: current repository]", Arity = ArgumentArity.ExactlyOne)
         let requiredRepositoryName = new Option<String>([|"--repositoryName"; "-n"|], IsRequired = true, Description = "The name of the repository.", Arity = ArgumentArity.ExactlyOne)
+        let description = new Option<String>("--description", IsRequired = false, Description = "The description of the repository.", Arity = ArgumentArity.ExactlyOne)
         let visibility = (new Option<RepositoryVisibility>("--visibility", IsRequired = true, Description = "The visibility of the repository.", Arity = ArgumentArity.ExactlyOne))
                             .FromAmong (listCases<RepositoryVisibility>())
         let status = (new Option<String>("--status", IsRequired = true, Description = "The status of the repository.", Arity = ArgumentArity.ExactlyOne))
@@ -56,6 +57,8 @@ module Repository =
                                             .FromAmong(listCases<Constants.ServerApiVersions>())
         let saveDays = new Option<double>("--saveDays", IsRequired = true, Description = "How many days to keep saves. [default: 7.0]", Arity = ArgumentArity.ExactlyOne)
         let checkpointDays = new Option<double>("--checkpointDays", IsRequired = true, Description = "How many days to keep checkpoints. [default: 365.0]", Arity = ArgumentArity.ExactlyOne)
+        let diffCacheDays = new Option<double>("--diffCacheDays", IsRequired = true, Description = "How many days to keep diff results cached in the database. [default: 3.0]", Arity = ArgumentArity.ExactlyOne)
+        let directoryVersionCacheDays = new Option<double>("--directoryVersionCacheDays", IsRequired = true, Description = "How many days to keep recursive directory version contents cached. [default: 3.0]", Arity = ArgumentArity.ExactlyOne)
         let newName = new Option<String>("--newName", IsRequired = true, Description = "The new name for the repository.", Arity = ArgumentArity.ExactlyOne)
         let deleteReason = new Option<String>("--deleteReason", IsRequired = true, Description = "The reason for deleting the repository.", Arity = ArgumentArity.ExactlyOne)
         let graceConfig = new Option<String>("--graceConfig", IsRequired = false, Description = "The path of a Grace config file that you'd like to use instead of the default graceconfig.json.", Arity = ArgumentArity.ExactlyOne)
@@ -462,6 +465,7 @@ module Repository =
                 | Ok graceReturnValue ->
                     let jsonText = JsonText(serialize graceReturnValue.ReturnValue)
                     AnsiConsole.Write(jsonText)
+                    AnsiConsole.WriteLine()
                     return Ok graceReturnValue |> renderOutput parseResult
                 | Error graceError ->
                     return Error graceError |> renderOutput parseResult
@@ -760,7 +764,93 @@ module Repository =
                         let! result = setCheckpointDaysHandler parseResult checkpointDaysParameters
                         return result |> renderOutput parseResult
                     })
-                    
+
+    type DiffCacheDaysParameters() =
+        inherit CommonParameters()
+        member val public DiffCacheDays: double = Double.MinValue with get, set
+    let private setDiffCacheDaysHandler (parseResult: ParseResult) (parameters: DiffCacheDaysParameters) =
+        task {
+            try
+                if parseResult |> verbose then printParseResult parseResult
+                let validateIncomingParameters = CommonValidations (parseResult, parameters)
+                match validateIncomingParameters with
+                | Ok _ -> 
+                    let normalizedParameters = parameters |> normalizeIdsAndNames parseResult
+                    let diffCacheDaysParameters = Repository.SetDiffCacheDaysParameters(
+                        OwnerId = normalizedParameters.OwnerId,
+                        OwnerName = normalizedParameters.OwnerName,
+                        OrganizationId = normalizedParameters.OrganizationId,
+                        OrganizationName = normalizedParameters.OrganizationName,
+                        RepositoryId = normalizedParameters.RepositoryId, 
+                        RepositoryName = normalizedParameters.RepositoryName,
+                        CorrelationId = normalizedParameters.CorrelationId,
+                        DiffCacheDays = normalizedParameters.DiffCacheDays)
+
+                    if parseResult |> hasOutput then
+                        return! progress.Columns(progressColumns)
+                                .StartAsync(fun progressContext ->
+                                task {
+                                    let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
+                                    let! result = Repository.SetDiffCacheDays(diffCacheDaysParameters)
+                                    t0.Increment(100.0)
+                                    return result
+                                })
+                    else
+                        return! Repository.SetDiffCacheDays(diffCacheDaysParameters)
+                | Error error -> return Error error
+            with ex ->
+                return Error (GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
+        }
+    let private SetDiffCacheDays =
+        CommandHandler.Create(fun (parseResult: ParseResult) (diffCacheDaysParameters: DiffCacheDaysParameters) ->
+                    task {                
+                        let! result = setDiffCacheDaysHandler parseResult diffCacheDaysParameters
+                        return result |> renderOutput parseResult
+                    })
+
+    type DirectoryVersionCacheDaysParameters() =
+        inherit CommonParameters()
+        member val public DirectoryVersionCacheDays: double = Double.MinValue with get, set
+    let private setDirectoryVersionCacheDaysHandler (parseResult: ParseResult) (parameters: DirectoryVersionCacheDaysParameters) =        
+        task {
+            try
+                if parseResult |> verbose then printParseResult parseResult
+                let validateIncomingParameters = CommonValidations (parseResult, parameters)
+                match validateIncomingParameters with
+                | Ok _ -> 
+                    let normalizedParameters = parameters |> normalizeIdsAndNames parseResult
+                    let directoryVersionCacheDaysParameters = Repository.SetDirectoryVersionCacheDaysParameters(
+                        OwnerId = normalizedParameters.OwnerId,
+                        OwnerName = normalizedParameters.OwnerName,
+                        OrganizationId = normalizedParameters.OrganizationId,
+                        OrganizationName = normalizedParameters.OrganizationName,
+                        RepositoryId = normalizedParameters.RepositoryId, 
+                        RepositoryName = normalizedParameters.RepositoryName,
+                        CorrelationId = normalizedParameters.CorrelationId,
+                        DirectoryVersionCacheDays = normalizedParameters.DirectoryVersionCacheDays)
+
+                    if parseResult |> hasOutput then
+                        return! progress.Columns(progressColumns)
+                                .StartAsync(fun progressContext ->
+                                task {
+                                    let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
+                                    let! result = Repository.SetDirectoryVersionCacheDays(directoryVersionCacheDaysParameters)
+                                    t0.Increment(100.0)
+                                    return result
+                                })
+                    else
+                        return! Repository.SetDirectoryVersionCacheDays(directoryVersionCacheDaysParameters)
+                | Error error -> return Error error
+            with ex ->
+                return Error (GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
+        }
+    let private SetDirectoryVersionCacheDays =
+        CommandHandler.Create(fun (parseResult: ParseResult) (directoryVersionCacheDaysParameters: DirectoryVersionCacheDaysParameters) ->
+                    task {                
+                        let! result = setDirectoryVersionCacheDaysHandler parseResult directoryVersionCacheDaysParameters
+                        return result |> renderOutput parseResult
+                    })
+
     // Enable promotion type subcommands
     type EnablePromotionTypeCommand = EnablePromotionTypeParameters -> Task<GraceResult<string>>
     type EnablePromotionParameters() =
@@ -888,6 +978,50 @@ module Repository =
                     return result |> renderOutput parseResult
                 })
 
+    // Set-Description subcommand
+    type SetDescriptionParameters() =
+        inherit CommonParameters()
+        member val public Description = String.Empty with get, set
+    let private setDescriptionHandler (parseResult: ParseResult) (setDescriptionParameters: SetDescriptionParameters) = 
+        task {
+            try
+                if parseResult |> verbose then printParseResult parseResult
+                let validateIncomingParameters = CommonValidations (parseResult, setDescriptionParameters)
+                match validateIncomingParameters with
+                | Ok _ -> 
+                    let normalizedParameters = setDescriptionParameters |> normalizeIdsAndNames parseResult
+                    let setDescriptionParameters = Repository.SetRepositoryDescriptionParameters(
+                        OwnerId = normalizedParameters.OwnerId,
+                        OwnerName = normalizedParameters.OwnerName,
+                        OrganizationId = normalizedParameters.OrganizationId,
+                        OrganizationName = normalizedParameters.OrganizationName,
+                        RepositoryId = normalizedParameters.RepositoryId, 
+                        RepositoryName = normalizedParameters.RepositoryName,
+                        CorrelationId = normalizedParameters.CorrelationId,
+                        Description = setDescriptionParameters.Description)
+
+                    if parseResult |> hasOutput then
+                        return! progress.Columns(progressColumns)
+                                .StartAsync(fun progressContext ->
+                                task {
+                                    let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
+                                    let! result = Repository.SetDescription(setDescriptionParameters)
+                                    t0.Increment(100.0)
+                                    return result
+                                })
+                    else
+                        return! Repository.SetDescription(setDescriptionParameters)
+                | Error error -> return Error error
+            with
+                | ex -> return Error (GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
+        }
+    let private SetDescription =
+        CommandHandler.Create(fun (parseResult: ParseResult) (setDescriptionParameters: SetDescriptionParameters) ->
+                task {                
+                    let! result = setDescriptionHandler parseResult setDescriptionParameters
+                    return result |> renderOutput parseResult
+                })
+
     // Delete subcommand
     type DeleteParameters() =
         inherit CommonParameters()
@@ -989,15 +1123,15 @@ module Repository =
             command |> addOption Options.repositoryName |> addCommonOptionsExceptForRepositoryInfo
 
         // Create main command and aliases, if any.
-        let repositoryCommand = new Command("repository", Description = "Create, change, or delete repository-level information.")
+        let repositoryCommand = new Command("repository", Description = "Creates, changes, and deletes repository-level information.")
         repositoryCommand.AddAlias("repo")
 
         // Add subcommands.
-        let repositoryCreateCommand = new Command("create", Description = "Create a new repository.") |> addOption Options.requiredRepositoryName |> addCommonOptionsExceptForRepositoryInfo |> addOption Options.doNotSwitch
+        let repositoryCreateCommand = new Command("create", Description = "Creates a new repository.") |> addOption Options.requiredRepositoryName |> addCommonOptionsExceptForRepositoryInfo |> addOption Options.doNotSwitch
         repositoryCreateCommand.Handler <- Create
         repositoryCommand.AddCommand(repositoryCreateCommand)
 
-        let repositoryGetCommand = new Command("get", Description = "Get information about a repository.") |> addCommonOptions
+        let repositoryGetCommand = new Command("get", Description = "Gets information about a repository.") |> addCommonOptions
         repositoryGetCommand.Handler <- Get
         repositoryCommand.AddCommand(repositoryGetCommand)
 
@@ -1013,15 +1147,15 @@ module Repository =
         getBranchesCommand.Handler <- GetBranches
         repositoryCommand.AddCommand(getBranchesCommand)
 
-        let setVisibilityCommand = new Command("set-visibility", Description = "Set the visibility of the repository.") |> addOption Options.visibility |> addCommonOptions
+        let setVisibilityCommand = new Command("set-visibility", Description = "Sets the visibility of the repository.") |> addOption Options.visibility |> addCommonOptions
         setVisibilityCommand.Handler <- SetVisibility
         repositoryCommand.AddCommand(setVisibilityCommand)
 
-        let setStatusCommand = new Command("set-status", Description = "Set the status of the repository.") |> addOption Options.status |> addCommonOptions
+        let setStatusCommand = new Command("set-status", Description = "Sets the status of the repository.") |> addOption Options.status |> addCommonOptions
         setStatusCommand.Handler <- SetStatus
         repositoryCommand.AddCommand(setStatusCommand)
 
-        let setRecordSavesCommand = new Command("set-recordsaves", Description = "Set whether the repository defaults to recording every save.") |> addOption Options.recordSaves |> addCommonOptions
+        let setRecordSavesCommand = new Command("set-recordsaves", Description = "Sets whether the repository defaults to recording every save.") |> addOption Options.recordSaves |> addCommonOptions
         setRecordSavesCommand.Handler <- SetRecordSaves
         repositoryCommand.AddCommand(setRecordSavesCommand)
 
@@ -1029,19 +1163,31 @@ module Repository =
         setDefaultServerApiVersionCommand.Handler <- SetDefaultServerApiVersion
         repositoryCommand.AddCommand(setDefaultServerApiVersionCommand)
 
-        let setSaveDaysCommand = new Command("set-savedays", Description = "Set how long to keep saves in the repository.") |> addOption Options.saveDays |> addCommonOptions
+        let setSaveDaysCommand = new Command("set-savedays", Description = "Sets the number of days to keep saves in the repository.") |> addOption Options.saveDays |> addCommonOptions
         setSaveDaysCommand.Handler <- SetSaveDays
         repositoryCommand.AddCommand(setSaveDaysCommand)
         
-        let setCheckpointDaysCommand = new Command("set-checkpointdays", Description = "Set how long to keep checkpoints in the repository.") |> addOption Options.checkpointDays |> addCommonOptions
+        let setCheckpointDaysCommand = new Command("set-checkpointdays", Description = "Sets the number of days to keep checkpoints in the repository.") |> addOption Options.checkpointDays |> addCommonOptions
         setCheckpointDaysCommand.Handler <- SetCheckpointDays
         repositoryCommand.AddCommand(setCheckpointDaysCommand)
 
-        let setNameCommand = new Command("set-name", Description = "Set the name of the repository.") |> addOption Options.newName |> addCommonOptions
+        let setDiffCacheDaysCommand = new Command("set-diffcachedays", Description = "Sets the number of days to keep diff results cached in the repository.") |> addOption Options.diffCacheDays |> addCommonOptions
+        setDiffCacheDaysCommand.Handler <- SetDiffCacheDays
+        repositoryCommand.AddCommand(setDiffCacheDaysCommand)
+
+        let setDirectoryVersionCacheDaysCommand = new Command("set-directoryversioncachedays", Description = "Sets how long to keep recursive directory version contents cached in the repository.") |> addOption Options.directoryVersionCacheDays |> addCommonOptions
+        setDirectoryVersionCacheDaysCommand.Handler <- SetDirectoryVersionCacheDays
+        repositoryCommand.AddCommand(setDirectoryVersionCacheDaysCommand)
+
+        let setNameCommand = new Command("set-name", Description = "Sets the name of the repository.") |> addOption Options.newName |> addCommonOptions
         setNameCommand.Handler <- SetName
         repositoryCommand.AddCommand(setNameCommand)
 
-        let deleteCommand = new Command("delete", Description = "Delete a repository.") |> addOption Options.deleteReason |> addOption Options.force |> addCommonOptions
+        let setDescriptionCommand = new Command("set-description", Description = "Sets the description of the repository.") |> addOption Options.description |> addCommonOptions
+        setDescriptionCommand.Handler <- SetDescription
+        repositoryCommand.AddCommand(setDescriptionCommand)
+
+        let deleteCommand = new Command("delete", Description = "Deletes a repository.") |> addOption Options.deleteReason |> addOption Options.force |> addCommonOptions
         deleteCommand.Handler <- Delete
         repositoryCommand.AddCommand(deleteCommand)
 

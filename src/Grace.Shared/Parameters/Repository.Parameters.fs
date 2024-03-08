@@ -59,6 +59,16 @@ module Repository =
         inherit RepositoryParameters()
         member val public CheckpointDays: Double = Double.MinValue with get, set
 
+    /// Parameters for the /repository/setDirectoryVersionCacheDays endpoint.
+    type SetDirectoryVersionCacheDaysParameters() = 
+        inherit RepositoryParameters()
+        member val public DirectoryVersionCacheDays: Double = Double.MinValue with get, set
+
+    /// Parameters for the /repository/setDiffCacheDays endpoint.
+    type SetDiffCacheDaysParameters() = 
+        inherit RepositoryParameters()
+        member val public DiffCacheDays: Double = Double.MinValue with get, set
+
     /// Parameters for the /repository/setDescription endpoint.
     type SetRepositoryDescriptionParameters() =
         inherit RepositoryParameters()
@@ -73,7 +83,7 @@ module Repository =
     type SetRepositoryNameParameters() = 
         inherit RepositoryParameters()
         member val public NewName = String.Empty with get, set
-    
+
     /// Parameters for the /repository/delete endpoint.
     type DeleteRepositoryParameters() =
         inherit RepositoryParameters()

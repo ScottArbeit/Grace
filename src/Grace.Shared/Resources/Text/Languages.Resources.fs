@@ -419,6 +419,8 @@ module Text =
         | InvalidBranchId
         | InvalidBranchName
         | InvalidCheckpointDaysValue
+        | InvalidDiffCacheDaysValue
+        | InvalidDirectoryVersionCacheDaysValue
         | InvalidDirectoryPath
         | InvalidDirectoryId
         | InvalidMaxCountValue

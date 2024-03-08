@@ -5,8 +5,12 @@ open Grace.Shared.Dto.Branch
 open Grace.Shared.Dto.Reference
 open Grace.Shared.Dto.Repository
 open Grace.Shared.Parameters.Repository
+open Grace.Shared.Types
 open System
 open System.Collections.Generic
+open System.Threading.Tasks
+
+[<AutoOpen>]
 
 type Repository() =
 
@@ -64,21 +68,29 @@ type Repository() =
         postServer<RecordSavesParameters, String>(parameters |> ensureCorrelationIdIsSet, $"repository/{nameof(Repository.SetRecordSaves)}")
     
     /// <summary>
-    /// Sets the default number of days to keep saves.
+    /// Sets the number of days to keep saves in this repository.
     /// </summary>
     /// <param name="parameters">Values to use when setting the default save days.</param>
     static member public SetSaveDays(parameters: SetSaveDaysParameters) =
         postServer<SetSaveDaysParameters, String>(parameters |> ensureCorrelationIdIsSet, $"repository/{nameof(Repository.SetSaveDays)}")
 
     /// <summary>
-    /// Sets the default number of days to keep checkpoints.
+    /// Sets the number of days to keep checkpoints in this repository.
     /// </summary>
     /// <param name="parameters">Values to use when setting the default checkpoint retention time.</param>
     static member public SetCheckpointDays(parameters: SetCheckpointDaysParameters) =
         postServer<SetCheckpointDaysParameters, String>(parameters |> ensureCorrelationIdIsSet, $"repository/{nameof(Repository.SetCheckpointDays)}")
 
+    /// Sets the number of days to keep diff results cached in the database.
+    static member public SetDiffCacheDays(parameters: SetDiffCacheDaysParameters) =
+        postServer<SetDiffCacheDaysParameters, String>(parameters |> ensureCorrelationIdIsSet, $"repository/{nameof(Repository.SetDiffCacheDays)}")
+
+    /// Sets the number of days to keep recursive directory version contents in the database.
+    static member public SetDirectoryVersionCacheDays(parameters: SetDirectoryVersionCacheDaysParameters) =
+        postServer<SetDirectoryVersionCacheDaysParameters, String>(parameters |> ensureCorrelationIdIsSet, $"repository/{nameof(Repository.SetDirectoryVersionCacheDays)}")
+
     /// <summary>
-    /// Sets the default number of days to keep checkpoints.
+    /// Sets the default version of the Server API that clients should use when accessing this repository.
     /// </summary>
     /// <param name="parameters">Values to use when setting the default checkpoint retention time.</param>
     static member public SetDefaultServerApiVersion(parameters: SetDefaultServerApiVersionParameters) =

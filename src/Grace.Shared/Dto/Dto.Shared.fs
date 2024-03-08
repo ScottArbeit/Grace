@@ -189,6 +189,8 @@ module Dto =
                 DefaultBranchName: BranchName
                 SaveDays: double
                 CheckpointDays: double
+                DirectoryVersionCacheDays: double
+                DiffCacheDays: double
                 Description: string
                 RecordSaves: bool
                 CreatedAt: Instant
@@ -214,6 +216,8 @@ module Dto =
                 DefaultBranchName = BranchName Constants.InitialBranchName
                 SaveDays = 7.0
                 CheckpointDays = 365.0
+                DirectoryVersionCacheDays = 1.0
+                DiffCacheDays = 1.0
                 Description = String.Empty
                 RecordSaves = true
                 CreatedAt = getCurrentInstant()

@@ -123,6 +123,8 @@ module Events =
             | DefaultBranchNameSet of defaultBranchName: BranchName
             | SaveDaysSet of duration: double
             | CheckpointDaysSet of duration: double
+            | DirectoryVersionCacheDaysSet of duration: double
+            | DiffCacheDaysSet of duration: double
             | NameSet of repositoryName: RepositoryName
             | DescriptionSet of description: string
             | LogicalDeleted of force: bool * deleteReason: string

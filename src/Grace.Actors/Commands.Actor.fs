@@ -79,6 +79,8 @@ module Commands =
             | SetDefaultBranchName of defaultBranchName: BranchName
             | SetSaveDays of duration: double
             | SetCheckpointDays of duration: double
+            | SetDirectoryVersionCacheDays of duration: double
+            | SetDiffCacheDays of duration: double
             | SetName of repositoryName: RepositoryName
             | SetDescription of description: string
             | DeleteLogical of force: bool * deleteReason: string

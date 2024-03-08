@@ -129,6 +129,8 @@ module Repository =
                 | DefaultBranchNameSet defaultBranchName -> {currentRepositoryDto with DefaultBranchName = defaultBranchName}
                 | SaveDaysSet days -> {currentRepositoryDto with SaveDays = days}
                 | CheckpointDaysSet days -> {currentRepositoryDto with CheckpointDays = days}
+                | DirectoryVersionCacheDaysSet days -> {currentRepositoryDto with DirectoryVersionCacheDays = days}
+                | DiffCacheDaysSet days -> {currentRepositoryDto with DiffCacheDays = days}
                 | NameSet repositoryName -> {currentRepositoryDto with RepositoryName = repositoryName}
                 | DescriptionSet description -> {currentRepositoryDto with Description = description}
                 | LogicalDeleted _ -> {currentRepositoryDto with DeletedAt = Some (getCurrentInstant())}
@@ -405,6 +407,8 @@ module Repository =
                                     | SetDefaultBranchName defaultBranchName -> return DefaultBranchNameSet defaultBranchName
                                     | SetSaveDays days -> return SaveDaysSet days
                                     | SetCheckpointDays days -> return CheckpointDaysSet days
+                                    | SetDirectoryVersionCacheDays days -> return DirectoryVersionCacheDaysSet days
+                                    | SetDiffCacheDays days -> return DiffCacheDaysSet days
                                     | SetName repositoryName -> return NameSet repositoryName
                                     | SetDescription description -> return DescriptionSet description
                                     | DeleteLogical (force, deleteReason) ->

@@ -172,6 +172,8 @@ module Application =
                     route "/getReferencesByReferenceId" Repository.GetReferencesByReferenceId |> addMetadata typeof<Repository.GetReferencesByReferenceIdParameters>
                     route "/isEmpty" Repository.IsEmpty |> addMetadata typeof<Repository.IsEmptyParameters>
                     route "/setCheckpointDays" Repository.SetCheckpointDays |> addMetadata typeof<Repository.SetCheckpointDaysParameters>
+                    route "/setDiffCacheDays" Repository.SetDiffCacheDays |> addMetadata typeof<Repository.SetDiffCacheDaysParameters>
+                    route "/setDirectoryVersionCacheDays" Repository.SetDirectoryVersionCacheDays |> addMetadata typeof<Repository.SetDirectoryVersionCacheDaysParameters>
                     route "/setDefaultServerApiVersion" Repository.SetDefaultServerApiVersion |> addMetadata typeof<Repository.SetDefaultServerApiVersionParameters>
                     route "/setDescription" Repository.SetDescription |> addMetadata typeof<Repository.SetRepositoryDescriptionParameters>
                     route "/setName" Repository.SetName |> addMetadata typeof<Repository.SetRepositoryNameParameters>

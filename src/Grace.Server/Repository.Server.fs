@@ -236,6 +236,40 @@ module Repository =
                 return! processCommand context validations command
             }
 
+    /// Sets the number of days to keep diff contents in the database.
+    let SetDiffCacheDays: HttpHandler =
+        fun (next: HttpFunc) (context: HttpContext) ->
+            task {
+                let validations (parameters: SetDiffCacheDaysParameters) =
+                    [| Input.eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherRepositoryIdOrRepositoryNameRequired
+                       Repository.daysIsValid parameters.DiffCacheDays InvalidDiffCacheDaysValue
+                       Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.CorrelationId RepositoryDoesNotExist
+                       Repository.repositoryIsNotDeleted parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.CorrelationId RepositoryIsDeleted |]
+                
+                let command (parameters: SetDiffCacheDaysParameters) = 
+                    SetDiffCacheDays(parameters.DiffCacheDays) |> returnValueTask
+                
+                context.Items.Add("Command", nameof(SetDiffCacheDays))
+                return! processCommand context validations command
+            }
+
+    /// Sets the number of days to keep recursive directory version contents in the database.
+    let SetDirectoryVersionCacheDays: HttpHandler = 
+        fun (next: HttpFunc) (context: HttpContext) ->
+            task {
+                let validations (parameters: SetDirectoryVersionCacheDaysParameters) =
+                    [| Input.eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherRepositoryIdOrRepositoryNameRequired
+                       Repository.daysIsValid parameters.DirectoryVersionCacheDays InvalidDirectoryVersionCacheDaysValue
+                       Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.CorrelationId RepositoryDoesNotExist
+                       Repository.repositoryIsNotDeleted parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.CorrelationId RepositoryIsDeleted |]
+                
+                let command (parameters: SetDirectoryVersionCacheDaysParameters) = 
+                    SetDirectoryVersionCacheDays(parameters.DirectoryVersionCacheDays) |> returnValueTask
+                
+                context.Items.Add("Command", nameof(SetDirectoryVersionCacheDays))
+                return! processCommand context validations command
+            }
+
     /// Sets the status of the repository (Public, Private).
     let SetStatus: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) -> 
