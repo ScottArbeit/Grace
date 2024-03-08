@@ -63,12 +63,12 @@
 		<PackageReference Include="Azure.Storage.Blobs" Version="12.20.0-beta.1" />
 		<PackageReference Include="Azure.Storage.Blobs.Batch" Version="12.17.0-beta.1" />
 		<PackageReference Include="FSharp.SystemTextJson" Version="1.2.42" />
-		<PackageReference Include="Giraffe" Version="6.2.0" />
-		<PackageReference Include="Dapr.Client" Version="1.12.0" />
-		<PackageReference Include="Dapr.AspNetCore" Version="1.12.0" />
-		<PackageReference Include="Dapr.Actors" Version="1.12.0" />
-		<PackageReference Include="Dapr.Actors.AspNetCore" Version="1.12.0" />
-		<PackageReference Include="Dapr.Extensions.Configuration" Version="1.12.0" />
+		<PackageReference Include="Giraffe" Version="6.3.0" />
+		<PackageReference Include="Dapr.Client" Version="1.13.0" />
+		<PackageReference Include="Dapr.AspNetCore" Version="1.13.0" />
+		<PackageReference Include="Dapr.Actors" Version="1.13.0" />
+		<PackageReference Include="Dapr.Actors.AspNetCore" Version="1.13.0" />
+		<PackageReference Include="Dapr.Extensions.Configuration" Version="1.13.0" />
 		<PackageReference Include="Microsoft.Azure.Cosmos" Version="3.39.0-preview.1" />
 		<PackageReference Include="Microsoft.Extensions.Caching.Memory" Version="8.0.0" />
 		<!--<PackageReference Include="Microsoft.Extensions.ApiDescription.Server" Version="7.0.1">
@@ -78,7 +78,7 @@
 		<PackageReference Include="Microsoft.Extensions.Configuration" Version="8.0.0" />
 		<PackageReference Include="Microsoft.Extensions.Logging" Version="8.0.0" />
 		<PackageReference Include="Microsoft.Extensions.Logging.Configuration" Version="8.0.0" />
-		<PackageReference Include="Microsoft.OpenApi" Version="1.6.13" />
+		<PackageReference Include="Microsoft.OpenApi" Version="1.6.14" />
 		<PackageReference Include="Microsoft.VisualStudio.Azure.Containers.Tools.Targets" Version="1.19.6" />
 		<PackageReference Include="OpenTelemetry" Version="1.7.0" />
 		<PackageReference Include="OpenTelemetry.Exporter.Console" Version="1.7.0" />
