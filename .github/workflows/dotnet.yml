@@ -18,6 +18,8 @@ jobs:
       with:
         dotnet-version: 8.0.x
         #dotnet-quality: 'preview'
+    - name: Install .NET Aspire workload
+      run: dotnet workload install aspire
     - name: Restore dependencies
       run: dotnet restore Grace.sln
       working-directory: src
