@@ -14,6 +14,7 @@ open System.Threading.Tasks
 
 module OrganizationName =
 
+    let actorName = ActorName.OrganizationName
     let mutable actorStartTime = Instant.MinValue
     let mutable logScope: IDisposable = null
 
@@ -22,10 +23,13 @@ module OrganizationName =
     type OrganizationNameActor(host: ActorHost) =
         inherit Actor(host)
 
-        let actorName = ActorName.OrganizationName
+        let idSections = host.Id.GetId().Split('|')
+        let organizationName = idSections[0]
+        let ownerId = idSections[1]
+
         let log = loggerFactory.CreateLogger("OrganizationName.Actor")
     
-        let mutable cachedOrganizationId: string option = None
+        let mutable cachedOrganizationId: OrganizationId option = None
 
         member val private correlationId: CorrelationId = String.Empty with get, set
 
@@ -42,8 +46,8 @@ module OrganizationName =
 
         override this.OnPostActorMethodAsync(context) =
             let duration_ms = (getCurrentInstant().Minus(actorStartTime).TotalMilliseconds).ToString("F3")
-            log.LogInformation("{CurrentInstant}: CorrelationId: {correlationId}; Finished {ActorName}.{MethodName}; OrganizationName: {OrganizationName}; OrganizationId: {OrganizationId}; Duration: {duration_ms}ms.", 
-                getCurrentInstantExtended(), this.correlationId, actorName, context.MethodName, this.Id, (if Option.isSome cachedOrganizationId then cachedOrganizationId.Value else "None"), duration_ms)
+            log.LogInformation("{CurrentInstant}: CorrelationId: {correlationId}; Finished {ActorName}.{MethodName}; OwnerId: {OwnerId}; OrganizationName: {OrganizationName}; OrganizationId: {OrganizationId}; Duration: {duration_ms}ms.", 
+                getCurrentInstantExtended(), this.correlationId, actorName, context.MethodName, ownerId, organizationName, (if Option.isSome cachedOrganizationId then $"{cachedOrganizationId.Value}" else "None"), duration_ms)
             logScope.Dispose()
             Task.CompletedTask
 
@@ -56,5 +60,5 @@ module OrganizationName =
                 this.correlationId <- correlationId
                 let mutable guid = Guid.Empty
                 if Guid.TryParse(organizationId, &guid) && guid <> Guid.Empty then
-                    cachedOrganizationId <- Some organizationId
+                    cachedOrganizationId <- Some guid
                 Task.CompletedTask

@@ -361,7 +361,11 @@ module Types =
         member this.enhance(key, value) =
             this.Properties.Add(key, value)
             this
-        override this.ToString() = serialize this
+        override this.ToString() =
+            let properties = this.Properties |> Seq.fold (fun (state: StringBuilder) kvp -> state.AppendLine($"  {kvp.Key}: {kvp.Value}; ")) (StringBuilder())
+            if properties.Length >= 2 then
+                properties.Remove(properties.Length - 2, 2) |> ignore
+            $"Error: {this.Error}{Environment.NewLine}EventTime: {formatInstantExtended this.EventTime}{Environment.NewLine}CorrelationId: {this.CorrelationId}{Environment.NewLine}Properties:{Environment.NewLine}{properties.ToString()}{Environment.NewLine}"
 
     /// The primary type used to represent Grace operations results.
     type GraceResult<'T> = Result<GraceReturnValue<'T>, GraceError>

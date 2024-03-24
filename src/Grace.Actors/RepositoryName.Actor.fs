@@ -14,6 +14,7 @@ open System.Threading.Tasks
 
 module RepositoryName =
 
+    let actorName = ActorName.RepositoryName
     let mutable actorStartTime = Instant.MinValue
     let mutable logScope: IDisposable = null
 
@@ -22,9 +23,12 @@ module RepositoryName =
     type RepositoryNameActor(host: ActorHost) =
         inherit Actor(host)
 
-        let actorName = Constants.ActorName.RepositoryName
+        let idSections = host.Id.GetId().Split('|')
+        let repositoryName = idSections[0]
+        let ownerId = idSections[1]
+        let organizationId = idSections[2]
     
-        let log = loggerFactory.CreateLogger(actorName)
+        let log = loggerFactory.CreateLogger("RepositoryName.Actor")
 
         let mutable cachedRepositoryId: string option = None
 
@@ -39,8 +43,8 @@ module RepositoryName =
 
         override this.OnPostActorMethodAsync(context) =
             let duration_ms = (getCurrentInstant().Minus(actorStartTime).TotalMilliseconds).ToString("F3")
-            log.LogInformation("{CurrentInstant}: CorrelationId: {correlationId}; Finished {ActorName}.{MethodName}; RepositoryName: {RepositoryName}; RepositoryId: {RepositoryId}; Duration: {duration_ms}ms.", 
-                getCurrentInstantExtended(), this.correlationId, actorName, context.MethodName, this.Id, (if Option.isSome cachedRepositoryId then cachedRepositoryId.Value else "None"), duration_ms)
+            log.LogInformation("{CurrentInstant}: CorrelationId: {correlationId}; Finished {ActorName}.{MethodName}; OwnerId: {OwnerId}; OrganizationId: {OrganizationId}; RepositoryName: {RepositoryName}; RepositoryId: {RepositoryId}; Duration: {duration_ms}ms.", 
+                getCurrentInstantExtended(), this.correlationId, actorName, context.MethodName, ownerId, organizationId, repositoryName, (if Option.isSome cachedRepositoryId then cachedRepositoryId.Value else "None"), duration_ms)
             logScope.Dispose()
             Task.CompletedTask
 

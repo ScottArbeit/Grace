@@ -17,6 +17,7 @@ open Grace.Shared.Utilities
 open Microsoft.Extensions.Logging
 open ApplicationContext
 open Microsoft.Extensions.Caching.Memory
+open System.Collections.Immutable
 
 module Program =
     let createHostBuilder (args: string[]) : IHostBuilder =
@@ -33,7 +34,7 @@ module Program =
                           //.UseUrls("http://*:5000")
                           .UseKestrel(fun kestrelServerOptions ->
                               kestrelServerOptions.Listen(IPAddress.Any, 5000)
-                              kestrelServerOptions.Listen(IPAddress.Any, 5001, (fun listenOptions -> listenOptions.UseHttps("/etc/certificates/gracedevcert.pfx", "GraceDevCert") |> ignore))
+                              //kestrelServerOptions.Listen(IPAddress.Any, 5001, (fun listenOptions -> listenOptions.UseHttps("/etc/certificates/gracedevcert.pfx", "GraceDevCert") |> ignore))
                               kestrelServerOptions.ConfigureEndpointDefaults(fun listenOptions -> listenOptions.Protocols <- HttpProtocols.Http1AndHttp2)
                               kestrelServerOptions.ConfigureHttpsDefaults(fun options -> 
                                 options.SslProtocols <- SslProtocols.Tls12 ||| SslProtocols.Tls13
@@ -46,14 +47,27 @@ module Program =
 
     [<EntryPoint>]
     let main args =
-        let dir = new DirectoryInfo("/etc/certificates")
-        let files = dir.EnumerateFiles() 
-        logToConsole $"In main. Contents of {dir.FullName} ({files.Count()} files):"
-        files |> Seq.iter (fun file -> logToConsole $"{file.Name}: {file.Length} bytes")
+        //let dir = new DirectoryInfo("/etc/certificates")
+        //let files = dir.EnumerateFiles() 
+        //logToConsole $"In main. Contents of {dir.FullName} ({files.Count()} files):"
+        //files |> Seq.iter (fun file -> logToConsole $"{file.Name}: {file.Length} bytes")
+
         logToConsole "-----------------------------------------------------------"
         let host = createHostBuilder(args).Build()
         
-        // Just placing some much-used services into the ApplicationContext where they're easy to find.
+        // Build the configuration
+        let environment = Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT")
+        let config = ConfigurationBuilder()
+                        .AddJsonFile("appsettings.json", true, true) // Load appsettings.json
+                        .AddJsonFile($"appsettings.{environment}.json", false, true) // Load environment-specific settings
+                        .AddEnvironmentVariables() // Include environment variables
+                        .Build();
+
+
+        for kvp in config.AsEnumerable().ToImmutableSortedDictionary() do
+            Console.WriteLine($"{kvp.Key}: {kvp.Value}");
+
+        // Just placing some much-used services into ApplicationContext where they're easy to find.
         let loggerFactory = host.Services.GetService(typeof<ILoggerFactory>) :?> ILoggerFactory
         ApplicationContext.setLoggerFactory(loggerFactory)
 

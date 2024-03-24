@@ -36,10 +36,10 @@ open System.Threading.Tasks
 
 module Services =
     type ServerGraceIndex = Dictionary<RelativePath, DirectoryVersion>
-    type ownerIdRecord = {ownerId: string}
-    type organizationIdRecord = {organizationId: string}
-    type repositoryIdRecord = {repositoryId: string}
-    type branchIdRecord = {branchId: string}
+    type OwnerIdRecord = {ownerId: string}
+    type OrganizationIdRecord = {organizationId: string}
+    type RepositoryIdRecord = {repositoryId: string}
+    type BranchIdRecord = {branchId: string}
 
     let repositoryContainerNameCache = ConcurrentDictionary<Guid, string>()
     let containerClients = new ConcurrentDictionary<string, BlobContainerClient>()
@@ -50,11 +50,6 @@ module Services =
     let private azureStorageConnectionString = Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.AzureStorageConnectionString)
     let private storageKey = Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.AzureStorageKey)
     let private sharedKeyCredential = StorageSharedKeyCredential(DefaultObjectStorageAccount, storageKey)
-
-    //let actorProxyOptions = ActorProxyOptions(JsonSerializerOptions = Constants.JsonSerializerOptions, HttpEndpoint = daprEndpoint)
-    //let ActorProxyFactory = ActorProxyFactory(actorProxyOptions)
-
-    let GetBranchNameActorId repositoryId branchName = ActorId($"{repositoryId}-{branchName}")
 
     let mutable actorProxyFactory: IActorProxyFactory = null
     let setActorProxyFactory proxyFactory =
@@ -83,6 +78,11 @@ module Services =
 
     let log = Lazy<ILogger>(fun () -> loggerFactory.CreateLogger("Services.Actor"))
     let linqSerializerOptions = CosmosLinqSerializerOptions(PropertyNamingPolicy = CosmosPropertyNamingPolicy.CamelCase)
+
+    let getOwnerNameActorId ownerName = ActorId(ownerName)
+    let getOrganizationNameActorId ownerId organizationName = ActorId($"{organizationName}|{ownerId}")
+    let getRepositoryNameActorId ownerId organizationId repositoryName = ActorId($"{repositoryName}|{ownerId}|{organizationId}")
+    let getBranchNameActorId repositoryId branchName = ActorId($"{branchName}|{repositoryId}")
 
     /// Custom QueryRequestOptions that requests Index Metrics only in DEBUG build.
     let queryRequestOptions = QueryRequestOptions()
@@ -203,9 +203,9 @@ module Services =
                 if cached then
                     return Some (ownerGuid.ToString())
                 else
-                    let ownerNameActorProxy = actorProxyFactory.CreateActorProxy<IOwnerNameActor>(ActorId(ownerName), ActorName.OwnerName)
+                    let ownerNameActorProxy = actorProxyFactory.CreateActorProxy<IOwnerNameActor>((getOwnerNameActorId ownerName), ActorName.OwnerName)
                     match! ownerNameActorProxy.GetOwnerId correlationId with
-                    | Some ownerId -> return Some ownerId
+                    | Some ownerId -> return Some $"{ownerId}"
                     | None ->
                         match actorStateStorageProvider with
                         | Unknown -> return None
@@ -213,17 +213,17 @@ module Services =
                             let queryDefinition = QueryDefinition("""SELECT c["value"].OwnerId FROM c WHERE STRINGEQUALS(c["value"].OwnerName, @ownerName, true) AND c["value"].Class = @class""")
                                                     .WithParameter("@ownerName", ownerName)
                                                     .WithParameter("@class", "OwnerDto")
-                            let iterator = DefaultRetryPolicy.Execute(fun () -> cosmosContainer.GetItemQueryIterator<ownerIdRecord>(queryDefinition))
+                            let iterator = DefaultRetryPolicy.Execute(fun () -> cosmosContainer.GetItemQueryIterator<OwnerIdRecord>(queryDefinition))
                             if iterator.HasMoreResults then
                                 let! currentResultSet = iterator.ReadNextAsync()
                                 let ownerId = currentResultSet.FirstOrDefault({ownerId = String.Empty}).ownerId
                                 if String.IsNullOrEmpty(ownerId) then
                                     return None
                                 else
-                                    do! ownerNameActorProxy.SetOwnerId ownerId correlationId
                                     ownerGuid <- Guid.Parse(ownerId)
-                                    use newCacheEntry = memoryCache.CreateEntry(ownerGuid, Value = null, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
-                                    use newCacheEntry2 = memoryCache.CreateEntry($"OwN:{ownerName}", Value = ownerGuid, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
+                                    use newCacheEntry1 = memoryCache.CreateEntry($"OwN:{ownerName}", Value = ownerGuid, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
+                                    use newCacheEntry2 = memoryCache.CreateEntry(ownerGuid, Value = null, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
+                                    do! ownerNameActorProxy.SetOwnerId ownerId correlationId
                                     return Some ownerId
                             else return None
                         | MongoDB -> return None
@@ -253,11 +253,11 @@ module Services =
                 else
                     let cached = memoryCache.TryGetValue($"OrN:{organizationName}", &organizationGuid)
                     if cached then
-                        return Some (organizationGuid.ToString())
+                        return Some $"{organizationGuid}"
                     else
-                        let organizationNameActorProxy = actorProxyFactory.CreateActorProxy<IOrganizationNameActor>(ActorId(organizationName), ActorName.OrganizationName)
+                        let organizationNameActorProxy = actorProxyFactory.CreateActorProxy<IOrganizationNameActor>((getOrganizationNameActorId ownerId organizationName), ActorName.OrganizationName)
                         match! organizationNameActorProxy.GetOrganizationId correlationId with
-                        | Some ownerId -> return Some ownerId
+                        | Some ownerId -> return Some $"{ownerId}"
                         | None ->
                             match actorStateStorageProvider with
                             | Unknown -> return None
@@ -266,17 +266,17 @@ module Services =
                                                         .WithParameter("@organizationName", organizationName)
                                                         .WithParameter("@ownerId", ownerId)
                                                         .WithParameter("@class", "OrganizationDto")
-                                let iterator = DefaultRetryPolicy.Execute(fun () -> cosmosContainer.GetItemQueryIterator<organizationIdRecord>(queryDefinition))
+                                let iterator = DefaultRetryPolicy.Execute(fun () -> cosmosContainer.GetItemQueryIterator<OrganizationIdRecord>(queryDefinition))
                                 if iterator.HasMoreResults then
                                     let! currentResultSet = iterator.ReadNextAsync()
                                     let organizationId = currentResultSet.FirstOrDefault({organizationId = String.Empty}).organizationId
                                     if String.IsNullOrEmpty(organizationId) then
                                         return None
                                     else
-                                        do! organizationNameActorProxy.SetOrganizationId organizationId correlationId
                                         organizationGuid <- Guid.Parse(organizationId)
-                                        use newCacheEntry = memoryCache.CreateEntry(organizationGuid, Value = null, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
-                                        use newCacheEntry2 = memoryCache.CreateEntry($"OrN:{organizationName}", Value = organizationGuid, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
+                                        use newCacheEntry1 = memoryCache.CreateEntry($"OrN:{organizationName}", Value = organizationGuid, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
+                                        use newCacheEntry2 = memoryCache.CreateEntry(organizationGuid, Value = null, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
+                                        do! organizationNameActorProxy.SetOrganizationId organizationId correlationId
                                         return Some organizationId
                                 else return None
                             | MongoDB -> return None
@@ -311,7 +311,7 @@ module Services =
                         if cached then
                             return Some (repositoryGuid.ToString())
                         else
-                            let repositoryNameActorProxy = actorProxyFactory.CreateActorProxy<IRepositoryNameActor>(ActorId(repositoryName), ActorName.RepositoryName)
+                            let repositoryNameActorProxy = actorProxyFactory.CreateActorProxy<IRepositoryNameActor>((getRepositoryNameActorId ownerId organizationId repositoryName), ActorName.RepositoryName)
                             match! repositoryNameActorProxy.GetRepositoryId correlationId with
                             | Some repositoryId -> return Some repositoryId
                             | None ->
@@ -323,17 +323,17 @@ module Services =
                                                             .WithParameter("@organizationId", organizationId)
                                                             .WithParameter("@ownerId", ownerId)
                                                             .WithParameter("@class", "RepositoryDto")
-                                    let iterator = cosmosContainer.GetItemQueryIterator<repositoryIdRecord>(queryDefinition)
+                                    let iterator = cosmosContainer.GetItemQueryIterator<RepositoryIdRecord>(queryDefinition)
                                     if iterator.HasMoreResults then
                                         let! currentResultSet = iterator.ReadNextAsync()
                                         let repositoryId = currentResultSet.FirstOrDefault({repositoryId = String.Empty}).repositoryId
                                         if String.IsNullOrEmpty(repositoryId) then
                                             return None
                                         else
-                                            do! repositoryNameActorProxy.SetRepositoryId repositoryId correlationId
                                             repositoryGuid <- Guid.Parse(repositoryId)
-                                            use newCacheEntry = memoryCache.CreateEntry(repositoryGuid, Value = null, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
-                                            use newCacheEntry2 = memoryCache.CreateEntry($"ReN:{repositoryName}", Value = repositoryGuid, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
+                                            use newCacheEntry1 = memoryCache.CreateEntry($"ReN:{repositoryName}", Value = repositoryGuid, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
+                                            use newCacheEntry2 = memoryCache.CreateEntry(repositoryGuid, Value = null, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
+                                            do! repositoryNameActorProxy.SetRepositoryId repositoryId correlationId
                                             return Some repositoryId
                                     else return None
                                 | MongoDB -> return None
@@ -365,7 +365,7 @@ module Services =
                 if cached then
                     return Some $"{branchGuid}"
                 else
-                    let branchNameActorProxy = actorProxyFactory.CreateActorProxy<IBranchNameActor>(GetBranchNameActorId repositoryId branchName, ActorName.BranchName)
+                    let branchNameActorProxy = actorProxyFactory.CreateActorProxy<IBranchNameActor>(getBranchNameActorId repositoryId branchName, ActorName.BranchName)
                     match! branchNameActorProxy.GetBranchId correlationId with
                     | Some branchId -> return Some $"{branchId}"
                     | None ->
@@ -376,7 +376,7 @@ module Services =
                                                     .WithParameter("@repositoryId", repositoryId)
                                                     .WithParameter("@branchName", branchName)
                                                     .WithParameter("@class", "BranchDto")
-                            let iterator = DefaultRetryPolicy.Execute(fun () -> cosmosContainer.GetItemQueryIterator<branchIdRecord>(queryDefinition))
+                            let iterator = DefaultRetryPolicy.Execute(fun () -> cosmosContainer.GetItemQueryIterator<BranchIdRecord>(queryDefinition))
                             if iterator.HasMoreResults then
                                 let! currentResultSet = iterator.ReadNextAsync()
                                 let branchId = currentResultSet.FirstOrDefault({branchId = String.Empty}).branchId
@@ -384,9 +384,9 @@ module Services =
                                     return None
                                 else
                                     branchGuid <- Guid.Parse(branchId)
+                                    use newCacheEntry1 = memoryCache.CreateEntry($"BrN:{branchName}", Value = branchGuid, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
+                                    use newCacheEntry2 = memoryCache.CreateEntry(branchGuid, Value = null, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
                                     do! branchNameActorProxy.SetBranchId branchGuid correlationId
-                                    use newCacheEntry = memoryCache.CreateEntry(branchGuid, Value = null, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
-                                    use newCacheEntry2 = memoryCache.CreateEntry($"BrN:{branchName}", Value = branchGuid, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
                                     return Some branchId
                             else return None
                         | MongoDB -> return None
@@ -449,7 +449,7 @@ module Services =
                                                 .WithParameter("@organizationName", organizationName)
                                                 .WithParameter("@class", "OrganizationDto")
                         //logToConsole (queryDefinition.QueryText.Replace("@ownerId", $"\"{ownerId}\"").Replace("@organizationName", $"\"{organizationName}\"").Replace("@class", "\"OrganizationDto\""))
-                        let iterator = cosmosContainer.GetItemQueryIterator<organizationIdRecord>(queryDefinition, requestOptions = queryRequestOptions)
+                        let iterator = cosmosContainer.GetItemQueryIterator<OrganizationIdRecord>(queryDefinition, requestOptions = queryRequestOptions)
                         if iterator.HasMoreResults then
                             let! currentResultSet = iterator.ReadNextAsync()
                             // If a row is returned, and organizationId gets a value, then the organization name is not unique.
@@ -481,7 +481,7 @@ module Services =
                                                 .WithParameter("@repositoryName", repositoryName)
                                                 .WithParameter("@class", "RepositoryDto")
                         //logToConsole (queryDefinition.QueryText.Replace("@organizationId", $"\"{organizationId}\"").Replace("@repositoryName", $"\"{repositoryName}\""))
-                        let iterator = cosmosContainer.GetItemQueryIterator<repositoryIdRecord>(queryDefinition, requestOptions = queryRequestOptions)
+                        let iterator = cosmosContainer.GetItemQueryIterator<RepositoryIdRecord>(queryDefinition, requestOptions = queryRequestOptions)
                         if iterator.HasMoreResults then
                             let! currentResultSet = iterator.ReadNextAsync()
                             // If a row is returned, and repositoryId gets a value, then the repository name is not unique.
