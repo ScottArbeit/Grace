@@ -307,7 +307,12 @@ module Utilities =
             ``exception``: string
             innerException: string
         }
-        override this.ToString() = (serialize this).Replace("\\\\\\\\", @"\").Replace("\\\\", @"\").Replace(@"\r\n", Environment.NewLine)
+        
+        override this.ToString() = 
+            match this.innerException with
+            | null -> $"Exception: {this.``exception``}{Environment.NewLine}{Environment.NewLine}"
+            | innerEx -> $"Exception: {this.``exception``}{Environment.NewLine}{Environment.NewLine}Inner exception: {this.innerException}{Environment.NewLine}"
+            //(serialize this).Replace("\\\\\\\\", @"\").Replace("\\\\", @"\").Replace(@"\r\n", Environment.NewLine)
 
     /// Converts an Exception-based instance into an ExceptionResponse instance.
     let createExceptionResponse (ex: Exception): ExceptionResponse =
@@ -315,10 +320,18 @@ module Utilities =
         let stackTrace (ex: Exception) = 
             if not <| String.IsNullOrEmpty(ex.StackTrace) then
                 //ex.StackTrace.Replace("\\\\\\\\", @"\").Replace("\\\\", @"\").Replace("\r\n", Environment.NewLine)
-                serialize ex.StackTrace //.Replace("\\\\\\\\", @"\").Replace("\\\\", @"\").Replace(@"\r\n", Environment.NewLine)
+                //serialize ex.StackTrace //.Replace("\\\\\\\\", @"\").Replace("\\\\", @"\").Replace(@"\r\n", Environment.NewLine)
+                let jsonSerializerOptions = new JsonSerializerOptions()
+                jsonSerializerOptions.Encoder <- Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+                jsonSerializerOptions.WriteIndented <- true
+                JsonSerializer.Serialize(ex.StackTrace, jsonSerializerOptions)
             else
                 String.Empty
-        let exceptionMessage (ex: Exception) = $"Message: {ex.Message}{Environment.NewLine}{Environment.NewLine}Stack trace:{Environment.NewLine}{stackTrace ex}{Environment.NewLine}"
+        
+        let exceptionMessage (ex: Exception) = 
+            //$"Message: {ex.Message}{Environment.NewLine}{Environment.NewLine}Stack trace:{Environment.NewLine}{stackTrace ex}{Environment.NewLine}"
+            $"Message: {ex.Message}{Environment.NewLine}{Environment.NewLine}Stack trace:{Environment.NewLine}{ex.StackTrace}{Environment.NewLine}"
+
         match ex.InnerException with
         | null -> {``exception`` = exceptionMessage ex; innerException = "null"}
         | innerEx -> {``exception`` = exceptionMessage ex; innerException = exceptionMessage ex.InnerException}

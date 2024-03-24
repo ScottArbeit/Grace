@@ -16,7 +16,7 @@ data:
   ASPNETCORE_URLS: https://+:5001;http://+:5000
   # ASPNETCORE_Kestrel__Certificates__Default__Path: /https/aspnetapp.pfx
   # ASPNETCORE_Kestrel__Certificates__Default__Password: CrypticPassword8=5
-  AZURE_MONITOR_CONNECTION_STRING: "InstrumentationKey=e0955eb4-1817-4a94-bf6e-d48f6ae54a8c;IngestionEndpoint=https://westus2-2.in.applicationinsights.azure.com/"
+  APPLICATIONINSIGHTS_CONNECTION_STRING: "InstrumentationKey=e0955eb4-1817-4a94-bf6e-d48f6ae54a8c;IngestionEndpoint=https://westus2-2.in.applicationinsights.azure.com/"
   # Azure_CosmosDB_Connection_String: "AccountEndpoint=https://localhost:8081/;AccountKey=C2y6yDjf5/R+ob0N8A7Cgv30VRDJIWEHLM+4QDU5DE2nQ9nDuVTqobD4b8mGGyPMbIZnqyMsEcaGQy67XIw/Jw==" # This is a well-known default key.
   DAPR_APP_PORT: "5000"
   DAPR_HTTP_PORT: "3500"
@@ -167,11 +167,11 @@ spec:
       - name: opentelemetry-collector
         image: otel/opentelemetry-collector:latest
         env:
-        - name: Azure_Monitor_Connection_String
+        - name: APPLICATIONINSIGHTS_CONNECTION_STRING
           valueFrom:
             secretKeyRef:
-              name: azuremonitorconnectionstring
-              key: azuremonitorconnectionstring
+              name: applicationinsightsconnectionstring
+              key: applicationinsightsconnectionstring
         ports:
         - containerPort: 4317 # gRPC port for traces
           protocol: TCP
@@ -223,16 +223,16 @@ spec:
       #     requests:
       #       cpu: "0.25"
       #       memory: "400Mi"
-      - name: grafana
-        image: grafana/grafana:latest
-        ports:
-        - containerPort: 3000
-          name: grafana
-          protocol: TCP
-        resources:
-          limits:
-            cpu: "2.0"
-            memory: "1Gi"
-          requests:
-            cpu: "0.25"
-            memory: "400Mi"
+      # - name: grafana
+      #   image: grafana/grafana:latest
+      #   ports:
+      #   - containerPort: 3000
+      #     name: grafana
+      #     protocol: TCP
+      #   resources:
+      #     limits:
+      #       cpu: "2.0"
+      #       memory: "1Gi"
+      #     requests:
+      #       cpu: "0.25"
+      #       memory: "400Mi"

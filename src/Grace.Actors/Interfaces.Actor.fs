@@ -145,7 +145,7 @@ module Interfaces =
         /// Returns true if an organization with this organization name already exists in the database.
         abstract member SetOrganizationId: organizationName: OrganizationName -> correlationId: CorrelationId -> Task
         /// Returns the OrganizationId for the given OrganizationName.
-        abstract member GetOrganizationId: correlationId: CorrelationId -> Task<string option>
+        abstract member GetOrganizationId: correlationId: CorrelationId -> Task<OrganizationId option>
 
     /// Defines the operations for the Owner actor.
     [<Interface>]
@@ -171,7 +171,7 @@ module Interfaces =
         /// Sets the OwnerId for a given OwnerName.
         abstract member SetOwnerId: ownerName: OwnerName -> correlationId: CorrelationId -> Task
         /// Returns the OwnerId for the given OwnerName.
-        abstract member GetOwnerId: correlationId: CorrelationId -> Task<string option>
+        abstract member GetOwnerId: correlationId: CorrelationId -> Task<OwnerId option>
 
     /// Defines the operations for the Reference actor.
     [<Interface>]

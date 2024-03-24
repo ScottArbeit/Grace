@@ -14,7 +14,7 @@ open System.Threading.Tasks
 
 module OwnerName =
 
-    let actorName = Constants.ActorName.OwnerName
+    let actorName = ActorName.OwnerName
     let mutable actorStartTime = Instant.MinValue
     let mutable logScope: IDisposable = null
     
@@ -23,10 +23,9 @@ module OwnerName =
     type OwnerNameActor(host: ActorHost) =
         inherit Actor(host)
 
-        let actorName = ActorName.OwnerName
         let log = loggerFactory.CreateLogger("OwnerName.Actor")
 
-        let mutable cachedOwnerId: string option = None
+        let mutable cachedOwnerId: OwnerId option = None
 
         member val private correlationId: CorrelationId = String.Empty with get, set
 
@@ -40,7 +39,7 @@ module OwnerName =
         override this.OnPostActorMethodAsync(context) =
             let duration_ms = (getCurrentInstant().Minus(actorStartTime).TotalMilliseconds).ToString("F3")
             log.LogInformation("{CurrentInstant}: CorrelationID: {correlationID}; Finished {ActorName}.{MethodName}; OwnerName: {OwnerName}; OwnerId: {ownerId}; Duration: {duration_ms}ms.", 
-                getCurrentInstantExtended(), this.correlationId, actorName, context.MethodName, this.Id, (if Option.isSome cachedOwnerId then cachedOwnerId.Value else "None"), duration_ms)
+                getCurrentInstantExtended(), this.correlationId, actorName, context.MethodName, this.Id, (if Option.isSome cachedOwnerId then $"{cachedOwnerId.Value}" else "None"), duration_ms)
             logScope.Dispose()
             Task.CompletedTask
 
@@ -53,5 +52,5 @@ module OwnerName =
                 this.correlationId <- correlationId
                 let mutable guid = Guid.Empty
                 if Guid.TryParse(ownerId, &guid) && guid <> Guid.Empty then
-                    cachedOwnerId <- Some ownerId
+                    cachedOwnerId <- Some guid
                 Task.CompletedTask
