@@ -8,6 +8,8 @@ Project("{6EC3EE1D-3C4E-46DD-8F32-0CC8E7565705}") = "Grace.Server", "Grace.Serve
 		{0FC7C544-A958-4D86-9586-49C26A3B73EE} = {0FC7C544-A958-4D86-9586-49C26A3B73EE}
 	EndProjectSection
 EndProject
+Project("{6EC3EE1D-3C4E-46DD-8F32-0CC8E7565705}") = "Grace.CLI", "Grace.CLI\Grace.CLI.fsproj", "{9003426D-A5D8-4623-815E-A31C0279DA3A}"
+EndProject
 Project("{6EC3EE1D-3C4E-46DD-8F32-0CC8E7565705}") = "Grace.Actors", "Grace.Actors\Grace.Actors.fsproj", "{C15014E1-123C-4FAB-BBED-9C1627FCE6E0}"
 EndProject
 Project("{6EC3EE1D-3C4E-46DD-8F32-0CC8E7565705}") = "Grace.Shared", "Grace.Shared\Grace.Shared.fsproj", "{0FC7C544-A958-4D86-9586-49C26A3B73EE}"
@@ -17,8 +19,6 @@ EndProject
 Project("{6EC3EE1D-3C4E-46DD-8F32-0CC8E7565705}") = "Grace.Load", "Grace.Load\Grace.Load.fsproj", "{05E1442F-7263-459F-B726-80D7AE7A0DEC}"
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "CosmosJsonSerializer", "CosmosSerializer\CosmosJsonSerializer.csproj", "{72660935-7140-4D48-9BF2-020A790AC747}"
-EndProject
-Project("{6EC3EE1D-3C4E-46DD-8F32-0CC8E7565705}") = "Grace.CLI", "Grace.CLI\Grace.CLI.fsproj", "{9003426D-A5D8-4623-815E-A31C0279DA3A}"
 EndProject
 Project("{E53339B2-1760-4266-BCC7-CA923CBCF16C}") = "docker-compose", "docker-compose.dcproj", "{17B590BA-543E-49B1-9EB7-262CE73D86FE}"
 EndProject
@@ -43,6 +43,10 @@ Global
 		{2CD13C60-F69F-4D94-8319-C3630F854356}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{2CD13C60-F69F-4D94-8319-C3630F854356}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{2CD13C60-F69F-4D94-8319-C3630F854356}.Release|Any CPU.Build.0 = Release|Any CPU
+		{9003426D-A5D8-4623-815E-A31C0279DA3A}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{9003426D-A5D8-4623-815E-A31C0279DA3A}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{9003426D-A5D8-4623-815E-A31C0279DA3A}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{9003426D-A5D8-4623-815E-A31C0279DA3A}.Release|Any CPU.Build.0 = Release|Any CPU
 		{C15014E1-123C-4FAB-BBED-9C1627FCE6E0}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
 		{C15014E1-123C-4FAB-BBED-9C1627FCE6E0}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{C15014E1-123C-4FAB-BBED-9C1627FCE6E0}.Release|Any CPU.ActiveCfg = Release|Any CPU
@@ -63,10 +67,6 @@ Global
 		{72660935-7140-4D48-9BF2-020A790AC747}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{72660935-7140-4D48-9BF2-020A790AC747}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{72660935-7140-4D48-9BF2-020A790AC747}.Release|Any CPU.Build.0 = Release|Any CPU
-		{9003426D-A5D8-4623-815E-A31C0279DA3A}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{9003426D-A5D8-4623-815E-A31C0279DA3A}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{9003426D-A5D8-4623-815E-A31C0279DA3A}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{9003426D-A5D8-4623-815E-A31C0279DA3A}.Release|Any CPU.Build.0 = Release|Any CPU
 		{17B590BA-543E-49B1-9EB7-262CE73D86FE}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
 		{17B590BA-543E-49B1-9EB7-262CE73D86FE}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{17B590BA-543E-49B1-9EB7-262CE73D86FE}.Release|Any CPU.ActiveCfg = Release|Any CPU
@@ -76,9 +76,13 @@ Global
 		{B31CE180-594F-46CF-95FE-4A482EFEC24D}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{B31CE180-594F-46CF-95FE-4A482EFEC24D}.Release|Any CPU.Build.0 = Release|Any CPU
 		{02A981E8-7BAF-4EAE-B0B1-CD6619F119E9}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{02A981E8-7BAF-4EAE-B0B1-CD6619F119E9}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{02A981E8-7BAF-4EAE-B0B1-CD6619F119E9}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{02A981E8-7BAF-4EAE-B0B1-CD6619F119E9}.Release|Any CPU.Build.0 = Release|Any CPU
 		{6BAB5FC5-3501-4CAB-8507-4EAC4B9D2E5E}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{6BAB5FC5-3501-4CAB-8507-4EAC4B9D2E5E}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{6BAB5FC5-3501-4CAB-8507-4EAC4B9D2E5E}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{6BAB5FC5-3501-4CAB-8507-4EAC4B9D2E5E}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

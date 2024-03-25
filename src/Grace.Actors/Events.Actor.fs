@@ -20,11 +20,13 @@ module Events =
             | Checkpointed of referenceId: ReferenceId * directoryId: DirectoryId * sha256Hash: Sha256Hash * referenceText: ReferenceText
             | Saved of referenceId: ReferenceId * directoryId: DirectoryId * sha256Hash: Sha256Hash * referenceText: ReferenceText
             | Tagged of referenceId: ReferenceId * directoryId: DirectoryId * sha256Hash: Sha256Hash * referenceText: ReferenceText
-            | EnabledPromotion of allowed: bool
-            | EnabledCommit of allowed: bool
-            | EnabledCheckpoint of allowed: bool
-            | EnabledSave of allowed: bool
-            | EnabledTag of allowed: bool
+            | EnabledAssign of enabled: bool
+            | EnabledPromotion of enabled: bool
+            | EnabledCommit of enabled: bool
+            | EnabledCheckpoint of enabled: bool
+            | EnabledSave of enabled: bool
+            | EnabledTag of enabled: bool
+            | EnabledAutoRebase of enabled: bool
             | ReferenceRemoved of referenceId: ReferenceId
             | LogicalDeleted of force: bool * deleteReason: string
             | PhysicalDeleted

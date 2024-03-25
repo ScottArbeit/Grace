@@ -178,14 +178,13 @@ module Repository =
                             | Created (name, repositoryId, ownerId, organizationId) -> 
                                 // Create the default branch.
                                 let branchId = (Guid.NewGuid())
-                                let branchActorId = ActorId($"{branchId}")
+                                let branchActorId = Branch.GetActorId(branchId)
                                 let branchActor = Services.actorProxyFactory.CreateActorProxy<IBranchActor>(branchActorId, ActorName.Branch)
 
                                 // Only allow promotions and tags on the initial branch.
-                                let initialBranchPermissions = [|ReferenceType.Promotion; ReferenceType.Tag|]
+                                let initialBranchPermissions = [| ReferenceType.Promotion; ReferenceType.Tag |]
                                 let createCommand = Commands.Branch.BranchCommand.Create (branchId, (BranchName Constants.InitialBranchName), Constants.DefaultParentBranchId, ReferenceId.Empty, repositoryId, initialBranchPermissions)
-                                let! result = branchActor.Handle createCommand repositoryEvent.Metadata
-                                match result with
+                                match! branchActor.Handle createCommand repositoryEvent.Metadata with
                                 | Ok branchGraceReturn -> 
                                     // Create an initial promotion with completely empty contents
                                     let emptyDirectoryId = DirectoryId.NewGuid()

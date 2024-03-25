@@ -79,6 +79,8 @@ module Application =
                     route "/commit" Branch.Commit |> addMetadata typeof<Branch.CreateReferenceParameters>
                     route "/create" Branch.Create |> addMetadata typeof<Branch.CreateBranchParameters>
                     route "/delete" Branch.Delete |> addMetadata typeof<Branch.DeleteBranchParameters>
+                    route "/enableAssign" Branch.EnableAssign |> addMetadata typeof<Branch.EnableFeatureParameters> 
+                    route "/enableAutoRebase" Branch.EnableAutoRebase |> addMetadata typeof<Branch.EnableFeatureParameters>
                     route "/enableCheckpoint" Branch.EnableCheckpoint |> addMetadata typeof<Branch.EnableFeatureParameters>
                     route "/enableCommit" Branch.EnableCommit |> addMetadata typeof<Branch.EnableFeatureParameters>
                     route "/enablePromotion" Branch.EnablePromotion |> addMetadata typeof<Branch.EnableFeatureParameters>

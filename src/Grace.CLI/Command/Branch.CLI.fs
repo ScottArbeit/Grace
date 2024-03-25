@@ -775,6 +775,18 @@ module Branch =
                 return Error error
         }
 
+    let private EnableAssign =
+        CommandHandler.Create(fun (parseResult: ParseResult) (enableFeaturesParams: EnableFeatureParams) -> 
+            task {
+                let command (parameters: EnableFeatureParameters) =
+                    task {
+                        return! Branch.EnableAssign(parameters)
+                    }
+
+                let! result = enableFeatureHandler parseResult (enableFeaturesParams |> normalizeIdsAndNames parseResult) command "assign"
+                return result |> renderOutput parseResult
+            })
+
     let private EnablePromotion =
         CommandHandler.Create(fun (parseResult: ParseResult) (enableFeaturesParams: EnableFeatureParams) ->
             task {
@@ -832,6 +844,18 @@ module Branch =
                     }
 
                 let! result = enableFeatureHandler parseResult (enableFeaturesParams |> normalizeIdsAndNames parseResult) command "tag"
+                return result |> renderOutput parseResult
+            })
+
+    let private EnableAutoRebase = 
+        CommandHandler.Create(fun (parseResult: ParseResult) (enableFeaturesParams: EnableFeatureParams) ->
+            task {
+                let command (parameters: EnableFeatureParameters) =
+                    task {
+                        return! Branch.EnableAutoRebase(parameters)
+                    }
+
+                let! result = enableFeatureHandler parseResult (enableFeaturesParams |> normalizeIdsAndNames parseResult) command "auto-rebase"
                 return result |> renderOutput parseResult
             })
 
@@ -2412,6 +2436,10 @@ module Branch =
         getRecursiveSizeCommand.Handler <- GetRecursiveSize
         branchCommand.AddCommand(getRecursiveSizeCommand)
 
+        let enableAssignCommand = new Command("enable-assign", Description = "Enable or disable assigning promotions on this branch.") |> addOption Options.enabled |> addCommonOptions
+        enableAssignCommand.Handler <- EnableAssign
+        branchCommand.AddCommand(enableAssignCommand)
+
         let enablePromotionCommand = new Command("enable-promotion", Description = "Enable or disable promotions on this branch.") |> addOption Options.enabled |> addCommonOptions
         enablePromotionCommand.Handler <- EnablePromotion
         branchCommand.AddCommand(enablePromotionCommand)
@@ -2431,6 +2459,10 @@ module Branch =
         let enableTagCommand = new Command("enable-tag", Description = "Enable or disable tags on this branch.") |> addOption Options.enabled |> addCommonOptions
         enableTagCommand.Handler <- EnableTag
         branchCommand.AddCommand(enableTagCommand)
+
+        let enableAutoRebaseCommand = new Command("enable-auto-rebase", Description = "Enable or disable auto-rebase on this branch.") |> addOption Options.enabled |> addCommonOptions
+        enableAutoRebaseCommand.Handler <- EnableAutoRebase
+        branchCommand.AddCommand(enableAutoRebaseCommand)
 
         let setNameCommand = new Command("set-name", Description = "Change the name of the branch.") |> addOption Options.newName |> addCommonOptions
         setNameCommand.Handler <- SetName

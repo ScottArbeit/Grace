@@ -17,11 +17,13 @@ module Commands =
             | Checkpoint of directoryId: DirectoryId * sha256Hash: Sha256Hash * referenceText: ReferenceText
             | Save of directoryId: DirectoryId * sha256Hash: Sha256Hash * referenceText: ReferenceText
             | Tag of directoryId: DirectoryId * sha256Hash: Sha256Hash * referenceText: ReferenceText
+            | EnableAssign of enabled: bool
             | EnablePromotion of enabled: bool
             | EnableCommit of enabled: bool
             | EnableCheckpoint of enabled: bool
             | EnableSave of enabled: bool
             | EnableTag of enabled: bool
+            | EnableAutoRebase of enabled: bool
             | RemoveReference of referenceId: ReferenceId
             | DeleteLogical of force: bool * deleteReason: string
             | DeletePhysical

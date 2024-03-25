@@ -20,12 +20,13 @@ module Dto =
                 BasedOn: ReferenceId
                 RepositoryId: RepositoryId
                 UserId: UserId
-                //References: SortedList<Instant, ReferenceDto>
+                AssignEnabled: bool
                 PromotionEnabled: bool
                 CommitEnabled: bool
                 CheckpointEnabled: bool
                 SaveEnabled: bool
                 TagEnabled: bool
+                AutoRebaseEnabled: bool
                 LatestPromotion: ReferenceId
                 LatestCommit: ReferenceId
                 LatestCheckpoint: ReferenceId
@@ -43,12 +44,13 @@ module Dto =
                 BasedOn = ReferenceId.Empty
                 RepositoryId = RepositoryId.Empty
                 UserId = UserId String.Empty
-                //References = SortedList<Instant, ReferenceDto>()
+                AssignEnabled = false
                 PromotionEnabled = false
                 CommitEnabled = false
                 CheckpointEnabled = false
                 SaveEnabled = false
                 TagEnabled = false
+                AutoRebaseEnabled = true
                 LatestPromotion = ReferenceId.Empty
                 LatestCommit = ReferenceId.Empty
                 LatestCheckpoint = ReferenceId.Empty

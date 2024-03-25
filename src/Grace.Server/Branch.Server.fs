@@ -328,6 +328,26 @@ module Branch =
                 return! processCommand context validations command
             }
 
+    /// Enables and disables `grace assign` commands in the provided branch.
+    let EnableAssign: HttpHandler =
+        fun (next: HttpFunc) (context: HttpContext) ->
+            task {
+                let validations (parameters: EnableFeatureParameters) =
+                    [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
+                       String.isValidGraceName parameters.BranchName InvalidBranchName
+                       Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
+                       Owner.ownerExists parameters.OwnerId parameters.OwnerName parameters.CorrelationId OwnerDoesNotExist
+                       Organization.organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.CorrelationId OrganizationDoesNotExist
+                       Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.CorrelationId RepositoryDoesNotExist
+                       Branch.branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName parameters.CorrelationId BranchDoesNotExist |]
+
+                let command (parameters: EnableFeatureParameters) = 
+                    EnableAssign(parameters.Enabled) |> returnValueTask
+
+                context.Items.Add("Command", nameof(EnableAssign))
+                return! processCommand context validations command
+            }
+
     /// Enables and disables promotion references in the provided branch.
     let EnablePromotion: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
@@ -425,6 +445,26 @@ module Branch =
                     EnableTag(parameters.Enabled) |> returnValueTask
 
                 context.Items.Add("Command", nameof(EnableTag))
+                return! processCommand context validations command
+            }
+
+    /// Enables and disables auto-rebase for the provided branch.
+    let EnableAutoRebase: HttpHandler =
+        fun (next: HttpFunc) (context: HttpContext) ->
+            task {
+                let validations (parameters: EnableFeatureParameters) =
+                    [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
+                       String.isValidGraceName parameters.BranchName InvalidBranchName
+                       Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
+                       Owner.ownerExists parameters.OwnerId parameters.OwnerName parameters.CorrelationId OwnerDoesNotExist
+                       Organization.organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.CorrelationId OrganizationDoesNotExist
+                       Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.CorrelationId RepositoryDoesNotExist
+                       Branch.branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName parameters.CorrelationId BranchDoesNotExist |]
+
+                let command (parameters: EnableFeatureParameters) = 
+                    EnableAutoRebase(parameters.Enabled) |> returnValueTask
+
+                context.Items.Add("Command", nameof(EnableAutoRebase))
                 return! processCommand context validations command
             }
 

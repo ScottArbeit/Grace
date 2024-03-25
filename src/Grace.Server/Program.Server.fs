@@ -64,8 +64,8 @@ module Program =
                         .Build();
 
 
-        for kvp in config.AsEnumerable().ToImmutableSortedDictionary() do
-            Console.WriteLine($"{kvp.Key}: {kvp.Value}");
+        // for kvp in config.AsEnumerable().ToImmutableSortedDictionary() do
+        //     Console.WriteLine($"{kvp.Key}: {kvp.Value}");
 
         // Just placing some much-used services into ApplicationContext where they're easy to find.
         let loggerFactory = host.Services.GetService(typeof<ILoggerFactory>) :?> ILoggerFactory

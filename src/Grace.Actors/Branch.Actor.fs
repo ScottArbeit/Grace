@@ -68,11 +68,13 @@ module Branch =
                 | Checkpointed (referenceId, directoryVersion, sha256Hash, referenceText) -> {currentBranchDto with LatestCheckpoint = referenceId}
                 | Saved (referenceId, directoryVersion, sha256Hash, referenceText) -> {currentBranchDto with LatestSave = referenceId}
                 | Tagged (referenceId, directoryVersion, sha256Hash, referenceText) -> currentBranchDto
+                | EnabledAssign enabled -> {currentBranchDto with AssignEnabled = enabled}
                 | EnabledPromotion enabled -> {currentBranchDto with PromotionEnabled = enabled}
                 | EnabledCommit enabled -> {currentBranchDto with CommitEnabled = enabled}
                 | EnabledCheckpoint enabled -> {currentBranchDto with CheckpointEnabled = enabled}
                 | EnabledSave enabled -> {currentBranchDto with SaveEnabled = enabled}
                 | EnabledTag enabled -> {currentBranchDto with TagEnabled = enabled}
+                | EnabledAutoRebase enabled -> {currentBranchDto with AutoRebaseEnabled = enabled}
                 | ReferenceRemoved _ -> currentBranchDto
                 | LogicalDeleted (force, deleteReason) -> {currentBranchDto with DeletedAt = Some (getCurrentInstant()); DeleteReason = deleteReason}
                 | PhysicalDeleted -> currentBranchDto // Do nothing because it's about to be deleted anyway.
@@ -291,11 +293,13 @@ module Branch =
                                         metadata.Properties.Add(nameof(BranchId), $"{this.Id}")
                                         metadata.Properties.Add(nameof(BranchName), $"{branchDto.BranchName}")
                                         return Tagged (referenceId, directoryId, sha256Hash, referenceText)
+                                    | EnableAssign enabled -> return EnabledAssign enabled
                                     | EnablePromotion enabled -> return EnabledPromotion enabled
                                     | EnableCommit enabled -> return EnabledCommit enabled
                                     | EnableCheckpoint enabled -> return EnabledCheckpoint enabled
                                     | EnableSave enabled -> return EnabledSave enabled
                                     | EnableTag enabled -> return EnabledTag enabled
+                                    | EnableAutoRebase enabled -> return EnabledAutoRebase enabled
                                     | RemoveReference referenceId -> return ReferenceRemoved referenceId
                                     | DeleteLogical (force, deleteReason) ->
                                         this.SchedulePhysicalDeletion(deleteReason, metadata.CorrelationId)

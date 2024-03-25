@@ -58,6 +58,10 @@ type Branch() =
     static member public Tag(parameters: CreateReferenceParameters) =
         postServer<CreateReferenceParameters, string>(parameters |> ensureCorrelationIdIsSet, $"branch/{nameof(Branch.Tag)}")
 
+    /// Sets the flag to allow `grace assign` in this branch.
+    static member public EnableAssign(parameters: EnableFeatureParameters) =
+        postServer<EnableFeatureParameters, string>(parameters |> ensureCorrelationIdIsSet, $"branch/{nameof(Branch.EnableAssign)}")
+
     /// Sets the flag to allow promotion in this branch.
     static member public EnablePromotion(parameters: EnableFeatureParameters) =
         postServer<EnableFeatureParameters, string>(parameters |> ensureCorrelationIdIsSet, $"branch/{nameof(Branch.EnablePromotion)}")
@@ -77,6 +81,10 @@ type Branch() =
     /// Sets the flag to allow tags in this branch.
     static member public EnableTag(parameters: EnableFeatureParameters) =
         postServer<EnableFeatureParameters, string>(parameters |> ensureCorrelationIdIsSet, $"branch/{nameof(Branch.EnableTag)}")
+
+    /// Sets the flag to allow auto-rebase in this branch.
+    static member public EnableAutoRebase(parameters: EnableFeatureParameters) =
+        postServer<EnableFeatureParameters, string>(parameters |> ensureCorrelationIdIsSet, $"branch/{nameof(Branch.EnableAutoRebase)}")
 
     /// Gets the diffs between a set of references.
     static member public GetDiffsForReferenceType(parameters: GetDiffsForReferenceTypeParameters) =
