@@ -102,19 +102,19 @@ module Load =
                     match Random.Shared.Next(13) with
                     | 0 -> 
                         let! r = Branch.Save(Branch.CreateReferenceParameters(OwnerId = $"{ownerId}", OrganizationId = $"{organizationId}", RepositoryId = $"{repositoryId}", BranchId = $"{branchId}", 
-                            Message = $"Save - {DateTime.UtcNow}", DirectoryId = Guid.NewGuid(), CorrelationId = g()))
+                            Message = $"Save - {DateTime.UtcNow}", DirectoryVersionId = Guid.NewGuid(), CorrelationId = g()))
                         showResult r
                     | 1 ->
                         let! r = Branch.Checkpoint(Branch.CreateReferenceParameters(OwnerId = $"{ownerId}", OrganizationId = $"{organizationId}", RepositoryId = $"{repositoryId}", BranchId = $"{branchId}",
-                            Message = $"Checkpoint - {DateTime.UtcNow}", DirectoryId = Guid.NewGuid(), CorrelationId = g()))
+                            Message = $"Checkpoint - {DateTime.UtcNow}", DirectoryVersionId = Guid.NewGuid(), CorrelationId = g()))
                         showResult r
                     | 2 ->
                         let! r = Branch.Commit(Branch.CreateReferenceParameters(OwnerId = $"{ownerId}", OrganizationId = $"{organizationId}", RepositoryId = $"{repositoryId}", BranchId = $"{branchId}",
-                            Message = $"Commit - {DateTime.UtcNow}", DirectoryId = Guid.NewGuid(), CorrelationId = g()))
+                            Message = $"Commit - {DateTime.UtcNow}", DirectoryVersionId = Guid.NewGuid(), CorrelationId = g()))
                         showResult r
                     | 3 ->
                         let! r = Branch.Tag(Branch.CreateReferenceParameters(OwnerId = $"{ownerId}", OrganizationId = $"{organizationId}", RepositoryId = $"{repositoryId}", BranchId = $"{branchId}",
-                            Message = $"Tag - {DateTime.UtcNow}", DirectoryId = Guid.NewGuid(), CorrelationId = g()))
+                            Message = $"Tag - {DateTime.UtcNow}", DirectoryVersionId = Guid.NewGuid(), CorrelationId = g()))
                         showResult r
                     | 4 ->
                         let! r = Branch.Get(Branch.GetBranchParameters(OwnerId = $"{ownerId}", OrganizationId = $"{organizationId}", RepositoryId = $"{repositoryId}", BranchId = $"{branchId}", CorrelationId = g()))

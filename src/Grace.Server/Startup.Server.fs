@@ -75,6 +75,7 @@ module Application =
                 GET [
                 ]
                 POST [
+                    route "/assign" Branch.Assign |> addMetadata typeof<Branch.AssignParameters>
                     route "/checkpoint" Branch.Checkpoint |> addMetadata typeof<Branch.CreateReferenceParameters>
                     route "/commit" Branch.Commit |> addMetadata typeof<Branch.CreateReferenceParameters>
                     route "/create" Branch.Create |> addMetadata typeof<Branch.CreateBranchParameters>
@@ -370,7 +371,11 @@ module Application =
                 options.ActorScanInterval <- TimeSpan.FromSeconds(60.0)         // Default is 30s
                 options.DrainOngoingCallTimeout <- TimeSpan.FromSeconds(30.0)   // Default is 60s
                 options.DrainRebalancedActors <- true                           // Default is false
-                options.RemindersStoragePartitions <- 32
+                options.RemindersStoragePartitions <- 0                         // Default is 0 (which means 1 partition when needed)
+                (* I wonder what the right number for `RemindersStoragePartitions` is to handle significant scale.
+
+                   When Dapr redesigns Reminders (which they are planning to do), we'll switch to the new design 
+                   immediately, which will make this problem go away. *)
             )
 
             services.AddSignalR(fun options -> options.EnableDetailedErrors <- true)
@@ -385,9 +390,6 @@ module Application =
                    //.UseSwaggerUI(fun config -> config.SwaggerEndpoint("/swagger", "Grace Server API"))
                    .UseDeveloperExceptionPage() |> ignore
 
-            // This line enables Azure SDK (i.e. CosmosDB) OpenTelemetry output, which is currently in experimental support. 
-            //   When this is fully supported, we can remove it.
-            AppContext.SetSwitch("Azure.Experimental.EnableActivitySource", true)
             app.UseW3CLogging()
                .UseCloudEvents()
                .UseAuthentication()

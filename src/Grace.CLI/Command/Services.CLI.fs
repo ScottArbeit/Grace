@@ -472,18 +472,18 @@ module Services =
             match Current().ObjectStorageProvider with
             | ObjectStorageProvider.Unknown -> return Error (GraceError.Create (StorageError.getErrorMessage StorageError.NotImplemented) correlationId)
             | AzureBlobStorage -> 
+                //logToAnsiConsole Colors.Verbose $"Uploading {fileVersions.Count()} files to object storage."
                 if fileVersions.Count() > 0 then
-                    let! graceResult = Storage.FilesExistInObjectStorage (fileVersions.Select(fun f -> f.ToFileVersion).ToList()) correlationId
-                    match graceResult with
+                    match! Storage.FilesExistInObjectStorage (fileVersions.Select(fun f -> f.ToFileVersion).ToList()) correlationId with
                     | Ok graceReturnValue ->
                         let filesToUpload = graceReturnValue.ReturnValue
+                        //logToAnsiConsole Colors.Verbose $"{serialize filesToUpload}"
                         let errors = ConcurrentQueue<GraceError>()
                         do! Parallel.ForEachAsync(filesToUpload, Constants.ParallelOptions, (fun uploadMetadata ct ->
                             ValueTask(task {
                                 let fileVersion = (fileVersions.First(fun f -> f.Sha256Hash = uploadMetadata.Sha256Hash)).ToFileVersion
-                                let! x = Storage.SaveFileToObjectStorage fileVersion (uploadMetadata.BlobUriWithSasToken) correlationId
-                                match x with
-                                | Ok result -> logToAnsiConsole Colors.Verbose $"Uploaded {fileVersion.GetObjectFileName} to object storage."
+                                match! Storage.SaveFileToObjectStorage fileVersion (uploadMetadata.BlobUriWithSasToken) correlationId with
+                                | Ok result -> () //logToAnsiConsole Colors.Verbose $"Uploaded {fileVersion.GetObjectFileName} to object storage."
                                 | Error error -> errors.Enqueue(error)
                             })))
 
@@ -971,7 +971,7 @@ module Services =
                                    RepositoryId = $"{Current().RepositoryId}",
                                    BranchId = $"{Current().BranchId}",
                                    CorrelationId = correlationId,
-                                   DirectoryId = rootDirectoryVersion.DirectoryId,
+                                   DirectoryVersionId = rootDirectoryVersion.DirectoryId,
                                    Sha256Hash = rootDirectoryVersion.Sha256Hash,
                                    Message = message)
                                    

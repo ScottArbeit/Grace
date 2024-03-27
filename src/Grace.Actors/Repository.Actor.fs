@@ -186,22 +186,27 @@ module Repository =
                                 let createCommand = Commands.Branch.BranchCommand.Create (branchId, (BranchName Constants.InitialBranchName), Constants.DefaultParentBranchId, ReferenceId.Empty, repositoryId, initialBranchPermissions)
                                 match! branchActor.Handle createCommand repositoryEvent.Metadata with
                                 | Ok branchGraceReturn -> 
-                                    // Create an initial promotion with completely empty contents
+                                    // Create an empty directory version, and use that for the initial promotion
                                     let emptyDirectoryId = DirectoryId.NewGuid()
-                                    let emptySha256Hash = computeSha256ForDirectory "/" (List<LocalDirectoryVersion>()) (List<LocalFileVersion>())
+                                    let emptySha256Hash = computeSha256ForDirectory Constants.RootDirectoryPath (List<LocalDirectoryVersion>()) (List<LocalFileVersion>())
+                                    let directoryVersionActorProxy = Services.actorProxyFactory.CreateActorProxy<IDirectoryVersionActor>(DirectoryVersion.GetActorId(emptyDirectoryId), ActorName.DirectoryVersion)
+                                    let emptyDirectoryVersion = DirectoryVersion.Create emptyDirectoryId repositoryDto.RepositoryId Constants.RootDirectoryPath emptySha256Hash (List<DirectoryId>()) (List<FileVersion>()) 0L
+                                    let! directoryResult = directoryVersionActorProxy.Handle (Commands.DirectoryVersion.DirectoryVersionCommand.Create (emptyDirectoryVersion)) repositoryEvent.Metadata
                                     let! promotionResult = branchActor.Handle (Commands.Branch.BranchCommand.Promote(emptyDirectoryId, emptySha256Hash, (getLocalizedString StringResourceName.InitialPromotionMessage))) repositoryEvent.Metadata
-                                    match promotionResult with
-                                    | Ok promotionGraceReturn ->
+                                    match directoryResult, promotionResult with
+                                    | (Ok directoryVersionGraceReturnValue, Ok promotionGraceReturnValue) ->
                                         // Set current, empty directory as the based-on reference.
-                                        let referenceId = Guid.Parse(promotionGraceReturn.Properties[nameof(ReferenceId)])
+                                        let referenceId = Guid.Parse(promotionGraceReturnValue.Properties[nameof(ReferenceId)])
                                         let! rebaseResult = branchActor.Handle (Commands.Branch.BranchCommand.Rebase(referenceId)) repositoryEvent.Metadata
                                         match rebaseResult with
                                         | Ok rebaseGraceReturn -> 
                                             return Ok (branchId, referenceId)
                                         | Error graceError -> 
                                             return processGraceError FailedRebasingInitialBranch repositoryEvent graceError
-                                    | Error graceError ->
+                                    | (_, Error graceError) ->
                                         return processGraceError FailedCreatingInitialPromotion repositoryEvent graceError
+                                    | (Error graceError, _) ->
+                                        return processGraceError FailedCreatingEmptyDirectoryVersion repositoryEvent graceError
                                 | Error graceError ->
                                     return processGraceError FailedCreatingInitialBranch repositoryEvent graceError
                             | _ -> return Ok (BranchId.Empty, ReferenceId.Empty)

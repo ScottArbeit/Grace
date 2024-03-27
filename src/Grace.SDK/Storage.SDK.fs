@@ -144,6 +144,7 @@ module Storage =
                             // Check if this blob already exists in the storage account.
                             let blockBlobClient = BlockBlobClient(blobUriWithSasToken, blobClientOptions)
                             let! blobAlreadyExists = blockBlobClient.ExistsAsync()
+                            logToConsole $"In SaveFileToObjectStorageWithMetadata: blobAlreadyExists: {blobAlreadyExists.Value}; fileVersion.RelativePath: {fileVersion.RelativePath}."
 
                             // If it doesn't exist, upload it.
                             if not <| (blobAlreadyExists.Value) then
@@ -192,6 +193,7 @@ module Storage =
                                 return Ok returnValue
                         with ex ->
                             let exceptionResponse = createExceptionResponse ex
+                            logToConsole $"In SaveFileToObjectStorageWithMetadata: exceptionResponse: {exceptionResponse}."
                             return Error (GraceError.Create (exceptionResponse.ToString()) correlationId)
                     | ObjectStorageProvider.AWSS3 -> return Error (GraceError.Create (StorageError.getErrorMessage NotImplemented) correlationId)
                     | ObjectStorageProvider.GoogleCloudStorage -> return Error (GraceError.Create (StorageError.getErrorMessage NotImplemented) correlationId)

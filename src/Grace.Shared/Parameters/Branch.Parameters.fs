@@ -31,6 +31,13 @@ module Branch =
         member val public ParentBranchName: BranchName = String.Empty with get, set
         member val public InitialPermissions: ReferenceType array = [| Commit; Checkpoint; Save; Tag |] with get, set
 
+    /// Parameters for the /branch/assign endpoint.
+    type AssignParameters() =
+        inherit BranchParameters()
+        member val public DirectoryVersionId: DirectoryId = Guid.Empty with get, set 
+        member val public Sha256Hash: Sha256Hash  = String.Empty with get, set
+        member val public Message = String.Empty with get, set
+
     /// Parameters for the /branch/rebase endpoint.
     type RebaseParameters() =
         inherit BranchParameters()
@@ -39,7 +46,7 @@ module Branch =
     /// Parameters for the various /branch/create[reference] endpoints.
     type CreateReferenceParameters() =
         inherit BranchParameters()
-        member val public DirectoryId: DirectoryId = Guid.Empty with get, set
+        member val public DirectoryVersionId: DirectoryId = Guid.Empty with get, set
         member val public Sha256Hash: Sha256Hash  = String.Empty with get, set
         member val public Message = String.Empty with get, set
 

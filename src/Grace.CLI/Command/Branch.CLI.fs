@@ -76,8 +76,8 @@ module Branch =
         let fullSha = new Option<bool>("--fullSha", IsRequired = false, Description = "Show the full SHA-256 value in output.", Arity = ArgumentArity.ZeroOrOne)
         let maxCount = new Option<int>("--maxCount", IsRequired = false, Description = "The maximum number of results to return.", Arity = ArgumentArity.ExactlyOne)
         maxCount.SetDefaultValue(30)
-        let referenceId = new Option<String>([|"--referenceId"|], IsRequired = false, Description = "The reference ID to switch to <Guid>.", Arity = ArgumentArity.ExactlyOne)
-        let sha256Hash = new Option<String>([|"--sha256Hash"|], IsRequired = false, Description = "The full or partial SHA-256 hash value of the version to switch to.", Arity = ArgumentArity.ExactlyOne)
+        let referenceId = new Option<String>([|"--referenceId"|], IsRequired = false, Description = "The reference ID <Guid>.", Arity = ArgumentArity.ExactlyOne) 
+        let sha256Hash = new Option<String>([|"--sha256Hash"|], IsRequired = false, Description = "The full or partial SHA-256 hash value of the version.", Arity = ArgumentArity.ExactlyOne)
         let enabled = new Option<bool>("--enabled", IsRequired = false, Description = "True to enable the feature; false to disable it.", Arity = ArgumentArity.ZeroOrOne)
         let includeDeleted = new Option<bool>([|"--include-deleted"; "-d"|], IsRequired = false, Description = "Include deleted branches in the result. [default: false]")
         let showEvents = new Option<bool>([|"--show-events"; "-e"|], IsRequired = false, Description = "Include actor events in the result. [default: false]")
@@ -85,6 +85,7 @@ module Branch =
         let toBranchId = new Option<String>([|"--toBranchId"; "-d"|], IsRequired = false, Description = "The ID of the branch to switch to <Guid>.", Arity = ArgumentArity.ExactlyOne)
         let toBranchName = new Option<String>([|"--toBranchName"; "-c"|], IsRequired = false, Description = "The name of the branch to switch to.", Arity = ArgumentArity.ExactlyOne)
         let forceRecompute = new Option<bool>("--forceRecompute", IsRequired = false, Description = "Force the re-computation of the recursive directory contents. [default: false]", Arity = ArgumentArity.ZeroOrOne)
+        let directoryVersionId = new Option<String>([|"--directoryVersionId"; "-v"|], IsRequired = false, Description = "The directory version ID to assign to the promotion <Guid>.", Arity = ArgumentArity.ExactlyOne)
         //let listDirectories = new Option<bool>("--listDirectories", IsRequired = false, Description = "Show directories when listing contents. [default: false]")
         //let listFiles = new Option<bool>("--listFiles", IsRequired = false, Description = "Show files when listing contents. Implies --listDirectories. [default: false]")
 
@@ -431,6 +432,46 @@ module Branch =
                 return result |> renderOutput parseResult
             })
 
+    type AssignParameters() =
+        inherit CommonParameters()
+        member val public DirectoryVersionId: DirectoryId = Guid.Empty with get, set
+        member val public Sha256Hash: Sha256Hash = String.Empty with get, set
+    let assignHandler (parseResult: ParseResult) (assignParameters: AssignParameters) =
+        task {
+            try
+                if parseResult |> verbose then printParseResult parseResult
+                let validateIncomingParameters = CommonValidations parseResult assignParameters
+                let localValidations = oneOfTheseOptionsMustBeProvided parseResult assignParameters [| Options.directoryVersionId; Options.sha256Hash |] EitherDirectoryVersionIdOrSha256HashRequired
+                match validateIncomingParameters with
+                | Ok _ -> 
+                    let parameters = Parameters.Branch.AssignParameters(OwnerId = assignParameters.OwnerId, OwnerName = assignParameters.OwnerName, 
+                                                                        OrganizationId = assignParameters.OrganizationId, OrganizationName = assignParameters.OrganizationName,
+                                                                        RepositoryId = assignParameters.RepositoryId, RepositoryName = assignParameters.RepositoryName, 
+                                                                        BranchId = assignParameters.BranchId, BranchName = assignParameters.BranchName,
+                                                                        DirectoryVersionId = assignParameters.DirectoryVersionId, Sha256Hash = assignParameters.Sha256Hash,  
+                                                                        CorrelationId = assignParameters.CorrelationId)
+                    if parseResult |> hasOutput then
+                        return! progress.Columns(progressColumns)
+                                .StartAsync(fun progressContext ->
+                                task {
+                                    let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
+                                    let! result = Branch.Assign(parameters)
+                                    t0.Increment(100.0)
+                                    return result
+                                })
+                    else
+                        return! Branch.Assign(parameters)
+                | Error error -> return Error error
+            with
+                | ex -> return Error (GraceError.Create $"{createExceptionResponse ex}" (parseResult |> getCorrelationId))
+        }
+    let private Assign =
+        CommandHandler.Create(fun (parseResult: ParseResult) (assignParameters: AssignParameters) ->
+            task {                
+                let! result = assignHandler parseResult (assignParameters |> normalizeIdsAndNames parseResult)
+                return result |> renderOutput parseResult
+            })
+
     type CreateReferenceCommand = CreateReferenceParameters -> Task<GraceResult<String>>
     type CreateRefParameters() =
         inherit CommonParameters()
@@ -477,6 +518,7 @@ module Branch =
 
                                         t1.StartTask()  // Scan for differences.
                                         let! differences = scanForDifferences previousGraceStatus
+                                        let! newFileVersions = copyUpdatedFilesToObjectCache t1 differences
                                         t1.Value <- 100.0
 
                                         t2.StartTask()  // Create new directory versions.
@@ -495,12 +537,14 @@ module Branch =
                                                 .Where(fun relativePathOption -> relativePathOption.IsSome)
                                                 .Select(fun relativePath -> relativePath.Value)
 
-                                        let newFileVersions = updatedRelativePaths.Select(fun relativePath -> 
-                                            newDirectoryVersions.First(fun dv -> dv.Files.Exists(fun file -> file.RelativePath = relativePath)).Files.First(fun file -> file.RelativePath = relativePath))
+                                        // let newFileVersions = updatedRelativePaths.Select(fun relativePath -> 
+                                        //     newDirectoryVersions.First(fun dv -> dv.Files.Exists(fun file -> file.RelativePath = relativePath)).Files.First(fun file -> file.RelativePath = relativePath))
 
                                         let mutable lastFileUploadInstant = newGraceStatus.LastSuccessfulFileUpload
                                         if newFileVersions.Count() > 0 then
-                                            let! uploadResult = uploadFilesToObjectStorage newFileVersions (getCorrelationId parseResult)
+                                            match! uploadFilesToObjectStorage newFileVersions (getCorrelationId parseResult) with
+                                            | Ok returnValue -> logToAnsiConsole Colors.Verbose $"Uploaded all files to object storage."
+                                            | Error error -> logToAnsiConsole Colors.Error $"Error uploading files to object storage: {error.Error}"
                                             lastFileUploadInstant <- getCurrentInstant()
                                         t3.Value <- 100.0
 
@@ -524,7 +568,7 @@ module Branch =
                                             OwnerId = parameters.OwnerId, OwnerName = parameters.OwnerName,
                                             OrganizationId = parameters.OrganizationId, OrganizationName = parameters.OrganizationName,
                                             RepositoryId = parameters.RepositoryId, RepositoryName = parameters.RepositoryName,
-                                            DirectoryId = rootDirectoryId, Sha256Hash = rootDirectorySha256Hash,
+                                            DirectoryVersionId = rootDirectoryId, Sha256Hash = rootDirectorySha256Hash,
                                             Message = parameters.Message, CorrelationId = parameters.CorrelationId)
                                     let! result = command sdkParameters
                                     t5.Value <- 100.0
@@ -555,7 +599,7 @@ module Branch =
                                 OwnerId = parameters.OwnerId, OwnerName = parameters.OwnerName,
                                 OrganizationId = parameters.OrganizationId, OrganizationName = parameters.OrganizationName,
                                 RepositoryId = parameters.RepositoryId, RepositoryName = parameters.RepositoryName,
-                                DirectoryId = rootDirectoryVersion.DirectoryId, Sha256Hash = rootDirectoryVersion.Sha256Hash,
+                                DirectoryVersionId = rootDirectoryVersion.DirectoryId, Sha256Hash = rootDirectoryVersion.Sha256Hash,
                                 Message = parameters.Message, CorrelationId = parameters.CorrelationId)
                         let! result = command sdkParameters
                         return result                    
@@ -652,7 +696,7 @@ module Branch =
                                                                 OwnerId = parameters.OwnerId, OwnerName = parameters.OwnerName,
                                                                 OrganizationId = parameters.OrganizationId, OrganizationName = parameters.OrganizationName,
                                                                 RepositoryId = parameters.RepositoryId, RepositoryName = parameters.RepositoryName,
-                                                                DirectoryId = latestPromotableReference.DirectoryId, Sha256Hash = latestPromotableReference.Sha256Hash,
+                                                                DirectoryVersionId = latestPromotableReference.DirectoryId, Sha256Hash = latestPromotableReference.Sha256Hash,
                                                                 Message = parameters.Message, CorrelationId = parameters.CorrelationId)
                                                         let! promotionResult = Branch.Promote(promotionParameters)
                                                         match promotionResult with
@@ -2111,7 +2155,7 @@ module Branch =
                                             let saveReferenceParameters = Parameters.Branch.CreateReferenceParameters(BranchId = $"{branchDto.BranchId}", RepositoryId = $"{branchDto.RepositoryId}",
                                                 OwnerId = parameters.OwnerId, OwnerName = parameters.OwnerName,
                                                 OrganizationId = parameters.OrganizationId, OrganizationName = parameters.OrganizationName,
-                                                Sha256Hash = rootDirectoryVersion.Sha256Hash, DirectoryId = rootDirectoryVersion.DirectoryId,
+                                                Sha256Hash = rootDirectoryVersion.Sha256Hash, DirectoryVersionId = rootDirectoryVersion.DirectoryId,
                                                 Message = $"Save after rebase from {parentBranchDto.BranchName}; {getShortSha256Hash parentLatestPromotion.Sha256Hash} - {parentLatestPromotion.ReferenceText}.")
                                             match! Branch.Save(saveReferenceParameters) with
                                             | Ok returnValue ->
@@ -2499,6 +2543,10 @@ module Branch =
         let deleteCommand = new Command("delete", Description = "Delete the branch.") |> addCommonOptions
         deleteCommand.Handler <- Delete
         branchCommand.AddCommand(deleteCommand)
+
+        let assignCommand = new Command("assign", Description = "Assign a promotion to this branch.") |> addOption Options.directoryVersionId |> addOption Options.sha256Hash |> addCommonOptions
+        assignCommand.Handler <- Assign
+        branchCommand.AddCommand(assignCommand)
 
         //let undeleteCommand = new Command("undelete", Description = "Undelete a deleted owner.") |> addCommonOptions
         //undeleteCommand.Handler <- Undelete

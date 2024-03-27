@@ -213,6 +213,27 @@ module Branch =
                 return! processCommand context validations command
             }
 
+    /// Assigns a specific directory version as the next promotion reference for a branch.
+    let Assign: HttpHandler =
+        fun (next: HttpFunc) (context: HttpContext) ->
+            task {
+                let validations (parameters: AssignParameters) =
+                    [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
+                       String.isValidGraceName parameters.BranchName InvalidBranchName
+                       String.isValidSha256Hash parameters.Sha256Hash Sha256HashIsRequired
+                       Input.oneOfTheseValuesMustBeProvided [| parameters.DirectoryVersionId; parameters.Sha256Hash |] EitherDirectoryVersionIdOrSha256HashRequired 
+                       Owner.ownerExists parameters.OwnerId parameters.OwnerName parameters.CorrelationId OwnerDoesNotExist
+                       Organization.organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.CorrelationId OrganizationDoesNotExist
+                       Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.CorrelationId RepositoryDoesNotExist
+                       Branch.branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName parameters.CorrelationId ParentBranchDoesNotExist |]
+
+                let command (parameters: AssignParameters) = 
+                    Assign(parameters.DirectoryVersionId, parameters.Sha256Hash, ReferenceText parameters.Message) |> returnValueTask
+
+                context.Items.Add("Command", nameof(Assign))
+                return! processCommand context validations command
+            }
+
     /// Creates a promotion reference in the parent of the specified branch, based on the most-recent commit.
     let Promote: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
@@ -230,7 +251,7 @@ module Branch =
                        Branch.branchAllowsReferenceType parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName ReferenceType.Promotion parameters.CorrelationId PromotionIsDisabled |]
 
                 let command (parameters: CreateReferenceParameters) = 
-                    Promote(parameters.DirectoryId, parameters.Sha256Hash, ReferenceText parameters.Message) |> returnValueTask
+                    Promote(parameters.DirectoryVersionId, parameters.Sha256Hash, ReferenceText parameters.Message) |> returnValueTask
 
                 context.Items.Add("Command", nameof(Promote))
                 return! processCommand context validations command
@@ -253,7 +274,7 @@ module Branch =
                        Branch.branchAllowsReferenceType parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName ReferenceType.Commit parameters.CorrelationId CommitIsDisabled |]
 
                 let command (parameters: CreateReferenceParameters) = 
-                    BranchCommand.Commit(parameters.DirectoryId, parameters.Sha256Hash, ReferenceText parameters.Message) |> returnValueTask
+                    BranchCommand.Commit(parameters.DirectoryVersionId, parameters.Sha256Hash, ReferenceText parameters.Message) |> returnValueTask
 
                 context.Items.Add("Command", nameof(Commit))
                 return! processCommand context validations command
@@ -276,7 +297,7 @@ module Branch =
                        Branch.branchAllowsReferenceType parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName ReferenceType.Checkpoint parameters.CorrelationId CheckpointIsDisabled |]
 
                 let command (parameters: CreateReferenceParameters) = 
-                    BranchCommand.Checkpoint(parameters.DirectoryId, parameters.Sha256Hash, ReferenceText parameters.Message) |> returnValueTask
+                    BranchCommand.Checkpoint(parameters.DirectoryVersionId, parameters.Sha256Hash, ReferenceText parameters.Message) |> returnValueTask
 
                 context.Items.Add("Command", nameof(Checkpoint))
                 return! processCommand context validations command
@@ -299,7 +320,7 @@ module Branch =
                        Branch.branchAllowsReferenceType parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName ReferenceType.Save parameters.CorrelationId SaveIsDisabled |]
 
                 let command (parameters: CreateReferenceParameters) = 
-                    BranchCommand.Save(parameters.DirectoryId, parameters.Sha256Hash, ReferenceText parameters.Message) |> returnValueTask
+                    BranchCommand.Save(parameters.DirectoryVersionId, parameters.Sha256Hash, ReferenceText parameters.Message) |> returnValueTask
 
                 context.Items.Add("Command", nameof(Save))
                 return! processCommand context validations command
@@ -322,7 +343,7 @@ module Branch =
                        Branch.branchAllowsReferenceType parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName ReferenceType.Tag parameters.CorrelationId TagIsDisabled |]
 
                 let command (parameters: CreateReferenceParameters) = 
-                    BranchCommand.Tag(parameters.DirectoryId, parameters.Sha256Hash, ReferenceText parameters.Message) |> returnValueTask
+                    BranchCommand.Tag(parameters.DirectoryVersionId, parameters.Sha256Hash, ReferenceText parameters.Message) |> returnValueTask
 
                 context.Items.Add("Command", nameof(Tag))
                 return! processCommand context validations command

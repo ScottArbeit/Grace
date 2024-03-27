@@ -12,11 +12,12 @@ module Commands =
             | Create of branchId: BranchId * branchName: BranchName * parentBranchId: BranchId * basedOn: ReferenceId * repositoryId: RepositoryId * initialPermissions: ReferenceType[]
             | Rebase of basedOn: ReferenceId
             | SetName of newName: BranchName
-            | Promote of directoryId: DirectoryId * sha256Hash: Sha256Hash * referenceText: ReferenceText
-            | Commit of directoryId: DirectoryId * sha256Hash: Sha256Hash * referenceText: ReferenceText
-            | Checkpoint of directoryId: DirectoryId * sha256Hash: Sha256Hash * referenceText: ReferenceText
-            | Save of directoryId: DirectoryId * sha256Hash: Sha256Hash * referenceText: ReferenceText
-            | Tag of directoryId: DirectoryId * sha256Hash: Sha256Hash * referenceText: ReferenceText
+            | Assign of directoryVersionId: DirectoryId * sha256Hash: Sha256Hash * referenceText: ReferenceText
+            | Promote of directoryVersionId: DirectoryId * sha256Hash: Sha256Hash * referenceText: ReferenceText
+            | Commit of directoryVersionId: DirectoryId * sha256Hash: Sha256Hash * referenceText: ReferenceText
+            | Checkpoint of directoryVersionId: DirectoryId * sha256Hash: Sha256Hash * referenceText: ReferenceText
+            | Save of directoryVersionId: DirectoryId * sha256Hash: Sha256Hash * referenceText: ReferenceText
+            | Tag of directoryVersionId: DirectoryId * sha256Hash: Sha256Hash * referenceText: ReferenceText
             | EnableAssign of enabled: bool
             | EnablePromotion of enabled: bool
             | EnableCommit of enabled: bool

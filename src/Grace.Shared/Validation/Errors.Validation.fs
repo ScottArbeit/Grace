@@ -18,6 +18,7 @@ module Errors =
             | CommitIsDisabled
             | DuplicateCorrelationId
             | EitherBranchIdOrBranchNameRequired
+            | EitherDirectoryVersionIdOrSha256HashRequired
             | EitherOrganizationIdOrOrganizationNameRequired
             | EitherOwnerIdOrOwnerNameRequired
             | EitherRepositoryIdOrRepositoryNameIsRequired
@@ -65,6 +66,7 @@ module Errors =
                 | CommitIsDisabled -> getLocalizedString StringResourceName.CommitIsDisabled
                 | DuplicateCorrelationId -> getLocalizedString StringResourceName.DuplicateCorrelationId
                 | EitherBranchIdOrBranchNameRequired -> getLocalizedString StringResourceName.EitherBranchIdOrBranchNameIsRequired
+                | EitherDirectoryVersionIdOrSha256HashRequired -> getLocalizedString StringResourceName.EitherDirectoryVersionIdOrSha256HashRequired
                 | EitherOrganizationIdOrOrganizationNameRequired -> getLocalizedString StringResourceName.EitherOrganizationIdOrOrganizationNameIsRequired
                 | EitherOwnerIdOrOwnerNameRequired -> getLocalizedString StringResourceName.EitherOwnerIdOrOwnerNameIsRequired
                 | EitherRepositoryIdOrRepositoryNameIsRequired -> getLocalizedString StringResourceName.EitherRepositoryIdOrRepositoryNameIsRequired
@@ -333,6 +335,7 @@ module Errors =
             | EitherOrganizationIdOrOrganizationNameRequired
             | EitherOwnerIdOrOwnerNameRequired
             | EitherRepositoryIdOrRepositoryNameRequired
+            | FailedCreatingEmptyDirectoryVersion
             | FailedCreatingInitialBranch
             | FailedCreatingInitialPromotion
             | FailedRebasingInitialBranch
@@ -379,6 +382,7 @@ module Errors =
                 | EitherOrganizationIdOrOrganizationNameRequired -> getLocalizedString StringResourceName.EitherOrganizationIdOrOrganizationNameIsRequired
                 | EitherOwnerIdOrOwnerNameRequired -> getLocalizedString StringResourceName.EitherOwnerIdOrOwnerNameIsRequired
                 | EitherRepositoryIdOrRepositoryNameRequired -> getLocalizedString StringResourceName.EitherRepositoryIdOrRepositoryNameIsRequired
+                | FailedCreatingEmptyDirectoryVersion -> getLocalizedString StringResourceName.FailedCreatingEmptyDirectoryVersion
                 | FailedCreatingInitialBranch -> getLocalizedString StringResourceName.FailedCreatingInitialBranch
                 | FailedCreatingInitialPromotion -> getLocalizedString StringResourceName.FailedCreatingInitialPromotion
                 | FailedRebasingInitialBranch -> getLocalizedString StringResourceName.FailedRebasingInitialBranch

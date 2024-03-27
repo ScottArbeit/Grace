@@ -110,3 +110,12 @@ module Common =
                 Ok () |> returnValueTask
             else
                 Error error |> returnValueTask
+
+        /// Validates that one of the values passed in the array is not null, and if it's a string, it's not empty.
+        let oneOfTheseValuesMustBeProvided (values: Object array) (error: 'T) =  
+            match values |> Array.tryFind (fun value -> 
+                not <| isNull(value) && if value :? String then not <| String.IsNullOrEmpty((value :?> string)) else true) with
+            | Some _ ->
+                Ok () |> returnValueTask
+            | None ->
+                Error error |> returnValueTask

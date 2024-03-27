@@ -62,8 +62,8 @@ module Branch =
                     branchDto
                 | Rebased referenceId -> {currentBranchDto with BasedOn = referenceId}
                 | NameSet branchName -> {currentBranchDto with BranchName = branchName}
-                | Promoted (referenceId, directoryVersion, sha256Hash, referenceText) -> 
-                    {currentBranchDto with LatestPromotion = referenceId; BasedOn = referenceId}
+                | Assigned (referenceId, directoryVersion, sha256Hash, referenceText) -> {currentBranchDto with LatestPromotion = referenceId; BasedOn = referenceId}
+                | Promoted (referenceId, directoryVersion, sha256Hash, referenceText) -> {currentBranchDto with LatestPromotion = referenceId; BasedOn = referenceId}
                 | Committed (referenceId, directoryVersion, sha256Hash, referenceText) -> {currentBranchDto with LatestCommit = referenceId}
                 | Checkpointed (referenceId, directoryVersion, sha256Hash, referenceText) -> {currentBranchDto with LatestCheckpoint = referenceId}
                 | Saved (referenceId, directoryVersion, sha256Hash, referenceText) -> {currentBranchDto with LatestSave = referenceId}
@@ -248,51 +248,60 @@ module Branch =
                                         metadata.Properties.Add(nameof(BranchName), $"{branchDto.BranchName}")
                                         return Rebased referenceId
                                     | SetName branchName -> return NameSet branchName
-                                    | BranchCommand.Promote (directoryId, sha256Hash, referenceText) ->
-                                        let! referenceId = addReference directoryId sha256Hash referenceText ReferenceType.Promotion
+                                    | BranchCommand.Assign (directoryVersionId, sha256Hash, referenceText) -> 
+                                        let! referenceId = addReference directoryVersionId sha256Hash referenceText ReferenceType.Promotion
                                         metadata.Properties.Add(nameof(ReferenceId), $"{referenceId}")
-                                        metadata.Properties.Add(nameof(DirectoryId), $"{directoryId}")
+                                        metadata.Properties.Add(nameof(DirectoryId), $"{directoryVersionId}")
                                         metadata.Properties.Add(nameof(Sha256Hash), $"{sha256Hash}")
                                         metadata.Properties.Add(nameof(ReferenceText), $"{referenceText}")
                                         metadata.Properties.Add(nameof(BranchId), $"{this.Id}")
                                         metadata.Properties.Add(nameof(BranchName), $"{branchDto.BranchName}")
-                                        return Promoted (referenceId, directoryId, sha256Hash, referenceText)
-                                    | BranchCommand.Commit (directoryId, sha256Hash, referenceText) ->
-                                        let! referenceId = addReference directoryId sha256Hash referenceText ReferenceType.Commit
+                                        return Assigned (referenceId, directoryVersionId, sha256Hash, referenceText)
+                                    | BranchCommand.Promote (directoryVersionId, sha256Hash, referenceText) ->
+                                        let! referenceId = addReference directoryVersionId sha256Hash referenceText ReferenceType.Promotion
                                         metadata.Properties.Add(nameof(ReferenceId), $"{referenceId}")
-                                        metadata.Properties.Add(nameof(DirectoryId), $"{directoryId}")
+                                        metadata.Properties.Add(nameof(DirectoryId), $"{directoryVersionId}")
                                         metadata.Properties.Add(nameof(Sha256Hash), $"{sha256Hash}")
                                         metadata.Properties.Add(nameof(ReferenceText), $"{referenceText}")
                                         metadata.Properties.Add(nameof(BranchId), $"{this.Id}")
                                         metadata.Properties.Add(nameof(BranchName), $"{branchDto.BranchName}")
-                                        return Committed (referenceId, directoryId, sha256Hash, referenceText)
-                                    | BranchCommand.Checkpoint (directoryId, sha256Hash, referenceText) -> 
-                                        let! referenceId = addReference directoryId sha256Hash referenceText ReferenceType.Checkpoint
+                                        return Promoted (referenceId, directoryVersionId, sha256Hash, referenceText)
+                                    | BranchCommand.Commit (directoryVersionId, sha256Hash, referenceText) ->
+                                        let! referenceId = addReference directoryVersionId sha256Hash referenceText ReferenceType.Commit
                                         metadata.Properties.Add(nameof(ReferenceId), $"{referenceId}")
-                                        metadata.Properties.Add(nameof(DirectoryId), $"{directoryId}")
+                                        metadata.Properties.Add(nameof(DirectoryId), $"{directoryVersionId}")
                                         metadata.Properties.Add(nameof(Sha256Hash), $"{sha256Hash}")
                                         metadata.Properties.Add(nameof(ReferenceText), $"{referenceText}")
                                         metadata.Properties.Add(nameof(BranchId), $"{this.Id}")
                                         metadata.Properties.Add(nameof(BranchName), $"{branchDto.BranchName}")
-                                        return Checkpointed (referenceId, directoryId, sha256Hash, referenceText)
-                                    | BranchCommand.Save (directoryId, sha256Hash, referenceText) -> 
-                                        let! referenceId = addReference directoryId sha256Hash referenceText ReferenceType.Save
+                                        return Committed (referenceId, directoryVersionId, sha256Hash, referenceText)
+                                    | BranchCommand.Checkpoint (directoryVersionId, sha256Hash, referenceText) -> 
+                                        let! referenceId = addReference directoryVersionId sha256Hash referenceText ReferenceType.Checkpoint
                                         metadata.Properties.Add(nameof(ReferenceId), $"{referenceId}")
-                                        metadata.Properties.Add(nameof(DirectoryId), $"{directoryId}")
+                                        metadata.Properties.Add(nameof(DirectoryId), $"{directoryVersionId}")
                                         metadata.Properties.Add(nameof(Sha256Hash), $"{sha256Hash}")
                                         metadata.Properties.Add(nameof(ReferenceText), $"{referenceText}")
                                         metadata.Properties.Add(nameof(BranchId), $"{this.Id}")
                                         metadata.Properties.Add(nameof(BranchName), $"{branchDto.BranchName}")
-                                        return Saved (referenceId, directoryId, sha256Hash, referenceText)
-                                    | BranchCommand.Tag (directoryId, sha256Hash, referenceText) -> 
-                                        let! referenceId = addReference directoryId sha256Hash referenceText ReferenceType.Tag
+                                        return Checkpointed (referenceId, directoryVersionId, sha256Hash, referenceText)
+                                    | BranchCommand.Save (directoryVersionId, sha256Hash, referenceText) -> 
+                                        let! referenceId = addReference directoryVersionId sha256Hash referenceText ReferenceType.Save
                                         metadata.Properties.Add(nameof(ReferenceId), $"{referenceId}")
-                                        metadata.Properties.Add(nameof(DirectoryId), $"{directoryId}")
+                                        metadata.Properties.Add(nameof(DirectoryId), $"{directoryVersionId}")
                                         metadata.Properties.Add(nameof(Sha256Hash), $"{sha256Hash}")
                                         metadata.Properties.Add(nameof(ReferenceText), $"{referenceText}")
                                         metadata.Properties.Add(nameof(BranchId), $"{this.Id}")
                                         metadata.Properties.Add(nameof(BranchName), $"{branchDto.BranchName}")
-                                        return Tagged (referenceId, directoryId, sha256Hash, referenceText)
+                                        return Saved (referenceId, directoryVersionId, sha256Hash, referenceText)
+                                    | BranchCommand.Tag (directoryVersionId, sha256Hash, referenceText) -> 
+                                        let! referenceId = addReference directoryVersionId sha256Hash referenceText ReferenceType.Tag
+                                        metadata.Properties.Add(nameof(ReferenceId), $"{referenceId}")
+                                        metadata.Properties.Add(nameof(DirectoryId), $"{directoryVersionId}")
+                                        metadata.Properties.Add(nameof(Sha256Hash), $"{sha256Hash}")
+                                        metadata.Properties.Add(nameof(ReferenceText), $"{referenceText}")
+                                        metadata.Properties.Add(nameof(BranchId), $"{this.Id}")
+                                        metadata.Properties.Add(nameof(BranchName), $"{branchDto.BranchName}")
+                                        return Tagged (referenceId, directoryVersionId, sha256Hash, referenceText)
                                     | EnableAssign enabled -> return EnabledAssign enabled
                                     | EnablePromotion enabled -> return EnabledPromotion enabled
                                     | EnableCommit enabled -> return EnabledCommit enabled

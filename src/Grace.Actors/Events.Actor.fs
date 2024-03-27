@@ -15,11 +15,12 @@ module Events =
             | Created of branchId: BranchId * branchName: BranchName * parentBranchId: BranchId * basedOn: ReferenceId * repositoryId: RepositoryId * initialPermissions: ReferenceType[]
             | Rebased of basedOn: ReferenceId
             | NameSet of newName: BranchName
-            | Promoted of referenceId: ReferenceId * directoryId: DirectoryId * sha256Hash: Sha256Hash * referenceText: ReferenceText
-            | Committed of referenceId: ReferenceId * directoryId: DirectoryId * sha256Hash: Sha256Hash * referenceText: ReferenceText
-            | Checkpointed of referenceId: ReferenceId * directoryId: DirectoryId * sha256Hash: Sha256Hash * referenceText: ReferenceText
-            | Saved of referenceId: ReferenceId * directoryId: DirectoryId * sha256Hash: Sha256Hash * referenceText: ReferenceText
-            | Tagged of referenceId: ReferenceId * directoryId: DirectoryId * sha256Hash: Sha256Hash * referenceText: ReferenceText
+            | Assigned of referenceId: ReferenceId * directoryVersionId: DirectoryId * sha256Hash: Sha256Hash * referenceText: ReferenceText
+            | Promoted of referenceId: ReferenceId * directoryVersionId: DirectoryId * sha256Hash: Sha256Hash * referenceText: ReferenceText
+            | Committed of referenceId: ReferenceId * directoryVersionId: DirectoryId * sha256Hash: Sha256Hash * referenceText: ReferenceText
+            | Checkpointed of referenceId: ReferenceId * directoryVersionId: DirectoryId * sha256Hash: Sha256Hash * referenceText: ReferenceText
+            | Saved of referenceId: ReferenceId * directoryVersionId: DirectoryId * sha256Hash: Sha256Hash * referenceText: ReferenceText
+            | Tagged of referenceId: ReferenceId * directoryVersionId: DirectoryId * sha256Hash: Sha256Hash * referenceText: ReferenceText
             | EnabledAssign of enabled: bool
             | EnabledPromotion of enabled: bool
             | EnabledCommit of enabled: bool
