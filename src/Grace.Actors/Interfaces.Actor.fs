@@ -89,7 +89,7 @@ module Interfaces =
     [<Interface>]
     type IDiffActor = 
         inherit IActor
-        /// Populates the contents of the diff.
+        /// Populates the contents of the diff, without returning the results.
         abstract member Populate: correlationId: CorrelationId -> Task<bool>
         /// Gets the results of the diff.
         abstract member GetDiff: correlationId: CorrelationId -> Task<DiffDto>

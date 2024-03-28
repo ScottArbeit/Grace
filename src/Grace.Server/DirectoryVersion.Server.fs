@@ -234,7 +234,7 @@ module DirectoryVersion =
                                 let actorId = GetActorId dv.DirectoryId
                                 let directoryVersionActor = ApplicationContext.actorProxyFactory.CreateActorProxy<IDirectoryVersionActor>(actorId, ActorName.DirectoryVersion)
                                 let! exists = directoryVersionActor.Exists parameters.CorrelationId
-                                logToConsole $"In SaveDirectoryVersions: {dv.DirectoryId} exists: {exists}"
+                                //logToConsole $"In SaveDirectoryVersions: {dv.DirectoryId} exists: {exists}"
                                 if not <| exists then
                                     let! createResult = directoryVersionActor.Handle (DirectoryVersion.Create dv) (createMetadata context)
                                     results.Enqueue(createResult)

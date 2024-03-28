@@ -118,6 +118,7 @@ module Diff =
                 | AWSS3 -> return new MemoryStream() :> Stream
                 | AzureBlobStorage ->
                     let blobClient = BlockBlobClient(Uri(url))
+                    //logToConsole $"In DiffActor.getFileStream(): blobClient.Uri: {blobClient.Uri}."
                     let fileStream = blobClient.OpenRead(position = 0, bufferSize = (64 * 1024))
                     let uncompressedStream =
                         if fileVersion.IsBinary then
@@ -222,7 +223,6 @@ module Diff =
                                 let directory = graceIndex[relativeDirectoryPath]
                                 let fileVersion = directory.Files.First(fun f -> f.RelativePath = relativePath)
                                 let! uri = getReadSharedAccessSignature repositoryDto fileVersion correlationId
-                                logToConsole $"In DiffActor.getFileStream(); uri: {Result.get uri}."
                                 let! stream = this.getFileStream fileVersion (Result.get uri) correlationId
                                 return (stream, fileVersion)
                             }
@@ -269,9 +269,7 @@ module Diff =
                                 | Delete -> ()
                             })))
 
-
                         diffDto.FileDiffs.AddRange(fileDiffs.ToArray())
-
 
                         diffDto <- {diffDto with 
                                         HasDifferences = differences.Count <> 0
@@ -286,6 +284,7 @@ module Diff =
                         return true
                     with ex ->
                         logToConsole $"Exception in DiffActor.Populate(): {createExceptionResponse ex}"
+                        logToConsole $"directoryId1: {directoryId1}; directoryId2: {directoryId2}"
                         Activity.Current.SetStatus(ActivityStatusCode.Error, "Exception while creating diff.")
                             .AddTag("ex.Message", ex.Message)
                             .AddTag("ex.StackTrace", ex.StackTrace)

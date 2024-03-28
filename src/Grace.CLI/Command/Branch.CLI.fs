@@ -518,7 +518,9 @@ module Branch =
 
                                         t1.StartTask()  // Scan for differences.
                                         let! differences = scanForDifferences previousGraceStatus
+                                        //logToAnsiConsole Colors.Verbose $"differences: {serialize differences}"
                                         let! newFileVersions = copyUpdatedFilesToObjectCache t1 differences
+                                        //logToAnsiConsole Colors.Verbose $"newFileVersions: {serialize newFileVersions}" 
                                         t1.Value <- 100.0
 
                                         t2.StartTask()  // Create new directory versions.
@@ -543,7 +545,7 @@ module Branch =
                                         let mutable lastFileUploadInstant = newGraceStatus.LastSuccessfulFileUpload
                                         if newFileVersions.Count() > 0 then
                                             match! uploadFilesToObjectStorage newFileVersions (getCorrelationId parseResult) with
-                                            | Ok returnValue -> logToAnsiConsole Colors.Verbose $"Uploaded all files to object storage."
+                                            | Ok returnValue -> () //logToAnsiConsole Colors.Verbose $"Uploaded all files to object storage."
                                             | Error error -> logToAnsiConsole Colors.Error $"Error uploading files to object storage: {error.Error}"
                                             lastFileUploadInstant <- getCurrentInstant()
                                         t3.Value <- 100.0
@@ -552,7 +554,9 @@ module Branch =
                                         let mutable lastDirectoryVersionUpload = newGraceStatus.LastSuccessfulDirectoryVersionUpload
                                         if newDirectoryVersions.Count > 0 then
                                             let saveParameters = SaveDirectoryVersionsParameters()
+                                            saveParameters.DirectoryId <- $"{newGraceStatus.RootDirectoryId}"
                                             saveParameters.DirectoryVersions <- newDirectoryVersions.Select(fun dv -> dv.ToDirectoryVersion).ToList()
+                                            saveParameters.CorrelationId <- getCorrelationId parseResult
                                             let! uploadDirectoryVersions = Directory.SaveDirectoryVersions saveParameters
                                             lastDirectoryVersionUpload <- getCurrentInstant()
                                         t4.Value <- 100.0
@@ -2544,7 +2548,7 @@ module Branch =
         deleteCommand.Handler <- Delete
         branchCommand.AddCommand(deleteCommand)
 
-        let assignCommand = new Command("assign", Description = "Assign a promotion to this branch.") |> addOption Options.directoryVersionId |> addOption Options.sha256Hash |> addCommonOptions
+        let assignCommand = new Command("assign", Description = "Assign a promotion to this branch.") |> addOption Options.directoryVersionId |> addOption Options.sha256Hash |> addOption Options.message |> addCommonOptions
         assignCommand.Handler <- Assign
         branchCommand.AddCommand(assignCommand)
 

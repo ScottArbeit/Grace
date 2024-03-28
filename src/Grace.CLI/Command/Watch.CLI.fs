@@ -115,7 +115,7 @@ module Watch =
                 filesToProcess.TryAdd(args.FullPath, ()) |> ignore
 
     let OnError (args: ErrorEventArgs) =
-        let correlationId = Guid.NewGuid().ToString()
+        let correlationId = generateCorrelationId()
         logToAnsiConsole Colors.Error $"I saw that the FileSystemWatcher threw an exception: {args.GetException().Message}. grace watch should be restarted."
 
     let OnGraceUpdateInProgressCreated (args: FileSystemEventArgs) =
@@ -255,7 +255,7 @@ module Watch =
         task {
             // First, check if there's anything to process.
             if not (filesToProcess.IsEmpty && directoriesToProcess.IsEmpty) then
-                let correlationId = Guid.NewGuid().ToString()
+                let correlationId = generateCorrelationId()
                 let! graceStatusFromDisk = readGraceStatusFile()
                 graceStatus <- graceStatusFromDisk
                 

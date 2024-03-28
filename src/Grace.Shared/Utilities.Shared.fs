@@ -261,13 +261,19 @@ module Utilities =
             relativeDirectoryPath.Remove(relativeDirectoryPath.Length - 1, 1) |> ignore
             //logToConsole $"In getRelativeDirectory: relativeDirectoryPath.ToString(): {relativeDirectoryPath.ToString()}"
             (relativeDirectoryPath.ToString())
+    
+    /// Returns a 12-character randomly-generated NanoId value, using a custom alphabet.
+    let generateCorrelationId () =
+        // According to https://alex7kom.github.io/nano-nanoid-cc/?alphabet=~._-0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz&size=12&speed=1000&speedUnit=second
+        //   if we generate 1000 Id's per second, we'll need 4 months before we have a 1% chance of a collision, and even if we do, it will be in different owners/orgs/repos etc.
+        NanoidDotNet.Nanoid.Generate(CorrelationIdAlphabet, size = 12)
 
     /// Returns either the supplied correlationId, if not null, or a new Guid.
     let ensureNonEmptyCorrelationId (correlationId: string) =
         if not <| String.IsNullOrEmpty(correlationId) then
             correlationId
         else
-            Guid.NewGuid().ToString()
+            generateCorrelationId()
 
     /// Formats a byte array as a string. For example, [0xab, 0x15, 0x03] -> "ab1503"
     let byteArrayToString (array: Span<byte>) =
@@ -484,9 +490,3 @@ module Utilities =
     let getObjectFileName (relativePath: string) (sha256Hash: string) = 
         let file = FileInfo(relativePath)
         $"{file.Name.Replace(file.Extension, String.Empty)}_{sha256Hash}{file.Extension}"
-
-    /// Returns a 12-character randomly-generated NanoId value, using a custom alphabet.
-    let generateCorrelationId () =
-        // According to https://alex7kom.github.io/nano-nanoid-cc/?alphabet=~._-0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz&size=12&speed=1000&speedUnit=second
-        //   if we generate 1000 Id's per second, we'll need 4 months before we have a 1% chance of a collision, and even if we do, it will be in different owners/orgs/repos etc.
-        NanoidDotNet.Nanoid.Generate(CorrelationIdAlphabet, size = 12)

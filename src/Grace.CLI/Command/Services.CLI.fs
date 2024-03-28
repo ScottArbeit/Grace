@@ -477,13 +477,14 @@ module Services =
                     match! Storage.FilesExistInObjectStorage (fileVersions.Select(fun f -> f.ToFileVersion).ToList()) correlationId with
                     | Ok graceReturnValue ->
                         let filesToUpload = graceReturnValue.ReturnValue
-                        //logToAnsiConsole Colors.Verbose $"{serialize filesToUpload}"
+                        //logToAnsiConsole Colors.Verbose $"In Services.uploadFilesToObjectStorage(): filesToUpload: {serialize filesToUpload}."
                         let errors = ConcurrentQueue<GraceError>()
                         do! Parallel.ForEachAsync(filesToUpload, Constants.ParallelOptions, (fun uploadMetadata ct ->
                             ValueTask(task {
                                 let fileVersion = (fileVersions.First(fun f -> f.Sha256Hash = uploadMetadata.Sha256Hash)).ToFileVersion
+                                //logToAnsiConsole Colors.Verbose $"In Services.uploadFilesToObjectStorage(): Uploading {fileVersion.GetObjectFileName} to object storage."
                                 match! Storage.SaveFileToObjectStorage fileVersion (uploadMetadata.BlobUriWithSasToken) correlationId with
-                                | Ok result -> () //logToAnsiConsole Colors.Verbose $"Uploaded {fileVersion.GetObjectFileName} to object storage."
+                                | Ok result -> () //logToAnsiConsole Colors.Verbose $"In Services.uploadFilesToObjectStorage(): Uploaded {fileVersion.GetObjectFileName} to object storage."
                                 | Error error -> errors.Enqueue(error)
                             })))
 
@@ -625,10 +626,10 @@ module Services =
                     // Add this directoryVersion for further processing.
                     changedDirectoryVersions.AddOrUpdate(directoryVersion.RelativePath, (fun _ -> updatedWithNewSize), (fun _ _ -> updatedWithNewSize)) |> ignore
                 | Change -> 
-                    logToAnsiConsole Colors.Verbose $"Change file {difference.RelativePath}."
+                    //logToAnsiConsole Colors.Verbose $"Change file {difference.RelativePath}."
                     let fileInfo = FileInfo(Path.Combine(Current().RootDirectory, difference.RelativePath))
                     let relativeDirectoryPath = normalizeFilePath (getLocalRelativeDirectory fileInfo.DirectoryName (Current().RootDirectory))
-                    logToAnsiConsole Colors.Verbose $"{fileInfo.FullName}; {fileInfo.DirectoryName}; relativeDirectoryPath: {relativeDirectoryPath}"
+                    //logToAnsiConsole Colors.Verbose $"{fileInfo.FullName}; {fileInfo.DirectoryName}; relativeDirectoryPath: {relativeDirectoryPath}"
 
                     let directoryVersion =
                         let alreadyChanged = changedDirectoryVersions.Values.FirstOrDefault((fun dv -> dv.RelativePath = relativeDirectoryPath), LocalDirectoryVersion.Default)
@@ -650,7 +651,7 @@ module Services =
                     // Get a fileVersion for this file, including Sha256Hash, and see if it matches with the previous value.
                     // If it's changed, we have a new file version; if Sha256Hash matches, then the file was updated but then changed back to the same contents.
                     let existingFileIndex = directoryVersion.Files.FindIndex(fun file -> file.RelativePath = difference.RelativePath)
-                    logToAnsiConsole Colors.Verbose $"difference.RelativePath: {difference.RelativePath}; existingFileIndex: {existingFileIndex}."
+                    //logToAnsiConsole Colors.Verbose $"difference.RelativePath: {difference.RelativePath}; existingFileIndex: {existingFileIndex}."
                     let existingFileVersion = directoryVersion.Files[existingFileIndex]
                     match! createLocalFileVersion fileInfo with
                     | Some fileVersion ->
@@ -1044,16 +1045,16 @@ module Services =
                         let relativePath = Path.GetRelativePath(Current().RootDirectory, filePath)
                         return Some (FileVersion.Create (Current().RepositoryId) (RelativePath relativePath) (Sha256Hash $"{sha256Hash}") ("") isBinary (objectFilePathInfo.Length))
                     else
-                    //   If we do already have this exact version of the file, just delete the temp file.
+                    // If we do already have this exact version of the file, just delete the temp file.
                         File.Delete(tempFilePath)
-                        //logToConsole $"Finished copyToObjectDirectory for {filePath}; deleted temp file."
+                        //logToConsole $"Finished copyToObjectDirectory for {filePath}; object file already exists; deleted temp file."
                         return None
                     //return result
                 else
+                    logToAnsiConsole Colors.Error $"File {filePath} does not exist."
                     return None
             with ex ->
-                logToAnsiConsole Colors.Error $"Exception: {ex.Message}"
-                logToAnsiConsole Colors.Error $"Stack trace: {ex.StackTrace}"
+                logToAnsiConsole Colors.Error $"Exception in copyToObjectDirectory: {createExceptionResponse ex}"
                 return None
         }
 
@@ -1069,15 +1070,21 @@ module Services =
                     | Delete -> None)
                     .Where(fun relativePathOption -> relativePathOption.IsSome)
                     .Select(fun relativePath -> relativePath.Value)
+            //logToAnsiConsole Colors.Verbose $"relativePathsOfUpdatedFiles: {serialize relativePathsOfUpdatedFiles}"
 
             // Create new LocalFileVersion instances for each updated file.
             let increment = if differences.Count > 0 then (100.0 - t.Value) / float differences.Count else 0.0
             let newFileVersions = ConcurrentQueue<LocalFileVersion>()
             do! Parallel.ForEachAsync(relativePathsOfUpdatedFiles, Constants.ParallelOptions, (fun relativePath continuationToken ->
                 ValueTask(task {
-                    match! copyToObjectDirectory relativePath with
-                    | Some fileVersion -> newFileVersions.Enqueue(fileVersion.ToLocalFileVersion(DateTime.UtcNow))
-                    | None -> ()
+                    //logToAnsiConsole Colors.Verbose $"In Services.CLI.copyToObjectDirectory: Copying {relativePath} to object storage." 
+                    match! copyToObjectDirectory (Path.Combine(Current().RootDirectory, relativePath)) with
+                    | Some fileVersion -> 
+                        newFileVersions.Enqueue(fileVersion.ToLocalFileVersion(DateTime.UtcNow))
+                        //logToAnsiConsole Colors.Verbose $"Copied {fileVersion.RelativePath} to {fileVersion.GetObjectFileName} in object storage."
+                    | None -> 
+                        logToAnsiConsole Colors.Error $"Failed to copy {relativePath} to object storage."
+                        ()
                     t.Increment(increment)
                 })
             ))

@@ -169,7 +169,7 @@ module Branch =
                         match! (resolveBranchId parameters.RepositoryId parameters.ParentBranchId parameters.ParentBranchName parameters.CorrelationId) with
                         | Some parentBranchId -> 
                             let parentBranchActorId = ActorId(parentBranchId)
-                            let parentBranchActorProxy = ApplicationContext.actorProxyFactory.CreateActorProxy<IBranchActor>(parentBranchActorId, ActorName.Branch)
+                            let parentBranchActorProxy = actorProxyFactory.CreateActorProxy<IBranchActor>(parentBranchActorId, ActorName.Branch)
                             let! parentBranch = parentBranchActorProxy.Get parameters.CorrelationId
                             return Create(
                                 (Guid.Parse(parameters.BranchId)), 
@@ -217,6 +217,8 @@ module Branch =
     let Assign: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
+                let graceIds = context.Items[nameof(GraceIds)] :?> GraceIds
+
                 let validations (parameters: AssignParameters) =
                     [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
                        String.isValidGraceName parameters.BranchName InvalidBranchName
@@ -228,10 +230,28 @@ module Branch =
                        Branch.branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName parameters.CorrelationId ParentBranchDoesNotExist |]
 
                 let command (parameters: AssignParameters) = 
-                    Assign(parameters.DirectoryVersionId, parameters.Sha256Hash, ReferenceText parameters.Message) |> returnValueTask
+                    task {
+                        if parameters.DirectoryVersionId <> Guid.Empty then
+                            let directoryVersionActorProxy = actorProxyFactory.CreateActorProxy<IDirectoryVersionActor>(DirectoryVersion.GetActorId(parameters.DirectoryVersionId), ActorName.DirectoryVersion)
+                            let! directoryVersion = directoryVersionActorProxy.Get(parameters.CorrelationId)
+                            return Some (Assign(parameters.DirectoryVersionId, directoryVersion.Sha256Hash, ReferenceText parameters.Message))
+                        elif not <|String.IsNullOrEmpty(parameters.Sha256Hash) then
+                            match! getDirectoryBySha256Hash (Guid.Parse(graceIds.RepositoryId)) parameters.Sha256Hash parameters.CorrelationId with
+                            | Some directoryVersion ->
+                                return Some (Assign(directoryVersion.DirectoryId, directoryVersion.Sha256Hash, ReferenceText parameters.Message))
+                            | None ->
+                                return None
+                        else
+                            return None
+                    }
 
+                let! parameters = context |> parse<AssignParameters>
                 context.Items.Add("Command", nameof(Assign))
-                return! processCommand context validations command
+                context.Items["AssignParameters"] <- parameters
+                context.Request.Body.Seek(0L, IO.SeekOrigin.Begin) |> ignore
+                match! command parameters with
+                | Some command -> return! processCommand context validations (fun parameters -> ValueTask<BranchCommand>(command)) 
+                | None -> return! context |> result400BadRequest (GraceError.Create (BranchError.getErrorMessage EitherDirectoryVersionIdOrSha256HashRequired) (getCorrelationId context))
             }
 
     /// Creates a promotion reference in the parent of the specified branch, based on the most-recent commit.

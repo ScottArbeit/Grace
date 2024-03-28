@@ -111,10 +111,15 @@ module Common =
             else
                 Error error |> returnValueTask
 
-        /// Validates that one of the values passed in the array is not null, and if it's a string, it's not empty.
+        /// Validates that one of the values passed in the array is not null, if it's a string, it's not empty, and if it's a Guid, it's not Guid.Empty.
         let oneOfTheseValuesMustBeProvided (values: Object array) (error: 'T) =  
-            match values |> Array.tryFind (fun value -> 
-                not <| isNull(value) && if value :? String then not <| String.IsNullOrEmpty((value :?> string)) else true) with
+            match values |> Array.tryFind (fun value ->
+                match value with
+                | null -> false
+                | :? string as s -> not <| String.IsNullOrEmpty(s)
+                | :? Guid as g -> g <> Guid.Empty
+                | _ -> true)
+            with
             | Some _ ->
                 Ok () |> returnValueTask
             | None ->
