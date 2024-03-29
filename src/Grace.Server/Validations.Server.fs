@@ -18,6 +18,7 @@ open System
 open System.Collections.Concurrent
 open System.Collections.Generic
 open System.Threading.Tasks
+open Grpc.Net.Client.Balancer
 
 module Validations =
 
@@ -473,6 +474,30 @@ module Validations =
                                 | Save -> if branchDto.SaveEnabled then true else false
                                 | Tag -> if branchDto.TagEnabled then true else false
                             use newCacheEntry = memoryCache.CreateEntry($"{branchId}{referenceType}Allowed", Value = allowed, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
+                            if allowed then return Ok () else return Error error
+                    | None -> return Error error
+                | None -> return Error error
+            } |> ValueTask<Result<unit, 'T>>
+
+
+        /// Validates that a branch allows assign to create promotion references.
+        let branchAllowsAssign<'T> ownerId ownerName organizationId organizationName repositoryId repositoryName branchId branchName correlationId (error: 'T) =
+            task {
+                let mutable guid = Guid.Empty
+                match! resolveRepositoryId ownerId ownerName organizationId organizationName repositoryId repositoryName correlationId with
+                | Some repositoryId ->
+                    match! resolveBranchId repositoryId branchId branchName correlationId with
+                    | Some branchId ->
+                        let mutable allowed = new obj()
+                        if memoryCache.TryGetValue($"{branchId}AssignAllowed", &allowed) then
+                            let allowed = allowed :?> bool
+                            if allowed then return Ok () else return Error error
+                        else
+                            let actorId = ActorId(branchId)
+                            let branchActorProxy = actorProxyFactory.CreateActorProxy<IBranchActor>(actorId, ActorName.Branch)
+                            let! branchDto = branchActorProxy.Get correlationId
+                            let allowed = branchDto.AssignEnabled
+                            use newCacheEntry = memoryCache.CreateEntry($"{branchId}AssignAllowed", Value = allowed, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
                             if allowed then return Ok () else return Error error
                     | None -> return Error error
                 | None -> return Error error

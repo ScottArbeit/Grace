@@ -323,27 +323,12 @@ module Utilities =
     /// Converts an Exception-based instance into an ExceptionResponse instance.
     let createExceptionResponse (ex: Exception): ExceptionResponse =
 //#if DEBUG
-        let stackTrace (ex: Exception) = 
-            if not <| String.IsNullOrEmpty(ex.StackTrace) then
-                //ex.StackTrace.Replace("\\\\\\\\", @"\").Replace("\\\\", @"\").Replace("\r\n", Environment.NewLine)
-                //serialize ex.StackTrace //.Replace("\\\\\\\\", @"\").Replace("\\\\", @"\").Replace(@"\r\n", Environment.NewLine)
-                let jsonSerializerOptions = new JsonSerializerOptions()
-                jsonSerializerOptions.Encoder <- Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping
-                jsonSerializerOptions.WriteIndented <- true
-                JsonSerializer.Serialize(ex.StackTrace, jsonSerializerOptions)
-            else
-                String.Empty
-        
         let exceptionMessage (ex: Exception) = 
-            //$"Message: {ex.Message}{Environment.NewLine}{Environment.NewLine}Stack trace:{Environment.NewLine}{stackTrace ex}{Environment.NewLine}"
             $"Message: {ex.Message}{Environment.NewLine}{Environment.NewLine}Stack trace:{Environment.NewLine}{ex.StackTrace}{Environment.NewLine}"
 
         match ex.InnerException with
         | null -> {``exception`` = exceptionMessage ex; innerException = "null"}
         | innerEx -> {``exception`` = exceptionMessage ex; innerException = exceptionMessage ex.InnerException}
-        //match ex.InnerException with
-        //| null -> {``exception`` = serialize ex; innerException = String.Empty}
-        //| innerEx -> {``exception`` = serialize ex; innerException = serialize innerEx}
 //#else
 //        {|message = $"Internal server error, and, yes, it's been logged. The correlationId is in the X-Correlation-Id header."|}
 //#endif
@@ -361,12 +346,6 @@ module Utilities =
     let returnValueTask<'T> value = ValueTask.FromResult<'T>(value)
 
     /// Monadic bind for the nested monad Task<Result<'T, 'TError>>.
-    //let bindTaskResult (result: ValueTask<Result<'T, 'TError>>) (f: 'T -> ValueTask<Result<'U, 'TError>>) =
-    //    (task {
-    //        match! result with
-    //        | Ok returnValue -> return (f returnValue)
-    //        | Error error -> return Error error |> returnValueTask
-    //    }) |> ValueTask<ValueTask<Result<'U, 'TError>>> |> flattenValueTask
     let bindTaskResult (result: Task<Result<'T, 'TError>>) (f: 'T -> Task<Result<'U, 'TError>>) =
         (task {
             match! result with

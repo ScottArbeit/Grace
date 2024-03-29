@@ -8,6 +8,7 @@ module Errors =
 
     module Branch =
         type BranchError =
+            | AssignIsDisabled
             | BranchAlreadyExists
             | BranchDoesNotExist
             | BranchIdIsRequired
@@ -56,6 +57,7 @@ module Errors =
 
             static member getErrorMessage (branchError: BranchError): string =
                 match branchError with
+                | AssignIsDisabled -> getLocalizedString StringResourceName.AssignIsDisabled
                 | BranchAlreadyExists -> getLocalizedString StringResourceName.BranchAlreadyExists
                 | BranchDoesNotExist -> getLocalizedString StringResourceName.BranchDoesNotExist
                 | BranchIdIsRequired -> getLocalizedString StringResourceName.BranchIdIsRequired

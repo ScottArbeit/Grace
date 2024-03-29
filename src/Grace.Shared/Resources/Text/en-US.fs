@@ -13,6 +13,7 @@ module en_US =
     /// <param name="stringName">The resource name of the string to return.</param>
     let getString stringResourceName =
         match stringResourceName with
+            | AssignIsDisabled -> "This branch has disabled assign."
             | BranchAlreadyExists -> "The branch already exists."
             | BranchDoesNotExist -> "The branch was not found."
             | BranchIdIsRequired -> "The BranchId must be provided."

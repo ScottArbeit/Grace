@@ -12,6 +12,7 @@ module Text =
         | ``EN-US``
 
     type StringResourceName =
+        | AssignIsDisabled
         | BranchAlreadyExists
         | BranchDoesNotExist
         | BranchIdIsRequired

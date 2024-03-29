@@ -27,6 +27,7 @@ open System.Globalization
 open System.IO
 open System.Linq
 open System.Threading.Tasks
+open FSharpPlus.Data.NonEmptyList
 
 module Configuration =
     
@@ -350,7 +351,7 @@ module GraceCommand =
                         // If we're writing output, write the final Rule() to the console.
                         if parseResult |> hasOutput then
                             let finishTime = getCurrentInstant()
-                            let elapsed = finishTime - startTime
+                            let elapsed = (finishTime - startTime).Plus(Duration.FromMilliseconds(110.0)) // Adding 110ms for .NET Runtime startup time.
                             if parseResult |> verbose then
                                 AnsiConsole.Write((new Rule($"[{Colors.Important}]Elapsed: {elapsed.TotalSeconds:F3}s. Exit code: {returnValue}. Finished: {finishTime.ToString(InstantPattern.ExtendedIso.PatternText, CultureInfo.InvariantCulture)}[/]")).RightJustified())
                             else
@@ -368,7 +369,7 @@ module GraceCommand =
                             AnsiConsole.MarkupLine($"[{Colors.Important}]{getLocalizedString StringResourceName.GraceConfigFileNotFound}[/]")
                         printParseResult parseResult
                         let finishTime = getCurrentInstant()
-                        let elapsed = finishTime - startTime
+                        let elapsed = (finishTime - startTime).Plus(Duration.FromMilliseconds(110.0)) // Adding 110ms for .NET Runtime startup time.
                         AnsiConsole.Write((new Rule($"[{Colors.Important}]Elapsed: {elapsed.TotalSeconds:F3}s. Exit code: {returnValue}.[/]")).RightJustified())
 
                     return returnValue

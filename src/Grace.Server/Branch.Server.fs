@@ -223,11 +223,12 @@ module Branch =
                     [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
                        String.isValidGraceName parameters.BranchName InvalidBranchName
                        String.isValidSha256Hash parameters.Sha256Hash Sha256HashIsRequired
-                       Input.oneOfTheseValuesMustBeProvided [| parameters.DirectoryVersionId; parameters.Sha256Hash |] EitherDirectoryVersionIdOrSha256HashRequired 
+                       Input.oneOfTheseValuesMustBeProvided [| parameters.DirectoryVersionId; parameters.Sha256Hash |] EitherDirectoryVersionIdOrSha256HashRequired
                        Owner.ownerExists parameters.OwnerId parameters.OwnerName parameters.CorrelationId OwnerDoesNotExist
                        Organization.organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.CorrelationId OrganizationDoesNotExist
                        Repository.repositoryExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.CorrelationId RepositoryDoesNotExist
-                       Branch.branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName parameters.CorrelationId ParentBranchDoesNotExist |]
+                       Branch.branchExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName parameters.CorrelationId ParentBranchDoesNotExist 
+                       Branch.branchAllowsAssign parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.RepositoryId parameters.RepositoryName parameters.BranchId parameters.BranchName parameters.CorrelationId AssignIsDisabled |]
 
                 let command (parameters: AssignParameters) = 
                     task {
