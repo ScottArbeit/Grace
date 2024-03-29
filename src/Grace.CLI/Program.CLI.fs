@@ -27,7 +27,6 @@ open System.Globalization
 open System.IO
 open System.Linq
 open System.Threading.Tasks
-open FSharpPlus.Data.NonEmptyList
 
 module Configuration =
     
