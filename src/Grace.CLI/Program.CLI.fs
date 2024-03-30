@@ -323,7 +323,7 @@ module GraceCommand =
 
                         if parseResult |> hasOutput then
                             if parseResult |> verbose then
-                                AnsiConsole.Write((new Rule($"[{Colors.Important}]Started: {startTime.ToString(InstantPattern.ExtendedIso.PatternText, CultureInfo.InvariantCulture)}.[/]")).RightJustified())
+                                AnsiConsole.Write((new Rule($"[{Colors.Important}]Started: {formatInstantExtended startTime}.[/]")).RightJustified())
                                 printParseResult parseResult
                             else
                                 AnsiConsole.Write(new Rule())
@@ -352,7 +352,7 @@ module GraceCommand =
                             let finishTime = getCurrentInstant()
                             let elapsed = (finishTime - startTime).Plus(Duration.FromMilliseconds(110.0)) // Adding 110ms for .NET Runtime startup time.
                             if parseResult |> verbose then
-                                AnsiConsole.Write((new Rule($"[{Colors.Important}]Elapsed: {elapsed.TotalSeconds:F3}s. Exit code: {returnValue}. Finished: {finishTime.ToString(InstantPattern.ExtendedIso.PatternText, CultureInfo.InvariantCulture)}[/]")).RightJustified())
+                                AnsiConsole.Write((new Rule($"[{Colors.Important}]Elapsed: {elapsed.TotalSeconds:F3}s. Exit code: {returnValue}. Finished: {formatInstantExtended finishTime}[/]")).RightJustified())
                             else
                                 AnsiConsole.Write((new Rule($"[{Colors.Important}]Elapsed: {elapsed.TotalSeconds:F3}s. Exit code: {returnValue}.[/]")).RightJustified())
 

@@ -474,13 +474,22 @@ module Types =
             OrganizationId: string
             RepositoryId: string
             BranchId: string
+            CorrelationId: string
             HasOwner: bool
             HasOrganization: bool
             HasRepository: bool
             HasBranch: bool
         }
-
         static member Default = 
-            {OwnerId = String.Empty; OrganizationId = String.Empty; RepositoryId = String.Empty; BranchId = String.Empty; 
-                HasOwner = false; HasOrganization = false; HasRepository = false; HasBranch = false}
+            {
+                OwnerId = String.Empty
+                OrganizationId = String.Empty
+                RepositoryId = String.Empty
+                BranchId = String.Empty
+                CorrelationId = String.Empty
+                HasOwner = false
+                HasOrganization = false
+                HasRepository = false
+                HasBranch = false
+            }
         override this.ToString() = serialize this

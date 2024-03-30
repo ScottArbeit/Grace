@@ -28,7 +28,6 @@ type EntityProperties =
         RepositoryName: PropertyInfo option
         BranchId: PropertyInfo option
         BranchName: PropertyInfo option
-        CorrelationId: PropertyInfo option
     }
 
     static member Default =
@@ -41,7 +40,6 @@ type EntityProperties =
             RepositoryName = None
             BranchId = None
             BranchName = None
-            CorrelationId = None
         }
 
 /// Examines the body of the incoming request to validate the Ids and Names in the request, and ensure that we know the right Ids. Having the Ids already figured out saves work for the rest of the pipeline.
@@ -99,8 +97,7 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
                 let correlationId = getCorrelationId context
                 let mutable requestBodyType: Type = null
                 let mutable graceIds = GraceIds.Default
-                let mutable notFound = false
-                let mutable badRequest = false
+                let mutable badRequest = String.Empty
 
                 // If we haven't seen this endpoint before, get the parameter type for the endpoint.
                 if not <| typeLookup.TryGetValue(path, &requestBodyType) then
@@ -138,7 +135,6 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
                                     RepositoryName =    findProperty (nameof(RepositoryName))
                                     BranchId =          findProperty (nameof(BranchId))
                                     BranchName =        findProperty (nameof(BranchName))
-                                    CorrelationId =     findProperty (nameof(CorrelationId))
                                 }
 
                             // Cache the property list for this request body type.
@@ -174,7 +170,9 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
                                 | Some resolvedOwnerId ->
                                     graceIds <- {graceIds with OwnerId = resolvedOwnerId; HasOwner = true}
                                 | None ->
-                                    badRequest <- true
+                                    let id = if String.IsNullOrEmpty(ownerId) then "<none>" else ownerId
+                                    let name = if String.IsNullOrEmpty(ownerName) then "<none>" else ownerName
+                                    badRequest <- $"Owner with Id: {id} | Name: {name} not found."
 
                         // Get Organization information.
                         if Option.isSome entityProperties.OrganizationId && Option.isSome entityProperties.OrganizationName then
@@ -187,11 +185,13 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
                                 graceIds <- {graceIds with OrganizationId = organizationId; HasOrganization = true}
                             else
                                 // Resolve the OrganizationId based on the provided Id and Name.
-                                match! resolveOrganizationId ownerId ownerName organizationId organizationName correlationId with
+                                match! resolveOrganizationId graceIds.OwnerId String.Empty organizationId organizationName correlationId with
                                 | Some resolvedOrganizationId ->
                                     graceIds <- {graceIds with OrganizationId = resolvedOrganizationId; HasOrganization = true}
                                 | None -> 
-                                    badRequest <- true
+                                    let id = if String.IsNullOrEmpty(organizationId) then "<none>" else organizationId
+                                    let name = if String.IsNullOrEmpty(organizationName) then "<none>" else organizationName
+                                    badRequest <- $"Organization with Id: {id} | Name: {name} not found."
 
                         // Get repository information.
                         if Option.isSome entityProperties.RepositoryId && Option.isSome entityProperties.RepositoryName then
@@ -204,11 +204,13 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
                                 graceIds <- {graceIds with RepositoryId = repositoryId; HasRepository = true}
                             else
                                 // Resolve the RepositoryId based on the provided Id and Name.
-                                match! resolveRepositoryId ownerId ownerName organizationId organizationName repositoryId repositoryName correlationId with
+                                match! resolveRepositoryId graceIds.OwnerId String.Empty graceIds.OrganizationId String.Empty repositoryId repositoryName correlationId with
                                 | Some resolvedRepositoryId ->
                                     graceIds <- {graceIds with RepositoryId = resolvedRepositoryId; HasRepository = true}
                                 | None ->
-                                    badRequest <- true
+                                    let id = if String.IsNullOrEmpty(repositoryId) then "<none>" else repositoryId
+                                    let name = if String.IsNullOrEmpty(repositoryName) then "<none>" else repositoryName
+                                    badRequest <- $"Repository with Id: {id} | Name: {name} not found."
 
                         // Get branch information.
                         if Option.isSome entityProperties.BranchId && Option.isSome entityProperties.BranchName then
@@ -223,15 +225,11 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
                                 // Resolve the BranchId based on the provided Id and Name.
                                 match! resolveBranchId graceIds.RepositoryId branchId branchName correlationId with
                                 | Some resolvedBranchId ->
-                                    // Check to see if the Branch exists.
-                                    match! Branch.branchExists ownerId ownerName organizationId organizationName repositoryId repositoryName resolvedBranchId branchName correlationId Branch.BranchError.BranchDoesNotExist with
-                                    | Ok _ ->
-                                        graceIds <- {graceIds with BranchId = resolvedBranchId; HasBranch = true}
-                                    | Error error ->
-                                        notFound <- true
+                                    graceIds <- {graceIds with BranchId = resolvedBranchId; HasBranch = true}
                                 | None ->
-                                    badRequest <- true
-
+                                    let id = if String.IsNullOrEmpty(branchId) then "<none>" else branchId
+                                    let name = if String.IsNullOrEmpty(branchName) then "<none>" else branchName
+                                    badRequest <- $"Branch with Id: {id} | Name: {name} not found."
                     | None ->
                         ()
 
@@ -241,33 +239,33 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
                     // Reset the Body to the beginning so that it can be read again later in the pipeline.
                     context.Request.Body.Seek(0L, IO.SeekOrigin.Begin) |> ignore
 
-                if badRequest then
-                    log.LogDebug("{currentInstant}: Bad request. CorrelationId: {correlationId}", getCurrentInstantExtended(), correlationId)
-                    context.Items.Add("BadRequest", true)
-                elif notFound then
-                    log.LogDebug("{currentInstant}: The provided entity Id's and/or Names were not found in the database. This is normal for Create commands. CorrelationId: {correlationId}", getCurrentInstantExtended(), correlationId)
-                    context.Items.Add("EntitiesNotFound", true)
+                if not <| String.IsNullOrEmpty(badRequest) then
+                    context.Items.Add("BadRequest", badRequest)
+                    log.LogInformation("{currentInstant}: The provided entity Id's and/or Names were not found in the database. {message}. CorrelationId: {correlationId}", getCurrentInstantExtended(), badRequest, correlationId)
+                    context.Response.StatusCode <- 400
+                    do! context.Response.WriteAsync($"{badRequest}")
+                else
     // -----------------------------------------------------------------------------------------------------
 
-                // Pass control to next middleware instance...
-                let nextTask = next.Invoke(context);
+                    // Pass control to next middleware instance...
+                    let nextTask = next.Invoke(context);
 
     // -----------------------------------------------------------------------------------------------------
     // On the way out...
 
     #if DEBUG
-                let middlewareTraceOutHeader = context.Request.Headers["X-MiddlewareTraceOut"];
-                context.Request.Headers["X-MiddlewareTraceOut"] <- $"{middlewareTraceOutHeader}{nameof(ValidateIdsMiddleware)} --> ";
+                    let middlewareTraceOutHeader = context.Request.Headers["X-MiddlewareTraceOut"];
+                    context.Request.Headers["X-MiddlewareTraceOut"] <- $"{middlewareTraceOutHeader}{nameof(ValidateIdsMiddleware)} --> ";
 
-                let elapsed = getCurrentInstant().Minus(startTime).TotalMilliseconds
-                if not <| (ignorePaths |> Seq.exists(fun ignorePath -> path.StartsWith(ignorePath, StringComparison.InvariantCultureIgnoreCase))) then
-                    log.LogDebug("{currentInstant}: Path: {path}; Elapsed: {elapsed}ms; Status code: {statusCode}; graceIds: {graceIds}",
-                        getCurrentInstantExtended(), context.Request.Path, elapsed, context.Response.StatusCode, serialize graceIds)
+                    let elapsed = getCurrentInstant().Minus(startTime).TotalMilliseconds
+                    if not <| (ignorePaths |> Seq.exists(fun ignorePath -> path.StartsWith(ignorePath, StringComparison.InvariantCultureIgnoreCase))) then
+                        log.LogDebug("{currentInstant}: Path: {path}; Elapsed: {elapsed}ms; Status code: {statusCode}; graceIds: {graceIds}",
+                            getCurrentInstantExtended(), context.Request.Path, elapsed, context.Response.StatusCode, serialize graceIds)
 #endif
-                do! nextTask
+                    do! nextTask
             with ex ->
                 log.LogError(ex, "{currentInstant}: An unhandled exception occurred in the {middlewareName} middleware.", getCurrentInstantExtended(), nameof(ValidateIdsMiddleware))
                 context.Response.StatusCode <- 500
                 do! context.Response.WriteAsync($"{getCurrentInstantExtended()}: An unhandled exception occurred in the ValidateIdsMiddleware middleware.")
-                do! Task.CompletedTask
+
         } :> Task

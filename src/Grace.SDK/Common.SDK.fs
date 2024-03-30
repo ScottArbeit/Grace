@@ -120,6 +120,7 @@ module Common =
                 //logToConsole $"serverUriWithRoute: {serverUriWithRoute}"
                 let startTime = getCurrentInstant()
                 let! response = httpClient.PostAsync(serverUriWithRoute, createJsonContent parameters)
+                
                 let endTime = getCurrentInstant()
                 if response.IsSuccessStatusCode then
                     let! graceReturnValue = response.Content.ReadFromJsonAsync<GraceReturnValue<'U>>(Constants.JsonSerializerOptions)
@@ -129,12 +130,16 @@ module Common =
                 else
                     if response.StatusCode = HttpStatusCode.NotFound then
                         return Error (GraceError.Create $"Server endpoint {route} not found." parameters.CorrelationId)
+                    elif response.StatusCode = HttpStatusCode.BadRequest then
+                        let! errorMessage = response.Content.ReadAsStringAsync();
+                        return Error (GraceError.Create $"{errorMessage}" parameters.CorrelationId) |> enhance ("ServerResponseTime", $"{(endTime - startTime).TotalMilliseconds:F3} ms") |> enhance ("StatusCode", $"{response.StatusCode}")
                     else
-                        //let! responseAsString = response.Content.ReadAsStringAsync()
-                        //logToConsole $"responseAsString: {responseAsString}"
-                        //let graceError = GraceError.Create responseAsString parameters.CorrelationId
-                        let! graceError = response.Content.ReadFromJsonAsync<GraceError>(Constants.JsonSerializerOptions)
-                        return Error graceError |> enhance ("ServerResponseTime", $"{(endTime - startTime).TotalMilliseconds:F3} ms") |> enhance ("StatusCode", $"{response.StatusCode}")
+                        let! responseAsString = response.Content.ReadAsStringAsync()
+                        try
+                            let graceError = deserialize<GraceError>(responseAsString)
+                            return Error graceError |> enhance ("ServerResponseTime", $"{(endTime - startTime).TotalMilliseconds:F3} ms") |> enhance ("StatusCode", $"{response.StatusCode}")
+                        with ex ->
+                            return Error (GraceError.Create $"{responseAsString}" parameters.CorrelationId) |> enhance ("ServerResponseTime", $"{(endTime - startTime).TotalMilliseconds:F3} ms") |> enhance ("StatusCode", $"{response.StatusCode}")
             with ex ->
                 let exceptionResponse = Utilities.createExceptionResponse ex
                 return Error (GraceError.Create ($"{exceptionResponse}") parameters.CorrelationId)
