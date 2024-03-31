@@ -218,6 +218,9 @@ module Constants =
     /// The default root branch Id for a repository.
     let DefaultParentBranchId = Guid("38EC9A98-00B0-4FA3-8CC5-ACFB04E445A7") // There's nothing special about this Guid. I just generated it one day.
 
+    /// A special Guid value that means "false" or "we know there's no value here". Used in MemoryCache stuff.
+    let MemoryCacheValueGuid = Guid("27F21D8A-DA1D-4C73-8773-4AA5A5712612") // There's nothing special about this Guid. I just generated it one day.
+
     /// The name of the inter-process communication file used by grace watch to share status with other invocations of Grace.
     let IpcFileName = "graceWatchStatus.json"
 

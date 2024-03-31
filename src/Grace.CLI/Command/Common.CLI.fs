@@ -118,24 +118,21 @@ module Common =
             | Normal -> ()      // Return unit because in the Normal case, we expect to print output within each command.
             0
         | Error error -> 
-            let json =  if error.Error.Contains("Stack trace") then
-                            logToConsole $"Error: {error.Error}"
-                            try
-                                let exceptionResponse = deserialize<ExceptionResponse> error.Error
-                                sprintf "%A" exceptionResponse
-                            with ex -> 
-                                sprintf "%A" error.Error
-                        else
-                            Regex.Unescape(serialize error)
+            let json =
+                if error.Error.Contains("Stack trace") then
+                    Regex.Unescape(error.Error)
+                else
+                    Regex.Unescape(serialize error)
 
-            let errorText = if error.Error.Contains("Stack trace") then 
-                                try
-                                    let exceptionResponse = deserialize<ExceptionResponse> error.Error
-                                    sprintf "%A" exceptionResponse
-                                with ex -> 
-                                    sprintf "%A" error.Error
-                            else
-                                Regex.Unescape(error.Error)
+            let errorText = 
+                if error.Error.Contains("Stack trace") then 
+                    try
+                        let exceptionResponse = deserialize<ExceptionResponse> error.Error
+                        Regex.Unescape($"{exceptionResponse}")
+                    with ex -> 
+                        Regex.Unescape(error.Error)
+                else
+                    Regex.Unescape(error.Error)
 
             match outputFormat with
             | Json -> AnsiConsole.WriteLine($"{Markup.Escape(json)}")

@@ -16,6 +16,7 @@ open System.Linq
 open System.Reflection
 open System.Text
 open System.Threading.Tasks
+open Grace.Shared.Validation.Errors.Owner
 
 /// Holds the PropertyInfo for each Entity Id and Name property.
 type EntityProperties =
@@ -170,12 +171,14 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
                                 | Some resolvedOwnerId ->
                                     graceIds <- {graceIds with OwnerId = resolvedOwnerId; HasOwner = true}
                                 | None ->
-                                    let id = if String.IsNullOrEmpty(ownerId) then "<none>" else ownerId
-                                    let name = if String.IsNullOrEmpty(ownerName) then "<none>" else ownerName
-                                    badRequest <- $"Owner with Id: {id} | Name: {name} not found."
+                                    badRequest <-
+                                        if not <| String.IsNullOrEmpty(ownerId) then
+                                            $"Owner with Id: {ownerId} not found."
+                                        else
+                                            $"Owner with Name: {ownerName} not found."
 
                         // Get Organization information.
-                        if Option.isSome entityProperties.OrganizationId && Option.isSome entityProperties.OrganizationName then
+                        if String.IsNullOrEmpty(badRequest) && Option.isSome entityProperties.OrganizationId && Option.isSome entityProperties.OrganizationName then
                             // Get the values from the request body.
                             organizationId <- entityProperties.OrganizationId.Value.GetValue(requestBody) :?> string
                             organizationName <- entityProperties.OrganizationName.Value.GetValue(requestBody) :?> string
@@ -188,13 +191,15 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
                                 match! resolveOrganizationId graceIds.OwnerId String.Empty organizationId organizationName correlationId with
                                 | Some resolvedOrganizationId ->
                                     graceIds <- {graceIds with OrganizationId = resolvedOrganizationId; HasOrganization = true}
-                                | None -> 
-                                    let id = if String.IsNullOrEmpty(organizationId) then "<none>" else organizationId
-                                    let name = if String.IsNullOrEmpty(organizationName) then "<none>" else organizationName
-                                    badRequest <- $"Organization with Id: {id} | Name: {name} not found."
+                                | None ->
+                                    badRequest <-
+                                        if not <| String.IsNullOrEmpty(organizationId) then
+                                            $"Organization with Id: {organizationId} not found."
+                                        else
+                                            $"Organization with Name: {organizationName} not found."
 
                         // Get repository information.
-                        if Option.isSome entityProperties.RepositoryId && Option.isSome entityProperties.RepositoryName then
+                        if String.IsNullOrEmpty(badRequest) && Option.isSome entityProperties.RepositoryId && Option.isSome entityProperties.RepositoryName then
                             // Get the values from the request body.
                             repositoryId <- entityProperties.RepositoryId.Value.GetValue(requestBody) :?> string
                             repositoryName <- entityProperties.RepositoryName.Value.GetValue(requestBody) :?> string
@@ -208,12 +213,14 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
                                 | Some resolvedRepositoryId ->
                                     graceIds <- {graceIds with RepositoryId = resolvedRepositoryId; HasRepository = true}
                                 | None ->
-                                    let id = if String.IsNullOrEmpty(repositoryId) then "<none>" else repositoryId
-                                    let name = if String.IsNullOrEmpty(repositoryName) then "<none>" else repositoryName
-                                    badRequest <- $"Repository with Id: {id} | Name: {name} not found."
+                                    badRequest <-
+                                        if not <| String.IsNullOrEmpty(repositoryId) then
+                                            $"Repository with Id: {repositoryId} not found."
+                                        else
+                                            $"Repository with Name: {repositoryName} not found."
 
                         // Get branch information.
-                        if Option.isSome entityProperties.BranchId && Option.isSome entityProperties.BranchName then
+                        if String.IsNullOrEmpty(badRequest) && Option.isSome entityProperties.BranchId && Option.isSome entityProperties.BranchName then
                             // Get the values from the request body.
                             branchId <- entityProperties.BranchId.Value.GetValue(requestBody) :?> string
                             branchName <- entityProperties.BranchName.Value.GetValue(requestBody) :?> string
@@ -227,9 +234,11 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
                                 | Some resolvedBranchId ->
                                     graceIds <- {graceIds with BranchId = resolvedBranchId; HasBranch = true}
                                 | None ->
-                                    let id = if String.IsNullOrEmpty(branchId) then "<none>" else branchId
-                                    let name = if String.IsNullOrEmpty(branchName) then "<none>" else branchName
-                                    badRequest <- $"Branch with Id: {id} | Name: {name} not found."
+                                    badRequest <- 
+                                        if not <| String.IsNullOrEmpty(branchId) then
+                                            $"Branch with Id: {branchId} not found."
+                                        else
+                                            $"Branch with Name: {branchName} not found."
                     | None ->
                         ()
 
