@@ -10,7 +10,9 @@ open Grace.Shared.Utilities
 type BranchDtoConverter() =
     inherit JsonConverter<BranchDto>()
 
-    override this.Read ((reader: byref<Utf8JsonReader>), (typeToConvert: Type), (jsonSerializerOptions: JsonSerializerOptions)): BranchDto =
+    override this.Read
+        ((reader: byref<Utf8JsonReader>), (typeToConvert: Type), (jsonSerializerOptions: JsonSerializerOptions))
+        : BranchDto =
         let dictionary = Dictionary<string, string>()
         let mutable branchDto = BranchDto.Default
 
@@ -23,11 +25,14 @@ type BranchDtoConverter() =
         logToConsole $"""{sprintf "%A" properties}"""
         logToConsole $"""{sprintf "%A" members}"""
 
-        if reader.TokenType <> JsonTokenType.StartObject then raise (JsonException("Invalid JSON text."))
+        if reader.TokenType <> JsonTokenType.StartObject then
+            raise (JsonException("Invalid JSON text."))
         else
             while reader.Read() do
-                if reader.TokenType = JsonTokenType.EndObject then ()
-                elif reader.TokenType <> JsonTokenType.PropertyName then ()
+                if reader.TokenType = JsonTokenType.EndObject then
+                    ()
+                elif reader.TokenType <> JsonTokenType.PropertyName then
+                    ()
                 else
                     let key = reader.GetString()
                     ()
@@ -36,7 +41,8 @@ type BranchDtoConverter() =
                     let value: string = reader.GetString()
                     dictionary.Add(key, value)
 
-            for kvp in dictionary do logToConsole $"{kvp.Key}: {kvp.Value}"
+            for kvp in dictionary do
+                logToConsole $"{kvp.Key}: {kvp.Value}"
 
             branchDto
 

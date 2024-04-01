@@ -11,29 +11,34 @@ type CorrelationIdMiddleware(next: RequestDelegate) =
 
     member this.Invoke(context: HttpContext) =
 
-// -----------------------------------------------------------------------------------------------------
-// On the way in...
+        // -----------------------------------------------------------------------------------------------------
+        // On the way in...
 #if DEBUG
-        let middlewareTraceHeader = context.Request.Headers["X-MiddlewareTraceIn"];
-        context.Request.Headers["X-MiddlewareTraceIn"] <- $"{middlewareTraceHeader}{nameof(CorrelationIdMiddleware)} --> ";
+        let middlewareTraceHeader = context.Request.Headers["X-MiddlewareTraceIn"]
+
+        context.Request.Headers["X-MiddlewareTraceIn"] <-
+            $"{middlewareTraceHeader}{nameof (CorrelationIdMiddleware)} --> "
 #endif
 
-        let correlationId = 
+        let correlationId =
             if context.Request.Headers.ContainsKey(Constants.CorrelationIdHeaderKey) then
                 context.Request.Headers[Constants.CorrelationIdHeaderKey].ToString()
             else
-                generateCorrelationId()
+                generateCorrelationId ()
+
         context.Items.Add(Constants.CorrelationId, correlationId)
         context.Response.Headers.Add(Constants.CorrelationIdHeaderKey, correlationId)
 
-// -----------------------------------------------------------------------------------------------------
-// Pass control to next middleware instance...
-        let nextTask = next.Invoke(context);
+        // -----------------------------------------------------------------------------------------------------
+        // Pass control to next middleware instance...
+        let nextTask = next.Invoke(context)
 
-// -----------------------------------------------------------------------------------------------------
-// On the way out...
+        // -----------------------------------------------------------------------------------------------------
+        // On the way out...
 #if DEBUG
-        let middlewareTraceOutHeader = context.Request.Headers["X-MiddlewareTraceOut"];
-        context.Request.Headers["X-MiddlewareTraceOut"] <- $"{middlewareTraceOutHeader}{nameof(CorrelationIdMiddleware)} --> ";
+        let middlewareTraceOutHeader = context.Request.Headers["X-MiddlewareTraceOut"]
+
+        context.Request.Headers["X-MiddlewareTraceOut"] <-
+            $"{middlewareTraceOutHeader}{nameof (CorrelationIdMiddleware)} --> "
 #endif
         nextTask

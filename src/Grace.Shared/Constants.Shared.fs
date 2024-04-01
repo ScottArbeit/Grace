@@ -18,45 +18,51 @@ module Constants =
     /// The universal serialization options for F#-specific data types in Grace.
     ///
     /// See https://github.com/Tarmil/FSharp.SystemTextJson/blob/master/docs/Customizing.md for more information about these options.
-    let private jsonFSharpOptions = 
-        JsonFSharpOptions.Default()
+    let private jsonFSharpOptions =
+        JsonFSharpOptions
+            .Default()
             .WithAllowNullFields(true)
             .WithUnionFieldsName("value")
             .WithUnionTagNamingPolicy(JsonNamingPolicy.CamelCase)
             .WithUnionTagCaseInsensitive(true)
-            .WithUnionEncoding(JsonUnionEncoding.ExternalTag ||| 
-                JsonUnionEncoding.UnwrapFieldlessTags |||
-                JsonUnionEncoding.UnwrapSingleFieldCases ||| 
-                JsonUnionEncoding.UnwrapSingleCaseUnions ||| 
-                JsonUnionEncoding.NamedFields)
+            .WithUnionEncoding(
+                JsonUnionEncoding.ExternalTag
+                ||| JsonUnionEncoding.UnwrapFieldlessTags
+                ||| JsonUnionEncoding.UnwrapSingleFieldCases
+                ||| JsonUnionEncoding.UnwrapSingleCaseUnions
+                ||| JsonUnionEncoding.NamedFields
+            )
             .WithUnwrapOption(true)
 
     /// The universal JSON serialization options for Grace.
     let public JsonSerializerOptions = JsonSerializerOptions()
     JsonSerializerOptions.AllowTrailingCommas <- true
     JsonSerializerOptions.Converters.Add(JsonFSharpConverter(jsonFSharpOptions))
-    JsonSerializerOptions.ConfigureForNodaTime(NodaTime.DateTimeZoneProviders.Tzdb) |> ignore
+
+    JsonSerializerOptions.ConfigureForNodaTime(NodaTime.DateTimeZoneProviders.Tzdb)
+    |> ignore
+
     JsonSerializerOptions.DefaultBufferSize <- 64 * 1024
-    JsonSerializerOptions.DefaultIgnoreCondition <- JsonIgnoreCondition.WhenWritingDefault  // JsonSerializerOptions.IgnoreNullValues is deprecated. This is the new way to say it.
+    JsonSerializerOptions.DefaultIgnoreCondition <- JsonIgnoreCondition.WhenWritingDefault // JsonSerializerOptions.IgnoreNullValues is deprecated. This is the new way to say it.
     JsonSerializerOptions.NumberHandling <- JsonNumberHandling.AllowReadingFromString
-    JsonSerializerOptions.PropertyNameCaseInsensitive <- true   // Case sensitivity is from the 1970's. We should let it go.
+    JsonSerializerOptions.PropertyNameCaseInsensitive <- true // Case sensitivity is from the 1970's. We should let it go.
     //JsonSerializerOptions.PropertyNamingPolicy <- JsonNamingPolicy.CamelCase
     JsonSerializerOptions.ReadCommentHandling <- JsonCommentHandling.Skip
     JsonSerializerOptions.ReferenceHandler <- ReferenceHandler.IgnoreCycles
     JsonSerializerOptions.UnknownTypeHandling <- JsonUnknownTypeHandling.JsonElement
     JsonSerializerOptions.WriteIndented <- true
-    JsonSerializerOptions.MaxDepth <- 16    // Default is 64, but if we exceed a depth of 16, we're probably doing something wrong.
-    
+    JsonSerializerOptions.MaxDepth <- 16 // Default is 64, but if we exceed a depth of 16, we're probably doing something wrong.
+
     /// Converts the full name of a discriminated union to a string. Example: ServerApiVersions.Latest -> "ServerApiVersions.Latest"
-    let discriminatedUnionFullName (value:'T) = 
+    let discriminatedUnionFullName (value: 'T) =
         let discriminatedUnionType = typeof<'T>
-        let (case, _ ) = FSharpValue.GetUnionFields(value, discriminatedUnionType)
+        let (case, _) = FSharpValue.GetUnionFields(value, discriminatedUnionType)
         $"{discriminatedUnionType.Name}.{case.Name}"
 
     /// Converts just the case name of a discriminated union to a string. Example: ServerApiVersions.Latest -> "Latest"
-    let discriminatedUnionCaseName (value:'T) = 
+    let discriminatedUnionCaseName (value: 'T) =
         let discriminatedUnionType = typeof<'T>
-        let (case, _ ) = FSharpValue.GetUnionFields(value, discriminatedUnionType)
+        let (case, _) = FSharpValue.GetUnionFields(value, discriminatedUnionType)
         $"{case.Name}"
 
     /// The name of the Dapr service running Grace Server.
@@ -112,6 +118,7 @@ module Constants =
         | ``V2022-02-01``
         | Latest
         | Edge
+
         override this.ToString() = discriminatedUnionFullName this
 
     /// Environment variables used by Grace.
@@ -170,7 +177,7 @@ module Constants =
     /// Regex: ^[A-Za-z][A-Za-z0-9\-]{1,63}$
     ///
     /// A valid object name in Grace has between 2 and 64 characters, has a letter for the first character ([A-Za-z]), and letters, numbers, or a dash (-) for the rest ([A-Za-z0-9\-_]{1,63}).
-    /// 
+    ///
     /// See https://regexper.com for a diagram.
     /// </summary>
     let GraceNameRegexText = "^[A-Za-z][A-Za-z0-9\-]{1,63}$"
@@ -181,36 +188,68 @@ module Constants =
     /// Regex: ^[A-Za-z][A-Za-z0-9\-]{1,63}$
     ///
     /// A valid object name in Grace has between 2 and 64 characters, has a letter for the first character ([A-Za-z]), and letters, numbers, or a dash (-) for the rest ([A-Za-z0-9\-_]{1,63}).
-    /// 
+    ///
     /// See https://regexper.com for a diagram.
     /// </summary>
-    let GraceNameRegex = new Regex(GraceNameRegexText, RegexOptions.CultureInvariant ||| RegexOptions.Compiled, TimeSpan.FromSeconds(2.0))
+    let GraceNameRegex =
+        new Regex(
+            GraceNameRegexText,
+            RegexOptions.CultureInvariant ||| RegexOptions.Compiled,
+            TimeSpan.FromSeconds(2.0)
+        )
     // Note: The timeout value of 2s is a crazy big maximum time; matching against this should take less than 1ms.
 
     /// Validates that a string is a full or partial valid SHA-256 hash value, between 2 and 64 hexadecimal characters.
     ///
     /// Regex: ^[0-9a-fA-F]{2,64}$
-    let Sha256Regex = new Regex("^[0-9a-fA-F]{2,64}$", RegexOptions.CultureInvariant ||| RegexOptions.Compiled, TimeSpan.FromSeconds(1.0))
+    let Sha256Regex =
+        new Regex(
+            "^[0-9a-fA-F]{2,64}$",
+            RegexOptions.CultureInvariant ||| RegexOptions.Compiled,
+            TimeSpan.FromSeconds(1.0)
+        )
 
     /// The backoff policy used by Grace for server requests.
-    let private backoffWithJitter = Backoff.DecorrelatedJitterBackoffV2(medianFirstRetryDelay = (TimeSpan.FromSeconds(0.25)), retryCount = 7, fastFirst = false)
+    let private backoffWithJitter =
+        Backoff.DecorrelatedJitterBackoffV2(
+            medianFirstRetryDelay = (TimeSpan.FromSeconds(0.25)),
+            retryCount = 7,
+            fastFirst = false
+        )
 
     /// An exponential retry policy, with backoffs starting at 0.25s, and retrying 8 times.
-    let DefaultRetryPolicy = Policy.Handle<Exception>(fun ex -> ex.GetType() <> typeof<KeyNotFoundException>).WaitAndRetry(backoffWithJitter)
+    let DefaultRetryPolicy =
+        Policy
+            .Handle<Exception>(fun ex -> ex.GetType() <> typeof<KeyNotFoundException>)
+            .WaitAndRetry(backoffWithJitter)
 
     /// An exponential retry policy, with backoffs starting at 0.25s, and retrying 8 times.
-    let DefaultAsyncRetryPolicy = Policy.Handle<Exception>(fun ex -> ex.GetType() <> typeof<KeyNotFoundException>).WaitAndRetryAsync(backoffWithJitter)
+    let DefaultAsyncRetryPolicy =
+        Policy
+            .Handle<Exception>(fun ex -> ex.GetType() <> typeof<KeyNotFoundException>)
+            .WaitAndRetryAsync(backoffWithJitter)
 
-    let private fileCopyBackoff = Backoff.LinearBackoff(initialDelay = (TimeSpan.FromSeconds(1.0)), retryCount = 16, factor = 1.5, fastFirst = false)
+    let private fileCopyBackoff =
+        Backoff.LinearBackoff(
+            initialDelay = (TimeSpan.FromSeconds(1.0)),
+            retryCount = 16,
+            factor = 1.5,
+            fastFirst = false
+        )
+
     /// A linear retry policy for copying files locally, with backoffs starting at 1s and retrying 16 times.
     // This retry policy helps with large files. `grace watch` will see that the file is arriving, but if that file takes longer to be written than the next tick,
     // we get an IOException when we try to compute the Sha256Hash and copy it to the object directory. This policy allows us to wait until the file is complete.
-    let DefaultFileCopyRetryPolicy = Policy.Handle<IOException>(fun ex -> ex.GetType() <> typeof<KeyNotFoundException>).WaitAndRetry(fileCopyBackoff)
+    let DefaultFileCopyRetryPolicy =
+        Policy
+            .Handle<IOException>(fun ex -> ex.GetType() <> typeof<KeyNotFoundException>)
+            .WaitAndRetry(fileCopyBackoff)
 
     /// Grace's global settings for Parallel.ForEach/ForEachAsync expressions; sets MaxDegreeofParallelism to maximize performance.
-    // I'm choosing a higher-than-usual number here because these parallel loops are used in code where most of the time is spent on network 
+    // I'm choosing a higher-than-usual number here because these parallel loops are used in code where most of the time is spent on network
     //   and disk traffic - and therefore Task<'T> - and we can run lots of them simultaneously.
-    let ParallelOptions = ParallelOptions(MaxDegreeOfParallelism = Environment.ProcessorCount * 4)
+    let ParallelOptions =
+        ParallelOptions(MaxDegreeOfParallelism = Environment.ProcessorCount * 4)
 
     /// Default directory size magic value.
     let InitialDirectorySize = int64 -1
@@ -231,7 +270,8 @@ module Constants =
     let DefaultExpirationTime = TimeSpan.FromMinutes(2.0)
 
     /// The custom alphabet to use when generating a CorrelationId. This alphabet is URL-safe. Consists of "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz._-".
-    let CorrelationIdAlphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz._-"
+    let CorrelationIdAlphabet =
+        "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz._-"
 
 module Results =
     let Ok = 0

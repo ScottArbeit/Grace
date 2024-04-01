@@ -29,18 +29,21 @@ open System.Net.Sockets
 module ApplicationContext =
 
     let mutable private configuration: IConfiguration = null
-    let Configuration(): IConfiguration = configuration
+    let Configuration () : IConfiguration = configuration
 
     let mutable actorProxyFactory: IActorProxyFactory = null
-    let mutable actorStateStorageProvider: ActorStateStorageProvider = ActorStateStorageProvider.Unknown
+
+    let mutable actorStateStorageProvider: ActorStateStorageProvider =
+        ActorStateStorageProvider.Unknown
+
     let mutable loggerFactory: ILoggerFactory = null
     let mutable memoryCache: IMemoryCache = null
 
     /// Sets the Application global configuration.
     let setConfiguration (config: IConfiguration) =
-        logToConsole $"In setConfiguration: isNull(config): {isNull(config)}."
+        logToConsole $"In setConfiguration: isNull(config): {isNull (config)}."
         configuration <- config
-        //configuration.AsEnumerable() |> Seq.iter (fun kvp -> logToConsole $"{kvp.Key}: {kvp.Value}")
+    //configuration.AsEnumerable() |> Seq.iter (fun kvp -> logToConsole $"{kvp.Key}: {kvp.Value}")
 
     /// Sets the ActorProxyFactory for the application.
     let setActorProxyFactory proxyFactory =
@@ -59,29 +62,37 @@ module ApplicationContext =
 
     /// Holds information about each Azure Storage Account used by the application.
     type StorageAccount =
-        {
-            StorageAccountName: string;
-            StorageAccountConnectionString: string;
-        }
+        { StorageAccountName: string
+          StorageAccountConnectionString: string }
 
-    let daprHttpEndpoint = $"{Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.DaprServerUri)}:{Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.DaprHttpPort)}"
-    let daprGrpcEndpoint = $"{Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.DaprServerUri)}:{Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.DaprGrpcPort)}"
-    
+    let daprHttpEndpoint =
+        $"{Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.DaprServerUri)}:{Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.DaprHttpPort)}"
+
+    let daprGrpcEndpoint =
+        $"{Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.DaprServerUri)}:{Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.DaprGrpcPort)}"
+
     logToConsole $"daprHttpEndpoint: {daprHttpEndpoint}; daprGrpcEndpoint: {daprGrpcEndpoint}"
-    let daprClient = DaprClientBuilder().UseJsonSerializationOptions(Constants.JsonSerializerOptions).UseHttpEndpoint(daprHttpEndpoint).UseGrpcEndpoint(daprGrpcEndpoint).Build()
-    
+
+    let daprClient =
+        DaprClientBuilder()
+            .UseJsonSerializationOptions(Constants.JsonSerializerOptions)
+            .UseHttpEndpoint(daprHttpEndpoint)
+            .UseGrpcEndpoint(daprGrpcEndpoint)
+            .Build()
+
     let mutable sharedKeyCredential: StorageSharedKeyCredential = null
     let mutable grpcPortListener: TcpListener = null
-    
+
     let defaultObjectStorageProvider = ObjectStorageProvider.AzureBlobStorage
 
-    let Set = 
+    let Set =
         task {
             let mutable isReady = false
             let secondsToWaitForDaprToBeReady = 30.0
 
             // Wait for the Dapr gRPC port to be ready.
-            logToConsole $"""----------------------------------------------------------------------------------------------
+            logToConsole
+                $"""----------------------------------------------------------------------------------------------
                                 Pausing to check for an active gRPC connection with the Dapr sidecar.
                                 -----------------------------------------------------------------------------------------------
                                 Grace Server should not complete startup and accept requests until we know that we can
@@ -91,41 +102,60 @@ module ApplicationContext =
                                 We'll also exit and allow Kubernetes to restart Grace Server; by the time it restarts,
                                 the Dapr sidecar will be up and running, and we'll connect right away.
                                 -----------------------------------------------------------------------------------------------"""
-            let mutable gRPCPort: int = 50001   // This is Dapr's default gRPC port.
-            let grpcPortString = Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.DaprGrpcPort)
+
+            let mutable gRPCPort: int = 50001 // This is Dapr's default gRPC port.
+
+            let grpcPortString =
+                Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.DaprGrpcPort)
+
             if Int32.TryParse(grpcPortString, &gRPCPort) then
-                let startTime = getCurrentInstant()
+                let startTime = getCurrentInstant ()
+
                 while not <| isReady do
                     do! Task.Delay(TimeSpan.FromSeconds(2.0))
                     logToConsole $"Checking for an active TcpListner on gRPC port {gRPCPort}."
-                    let tcpListeners = Net.NetworkInformation.IPGlobalProperties.GetIPGlobalProperties().GetActiveTcpListeners()
+
+                    let tcpListeners =
+                        Net.NetworkInformation.IPGlobalProperties
+                            .GetIPGlobalProperties()
+                            .GetActiveTcpListeners()
                     //if tcpListeners.Length > 0 then logToConsole "Active TCP listeners:"
                     //for t in tcpListeners do
                     //    logToConsole $"{t.Address}:{t.Port} {t.AddressFamily}."
                     if tcpListeners.Any(fun tcpListener -> tcpListener.Port = gRPCPort) then
                         logToConsole $"gRPC port is ready."
                         isReady <- true
-                    else
-                        if getCurrentInstant().Minus(startTime) > Duration.FromSeconds(secondsToWaitForDaprToBeReady)  then
-                            logToConsole $"gRPC port is not ready after {secondsToWaitForDaprToBeReady} seconds. Exiting."
-                            Environment.Exit(-1)
+                    else if
+                        getCurrentInstant().Minus(startTime) > Duration.FromSeconds(secondsToWaitForDaprToBeReady)
+                    then
+                        logToConsole $"gRPC port is not ready after {secondsToWaitForDaprToBeReady} seconds. Exiting."
+                        Environment.Exit(-1)
             else
                 logToConsole $"Could not parse gRPC port {grpcPortString} as a port number. Exiting."
                 Environment.Exit(-1)
-            
-            let storageKey = Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.AzureStorageKey)
+
+            let storageKey =
+                Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.AzureStorageKey)
+
             sharedKeyCredential <- StorageSharedKeyCredential(DefaultObjectStorageAccount, storageKey)
 
-            let cosmosDbConnectionString = Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.AzureCosmosDBConnectionString)
-            let cosmosDatabaseName = Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.CosmosDatabaseName)
-            let cosmosContainerName = Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.CosmosContainerName)
+            let cosmosDbConnectionString =
+                Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.AzureCosmosDBConnectionString)
+
+            let cosmosDatabaseName =
+                Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.CosmosDatabaseName)
+
+            let cosmosContainerName =
+                Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.CosmosContainerName)
 
             // Get a reference to the CosmosDB database.
-            let cosmosClientOptions = CosmosClientOptions(
-                ApplicationName = Constants.GraceServerAppId,
-                EnableContentResponseOnWrite = false,
-                LimitToEndpoint = true,
-                Serializer = new CosmosJsonSerializer(Constants.JsonSerializerOptions))
+            let cosmosClientOptions =
+                CosmosClientOptions(
+                    ApplicationName = Constants.GraceServerAppId,
+                    EnableContentResponseOnWrite = false,
+                    LimitToEndpoint = true,
+                    Serializer = new CosmosJsonSerializer(Constants.JsonSerializerOptions)
+                )
 
 #if DEBUG
             // The CosmosDB emulator uses a self-signed certificate, and, by default, HttpClient will refuse
@@ -139,12 +169,18 @@ module ApplicationContext =
             //cosmosClientOptions.HttpClientFactory <- httpClientFactory
             //cosmosClientOptions.ConnectionMode <- ConnectionMode.Direct
 #endif
-            let cosmosClient = new CosmosClient(cosmosDbConnectionString, cosmosClientOptions)            
+            let cosmosClient = new CosmosClient(cosmosDbConnectionString, cosmosClientOptions)
             let! databaseResponse = cosmosClient.CreateDatabaseIfNotExistsAsync(cosmosDatabaseName)
             let database = databaseResponse.Database
 
             // Get a reference to the CosmosDB container.
-            let containerProperties = ContainerProperties(Id = cosmosContainerName, PartitionKeyPath = "/partitionKey", DefaultTimeToLive = 3600)
+            let containerProperties =
+                ContainerProperties(
+                    Id = cosmosContainerName,
+                    PartitionKeyPath = "/partitionKey",
+                    DefaultTimeToLive = 3600
+                )
+
             let! containerResponse = database.CreateContainerIfNotExistsAsync(containerProperties)
             let cosmosContainer = containerResponse.Container
 
@@ -159,4 +195,5 @@ module ApplicationContext =
             Grace.Actors.Services.setCosmosClient cosmosClient
             Grace.Actors.Services.setCosmosContainer cosmosContainer
             Grace.Actors.Services.setMemoryCache memoryCache
-        } :> Task
+        }
+        :> Task

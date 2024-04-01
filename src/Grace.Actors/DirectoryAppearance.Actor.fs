@@ -14,12 +14,10 @@ module DirectoryAppearance =
 
     let GetActorId (directoryId: DirectoryId) = ActorId($"{directoryId}")
 
-    type Appearance = 
-        {
-            Root: DirectoryId;
-            Parent: DirectoryId;
-            Created: Instant;
-        }
+    type Appearance =
+        { Root: DirectoryId
+          Parent: DirectoryId
+          Created: Instant }
 
     type AppearancesList = SortedSet<Appearance>
 
@@ -29,7 +27,7 @@ module DirectoryAppearance =
     type IDirectoryAppearanceActor =
         inherit IActor
         abstract member Add: appearance: Appearance -> Task
-        abstract member Remove: appearance: Appearance -> correlationId: string-> Task
+        abstract member Remove: appearance: Appearance -> correlationId: string -> Task
         abstract member Contains: appearance: Appearance -> Task<bool>
         abstract member Appearances: unit -> Task<AppearancesList>
 
@@ -44,47 +42,64 @@ module DirectoryAppearance =
 
         override this.OnActivateAsync() =
             let stateManager = this.StateManager
+
             task {
-                let! directoryAppearanceDtoFromStorage = 
+                let! directoryAppearanceDtoFromStorage =
                     task {
                         match! (Storage.RetrieveState<DirectoryAppearanceDto> stateManager dtoStateName) with
                         | Some dto -> return dto
                         | None -> return DirectoryAppearanceDto()
                     }
+
                 dto <- directoryAppearanceDtoFromStorage
-            } :> Task
+            }
+            :> Task
 
         interface IDirectoryAppearanceActor with
 
             member this.Add(appearance) =
                 let stateManager = this.StateManager
+
                 task {
                     let wasAdded = dto.Appearances.Add(appearance)
+
                     if wasAdded then
                         do! Storage.SaveState stateManager dtoStateName dto
-                } :> Task
+                }
+                :> Task
 
             member this.Remove appearance correlationId =
                 let stateManager = this.StateManager
+
                 task {
                     let wasRemoved = dto.Appearances.Remove(appearance)
+
                     if wasRemoved then
                         if dto.Appearances.Count = 0 then
                             let! deleteSucceeded = Storage.DeleteState stateManager dtoStateName
+
                             if deleteSucceeded then
-                                let directoryVersionActorProxy = Services.actorProxyFactory.CreateActorProxy<IDirectoryVersionActor>(this.Id, Constants.ActorName.DirectoryVersion)
+                                let directoryVersionActorProxy =
+                                    Services.actorProxyFactory.CreateActorProxy<IDirectoryVersionActor>(
+                                        this.Id,
+                                        Constants.ActorName.DirectoryVersion
+                                    )
+
                                 let! result = directoryVersionActorProxy.Delete(correlationId)
+
                                 match result with
-                                | Ok returnValue ->
-                                    ()
-                                | Error error ->
-                                    ()
+                                | Ok returnValue -> ()
+                                | Error error -> ()
+
                                 ()
                         else
                             do! Storage.SaveState stateManager dtoStateName dto
-                        ()
-                } :> Task
 
-            member this.Contains(appearance) = Task.FromResult(dto.Appearances.Contains(appearance))
+                        ()
+                }
+                :> Task
+
+            member this.Contains(appearance) =
+                Task.FromResult(dto.Appearances.Contains(appearance))
 
             member this.Appearances() = Task.FromResult(dto.Appearances)

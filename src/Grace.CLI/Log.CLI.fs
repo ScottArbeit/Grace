@@ -14,7 +14,7 @@ module Log =
 
     let Log (level: LogLevel) (message: string) =
         let pattern = "uuuu'-'MM'-'dd'T'HH':'mm':'ss.fff"
-        printfn $"({getCurrentInstantExtended()} {Utilities.getDiscriminatedUnionFullName level} {message}"
+        printfn $"({getCurrentInstantExtended ()} {Utilities.getDiscriminatedUnionFullName level} {message}"
         ()
 
     let LogInformational (message: string) = Log LogLevel.Informational message

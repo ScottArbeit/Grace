@@ -37,87 +37,179 @@ module Organization =
         let actorId = ActorId(organizationId)
         actorProxyFactory.CreateActorProxy<IOrganizationActor>(actorId, ActorName.Organization)
 
-    let processCommand<'T when 'T :> OrganizationParameters> (context: HttpContext) (validations: Validations<'T>) (command: 'T -> ValueTask<OrganizationCommand>) =
+    let processCommand<'T when 'T :> OrganizationParameters>
+        (context: HttpContext)
+        (validations: Validations<'T>)
+        (command: 'T -> ValueTask<OrganizationCommand>)
+        =
         task {
             try
                 let commandName = context.Items["Command"] :?> string
                 use activity = activitySource.StartActivity("processCommand", ActivityKind.Server)
                 let! parameters = context |> parse<'T>
 
-                let handleCommand organizationId cmd  =
+                let handleCommand organizationId cmd =
                     task {
                         let actorProxy = getActorProxy context organizationId
+
                         match! actorProxy.Handle cmd (createMetadata context) with
                         | Ok graceReturnValue ->
                             match getGraceIds context with
                             | Some graceIds ->
-                                graceReturnValue.Properties[nameof(OwnerId)] <- graceIds.OwnerId
-                                graceReturnValue.Properties[nameof(OrganizationId)] <- graceIds.OrganizationId
+                                graceReturnValue.Properties[nameof (OwnerId)] <- graceIds.OwnerId
+                                graceReturnValue.Properties[nameof (OrganizationId)] <- graceIds.OrganizationId
                             | None -> ()
+
                             return! context |> result200Ok graceReturnValue
                         | Error graceError ->
-                            log.LogDebug("{currentInstant}: In Branch.Server.handleCommand: error from actorProxy.Handle: {error}", getCurrentInstantExtended(), (graceError.ToString()))
-                            return! context |> result400BadRequest {graceError with Properties = getPropertiesAsDictionary parameters}                    }
+                            log.LogDebug(
+                                "{currentInstant}: In Branch.Server.handleCommand: error from actorProxy.Handle: {error}",
+                                getCurrentInstantExtended (),
+                                (graceError.ToString())
+                            )
+
+                            return!
+                                context
+                                |> result400BadRequest
+                                    { graceError with
+                                        Properties = getPropertiesAsDictionary parameters }
+                    }
 
                 let validationResults = validations parameters
                 let! validationsPassed = validationResults |> allPass
-                log.LogDebug("{currentInstant}: In Organization.Server.processCommand: validationsPassed: {validationsPassed}.", getCurrentInstantExtended(), validationsPassed)
+
+                log.LogDebug(
+                    "{currentInstant}: In Organization.Server.processCommand: validationsPassed: {validationsPassed}.",
+                    getCurrentInstantExtended (),
+                    validationsPassed
+                )
 
                 if validationsPassed then
                     let! cmd = command parameters
-                    let! organizationId = resolveOrganizationId parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.CorrelationId
-                    match organizationId, commandName = nameof(Create) with
+
+                    let! organizationId =
+                        resolveOrganizationId
+                            parameters.OwnerId
+                            parameters.OwnerName
+                            parameters.OrganizationId
+                            parameters.OrganizationName
+                            parameters.CorrelationId
+
+                    match organizationId, commandName = nameof (Create) with
                     | Some organizationId, _ ->
                         // If Id is Some, then we know we have a valid Id.
-                        if String.IsNullOrEmpty(parameters.OrganizationId) then parameters.OrganizationId<- organizationId
+                        if String.IsNullOrEmpty(parameters.OrganizationId) then
+                            parameters.OrganizationId <- organizationId
+
                         return! handleCommand organizationId cmd
                     | None, true ->
                         // If it's None, but this is a Create command, still valid, just use the Id from the parameters.
                         return! handleCommand parameters.OrganizationId cmd
                     | None, false ->
                         // If it's None, and this is not a Create command, then we have a bad request.
-                        log.LogDebug("{currentInstant}: In Organization.Server.processCommand: resolveOrganizationId failed. Organization does not exist. organizationId: {organizationId}; organizationName: {organizationName}.", getCurrentInstantExtended(), parameters.OrganizationId, parameters.OrganizationName)
-                        return! context |> result400BadRequest (GraceError.CreateWithMetadata (OrganizationError.getErrorMessage OrganizationDoesNotExist) (getCorrelationId context) (getPropertiesAsDictionary parameters))
+                        log.LogDebug(
+                            "{currentInstant}: In Organization.Server.processCommand: resolveOrganizationId failed. Organization does not exist. organizationId: {organizationId}; organizationName: {organizationName}.",
+                            getCurrentInstantExtended (),
+                            parameters.OrganizationId,
+                            parameters.OrganizationName
+                        )
+
+                        return!
+                            context
+                            |> result400BadRequest (
+                                GraceError.CreateWithMetadata
+                                    (OrganizationError.getErrorMessage OrganizationDoesNotExist)
+                                    (getCorrelationId context)
+                                    (getPropertiesAsDictionary parameters)
+                            )
                 else
                     let! error = validationResults |> getFirstError
                     let errorMessage = OrganizationError.getErrorMessage error
-                    log.LogDebug("{currentInstant}: error: {error}", getCurrentInstantExtended(), errorMessage)
-                    let graceError = GraceError.CreateWithMetadata errorMessage (getCorrelationId context) (getPropertiesAsDictionary parameters)
+                    log.LogDebug("{currentInstant}: error: {error}", getCurrentInstantExtended (), errorMessage)
+
+                    let graceError =
+                        GraceError.CreateWithMetadata
+                            errorMessage
+                            (getCorrelationId context)
+                            (getPropertiesAsDictionary parameters)
+
                     graceError.Properties.Add("Path", context.Request.Path)
                     graceError.Properties.Add("Error", errorMessage)
                     return! context |> result400BadRequest graceError
             with ex ->
-                log.LogError(ex, "{currentInstant}: Exception in Organization.Server.processCommand. CorrelationId: {correlationId}.", getCurrentInstantExtended(), (getCorrelationId context))
-                return! context |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
+                log.LogError(
+                    ex,
+                    "{currentInstant}: Exception in Organization.Server.processCommand. CorrelationId: {correlationId}.",
+                    getCurrentInstantExtended (),
+                    (getCorrelationId context)
+                )
+
+                return!
+                    context
+                    |> result500ServerError (
+                        GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context)
+                    )
         }
-    
-    let processQuery<'T, 'U when 'T :> OrganizationParameters> (context: HttpContext) (parameters: 'T) (validations: Validations<'T>) (maxCount: int) (query: QueryResult<IOrganizationActor, 'U>) =
+
+    let processQuery<'T, 'U when 'T :> OrganizationParameters>
+        (context: HttpContext)
+        (parameters: 'T)
+        (validations: Validations<'T>)
+        (maxCount: int)
+        (query: QueryResult<IOrganizationActor, 'U>)
+        =
         task {
             use activity = activitySource.StartActivity("processQuery", ActivityKind.Server)
+
             try
                 let validationResults = validations parameters
                 let! validationsPassed = validationResults |> allPass
+
                 if validationsPassed then
-                    match! resolveOrganizationId parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.CorrelationId with
+                    match!
+                        resolveOrganizationId
+                            parameters.OwnerId
+                            parameters.OwnerName
+                            parameters.OrganizationId
+                            parameters.OrganizationName
+                            parameters.CorrelationId
+                    with
                     | Some organizationId ->
                         let actorProxy = getActorProxy context organizationId
                         let! queryResult = query context maxCount actorProxy
-                        let graceReturnValue = GraceReturnValue.Create queryResult (getCorrelationId context)
+
+                        let graceReturnValue =
+                            GraceReturnValue.Create queryResult (getCorrelationId context)
+
                         match getGraceIds context with
                         | Some graceIds ->
-                            graceReturnValue.Properties[nameof(OwnerId)] <- graceIds.OwnerId
-                            graceReturnValue.Properties[nameof(OrganizationId)] <- graceIds.OrganizationId
+                            graceReturnValue.Properties[nameof (OwnerId)] <- graceIds.OwnerId
+                            graceReturnValue.Properties[nameof (OrganizationId)] <- graceIds.OrganizationId
                         | None -> ()
+
                         return! context |> result200Ok graceReturnValue
                     | None ->
-                        return! context |> result400BadRequest (GraceError.Create (OrganizationError.getErrorMessage OrganizationDoesNotExist) (getCorrelationId context))
+                        return!
+                            context
+                            |> result400BadRequest (
+                                GraceError.Create
+                                    (OrganizationError.getErrorMessage OrganizationDoesNotExist)
+                                    (getCorrelationId context)
+                            )
                 else
                     let! error = validationResults |> getFirstError
-                    let graceError = GraceError.Create (OrganizationError.getErrorMessage error) (getCorrelationId context)
+
+                    let graceError =
+                        GraceError.Create (OrganizationError.getErrorMessage error) (getCorrelationId context)
+
                     graceError.Properties.Add("Path", context.Request.Path)
                     return! context |> result400BadRequest graceError
             with ex ->
-                return! context |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
+                return!
+                    context
+                    |> result500ServerError (
+                        GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context)
+                    )
         }
 
     /// Create an organization.
@@ -127,25 +219,44 @@ module Organization =
                 let validations (parameters: CreateOrganizationParameters) =
                     [| Guid.isValidAndNotEmpty parameters.OwnerId InvalidOwnerId
                        String.isValidGraceName parameters.OwnerName InvalidOwnerName
-                       Input.eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
+                       Input.eitherIdOrNameMustBeProvided
+                           parameters.OwnerId
+                           parameters.OwnerName
+                           EitherOwnerIdOrOwnerNameRequired
                        String.isNotEmpty parameters.OrganizationId OrganizationIdIsRequired
                        Guid.isValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId
                        String.isNotEmpty parameters.OrganizationName OrganizationNameIsRequired
                        String.isValidGraceName parameters.OrganizationName InvalidOrganizationName
-                       Owner.ownerExists parameters.OwnerId parameters.OwnerName parameters.CorrelationId OwnerDoesNotExist
-                       Organization.organizationDoesNotExist parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.CorrelationId OrganizationIdAlreadyExists
-                       Organization.organizationNameIsUnique parameters.OwnerId parameters.OwnerName parameters.OrganizationName parameters.CorrelationId OrganizationNameAlreadyExists |]
+                       Owner.ownerExists
+                           parameters.OwnerId
+                           parameters.OwnerName
+                           parameters.CorrelationId
+                           OwnerDoesNotExist
+                       Organization.organizationDoesNotExist
+                           parameters.OwnerId
+                           parameters.OwnerName
+                           parameters.OrganizationId
+                           parameters.OrganizationName
+                           parameters.CorrelationId
+                           OrganizationIdAlreadyExists
+                       Organization.organizationNameIsUnique
+                           parameters.OwnerId
+                           parameters.OwnerName
+                           parameters.OrganizationName
+                           parameters.CorrelationId
+                           OrganizationNameAlreadyExists |]
 
-                let command (parameters: CreateOrganizationParameters) = 
+                let command (parameters: CreateOrganizationParameters) =
                     task {
                         let! ownerId = resolveOwnerId parameters.OwnerId parameters.OwnerName parameters.CorrelationId
                         let ownerIdGuid = Guid.Parse(ownerId.Value)
                         let organizationIdGuid = Guid.Parse(parameters.OrganizationId)
-                        return Create (organizationIdGuid, OrganizationName parameters.OrganizationName, ownerIdGuid)
-                    } |> ValueTask<OrganizationCommand>
+                        return Create(organizationIdGuid, OrganizationName parameters.OrganizationName, ownerIdGuid)
+                    }
+                    |> ValueTask<OrganizationCommand>
 
-                log.LogDebug("{currentInstant}: In Grace.Server.Create.", getCurrentInstantExtended())
-                context.Items.Add("Command", nameof(Create))
+                log.LogDebug("{currentInstant}: In Grace.Server.Create.", getCurrentInstantExtended ())
+                context.Items.Add("Command", nameof (Create))
                 return! processCommand context validations command
             }
 
@@ -156,20 +267,42 @@ module Organization =
                 let validations (parameters: SetOrganizationNameParameters) =
                     [| Guid.isValidAndNotEmpty parameters.OwnerId InvalidOwnerId
                        String.isValidGraceName parameters.OwnerName InvalidOwnerName
-                       Input.eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
+                       Input.eitherIdOrNameMustBeProvided
+                           parameters.OwnerId
+                           parameters.OwnerName
+                           EitherOwnerIdOrOwnerNameRequired
                        Guid.isValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId
                        String.isValidGraceName parameters.OrganizationName InvalidOrganizationName
-                       Input.eitherIdOrNameMustBeProvided parameters.OrganizationId parameters.OrganizationName EitherOrganizationIdOrOrganizationNameRequired
+                       Input.eitherIdOrNameMustBeProvided
+                           parameters.OrganizationId
+                           parameters.OrganizationName
+                           EitherOrganizationIdOrOrganizationNameRequired
                        String.isNotEmpty parameters.NewName OrganizationNameIsRequired
                        String.isValidGraceName parameters.NewName InvalidOrganizationName
-                       Owner.ownerExists parameters.OwnerId parameters.OwnerName parameters.CorrelationId OwnerDoesNotExist
-                       Organization.organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.CorrelationId OrganizationDoesNotExist
-                       Organization.organizationIsNotDeleted parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.CorrelationId OrganizationIsDeleted |]
+                       Owner.ownerExists
+                           parameters.OwnerId
+                           parameters.OwnerName
+                           parameters.CorrelationId
+                           OwnerDoesNotExist
+                       Organization.organizationExists
+                           parameters.OwnerId
+                           parameters.OwnerName
+                           parameters.OrganizationId
+                           parameters.OrganizationName
+                           parameters.CorrelationId
+                           OrganizationDoesNotExist
+                       Organization.organizationIsNotDeleted
+                           parameters.OwnerId
+                           parameters.OwnerName
+                           parameters.OrganizationId
+                           parameters.OrganizationName
+                           parameters.CorrelationId
+                           OrganizationIsDeleted |]
 
-                let command (parameters: SetOrganizationNameParameters) = 
-                    SetName (OrganizationName parameters.NewName) |> returnValueTask
+                let command (parameters: SetOrganizationNameParameters) =
+                    SetName(OrganizationName parameters.NewName) |> returnValueTask
 
-                context.Items.Add("Command", nameof(SetName))
+                context.Items.Add("Command", nameof (SetName))
                 return! processCommand context validations command
             }
 
@@ -180,19 +313,47 @@ module Organization =
                 let validations (parameters: SetOrganizationTypeParameters) =
                     [| Guid.isValidAndNotEmpty parameters.OwnerId InvalidOwnerId
                        String.isValidGraceName parameters.OwnerName InvalidOwnerName
-                       Input.eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
+                       Input.eitherIdOrNameMustBeProvided
+                           parameters.OwnerId
+                           parameters.OwnerName
+                           EitherOwnerIdOrOwnerNameRequired
                        Guid.isValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId
                        String.isValidGraceName parameters.OrganizationName InvalidOrganizationName
-                       Input.eitherIdOrNameMustBeProvided parameters.OrganizationId parameters.OrganizationName EitherOrganizationIdOrOrganizationNameRequired
-                       DiscriminatedUnion.isMemberOf<OrganizationType, OrganizationError> parameters.OrganizationType InvalidOrganizationType
-                       Owner.ownerExists parameters.OwnerId parameters.OwnerName parameters.CorrelationId OwnerDoesNotExist
-                       Organization.organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.CorrelationId OrganizationDoesNotExist
-                       Organization.organizationIsNotDeleted parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.CorrelationId OrganizationIsDeleted |]
+                       Input.eitherIdOrNameMustBeProvided
+                           parameters.OrganizationId
+                           parameters.OrganizationName
+                           EitherOrganizationIdOrOrganizationNameRequired
+                       DiscriminatedUnion.isMemberOf<OrganizationType, OrganizationError>
+                           parameters.OrganizationType
+                           InvalidOrganizationType
+                       Owner.ownerExists
+                           parameters.OwnerId
+                           parameters.OwnerName
+                           parameters.CorrelationId
+                           OwnerDoesNotExist
+                       Organization.organizationExists
+                           parameters.OwnerId
+                           parameters.OwnerName
+                           parameters.OrganizationId
+                           parameters.OrganizationName
+                           parameters.CorrelationId
+                           OrganizationDoesNotExist
+                       Organization.organizationIsNotDeleted
+                           parameters.OwnerId
+                           parameters.OwnerName
+                           parameters.OrganizationId
+                           parameters.OrganizationName
+                           parameters.CorrelationId
+                           OrganizationIsDeleted |]
 
-                let command (parameters: SetOrganizationTypeParameters) = 
-                    SetType (discriminatedUnionFromString<OrganizationType>(parameters.OrganizationType).Value) |> returnValueTask
-                
-                context.Items.Add("Command", nameof(SetType))
+                let command (parameters: SetOrganizationTypeParameters) =
+                    SetType(
+                        discriminatedUnionFromString<OrganizationType>(parameters.OrganizationType)
+                            .Value
+                    )
+                    |> returnValueTask
+
+                context.Items.Add("Command", nameof (SetType))
                 return! processCommand context validations command
             }
 
@@ -203,23 +364,51 @@ module Organization =
                 let validations (parameters: SetOrganizationSearchVisibilityParameters) =
                     [| Guid.isValidAndNotEmpty parameters.OwnerId InvalidOwnerId
                        String.isValidGraceName parameters.OwnerName InvalidOwnerName
-                       Input.eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
+                       Input.eitherIdOrNameMustBeProvided
+                           parameters.OwnerId
+                           parameters.OwnerName
+                           EitherOwnerIdOrOwnerNameRequired
                        Guid.isValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId
                        String.isValidGraceName parameters.OrganizationName InvalidOrganizationName
-                       Input.eitherIdOrNameMustBeProvided parameters.OrganizationId parameters.OrganizationName EitherOrganizationIdOrOrganizationNameRequired
+                       Input.eitherIdOrNameMustBeProvided
+                           parameters.OrganizationId
+                           parameters.OrganizationName
+                           EitherOrganizationIdOrOrganizationNameRequired
                        String.isNotEmpty parameters.SearchVisibility SearchVisibilityIsRequired
-                       DiscriminatedUnion.isMemberOf<SearchVisibility, OrganizationError> parameters.SearchVisibility InvalidSearchVisibility
-                       Owner.ownerExists parameters.OwnerId parameters.OwnerName parameters.CorrelationId OwnerDoesNotExist
-                       Organization.organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.CorrelationId OrganizationDoesNotExist
-                       Organization.organizationIsNotDeleted parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.CorrelationId OrganizationIsDeleted |]
+                       DiscriminatedUnion.isMemberOf<SearchVisibility, OrganizationError>
+                           parameters.SearchVisibility
+                           InvalidSearchVisibility
+                       Owner.ownerExists
+                           parameters.OwnerId
+                           parameters.OwnerName
+                           parameters.CorrelationId
+                           OwnerDoesNotExist
+                       Organization.organizationExists
+                           parameters.OwnerId
+                           parameters.OwnerName
+                           parameters.OrganizationId
+                           parameters.OrganizationName
+                           parameters.CorrelationId
+                           OrganizationDoesNotExist
+                       Organization.organizationIsNotDeleted
+                           parameters.OwnerId
+                           parameters.OwnerName
+                           parameters.OrganizationId
+                           parameters.OrganizationName
+                           parameters.CorrelationId
+                           OrganizationIsDeleted |]
 
                 let command (parameters: SetOrganizationSearchVisibilityParameters) =
-                    SetSearchVisibility (discriminatedUnionFromString<SearchVisibility>(parameters.SearchVisibility).Value) |> returnValueTask
-                
-                context.Items.Add("Command", nameof(SetSearchVisibility))
+                    SetSearchVisibility(
+                        discriminatedUnionFromString<SearchVisibility>(parameters.SearchVisibility)
+                            .Value
+                    )
+                    |> returnValueTask
+
+                context.Items.Add("Command", nameof (SetSearchVisibility))
                 return! processCommand context validations command
             }
-            
+
     /// Set the description of an organization.
     let SetDescription: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
@@ -227,19 +416,41 @@ module Organization =
                 let validations (parameters: SetOrganizationDescriptionParameters) =
                     [| Guid.isValidAndNotEmpty parameters.OwnerId InvalidOwnerId
                        String.isValidGraceName parameters.OwnerName InvalidOwnerName
-                       Input.eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
+                       Input.eitherIdOrNameMustBeProvided
+                           parameters.OwnerId
+                           parameters.OwnerName
+                           EitherOwnerIdOrOwnerNameRequired
                        Guid.isValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId
                        String.isValidGraceName parameters.OrganizationName InvalidOrganizationName
-                       Input.eitherIdOrNameMustBeProvided parameters.OrganizationId parameters.OrganizationName EitherOrganizationIdOrOrganizationNameRequired
+                       Input.eitherIdOrNameMustBeProvided
+                           parameters.OrganizationId
+                           parameters.OrganizationName
+                           EitherOrganizationIdOrOrganizationNameRequired
                        String.isNotEmpty parameters.Description OrganizationDescriptionIsRequired
-                       Owner.ownerExists parameters.OwnerId parameters.OwnerName parameters.CorrelationId OwnerDoesNotExist
-                       Organization.organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.CorrelationId OrganizationDoesNotExist
-                       Organization.organizationIsNotDeleted parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.CorrelationId OrganizationIsDeleted |]
+                       Owner.ownerExists
+                           parameters.OwnerId
+                           parameters.OwnerName
+                           parameters.CorrelationId
+                           OwnerDoesNotExist
+                       Organization.organizationExists
+                           parameters.OwnerId
+                           parameters.OwnerName
+                           parameters.OrganizationId
+                           parameters.OrganizationName
+                           parameters.CorrelationId
+                           OrganizationDoesNotExist
+                       Organization.organizationIsNotDeleted
+                           parameters.OwnerId
+                           parameters.OwnerName
+                           parameters.OrganizationId
+                           parameters.OrganizationName
+                           parameters.CorrelationId
+                           OrganizationIsDeleted |]
 
                 let command (parameters: SetOrganizationDescriptionParameters) =
                     SetDescription(parameters.Description) |> returnValueTask
 
-                context.Items.Add("Command", nameof(SetDescription))
+                context.Items.Add("Command", nameof (SetDescription))
                 return! processCommand context validations command
             }
 
@@ -251,24 +462,50 @@ module Organization =
                     let validations (parameters: ListRepositoriesParameters) =
                         [| Guid.isValidAndNotEmpty parameters.OwnerId InvalidOwnerId
                            String.isValidGraceName parameters.OwnerName InvalidOwnerName
-                           Input.eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
+                           Input.eitherIdOrNameMustBeProvided
+                               parameters.OwnerId
+                               parameters.OwnerName
+                               EitherOwnerIdOrOwnerNameRequired
                            Guid.isValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId
                            String.isValidGraceName parameters.OrganizationName InvalidOrganizationName
-                           Input.eitherIdOrNameMustBeProvided parameters.OrganizationId parameters.OrganizationName EitherOrganizationIdOrOrganizationNameRequired
-                           Owner.ownerExists parameters.OwnerId parameters.OwnerName parameters.CorrelationId OwnerDoesNotExist
-                           Organization.organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.CorrelationId OrganizationDoesNotExist
-                           Organization.organizationIsNotDeleted parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.CorrelationId OrganizationIsDeleted |]
+                           Input.eitherIdOrNameMustBeProvided
+                               parameters.OrganizationId
+                               parameters.OrganizationName
+                               EitherOrganizationIdOrOrganizationNameRequired
+                           Owner.ownerExists
+                               parameters.OwnerId
+                               parameters.OwnerName
+                               parameters.CorrelationId
+                               OwnerDoesNotExist
+                           Organization.organizationExists
+                               parameters.OwnerId
+                               parameters.OwnerName
+                               parameters.OrganizationId
+                               parameters.OrganizationName
+                               parameters.CorrelationId
+                               OrganizationDoesNotExist
+                           Organization.organizationIsNotDeleted
+                               parameters.OwnerId
+                               parameters.OwnerName
+                               parameters.OrganizationId
+                               parameters.OrganizationName
+                               parameters.CorrelationId
+                               OrganizationIsDeleted |]
 
                     let query (context: HttpContext) (maxCount: int) (actorProxy: IOrganizationActor) =
                         task {
-                            let! repositories = actorProxy.ListRepositories (getCorrelationId context)
+                            let! repositories = actorProxy.ListRepositories(getCorrelationId context)
                             return! context.WriteJsonAsync(repositories)
                         }
 
                     let! parameters = context |> parse<ListRepositoriesParameters>
                     return! processQuery context parameters validations 1 query
                 with ex ->
-                    return! context |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
+                    return!
+                        context
+                        |> result500ServerError (
+                            GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context)
+                        )
             }
 
     /// Delete an organization.
@@ -278,19 +515,41 @@ module Organization =
                 let validations (parameters: DeleteOrganizationParameters) =
                     [| Guid.isValidAndNotEmpty parameters.OwnerId InvalidOwnerId
                        String.isValidGraceName parameters.OwnerName InvalidOwnerName
-                       Input.eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
+                       Input.eitherIdOrNameMustBeProvided
+                           parameters.OwnerId
+                           parameters.OwnerName
+                           EitherOwnerIdOrOwnerNameRequired
                        Guid.isValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId
                        String.isValidGraceName parameters.OrganizationName InvalidOrganizationName
-                       Input.eitherIdOrNameMustBeProvided parameters.OrganizationId parameters.OrganizationName EitherOrganizationIdOrOrganizationNameRequired
+                       Input.eitherIdOrNameMustBeProvided
+                           parameters.OrganizationId
+                           parameters.OrganizationName
+                           EitherOrganizationIdOrOrganizationNameRequired
                        String.isNotEmpty parameters.DeleteReason DeleteReasonIsRequired
-                       Owner.ownerExists parameters.OwnerId parameters.OwnerName parameters.CorrelationId OwnerDoesNotExist
-                       Organization.organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.CorrelationId OrganizationDoesNotExist
-                       Organization.organizationIsNotDeleted parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.CorrelationId OrganizationIsDeleted |]
+                       Owner.ownerExists
+                           parameters.OwnerId
+                           parameters.OwnerName
+                           parameters.CorrelationId
+                           OwnerDoesNotExist
+                       Organization.organizationExists
+                           parameters.OwnerId
+                           parameters.OwnerName
+                           parameters.OrganizationId
+                           parameters.OrganizationName
+                           parameters.CorrelationId
+                           OrganizationDoesNotExist
+                       Organization.organizationIsNotDeleted
+                           parameters.OwnerId
+                           parameters.OwnerName
+                           parameters.OrganizationId
+                           parameters.OrganizationName
+                           parameters.CorrelationId
+                           OrganizationIsDeleted |]
 
-                let command (parameters: DeleteOrganizationParameters) = 
-                    DeleteLogical (parameters.Force, parameters.DeleteReason) |> returnValueTask
+                let command (parameters: DeleteOrganizationParameters) =
+                    DeleteLogical(parameters.Force, parameters.DeleteReason) |> returnValueTask
 
-                context.Items.Add("Command", nameof(DeleteLogical))
+                context.Items.Add("Command", nameof (DeleteLogical))
                 return! processCommand context validations command
             }
 
@@ -301,19 +560,43 @@ module Organization =
                 let validations (parameters: OrganizationParameters) =
                     [| Guid.isValidAndNotEmpty parameters.OwnerId InvalidOwnerId
                        String.isValidGraceName parameters.OwnerName InvalidOwnerName
-                       Input.eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
+                       Input.eitherIdOrNameMustBeProvided
+                           parameters.OwnerId
+                           parameters.OwnerName
+                           EitherOwnerIdOrOwnerNameRequired
                        Guid.isValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId
                        String.isValidGraceName parameters.OrganizationName InvalidOrganizationName
-                       Input.eitherIdOrNameMustBeProvided parameters.OrganizationId parameters.OrganizationName EitherOrganizationIdOrOrganizationNameRequired
-                       Input.eitherIdOrNameMustBeProvided parameters.OrganizationId parameters.OrganizationName EitherOrganizationIdOrOrganizationNameRequired
-                       Owner.ownerExists parameters.OwnerId parameters.OwnerName parameters.CorrelationId OwnerDoesNotExist
-                       Organization.organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.CorrelationId OrganizationDoesNotExist
-                       Organization.organizationIsDeleted parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.CorrelationId OrganizationIsNotDeleted |]
+                       Input.eitherIdOrNameMustBeProvided
+                           parameters.OrganizationId
+                           parameters.OrganizationName
+                           EitherOrganizationIdOrOrganizationNameRequired
+                       Input.eitherIdOrNameMustBeProvided
+                           parameters.OrganizationId
+                           parameters.OrganizationName
+                           EitherOrganizationIdOrOrganizationNameRequired
+                       Owner.ownerExists
+                           parameters.OwnerId
+                           parameters.OwnerName
+                           parameters.CorrelationId
+                           OwnerDoesNotExist
+                       Organization.organizationExists
+                           parameters.OwnerId
+                           parameters.OwnerName
+                           parameters.OrganizationId
+                           parameters.OrganizationName
+                           parameters.CorrelationId
+                           OrganizationDoesNotExist
+                       Organization.organizationIsDeleted
+                           parameters.OwnerId
+                           parameters.OwnerName
+                           parameters.OrganizationId
+                           parameters.OrganizationName
+                           parameters.CorrelationId
+                           OrganizationIsNotDeleted |]
 
-                let command (parameters: OrganizationParameters) = 
-                    Undelete |> returnValueTask
+                let command (parameters: OrganizationParameters) = Undelete |> returnValueTask
 
-                context.Items.Add("Command", nameof(Undelete))
+                context.Items.Add("Command", nameof (Undelete))
                 return! processCommand context validations command
             }
 
@@ -325,21 +608,45 @@ module Organization =
                     let validations (parameters: GetOrganizationParameters) =
                         [| Guid.isValidAndNotEmpty parameters.OwnerId InvalidOwnerId
                            String.isValidGraceName parameters.OwnerName InvalidOwnerName
-                           Input.eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
+                           Input.eitherIdOrNameMustBeProvided
+                               parameters.OwnerId
+                               parameters.OwnerName
+                               EitherOwnerIdOrOwnerNameRequired
                            Guid.isValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId
                            String.isValidGraceName parameters.OrganizationName InvalidOrganizationName
-                           Input.eitherIdOrNameMustBeProvided parameters.OrganizationId parameters.OrganizationName EitherOrganizationIdOrOrganizationNameRequired
-                           Owner.ownerExists parameters.OwnerId parameters.OwnerName parameters.CorrelationId OwnerDoesNotExist
-                           Organization.organizationExists parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.CorrelationId OrganizationDoesNotExist
-                           Organization.organizationIsNotDeleted parameters.OwnerId parameters.OwnerName parameters.OrganizationId parameters.OrganizationName parameters.CorrelationId OrganizationIsDeleted |]
+                           Input.eitherIdOrNameMustBeProvided
+                               parameters.OrganizationId
+                               parameters.OrganizationName
+                               EitherOrganizationIdOrOrganizationNameRequired
+                           Owner.ownerExists
+                               parameters.OwnerId
+                               parameters.OwnerName
+                               parameters.CorrelationId
+                               OwnerDoesNotExist
+                           Organization.organizationExists
+                               parameters.OwnerId
+                               parameters.OwnerName
+                               parameters.OrganizationId
+                               parameters.OrganizationName
+                               parameters.CorrelationId
+                               OrganizationDoesNotExist
+                           Organization.organizationIsNotDeleted
+                               parameters.OwnerId
+                               parameters.OwnerName
+                               parameters.OrganizationId
+                               parameters.OrganizationName
+                               parameters.CorrelationId
+                               OrganizationIsDeleted |]
 
                     let query (context: HttpContext) (maxCount: int) (actorProxy: IOrganizationActor) =
-                        task {
-                            return! actorProxy.Get (getCorrelationId context)
-                        }
+                        task { return! actorProxy.Get(getCorrelationId context) }
 
                     let! parameters = context |> parse<GetOrganizationParameters>
                     return! processQuery context parameters validations 1 query
                 with ex ->
-                    return! context |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
+                    return!
+                        context
+                        |> result500ServerError (
+                            GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context)
+                        )
             }

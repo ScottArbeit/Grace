@@ -21,55 +21,60 @@ open System.Collections.Immutable
 
 module Program =
     let createHostBuilder (args: string[]) : IHostBuilder =
-        Host.CreateDefaultBuilder(args)
+        Host
+            .CreateDefaultBuilder(args)
             .ConfigureLogging(fun logConfig ->
-                logConfig.AddOpenTelemetry(fun openTelemetryOptions ->
-                    openTelemetryOptions.IncludeScopes <- true
-                ) |> ignore
-            )
-            
+                logConfig.AddOpenTelemetry(fun openTelemetryOptions -> openTelemetryOptions.IncludeScopes <- true)
+                |> ignore)
+
             .ConfigureWebHostDefaults(fun webBuilder ->
-                webBuilder.UseStartup<Application.Startup>()
-                          //.UseUrls("http://*:5000", "https://*:5001")
-                          //.UseUrls("http://*:5000")
-                          .UseKestrel(fun kestrelServerOptions ->
-                              kestrelServerOptions.Listen(IPAddress.Any, 5000)
-                              //kestrelServerOptions.Listen(IPAddress.Any, 5001, (fun listenOptions -> listenOptions.UseHttps("/etc/certificates/gracedevcert.pfx", "GraceDevCert") |> ignore))
-                              kestrelServerOptions.ConfigureEndpointDefaults(fun listenOptions -> listenOptions.Protocols <- HttpProtocols.Http1AndHttp2)
-                              kestrelServerOptions.ConfigureHttpsDefaults(fun options -> 
-                                options.SslProtocols <- SslProtocols.Tls12 ||| SslProtocols.Tls13
+                webBuilder
+                    .UseStartup<Application.Startup>()
+                    //.UseUrls("http://*:5000", "https://*:5001")
+                    //.UseUrls("http://*:5000")
+                    .UseKestrel(fun kestrelServerOptions ->
+                        kestrelServerOptions.Listen(IPAddress.Any, 5000)
+                        //kestrelServerOptions.Listen(IPAddress.Any, 5001, (fun listenOptions -> listenOptions.UseHttps("/etc/certificates/gracedevcert.pfx", "GraceDevCert") |> ignore))
+                        kestrelServerOptions.ConfigureEndpointDefaults(fun listenOptions ->
+                            listenOptions.Protocols <- HttpProtocols.Http1AndHttp2)
+
+                        kestrelServerOptions.ConfigureHttpsDefaults(fun options ->
+                            options.SslProtocols <- SslProtocols.Tls12 ||| SslProtocols.Tls13
 #if DEBUG
-                                options.AllowAnyClientCertificate()
+                            options.AllowAnyClientCertificate()
 #endif
-                              )
-                          ) |> ignore
-            )
+                        ))
+                |> ignore)
 
     [<EntryPoint>]
     let main args =
         //let dir = new DirectoryInfo("/etc/certificates")
-        //let files = dir.EnumerateFiles() 
+        //let files = dir.EnumerateFiles()
         //logToConsole $"In main. Contents of {dir.FullName} ({files.Count()} files):"
         //files |> Seq.iter (fun file -> logToConsole $"{file.Name}: {file.Length} bytes")
 
         logToConsole "-----------------------------------------------------------"
         let host = createHostBuilder(args).Build()
-        
+
         // Build the configuration
         let environment = Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT")
-        let config = ConfigurationBuilder()
-                        .AddJsonFile("appsettings.json", true, true) // Load appsettings.json
-                        .AddJsonFile($"appsettings.{environment}.json", false, true) // Load environment-specific settings
-                        .AddEnvironmentVariables() // Include environment variables
-                        .Build();
+
+        let config =
+            ConfigurationBuilder()
+                .AddJsonFile("appsettings.json", true, true) // Load appsettings.json
+                .AddJsonFile($"appsettings.{environment}.json", false, true) // Load environment-specific settings
+                .AddEnvironmentVariables() // Include environment variables
+                .Build()
 
 
         // for kvp in config.AsEnumerable().ToImmutableSortedDictionary() do
         //     Console.WriteLine($"{kvp.Key}: {kvp.Value}");
 
         // Just placing some much-used services into ApplicationContext where they're easy to find.
-        let loggerFactory = host.Services.GetService(typeof<ILoggerFactory>) :?> ILoggerFactory
-        ApplicationContext.setLoggerFactory(loggerFactory)
+        let loggerFactory =
+            host.Services.GetService(typeof<ILoggerFactory>) :?> ILoggerFactory
+
+        ApplicationContext.setLoggerFactory (loggerFactory)
 
         host.Run()
 

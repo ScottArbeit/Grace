@@ -17,7 +17,7 @@ module OwnerName =
     let actorName = ActorName.OwnerName
     let mutable actorStartTime = Instant.MinValue
     let mutable logScope: IDisposable = null
-    
+
     let GetActorId (ownerName: string) = ActorId(ownerName)
 
     type OwnerNameActor(host: ActorHost) =
@@ -31,26 +31,50 @@ module OwnerName =
 
         override this.OnPreActorMethodAsync(context) =
             this.correlationId <- String.Empty
-            actorStartTime <- getCurrentInstant()
+            actorStartTime <- getCurrentInstant ()
             logScope <- log.BeginScope("Actor {actorName}", actorName)
-            log.LogTrace("{CurrentInstant}: Started {ActorName}.{MethodName} Id: {Id}.", getCurrentInstantExtended(), actorName, context.MethodName, this.Id)
+
+            log.LogTrace(
+                "{CurrentInstant}: Started {ActorName}.{MethodName} Id: {Id}.",
+                getCurrentInstantExtended (),
+                actorName,
+                context.MethodName,
+                this.Id
+            )
+
             Task.CompletedTask
 
         override this.OnPostActorMethodAsync(context) =
-            let duration_ms = (getCurrentInstant().Minus(actorStartTime).TotalMilliseconds).ToString("F3")
-            log.LogInformation("{CurrentInstant}: CorrelationID: {correlationID}; Finished {ActorName}.{MethodName}; OwnerName: {OwnerName}; OwnerId: {ownerId}; Duration: {duration_ms}ms.", 
-                getCurrentInstantExtended(), this.correlationId, actorName, context.MethodName, this.Id, (if Option.isSome cachedOwnerId then $"{cachedOwnerId.Value}" else "None"), duration_ms)
+            let duration_ms =
+                (getCurrentInstant().Minus(actorStartTime).TotalMilliseconds).ToString("F3")
+
+            log.LogInformation(
+                "{CurrentInstant}: CorrelationID: {correlationID}; Finished {ActorName}.{MethodName}; OwnerName: {OwnerName}; OwnerId: {ownerId}; Duration: {duration_ms}ms.",
+                getCurrentInstantExtended (),
+                this.correlationId,
+                actorName,
+                context.MethodName,
+                this.Id,
+                (if Option.isSome cachedOwnerId then
+                     $"{cachedOwnerId.Value}"
+                 else
+                     "None"),
+                duration_ms
+            )
+
             logScope.Dispose()
             Task.CompletedTask
 
         interface IOwnerNameActor with
-            member this.GetOwnerId (correlationId) = 
+            member this.GetOwnerId(correlationId) =
                 this.correlationId <- correlationId
                 cachedOwnerId |> returnTask
 
             member this.SetOwnerId (ownerId: string) correlationId =
                 this.correlationId <- correlationId
                 let mutable guid = Guid.Empty
+
                 if Guid.TryParse(ownerId, &guid) && guid <> Guid.Empty then
                     cachedOwnerId <- Some guid
+
                 Task.CompletedTask

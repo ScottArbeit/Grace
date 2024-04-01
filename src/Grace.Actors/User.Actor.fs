@@ -11,9 +11,9 @@ open System
 module User =
 
     [<Serializable>]
-    type UserDto (userId, emailAddress, isPrivateDefault, isSuspended, isDeactivated, defaultTimeZone, updatedAt) =
-        new() = UserDto(Guid.NewGuid(), String.Empty, false, false, false, TimeZoneInfo.Utc.Id, getCurrentInstant())
-        member val public UserId : Guid = userId with get, set
+    type UserDto(userId, emailAddress, isPrivateDefault, isSuspended, isDeactivated, defaultTimeZone, updatedAt) =
+        new() = UserDto(Guid.NewGuid(), String.Empty, false, false, false, TimeZoneInfo.Utc.Id, getCurrentInstant ())
+        member val public UserId: Guid = userId with get, set
         member val public EmailAddress: string = emailAddress with get, set
         member val public IsPrivateDefault: bool = isPrivateDefault with get, set
         member val public IsSuspended: bool = isSuspended with get, set
@@ -22,5 +22,5 @@ module User =
         member val public UpdatedAt: Instant = updatedAt with get, set
 
 
-    type User() = 
-        let x = 0 
+    type User() =
+        let x = 0

@@ -37,38 +37,45 @@ module Services =
     type QueryResult<'T, 'U when 'T :> IActor> = HttpContext -> int -> 'T -> Task<'U>
 
     /// Gets the CorrelationId from HttpContext.Items.
-    let getCorrelationId (context: HttpContext) : CorrelationId = (context.Items[Constants.CorrelationId] :?> string)
+    let getCorrelationId (context: HttpContext) : CorrelationId =
+        (context.Items[Constants.CorrelationId] :?> string)
 
     /// Gets the GraceIds record from HttpContext.Items.
     let getGraceIds (context: HttpContext) =
-        if context.Items.ContainsKey(nameof(GraceIds)) then
-            Some (context.Items[nameof(GraceIds)] :?> GraceIds)
+        if context.Items.ContainsKey(nameof (GraceIds)) then
+            Some(context.Items[nameof (GraceIds)] :?> GraceIds)
         else
             None
 
     /// Creates common metadata for Grace events.
-    let createMetadata (context: HttpContext): EventMetadata = 
-        {
-            Timestamp = getCurrentInstant();
-            CorrelationId = context.Items[Constants.CorrelationId].ToString()
-            Principal = context.User.Identity.Name;
-            Properties = new Dictionary<string, string>()
-        }
+    let createMetadata (context: HttpContext) : EventMetadata =
+        { Timestamp = getCurrentInstant ()
+          CorrelationId = context.Items[Constants.CorrelationId].ToString()
+          Principal = context.User.Identity.Name
+          Properties = new Dictionary<string, string>() }
 
     /// Parses the incoming request body into the specified type.
-    let parse<'T when 'T :> CommonParameters> (context: HttpContext) = 
+    let parse<'T when 'T :> CommonParameters> (context: HttpContext) =
         task {
             let! parameters = context.BindJsonAsync<'T>()
+
             if String.IsNullOrEmpty(parameters.CorrelationId) then
                 parameters.CorrelationId <- getCorrelationId context
+
             return parameters
         }
 
     /// Parses the incoming request body into the provided type.
-    let parseType (requestBodyType: Type) (context: HttpContext) = 
+    let parseType (requestBodyType: Type) (context: HttpContext) =
         task {
             try
-                let! parameters = JsonSerializer.DeserializeAsync(context.Request.Body, requestBodyType, Constants.JsonSerializerOptions)
+                let! parameters =
+                    JsonSerializer.DeserializeAsync(
+                        context.Request.Body,
+                        requestBodyType,
+                        Constants.JsonSerializerOptions
+                    )
+
                 if not <| isNull parameters then
                     return Some parameters
                 else
@@ -81,23 +88,31 @@ module Services =
     let returnResult<'T> (statusCode: int) (result: 'T) (context: HttpContext) =
         task {
             try
-                Activity.Current.AddTag("correlation_id", getCorrelationId context)
-                                .AddTag("http.status_code", statusCode) |> ignore
+                Activity.Current
+                    .AddTag("correlation_id", getCorrelationId context)
+                    .AddTag("http.status_code", statusCode)
+                |> ignore
+
                 context.SetStatusCode(statusCode)
 
                 //log.LogDebug("{currentInstant}: In returnResult: StatusCode: {statusCode}; result: {result}", getCurrentInstantExtended(), statusCode, serialize result)
 
-                return! context.WriteJsonAsync(result)  // .WriteJsonAsync() uses Grace's JsonSerializerOptions.
+                return! context.WriteJsonAsync(result) // .WriteJsonAsync() uses Grace's JsonSerializerOptions.
             with ex ->
                 let exceptionResponse = Utilities.createExceptionResponse ex
-                return! context.WriteJsonAsync(GraceError.Create (serialize exceptionResponse) (getCorrelationId context))
+
+                return!
+                    context.WriteJsonAsync(GraceError.Create (serialize exceptionResponse) (getCorrelationId context))
         }
 
     /// Adds common attributes to the current OpenTelemetry activity, and returns a 404 Not found status.
     let result404NotFound (context: HttpContext) =
         task {
-            Activity.Current.AddTag("correlation_id", getCorrelationId context)
-                            .AddTag("http.status_code", StatusCodes.Status404NotFound) |> ignore
+            Activity.Current
+                .AddTag("correlation_id", getCorrelationId context)
+                .AddTag("http.status_code", StatusCodes.Status404NotFound)
+            |> ignore
+
             context.SetStatusCode(StatusCodes.Status404NotFound)
             return Some context
         }
@@ -112,4 +127,5 @@ module Services =
     // let result404NotFound<'T> = returnResult<'T> StatusCodes.Status404NotFound
 
     /// Adds common attributes to the current OpenTelemetry activity, and returns the result with a 500 Internal server error status.
-    let result500ServerError<'T> = returnResult<'T> StatusCodes.Status500InternalServerError
+    let result500ServerError<'T> =
+        returnResult<'T> StatusCodes.Status500InternalServerError

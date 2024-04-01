@@ -12,15 +12,45 @@ module Events =
         /// Defines the events for the Branch actor.
         [<KnownType("GetKnownTypes")>]
         type BranchEventType =
-            | Created of branchId: BranchId * branchName: BranchName * parentBranchId: BranchId * basedOn: ReferenceId * repositoryId: RepositoryId * initialPermissions: ReferenceType[]
+            | Created of
+                branchId: BranchId *
+                branchName: BranchName *
+                parentBranchId: BranchId *
+                basedOn: ReferenceId *
+                repositoryId: RepositoryId *
+                initialPermissions: ReferenceType[]
             | Rebased of basedOn: ReferenceId
             | NameSet of newName: BranchName
-            | Assigned of referenceId: ReferenceId * directoryVersionId: DirectoryId * sha256Hash: Sha256Hash * referenceText: ReferenceText
-            | Promoted of referenceId: ReferenceId * directoryVersionId: DirectoryId * sha256Hash: Sha256Hash * referenceText: ReferenceText
-            | Committed of referenceId: ReferenceId * directoryVersionId: DirectoryId * sha256Hash: Sha256Hash * referenceText: ReferenceText
-            | Checkpointed of referenceId: ReferenceId * directoryVersionId: DirectoryId * sha256Hash: Sha256Hash * referenceText: ReferenceText
-            | Saved of referenceId: ReferenceId * directoryVersionId: DirectoryId * sha256Hash: Sha256Hash * referenceText: ReferenceText
-            | Tagged of referenceId: ReferenceId * directoryVersionId: DirectoryId * sha256Hash: Sha256Hash * referenceText: ReferenceText
+            | Assigned of
+                referenceId: ReferenceId *
+                directoryVersionId: DirectoryId *
+                sha256Hash: Sha256Hash *
+                referenceText: ReferenceText
+            | Promoted of
+                referenceId: ReferenceId *
+                directoryVersionId: DirectoryId *
+                sha256Hash: Sha256Hash *
+                referenceText: ReferenceText
+            | Committed of
+                referenceId: ReferenceId *
+                directoryVersionId: DirectoryId *
+                sha256Hash: Sha256Hash *
+                referenceText: ReferenceText
+            | Checkpointed of
+                referenceId: ReferenceId *
+                directoryVersionId: DirectoryId *
+                sha256Hash: Sha256Hash *
+                referenceText: ReferenceText
+            | Saved of
+                referenceId: ReferenceId *
+                directoryVersionId: DirectoryId *
+                sha256Hash: Sha256Hash *
+                referenceText: ReferenceText
+            | Tagged of
+                referenceId: ReferenceId *
+                directoryVersionId: DirectoryId *
+                sha256Hash: Sha256Hash *
+                referenceText: ReferenceText
             | EnabledAssign of enabled: bool
             | EnabledPromotion of enabled: bool
             | EnabledCommit of enabled: bool
@@ -32,15 +62,17 @@ module Events =
             | LogicalDeleted of force: bool * deleteReason: string
             | PhysicalDeleted
             | Undeleted
+
             static member GetKnownTypes() = GetKnownTypes<BranchEventType>()
 
         /// Record that holds the event type and metadata for a Branch event.
-        type BranchEvent = {
-            /// The BranchEventType case that describes the event.
-            Event: BranchEventType
-            /// The EventMetadata for the event. EventMetadata includes the Timestamp, CorrelationId, Principal, and a Properties dictionary.
-            Metadata: EventMetadata
-        }
+        type BranchEvent =
+            {
+                /// The BranchEventType case that describes the event.
+                Event: BranchEventType
+                /// The EventMetadata for the event. EventMetadata includes the Timestamp, CorrelationId, Principal, and a Properties dictionary.
+                Metadata: EventMetadata
+            }
 
     /// Defines the events for the DirectoryVersion actor.
     module DirectoryVersion =
@@ -54,12 +86,13 @@ module Events =
             | Undeleted
 
         /// Record that holds the event type and metadata for a DirectoryVersion event.
-        type DirectoryVersionEvent = {
-            /// The DirectoryVersionEventType case that describes the event.
-            Event: DirectoryVersionEventType
-            /// The EventMetadata for the event. EventMetadata includes the Timestamp, CorrelationId, Principal, and a Properties dictionary.
-            Metadata: EventMetadata
-        }
+        type DirectoryVersionEvent =
+            {
+                /// The DirectoryVersionEventType case that describes the event.
+                Event: DirectoryVersionEventType
+                /// The EventMetadata for the event. EventMetadata includes the Timestamp, CorrelationId, Principal, and a Properties dictionary.
+                Metadata: EventMetadata
+            }
 
     /// Defines the events for the Organization actor.
     module Organization =
@@ -67,13 +100,14 @@ module Events =
         [<KnownType("GetKnownTypes")>]
         type OrganizationEventType =
             | Created of organizationId: OrganizationId * organizationName: OrganizationName * ownerId: OwnerId
-            | NameSet of organizationName: OrganizationName 
-            | TypeSet of organizationType: OrganizationType 
-            | SearchVisibilitySet of searchVisibility: SearchVisibility 
-            | DescriptionSet of organizationDescription: string 
+            | NameSet of organizationName: OrganizationName
+            | TypeSet of organizationType: OrganizationType
+            | SearchVisibilitySet of searchVisibility: SearchVisibility
+            | DescriptionSet of organizationDescription: string
             | LogicalDeleted of force: bool * deleteReason: string
             | PhysicalDeleted
             | Undeleted
+
             static member GetKnownTypes() = GetKnownTypes<OrganizationEventType>()
 
         /// Record that holds the event type and metadata for an Organization event.
@@ -91,13 +125,14 @@ module Events =
         [<KnownType("GetKnownTypes")>]
         type OwnerEventType =
             | Created of ownerId: OwnerId * ownerName: OwnerName
-            | NameSet of ownerName: OwnerName 
+            | NameSet of ownerName: OwnerName
             | TypeSet of ownerType: OwnerType
             | SearchVisibilitySet of searchVisibility: SearchVisibility
             | DescriptionSet of description: string
             | LogicalDeleted of force: bool * deleteReason: string
-            | PhysicalDeleted 
+            | PhysicalDeleted
             | Undeleted
+
             static member GetKnownTypes() = GetKnownTypes<OwnerEventType>()
 
         /// Record that holds the event type and metadata for an Owner event.
@@ -114,7 +149,11 @@ module Events =
         /// Defines the events for the Repository actor.
         [<KnownType("GetKnownTypes")>]
         type RepositoryEventType =
-            | Created of repositoryName: RepositoryName * repositoryId: RepositoryId * ownerId: OwnerId * organizationId: OrganizationId
+            | Created of
+                repositoryName: RepositoryName *
+                repositoryId: RepositoryId *
+                ownerId: OwnerId *
+                organizationId: OrganizationId
             | Initialized
             | ObjectStorageProviderSet of objectStorageProvider: ObjectStorageProvider
             | StorageAccountNameSet of storageAccountName: StorageAccountName
@@ -133,8 +172,9 @@ module Events =
             | LogicalDeleted of force: bool * deleteReason: string
             | PhysicalDeleted
             | Undeleted
+
             static member GetKnownTypes() = GetKnownTypes<RepositoryEventType>()
-        
+
         /// Record that holds the event type and metadata for a Repository event.
         type RepositoryEvent =
             {
@@ -152,5 +192,5 @@ module Events =
         | OrganizationEvent of Organization.OrganizationEvent
         | OwnerEvent of Owner.OwnerEvent
         | RepositoryEvent of Repository.RepositoryEvent
+
         static member GetKnownTypes() = GetKnownTypes<GraceEvent>()
-    

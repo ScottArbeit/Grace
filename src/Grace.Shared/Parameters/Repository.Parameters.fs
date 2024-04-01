@@ -8,7 +8,7 @@ open System.Collections.Generic
 module Repository =
 
     /// Parameters for many endpoints in the /repository path.
-    type RepositoryParameters() = 
+    type RepositoryParameters() =
         inherit CommonParameters()
         member val public OwnerId = String.Empty with get, set
         member val public OwnerName = String.Empty with get, set
@@ -16,56 +16,56 @@ module Repository =
         member val public OrganizationName = String.Empty with get, set
         member val public RepositoryId = String.Empty with get, set
         member val public RepositoryName = String.Empty with get, set
-    
+
     /// Parameters for the /repository/create endpoint.
-    type CreateRepositoryParameters() = 
+    type CreateRepositoryParameters() =
         inherit RepositoryParameters()
 
     /// Parameters for the /repository/get endpoint.
-    type GetRepositoryParameters() = 
+    type GetRepositoryParameters() =
         inherit RepositoryParameters()
 
     /// Parameters for the /repository/isEmpty endpoint.
-    type IsEmptyParameters() = 
+    type IsEmptyParameters() =
         inherit RepositoryParameters()
 
     /// Parameters for the /repository/init endpoint.
-    type InitParameters() = 
+    type InitParameters() =
         inherit RepositoryParameters()
         member val public GraceConfig = String.Empty with get, set
-    
+
     /// Parameters for the /repository/setVisibility endpoint.
-    type SetRepositoryVisibilityParameters() = 
+    type SetRepositoryVisibilityParameters() =
         inherit RepositoryParameters()
         member val public Visibility = String.Empty with get, set
-    
+
     /// Parameters for the /repository/setStatus endpoint.
-    type SetRepositoryStatusParameters() = 
+    type SetRepositoryStatusParameters() =
         inherit RepositoryParameters()
         member val public Status = String.Empty with get, set
-    
+
     /// Parameters for the /repository/recordSaves endpoint.
-    type RecordSavesParameters() = 
+    type RecordSavesParameters() =
         inherit RepositoryParameters()
         member val public RecordSaves = false with get, set
-    
+
     /// Parameters for the /repository/setSaveDays endpoint.
-    type SetSaveDaysParameters() = 
+    type SetSaveDaysParameters() =
         inherit RepositoryParameters()
         member val public SaveDays: Double = Double.MinValue with get, set
 
     /// Parameters for the /repository/setCheckpointDays endpoint.
-    type SetCheckpointDaysParameters() = 
+    type SetCheckpointDaysParameters() =
         inherit RepositoryParameters()
         member val public CheckpointDays: Double = Double.MinValue with get, set
 
     /// Parameters for the /repository/setDirectoryVersionCacheDays endpoint.
-    type SetDirectoryVersionCacheDaysParameters() = 
+    type SetDirectoryVersionCacheDaysParameters() =
         inherit RepositoryParameters()
         member val public DirectoryVersionCacheDays: Double = Double.MinValue with get, set
 
     /// Parameters for the /repository/setDiffCacheDays endpoint.
-    type SetDiffCacheDaysParameters() = 
+    type SetDiffCacheDaysParameters() =
         inherit RepositoryParameters()
         member val public DiffCacheDays: Double = Double.MinValue with get, set
 
@@ -73,14 +73,14 @@ module Repository =
     type SetRepositoryDescriptionParameters() =
         inherit RepositoryParameters()
         member val public Description = String.Empty with get, set
-            
+
     /// Parameters for the /repository/setDefaultServerApiVersion endpoint.
     type SetDefaultServerApiVersionParameters() =
         inherit RepositoryParameters()
         member val public DefaultServerApiVersion = String.Empty with get, set
 
     /// Parameters for the /repository/setName endpoint.
-    type SetRepositoryNameParameters() = 
+    type SetRepositoryNameParameters() =
         inherit RepositoryParameters()
         member val public NewName = String.Empty with get, set
 
@@ -105,7 +105,7 @@ module Repository =
         inherit RepositoryParameters()
         member val public IncludeDeleted = false with get, set
         member val public MaxCount: int = 30 with get, set
-        
+
     /// Parameters for the /repository/getBranchesByBranchId endpoint.
     type GetBranchesByBranchIdParameters() =
         inherit RepositoryParameters()
@@ -116,4 +116,3 @@ module Repository =
     /// Parameters for the /repository/undelete endpoint.
     type UndeleteRepositoryParameters() =
         inherit RepositoryParameters()
-    

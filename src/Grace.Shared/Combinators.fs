@@ -25,9 +25,9 @@ module CombinatorExamples =
 //        | Success s -> successFunc s
 //        | Failure f -> failureFunc f
 
-    //// convert a switch function into a two-track function
-    //let bind f =
-    //    either f fail
+//// convert a switch function into a two-track function
+//let bind f =
+//    either f fail
 
 //    // pipe a two-track value into a switch function
 //    let (>>=) x f =

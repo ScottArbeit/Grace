@@ -43,9 +43,18 @@ module Storage =
                     //logToConsole $"response.StatusCode: {response.StatusCode}; blobUriWithSasToken: {blobUriWithSasToken}"
 
 
-                    let relativeDirectory = if fileVersion.RelativeDirectory = Constants.RootDirectoryPath then String.Empty else getNativeFilePath fileVersion.RelativeDirectory
-                    let tempFilePath = Path.Combine(Path.GetTempPath(), relativeDirectory, fileVersion.GetObjectFileName)
-                    let objectFilePath = Path.Combine(Current().ObjectDirectory, fileVersion.RelativePath, fileVersion.GetObjectFileName)
+                    let relativeDirectory =
+                        if fileVersion.RelativeDirectory = Constants.RootDirectoryPath then
+                            String.Empty
+                        else
+                            getNativeFilePath fileVersion.RelativeDirectory
+
+                    let tempFilePath =
+                        Path.Combine(Path.GetTempPath(), relativeDirectory, fileVersion.GetObjectFileName)
+
+                    let objectFilePath =
+                        Path.Combine(Current().ObjectDirectory, fileVersion.RelativePath, fileVersion.GetObjectFileName)
+
                     let tempFileInfo = FileInfo(tempFilePath)
                     let objectFileInfo = FileInfo(objectFilePath)
                     Directory.CreateDirectory(tempFileInfo.Directory.FullName) |> ignore
@@ -55,6 +64,7 @@ module Storage =
                     // Download the file from object storage.
                     let blobClient = BlobClient(Uri(blobUriWithSasToken))
                     let! azureResponse = blobClient.DownloadToAsync(tempFilePath)
+
                     if not <| azureResponse.IsError then
                         File.Move(tempFilePath, objectFilePath, overwrite = true)
                         //if fileVersion.IsBinary then
@@ -67,25 +77,32 @@ module Storage =
 
                         //    do! gzStream.CopyToAsync(fileWriter)
                         //    logToConsole $"In GetFileFromObjectStorage: After CopyToAsync(). {fileVersion.RelativePath}"
-                            
+
                         //    do! fileWriter.FlushAsync()
                         //    logToConsole $"In GetFileFromObjectStorage: After FlushAsync(). {fileVersion.RelativePath}"
 
                         //    logToConsole $"After tempFileInfo.Delete(). {fileVersion.RelativePath}"
                         tempFileInfo.Delete()
-                        return Ok (GraceReturnValue.Create "Retrieved all files from object storage." correlationId)
-                    else 
+                        return Ok(GraceReturnValue.Create "Retrieved all files from object storage." correlationId)
+                    else
                         tempFileInfo.Delete()
-                        let error = GraceError.Create (StorageError.getErrorMessage FailedCommunicatingWithObjectStorage) correlationId
+
+                        let error =
+                            GraceError.Create
+                                (StorageError.getErrorMessage FailedCommunicatingWithObjectStorage)
+                                correlationId
+
                         error.Properties.Add("StatusCode", $"HTTP {azureResponse.Status}")
                         error.Properties.Add("ReasonPhrase", $"Reason: {azureResponse.ReasonPhrase}")
                         return Error error
-                | AWSS3 -> return Error (GraceError.Create (StorageError.getErrorMessage NotImplemented) correlationId)
-                | GoogleCloudStorage -> return Error (GraceError.Create (StorageError.getErrorMessage NotImplemented) correlationId)
-                | ObjectStorageProvider.Unknown -> return Error (GraceError.Create (StorageError.getErrorMessage NotImplemented) correlationId)
+                | AWSS3 -> return Error(GraceError.Create (StorageError.getErrorMessage NotImplemented) correlationId)
+                | GoogleCloudStorage ->
+                    return Error(GraceError.Create (StorageError.getErrorMessage NotImplemented) correlationId)
+                | ObjectStorageProvider.Unknown ->
+                    return Error(GraceError.Create (StorageError.getErrorMessage NotImplemented) correlationId)
             with ex ->
                 logToConsole $"Exception downloading {fileVersion.RelativePath}: {ex.Message}"
-                return Error (GraceError.Create (StorageError.getErrorMessage ObjectStorageException) correlationId)
+                return Error(GraceError.Create (StorageError.getErrorMessage ObjectStorageException) correlationId)
         }
 
     let FilesExistInObjectStorage (fileVersions: List<FileVersion>) correlationId =
@@ -98,30 +115,53 @@ module Storage =
                         let serviceUrl = $"{Current().ServerUri}/storage/filesExistInObjectStorage"
                         let jsonContent = createJsonContent fileVersions
                         let! response = httpClient.PostAsync(serviceUrl, jsonContent)
+
                         if response.IsSuccessStatusCode then
-                            let! uploadMetadata = response.Content.ReadFromJsonAsync<GraceReturnValue<List<UploadMetadata>>>(Constants.JsonSerializerOptions)
+                            let! uploadMetadata =
+                                response.Content.ReadFromJsonAsync<GraceReturnValue<List<UploadMetadata>>>(
+                                    Constants.JsonSerializerOptions
+                                )
+
                             return Ok uploadMetadata
                         else
                             let! errorMessage = response.Content.ReadAsStringAsync()
-                            let graceError = (GraceError.Create $"{StorageError.getErrorMessage FailedToGetUploadUrls}; {errorMessage}" correlationId)
+
+                            let graceError =
+                                (GraceError.Create
+                                    $"{StorageError.getErrorMessage FailedToGetUploadUrls}; {errorMessage}"
+                                    correlationId)
+
                             let fileVersionList = StringBuilder()
-                            for fileVersion in fileVersions do fileVersionList.Append($"{fileVersion.RelativePath}; ") |> ignore
+
+                            for fileVersion in fileVersions do
+                                fileVersionList.Append($"{fileVersion.RelativePath}; ") |> ignore
+
                             return Error graceError |> enhance ("fileVersions", fileVersionList.ToString())
-                    | AWSS3 -> return Error (GraceError.Create (StorageError.getErrorMessage NotImplemented) correlationId)
-                    | GoogleCloudStorage -> return Error (GraceError.Create (StorageError.getErrorMessage NotImplemented) correlationId)
-                    | ObjectStorageProvider.Unknown -> return Error (GraceError.Create (StorageError.getErrorMessage NotImplemented) correlationId)
+                    | AWSS3 ->
+                        return Error(GraceError.Create (StorageError.getErrorMessage NotImplemented) correlationId)
+                    | GoogleCloudStorage ->
+                        return Error(GraceError.Create (StorageError.getErrorMessage NotImplemented) correlationId)
+                    | ObjectStorageProvider.Unknown ->
+                        return Error(GraceError.Create (StorageError.getErrorMessage NotImplemented) correlationId)
                 else
-                    return Error (GraceError.Create (StorageError.getErrorMessage FilesMustNotBeEmpty) correlationId)
+                    return Error(GraceError.Create (StorageError.getErrorMessage FilesMustNotBeEmpty) correlationId)
             with ex ->
                 let exceptionResponse = createExceptionResponse ex
-                return Error (GraceError.Create (exceptionResponse.ToString()) correlationId)
+                return Error(GraceError.Create (exceptionResponse.ToString()) correlationId)
         }
 
-    let SaveFileToObjectStorageWithMetadata (fileVersion: FileVersion) (blobUriWithSasToken: Uri) (metadata: Dictionary<string, string>) correlationId = 
+    let SaveFileToObjectStorageWithMetadata
+        (fileVersion: FileVersion)
+        (blobUriWithSasToken: Uri)
+        (metadata: Dictionary<string, string>)
+        correlationId
+        =
         task {
             try
                 //logToConsole $"In SDK.Storage.SaveFileToObjectStorageWithMetadata: fileVersion.RelativePath: {fileVersion.RelativePath}."
-                let fileInfo = FileInfo(Path.Combine(Current().RootDirectory, fileVersion.RelativePath))
+                let fileInfo =
+                    FileInfo(Path.Combine(Current().RootDirectory, fileVersion.RelativePath))
+
                 metadata.TryAdd("CorrelationId", correlationId) |> ignore
                 metadata.TryAdd("OwnerId", $"{Current().OwnerId}") |> ignore
                 metadata.TryAdd("OrganizationId", $"{Current().OrganizationId}") |> ignore
@@ -131,75 +171,105 @@ module Storage =
                 metadata.TryAdd("OriginalSize", $"{fileInfo.Length}") |> ignore
 
                 match Current().ObjectStorageProvider with
-                    | ObjectStorageProvider.Unknown -> return Error (GraceError.Create (StorageError.getErrorMessage NotImplemented) correlationId)
-                    | ObjectStorageProvider.AzureBlobStorage ->
-                        try
-                            // Creating an HttpClientTransport so we can use our custom HttpClientFactory here.
-                            use transport = new HttpClientTransport(getHttpClient correlationId)
-                            
-                            let blobClientOptions = BlobClientOptions(Transport = transport)
-                            // I might regret this setting. Time will tell.
-                            blobClientOptions.Retry.NetworkTimeout <- TimeSpan.FromMinutes(60.0)
+                | ObjectStorageProvider.Unknown ->
+                    return Error(GraceError.Create (StorageError.getErrorMessage NotImplemented) correlationId)
+                | ObjectStorageProvider.AzureBlobStorage ->
+                    try
+                        // Creating an HttpClientTransport so we can use our custom HttpClientFactory here.
+                        use transport = new HttpClientTransport(getHttpClient correlationId)
 
-                            // Check if this blob already exists in the storage account.
-                            let blockBlobClient = BlockBlobClient(blobUriWithSasToken, blobClientOptions)
-                            let! blobAlreadyExists = blockBlobClient.ExistsAsync()
-                            logToConsole $"In SaveFileToObjectStorageWithMetadata: blobAlreadyExists: {blobAlreadyExists.Value}; fileVersion.RelativePath: {fileVersion.RelativePath}."
+                        let blobClientOptions = BlobClientOptions(Transport = transport)
+                        // I might regret this setting. Time will tell.
+                        blobClientOptions.Retry.NetworkTimeout <- TimeSpan.FromMinutes(60.0)
 
-                            // If it doesn't exist, upload it.
-                            if not <| (blobAlreadyExists.Value) then
-                                let storageTransferOptions = StorageTransferOptions(MaximumConcurrency = Constants.ParallelOptions.MaxDegreeOfParallelism)
-                                let blobUploadOptions = BlobUploadOptions(Metadata = metadata, Tags = metadata, TransferOptions = storageTransferOptions)
-                                blobUploadOptions.HttpHeaders <- BlobHttpHeaders(
-                                    ContentType = getContentType fileInfo (fileVersion.IsBinary), 
+                        // Check if this blob already exists in the storage account.
+                        let blockBlobClient = BlockBlobClient(blobUriWithSasToken, blobClientOptions)
+                        let! blobAlreadyExists = blockBlobClient.ExistsAsync()
+
+                        logToConsole
+                            $"In SaveFileToObjectStorageWithMetadata: blobAlreadyExists: {blobAlreadyExists.Value}; fileVersion.RelativePath: {fileVersion.RelativePath}."
+
+                        // If it doesn't exist, upload it.
+                        if not <| (blobAlreadyExists.Value) then
+                            let storageTransferOptions =
+                                StorageTransferOptions(
+                                    MaximumConcurrency = Constants.ParallelOptions.MaxDegreeOfParallelism
+                                )
+
+                            let blobUploadOptions =
+                                BlobUploadOptions(
+                                    Metadata = metadata,
+                                    Tags = metadata,
+                                    TransferOptions = storageTransferOptions
+                                )
+
+                            blobUploadOptions.HttpHeaders <-
+                                BlobHttpHeaders(
+                                    ContentType = getContentType fileInfo (fileVersion.IsBinary),
                                     CacheControl = Constants.BlobCacheControl,
-                                    ContentDisposition = $"""attachment; creation-date="{fileVersion.CreatedAt.ToString(InstantPattern.General.PatternText, CultureInfo.InvariantCulture)}" """)
+                                    ContentDisposition =
+                                        $"""attachment; creation-date="{fileVersion.CreatedAt.ToString(InstantPattern.General.PatternText, CultureInfo.InvariantCulture)}" """
+                                )
 
-                                let objectFilePath = $"{Current().ObjectDirectory}{Path.DirectorySeparatorChar}{fileVersion.RelativePath}{Path.DirectorySeparatorChar}{fileVersion.GetObjectFileName}"
-                                let normalizedObjectFilePath = Path.GetFullPath(objectFilePath)
+                            let objectFilePath =
+                                $"{Current().ObjectDirectory}{Path.DirectorySeparatorChar}{fileVersion.RelativePath}{Path.DirectorySeparatorChar}{fileVersion.GetObjectFileName}"
 
-                                use fileStream = File.Open(normalizedObjectFilePath, FileMode.Open, FileAccess.Read, FileShare.Read)
-                                let! blobContentInfo =
-                                    task {
-                                        if fileVersion.IsBinary then
-                                            // If the file is a binary file, stream it to Blob Storage without compressing it.
-                                            return! blockBlobClient.UploadAsync(fileStream, blobUploadOptions)
-                                        else
-                                            // If the file is not a binary file, gzip it, and stream the compressed file to Blob Storage.
-                                            //blobUploadOptions.HttpHeaders.ContentEncoding <- "gzip"
-                                            //use memoryStream = new MemoryStream(64 * 1024)  // Setting initial capacity larger than most files will need.
-                                            //use gzipStream = new GZipStream(memoryStream, CompressionLevel.SmallestSize, leaveOpen = false)
-                                            //do! fileStream.CopyToAsync(gzipStream, bufferSize = (64 * 1024))
-                                            //do! gzipStream.FlushAsync()
-                                            //memoryStream.Position <- 0
-                                            //return! blockBlobClient.UploadAsync(memoryStream, blobUploadOptions)
-                                            return! blockBlobClient.UploadAsync(fileStream, blobUploadOptions)
-                                        }
+                            let normalizedObjectFilePath = Path.GetFullPath(objectFilePath)
 
-                                if blobContentInfo.GetRawResponse().Status = 201 then
-                                    let returnValue = GraceReturnValue.Create "File successfully saved to object storage." correlationId
-                                    returnValue.Properties.Add(nameof(Sha256Hash), $"{fileVersion.Sha256Hash}")
-                                    returnValue.Properties.Add(nameof(RelativePath), $"{fileVersion.RelativePath}")
-                                    returnValue.Properties.Add(nameof(RepositoryId), $"{fileVersion.RepositoryId}")
-                                    return Ok returnValue
-                                else
-                                    let error = (GraceError.Create $"Failed to upload file {normalizedObjectFilePath} to object storage." correlationId)
-                                    return Error error
-                            else
-                                let returnValue = GraceReturnValue.Create "File already uploaded to object storage." correlationId
-                                returnValue.Properties.Add(nameof(Sha256Hash), $"{fileVersion.Sha256Hash}")
-                                returnValue.Properties.Add(nameof(RelativePath), $"{fileVersion.RelativePath}")
-                                returnValue.Properties.Add(nameof(RepositoryId), $"{fileVersion.RepositoryId}")
+                            use fileStream =
+                                File.Open(normalizedObjectFilePath, FileMode.Open, FileAccess.Read, FileShare.Read)
+
+                            let! blobContentInfo =
+                                task {
+                                    if fileVersion.IsBinary then
+                                        // If the file is a binary file, stream it to Blob Storage without compressing it.
+                                        return! blockBlobClient.UploadAsync(fileStream, blobUploadOptions)
+                                    else
+                                        // If the file is not a binary file, gzip it, and stream the compressed file to Blob Storage.
+                                        //blobUploadOptions.HttpHeaders.ContentEncoding <- "gzip"
+                                        //use memoryStream = new MemoryStream(64 * 1024)  // Setting initial capacity larger than most files will need.
+                                        //use gzipStream = new GZipStream(memoryStream, CompressionLevel.SmallestSize, leaveOpen = false)
+                                        //do! fileStream.CopyToAsync(gzipStream, bufferSize = (64 * 1024))
+                                        //do! gzipStream.FlushAsync()
+                                        //memoryStream.Position <- 0
+                                        //return! blockBlobClient.UploadAsync(memoryStream, blobUploadOptions)
+                                        return! blockBlobClient.UploadAsync(fileStream, blobUploadOptions)
+                                }
+
+                            if blobContentInfo.GetRawResponse().Status = 201 then
+                                let returnValue =
+                                    GraceReturnValue.Create "File successfully saved to object storage." correlationId
+
+                                returnValue.Properties.Add(nameof (Sha256Hash), $"{fileVersion.Sha256Hash}")
+                                returnValue.Properties.Add(nameof (RelativePath), $"{fileVersion.RelativePath}")
+                                returnValue.Properties.Add(nameof (RepositoryId), $"{fileVersion.RepositoryId}")
                                 return Ok returnValue
-                        with ex ->
-                            let exceptionResponse = createExceptionResponse ex
-                            logToConsole $"In SaveFileToObjectStorageWithMetadata: exceptionResponse: {exceptionResponse}."
-                            return Error (GraceError.Create (exceptionResponse.ToString()) correlationId)
-                    | ObjectStorageProvider.AWSS3 -> return Error (GraceError.Create (StorageError.getErrorMessage NotImplemented) correlationId)
-                    | ObjectStorageProvider.GoogleCloudStorage -> return Error (GraceError.Create (StorageError.getErrorMessage NotImplemented) correlationId)
+                            else
+                                let error =
+                                    (GraceError.Create
+                                        $"Failed to upload file {normalizedObjectFilePath} to object storage."
+                                        correlationId)
+
+                                return Error error
+                        else
+                            let returnValue =
+                                GraceReturnValue.Create "File already uploaded to object storage." correlationId
+
+                            returnValue.Properties.Add(nameof (Sha256Hash), $"{fileVersion.Sha256Hash}")
+                            returnValue.Properties.Add(nameof (RelativePath), $"{fileVersion.RelativePath}")
+                            returnValue.Properties.Add(nameof (RepositoryId), $"{fileVersion.RepositoryId}")
+                            return Ok returnValue
+                    with ex ->
+                        let exceptionResponse = createExceptionResponse ex
+                        logToConsole $"In SaveFileToObjectStorageWithMetadata: exceptionResponse: {exceptionResponse}."
+                        return Error(GraceError.Create (exceptionResponse.ToString()) correlationId)
+                | ObjectStorageProvider.AWSS3 ->
+                    return Error(GraceError.Create (StorageError.getErrorMessage NotImplemented) correlationId)
+                | ObjectStorageProvider.GoogleCloudStorage ->
+                    return Error(GraceError.Create (StorageError.getErrorMessage NotImplemented) correlationId)
             with ex ->
                 let exceptionResponse = createExceptionResponse ex
-                return Error (GraceError.Create (exceptionResponse.ToString()) correlationId)
+                return Error(GraceError.Create (exceptionResponse.ToString()) correlationId)
         }
 
     let SaveFileToObjectStorage (fileVersion: FileVersion) (blobUriWithSasToken: Uri) correlationId =
@@ -209,40 +279,46 @@ module Storage =
         task {
             try
                 match Current().ObjectStorageProvider with
-                    | ObjectStorageProvider.Unknown -> return Error (GraceError.Create (StorageError.getErrorMessage NotImplemented) correlationId)
-                    | ObjectStorageProvider.AzureBlobStorage ->
-                        let httpClient = getHttpClient correlationId
-                        let serviceUrl = $"{Current().ServerUri}/storage/getUploadUri"
-                        let jsonContent = createJsonContent fileVersion
-                        let! response = httpClient.PostAsync(serviceUrl, jsonContent)
-                        let! blobUriWithSasToken = response.Content.ReadAsStringAsync()
-                        //logToConsole $"blobUriWithSasToken: {blobUriWithSasToken}"
-                        return Ok (GraceReturnValue.Create blobUriWithSasToken correlationId)
-                    | ObjectStorageProvider.AWSS3 -> return Error (GraceError.Create (StorageError.getErrorMessage NotImplemented) correlationId)
-                    | ObjectStorageProvider.GoogleCloudStorage -> return Error (GraceError.Create (StorageError.getErrorMessage NotImplemented) correlationId)
+                | ObjectStorageProvider.Unknown ->
+                    return Error(GraceError.Create (StorageError.getErrorMessage NotImplemented) correlationId)
+                | ObjectStorageProvider.AzureBlobStorage ->
+                    let httpClient = getHttpClient correlationId
+                    let serviceUrl = $"{Current().ServerUri}/storage/getUploadUri"
+                    let jsonContent = createJsonContent fileVersion
+                    let! response = httpClient.PostAsync(serviceUrl, jsonContent)
+                    let! blobUriWithSasToken = response.Content.ReadAsStringAsync()
+                    //logToConsole $"blobUriWithSasToken: {blobUriWithSasToken}"
+                    return Ok(GraceReturnValue.Create blobUriWithSasToken correlationId)
+                | ObjectStorageProvider.AWSS3 ->
+                    return Error(GraceError.Create (StorageError.getErrorMessage NotImplemented) correlationId)
+                | ObjectStorageProvider.GoogleCloudStorage ->
+                    return Error(GraceError.Create (StorageError.getErrorMessage NotImplemented) correlationId)
             with ex ->
                 let exceptionResponse = createExceptionResponse ex
                 logToConsole $"exception: {exceptionResponse.ToString()}"
-                return Error (GraceError.Create (exceptionResponse.ToString()) correlationId)
+                return Error(GraceError.Create (exceptionResponse.ToString()) correlationId)
         }
 
     let GetDownloadUri (fileVersion: FileVersion) correlationId =
         task {
             try
                 match Current().ObjectStorageProvider with
-                    | ObjectStorageProvider.Unknown -> return Error (GraceError.Create (StorageError.getErrorMessage NotImplemented) correlationId)
-                    | ObjectStorageProvider.AzureBlobStorage ->
-                        let httpClient = getHttpClient correlationId
-                        let serviceUrl = $"{Current().ServerUri}/storage/getDownloadUri"
-                        let jsonContent = createJsonContent fileVersion
-                        let! response = httpClient.PostAsync(serviceUrl, jsonContent)
-                        let! blobUriWithSasToken = response.Content.ReadAsStringAsync()
-                        //logToConsole $"blobUriWithSasToken: {blobUriWithSasToken}"
-                        return Ok (GraceReturnValue.Create blobUriWithSasToken correlationId)
-                    | ObjectStorageProvider.AWSS3 -> return Error (GraceError.Create (StorageError.getErrorMessage NotImplemented) correlationId)
-                    | ObjectStorageProvider.GoogleCloudStorage -> return Error (GraceError.Create (StorageError.getErrorMessage NotImplemented) correlationId)
+                | ObjectStorageProvider.Unknown ->
+                    return Error(GraceError.Create (StorageError.getErrorMessage NotImplemented) correlationId)
+                | ObjectStorageProvider.AzureBlobStorage ->
+                    let httpClient = getHttpClient correlationId
+                    let serviceUrl = $"{Current().ServerUri}/storage/getDownloadUri"
+                    let jsonContent = createJsonContent fileVersion
+                    let! response = httpClient.PostAsync(serviceUrl, jsonContent)
+                    let! blobUriWithSasToken = response.Content.ReadAsStringAsync()
+                    //logToConsole $"blobUriWithSasToken: {blobUriWithSasToken}"
+                    return Ok(GraceReturnValue.Create blobUriWithSasToken correlationId)
+                | ObjectStorageProvider.AWSS3 ->
+                    return Error(GraceError.Create (StorageError.getErrorMessage NotImplemented) correlationId)
+                | ObjectStorageProvider.GoogleCloudStorage ->
+                    return Error(GraceError.Create (StorageError.getErrorMessage NotImplemented) correlationId)
             with ex ->
                 let exceptionResponse = createExceptionResponse ex
                 logToConsole $"exception: {exceptionResponse.ToString()}"
-                return Error (GraceError.Create (exceptionResponse.ToString()) correlationId)
+                return Error(GraceError.Create (exceptionResponse.ToString()) correlationId)
         }

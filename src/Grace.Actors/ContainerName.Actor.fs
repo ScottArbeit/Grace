@@ -35,18 +35,35 @@ module ContainerName =
         member val private correlationId: CorrelationId = String.Empty with get, set
 
         override this.OnActivateAsync() =
-            log.LogInformation("{CurrentInstant} Activated {ActorType} {ActorId}.", getCurrentInstantExtended(), this.GetType().Name, host.Id)
+            log.LogInformation(
+                "{CurrentInstant} Activated {ActorType} {ActorId}.",
+                getCurrentInstantExtended (),
+                this.GetType().Name,
+                host.Id
+            )
+
             Task.CompletedTask
 
         override this.OnPreActorMethodAsync context =
             this.correlationId <- String.Empty
-            actorStartTime <- getCurrentInstant()
+            actorStartTime <- getCurrentInstant ()
             //log.LogDebug $"Entering ContainerNameActor.{context.MethodName}."
             Task.CompletedTask
 
         override this.OnPostActorMethodAsync context =
-            let duration_ms = (getCurrentInstant().Minus(actorStartTime).TotalMilliseconds).ToString("F3")
-            log.LogInformation("{CurrentInstant}: CorrelationId: {correlationId}; Finished {ActorName}.{MethodName}; Id: {Id}; Duration: {duration_ms}ms.", getCurrentInstantExtended(), this.correlationId, actorName, context.MethodName, this.Id, duration_ms)
+            let duration_ms =
+                (getCurrentInstant().Minus(actorStartTime).TotalMilliseconds).ToString("F3")
+
+            log.LogInformation(
+                "{CurrentInstant}: CorrelationId: {correlationId}; Finished {ActorName}.{MethodName}; Id: {Id}; Duration: {duration_ms}ms.",
+                getCurrentInstantExtended (),
+                this.correlationId,
+                actorName,
+                context.MethodName,
+                this.Id,
+                duration_ms
+            )
+
             Task.CompletedTask
 
         interface IContainerNameActor with
@@ -54,29 +71,49 @@ module ContainerName =
                 task {
                     try
                         this.correlationId <- correlationId
+
                         if not <| String.IsNullOrEmpty(containerName) then
                             return Ok containerName
                         else
                             let repositoryId = Guid.Parse(host.Id.GetId())
                             let repositoryActorId = Repository.GetActorId repositoryId
-                            let repositoryActorProxy = ActorProxyFactory().CreateActorProxy<IRepositoryActor>(repositoryActorId, ActorName.Repository)
+
+                            let repositoryActorProxy =
+                                ActorProxyFactory()
+                                    .CreateActorProxy<IRepositoryActor>(repositoryActorId, ActorName.Repository)
+
                             let! repositoryDto = repositoryActorProxy.Get correlationId
 
                             let organizationActorId = Organization.GetActorId repositoryDto.OrganizationId
-                            let organizationActorProxy = actorProxyFactory.CreateActorProxy<IOrganizationActor>(organizationActorId, ActorName.Organization)
+
+                            let organizationActorProxy =
+                                actorProxyFactory.CreateActorProxy<IOrganizationActor>(
+                                    organizationActorId,
+                                    ActorName.Organization
+                                )
+
                             let! organizationDto = organizationActorProxy.Get correlationId
-    
+
                             let ownerActorId = Owner.GetActorId repositoryDto.OwnerId
-                            let ownerActorProxy = actorProxyFactory.CreateActorProxy<IOwnerActor>(ownerActorId, ActorName.Owner)
+
+                            let ownerActorProxy =
+                                actorProxyFactory.CreateActorProxy<IOwnerActor>(ownerActorId, ActorName.Owner)
+
                             let! ownerDto = ownerActorProxy.Get correlationId
-    
-                            containerName <- $"{ownerDto.OwnerName}-{organizationDto.OrganizationName}-{repositoryDto.RepositoryName}".ToLowerInvariant()
+
+                            containerName <-
+                                $"{ownerDto.OwnerName}-{organizationDto.OrganizationName}-{repositoryDto.RepositoryName}"
+                                    .ToLowerInvariant()
+
                             return Ok containerName
                     with ex ->
-                        Activity.Current.SetStatus(ActivityStatusCode.Error, "Exception while creating a container name.")
+                        Activity.Current
+                            .SetStatus(ActivityStatusCode.Error, "Exception while creating a container name.")
                             .AddTag("repositoryId", $"{host.Id.GetId()}")
                             .AddTag("ex.Message", $"{ex.Message}")
-                            .AddTag("ex.StackTrace", $"{ex.StackTrace}") |> ignore
+                            .AddTag("ex.StackTrace", $"{ex.StackTrace}")
+                        |> ignore
+
                         let exc = createExceptionResponse ex
                         logToConsole $"{exc}"
                         return Error "Exception while creating a container name."

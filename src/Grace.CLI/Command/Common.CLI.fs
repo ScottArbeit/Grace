@@ -17,8 +17,8 @@ open Spectre.Console.Json
 open System.Text.RegularExpressions
 
 module Common =
-            
-    type ParameterBase() = 
+
+    type ParameterBase() =
         member val public CorrelationId: string = String.Empty with get, set
         member val public Json: bool = false with get, set
         member val public OutputFormat: string = String.Empty with get, set
@@ -46,20 +46,41 @@ module Common =
     let ago = ago Language
 
     module Options =
-        let correlationId = new Option<String>([|"--correlationId"; "-c"|], IsRequired = false, Description = "CorrelationId for end-to-end tracking <String>.", Arity = ArgumentArity.ExactlyOne)
-        correlationId.SetDefaultValue(generateCorrelationId())
+        let correlationId =
+            new Option<String>(
+                [| "--correlationId"; "-c" |],
+                IsRequired = false,
+                Description = "CorrelationId for end-to-end tracking <String>.",
+                Arity = ArgumentArity.ExactlyOne
+            )
 
-        let output = (new Option<String>([|"--output"; "-o"|], IsRequired = false, Description = "The style of output.", Arity = ArgumentArity.ExactlyOne))
-                            .FromAmong(listCases<OutputFormat>())
+        correlationId.SetDefaultValue(generateCorrelationId ())
+
+        let output =
+            (new Option<String>(
+                [| "--output"; "-o" |],
+                IsRequired = false,
+                Description = "The style of output.",
+                Arity = ArgumentArity.ExactlyOne
+            ))
+                .FromAmong(listCases<OutputFormat> ())
+
         output.SetDefaultValue("Normal")
 
     /// Checks if the output format from the command line is a specific format.
     let isOutputFormat (outputFormat: OutputFormat) (parseResult: ParseResult) =
         if parseResult.HasOption(Options.output) then
             let format = parseResult.FindResultFor(Options.output).GetValueOrDefault<String>()
-            String.Equals(format, getDiscriminatedUnionCaseName(outputFormat), StringComparison.CurrentCultureIgnoreCase)
+
+            String.Equals(
+                format,
+                getDiscriminatedUnionCaseName (outputFormat),
+                StringComparison.CurrentCultureIgnoreCase
+            )
+        else if outputFormat = OutputFormat.Normal then
+            true
         else
-            if outputFormat = OutputFormat.Normal then true else false
+            false
 
     /// Checks if the output format from the command line is Json.
     let json parseResult = parseResult |> isOutputFormat Json
@@ -77,18 +98,30 @@ module Common =
     let verbose parseResult = parseResult |> isOutputFormat Verbose
 
     /// Checks if the output format from the command line is either Normal or Verbose; i.e. it has output.
-    let hasOutput parseResult = parseResult |> normal || parseResult |> verbose
+    let hasOutput parseResult =
+        parseResult |> normal || parseResult |> verbose
 
-    let startProgressTask showOutput (t: ProgressTask) = if showOutput then t.StartTask()
-    let setProgressTaskValue showOutput (value: float) (t: ProgressTask) = if showOutput then t.Value <- value
-    let incrementProgressTaskValue showOutput (value: float) (t: ProgressTask) = if showOutput then t.Increment(value)
+    let startProgressTask showOutput (t: ProgressTask) =
+        if showOutput then
+            t.StartTask()
+
+    let setProgressTaskValue showOutput (value: float) (t: ProgressTask) =
+        if showOutput then
+            t.Value <- value
+
+    let incrementProgressTaskValue showOutput (value: float) (t: ProgressTask) =
+        if showOutput then
+            t.Increment(value)
+
     let emptyTask = ProgressTask(0, "Empty progress task", 0.0, autoStart = false)
 
     /// Gets the correlationId parameter from the command line.
-    let getCorrelationId (parseResult: ParseResult) = parseResult.FindResultFor(Options.correlationId).GetValueOrDefault<String>()
+    let getCorrelationId (parseResult: ParseResult) =
+        parseResult.FindResultFor(Options.correlationId).GetValueOrDefault<String>()
 
     /// Rewrites "[" to "[[" and "]" to "]]".
-    let escapeBrackets s  = s.ToString().Replace("[", "[[").Replace("]", "]]")
+    let escapeBrackets s =
+        s.ToString().Replace("[", "[[").Replace("]", "]]")
 
     /// Prints the ParseResult with markup.
     let printParseResult (parseResult: ParseResult) =
@@ -103,33 +136,48 @@ module Common =
 
     /// Prints output to the console, depending on the output format.
     let renderOutput (parseResult: ParseResult) (result: GraceResult<'T>) =
-        let outputFormat = discriminatedUnionFromString<OutputFormat>(parseResult.FindResultFor(Options.output).GetValueOrDefault<String>()).Value
+        let outputFormat =
+            discriminatedUnionFromString<OutputFormat>(
+                parseResult.FindResultFor(Options.output).GetValueOrDefault<String>()
+            )
+                .Value
+
         match result with
-        | Ok graceReturnValue -> 
+        | Ok graceReturnValue ->
             match outputFormat with
             | Json -> AnsiConsole.WriteLine(Markup.Escape($"{graceReturnValue}"))
-            | Minimal -> ()     //AnsiConsole.MarkupLine($"""[{Colors.Highlighted}]{Markup.Escape($"{graceReturnValue.ReturnValue}")}[/]""")
+            | Minimal -> () //AnsiConsole.MarkupLine($"""[{Colors.Highlighted}]{Markup.Escape($"{graceReturnValue.ReturnValue}")}[/]""")
             | Silent -> ()
-            | Verbose -> AnsiConsole.WriteLine()
-                         AnsiConsole.MarkupLine($"""[{Colors.Verbose}]EventTime: {formatInstantExtended graceReturnValue.EventTime}[/]""")
-                         AnsiConsole.MarkupLine($"""[{Colors.Verbose}]CorrelationId: "{graceReturnValue.CorrelationId}"[/]""")
-                         AnsiConsole.MarkupLine($"""[{Colors.Verbose}]Properties: {Markup.Escape(serialize graceReturnValue.Properties)}[/]""")
-                         AnsiConsole.WriteLine()
-            | Normal -> ()      // Return unit because in the Normal case, we expect to print output within each command.
+            | Verbose ->
+                AnsiConsole.WriteLine()
+
+                AnsiConsole.MarkupLine(
+                    $"""[{Colors.Verbose}]EventTime: {formatInstantExtended graceReturnValue.EventTime}[/]"""
+                )
+
+                AnsiConsole.MarkupLine($"""[{Colors.Verbose}]CorrelationId: "{graceReturnValue.CorrelationId}"[/]""")
+
+                AnsiConsole.MarkupLine(
+                    $"""[{Colors.Verbose}]Properties: {Markup.Escape(serialize graceReturnValue.Properties)}[/]"""
+                )
+
+                AnsiConsole.WriteLine()
+            | Normal -> () // Return unit because in the Normal case, we expect to print output within each command.
+
             0
-        | Error error -> 
+        | Error error ->
             let json =
                 if error.Error.Contains("Stack trace") then
                     Regex.Unescape(error.Error)
                 else
                     Regex.Unescape(serialize error)
 
-            let errorText = 
-                if error.Error.Contains("Stack trace") then 
+            let errorText =
+                if error.Error.Contains("Stack trace") then
                     try
                         let exceptionResponse = deserialize<ExceptionResponse> error.Error
                         Regex.Unescape($"{exceptionResponse}")
-                    with ex -> 
+                    with ex ->
                         Regex.Unescape(error.Error)
                 else
                     Regex.Unescape(error.Error)
@@ -138,11 +186,13 @@ module Common =
             | Json -> AnsiConsole.WriteLine($"{Markup.Escape(json)}")
             | Minimal -> AnsiConsole.MarkupLine($"[{Colors.Error}]{Markup.Escape(errorText)}[/]")
             | Silent -> ()
-            | Verbose -> AnsiConsole.MarkupLine($"[{Colors.Error}]{Markup.Escape(errorText)}[/]")
-                         AnsiConsole.WriteLine()
-                         AnsiConsole.MarkupLine($"[{Colors.Verbose}]{Markup.Escape(json)}[/]")
-                         AnsiConsole.WriteLine()
+            | Verbose ->
+                AnsiConsole.MarkupLine($"[{Colors.Error}]{Markup.Escape(errorText)}[/]")
+                AnsiConsole.WriteLine()
+                AnsiConsole.MarkupLine($"[{Colors.Verbose}]{Markup.Escape(json)}[/]")
+                AnsiConsole.WriteLine()
             | Normal -> AnsiConsole.MarkupLine($"[{Colors.Error}]{Markup.Escape(errorText)}[/]")
+
             -1
 
     let progressBarColumn = new ProgressBarColumn()
@@ -154,6 +204,11 @@ module Common =
 
     let spinnerColumn = new SpinnerColumn(Spinner.Known.Dots)
 
-    let progressColumns: ProgressColumn[] = [| new TaskDescriptionColumn(Alignment = Justify.Right); progressBarColumn; percentageColumn; spinnerColumn; |]
+    let progressColumns: ProgressColumn[] =
+        [| new TaskDescriptionColumn(Alignment = Justify.Right)
+           progressBarColumn
+           percentageColumn
+           spinnerColumn |]
 
-    let progress = AnsiConsole.Progress(AutoRefresh = true, AutoClear = false, HideCompleted = false)
+    let progress =
+        AnsiConsole.Progress(AutoRefresh = true, AutoClear = false, HideCompleted = false)

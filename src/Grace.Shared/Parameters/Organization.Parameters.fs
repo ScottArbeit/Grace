@@ -6,7 +6,7 @@ open System
 module Organization =
 
     /// Common parameters for endpoints in the /organization path.
-    type OrganizationParameters() = 
+    type OrganizationParameters() =
         inherit CommonParameters()
         /// The Id of the Owner.
         member val public OwnerId: string = String.Empty with get, set
@@ -18,7 +18,7 @@ module Organization =
         member val public OrganizationName: string = String.Empty with get, set
 
     /// Parameters for the /organization/create endpoint.
-    type CreateOrganizationParameters() = 
+    type CreateOrganizationParameters() =
         inherit OrganizationParameters()
 
     /// Parameters for the /organization/get endpoint.
@@ -32,19 +32,19 @@ module Organization =
         inherit OrganizationParameters()
         /// The new name of the Organization.
         member val public NewName: string = String.Empty with get, set
-    
+
     /// Parameters for the /organization/setType endpoint.
     type SetOrganizationTypeParameters() =
         inherit OrganizationParameters()
         /// The new type of the Organization. Must be one of the OrganizationType enum values.
         member val public OrganizationType: string = String.Empty with get, set
-        
+
     /// Parameters for the /organization/setSearchVisibility endpoint.
     type SetOrganizationSearchVisibilityParameters() =
         inherit OrganizationParameters()
         /// The new search visibility of the Organization. Must be one of the SearchVisibility enum values.
         member val public SearchVisibility: string = String.Empty with get, set
-        
+
     /// Parameters for the /organization/setDescription endpoint.
     type SetOrganizationDescriptionParameters() =
         inherit OrganizationParameters()
@@ -62,7 +62,7 @@ module Organization =
     /// Parameters for the /organization/undelete endpoint.
     type UndeleteOrganizationParameters() =
         inherit OrganizationParameters()
-    
+
     /// Parameters for the /organization/get endpoint.
     type GetOrganizationParameters() =
         inherit OrganizationParameters()

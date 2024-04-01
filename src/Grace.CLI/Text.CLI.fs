@@ -16,8 +16,8 @@ module Text =
         | ScanningWorkingDirectory
         | UpdatingWorkingDirectory
         | UploadingFiles
-        
-        static member getString (uiString: UIString): string =
+
+        static member getString(uiString: UIString) : string =
             match uiString with
             | CreatingNewDirectoryVersions -> getLocalizedString StringResourceName.CreatingNewDirectoryVersions
             | CreatingSaveReference -> getLocalizedString StringResourceName.CreatingSaveReference

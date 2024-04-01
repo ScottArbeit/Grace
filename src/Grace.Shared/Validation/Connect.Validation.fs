@@ -8,12 +8,9 @@ open System
 module Connect =
 
     let saveDaysIsAPositiveNumber (saveDays: double) (error: ConnectError) =
-        if saveDays < 0.0 then
-            Error error
-        else
-            Ok ()
+        if saveDays < 0.0 then Error error else Ok()
 
     let visibilityIsValid (visibility: string) (error: ConnectError) =
-        match Utilities.discriminatedUnionFromString<RepositoryVisibility>(visibility) with
-        | Some visibility -> Ok ()
+        match Utilities.discriminatedUnionFromString<RepositoryVisibility> (visibility) with
+        | Some visibility -> Ok()
         | None -> Error error

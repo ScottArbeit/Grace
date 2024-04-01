@@ -18,11 +18,11 @@ open System.Threading.Tasks
 
 module Reference =
     let x = 1
-    //type Validations<'T when 'T :> ReferenceParameters> = 'T -> HttpContext -> Task<Result<unit, ReferenceError>>[]
-    
-    //let activitySource = new ActivitySource("Reference")
-    
-    //let getActorProxy (context: HttpContext) (ownerId: string) =
-    //    let actorProxyFactory = context.GetService<IActorProxyFactory>()
-    //    let actorId = GetActorId (ReferenceId (Guid.Parse(ownerId)))
-    //    actorProxyFactory.CreateActorProxy<IReferenceActor>(actorId, ActorName.Reference)
+//type Validations<'T when 'T :> ReferenceParameters> = 'T -> HttpContext -> Task<Result<unit, ReferenceError>>[]
+
+//let activitySource = new ActivitySource("Reference")
+
+//let getActorProxy (context: HttpContext) (ownerId: string) =
+//    let actorProxyFactory = context.GetService<IActorProxyFactory>()
+//    let actorId = GetActorId (ReferenceId (Guid.Parse(ownerId)))
+//    actorProxyFactory.CreateActorProxy<IReferenceActor>(actorId, ActorName.Reference)

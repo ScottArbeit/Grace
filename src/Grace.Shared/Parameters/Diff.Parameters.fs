@@ -5,9 +5,9 @@ open Grace.Shared.Types
 open System
 
 module Diff =
-    
+
     /// Parameters used by multiple endpoints in the /diff path.
-    type DiffParameters() = 
+    type DiffParameters() =
         inherit CommonParameters()
         member val public OwnerId = String.Empty with get, set
         member val public OwnerName: OwnerName = String.Empty with get, set

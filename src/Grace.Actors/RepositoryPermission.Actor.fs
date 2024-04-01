@@ -13,17 +13,16 @@ module RepositoryPermission =
 
     let ActorName = ActorName.RepositoryPermission
 
-    type RepositoryPermissionCommand =
-        | Set of PathPermission
+    type RepositoryPermissionCommand = Set of PathPermission
 
-    //[<Serializable>]
-    //type RepositoryPermissionEvent =
-    //    {
-    //        Event: RepositoryPermissionEventType
-    //        Metadata: EventMetadata
-    //    }
+//[<Serializable>]
+//type RepositoryPermissionEvent =
+//    {
+//        Event: RepositoryPermissionEventType
+//        Metadata: EventMetadata
+//    }
 
-    //type IRepositoryPermission =
-    //    inherit IActor
-    //    abstract member Exists: unit -> Task<bool>
-    //    abstract member 
+//type IRepositoryPermission =
+//    inherit IActor
+//    abstract member Exists: unit -> Task<bool>
+//    abstract member

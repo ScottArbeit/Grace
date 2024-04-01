@@ -9,7 +9,13 @@ module Commands =
     module Branch =
         [<KnownType("GetKnownTypes")>]
         type BranchCommand =
-            | Create of branchId: BranchId * branchName: BranchName * parentBranchId: BranchId * basedOn: ReferenceId * repositoryId: RepositoryId * initialPermissions: ReferenceType[]
+            | Create of
+                branchId: BranchId *
+                branchName: BranchName *
+                parentBranchId: BranchId *
+                basedOn: ReferenceId *
+                repositoryId: RepositoryId *
+                initialPermissions: ReferenceType[]
             | Rebase of basedOn: ReferenceId
             | SetName of newName: BranchName
             | Assign of directoryVersionId: DirectoryId * sha256Hash: Sha256Hash * referenceText: ReferenceText
@@ -29,6 +35,7 @@ module Commands =
             | DeleteLogical of force: bool * deleteReason: string
             | DeletePhysical
             | Undelete
+
             static member GetKnownTypes() = GetKnownTypes<BranchCommand>()
 
     module DirectoryVersion =
@@ -39,7 +46,9 @@ module Commands =
             | DeleteLogical of deleteReason: string
             | DeletePhysical
             | Undelete
-            static member GetKnownTypes() = GetKnownTypes<DirectoryVersionCommand>()
+
+            static member GetKnownTypes() =
+                GetKnownTypes<DirectoryVersionCommand>()
 
     module Organization =
         [<KnownType("GetKnownTypes")>]
@@ -52,6 +61,7 @@ module Commands =
             | DeleteLogical of force: bool * deleteReason: string
             | DeletePhysical
             | Undelete
+
             static member GetKnownTypes() = GetKnownTypes<OrganizationCommand>()
 
     module Owner =
@@ -65,12 +75,17 @@ module Commands =
             | DeleteLogical of force: bool * deleteReason: string
             | DeletePhysical
             | Undelete
+
             static member GetKnownTypes() = GetKnownTypes<OwnerCommand>()
 
     module Repository =
         [<KnownType("GetKnownTypes")>]
         type RepositoryCommand =
-            | Create of repositoryName: RepositoryName * repositoryId: RepositoryId * ownerId: OwnerId * organizationId: OrganizationId
+            | Create of
+                repositoryName: RepositoryName *
+                repositoryId: RepositoryId *
+                ownerId: OwnerId *
+                organizationId: OrganizationId
             | Initialize
             | SetObjectStorageProvider of objectStorageProvider: ObjectStorageProvider
             | SetStorageAccountName of storageAccountName: StorageAccountName
@@ -89,4 +104,5 @@ module Commands =
             | DeleteLogical of force: bool * deleteReason: string
             | DeletePhysical
             | Undelete
+
             static member GetKnownTypes() = GetKnownTypes<RepositoryCommand>()

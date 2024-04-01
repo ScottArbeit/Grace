@@ -6,7 +6,7 @@ open System
 
 module Reference =
 
-    type ReferenceParameters() = 
+    type ReferenceParameters() =
         inherit CommonParameters()
         member val public ReferenceId: string = String.Empty with get, set
         member val public ReferenceType: string = String.Empty with get, set

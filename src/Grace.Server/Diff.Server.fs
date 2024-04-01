@@ -27,7 +27,7 @@ open System.Diagnostics
 open System.Threading.Tasks
 open System.Text.Json
 
-module Diff = 
+module Diff =
     type Validations<'T when 'T :> DiffParameters> = 'T -> ValueTask<Result<unit, DiffError>> array
 
     let activitySource = new ActivitySource("Repository")
@@ -38,7 +38,7 @@ module Diff =
         let actorId = Diff.GetActorId directoryId1 directoryId2
         actorProxyFactory.CreateActorProxy<IDiffActor>(actorId, ActorName.Diff)
 
-    ///let processCommand<'T when 'T :> DiffParameters> (context: HttpContext) (validations: Validations<'T>) (command: 'T -> Task<DiffCommand>) = 
+    ///let processCommand<'T when 'T :> DiffParameters> (context: HttpContext) (validations: Validations<'T>) (command: 'T -> Task<DiffCommand>) =
     //    task {
     //        try
     //            use activity = activitySource.StartActivity("processCommand", ActivityKind.Server)
@@ -54,7 +54,7 @@ module Diff =
     //                    let! cmd = command parameters
     //                    let! result = actorProxy.Handle cmd (Services.createMetadata context)
     //                    match result with
-    //                        | Ok graceReturn -> 
+    //                        | Ok graceReturn ->
     //                            match cmd with
     //                            | Create _ ->
     //                                let branchId = (BranchId (Guid.NewGuid()))
@@ -80,22 +80,29 @@ module Diff =
     //            return! context |> result500ServerError (GraceError.Create $"{Utilities.createExceptionResponse ex}" (getCorrelationId context))
     //    }
 
-    let processQuery<'T, 'U when 'T :> DiffParameters> (context: HttpContext) (parameters: 'T) (validations: Validations<'T>) (query: QueryResult<IDiffActor, 'U>) =
+    let processQuery<'T, 'U when 'T :> DiffParameters>
+        (context: HttpContext)
+        (parameters: 'T)
+        (validations: Validations<'T>)
+        (query: QueryResult<IDiffActor, 'U>)
+        =
         task {
             try
                 use activity = activitySource.StartActivity("processQuery", ActivityKind.Server)
                 //let! parameters = context |> parse<'T>
                 let validationResults = validations parameters
                 let! validationsPassed = validationResults |> allPass
-                if validationsPassed then
-                    let actorProxy = getActorProxy parameters.DirectoryId1 parameters.DirectoryId2 context
 
-                    //// Need to figure this whole part out next. 
+                if validationsPassed then
+                    let actorProxy =
+                        getActorProxy parameters.DirectoryId1 parameters.DirectoryId2 context
+
+                    //// Need to figure this whole part out next.
                     //// Then add SDK implementation of GetDiff.
                     //// Then add CLI command to get diff.
                     //// Then test diffs end-to-end.
                     //// Then format the CLI output properly.
-                    //| Some diff -> 
+                    //| Some diff ->
                     //| None ->
 
                     let! queryResult = query context 1 actorProxy
@@ -105,13 +112,20 @@ module Diff =
                     return! context |> result200Ok returnValue
                 else
                     let! error = validationResults |> getFirstError
-                    let graceError = GraceError.Create (DiffError.getErrorMessage error) (getCorrelationId context)
+
+                    let graceError =
+                        GraceError.Create (DiffError.getErrorMessage error) (getCorrelationId context)
+
                     graceError.Properties.Add("Path", context.Request.Path)
                     graceError.Properties.Add($"DirectoryId1", $"{parameters.DirectoryId1}")
                     graceError.Properties.Add($"DirectoryId2", $"{parameters.DirectoryId2}")
                     return! context |> result400BadRequest graceError
             with ex ->
-                return! context |> result500ServerError (GraceError.Create $"{Utilities.createExceptionResponse ex}" (getCorrelationId context))
+                return!
+                    context
+                    |> result500ServerError (
+                        GraceError.Create $"{Utilities.createExceptionResponse ex}" (getCorrelationId context)
+                    )
         }
 
     /// Populates the diff actor, without returning the diff. This is meant to be used when generating the diff through reacting to an event.
@@ -122,20 +136,30 @@ module Diff =
                     let validations (parameters: PopulateParameters) =
                         [| Guid.isNotEmpty parameters.DirectoryId1 DiffError.InvalidDirectoryId
                            Guid.isNotEmpty parameters.DirectoryId2 DiffError.InvalidDirectoryId
-                           DirectoryVersion.directoryIdExists parameters.DirectoryId1 parameters.CorrelationId DiffError.DirectoryDoesNotExist
-                           DirectoryVersion.directoryIdExists parameters.DirectoryId2 parameters.CorrelationId DiffError.DirectoryDoesNotExist |]
+                           DirectoryVersion.directoryIdExists
+                               parameters.DirectoryId1
+                               parameters.CorrelationId
+                               DiffError.DirectoryDoesNotExist
+                           DirectoryVersion.directoryIdExists
+                               parameters.DirectoryId2
+                               parameters.CorrelationId
+                               DiffError.DirectoryDoesNotExist |]
 
                     let query (context: HttpContext) _ (actorProxy: IDiffActor) =
                         task {
-                            let! populated = actorProxy.Populate (getCorrelationId context)
+                            let! populated = actorProxy.Populate(getCorrelationId context)
                             return populated
                         }
 
                     let! parameters = context |> parse<PopulateParameters>
                     return! processQuery context parameters validations query
                 with ex ->
-                    return! context |> result500ServerError (GraceError.Create $"{Utilities.createExceptionResponse ex}" (getCorrelationId context))
-        }
+                    return!
+                        context
+                        |> result500ServerError (
+                            GraceError.Create $"{Utilities.createExceptionResponse ex}" (getCorrelationId context)
+                        )
+            }
 
     /// Retrieves the contents of the diff.
     let GetDiff: HttpHandler =
@@ -145,12 +169,18 @@ module Diff =
                     let validations (parameters: GetDiffParameters) =
                         [| Guid.isNotEmpty parameters.DirectoryId1 DiffError.InvalidDirectoryId
                            Guid.isNotEmpty parameters.DirectoryId2 DiffError.InvalidDirectoryId
-                           DirectoryVersion.directoryIdExists parameters.DirectoryId1 parameters.CorrelationId DiffError.DirectoryDoesNotExist
-                           DirectoryVersion.directoryIdExists parameters.DirectoryId2 parameters.CorrelationId DiffError.DirectoryDoesNotExist |]
+                           DirectoryVersion.directoryIdExists
+                               parameters.DirectoryId1
+                               parameters.CorrelationId
+                               DiffError.DirectoryDoesNotExist
+                           DirectoryVersion.directoryIdExists
+                               parameters.DirectoryId2
+                               parameters.CorrelationId
+                               DiffError.DirectoryDoesNotExist |]
 
                     let query (context: HttpContext) _ (actorProxy: IDiffActor) =
                         task {
-                            let! diff = actorProxy.GetDiff (getCorrelationId context)
+                            let! diff = actorProxy.GetDiff(getCorrelationId context)
                             return diff
                         }
 
@@ -158,8 +188,12 @@ module Diff =
 
                     return! processQuery context parameters validations query
                 with ex ->
-                    return! context |> result500ServerError (GraceError.Create $"{Utilities.createExceptionResponse ex}" (getCorrelationId context))
-        }
+                    return!
+                        context
+                        |> result500ServerError (
+                            GraceError.Create $"{Utilities.createExceptionResponse ex}" (getCorrelationId context)
+                        )
+            }
 
     /// Retrieves a diff taken by comparing two DirectoryVersions by Sha256Hash.
     let GetDiffBySha256Hash: HttpHandler =
@@ -174,12 +208,16 @@ module Diff =
 
                     let query (context: HttpContext) _ (actorProxy: IDiffActor) =
                         task {
-                            let! diff = actorProxy.GetDiff (getCorrelationId context)
+                            let! diff = actorProxy.GetDiff(getCorrelationId context)
                             return diff
                         }
 
                     let! parameters = context |> parse<GetDiffBySha256HashParameters>
                     return! processQuery context parameters validations query
                 with ex ->
-                    return! context |> result500ServerError (GraceError.Create $"{Utilities.createExceptionResponse ex}" (getCorrelationId context))
-        }
+                    return!
+                        context
+                        |> result500ServerError (
+                            GraceError.Create $"{Utilities.createExceptionResponse ex}" (getCorrelationId context)
+                        )
+            }

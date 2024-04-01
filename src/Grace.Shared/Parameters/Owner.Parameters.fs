@@ -7,7 +7,7 @@ open System
 module Owner =
 
     /// Common parameters for endpoints in the /owner path.
-    type OwnerParameters() = 
+    type OwnerParameters() =
         inherit CommonParameters()
         /// The Id of the owner.
         member val public OwnerId: string = String.Empty with get, set
@@ -15,7 +15,7 @@ module Owner =
         member val public OwnerName: string = String.Empty with get, set
 
     /// Parameters for the /owner/create endpoint.
-    type CreateOwnerParameters() = 
+    type CreateOwnerParameters() =
         inherit OwnerParameters()
 
     /// Parameters for the /owner/setName endpoint.
@@ -35,13 +35,13 @@ module Owner =
         inherit OwnerParameters()
         /// The new search visibility for the owner. Must be one of the SearchVisibility cases.
         member val public SearchVisibility: string = String.Empty with get, set
-        
+
     /// Parameters for the /owner/setDescription endpoint.
     type SetOwnerDescriptionParameters() =
         inherit OwnerParameters()
         /// The new description for the owner.
         member val public Description: string = String.Empty with get, set
-        
+
     /// Parameters for the /owner/get endpoint.
     type GetOwnerParameters() =
         inherit OwnerParameters()

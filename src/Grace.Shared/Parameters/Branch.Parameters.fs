@@ -6,8 +6,8 @@ open System
 
 module Branch =
 
-    /// Parameters for many endpoints in the /branch path.    
-    type BranchParameters() = 
+    /// Parameters for many endpoints in the /branch path.
+    type BranchParameters() =
         inherit CommonParameters()
         member val public OwnerId = String.Empty with get, set
         member val public OwnerName: OwnerName = String.Empty with get, set
@@ -19,7 +19,7 @@ module Branch =
         member val public BranchName: BranchName = String.Empty with get, set
 
     /// Base class for parameters for branch queries.
-    type BranchQueryParameters() = 
+    type BranchQueryParameters() =
         inherit BranchParameters()
         member val public Sha256Hash: Sha256Hash = String.Empty with get, set
         member val public ReferenceId = String.Empty with get, set
@@ -34,8 +34,8 @@ module Branch =
     /// Parameters for the /branch/assign endpoint.
     type AssignParameters() =
         inherit BranchParameters()
-        member val public DirectoryVersionId: DirectoryId = Guid.Empty with get, set 
-        member val public Sha256Hash: Sha256Hash  = String.Empty with get, set
+        member val public DirectoryVersionId: DirectoryId = Guid.Empty with get, set
+        member val public Sha256Hash: Sha256Hash = String.Empty with get, set
         member val public Message = String.Empty with get, set
 
     /// Parameters for the /branch/rebase endpoint.
@@ -47,7 +47,7 @@ module Branch =
     type CreateReferenceParameters() =
         inherit BranchParameters()
         member val public DirectoryVersionId: DirectoryId = Guid.Empty with get, set
-        member val public Sha256Hash: Sha256Hash  = String.Empty with get, set
+        member val public Sha256Hash: Sha256Hash = String.Empty with get, set
         member val public Message = String.Empty with get, set
 
     /// Parameters for the /branch/setName endpoint.
@@ -65,7 +65,7 @@ module Branch =
         inherit BranchParameters()
         member val public Force: bool = false with get, set
         member val public DeleteReason: string = String.Empty with get, set
-        
+
     /// Parameters for the /branch/getReference endpoint.
     type GetReferenceParameters() =
         inherit BranchQueryParameters()
@@ -87,9 +87,9 @@ module Branch =
         inherit BranchParameters()
         member val public References = String.Empty with get, set
         member val public MaxCount = 50 with get, set
-        
+
     /// Parameters for the /branch/get endpoint.
-    type GetBranchParameters() = 
+    type GetBranchParameters() =
         inherit BranchQueryParameters()
         member val public IncludeDeleted = false with get, set
 
@@ -103,10 +103,10 @@ module Branch =
         member val public ForceRecompute = false with get, set
 
     /// Parameters for the /branch/switch endpoint.
-    type SwitchParameters() = 
+    type SwitchParameters() =
         inherit BranchQueryParameters()
 
     /// Parameters for the /branch/getVersion endpoint.
-    type GetBranchVersionParameters() = 
+    type GetBranchVersionParameters() =
         inherit BranchQueryParameters()
         member val public IncludeDeleted = false with get, set

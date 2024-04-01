@@ -15,33 +15,34 @@ module Common =
         let isValidAndNotEmpty<'T> (s: string) (error: 'T) =
             if not <| String.IsNullOrEmpty(s) then
                 let mutable guid = Guid.Empty
+
                 if Guid.TryParse(s, &guid) && guid <> Guid.Empty then
-                    Ok () |> returnValueTask
+                    Ok() |> returnValueTask
                 else
                     Error error |> returnValueTask
             else
-                Ok () |> returnValueTask
+                Ok() |> returnValueTask
 
         /// Validates that a guid is not Guid.Empty.
         let isNotEmpty<'T> (guid: Guid) (error: 'T) =
             if guid = Guid.Empty then
                 Error error |> returnValueTask
             else
-                Ok () |> returnValueTask
+                Ok() |> returnValueTask
 
     module Number =
 
         /// Validates that the given number is positive.
         let isPositiveOrZero<'T> (n: double) (error: 'T) =
             if n >= 0.0 then
-                Ok () |> returnValueTask
+                Ok() |> returnValueTask
             else
                 Error error |> returnValueTask
 
         /// Validates that a number is found between the supplied lower and upper bounds.
-        let isWithinRange<'T, 'U when 'T : comparison> (n: 'T) (lower: 'T) (upper: 'T) (error: 'U) =
+        let isWithinRange<'T, 'U when 'T: comparison> (n: 'T) (lower: 'T) (upper: 'T) (error: 'U) =
             if lower <= n && n <= upper then
-                Ok () |> returnValueTask
+                Ok() |> returnValueTask
             else
                 Error error |> returnValueTask
 
@@ -50,7 +51,7 @@ module Common =
         /// Checks that the provided string is a valid Grace name (i.e. it matches GraceNameRegex).
         let isValidGraceName<'T> (name: string) (error: 'T) =
             if String.IsNullOrEmpty(name) || Constants.GraceNameRegex.IsMatch(name) then
-                Ok () |> returnValueTask
+                Ok() |> returnValueTask
             else
                 Error error |> returnValueTask
 
@@ -59,23 +60,23 @@ module Common =
             if String.IsNullOrEmpty(s) then
                 Error error |> returnValueTask
             else
-                Ok () |> returnValueTask
+                Ok() |> returnValueTask
 
         /// Validates that a string is either empty or a valid partial or full SHA-256 hash value.
         ///
         /// Regex: ^[0-9a-fA-F]{2,64}$
-        let isEmptyOrValidSha256Hash<'T> (s:string) (error: 'T) =
+        let isEmptyOrValidSha256Hash<'T> (s: string) (error: 'T) =
             if String.IsNullOrEmpty(s) || Constants.Sha256Regex.IsMatch(s) then
-                Ok () |> returnValueTask
+                Ok() |> returnValueTask
             else
                 Error error |> returnValueTask
 
         /// Validates that a string is a valid partial or full SHA-256 hash value.
         ///
         /// Regex: ^[0-9a-fA-F]{2,64}$
-        let isValidSha256Hash<'T> (s:string) (error: 'T) =
+        let isValidSha256Hash<'T> (s: string) (error: 'T) =
             if Constants.Sha256Regex.IsMatch(s) then
-                Ok () |> returnValueTask
+                Ok() |> returnValueTask
             else
                 Error error |> returnValueTask
 
@@ -84,14 +85,14 @@ module Common =
             if s.Length > maxLength then
                 Error error |> returnValueTask
             else
-                Ok () |> returnValueTask
+                Ok() |> returnValueTask
 
     module DiscriminatedUnion =
 
         /// Validates that a string is a member of the supplied discriminated union type.
         let isMemberOf<'T, 'U> (s: string) (error: 'U) =
-            match Utilities.discriminatedUnionFromString<'T>(s) with
-            | Some _ -> Ok () |> returnValueTask
+            match Utilities.discriminatedUnionFromString<'T> (s) with
+            | Some _ -> Ok() |> returnValueTask
             | None -> Error error |> returnValueTask
 
     module Input =
@@ -101,26 +102,27 @@ module Common =
             if String.IsNullOrEmpty(id) && String.IsNullOrEmpty(name) then
                 Error error |> returnValueTask
             else
-                Ok () |> returnValueTask
-        
+                Ok() |> returnValueTask
+
         /// Validates that a list is non-empty.
         let listIsNonEmpty<'T, 'U> (list: IEnumerable<'T>) (error: 'U) =
             let xs = List<'T>(list)
+
             if xs.Count > 0 then
-                Ok () |> returnValueTask
+                Ok() |> returnValueTask
             else
                 Error error |> returnValueTask
 
         /// Validates that one of the values passed in the array is not null, if it's a string, it's not empty, and if it's a Guid, it's not Guid.Empty.
-        let oneOfTheseValuesMustBeProvided (values: Object array) (error: 'T) =  
-            match values |> Array.tryFind (fun value ->
-                match value with
-                | null -> false
-                | :? string as s -> not <| String.IsNullOrEmpty(s)
-                | :? Guid as g -> g <> Guid.Empty
-                | _ -> true)
+        let oneOfTheseValuesMustBeProvided (values: Object array) (error: 'T) =
+            match
+                values
+                |> Array.tryFind (fun value ->
+                    match value with
+                    | null -> false
+                    | :? string as s -> not <| String.IsNullOrEmpty(s)
+                    | :? Guid as g -> g <> Guid.Empty
+                    | _ -> true)
             with
-            | Some _ ->
-                Ok () |> returnValueTask
-            | None ->
-                Error error |> returnValueTask
+            | Some _ -> Ok() |> returnValueTask
+            | None -> Error error |> returnValueTask

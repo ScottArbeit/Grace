@@ -40,7 +40,7 @@ module Interfaces =
         //abstract member Import: IList<RepositoryEvent> -> Task<Result<bool, ImportError>>
         abstract member Export: unit -> Task<Result<List<'T>, ExportError>>
         abstract member Import: IList<'T> -> Task<Result<int, ImportError>>
-    
+
     /// This is an experimental interface to explore how to implement important management functions for actors.
     [<Interface>]
     type IRevertable<'T> =
@@ -52,8 +52,11 @@ module Interfaces =
     [<Interface>]
     type IBranchActor =
         inherit IActor
+
         /// Validates incoming commands and converts them to events that are stored in the database.
-        abstract member Handle : command: Branch.BranchCommand -> eventMetadata: EventMetadata -> Task<GraceResult<string>>
+        abstract member Handle:
+            command: Branch.BranchCommand -> eventMetadata: EventMetadata -> Task<GraceResult<string>>
+
         /// Validates that a branch with this BranchId exists.
         abstract member Exists: correlationId: CorrelationId -> Task<bool>
         /// Retrieves the current state of the branch.
@@ -84,10 +87,10 @@ module Interfaces =
         ///
         /// The container name is $"{ownerName}-{organizationName}-{repositoryName}".
         abstract member GetContainerName: correlationId: CorrelationId -> Task<Result<ContainerName, string>>
-    
+
     /// Defines the operations for the Diff actor.
     [<Interface>]
-    type IDiffActor = 
+    type IDiffActor =
         inherit IActor
         /// Populates the contents of the diff, without returning the results.
         abstract member Populate: correlationId: CorrelationId -> Task<bool>
@@ -112,14 +115,21 @@ module Interfaces =
         abstract member GetSha256Hash: correlationId: CorrelationId -> Task<Sha256Hash>
         /// Returns the total size of files contained in this directory. This does not include files in subdirectories; for that, use GetSizeRecursive().
         abstract member GetSize: correlationId: CorrelationId -> Task<int64>
+
         /// Returns a list of DirectoryVersion objects for all subdirectories.
-        abstract member GetDirectoryVersionsRecursive: forceRegenerate: bool -> correlationId: CorrelationId -> Task<List<DirectoryVersion>>
+        abstract member GetDirectoryVersionsRecursive:
+            forceRegenerate: bool -> correlationId: CorrelationId -> Task<List<DirectoryVersion>>
+
         /// Returns the total size of files contained in this directory and all subdirectories.
         abstract member GetRecursiveSize: correlationId: CorrelationId -> Task<int64>
         /// Delete the DirectoryVersion and all subdirectories and files.
         abstract member Delete: correlationId: CorrelationId -> Task<GraceResult<string>>
+
         /// Validates incoming commands and converts them to events that are stored in the database.
-        abstract member Handle : command: DirectoryVersion.DirectoryVersionCommand -> eventMetadata: EventMetadata -> Task<GraceResult<string>>
+        abstract member Handle:
+            command: DirectoryVersion.DirectoryVersionCommand ->
+            eventMetadata: EventMetadata ->
+                Task<GraceResult<string>>
 
     ///Defines the operations for the Organization actor.
     [<Interface>]
@@ -133,10 +143,14 @@ module Interfaces =
         abstract member RepositoryExists: repositoryName: RepositoryName -> correlationId: CorrelationId -> Task<bool>
         /// Returns the current state of the organization.
         abstract member Get: correlationId: CorrelationId -> Task<OrganizationDto>
+
         /// Returns a list of the repositories under this organization.
-        abstract member ListRepositories: correlationId: CorrelationId -> Task<IReadOnlyDictionary<RepositoryId, RepositoryName>>
+        abstract member ListRepositories:
+            correlationId: CorrelationId -> Task<IReadOnlyDictionary<RepositoryId, RepositoryName>>
+
         /// Validates incoming commands and converts them to events that are stored in the database.
-        abstract member Handle: command: Organization.OrganizationCommand -> eventMetadata: EventMetadata -> Task<GraceResult<string>>
+        abstract member Handle:
+            command: Organization.OrganizationCommand -> eventMetadata: EventMetadata -> Task<GraceResult<string>>
 
     /// Defines the operations for the OrganizationName actor.
     [<Interface>]
@@ -159,10 +173,13 @@ module Interfaces =
         abstract member OrganizationExists: organizationName: string -> correlationId: CorrelationId -> Task<bool>
         /// Returns the current state of the owner.
         abstract member Get: correlationId: CorrelationId -> Task<OwnerDto>
+
         /// Returns a list of the organizations under this owner.
-        abstract member ListOrganizations: correlationId: CorrelationId -> Task<IReadOnlyDictionary<OrganizationId, OrganizationName>>
+        abstract member ListOrganizations:
+            correlationId: CorrelationId -> Task<IReadOnlyDictionary<OrganizationId, OrganizationName>>
+
         /// Validates incoming commands and converts them to events that are stored in the database.
-        abstract member Handle : command: Owner.OwnerCommand -> eventMetadata: EventMetadata -> Task<GraceResult<string>>
+        abstract member Handle: command: Owner.OwnerCommand -> eventMetadata: EventMetadata -> Task<GraceResult<string>>
 
     /// Defines the operations fpr the OwnerName actor.
     [<Interface>]
@@ -180,14 +197,17 @@ module Interfaces =
         abstract member Exists: correlationId: CorrelationId -> Task<bool>
         abstract member Get: correlationId: CorrelationId -> Task<ReferenceDto>
         abstract member GetReferenceType: correlationId: CorrelationId -> Task<ReferenceType>
-        abstract member Create: referenceId: ReferenceId 
-                                * branchId: BranchId 
-                                * directoryId: DirectoryId 
-                                * sha256Hash: Sha256Hash
-                                * referenceType: ReferenceType 
-                                * referenceText: ReferenceText
-                                -> correlationId: CorrelationId
-                                -> Task<ReferenceDto>
+
+        abstract member Create:
+            referenceId: ReferenceId *
+            branchId: BranchId *
+            directoryId: DirectoryId *
+            sha256Hash: Sha256Hash *
+            referenceType: ReferenceType *
+            referenceText: ReferenceText ->
+                correlationId: CorrelationId ->
+                    Task<ReferenceDto>
+
         abstract member Delete: correlationId: CorrelationId -> Task<GraceResult<string>>
 
     /// Defines the operations for the Repository actor.
@@ -204,8 +224,10 @@ module Interfaces =
         abstract member Get: correlationId: CorrelationId -> Task<RepositoryDto>
         /// Returns the object storage provider for this repository.
         abstract member GetObjectStorageProvider: correlationId: CorrelationId -> Task<ObjectStorageProvider>
+
         /// Processes commands by checking that they're valid, and then converting them into events.
-        abstract member Handle : command: Repository.RepositoryCommand -> eventMetadata: EventMetadata -> Task<GraceResult<string>>
+        abstract member Handle:
+            command: Repository.RepositoryCommand -> eventMetadata: EventMetadata -> Task<GraceResult<string>>
 
     /// Defines the operations for the RepositoryName actor.
     [<Interface>]
