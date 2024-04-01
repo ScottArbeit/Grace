@@ -227,11 +227,7 @@ module Organization =
                        Guid.isValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId
                        String.isNotEmpty parameters.OrganizationName OrganizationNameIsRequired
                        String.isValidGraceName parameters.OrganizationName InvalidOrganizationName
-                       Owner.ownerExists
-                           parameters.OwnerId
-                           parameters.OwnerName
-                           parameters.CorrelationId
-                           OwnerDoesNotExist
+                       Owner.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
                        Organization.organizationDoesNotExist
                            parameters.OwnerId
                            parameters.OwnerName
@@ -279,11 +275,7 @@ module Organization =
                            EitherOrganizationIdOrOrganizationNameRequired
                        String.isNotEmpty parameters.NewName OrganizationNameIsRequired
                        String.isValidGraceName parameters.NewName InvalidOrganizationName
-                       Owner.ownerExists
-                           parameters.OwnerId
-                           parameters.OwnerName
-                           parameters.CorrelationId
-                           OwnerDoesNotExist
+                       Owner.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
                        Organization.organizationExists
                            parameters.OwnerId
                            parameters.OwnerName
@@ -326,11 +318,7 @@ module Organization =
                        DiscriminatedUnion.isMemberOf<OrganizationType, OrganizationError>
                            parameters.OrganizationType
                            InvalidOrganizationType
-                       Owner.ownerExists
-                           parameters.OwnerId
-                           parameters.OwnerName
-                           parameters.CorrelationId
-                           OwnerDoesNotExist
+                       Owner.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
                        Organization.organizationExists
                            parameters.OwnerId
                            parameters.OwnerName
@@ -378,11 +366,7 @@ module Organization =
                        DiscriminatedUnion.isMemberOf<SearchVisibility, OrganizationError>
                            parameters.SearchVisibility
                            InvalidSearchVisibility
-                       Owner.ownerExists
-                           parameters.OwnerId
-                           parameters.OwnerName
-                           parameters.CorrelationId
-                           OwnerDoesNotExist
+                       Owner.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
                        Organization.organizationExists
                            parameters.OwnerId
                            parameters.OwnerName
@@ -427,11 +411,7 @@ module Organization =
                            parameters.OrganizationName
                            EitherOrganizationIdOrOrganizationNameRequired
                        String.isNotEmpty parameters.Description OrganizationDescriptionIsRequired
-                       Owner.ownerExists
-                           parameters.OwnerId
-                           parameters.OwnerName
-                           parameters.CorrelationId
-                           OwnerDoesNotExist
+                       Owner.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
                        Organization.organizationExists
                            parameters.OwnerId
                            parameters.OwnerName
@@ -472,11 +452,7 @@ module Organization =
                                parameters.OrganizationId
                                parameters.OrganizationName
                                EitherOrganizationIdOrOrganizationNameRequired
-                           Owner.ownerExists
-                               parameters.OwnerId
-                               parameters.OwnerName
-                               parameters.CorrelationId
-                               OwnerDoesNotExist
+                           Owner.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
                            Organization.organizationExists
                                parameters.OwnerId
                                parameters.OwnerName
@@ -526,11 +502,7 @@ module Organization =
                            parameters.OrganizationName
                            EitherOrganizationIdOrOrganizationNameRequired
                        String.isNotEmpty parameters.DeleteReason DeleteReasonIsRequired
-                       Owner.ownerExists
-                           parameters.OwnerId
-                           parameters.OwnerName
-                           parameters.CorrelationId
-                           OwnerDoesNotExist
+                       Owner.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
                        Organization.organizationExists
                            parameters.OwnerId
                            parameters.OwnerName
@@ -574,11 +546,7 @@ module Organization =
                            parameters.OrganizationId
                            parameters.OrganizationName
                            EitherOrganizationIdOrOrganizationNameRequired
-                       Owner.ownerExists
-                           parameters.OwnerId
-                           parameters.OwnerName
-                           parameters.CorrelationId
-                           OwnerDoesNotExist
+                       Owner.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
                        Organization.organizationExists
                            parameters.OwnerId
                            parameters.OwnerName
@@ -618,11 +586,7 @@ module Organization =
                                parameters.OrganizationId
                                parameters.OrganizationName
                                EitherOrganizationIdOrOrganizationNameRequired
-                           Owner.ownerExists
-                               parameters.OwnerId
-                               parameters.OwnerName
-                               parameters.CorrelationId
-                               OwnerDoesNotExist
+                           Owner.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
                            Organization.organizationExists
                                parameters.OwnerId
                                parameters.OwnerName

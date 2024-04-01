@@ -290,11 +290,7 @@ module Repository =
                        Guid.isValidAndNotEmpty parameters.RepositoryId InvalidRepositoryId
                        String.isNotEmpty parameters.RepositoryName RepositoryNameIsRequired
                        String.isValidGraceName parameters.RepositoryName InvalidRepositoryName
-                       Owner.ownerExists
-                           parameters.OwnerId
-                           parameters.OwnerName
-                           parameters.CorrelationId
-                           OwnerDoesNotExist
+                       Owner.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
                        Organization.organizationExists
                            parameters.OwnerId
                            parameters.OwnerName

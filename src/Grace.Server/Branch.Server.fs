@@ -251,11 +251,7 @@ module Branch =
                        String.isValidGraceName parameters.BranchName InvalidBranchName
                        Guid.isValidAndNotEmpty parameters.ParentBranchId InvalidBranchId
                        String.isValidGraceName parameters.ParentBranchName InvalidBranchName
-                       Owner.ownerExists
-                           parameters.OwnerId
-                           parameters.OwnerName
-                           parameters.CorrelationId
-                           OwnerDoesNotExist
+                       Owner.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
                        Organization.organizationExists
                            parameters.OwnerId
                            parameters.OwnerName
@@ -345,11 +341,7 @@ module Branch =
                     [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
                        String.isValidGraceName parameters.BranchName InvalidBranchName
                        Branch.referenceIdExists parameters.BasedOn parameters.CorrelationId ReferenceIdDoesNotExist
-                       Owner.ownerExists
-                           parameters.OwnerId
-                           parameters.OwnerName
-                           parameters.CorrelationId
-                           OwnerDoesNotExist
+                       Owner.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
                        Organization.organizationExists
                            parameters.OwnerId
                            parameters.OwnerName
@@ -410,11 +402,7 @@ module Branch =
                        Input.oneOfTheseValuesMustBeProvided
                            [| parameters.DirectoryVersionId; parameters.Sha256Hash |]
                            EitherDirectoryVersionIdOrSha256HashRequired
-                       Owner.ownerExists
-                           parameters.OwnerId
-                           parameters.OwnerName
-                           parameters.CorrelationId
-                           OwnerDoesNotExist
+                       Owner.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
                        Organization.organizationExists
                            parameters.OwnerId
                            parameters.OwnerName
@@ -522,11 +510,7 @@ module Branch =
                        String.isNotEmpty parameters.Message MessageIsRequired
                        String.maxLength parameters.Message 2048 StringIsTooLong
                        String.isValidSha256Hash parameters.Sha256Hash Sha256HashIsRequired
-                       Owner.ownerExists
-                           parameters.OwnerId
-                           parameters.OwnerName
-                           parameters.CorrelationId
-                           OwnerDoesNotExist
+                       Owner.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
                        Organization.organizationExists
                            parameters.OwnerId
                            parameters.OwnerName
@@ -585,11 +569,7 @@ module Branch =
                        String.isNotEmpty parameters.Message MessageIsRequired
                        String.maxLength parameters.Message 2048 StringIsTooLong
                        String.isValidSha256Hash parameters.Sha256Hash Sha256HashIsRequired
-                       Owner.ownerExists
-                           parameters.OwnerId
-                           parameters.OwnerName
-                           parameters.CorrelationId
-                           OwnerDoesNotExist
+                       Owner.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
                        Organization.organizationExists
                            parameters.OwnerId
                            parameters.OwnerName
@@ -655,11 +635,7 @@ module Branch =
                            EitherBranchIdOrBranchNameRequired
                        String.maxLength parameters.Message 2048 StringIsTooLong
                        String.isValidSha256Hash parameters.Sha256Hash Sha256HashIsRequired
-                       Owner.ownerExists
-                           parameters.OwnerId
-                           parameters.OwnerName
-                           parameters.CorrelationId
-                           OwnerDoesNotExist
+                       Owner.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
                        Organization.organizationExists
                            parameters.OwnerId
                            parameters.OwnerName
@@ -725,11 +701,7 @@ module Branch =
                            EitherBranchIdOrBranchNameRequired
                        String.maxLength parameters.Message 4096 StringIsTooLong
                        String.isValidSha256Hash parameters.Sha256Hash Sha256HashIsRequired
-                       Owner.ownerExists
-                           parameters.OwnerId
-                           parameters.OwnerName
-                           parameters.CorrelationId
-                           OwnerDoesNotExist
+                       Owner.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
                        Organization.organizationExists
                            parameters.OwnerId
                            parameters.OwnerName
@@ -795,11 +767,7 @@ module Branch =
                            EitherBranchIdOrBranchNameRequired
                        String.maxLength parameters.Message 2048 StringIsTooLong
                        String.isValidSha256Hash parameters.Sha256Hash Sha256HashIsRequired
-                       Owner.ownerExists
-                           parameters.OwnerId
-                           parameters.OwnerName
-                           parameters.CorrelationId
-                           OwnerDoesNotExist
+                       Owner.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
                        Organization.organizationExists
                            parameters.OwnerId
                            parameters.OwnerName
@@ -863,11 +831,7 @@ module Branch =
                            parameters.BranchId
                            parameters.BranchName
                            EitherBranchIdOrBranchNameRequired
-                       Owner.ownerExists
-                           parameters.OwnerId
-                           parameters.OwnerName
-                           parameters.CorrelationId
-                           OwnerDoesNotExist
+                       Owner.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
                        Organization.organizationExists
                            parameters.OwnerId
                            parameters.OwnerName
@@ -914,11 +878,7 @@ module Branch =
                            parameters.BranchId
                            parameters.BranchName
                            EitherBranchIdOrBranchNameRequired
-                       Owner.ownerExists
-                           parameters.OwnerId
-                           parameters.OwnerName
-                           parameters.CorrelationId
-                           OwnerDoesNotExist
+                       Owner.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
                        Organization.organizationExists
                            parameters.OwnerId
                            parameters.OwnerName
@@ -965,11 +925,7 @@ module Branch =
                            parameters.BranchId
                            parameters.BranchName
                            EitherBranchIdOrBranchNameRequired
-                       Owner.ownerExists
-                           parameters.OwnerId
-                           parameters.OwnerName
-                           parameters.CorrelationId
-                           OwnerDoesNotExist
+                       Owner.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
                        Organization.organizationExists
                            parameters.OwnerId
                            parameters.OwnerName
@@ -1016,11 +972,7 @@ module Branch =
                            parameters.BranchId
                            parameters.BranchName
                            EitherBranchIdOrBranchNameRequired
-                       Owner.ownerExists
-                           parameters.OwnerId
-                           parameters.OwnerName
-                           parameters.CorrelationId
-                           OwnerDoesNotExist
+                       Owner.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
                        Organization.organizationExists
                            parameters.OwnerId
                            parameters.OwnerName
@@ -1067,11 +1019,7 @@ module Branch =
                            parameters.BranchId
                            parameters.BranchName
                            EitherBranchIdOrBranchNameRequired
-                       Owner.ownerExists
-                           parameters.OwnerId
-                           parameters.OwnerName
-                           parameters.CorrelationId
-                           OwnerDoesNotExist
+                       Owner.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
                        Organization.organizationExists
                            parameters.OwnerId
                            parameters.OwnerName
@@ -1118,11 +1066,7 @@ module Branch =
                            parameters.BranchId
                            parameters.BranchName
                            EitherBranchIdOrBranchNameRequired
-                       Owner.ownerExists
-                           parameters.OwnerId
-                           parameters.OwnerName
-                           parameters.CorrelationId
-                           OwnerDoesNotExist
+                       Owner.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
                        Organization.organizationExists
                            parameters.OwnerId
                            parameters.OwnerName
@@ -1169,11 +1113,7 @@ module Branch =
                            parameters.BranchId
                            parameters.BranchName
                            EitherBranchIdOrBranchNameRequired
-                       Owner.ownerExists
-                           parameters.OwnerId
-                           parameters.OwnerName
-                           parameters.CorrelationId
-                           OwnerDoesNotExist
+                       Owner.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
                        Organization.organizationExists
                            parameters.OwnerId
                            parameters.OwnerName
@@ -1220,11 +1160,7 @@ module Branch =
                            parameters.BranchId
                            parameters.BranchName
                            EitherBranchIdOrBranchNameRequired
-                       Owner.ownerExists
-                           parameters.OwnerId
-                           parameters.OwnerName
-                           parameters.CorrelationId
-                           OwnerDoesNotExist
+                       Owner.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
                        Organization.organizationExists
                            parameters.OwnerId
                            parameters.OwnerName
@@ -1275,11 +1211,7 @@ module Branch =
                                parameters.BranchId
                                parameters.BranchName
                                EitherBranchIdOrBranchNameRequired
-                           Owner.ownerExists
-                               parameters.OwnerId
-                               parameters.OwnerName
-                               parameters.CorrelationId
-                               OwnerDoesNotExist
+                           Owner.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
                            Organization.organizationExists
                                parameters.OwnerId
                                parameters.OwnerName
@@ -1366,11 +1298,7 @@ module Branch =
                                parameters.BranchId
                                parameters.BranchName
                                EitherBranchIdOrBranchNameRequired
-                           Owner.ownerExists
-                               parameters.OwnerId
-                               parameters.OwnerName
-                               parameters.CorrelationId
-                               OwnerDoesNotExist
+                           Owner.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
                            Organization.organizationExists
                                parameters.OwnerId
                                parameters.OwnerName
@@ -1458,11 +1386,7 @@ module Branch =
                                parameters.BranchId
                                parameters.BranchName
                                EitherBranchIdOrBranchNameRequired
-                           Owner.ownerExists
-                               parameters.OwnerId
-                               parameters.OwnerName
-                               parameters.CorrelationId
-                               OwnerDoesNotExist
+                           Owner.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
                            Organization.organizationExists
                                parameters.OwnerId
                                parameters.OwnerName
@@ -1549,11 +1473,7 @@ module Branch =
                                parameters.BranchId
                                parameters.BranchName
                                EitherBranchIdOrBranchNameRequired
-                           Owner.ownerExists
-                               parameters.OwnerId
-                               parameters.OwnerName
-                               parameters.CorrelationId
-                               OwnerDoesNotExist
+                           Owner.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
                            Organization.organizationExists
                                parameters.OwnerId
                                parameters.OwnerName
@@ -1650,11 +1570,7 @@ module Branch =
                                parameters.BranchName
                                EitherBranchIdOrBranchNameRequired
                            Number.isPositiveOrZero parameters.MaxCount ValueMustBePositive
-                           Owner.ownerExists
-                               parameters.OwnerId
-                               parameters.OwnerName
-                               parameters.CorrelationId
-                               OwnerDoesNotExist
+                           Owner.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
                            Organization.organizationExists
                                parameters.OwnerId
                                parameters.OwnerName
@@ -1747,11 +1663,7 @@ module Branch =
                            DiscriminatedUnion.isMemberOf<ReferenceType, BranchError>
                                parameters.ReferenceType
                                InvalidReferenceType
-                           Owner.ownerExists
-                               parameters.OwnerId
-                               parameters.OwnerName
-                               parameters.CorrelationId
-                               OwnerDoesNotExist
+                           Owner.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
                            Organization.organizationExists
                                parameters.OwnerId
                                parameters.OwnerName
@@ -1886,11 +1798,7 @@ module Branch =
                                parameters.BranchName
                                EitherBranchIdOrBranchNameRequired
                            Number.isPositiveOrZero parameters.MaxCount ValueMustBePositive
-                           Owner.ownerExists
-                               parameters.OwnerId
-                               parameters.OwnerName
-                               parameters.CorrelationId
-                               OwnerDoesNotExist
+                           Owner.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
                            Organization.organizationExists
                                parameters.OwnerId
                                parameters.OwnerName
@@ -1979,11 +1887,7 @@ module Branch =
                                parameters.BranchName
                                EitherBranchIdOrBranchNameRequired
                            Number.isPositiveOrZero parameters.MaxCount ValueMustBePositive
-                           Owner.ownerExists
-                               parameters.OwnerId
-                               parameters.OwnerName
-                               parameters.CorrelationId
-                               OwnerDoesNotExist
+                           Owner.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
                            Organization.organizationExists
                                parameters.OwnerId
                                parameters.OwnerName
@@ -2072,11 +1976,7 @@ module Branch =
                                parameters.BranchName
                                EitherBranchIdOrBranchNameRequired
                            Number.isPositiveOrZero parameters.MaxCount ValueMustBePositive
-                           Owner.ownerExists
-                               parameters.OwnerId
-                               parameters.OwnerName
-                               parameters.CorrelationId
-                               OwnerDoesNotExist
+                           Owner.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
                            Organization.organizationExists
                                parameters.OwnerId
                                parameters.OwnerName
@@ -2165,11 +2065,7 @@ module Branch =
                                parameters.BranchName
                                EitherBranchIdOrBranchNameRequired
                            Number.isPositiveOrZero parameters.MaxCount ValueMustBePositive
-                           Owner.ownerExists
-                               parameters.OwnerId
-                               parameters.OwnerName
-                               parameters.CorrelationId
-                               OwnerDoesNotExist
+                           Owner.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
                            Organization.organizationExists
                                parameters.OwnerId
                                parameters.OwnerName
@@ -2259,11 +2155,7 @@ module Branch =
                                parameters.BranchName
                                EitherBranchIdOrBranchNameRequired
                            Number.isPositiveOrZero parameters.MaxCount ValueMustBePositive
-                           Owner.ownerExists
-                               parameters.OwnerId
-                               parameters.OwnerName
-                               parameters.CorrelationId
-                               OwnerDoesNotExist
+                           Owner.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
                            Organization.organizationExists
                                parameters.OwnerId
                                parameters.OwnerName
@@ -2352,11 +2244,7 @@ module Branch =
                                EitherBranchIdOrBranchNameRequired
                            String.isEmptyOrValidSha256Hash parameters.Sha256Hash InvalidSha256Hash
                            Guid.isValidAndNotEmpty parameters.ReferenceId InvalidReferenceId
-                           Owner.ownerExists
-                               parameters.OwnerId
-                               parameters.OwnerName
-                               parameters.CorrelationId
-                               OwnerDoesNotExist
+                           Owner.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
                            Organization.organizationExists
                                parameters.OwnerId
                                parameters.OwnerName
@@ -2509,11 +2397,7 @@ module Branch =
                                EitherBranchIdOrBranchNameRequired
                            String.isEmptyOrValidSha256Hash parameters.Sha256Hash InvalidSha256Hash
                            Guid.isValidAndNotEmpty parameters.ReferenceId InvalidReferenceId
-                           Owner.ownerExists
-                               parameters.OwnerId
-                               parameters.OwnerName
-                               parameters.CorrelationId
-                               OwnerDoesNotExist
+                           Owner.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
                            Organization.organizationExists
                                parameters.OwnerId
                                parameters.OwnerName
@@ -2679,11 +2563,7 @@ module Branch =
                                EitherBranchIdOrBranchNameRequired
                            String.isEmptyOrValidSha256Hash parameters.Sha256Hash InvalidSha256Hash
                            Guid.isValidAndNotEmpty parameters.ReferenceId InvalidReferenceId
-                           Owner.ownerExists
-                               parameters.OwnerId
-                               parameters.OwnerName
-                               parameters.CorrelationId
-                               OwnerDoesNotExist
+                           Owner.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
                            Organization.organizationExists
                                parameters.OwnerId
                                parameters.OwnerName

@@ -18,6 +18,8 @@ open System
 open System.Collections.Concurrent
 open System.Collections.Generic
 open System.Threading.Tasks
+open Services
+open Grace.Shared.Validation.Errors.Owner
 
 module Validations =
 
@@ -83,42 +85,13 @@ module Validations =
             |> ValueTask<Result<unit, 'T>>
 
         /// Validates that the owner exists in the database.
-        let ownerExists<'T> ownerId ownerName correlationId (error: 'T) =
-            task {
-                let mutable ownerGuid = Guid.Empty
+        let ownerExists<'T> ownerId ownerName (context: HttpContext) (error: 'T) =
+            let result =
+                match getGraceIds context with
+                | Some graceIds -> if graceIds.HasOwner then Ok() else Error error
+                | None -> Error error
 
-                match! resolveOwnerId ownerId ownerName correlationId with
-                | Some ownerId ->
-                    if Guid.TryParse(ownerId, &ownerGuid) then
-                        let mutable x = null
-                        let cached = memoryCache.TryGetValue(ownerGuid, &x)
-
-                        if cached then
-                            return Ok()
-                        else
-                            let actorId = Owner.GetActorId(ownerGuid)
-
-                            let ownerActorProxy =
-                                actorProxyFactory.CreateActorProxy<IOwnerActor>(actorId, ActorName.Owner)
-
-                            let! exists = ownerActorProxy.Exists correlationId
-
-                            if exists then
-                                use newCacheEntry =
-                                    memoryCache.CreateEntry(
-                                        ownerGuid,
-                                        Value = null,
-                                        AbsoluteExpirationRelativeToNow = DefaultExpirationTime
-                                    )
-
-                                return Ok()
-                            else
-                                return Error error
-                    else
-                        return Ok()
-                | None -> return Error error
-            }
-            |> ValueTask<Result<unit, 'T>>
+            ValueTask.FromResult(result)
 
         /// Validates that the given ownerName does not already exist in the database.
         let ownerNameDoesNotExist<'T> (ownerName: string) correlationId (error: 'T) =
