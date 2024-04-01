@@ -92,20 +92,10 @@ module Repository =
             )
 
         let requiredRepositoryName =
-            new Option<String>(
-                [| "--repositoryName"; "-n" |],
-                IsRequired = true,
-                Description = "The name of the repository.",
-                Arity = ArgumentArity.ExactlyOne
-            )
+            new Option<String>([| "--repositoryName"; "-n" |], IsRequired = true, Description = "The name of the repository.", Arity = ArgumentArity.ExactlyOne)
 
         let description =
-            new Option<String>(
-                "--description",
-                IsRequired = false,
-                Description = "The description of the repository.",
-                Arity = ArgumentArity.ExactlyOne
-            )
+            new Option<String>("--description", IsRequired = false, Description = "The description of the repository.", Arity = ArgumentArity.ExactlyOne)
 
         let visibility =
             (new Option<RepositoryVisibility>(
@@ -117,12 +107,7 @@ module Repository =
                 .FromAmong(listCases<RepositoryVisibility> ())
 
         let status =
-            (new Option<String>(
-                "--status",
-                IsRequired = true,
-                Description = "The status of the repository.",
-                Arity = ArgumentArity.ExactlyOne
-            ))
+            (new Option<String>("--status", IsRequired = true, Description = "The status of the repository.", Arity = ArgumentArity.ExactlyOne))
                 .FromAmong(listCases<RepositoryStatus> ())
 
         let recordSaves =
@@ -137,19 +122,13 @@ module Repository =
             (new Option<String>(
                 "--defaultServerApiVersion",
                 IsRequired = true,
-                Description =
-                    "The default version of the server API that clients should use when accessing this repository.",
+                Description = "The default version of the server API that clients should use when accessing this repository.",
                 Arity = ArgumentArity.ExactlyOne
             ))
                 .FromAmong(listCases<Constants.ServerApiVersions> ())
 
         let saveDays =
-            new Option<double>(
-                "--saveDays",
-                IsRequired = true,
-                Description = "How many days to keep saves. [default: 7.0]",
-                Arity = ArgumentArity.ExactlyOne
-            )
+            new Option<double>("--saveDays", IsRequired = true, Description = "How many days to keep saves. [default: 7.0]", Arity = ArgumentArity.ExactlyOne)
 
         let checkpointDays =
             new Option<double>(
@@ -176,27 +155,16 @@ module Repository =
             )
 
         let newName =
-            new Option<String>(
-                "--newName",
-                IsRequired = true,
-                Description = "The new name for the repository.",
-                Arity = ArgumentArity.ExactlyOne
-            )
+            new Option<String>("--newName", IsRequired = true, Description = "The new name for the repository.", Arity = ArgumentArity.ExactlyOne)
 
         let deleteReason =
-            new Option<String>(
-                "--deleteReason",
-                IsRequired = true,
-                Description = "The reason for deleting the repository.",
-                Arity = ArgumentArity.ExactlyOne
-            )
+            new Option<String>("--deleteReason", IsRequired = true, Description = "The reason for deleting the repository.", Arity = ArgumentArity.ExactlyOne)
 
         let graceConfig =
             new Option<String>(
                 "--graceConfig",
                 IsRequired = false,
-                Description =
-                    "The path of a Grace config file that you'd like to use instead of the default graceconfig.json.",
+                Description = "The path of a Grace config file that you'd like to use instead of the default graceconfig.json.",
                 Arity = ArgumentArity.ExactlyOne
             )
 
@@ -232,13 +200,7 @@ module Repository =
                 Arity = ArgumentArity.ZeroOrOne
             )
 
-    let mustBeAValidGuid
-        (parseResult: ParseResult)
-        (parameters: CommonParameters)
-        (option: Option)
-        (value: string)
-        (error: RepositoryError)
-        =
+    let mustBeAValidGuid (parseResult: ParseResult) (parameters: CommonParameters) (option: Option) (value: string) (error: RepositoryError) =
         let mutable guid = Guid.Empty
 
         if
@@ -250,13 +212,7 @@ module Repository =
         else
             Ok(parseResult, parameters)
 
-    let mustBeAValidGraceName
-        (parseResult: ParseResult)
-        (parameters: CommonParameters)
-        (option: Option)
-        (value: string)
-        (error: RepositoryError)
-        =
+    let mustBeAValidGraceName (parseResult: ParseResult) (parameters: CommonParameters) (option: Option) (value: string) (error: RepositoryError) =
         if
             parseResult.CommandResult.FindResultFor(option) <> null
             && not <| Constants.GraceNameRegex.IsMatch(value)
@@ -274,20 +230,10 @@ module Repository =
             mustBeAValidGraceName parseResult parameters Options.ownerName parameters.OwnerName InvalidOwnerName
 
         let ``OrganizationId must be a Guid`` (parseResult: ParseResult, parameters: CommonParameters) =
-            mustBeAValidGuid
-                parseResult
-                parameters
-                Options.organizationId
-                parameters.OrganizationId
-                InvalidOrganizationId
+            mustBeAValidGuid parseResult parameters Options.organizationId parameters.OrganizationId InvalidOrganizationId
 
         let ``OrganizationName must be a valid Grace name`` (parseResult: ParseResult, parameters: CommonParameters) =
-            mustBeAValidGraceName
-                parseResult
-                parameters
-                Options.organizationName
-                parameters.OrganizationName
-                InvalidOrganizationName
+            mustBeAValidGraceName parseResult parameters Options.organizationName parameters.OrganizationName InvalidOrganizationName
 
         let ``RepositoryId must be a Guid`` (parseResult: ParseResult, parameters: CommonParameters) =
             mustBeAValidGuid parseResult parameters Options.repositoryId parameters.RepositoryId InvalidRepositoryId
@@ -300,16 +246,9 @@ module Repository =
         >>= ``RepositoryId must be a Guid``
 
     let ``RepositoryName must be a valid Grace name`` (parseResult: ParseResult, parameters: CommonParameters) =
-        mustBeAValidGraceName
-            parseResult
-            parameters
-            Options.repositoryName
-            parameters.RepositoryName
-            InvalidRepositoryName
+        mustBeAValidGraceName parseResult parameters Options.repositoryName parameters.RepositoryName InvalidRepositoryName
 
-    let ``Either RepositoryId or RepositoryName must be specified``
-        (parseResult: ParseResult, parameters: CommonParameters)
-        =
+    let ``Either RepositoryId or RepositoryName must be specified`` (parseResult: ParseResult, parameters: CommonParameters) =
         if
             parseResult.HasOption(Options.repositoryId)
             || parseResult.HasOption(Options.repositoryName)
@@ -317,11 +256,7 @@ module Repository =
         then
             Ok(parseResult, parameters)
         else
-            Error(
-                GraceError.Create
-                    (RepositoryError.getErrorMessage EitherRepositoryIdOrRepositoryNameRequired)
-                    (parameters.CorrelationId)
-            )
+            Error(GraceError.Create (RepositoryError.getErrorMessage EitherRepositoryIdOrRepositoryNameRequired) (parameters.CorrelationId))
 
     /// Adjusts parameters to account for whether Id's or Name's were specified by the user, or should be taken from default values.
     let normalizeIdsAndNames<'T when 'T :> CommonParameters> (parseResult: ParseResult) (parameters: 'T) =
@@ -447,9 +382,7 @@ module Repository =
                                 .StartAsync(fun progressContext ->
                                     task {
                                         let t0 =
-                                            progressContext.AddTask(
-                                                $"[{Color.DodgerBlue1}]Sending command to the server.[/]"
-                                            )
+                                            progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
 
                                         let! result = Repository.Create(enhancedParameters)
                                         t0.Increment(100.0)
@@ -459,8 +392,7 @@ module Repository =
                         return! Repository.Create(enhancedParameters)
                 | Error error -> return Error error
             with ex ->
-                return
-                    Error(GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
+                return Error(GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
         }
 
     let private Create =
@@ -539,21 +471,13 @@ module Repository =
                                             .StartAsync(fun progressContext ->
                                                 task {
                                                     let t0 =
-                                                        progressContext.AddTask(
-                                                            $"[{Color.DodgerBlue1}]Reading existing Grace index file.[/]"
-                                                        )
+                                                        progressContext.AddTask($"[{Color.DodgerBlue1}]Reading existing Grace index file.[/]")
 
                                                     let t1 =
-                                                        progressContext.AddTask(
-                                                            $"[{Color.DodgerBlue1}]Computing new Grace index file.[/]",
-                                                            autoStart = false
-                                                        )
+                                                        progressContext.AddTask($"[{Color.DodgerBlue1}]Computing new Grace index file.[/]", autoStart = false)
 
                                                     let t2 =
-                                                        progressContext.AddTask(
-                                                            $"[{Color.DodgerBlue1}]Writing new Grace index file.[/]",
-                                                            autoStart = false
-                                                        )
+                                                        progressContext.AddTask($"[{Color.DodgerBlue1}]Writing new Grace index file.[/]", autoStart = false)
 
                                                     let t3 =
                                                         progressContext.AddTask(
@@ -587,8 +511,7 @@ module Repository =
                                                     // Compute the new Grace status file, based on the contents of the working directory.
                                                     t1.StartTask()
 
-                                                    let! graceStatus =
-                                                        createNewGraceStatusFile previousGraceStatus parseResult
+                                                    let! graceStatus = createNewGraceStatusFile previousGraceStatus parseResult
 
                                                     t1.Value <- 100.0
 
@@ -600,8 +523,7 @@ module Repository =
                                                     // Ensure all files are in the object cache.
                                                     t3.StartTask()
 
-                                                    let fileVersions =
-                                                        ConcurrentDictionary<RelativePath, LocalFileVersion>()
+                                                    let fileVersions = ConcurrentDictionary<RelativePath, LocalFileVersion>()
 
                                                     // Loop through the local directory versions, and populate fileVersions with all of the files in the repo.
                                                     let plr =
@@ -610,11 +532,7 @@ module Repository =
                                                             Constants.ParallelOptions,
                                                             (fun ldv ->
                                                                 for fileVersion in ldv.Files do
-                                                                    fileVersions.TryAdd(
-                                                                        fileVersion.RelativePath,
-                                                                        fileVersion
-                                                                    )
-                                                                    |> ignore)
+                                                                    fileVersions.TryAdd(fileVersion.RelativePath, fileVersion) |> ignore)
                                                         )
 
                                                     let incrementAmount = 100.0 / double fileVersions.Count
@@ -629,18 +547,9 @@ module Repository =
                                                                 let fullObjectPath = fileVersion.FullObjectPath
 
                                                                 if not <| File.Exists(fullObjectPath) then
-                                                                    Directory.CreateDirectory(
-                                                                        Path.GetDirectoryName(fullObjectPath)
-                                                                    )
-                                                                    |> ignore // If the directory already exists, this will do nothing.
+                                                                    Directory.CreateDirectory(Path.GetDirectoryName(fullObjectPath)) |> ignore // If the directory already exists, this will do nothing.
 
-                                                                    File.Copy(
-                                                                        Path.Combine(
-                                                                            Current().RootDirectory,
-                                                                            fileVersion.RelativePath
-                                                                        ),
-                                                                        fullObjectPath
-                                                                    )
+                                                                    File.Copy(Path.Combine(Current().RootDirectory, fileVersion.RelativePath), fullObjectPath)
 
                                                                 t3.Increment(incrementAmount))
                                                         )
@@ -657,15 +566,8 @@ module Repository =
                                                             graceStatus.Index.Values,
                                                             Constants.ParallelOptions,
                                                             (fun ldv ->
-                                                                if
-                                                                    not
-                                                                    <| objectCache.Index.ContainsKey(ldv.DirectoryId)
-                                                                then
-                                                                    objectCache.Index.AddOrUpdate(
-                                                                        ldv.DirectoryId,
-                                                                        (fun _ -> ldv),
-                                                                        (fun _ _ -> ldv)
-                                                                    )
+                                                                if not <| objectCache.Index.ContainsKey(ldv.DirectoryId) then
+                                                                    objectCache.Index.AddOrUpdate(ldv.DirectoryId, (fun _ -> ldv), (fun _ _ -> ldv))
                                                                     |> ignore
 
                                                                     t4.Increment(incrementAmount))
@@ -697,36 +599,22 @@ module Repository =
                                                                         task {
                                                                             let! graceResult =
                                                                                 Storage.FilesExistInObjectStorage
-                                                                                    (fileVersions
-                                                                                        .Select(fun f ->
-                                                                                            f.Value.ToFileVersion)
-                                                                                        .ToList())
+                                                                                    (fileVersions.Select(fun f -> f.Value.ToFileVersion).ToList())
                                                                                     (getCorrelationId parseResult)
 
                                                                             match graceResult with
                                                                             | Ok graceReturnValue ->
-                                                                                let uploadMetadata =
-                                                                                    graceReturnValue.ReturnValue
+                                                                                let uploadMetadata = graceReturnValue.ReturnValue
                                                                                 // Increment the counter for the files that we don't have to upload.
                                                                                 t5.Increment(
-                                                                                    incrementAmount
-                                                                                    * double (
-                                                                                        fileVersions.Count()
-                                                                                        - uploadMetadata.Count
-                                                                                    )
+                                                                                    incrementAmount * double (fileVersions.Count() - uploadMetadata.Count)
                                                                                 )
 
                                                                                 // Index all of the file versions by their SHA256 hash; we'll look up the files to upload with it.
                                                                                 let filesIndexedBySha256Hash =
-                                                                                    Dictionary<
-                                                                                        Sha256Hash,
-                                                                                        LocalFileVersion
-                                                                                     >(
+                                                                                    Dictionary<Sha256Hash, LocalFileVersion>(
                                                                                         fileVersions.Select(fun kvp ->
-                                                                                            KeyValuePair(
-                                                                                                kvp.Value.Sha256Hash,
-                                                                                                kvp.Value
-                                                                                            ))
+                                                                                            KeyValuePair(kvp.Value.Sha256Hash, kvp.Value))
                                                                                     )
 
                                                                                 // Upload the files in this chunk to object storage.
@@ -745,34 +633,20 @@ module Repository =
                                                                                                         Storage.SaveFileToObjectStorage
                                                                                                             fileVersion
                                                                                                             (upload.BlobUriWithSasToken)
-                                                                                                            (getCorrelationId
-                                                                                                                parseResult)
+                                                                                                            (getCorrelationId parseResult)
 
                                                                                                     // Increment the counter for each file that we do upload.
-                                                                                                    t5.Increment(
-                                                                                                        incrementAmount
-                                                                                                    )
+                                                                                                    t5.Increment(incrementAmount)
 
                                                                                                     match result with
-                                                                                                    | Ok result ->
-                                                                                                        succeeded
-                                                                                                            .Enqueue(
-                                                                                                                result
-                                                                                                            )
-                                                                                                    | Error error ->
-                                                                                                        errors
-                                                                                                            .Enqueue(
-                                                                                                                error
-                                                                                                            )
+                                                                                                    | Ok result -> succeeded.Enqueue(result)
+                                                                                                    | Error error -> errors.Enqueue(error)
                                                                                                 }
                                                                                             ))
                                                                                     )
 
                                                                             | Error error ->
-                                                                                AnsiConsole.Write(
-                                                                                    (new Panel($"{error}"))
-                                                                                        .BorderColor(Color.Red3)
-                                                                                )
+                                                                                AnsiConsole.Write((new Panel($"{error}")).BorderColor(Color.Red3))
                                                                         }
                                                                     ))
                                                             )
@@ -783,14 +657,11 @@ module Repository =
                                                         else
                                                             AnsiConsole.MarkupLine($"{errors.Count} errors occurred.")
 
-                                                            let mutable error =
-                                                                GraceError.Create String.Empty String.Empty
+                                                            let mutable error = GraceError.Create String.Empty String.Empty
 
                                                             while not <| errors.IsEmpty do
                                                                 if errors.TryDequeue(&error) then
-                                                                    AnsiConsole.MarkupLine(
-                                                                        $"[{Colors.Error}]{error.Error.EscapeMarkup()}[/]"
-                                                                    )
+                                                                    AnsiConsole.MarkupLine($"[{Colors.Error}]{error.Error.EscapeMarkup()}[/]")
 
                                                             ()
                                                     | AWSS3 -> ()
@@ -823,38 +694,27 @@ module Repository =
                                                                 (fun directoryVersionGroup ct ->
                                                                     ValueTask(
                                                                         task {
-                                                                            let param =
-                                                                                SaveDirectoryVersionsParameters()
+                                                                            let param = SaveDirectoryVersionsParameters()
 
                                                                             param.DirectoryVersions <-
-                                                                                directoryVersionGroup
-                                                                                    .Select(fun dv ->
-                                                                                        dv.ToDirectoryVersion)
-                                                                                    .ToList()
+                                                                                directoryVersionGroup.Select(fun dv -> dv.ToDirectoryVersion).ToList()
 
-                                                                            param.CorrelationId <-
-                                                                                getCorrelationId parseResult
+                                                                            param.CorrelationId <- getCorrelationId parseResult
 
-                                                                            let! sdvResult =
-                                                                                Directory.SaveDirectoryVersions param
+                                                                            let! sdvResult = Directory.SaveDirectoryVersions param
 
                                                                             match sdvResult with
                                                                             | Ok result -> succeeded.Enqueue(result)
                                                                             | Error error -> errors.Enqueue(error)
 
-                                                                            t6.Increment(
-                                                                                incrementAmount
-                                                                                * double directoryVersionGroup.Length
-                                                                            )
+                                                                            t6.Increment(incrementAmount * double directoryVersionGroup.Length)
                                                                         }
                                                                     ))
                                                             )
 
                                                     t6.Value <- 100.0
 
-                                                    AnsiConsole.MarkupLine(
-                                                        $"[{Colors.Important}]succeeded: {succeeded.Count}; errors: {errors.Count}.[/]"
-                                                    )
+                                                    AnsiConsole.MarkupLine($"[{Colors.Important}]succeeded: {succeeded.Count}; errors: {errors.Count}.[/]")
 
                                                     let mutable error = GraceError.Create String.Empty String.Empty
 
@@ -864,9 +724,7 @@ module Repository =
                                                         if error.Error.Contains("TRetval") then
                                                             logToConsole $"********* {error.Error}"
 
-                                                        AnsiConsole.MarkupLine(
-                                                            $"[{Colors.Error}]{error.Error.EscapeMarkup()}[/]"
-                                                        )
+                                                        AnsiConsole.MarkupLine($"[{Colors.Error}]{error.Error.EscapeMarkup()}[/]")
 
                                                     return graceStatus
 
@@ -878,45 +736,26 @@ module Repository =
                                             .Sum()
 
                                     let totalFileSize =
-                                        graceStatus.Index.Values.Sum(fun directoryVersion ->
-                                            directoryVersion.Files.Sum(fun f -> int64 f.Size))
+                                        graceStatus.Index.Values.Sum(fun directoryVersion -> directoryVersion.Files.Sum(fun f -> int64 f.Size))
 
                                     let rootDirectoryVersion =
-                                        graceStatus.Index.Values.First(fun d ->
-                                            d.RelativePath = Constants.RootDirectoryPath)
+                                        graceStatus.Index.Values.First(fun d -> d.RelativePath = Constants.RootDirectoryPath)
 
-                                    AnsiConsole.MarkupLine(
-                                        $"[{Colors.Highlighted}]Number of directories scanned: {graceStatus.Index.Count}.[/]"
-                                    )
+                                    AnsiConsole.MarkupLine($"[{Colors.Highlighted}]Number of directories scanned: {graceStatus.Index.Count}.[/]")
 
                                     AnsiConsole.MarkupLine(
                                         $"[{Colors.Highlighted}]Number of files scanned: {fileCount}; total file size: {totalFileSize:N0}.[/]"
                                     )
 
-                                    AnsiConsole.MarkupLine
-                                        $"[{Colors.Highlighted}]Root SHA-256 hash: {rootDirectoryVersion.Sha256Hash.Substring(0, 8)}[/]"
+                                    AnsiConsole.MarkupLine $"[{Colors.Highlighted}]Root SHA-256 hash: {rootDirectoryVersion.Sha256Hash.Substring(0, 8)}[/]"
 
-                                    return
-                                        Ok(
-                                            GraceReturnValue.Create
-                                                "Initialized repository."
-                                                (parseResult |> getCorrelationId)
-                                        )
+                                    return Ok(GraceReturnValue.Create "Initialized repository." (parseResult |> getCorrelationId))
                                 else
                                     // Do the whole thing with no output
-                                    return
-                                        Ok(
-                                            GraceReturnValue.Create
-                                                "Initialized repository."
-                                                (parseResult |> getCorrelationId)
-                                        )
+                                    return Ok(GraceReturnValue.Create "Initialized repository." (parseResult |> getCorrelationId))
                             else
                                 return
-                                    Error(
-                                        GraceError.Create
-                                            (RepositoryError.getErrorMessage RepositoryIsAlreadyInitialized)
-                                            (parseResult |> getCorrelationId)
-                                    )
+                                    Error(GraceError.Create (RepositoryError.getErrorMessage RepositoryIsAlreadyInitialized) (parseResult |> getCorrelationId))
                         | Error error -> return Error error
                     // Take functionality from grace maint update... most of it is already there.
                     // We need to double-check that we have the correct owner/organization/repository because we're
@@ -929,8 +768,7 @@ module Repository =
                     | Error error -> return Error error
                 | Error error -> return Error error
             with ex ->
-                return
-                    Error(GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
+                return Error(GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
         }
 
     let private Init =
@@ -973,9 +811,7 @@ module Repository =
                                 .StartAsync(fun progressContext ->
                                     task {
                                         let t0 =
-                                            progressContext.AddTask(
-                                                $"[{Color.DodgerBlue1}]Sending command to the server.[/]"
-                                            )
+                                            progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
 
                                         let! result = Repository.Get(parameters)
                                         t0.Increment(100.0)
@@ -985,8 +821,7 @@ module Repository =
                         return! Repository.Get(parameters)
                 | Error error -> return Error error
             with ex ->
-                return
-                    Error(GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
+                return Error(GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
         }
 
     let private Get =
@@ -1039,9 +874,7 @@ module Repository =
                                 .StartAsync(fun progressContext ->
                                     task {
                                         let t0 =
-                                            progressContext.AddTask(
-                                                $"[{Color.DodgerBlue1}]Sending command to the server.[/]"
-                                            )
+                                            progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
 
                                         let! result = Repository.GetBranches(getBranchesParameters)
                                         t0.Increment(100.0)
@@ -1051,8 +884,7 @@ module Repository =
                         return! Repository.GetBranches(getBranchesParameters)
                 | Error error -> return Error error
             with ex ->
-                return
-                    Error(GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
+                return Error(GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
         }
 
     let private GetBranches =
@@ -1172,9 +1004,7 @@ module Repository =
                                 .StartAsync(fun progressContext ->
                                     task {
                                         let t0 =
-                                            progressContext.AddTask(
-                                                $"[{Color.DodgerBlue1}]Sending command to the server.[/]"
-                                            )
+                                            progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
 
                                         let! result = Repository.SetVisibility(visibilityParameters)
                                         t0.Increment(100.0)
@@ -1184,8 +1014,7 @@ module Repository =
                         return! Repository.SetVisibility(visibilityParameters)
                 | Error error -> return Error error
             with ex ->
-                return
-                    Error(GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
+                return Error(GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
         }
 
     let private SetVisibility =
@@ -1231,9 +1060,7 @@ module Repository =
                                 .StartAsync(fun progressContext ->
                                     task {
                                         let t0 =
-                                            progressContext.AddTask(
-                                                $"[{Color.DodgerBlue1}]Sending command to the server.[/]"
-                                            )
+                                            progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
 
                                         let! result = Repository.SetStatus(statusParameters)
                                         t0.Increment(100.0)
@@ -1243,8 +1070,7 @@ module Repository =
                         return! Repository.SetStatus(statusParameters)
                 | Error error -> return Error error
             with ex ->
-                return
-                    Error(GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
+                return Error(GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
         }
 
     let private SetStatus =
@@ -1290,9 +1116,7 @@ module Repository =
                                 .StartAsync(fun progressContext ->
                                     task {
                                         let t0 =
-                                            progressContext.AddTask(
-                                                $"[{Color.DodgerBlue1}]Sending command to the server.[/]"
-                                            )
+                                            progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
 
                                         let! result = Repository.SetRecordSaves(recordSavesParameters)
                                         t0.Increment(100.0)
@@ -1302,8 +1126,7 @@ module Repository =
                         return! Repository.SetRecordSaves(recordSavesParameters)
                 | Error error -> return Error error
             with ex ->
-                return
-                    Error(GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
+                return Error(GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
         }
 
     let private SetRecordSaves =
@@ -1349,9 +1172,7 @@ module Repository =
                                 .StartAsync(fun progressContext ->
                                     task {
                                         let t0 =
-                                            progressContext.AddTask(
-                                                $"[{Color.DodgerBlue1}]Sending command to the server.[/]"
-                                            )
+                                            progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
 
                                         let! result = Repository.SetSaveDays(setSaveDaysParameters)
                                         t0.Increment(100.0)
@@ -1361,8 +1182,7 @@ module Repository =
                         return! Repository.SetSaveDays(setSaveDaysParameters)
                 | Error error -> return Error error
             with ex ->
-                return
-                    Error(GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
+                return Error(GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
         }
 
     let private SetSaveDays =
@@ -1408,9 +1228,7 @@ module Repository =
                                 .StartAsync(fun progressContext ->
                                     task {
                                         let t0 =
-                                            progressContext.AddTask(
-                                                $"[{Color.DodgerBlue1}]Sending command to the server.[/]"
-                                            )
+                                            progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
 
                                         let! result = Repository.SetCheckpointDays(checkpointDaysParameters)
                                         t0.Increment(100.0)
@@ -1420,8 +1238,7 @@ module Repository =
                         return! Repository.SetCheckpointDays(checkpointDaysParameters)
                 | Error error -> return Error error
             with ex ->
-                return
-                    Error(GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
+                return Error(GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
         }
 
     let private SetCheckpointDays =
@@ -1466,9 +1283,7 @@ module Repository =
                                 .StartAsync(fun progressContext ->
                                     task {
                                         let t0 =
-                                            progressContext.AddTask(
-                                                $"[{Color.DodgerBlue1}]Sending command to the server.[/]"
-                                            )
+                                            progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
 
                                         let! result = Repository.SetDiffCacheDays(diffCacheDaysParameters)
                                         t0.Increment(100.0)
@@ -1478,8 +1293,7 @@ module Repository =
                         return! Repository.SetDiffCacheDays(diffCacheDaysParameters)
                 | Error error -> return Error error
             with ex ->
-                return
-                    Error(GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
+                return Error(GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
         }
 
     let private SetDiffCacheDays =
@@ -1493,10 +1307,7 @@ module Repository =
         inherit CommonParameters()
         member val public DirectoryVersionCacheDays: double = Double.MinValue with get, set
 
-    let private setDirectoryVersionCacheDaysHandler
-        (parseResult: ParseResult)
-        (parameters: DirectoryVersionCacheDaysParameters)
-        =
+    let private setDirectoryVersionCacheDaysHandler (parseResult: ParseResult) (parameters: DirectoryVersionCacheDaysParameters) =
         task {
             try
                 if parseResult |> verbose then
@@ -1527,14 +1338,9 @@ module Repository =
                                 .StartAsync(fun progressContext ->
                                     task {
                                         let t0 =
-                                            progressContext.AddTask(
-                                                $"[{Color.DodgerBlue1}]Sending command to the server.[/]"
-                                            )
+                                            progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
 
-                                        let! result =
-                                            Repository.SetDirectoryVersionCacheDays(
-                                                directoryVersionCacheDaysParameters
-                                            )
+                                        let! result = Repository.SetDirectoryVersionCacheDays(directoryVersionCacheDaysParameters)
 
                                         t0.Increment(100.0)
                                         return result
@@ -1543,17 +1349,15 @@ module Repository =
                         return! Repository.SetDirectoryVersionCacheDays(directoryVersionCacheDaysParameters)
                 | Error error -> return Error error
             with ex ->
-                return
-                    Error(GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
+                return Error(GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
         }
 
     let private SetDirectoryVersionCacheDays =
-        CommandHandler.Create
-            (fun (parseResult: ParseResult) (directoryVersionCacheDaysParameters: DirectoryVersionCacheDaysParameters) ->
-                task {
-                    let! result = setDirectoryVersionCacheDaysHandler parseResult directoryVersionCacheDaysParameters
-                    return result |> renderOutput parseResult
-                })
+        CommandHandler.Create(fun (parseResult: ParseResult) (directoryVersionCacheDaysParameters: DirectoryVersionCacheDaysParameters) ->
+            task {
+                let! result = setDirectoryVersionCacheDaysHandler parseResult directoryVersionCacheDaysParameters
+                return result |> renderOutput parseResult
+            })
 
     // Enable promotion type subcommands
     type EnablePromotionTypeCommand = EnablePromotionTypeParameters -> Task<GraceResult<string>>
@@ -1598,9 +1402,7 @@ module Repository =
                                 .StartAsync(fun progressContext ->
                                     task {
                                         let t0 =
-                                            progressContext.AddTask(
-                                                $"[{Color.DodgerBlue1}]Sending command to the server.[/]"
-                                            )
+                                            progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
 
                                         let! result = command enablePromotionTypeParameters
                                         t0.Increment(100.0)
@@ -1610,8 +1412,7 @@ module Repository =
                         return! command enablePromotionTypeParameters
                 | Error error -> return Error error
             with ex ->
-                return
-                    Error(GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
+                return Error(GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
         }
 
     // Set-DefaultServerApiVersion subcommand
@@ -1619,10 +1420,7 @@ module Repository =
         inherit CommonParameters()
         member val public DefaultServerApiVersion = String.Empty with get, set
 
-    let private setDefaultServerApiVersionHandler
-        (parseResult: ParseResult)
-        (parameters: DefaultServerApiVersionParameters)
-        =
+    let private setDefaultServerApiVersionHandler (parseResult: ParseResult) (parameters: DefaultServerApiVersionParameters) =
         task {
             try
                 if parseResult |> verbose then
@@ -1653,12 +1451,9 @@ module Repository =
                                 .StartAsync(fun progressContext ->
                                     task {
                                         let t0 =
-                                            progressContext.AddTask(
-                                                $"[{Color.DodgerBlue1}]Sending command to the server.[/]"
-                                            )
+                                            progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
 
-                                        let! result =
-                                            Repository.SetDefaultServerApiVersion(defaultServerApiVersionParameters)
+                                        let! result = Repository.SetDefaultServerApiVersion(defaultServerApiVersionParameters)
 
                                         t0.Increment(100.0)
                                         return result
@@ -1667,17 +1462,15 @@ module Repository =
                         return! Repository.SetDefaultServerApiVersion(defaultServerApiVersionParameters)
                 | Error error -> return Error error
             with ex ->
-                return
-                    Error(GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
+                return Error(GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
         }
 
     let private SetDefaultServerApiVersion =
-        CommandHandler.Create
-            (fun (parseResult: ParseResult) (defaultServerApiVersionParameters: DefaultServerApiVersionParameters) ->
-                task {
-                    let! result = setDefaultServerApiVersionHandler parseResult defaultServerApiVersionParameters
-                    return result |> renderOutput parseResult
-                })
+        CommandHandler.Create(fun (parseResult: ParseResult) (defaultServerApiVersionParameters: DefaultServerApiVersionParameters) ->
+            task {
+                let! result = setDefaultServerApiVersionHandler parseResult defaultServerApiVersionParameters
+                return result |> renderOutput parseResult
+            })
 
     // Rename subcommand
     type SetNameParameters() =
@@ -1715,9 +1508,7 @@ module Repository =
                                 .StartAsync(fun progressContext ->
                                     task {
                                         let t0 =
-                                            progressContext.AddTask(
-                                                $"[{Color.DodgerBlue1}]Sending command to the server.[/]"
-                                            )
+                                            progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
 
                                         let! result = Repository.SetName(setNameParameters)
                                         t0.Increment(100.0)
@@ -1727,8 +1518,7 @@ module Repository =
                         return! Repository.SetName(setNameParameters)
                 | Error error -> return Error error
             with ex ->
-                return
-                    Error(GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
+                return Error(GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
         }
 
     let private SetName =
@@ -1776,9 +1566,7 @@ module Repository =
                                 .StartAsync(fun progressContext ->
                                     task {
                                         let t0 =
-                                            progressContext.AddTask(
-                                                $"[{Color.DodgerBlue1}]Sending command to the server.[/]"
-                                            )
+                                            progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
 
                                         let! result = Repository.SetDescription(setDescriptionParameters)
                                         t0.Increment(100.0)
@@ -1788,8 +1576,7 @@ module Repository =
                         return! Repository.SetDescription(setDescriptionParameters)
                 | Error error -> return Error error
             with ex ->
-                return
-                    Error(GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
+                return Error(GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
         }
 
     let private SetDescription =
@@ -1837,9 +1624,7 @@ module Repository =
                                 .StartAsync(fun progressContext ->
                                     task {
                                         let t0 =
-                                            progressContext.AddTask(
-                                                $"[{Color.DodgerBlue1}]Sending command to the server.[/]"
-                                            )
+                                            progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
 
                                         let! result = Repository.Delete(enhancedParameters)
                                         t0.Increment(100.0)
@@ -1849,8 +1634,7 @@ module Repository =
                         return! Repository.Delete(enhancedParameters)
                 | Error error -> return Error error
             with ex ->
-                return
-                    Error(GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
+                return Error(GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
         }
 
     let private Delete =
@@ -1894,9 +1678,7 @@ module Repository =
                                 .StartAsync(fun progressContext ->
                                     task {
                                         let t0 =
-                                            progressContext.AddTask(
-                                                $"[{Color.DodgerBlue1}]Sending command to the server.[/]"
-                                            )
+                                            progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
 
                                         let! result = Repository.Undelete(undeleteParameters)
                                         t0.Increment(100.0)
@@ -1906,8 +1688,7 @@ module Repository =
                         return! Repository.Undelete(undeleteParameters)
                 | Error error -> return Error error
             with ex ->
-                return
-                    Error(GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
+                return Error(GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
         }
 
     let private Undelete =
@@ -1993,10 +1774,7 @@ module Repository =
         repositoryCommand.AddCommand(setStatusCommand)
 
         let setRecordSavesCommand =
-            new Command(
-                "set-recordsaves",
-                Description = "Sets whether the repository defaults to recording every save."
-            )
+            new Command("set-recordsaves", Description = "Sets whether the repository defaults to recording every save.")
             |> addOption Options.recordSaves
             |> addCommonOptions
 
@@ -2004,10 +1782,7 @@ module Repository =
         repositoryCommand.AddCommand(setRecordSavesCommand)
 
         let setDefaultServerApiVersionCommand =
-            new Command(
-                "set-defaultserverapiversion",
-                Description = "Sets the default server API version for clients to use when accessing this repository."
-            )
+            new Command("set-defaultserverapiversion", Description = "Sets the default server API version for clients to use when accessing this repository.")
             |> addOption Options.defaultServerApiVersion
             |> addCommonOptions
 
@@ -2023,10 +1798,7 @@ module Repository =
         repositoryCommand.AddCommand(setSaveDaysCommand)
 
         let setCheckpointDaysCommand =
-            new Command(
-                "set-checkpointdays",
-                Description = "Sets the number of days to keep checkpoints in the repository."
-            )
+            new Command("set-checkpointdays", Description = "Sets the number of days to keep checkpoints in the repository.")
             |> addOption Options.checkpointDays
             |> addCommonOptions
 
@@ -2034,10 +1806,7 @@ module Repository =
         repositoryCommand.AddCommand(setCheckpointDaysCommand)
 
         let setDiffCacheDaysCommand =
-            new Command(
-                "set-diffcachedays",
-                Description = "Sets the number of days to keep diff results cached in the repository."
-            )
+            new Command("set-diffcachedays", Description = "Sets the number of days to keep diff results cached in the repository.")
             |> addOption Options.diffCacheDays
             |> addCommonOptions
 
@@ -2045,10 +1814,7 @@ module Repository =
         repositoryCommand.AddCommand(setDiffCacheDaysCommand)
 
         let setDirectoryVersionCacheDaysCommand =
-            new Command(
-                "set-directoryversioncachedays",
-                Description = "Sets how long to keep recursive directory version contents cached in the repository."
-            )
+            new Command("set-directoryversioncachedays", Description = "Sets how long to keep recursive directory version contents cached in the repository.")
             |> addOption Options.directoryVersionCacheDays
             |> addCommonOptions
 

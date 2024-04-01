@@ -75,12 +75,7 @@ module Branch =
             )
 
         let branchNameRequired =
-            new Option<String>(
-                [| "--branchName"; "-b" |],
-                IsRequired = true,
-                Description = "The name of the branch.",
-                Arity = ArgumentArity.ExactlyOne
-            )
+            new Option<String>([| "--branchName"; "-b" |], IsRequired = true, Description = "The name of the branch.", Arity = ArgumentArity.ExactlyOne)
 
         let ownerId =
             new Option<String>(
@@ -134,12 +129,7 @@ module Branch =
             )
 
         let parentBranchId =
-            new Option<String>(
-                [| "--parentBranchId" |],
-                IsRequired = false,
-                Description = "The parent branch's ID <Guid>.",
-                Arity = ArgumentArity.ExactlyOne
-            )
+            new Option<String>([| "--parentBranchId" |], IsRequired = false, Description = "The parent branch's ID <Guid>.", Arity = ArgumentArity.ExactlyOne)
 
         let parentBranchName =
             new Option<String>(
@@ -151,12 +141,7 @@ module Branch =
             )
 
         let newName =
-            new Option<String>(
-                "--newName",
-                IsRequired = true,
-                Description = "The new name of the branch.",
-                Arity = ArgumentArity.ExactlyOne
-            )
+            new Option<String>("--newName", IsRequired = true, Description = "The new name of the branch.", Arity = ArgumentArity.ExactlyOne)
 
         let message =
             new Option<String>(
@@ -175,12 +160,7 @@ module Branch =
             )
 
         let referenceType =
-            (new Option<String>(
-                "--referenceType",
-                IsRequired = false,
-                Description = "The type of reference.",
-                Arity = ArgumentArity.ExactlyOne
-            ))
+            (new Option<String>("--referenceType", IsRequired = false, Description = "The type of reference.", Arity = ArgumentArity.ExactlyOne))
                 .FromAmong(listCases<ReferenceType> ())
 
         let doNotSwitch =
@@ -192,30 +172,15 @@ module Branch =
             )
 
         let fullSha =
-            new Option<bool>(
-                "--fullSha",
-                IsRequired = false,
-                Description = "Show the full SHA-256 value in output.",
-                Arity = ArgumentArity.ZeroOrOne
-            )
+            new Option<bool>("--fullSha", IsRequired = false, Description = "Show the full SHA-256 value in output.", Arity = ArgumentArity.ZeroOrOne)
 
         let maxCount =
-            new Option<int>(
-                "--maxCount",
-                IsRequired = false,
-                Description = "The maximum number of results to return.",
-                Arity = ArgumentArity.ExactlyOne
-            )
+            new Option<int>("--maxCount", IsRequired = false, Description = "The maximum number of results to return.", Arity = ArgumentArity.ExactlyOne)
 
         maxCount.SetDefaultValue(30)
 
         let referenceId =
-            new Option<String>(
-                [| "--referenceId" |],
-                IsRequired = false,
-                Description = "The reference ID <Guid>.",
-                Arity = ArgumentArity.ExactlyOne
-            )
+            new Option<String>([| "--referenceId" |], IsRequired = false, Description = "The reference ID <Guid>.", Arity = ArgumentArity.ExactlyOne)
 
         let sha256Hash =
             new Option<String>(
@@ -226,26 +191,13 @@ module Branch =
             )
 
         let enabled =
-            new Option<bool>(
-                "--enabled",
-                IsRequired = false,
-                Description = "True to enable the feature; false to disable it.",
-                Arity = ArgumentArity.ZeroOrOne
-            )
+            new Option<bool>("--enabled", IsRequired = false, Description = "True to enable the feature; false to disable it.", Arity = ArgumentArity.ZeroOrOne)
 
         let includeDeleted =
-            new Option<bool>(
-                [| "--include-deleted"; "-d" |],
-                IsRequired = false,
-                Description = "Include deleted branches in the result. [default: false]"
-            )
+            new Option<bool>([| "--include-deleted"; "-d" |], IsRequired = false, Description = "Include deleted branches in the result. [default: false]")
 
         let showEvents =
-            new Option<bool>(
-                [| "--show-events"; "-e" |],
-                IsRequired = false,
-                Description = "Include actor events in the result. [default: false]"
-            )
+            new Option<bool>([| "--show-events"; "-e" |], IsRequired = false, Description = "Include actor events in the result. [default: false]")
 
         let initialPermissions =
             new Option<ReferenceType array>(
@@ -290,13 +242,7 @@ module Branch =
     //let listDirectories = new Option<bool>("--listDirectories", IsRequired = false, Description = "Show directories when listing contents. [default: false]")
     //let listFiles = new Option<bool>("--listFiles", IsRequired = false, Description = "Show files when listing contents. Implies --listDirectories. [default: false]")
 
-    let mustBeAValidGuid
-        (parseResult: ParseResult)
-        (parameters: CommonParameters)
-        (option: Option)
-        (value: string)
-        (error: BranchError)
-        =
+    let mustBeAValidGuid (parseResult: ParseResult) (parameters: CommonParameters) (option: Option) (value: string) (error: BranchError) =
         let mutable guid = Guid.Empty
 
         if
@@ -308,13 +254,7 @@ module Branch =
         else
             Ok(parseResult, parameters)
 
-    let mustBeAValidGraceName
-        (parseResult: ParseResult)
-        (parameters: CommonParameters)
-        (option: Option)
-        (value: string)
-        (error: BranchError)
-        =
+    let mustBeAValidGraceName (parseResult: ParseResult) (parameters: CommonParameters) (option: Option) (value: string) (error: BranchError) =
         if
             parseResult.CommandResult.FindResultFor(option) <> null
             && not <| Constants.GraceNameRegex.IsMatch(value)
@@ -323,12 +263,7 @@ module Branch =
         else
             Ok(parseResult, parameters)
 
-    let oneOfTheseOptionsMustBeProvided
-        (parseResult: ParseResult)
-        (parameters: CommonParameters)
-        (options: Option array)
-        (error: BranchError)
-        =
+    let oneOfTheseOptionsMustBeProvided (parseResult: ParseResult) (parameters: CommonParameters) (options: Option array) (error: BranchError) =
         match
             options
             |> Array.tryFind (fun opt -> not <| isNull (parseResult.CommandResult.FindResultFor(opt)))
@@ -341,59 +276,25 @@ module Branch =
             mustBeAValidGuid parseResult commonParameters Options.branchId commonParameters.BranchId InvalidBranchId
 
         let ``BranchName must be a valid Grace name`` (parseResult: ParseResult, commonParameters: CommonParameters) =
-            mustBeAValidGraceName
-                parseResult
-                commonParameters
-                Options.branchName
-                commonParameters.BranchName
-                InvalidBranchName
+            mustBeAValidGraceName parseResult commonParameters Options.branchName commonParameters.BranchName InvalidBranchName
 
         let ``OwnerId must be a Guid`` (parseResult: ParseResult, commonParameters: CommonParameters) =
             mustBeAValidGuid parseResult commonParameters Options.ownerId commonParameters.OwnerId InvalidOwnerId
 
         let ``OwnerName must be a valid Grace name`` (parseResult: ParseResult, commonParameters: CommonParameters) =
-            mustBeAValidGraceName
-                parseResult
-                commonParameters
-                Options.ownerName
-                commonParameters.OwnerName
-                InvalidOwnerName
+            mustBeAValidGraceName parseResult commonParameters Options.ownerName commonParameters.OwnerName InvalidOwnerName
 
         let ``OrganizationId must be a Guid`` (parseResult: ParseResult, commonParameters: CommonParameters) =
-            mustBeAValidGuid
-                parseResult
-                commonParameters
-                Options.organizationId
-                commonParameters.OrganizationId
-                InvalidOrganizationId
+            mustBeAValidGuid parseResult commonParameters Options.organizationId commonParameters.OrganizationId InvalidOrganizationId
 
-        let ``OrganizationName must be a valid Grace name``
-            (parseResult: ParseResult, commonParameters: CommonParameters)
-            =
-            mustBeAValidGraceName
-                parseResult
-                commonParameters
-                Options.organizationName
-                commonParameters.OrganizationName
-                InvalidOrganizationName
+        let ``OrganizationName must be a valid Grace name`` (parseResult: ParseResult, commonParameters: CommonParameters) =
+            mustBeAValidGraceName parseResult commonParameters Options.organizationName commonParameters.OrganizationName InvalidOrganizationName
 
         let ``RepositoryId must be a Guid`` (parseResult: ParseResult, commonParameters: CommonParameters) =
-            mustBeAValidGuid
-                parseResult
-                commonParameters
-                Options.repositoryId
-                commonParameters.RepositoryId
-                InvalidRepositoryId
+            mustBeAValidGuid parseResult commonParameters Options.repositoryId commonParameters.RepositoryId InvalidRepositoryId
 
-        let ``RepositoryName must be a valid Grace name``
-            (parseResult: ParseResult, commonParameters: CommonParameters)
-            =
-            mustBeAValidGraceName
-                parseResult
-                commonParameters
-                Options.repositoryName
-                commonParameters.RepositoryName
-                InvalidRepositoryName
+        let ``RepositoryName must be a valid Grace name`` (parseResult: ParseResult, commonParameters: CommonParameters) =
+            mustBeAValidGraceName parseResult commonParameters Options.repositoryName commonParameters.RepositoryName InvalidRepositoryName
 
         let ``Grace index file must exist`` (parseResult: ParseResult, commonParameters: CommonParameters) =
             if not <| File.Exists(Current().GraceStatusFile) then
@@ -403,11 +304,7 @@ module Branch =
 
         let ``Grace object cache file must exist`` (parseResult: ParseResult, commonParameters: CommonParameters) =
             if not <| File.Exists(Current().GraceStatusFile) then
-                Error(
-                    GraceError.Create
-                        (BranchError.getErrorMessage ObjectCacheFileNotFound)
-                        commonParameters.CorrelationId
-                )
+                Error(GraceError.Create (BranchError.getErrorMessage ObjectCacheFileNotFound) commonParameters.CorrelationId)
             else
                 Ok(parseResult, commonParameters)
 
@@ -557,9 +454,7 @@ module Branch =
                                 .StartAsync(fun progressContext ->
                                     task {
                                         let t0 =
-                                            progressContext.AddTask(
-                                                $"[{Color.DodgerBlue1}]Sending command to the server.[/]"
-                                            )
+                                            progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
 
                                         let! result = Branch.Create(parameters)
                                         t0.Increment(100.0)
@@ -634,9 +529,7 @@ module Branch =
                                 .StartAsync(fun progressContext ->
                                     task {
                                         let t0 =
-                                            progressContext.AddTask(
-                                                $"[{Color.DodgerBlue1}]Sending command to the server.[/]"
-                                            )
+                                            progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
 
                                         let! result = Branch.GetRecursiveSize(sdkParameters)
                                         t0.Increment(100.0)
@@ -655,8 +548,7 @@ module Branch =
                 let! result = getRecursiveSizeHandler parseResult getRecursiveSizeParameters
 
                 match result with
-                | Ok returnValue ->
-                    AnsiConsole.MarkupLine $"[{Colors.Highlighted}]Total file size: {returnValue.ReturnValue:N0}[/]"
+                | Ok returnValue -> AnsiConsole.MarkupLine $"[{Colors.Highlighted}]Total file size: {returnValue.ReturnValue:N0}[/]"
                 | Error error -> AnsiConsole.MarkupLine $"[{Colors.Error}]{error}[/]"
 
                 return result |> renderOutput parseResult
@@ -747,9 +639,7 @@ module Branch =
                                 .StartAsync(fun progressContext ->
                                     task {
                                         let t0 =
-                                            progressContext.AddTask(
-                                                $"[{Color.DodgerBlue1}]Sending command to the server.[/]"
-                                            )
+                                            progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
 
                                         let! result = Branch.ListContents(sdkParameters)
                                         t0.Increment(100.0)
@@ -787,19 +677,13 @@ module Branch =
                     let rootDirectoryVersion =
                         directoryVersions.First(fun d -> d.RelativePath = Constants.RootDirectoryPath)
 
-                    AnsiConsole.MarkupLine(
-                        $"[{Colors.Important}]All values taken from the selected version of this branch from the server.[/]"
-                    )
+                    AnsiConsole.MarkupLine($"[{Colors.Important}]All values taken from the selected version of this branch from the server.[/]")
 
                     AnsiConsole.MarkupLine($"[{Colors.Highlighted}]Number of directories: {directoryCount}.[/]")
 
-                    AnsiConsole.MarkupLine(
-                        $"[{Colors.Highlighted}]Number of files: {fileCount}; total file size: {totalFileSize:N0}.[/]"
-                    )
+                    AnsiConsole.MarkupLine($"[{Colors.Highlighted}]Number of files: {fileCount}; total file size: {totalFileSize:N0}.[/]")
 
-                    AnsiConsole.MarkupLine(
-                        $"[{Colors.Highlighted}]Root SHA-256 hash: {rootDirectoryVersion.Sha256Hash.Substring(0, 8)}[/]"
-                    )
+                    AnsiConsole.MarkupLine($"[{Colors.Highlighted}]Root SHA-256 hash: {rootDirectoryVersion.Sha256Hash.Substring(0, 8)}[/]")
 
                     printContents parseResult directoryVersions
                     return result |> renderOutput parseResult
@@ -835,9 +719,7 @@ module Branch =
                                 .StartAsync(fun progressContext ->
                                     task {
                                         let t0 =
-                                            progressContext.AddTask(
-                                                $"[{Color.DodgerBlue1}]Sending command to the server.[/]"
-                                            )
+                                            progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
 
                                         let! result = Branch.SetName(parameters)
                                         t0.Increment(100.0)
@@ -901,9 +783,7 @@ module Branch =
                                 .StartAsync(fun progressContext ->
                                     task {
                                         let t0 =
-                                            progressContext.AddTask(
-                                                $"[{Color.DodgerBlue1}]Sending command to the server.[/]"
-                                            )
+                                            progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
 
                                         let! result = Branch.Assign(parameters)
                                         t0.Increment(100.0)
@@ -930,12 +810,7 @@ module Branch =
         member val public DirectoryVersion = DirectoryVersion.Default with get, set
         member val public Message = String.Empty with get, set
 
-    let createReferenceHandler
-        (parseResult: ParseResult)
-        (parameters: CreateRefParameters)
-        (command: CreateReferenceCommand)
-        (commandType: string)
-        =
+    let createReferenceHandler (parseResult: ParseResult) (parameters: CreateRefParameters) (command: CreateReferenceCommand) (commandType: string) =
         task {
             try
                 if parseResult |> verbose then
@@ -955,39 +830,22 @@ module Branch =
                                 .StartAsync(fun progressContext ->
                                     task {
                                         let t0 =
-                                            progressContext.AddTask(
-                                                $"[{Color.DodgerBlue1}]Reading Grace status file.[/]"
-                                            )
+                                            progressContext.AddTask($"[{Color.DodgerBlue1}]Reading Grace status file.[/]")
 
                                         let t1 =
-                                            progressContext.AddTask(
-                                                $"[{Color.DodgerBlue1}]Scanning working directory for changes.[/]",
-                                                autoStart = false
-                                            )
+                                            progressContext.AddTask($"[{Color.DodgerBlue1}]Scanning working directory for changes.[/]", autoStart = false)
 
                                         let t2 =
-                                            progressContext.AddTask(
-                                                $"[{Color.DodgerBlue1}]Creating new directory verions.[/]",
-                                                autoStart = false
-                                            )
+                                            progressContext.AddTask($"[{Color.DodgerBlue1}]Creating new directory verions.[/]", autoStart = false)
 
                                         let t3 =
-                                            progressContext.AddTask(
-                                                $"[{Color.DodgerBlue1}]Uploading changed files to object storage.[/]",
-                                                autoStart = false
-                                            )
+                                            progressContext.AddTask($"[{Color.DodgerBlue1}]Uploading changed files to object storage.[/]", autoStart = false)
 
                                         let t4 =
-                                            progressContext.AddTask(
-                                                $"[{Color.DodgerBlue1}]Uploading new directory versions.[/]",
-                                                autoStart = false
-                                            )
+                                            progressContext.AddTask($"[{Color.DodgerBlue1}]Uploading new directory versions.[/]", autoStart = false)
 
                                         let t5 =
-                                            progressContext.AddTask(
-                                                $"[{Color.DodgerBlue1}]Creating new {commandType}.[/]",
-                                                autoStart = false
-                                            )
+                                            progressContext.AddTask($"[{Color.DodgerBlue1}]Creating new {commandType}.[/]", autoStart = false)
 
                                         //let mutable rootDirectoryId = DirectoryId.Empty
                                         //let mutable rootDirectorySha256Hash = Sha256Hash String.Empty
@@ -1001,9 +859,7 @@ module Branch =
                                             t3.Value <- 100.0
                                             t4.Value <- 100.0
 
-                                            rootDirectoryVersion.Value <-
-                                                (graceWatchStatus.RootDirectoryId,
-                                                 graceWatchStatus.RootDirectorySha256Hash)
+                                            rootDirectoryVersion.Value <- (graceWatchStatus.RootDirectoryId, graceWatchStatus.RootDirectorySha256Hash)
                                         | None ->
                                             t0.StartTask() // Read Grace status file.
                                             let! previousGraceStatus = readGraceStatusFile ()
@@ -1024,8 +880,7 @@ module Branch =
 
                                             newGraceStatus <- updatedGraceStatus
 
-                                            rootDirectoryVersion.Value <-
-                                                (newGraceStatus.RootDirectoryId, newGraceStatus.RootDirectorySha256Hash)
+                                            rootDirectoryVersion.Value <- (newGraceStatus.RootDirectoryId, newGraceStatus.RootDirectorySha256Hash)
 
                                             t2.Value <- 100.0
 
@@ -1053,16 +908,9 @@ module Branch =
                                             let mutable lastFileUploadInstant = newGraceStatus.LastSuccessfulFileUpload
 
                                             if newFileVersions.Count() > 0 then
-                                                match!
-                                                    uploadFilesToObjectStorage
-                                                        newFileVersions
-                                                        (getCorrelationId parseResult)
-                                                with
+                                                match! uploadFilesToObjectStorage newFileVersions (getCorrelationId parseResult) with
                                                 | Ok returnValue -> () //logToAnsiConsole Colors.Verbose $"Uploaded all files to object storage."
-                                                | Error error ->
-                                                    logToAnsiConsole
-                                                        Colors.Error
-                                                        $"Error uploading files to object storage: {error.Error}"
+                                                | Error error -> logToAnsiConsole Colors.Error $"Error uploading files to object storage: {error.Error}"
 
                                                 lastFileUploadInstant <- getCurrentInstant ()
 
@@ -1077,15 +925,11 @@ module Branch =
                                                 let saveParameters = SaveDirectoryVersionsParameters()
                                                 saveParameters.DirectoryId <- $"{newGraceStatus.RootDirectoryId}"
 
-                                                saveParameters.DirectoryVersions <-
-                                                    newDirectoryVersions
-                                                        .Select(fun dv -> dv.ToDirectoryVersion)
-                                                        .ToList()
+                                                saveParameters.DirectoryVersions <- newDirectoryVersions.Select(fun dv -> dv.ToDirectoryVersion).ToList()
 
                                                 saveParameters.CorrelationId <- getCorrelationId parseResult
 
-                                                let! uploadDirectoryVersions =
-                                                    Directory.SaveDirectoryVersions saveParameters
+                                                let! uploadDirectoryVersions = Directory.SaveDirectoryVersions saveParameters
 
                                                 lastDirectoryVersionUpload <- getCurrentInstant ()
 
@@ -1127,8 +971,7 @@ module Branch =
                         let! previousGraceStatus = readGraceStatusFile ()
                         let! differences = scanForDifferences previousGraceStatus
 
-                        let! (newGraceIndex, newDirectoryVersions) =
-                            getNewGraceStatusAndDirectoryVersions previousGraceStatus differences
+                        let! (newGraceIndex, newDirectoryVersions) = getNewGraceStatusAndDirectoryVersions previousGraceStatus differences
 
                         let updatedRelativePaths =
                             differences
@@ -1155,8 +998,7 @@ module Branch =
                         let! uploadResult = uploadFilesToObjectStorage newFileVersions (getCorrelationId parseResult)
                         let saveParameters = SaveDirectoryVersionsParameters()
 
-                        saveParameters.DirectoryVersions <-
-                            newDirectoryVersions.Select(fun dv -> dv.ToDirectoryVersion).ToList()
+                        saveParameters.DirectoryVersions <- newDirectoryVersions.Select(fun dv -> dv.ToDirectoryVersion).ToList()
 
                         let! uploadDirectoryVersions = Directory.SaveDirectoryVersions saveParameters
                         let rootDirectoryVersion = getRootDirectoryVersion previousGraceStatus
@@ -1201,21 +1043,13 @@ module Branch =
                                 .StartAsync(fun progressContext ->
                                     task {
                                         let t0 =
-                                            progressContext.AddTask(
-                                                $"[{Color.DodgerBlue1}]Reading Grace status file.[/]"
-                                            )
+                                            progressContext.AddTask($"[{Color.DodgerBlue1}]Reading Grace status file.[/]")
 
                                         let t1 =
-                                            progressContext.AddTask(
-                                                $"[{Color.DodgerBlue1}]Checking if the promotion is valid.[/]",
-                                                autoStart = false
-                                            )
+                                            progressContext.AddTask($"[{Color.DodgerBlue1}]Checking if the promotion is valid.[/]", autoStart = false)
 
                                         let t2 =
-                                            progressContext.AddTask(
-                                                $"[{Color.DodgerBlue1}]Sending command to the server.[/]",
-                                                autoStart = false
-                                            )
+                                            progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]", autoStart = false)
 
                                         // Read Grace status file.
                                         let! graceStatus = readGraceStatusFile ()
@@ -1285,19 +1119,12 @@ module Branch =
                                                             CorrelationId = parameters.CorrelationId
                                                         )
 
-                                                    match!
-                                                        Repository.GetReferencesByReferenceId(
-                                                            getReferencesByReferenceIdParameters
-                                                        )
-                                                    with
+                                                    match! Repository.GetReferencesByReferenceId(getReferencesByReferenceIdParameters) with
                                                     | Ok returnValue ->
                                                         let references = returnValue.ReturnValue
 
                                                         let latestPromotableReference =
-                                                            references
-                                                                .OrderByDescending(fun reference ->
-                                                                    reference.CreatedAt)
-                                                                .First()
+                                                            references.OrderByDescending(fun reference -> reference.CreatedAt).First()
                                                         // If the current branch's latest reference is not the latest commit - i.e. they've done more work in the branch
                                                         //   after the commit they're expecting to promote - print a warning.
                                                         //match getReferencesByReferenceIdResult with
@@ -1321,8 +1148,7 @@ module Branch =
                                                                     OrganizationName = parameters.OrganizationName,
                                                                     RepositoryId = parameters.RepositoryId,
                                                                     RepositoryName = parameters.RepositoryName,
-                                                                    DirectoryVersionId =
-                                                                        latestPromotableReference.DirectoryId,
+                                                                    DirectoryVersionId = latestPromotableReference.DirectoryId,
                                                                     Sha256Hash = latestPromotableReference.Sha256Hash,
                                                                     Message = parameters.Message,
                                                                     CorrelationId = parameters.CorrelationId
@@ -1332,12 +1158,9 @@ module Branch =
 
                                                             match promotionResult with
                                                             | Ok returnValue ->
-                                                                logToAnsiConsole
-                                                                    Colors.Verbose
-                                                                    $"Succeeded doing promotion."
+                                                                logToAnsiConsole Colors.Verbose $"Succeeded doing promotion."
 
-                                                                let promotionReferenceId =
-                                                                    returnValue.Properties["ReferenceId"]
+                                                                let promotionReferenceId = returnValue.Properties["ReferenceId"]
 
                                                                 let rebaseParameters =
                                                                     Parameters.Branch.RebaseParameters(
@@ -1355,9 +1178,7 @@ module Branch =
 
                                                                 match rebaseResult with
                                                                 | Ok returnValue ->
-                                                                    logToAnsiConsole
-                                                                        Colors.Verbose
-                                                                        $"Succeeded doing rebase."
+                                                                    logToAnsiConsole Colors.Verbose $"Succeeded doing rebase."
 
                                                                     return promotionResult
                                                                 | Error error -> return Error error
@@ -1369,8 +1190,7 @@ module Branch =
                                                             return
                                                                 Error(
                                                                     GraceError.Create
-                                                                        (BranchError.getErrorMessage
-                                                                            BranchIsNotBasedOnLatestPromotion)
+                                                                        (BranchError.getErrorMessage BranchIsNotBasedOnLatestPromotion)
                                                                         (parseResult |> getCorrelationId)
                                                                 )
                                                     | Error error ->
@@ -1380,8 +1200,7 @@ module Branch =
                                                     return
                                                         Error(
                                                             GraceError.Create
-                                                                (BranchError.getErrorMessage
-                                                                    PromotionNotAvailableBecauseThereAreNoPromotableReferences)
+                                                                (BranchError.getErrorMessage PromotionNotAvailableBecauseThereAreNoPromotableReferences)
                                                                 (parseResult |> getCorrelationId)
                                                         )
                                             | Error error ->
@@ -1393,10 +1212,7 @@ module Branch =
                                     })
                     else
                         // Same result, with no output.
-                        return
-                            Error(
-                                GraceError.Create "Need to implement the else clause." (parseResult |> getCorrelationId)
-                            )
+                        return Error(GraceError.Create "Need to implement the else clause." (parseResult |> getCorrelationId))
                 | Error error -> return Error error
             with ex ->
                 return Error(GraceError.Create $"{createExceptionResponse ex}" (parseResult |> getCorrelationId))
@@ -1406,8 +1222,7 @@ module Branch =
         CommandHandler.Create(fun (parseResult: ParseResult) (createReferencesParameters: CreateRefParameters) ->
             task {
                 try
-                    let! result =
-                        promotionHandler parseResult (createReferencesParameters |> normalizeIdsAndNames parseResult)
+                    let! result = promotionHandler parseResult (createReferencesParameters |> normalizeIdsAndNames parseResult)
 
                     return result |> renderOutput parseResult
                 with ex ->
@@ -1484,12 +1299,7 @@ module Branch =
         inherit CommonParameters()
         member val public Enabled = false with get, set
 
-    let enableFeatureHandler
-        (parseResult: ParseResult)
-        (parameters: EnableFeatureParams)
-        (command: EnableFeatureCommand)
-        (commandType: string)
-        =
+    let enableFeatureHandler (parseResult: ParseResult) (parameters: EnableFeatureParams) (command: EnableFeatureCommand) (commandType: string) =
         task {
             let sdkParameters =
                 Parameters.Branch.EnableFeatureParameters(
@@ -1508,8 +1318,7 @@ module Branch =
             let! enableFeatureResult = command sdkParameters
 
             match enableFeatureResult with
-            | Ok returnValue ->
-                return Ok(GraceReturnValue.Create (returnValue.ReturnValue) (getCorrelationId parseResult))
+            | Ok returnValue -> return Ok(GraceReturnValue.Create (returnValue.ReturnValue) (getCorrelationId parseResult))
             | Error error -> return Error error
         }
 
@@ -1519,12 +1328,7 @@ module Branch =
                 let command (parameters: EnableFeatureParameters) =
                     task { return! Branch.EnableAssign(parameters) }
 
-                let! result =
-                    enableFeatureHandler
-                        parseResult
-                        (enableFeaturesParams |> normalizeIdsAndNames parseResult)
-                        command
-                        "assign"
+                let! result = enableFeatureHandler parseResult (enableFeaturesParams |> normalizeIdsAndNames parseResult) command "assign"
 
                 return result |> renderOutput parseResult
             })
@@ -1535,12 +1339,7 @@ module Branch =
                 let command (parameters: EnableFeatureParameters) =
                     task { return! Branch.EnablePromotion(parameters) }
 
-                let! result =
-                    enableFeatureHandler
-                        parseResult
-                        (enableFeaturesParams |> normalizeIdsAndNames parseResult)
-                        command
-                        "promotion"
+                let! result = enableFeatureHandler parseResult (enableFeaturesParams |> normalizeIdsAndNames parseResult) command "promotion"
 
                 return result |> renderOutput parseResult
             })
@@ -1551,12 +1350,7 @@ module Branch =
                 let command (parameters: EnableFeatureParameters) =
                     task { return! Branch.EnableCommit(parameters) }
 
-                let! result =
-                    enableFeatureHandler
-                        parseResult
-                        (enableFeaturesParams |> normalizeIdsAndNames parseResult)
-                        command
-                        "commit"
+                let! result = enableFeatureHandler parseResult (enableFeaturesParams |> normalizeIdsAndNames parseResult) command "commit"
 
                 return result |> renderOutput parseResult
             })
@@ -1567,12 +1361,7 @@ module Branch =
                 let command (parameters: EnableFeatureParameters) =
                     task { return! Branch.EnableCheckpoint(parameters) }
 
-                let! result =
-                    enableFeatureHandler
-                        parseResult
-                        (enableFeaturesParams |> normalizeIdsAndNames parseResult)
-                        command
-                        "checkpoint"
+                let! result = enableFeatureHandler parseResult (enableFeaturesParams |> normalizeIdsAndNames parseResult) command "checkpoint"
 
                 return result |> renderOutput parseResult
             })
@@ -1583,12 +1372,7 @@ module Branch =
                 let command (parameters: EnableFeatureParameters) =
                     task { return! Branch.EnableSave(parameters) }
 
-                let! result =
-                    enableFeatureHandler
-                        parseResult
-                        (enableFeaturesParams |> normalizeIdsAndNames parseResult)
-                        command
-                        "save"
+                let! result = enableFeatureHandler parseResult (enableFeaturesParams |> normalizeIdsAndNames parseResult) command "save"
 
                 return result |> renderOutput parseResult
             })
@@ -1599,12 +1383,7 @@ module Branch =
                 let command (parameters: EnableFeatureParameters) =
                     task { return! Branch.EnableTag(parameters) }
 
-                let! result =
-                    enableFeatureHandler
-                        parseResult
-                        (enableFeaturesParams |> normalizeIdsAndNames parseResult)
-                        command
-                        "tag"
+                let! result = enableFeatureHandler parseResult (enableFeaturesParams |> normalizeIdsAndNames parseResult) command "tag"
 
                 return result |> renderOutput parseResult
             })
@@ -1615,12 +1394,7 @@ module Branch =
                 let command (parameters: EnableFeatureParameters) =
                     task { return! Branch.EnableAutoRebase(parameters) }
 
-                let! result =
-                    enableFeatureHandler
-                        parseResult
-                        (enableFeaturesParams |> normalizeIdsAndNames parseResult)
-                        command
-                        "auto-rebase"
+                let! result = enableFeatureHandler parseResult (enableFeaturesParams |> normalizeIdsAndNames parseResult) command "auto-rebase"
 
                 return result |> renderOutput parseResult
             })
@@ -1662,9 +1436,7 @@ module Branch =
                                 .StartAsync(fun progressContext ->
                                     task {
                                         let t0 =
-                                            progressContext.AddTask(
-                                                $"[{Color.DodgerBlue1}]Sending command to the server.[/]"
-                                            )
+                                            progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
 
                                         let! result = Branch.Get(sdkParameters)
                                         t0.Increment(100.0)
@@ -1705,9 +1477,7 @@ module Branch =
                                 .StartAsync(fun progressContext ->
                                     task {
                                         let t0 =
-                                            progressContext.AddTask(
-                                                $"[{Color.DodgerBlue1}]Sending command to the server.[/]"
-                                            )
+                                            progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
 
                                         let! result = Branch.GetEvents(sdkParameters)
                                         t0.Increment(100.0)
@@ -1732,8 +1502,7 @@ module Branch =
                     AnsiConsole.WriteLine()
 
                     if getParameters.ShowEvents then
-                        let! eventsResult =
-                            getEventsHandler parseResult (getParameters |> normalizeIdsAndNames parseResult)
+                        let! eventsResult = getEventsHandler parseResult (getParameters |> normalizeIdsAndNames parseResult)
 
                         match eventsResult with
                         | Ok graceReturnValue ->
@@ -1805,9 +1574,7 @@ module Branch =
                                 .StartAsync(fun progressContext ->
                                     task {
                                         let t0 =
-                                            progressContext.AddTask(
-                                                $"[{Color.DodgerBlue1}]Sending command to the server.[/]"
-                                            )
+                                            progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
 
                                         let branchDtoResult = Branch.Get(getBranchParameters)
                                         let getReferencesResult = query getReferencesParameters
@@ -1817,13 +1584,10 @@ module Branch =
                                         match (branchDtoResult.Result, getReferencesResult.Result) with
                                         | (Ok branchDto, Ok references) ->
                                             let graceReturnValue =
-                                                GraceReturnValue.Create
-                                                    (branchDto.ReturnValue, references.ReturnValue.ToArray())
-                                                    (parameters.CorrelationId)
+                                                GraceReturnValue.Create (branchDto.ReturnValue, references.ReturnValue.ToArray()) (parameters.CorrelationId)
 
                                             references.Properties
-                                            |> Seq.iter (fun kvp ->
-                                                graceReturnValue.Properties.Add(kvp.Key, kvp.Value))
+                                            |> Seq.iter (fun kvp -> graceReturnValue.Properties.Add(kvp.Key, kvp.Value))
 
                                             return Ok graceReturnValue
                                         | (Error error, _) -> return Error error
@@ -1836,12 +1600,7 @@ module Branch =
 
                         match (branchDtoResult.Result, getReferencesResult.Result) with
                         | (Ok branchDto, Ok references) ->
-                            return
-                                Ok(
-                                    GraceReturnValue.Create
-                                        (branchDto.ReturnValue, references.ReturnValue.ToArray())
-                                        (parameters.CorrelationId)
-                                )
+                            return Ok(GraceReturnValue.Create (branchDto.ReturnValue, references.ReturnValue.ToArray()) (parameters.CorrelationId))
                         | (Error error, _) -> return Error error
                         | (_, Error error) -> return Error error
                 | Error error -> return Error error
@@ -1849,12 +1608,7 @@ module Branch =
                 return Error(GraceError.Create $"{createExceptionResponse ex}" (parseResult |> getCorrelationId))
         }
 
-    let private printReferences
-        (parseResult: ParseResult)
-        (branchDto: BranchDto)
-        (references: ReferenceDto array)
-        (referenceTypes: string)
-        =
+    let private printReferences (parseResult: ParseResult) (branchDto: BranchDto) (references: ReferenceDto array) (referenceTypes: string) =
         if references.Count() > 0 then
             let sortedResults = references |> Array.sortByDescending (fun row -> row.CreatedAt)
             let table = Table(Border = TableBorder.DoubleEdge)
@@ -1915,8 +1669,7 @@ module Branch =
                 let query (parameters: GetReferencesParameters) =
                     task { return! Branch.GetReferences(parameters) }
 
-                let! result =
-                    getReferenceHandler parseResult (getReferencesParameters |> normalizeIdsAndNames parseResult) query
+                let! result = getReferenceHandler parseResult (getReferencesParameters |> normalizeIdsAndNames parseResult) query
 
                 match result with
                 | Ok graceReturnValue ->
@@ -1936,8 +1689,7 @@ module Branch =
                 let query (parameters: GetReferencesParameters) =
                     task { return! Branch.GetPromotions(parameters) }
 
-                let! result =
-                    getReferenceHandler parseResult (getReferencesParameters |> normalizeIdsAndNames parseResult) query
+                let! result = getReferenceHandler parseResult (getReferencesParameters |> normalizeIdsAndNames parseResult) query
 
                 match result with
                 | Ok graceReturnValue ->
@@ -1958,8 +1710,7 @@ module Branch =
                 let query (parameters: GetReferencesParameters) =
                     task { return! Branch.GetCommits(parameters) }
 
-                let! result =
-                    getReferenceHandler parseResult (getReferencesParameters |> normalizeIdsAndNames parseResult) query
+                let! result = getReferenceHandler parseResult (getReferencesParameters |> normalizeIdsAndNames parseResult) query
 
                 match result with
                 | Ok graceReturnValue ->
@@ -1996,8 +1747,7 @@ module Branch =
                         | _, Error error -> return Error error
                     }
 
-                let! result =
-                    getReferenceHandler parseResult (getReferencesParameters |> normalizeIdsAndNames parseResult) query
+                let! result = getReferenceHandler parseResult (getReferencesParameters |> normalizeIdsAndNames parseResult) query
 
                 match result with
                 | Ok graceReturnValue ->
@@ -2018,8 +1768,7 @@ module Branch =
                 let query (parameters: GetReferencesParameters) =
                     task { return! Branch.GetSaves(parameters) }
 
-                let! result =
-                    getReferenceHandler parseResult (getReferencesParameters |> normalizeIdsAndNames parseResult) query
+                let! result = getReferenceHandler parseResult (getReferencesParameters |> normalizeIdsAndNames parseResult) query
 
                 match result with
                 | Ok graceReturnValue ->
@@ -2040,8 +1789,7 @@ module Branch =
                 let query (parameters: GetReferencesParameters) =
                     task { return! Branch.GetTags(parameters) }
 
-                let! result =
-                    getReferenceHandler parseResult (getReferencesParameters |> normalizeIdsAndNames parseResult) query
+                let! result = getReferenceHandler parseResult (getReferencesParameters |> normalizeIdsAndNames parseResult) query
 
                 match result with
                 | Ok graceReturnValue ->
@@ -2104,10 +1852,7 @@ module Branch =
                     | Error error -> Error error |> returnTask
 
                 // 0. Get the branchDto for the current branch.
-                let getCurrentBranch
-                    (t: ProgressTask)
-                    (showOutput, parseResult: ParseResult, parameters: CommonParameters)
-                    =
+                let getCurrentBranch (t: ProgressTask) (showOutput, parseResult: ParseResult, parameters: CommonParameters) =
                     task {
                         t |> startProgressTask showOutput
 
@@ -2131,10 +1876,7 @@ module Branch =
                     }
 
                 // 1. Read the Grace status file.
-                let readGraceStatusFile
-                    (t: ProgressTask)
-                    (showOutput, parseResult: ParseResult, parameters: CommonParameters, currentBranch: BranchDto)
-                    =
+                let readGraceStatusFile (t: ProgressTask) (showOutput, parseResult: ParseResult, parameters: CommonParameters, currentBranch: BranchDto) =
                     task {
                         t |> startProgressTask showOutput
                         let! existingGraceStaus = readGraceStatusFile ()
@@ -2145,10 +1887,7 @@ module Branch =
                     }
 
                 // 2. Scan the working directory for differences.
-                let scanForDifferences
-                    (t: ProgressTask)
-                    (showOutput, parseResult: ParseResult, parameters: CommonParameters, currentBranch: BranchDto)
-                    =
+                let scanForDifferences (t: ProgressTask) (showOutput, parseResult: ParseResult, parameters: CommonParameters, currentBranch: BranchDto) =
                     task {
                         t |> startProgressTask showOutput
 
@@ -2165,20 +1904,14 @@ module Branch =
                 // 3. Create new directory versions.
                 let getNewGraceStatusAndDirectoryVersions
                     (t: ProgressTask)
-                    (
-                        showOutput,
-                        parseResult: ParseResult,
-                        parameters: CommonParameters,
-                        currentBranch: BranchDto,
-                        differences: List<FileSystemDifference>
-                    ) =
+                    (showOutput, parseResult: ParseResult, parameters: CommonParameters, currentBranch: BranchDto, differences: List<FileSystemDifference>)
+                    =
                     task {
                         t |> startProgressTask showOutput
                         let mutable newDirectoryVersions = List<LocalDirectoryVersion>()
 
                         if currentBranch.SaveEnabled then
-                            let! (updatedGraceStatus, newVersions) =
-                                getNewGraceStatusAndDirectoryVersions previousGraceStatus differences
+                            let! (updatedGraceStatus, newVersions) = getNewGraceStatusAndDirectoryVersions previousGraceStatus differences
 
                             newGraceStatus <- updatedGraceStatus
                             newDirectoryVersions <- newVersions
@@ -2259,58 +1992,33 @@ module Branch =
                         if currentBranch.SaveEnabled && newDirectoryVersions.Any() then
                             let saveParameters = SaveDirectoryVersionsParameters()
 
-                            saveParameters.DirectoryVersions <-
-                                newDirectoryVersions.Select(fun dv -> dv.ToDirectoryVersion).ToList()
+                            saveParameters.DirectoryVersions <- newDirectoryVersions.Select(fun dv -> dv.ToDirectoryVersion).ToList()
 
                             let! uploadDirectoryVersions = Directory.SaveDirectoryVersions saveParameters
 
                             if true then
                                 t |> setProgressTaskValue showOutput 100.0
 
-                                return
-                                    Ok(
-                                        showOutput,
-                                        parseResult,
-                                        parameters,
-                                        currentBranch,
-                                        $"Save created prior to branch switch."
-                                    )
+                                return Ok(showOutput, parseResult, parameters, currentBranch, $"Save created prior to branch switch.")
                             else
                                 t |> setProgressTaskValue showOutput 50.0
                                 return Error GraceError.Default
                         else
                             t |> setProgressTaskValue showOutput 100.0
 
-                            return
-                                Ok(
-                                    showOutput,
-                                    parseResult,
-                                    parameters,
-                                    currentBranch,
-                                    $"Save created prior to branch switch."
-                                )
+                            return Ok(showOutput, parseResult, parameters, currentBranch, $"Save created prior to branch switch.")
                     }
 
                 // 6. Create a before save reference.
                 let createSaveReference
                     (t: ProgressTask)
-                    (
-                        showOutput,
-                        parseResult: ParseResult,
-                        parameters: CommonParameters,
-                        currentBranch: BranchDto,
-                        message: string
-                    ) =
+                    (showOutput, parseResult: ParseResult, parameters: CommonParameters, currentBranch: BranchDto, message: string)
+                    =
                     task {
                         t |> startProgressTask showOutput
 
                         if currentBranch.SaveEnabled then
-                            match!
-                                createSaveReference
-                                    newGraceStatus.Index[rootDirectoryId]
-                                    message
-                                    (getCorrelationId parseResult)
-                            with
+                            match! createSaveReference newGraceStatus.Index[rootDirectoryId] message (getCorrelationId parseResult) with
                             | Ok returnValue ->
                                 t |> setProgressTaskValue showOutput 100.0
                                 return Ok(showOutput, parseResult, parameters, currentBranch)
@@ -2323,10 +2031,7 @@ module Branch =
                     }
 
                 /// 7. Get the branch and directory versions for the requested version we're switching to from the server.
-                let getVersionToSwitchTo
-                    (t: ProgressTask)
-                    (showOutput, parseResult: ParseResult, parameters: CommonParameters, currentBranch: BranchDto)
-                    =
+                let getVersionToSwitchTo (t: ProgressTask) (showOutput, parseResult: ParseResult, parameters: CommonParameters, currentBranch: BranchDto) =
                     task {
                         t |> startProgressTask showOutput
 
@@ -2377,15 +2082,12 @@ module Branch =
                                 | Ok returnValue ->
                                     let directoryIds = returnValue.ReturnValue
 
-                                    logToAnsiConsole
-                                        Colors.Verbose
-                                        $"Retrieved {directoryIds.Count()} directory version(s) for branch {newBranch.BranchName}."
+                                    logToAnsiConsole Colors.Verbose $"Retrieved {directoryIds.Count()} directory version(s) for branch {newBranch.BranchName}."
 
                                     logToAnsiConsole Colors.Verbose $"DirectoryIds: {serialize directoryIds}."
                                     t |> setProgressTaskValue showOutput 100.0
 
-                                    return
-                                        Ok(showOutput, parseResult, parameters, currentBranch, newBranch, directoryIds)
+                                    return Ok(showOutput, parseResult, parameters, currentBranch, newBranch, directoryIds)
                                 | Error error -> return Error error
                             | Error error -> return Error error
 
@@ -2444,8 +2146,7 @@ module Branch =
                                     let newBranch = branchReturnValue.ReturnValue
                                     let directoryIds = versionReturnValue.ReturnValue
 
-                                    return
-                                        Ok(showOutput, parseResult, parameters, currentBranch, newBranch, directoryIds)
+                                    return Ok(showOutput, parseResult, parameters, currentBranch, newBranch, directoryIds)
                                 | (Error error, _) -> return Error error
                                 | (_, Error error) -> return Error error
                             | Error error -> return Error error
@@ -2469,15 +2170,13 @@ module Branch =
                             | Ok returnValue ->
                                 let directoryIds = returnValue.ReturnValue
 
-                                return
-                                    Ok(showOutput, parseResult, parameters, currentBranch, currentBranch, directoryIds)
+                                return Ok(showOutput, parseResult, parameters, currentBranch, currentBranch, directoryIds)
                             | Error error -> return Error error
                         else
                             return
                                 Error(
                                     GraceError.Create
-                                        (BranchError.getErrorMessage
-                                            BranchError.EitherToBranchIdOrToBranchNameIsRequired)
+                                        (BranchError.getErrorMessage BranchError.EitherToBranchIdOrToBranchNameIsRequired)
                                         (parseResult |> getCorrelationId)
                                 )
                     }
@@ -2523,22 +2222,14 @@ module Branch =
 
                             // Identify files that we don't already have in object cache and download them.
                             for directoryVersion in graceStatusWithNewDirectoryVersionsFromServer.Index.Values do
-                                match!
-                                    (downloadFilesFromObjectStorage
-                                        directoryVersion.Files
-                                        (getCorrelationId parseResult))
-                                with
+                                match! (downloadFilesFromObjectStorage directoryVersion.Files (getCorrelationId parseResult)) with
                                 | Ok _ ->
                                     try
                                         //logToAnsiConsole Colors.Verbose $"Succeeded downloading files from object storage for {directoryVersion.RelativePath}."
 
                                         // Write the UpdatesInProgress file to let grace watch know to ignore these changes.
                                         // This file is deleted in the finally clause.
-                                        do!
-                                            File.WriteAllTextAsync(
-                                                updateInProgressFileName,
-                                                "This file won't exist for long."
-                                            )
+                                        do! File.WriteAllTextAsync(updateInProgressFileName, "This file won't exist for long.")
 
                                         // Update working directory based on new GraceStatus.Index
                                         do!
@@ -2563,29 +2254,15 @@ module Branch =
                                         File.Delete(updateInProgressFileName)
 
                                 | Error error ->
-                                    logToAnsiConsole
-                                        Colors.Verbose
-                                        $"Failed downloading files from object storage for {directoryVersion.RelativePath}."
+                                    logToAnsiConsole Colors.Verbose $"Failed downloading files from object storage for {directoryVersion.RelativePath}."
 
                                     logToAnsiConsole Colors.Error $"{error}"
                                     isError <- true
 
                             if not <| isError then
-                                return
-                                    Ok(
-                                        showOutput,
-                                        parseResult,
-                                        parameters,
-                                        currentBranch,
-                                        $"Save created after branch switch."
-                                    )
+                                return Ok(showOutput, parseResult, parameters, currentBranch, $"Save created after branch switch.")
                             else
-                                return
-                                    Error(
-                                        GraceError.Create
-                                            $"Failed downloading files from object storage."
-                                            (parseResult |> getCorrelationId)
-                                    )
+                                return Error(GraceError.Create $"Failed downloading files from object storage." (parseResult |> getCorrelationId))
                         | Error error ->
                             logToAnsiConsole Colors.Verbose $"Failed calling Directory.GetByDirectoryIds."
                             logToAnsiConsole Colors.Error $"{error}"
@@ -2625,22 +2302,13 @@ module Branch =
                             .StartAsync(fun progressContext ->
                                 task {
                                     let t0 =
-                                        progressContext.AddTask(
-                                            $"[{Color.DodgerBlue1}]{UIString.getString GettingCurrentBranch}[/]",
-                                            autoStart = false
-                                        )
+                                        progressContext.AddTask($"[{Color.DodgerBlue1}]{UIString.getString GettingCurrentBranch}[/]", autoStart = false)
 
                                     let t1 =
-                                        progressContext.AddTask(
-                                            $"[{Color.DodgerBlue1}]{UIString.getString ReadingGraceStatus}[/]",
-                                            autoStart = false
-                                        )
+                                        progressContext.AddTask($"[{Color.DodgerBlue1}]{UIString.getString ReadingGraceStatus}[/]", autoStart = false)
 
                                     let t2 =
-                                        progressContext.AddTask(
-                                            $"[{Color.DodgerBlue1}]{UIString.getString ScanningWorkingDirectory}[/]",
-                                            autoStart = false
-                                        )
+                                        progressContext.AddTask($"[{Color.DodgerBlue1}]{UIString.getString ScanningWorkingDirectory}[/]", autoStart = false)
 
                                     let t3 =
                                         progressContext.AddTask(
@@ -2649,40 +2317,22 @@ module Branch =
                                         )
 
                                     let t4 =
-                                        progressContext.AddTask(
-                                            $"[{Color.DodgerBlue1}]{UIString.getString UploadingFiles}[/]",
-                                            autoStart = false
-                                        )
+                                        progressContext.AddTask($"[{Color.DodgerBlue1}]{UIString.getString UploadingFiles}[/]", autoStart = false)
 
                                     let t5 =
-                                        progressContext.AddTask(
-                                            $"[{Color.DodgerBlue1}]{UIString.getString SavingDirectoryVersions}[/]",
-                                            autoStart = false
-                                        )
+                                        progressContext.AddTask($"[{Color.DodgerBlue1}]{UIString.getString SavingDirectoryVersions}[/]", autoStart = false)
 
                                     let t6 =
-                                        progressContext.AddTask(
-                                            $"[{Color.DodgerBlue1}]{UIString.getString CreatingSaveReference}[/]",
-                                            autoStart = false
-                                        )
+                                        progressContext.AddTask($"[{Color.DodgerBlue1}]{UIString.getString CreatingSaveReference}[/]", autoStart = false)
 
                                     let t7 =
-                                        progressContext.AddTask(
-                                            $"[{Color.DodgerBlue1}]{UIString.getString GettingLatestVersion}[/]",
-                                            autoStart = false
-                                        )
+                                        progressContext.AddTask($"[{Color.DodgerBlue1}]{UIString.getString GettingLatestVersion}[/]", autoStart = false)
 
                                     let t8 =
-                                        progressContext.AddTask(
-                                            $"[{Color.DodgerBlue1}]{UIString.getString UpdatingWorkingDirectory}[/]",
-                                            autoStart = false
-                                        )
+                                        progressContext.AddTask($"[{Color.DodgerBlue1}]{UIString.getString UpdatingWorkingDirectory}[/]", autoStart = false)
 
                                     let t9 =
-                                        progressContext.AddTask(
-                                            $"[{Color.DodgerBlue1}]{UIString.getString CreatingSaveReference}[/]",
-                                            autoStart = false
-                                        )
+                                        progressContext.AddTask($"[{Color.DodgerBlue1}]{UIString.getString CreatingSaveReference}[/]", autoStart = false)
 
                                     return! generateResult [| t0; t1; t2; t3; t4; t5; t6; t7; t8; t9 |]
                                 })
@@ -2742,21 +2392,13 @@ module Branch =
                                     .StartAsync(fun progressContext ->
                                         task {
                                             let t0 =
-                                                progressContext.AddTask(
-                                                    $"[{Color.DodgerBlue1}]Reading Grace index file.[/]"
-                                                )
+                                                progressContext.AddTask($"[{Color.DodgerBlue1}]Reading Grace index file.[/]")
 
                                             let t1 =
-                                                progressContext.AddTask(
-                                                    $"[{Color.DodgerBlue1}]Scanning working directory for changes.[/]",
-                                                    autoStart = false
-                                                )
+                                                progressContext.AddTask($"[{Color.DodgerBlue1}]Scanning working directory for changes.[/]", autoStart = false)
 
                                             let t2 =
-                                                progressContext.AddTask(
-                                                    $"[{Color.DodgerBlue1}]Creating new directory verions.[/]",
-                                                    autoStart = false
-                                                )
+                                                progressContext.AddTask($"[{Color.DodgerBlue1}]Creating new directory verions.[/]", autoStart = false)
 
                                             let t3 =
                                                 progressContext.AddTask(
@@ -2765,16 +2407,10 @@ module Branch =
                                                 )
 
                                             let t4 =
-                                                progressContext.AddTask(
-                                                    $"[{Color.DodgerBlue1}]Uploading new directory versions.[/]",
-                                                    autoStart = false
-                                                )
+                                                progressContext.AddTask($"[{Color.DodgerBlue1}]Uploading new directory versions.[/]", autoStart = false)
 
                                             let t5 =
-                                                progressContext.AddTask(
-                                                    $"[{Color.DodgerBlue1}]Create a save reference.[/]",
-                                                    autoStart = false
-                                                )
+                                                progressContext.AddTask($"[{Color.DodgerBlue1}]Create a save reference.[/]", autoStart = false)
 
                                             let t6 =
                                                 progressContext.AddTask(
@@ -2812,9 +2448,7 @@ module Branch =
                                                     t2.StartTask()
 
                                                     let! (updatedGraceStatus, newDirectoryVersions) =
-                                                        getNewGraceStatusAndDirectoryVersions
-                                                            previousGraceStatus
-                                                            differences
+                                                        getNewGraceStatusAndDirectoryVersions previousGraceStatus differences
 
                                                     newGraceStatus <- updatedGraceStatus
                                                     rootDirectoryId <- newGraceStatus.RootDirectoryId
@@ -2830,13 +2464,11 @@ module Branch =
                                                                 match difference.DifferenceType with
                                                                 | Add ->
                                                                     match difference.FileSystemEntryType with
-                                                                    | FileSystemEntryType.File ->
-                                                                        Some difference.RelativePath
+                                                                    | FileSystemEntryType.File -> Some difference.RelativePath
                                                                     | FileSystemEntryType.Directory -> None
                                                                 | Change ->
                                                                     match difference.FileSystemEntryType with
-                                                                    | FileSystemEntryType.File ->
-                                                                        Some difference.RelativePath
+                                                                    | FileSystemEntryType.File -> Some difference.RelativePath
                                                                     | FileSystemEntryType.Directory -> None
                                                                 | Delete -> None)
                                                             .Where(fun relativePathOption -> relativePathOption.IsSome)
@@ -2845,29 +2477,19 @@ module Branch =
                                                     let newFileVersions =
                                                         updatedRelativePaths.Select(fun relativePath ->
                                                             newDirectoryVersions
-                                                                .First(fun dv ->
-                                                                    dv.Files.Exists(fun file ->
-                                                                        file.RelativePath = relativePath))
-                                                                .Files.First(fun file ->
-                                                                    file.RelativePath = relativePath))
+                                                                .First(fun dv -> dv.Files.Exists(fun file -> file.RelativePath = relativePath))
+                                                                .Files.First(fun file -> file.RelativePath = relativePath))
 
-                                                    let! uploadResult =
-                                                        uploadFilesToObjectStorage
-                                                            newFileVersions
-                                                            (getCorrelationId parseResult)
+                                                    let! uploadResult = uploadFilesToObjectStorage newFileVersions (getCorrelationId parseResult)
 
                                                     t3.Value <- 100.0
 
                                                     t4.StartTask()
                                                     let saveParameters = SaveDirectoryVersionsParameters()
 
-                                                    saveParameters.DirectoryVersions <-
-                                                        newDirectoryVersions
-                                                            .Select(fun dv -> dv.ToDirectoryVersion)
-                                                            .ToList()
+                                                    saveParameters.DirectoryVersions <- newDirectoryVersions.Select(fun dv -> dv.ToDirectoryVersion).ToList()
 
-                                                    let! uploadDirectoryVersions =
-                                                        Directory.SaveDirectoryVersions saveParameters
+                                                    let! uploadDirectoryVersions = Directory.SaveDirectoryVersions saveParameters
 
                                                     t4.Value <- 100.0
 
@@ -2893,9 +2515,7 @@ module Branch =
                                                 t5.Value <- 100.0
                                                 // Get current values from the current branch based on finding no differences, because we're not creating a save or uploading anything.
                                                 let! (updatedGraceStatus, newDirectoryVersions) =
-                                                    getNewGraceStatusAndDirectoryVersions
-                                                        previousGraceStatus
-                                                        (List<FileSystemDifference>())
+                                                    getNewGraceStatusAndDirectoryVersions previousGraceStatus (List<FileSystemDifference>())
 
                                                 newGraceStatus <- updatedGraceStatus
                                                 rootDirectoryId <- newGraceStatus.RootDirectoryId
@@ -2967,8 +2587,7 @@ module Branch =
 
                                                         let missingDirectoryIds =
                                                             directoryIds
-                                                                .Where(fun directoryId ->
-                                                                    not <| previousDirectoryIds.Contains(directoryId))
+                                                                .Where(fun directoryId -> not <| previousDirectoryIds.Contains(directoryId))
                                                                 .ToList()
 
                                                         // Get missing directory versions from server.
@@ -2979,26 +2598,20 @@ module Branch =
                                                                 DirectoryIds = missingDirectoryIds
                                                             )
 
-                                                        match!
-                                                            Directory.GetByDirectoryIds getByDirectoryIdParameters
-                                                        with
+                                                        match! Directory.GetByDirectoryIds getByDirectoryIdParameters with
                                                         | Ok returnValue ->
                                                             //logToAnsiConsole Colors.Verbose $"Succeeded calling Directory.GetByDirectoryIds."
                                                             // Create a new version of GraceStatus that includes the new DirectoryVersions.
                                                             let newDirectoryVersions = returnValue.ReturnValue
 
                                                             let newerGraceStatus =
-                                                                updateGraceStatusWithNewDirectoryVersionsFromServer
-                                                                    newGraceStatus
-                                                                    newDirectoryVersions
+                                                                updateGraceStatusWithNewDirectoryVersionsFromServer newGraceStatus newDirectoryVersions
                                                             //logToAnsiConsole Colors.Verbose $"Succeeded calling updateGraceStatusWithNewDirectoryVersions."
 
                                                             // Identify files that we don't already have in object cache and download them.
                                                             for directoryVersion in newerGraceStatus.Index.Values do
                                                                 match!
-                                                                    downloadFilesFromObjectStorage
-                                                                        directoryVersion.Files
-                                                                        (getCorrelationId parseResult)
+                                                                    downloadFilesFromObjectStorage directoryVersion.Files (getCorrelationId parseResult)
                                                                 with
                                                                 | Ok _ ->
                                                                     //logToAnsiConsole Colors.Verbose $"Succeeded downloading files from object storage for {directoryVersion.RelativePath}."
@@ -3028,9 +2641,7 @@ module Branch =
                                                             configuration.BranchName <- branchDto.BranchName
                                                             updateConfiguration configuration
                                                         | Error error ->
-                                                            logToAnsiConsole
-                                                                Colors.Verbose
-                                                                $"Failed calling Directory.GetByDirectoryIds."
+                                                            logToAnsiConsole Colors.Verbose $"Failed calling Directory.GetByDirectoryIds."
 
                                                             logToAnsiConsole Colors.Error $"{error}"
                                                     | Error error ->
@@ -3047,10 +2658,7 @@ module Branch =
                                             //    t6.StopTask()
                                             //    return -1
                                             else
-                                                logToAnsiConsole
-                                                    Colors.Error
-                                                    (BranchError.getErrorMessage
-                                                        BranchError.EitherBranchIdOrBranchNameRequired)
+                                                logToAnsiConsole Colors.Error (BranchError.getErrorMessage BranchError.EitherBranchIdOrBranchNameRequired)
 
                                                 t6.StopTask()
                                                 t7.StopTask()
@@ -3069,8 +2677,7 @@ module Branch =
                                 | None ->
                                     let! differences = scanForDifferences previousGraceStatus
 
-                                    let! (updatedGraceStatus, newDirectoryVersions) =
-                                        getNewGraceStatusAndDirectoryVersions previousGraceStatus differences
+                                    let! (updatedGraceStatus, newDirectoryVersions) = getNewGraceStatusAndDirectoryVersions previousGraceStatus differences
 
                                     newGraceStatus <- updatedGraceStatus
                                     rootDirectoryId <- newGraceStatus.RootDirectoryId
@@ -3096,17 +2703,14 @@ module Branch =
                                     let newFileVersions =
                                         updatedRelativePaths.Select(fun relativePath ->
                                             newDirectoryVersions
-                                                .First(fun dv ->
-                                                    dv.Files.Exists(fun file -> file.RelativePath = relativePath))
+                                                .First(fun dv -> dv.Files.Exists(fun file -> file.RelativePath = relativePath))
                                                 .Files.First(fun file -> file.RelativePath = relativePath))
 
-                                    let! uploadResult =
-                                        uploadFilesToObjectStorage newFileVersions (getCorrelationId parseResult)
+                                    let! uploadResult = uploadFilesToObjectStorage newFileVersions (getCorrelationId parseResult)
 
                                     let saveParameters = SaveDirectoryVersionsParameters()
 
-                                    saveParameters.DirectoryVersions <-
-                                        newDirectoryVersions.Select(fun dv -> dv.ToDirectoryVersion).ToList()
+                                    saveParameters.DirectoryVersions <- newDirectoryVersions.Select(fun dv -> dv.ToDirectoryVersion).ToList()
 
                                     let! uploadDirectoryVersions = Directory.SaveDirectoryVersions saveParameters
 
@@ -3123,9 +2727,7 @@ module Branch =
                                 // Save is not enabled on this branch, so we can skip all of the above.
                                 // Get current values from the current branch based on finding no differences, because we're not creating a save or uploading anything.
                                 let! (updatedGraceStatus, newDirectoryVersions) =
-                                    getNewGraceStatusAndDirectoryVersions
-                                        previousGraceStatus
-                                        (List<FileSystemDifference>())
+                                    getNewGraceStatusAndDirectoryVersions previousGraceStatus (List<FileSystemDifference>())
 
                                 newGraceStatus <- updatedGraceStatus
                                 rootDirectoryId <- newGraceStatus.RootDirectoryId
@@ -3193,8 +2795,7 @@ module Branch =
 
                                         let missingDirectoryIds =
                                             directoryIds
-                                                .Where(fun directoryId ->
-                                                    not <| previousDirectoryIds.Contains(directoryId))
+                                                .Where(fun directoryId -> not <| previousDirectoryIds.Contains(directoryId))
                                                 .ToList()
 
                                         // Get missing directory versions from server.
@@ -3212,18 +2813,12 @@ module Branch =
                                             let newDirectoryVersions = returnValue.ReturnValue
 
                                             let newerGraceStatus =
-                                                updateGraceStatusWithNewDirectoryVersionsFromServer
-                                                    newGraceStatus
-                                                    newDirectoryVersions
+                                                updateGraceStatusWithNewDirectoryVersionsFromServer newGraceStatus newDirectoryVersions
                                             //logToAnsiConsole Colors.Verbose $"Succeeded calling updateGraceStatusWithNewDirectoryVersions."
 
                                             // Identify files that we don't already have in object cache and download them.
                                             for directoryVersion in newerGraceStatus.Index.Values do
-                                                match!
-                                                    downloadFilesFromObjectStorage
-                                                        directoryVersion.Files
-                                                        (getCorrelationId parseResult)
-                                                with
+                                                match! downloadFilesFromObjectStorage directoryVersion.Files (getCorrelationId parseResult) with
                                                 | Ok _ ->
                                                     //logToAnsiConsole Colors.Verbose $"Succeeded downloading files from object storage for {directoryVersion.RelativePath}."
                                                     ()
@@ -3235,12 +2830,7 @@ module Branch =
                                                     logToAnsiConsole Colors.Error $"{error}"
 
                                             // Update working directory based on new GraceStatus.Index
-                                            do!
-                                                updateWorkingDirectory
-                                                    newGraceStatus
-                                                    newerGraceStatus
-                                                    newDirectoryVersions
-                                                    (getCorrelationId parseResult)
+                                            do! updateWorkingDirectory newGraceStatus newerGraceStatus newDirectoryVersions (getCorrelationId parseResult)
                                             //logToAnsiConsole Colors.Verbose $"Succeeded calling updateWorkingDirectory."
 
                                             // Save the new Grace Status.
@@ -3252,9 +2842,7 @@ module Branch =
                                             configuration.BranchName <- branchDto.BranchName
                                             updateConfiguration configuration
                                         | Error error ->
-                                            logToAnsiConsole
-                                                Colors.Verbose
-                                                $"Failed calling Directory.GetByDirectoryIds."
+                                            logToAnsiConsole Colors.Verbose $"Failed calling Directory.GetByDirectoryIds."
 
                                             logToAnsiConsole Colors.Error (Markup.Escape($"{error}"))
                                     | Error error ->
@@ -3328,9 +2916,7 @@ module Branch =
                     let parentBranchDto = returnValue.ReturnValue
 
                     if branchDto.BasedOn = parentBranchDto.LatestPromotion then
-                        AnsiConsole.MarkupLine(
-                            "The current branch is already based on the latest promotion in the parent branch."
-                        )
+                        AnsiConsole.MarkupLine("The current branch is already based on the latest promotion in the parent branch.")
 
                         AnsiConsole.MarkupLine("Run `grace status` to see more.")
                         return 0
@@ -3344,8 +2930,7 @@ module Branch =
                                 OrganizationName = parameters.OrganizationName,
                                 RepositoryId = $"{branchDto.RepositoryId}",
                                 CorrelationId = parameters.CorrelationId,
-                                ReferenceIds =
-                                    [| branchDto.BasedOn; branchDto.LatestCommit; parentBranchDto.LatestPromotion |]
+                                ReferenceIds = [| branchDto.BasedOn; branchDto.LatestCommit; parentBranchDto.LatestPromotion |]
                             )
 
                         match! Repository.GetReferencesByReferenceId(getReferencesByReferenceIdParameters) with
@@ -3353,22 +2938,13 @@ module Branch =
                             let referenceDtos = returnValue.ReturnValue
 
                             let latestCommit =
-                                referenceDtos.FirstOrDefault(
-                                    (fun ref -> ref.ReferenceId = branchDto.LatestCommit),
-                                    ReferenceDto.Default
-                                )
+                                referenceDtos.FirstOrDefault((fun ref -> ref.ReferenceId = branchDto.LatestCommit), ReferenceDto.Default)
 
                             let parentLatestPromotion =
-                                referenceDtos.FirstOrDefault(
-                                    (fun ref -> ref.ReferenceId = parentBranchDto.LatestPromotion),
-                                    ReferenceDto.Default
-                                )
+                                referenceDtos.FirstOrDefault((fun ref -> ref.ReferenceId = parentBranchDto.LatestPromotion), ReferenceDto.Default)
 
                             let basedOn =
-                                referenceDtos.FirstOrDefault(
-                                    (fun ref -> ref.ReferenceId = branchDto.BasedOn),
-                                    ReferenceDto.Default
-                                )
+                                referenceDtos.FirstOrDefault((fun ref -> ref.ReferenceId = branchDto.BasedOn), ReferenceDto.Default)
 
                             // Get the latest reference from the current branch.
                             let getReferencesParameters =
@@ -3464,8 +3040,7 @@ module Branch =
                                     for fileDifference in diff1.Differences do
                                         if
                                             not
-                                            <| diff2.Differences.Any(fun d ->
-                                                d.RelativePath = fileDifference.RelativePath)
+                                            <| diff2.Differences.Any(fun d -> d.RelativePath = fileDifference.RelativePath)
                                         then
                                             // Copy different file version into place - similar to how we do it for switch
                                             filesToDownload.Add(fileDifference)
@@ -3485,17 +3060,11 @@ module Branch =
                                         )
 
                                     // Get the directory versions for the parent promotion that we're rebasing on, and the latest reference.
-                                    let! d1 =
-                                        Directory.GetDirectoryVersionsRecursive(
-                                            getParentLatestPromotionDirectoryParameters
-                                        )
+                                    let! d1 = Directory.GetDirectoryVersionsRecursive(getParentLatestPromotionDirectoryParameters)
 
-                                    let! d2 =
-                                        Directory.GetDirectoryVersionsRecursive(getLatestReferenceDirectoryParameters)
+                                    let! d2 = Directory.GetDirectoryVersionsRecursive(getLatestReferenceDirectoryParameters)
 
-                                    let createFileVersionLookupDictionary
-                                        (directoryVersions: IEnumerable<DirectoryVersion>)
-                                        =
+                                    let createFileVersionLookupDictionary (directoryVersions: IEnumerable<DirectoryVersion>) =
                                         let lookup = Dictionary<RelativePath, LocalFileVersion>()
 
                                         directoryVersions
@@ -3521,37 +3090,26 @@ module Branch =
                                         // Get the specific FileVersions for those files from the contents of the parent's latest promotion.
                                         let fileVersionsToDownload =
                                             filesToDownload
-                                            |> Seq.where (fun fileToDownload ->
-                                                parentLatestPromotionLookup.ContainsKey(
-                                                    $"{fileToDownload.RelativePath}"
-                                                ))
-                                            |> Seq.map (fun fileToDownload ->
-                                                parentLatestPromotionLookup[$"{fileToDownload.RelativePath}"])
+                                            |> Seq.where (fun fileToDownload -> parentLatestPromotionLookup.ContainsKey($"{fileToDownload.RelativePath}"))
+                                            |> Seq.map (fun fileToDownload -> parentLatestPromotionLookup[$"{fileToDownload.RelativePath}"])
                                         //logToAnsiConsole Colors.Verbose $"fileVersionsToDownload: {fileVersionsToDownload.Count()}"
                                         //for f in fileVersionsToDownload do
                                         //    logToAnsiConsole Colors.Verbose  $"relativePath: {f.RelativePath}"
 
                                         // Download those FileVersions from object storage, and copy them into the working directory.
-                                        match!
-                                            downloadFilesFromObjectStorage
-                                                fileVersionsToDownload
-                                                parameters.CorrelationId
-                                        with
+                                        match! downloadFilesFromObjectStorage fileVersionsToDownload parameters.CorrelationId with
                                         | Ok _ ->
                                             //logToAnsiConsole Colors.Verbose $"Succeeded in downloadFilesFromObjectStorage."
                                             fileVersionsToDownload
                                             |> Seq.iter (fun file ->
-                                                logToAnsiConsole
-                                                    Colors.Verbose
-                                                    $"Copying {file.RelativePath} from {file.FullObjectPath} to {file.FullName}."
+                                                logToAnsiConsole Colors.Verbose $"Copying {file.RelativePath} from {file.FullObjectPath} to {file.FullName}."
                                                 // Delete the existing file in the working directory.
                                                 File.Delete(file.FullName)
                                                 // Copy the version from the object cache to the working directory.
                                                 File.Copy(file.FullObjectPath, file.FullName))
 
                                             logToAnsiConsole Colors.Verbose $"Copied files into place."
-                                        | Error error ->
-                                            AnsiConsole.WriteLine($"[{Colors.Error}]{Markup.Escape(error)}[/]")
+                                        | Error error -> AnsiConsole.WriteLine($"[{Colors.Error}]{Markup.Escape(error)}[/]")
 
                                         // If a file has changed in the second diff, but not in the first diff, cool, we can keep those changes, nothing to be done.
 
@@ -3572,12 +3130,10 @@ module Branch =
                                                 // Check the Sha256Hash values; if they're identical, ignore the file.
                                                 //let fileVersion1 = parentLatestPromotionLookup[$"{diff1Difference.RelativePath}"]
                                                 let fileVersion1 =
-                                                    parentLatestPromotionLookup.FirstOrDefault(fun kvp ->
-                                                        kvp.Key = $"{diff1Difference.RelativePath}")
+                                                    parentLatestPromotionLookup.FirstOrDefault(fun kvp -> kvp.Key = $"{diff1Difference.RelativePath}")
                                                 //let fileVersion2 = latestReferenceLookup[$"{diff2Difference.RelativePath}"]
                                                 let fileVersion2 =
-                                                    latestReferenceLookup.FirstOrDefault(fun kvp ->
-                                                        kvp.Key = $"{diff2Difference.RelativePath}")
+                                                    latestReferenceLookup.FirstOrDefault(fun kvp -> kvp.Key = $"{diff2Difference.RelativePath}")
                                                 //if (not <| isNull(fileVersion1) && not <| isNull(fileVersion2)) && (fileVersion1.Value.Sha256Hash <> fileVersion2.Value.Sha256Hash) then
                                                 if (fileVersion1.Value.Sha256Hash <> fileVersion2.Value.Sha256Hash) then
                                                     // Compare them at a line level; if there are no overlapping lines, we can just modify the working-directory version.
@@ -3599,12 +3155,8 @@ module Branch =
 
                                         /// Create new directory versions and updates Grace Status with them.
                                         let getNewGraceStatusAndDirectoryVersions
-                                            (
-                                                showOutput,
-                                                graceStatus,
-                                                currentBranch: BranchDto,
-                                                differences: IEnumerable<FileSystemDifference>
-                                            ) =
+                                            (showOutput, graceStatus, currentBranch: BranchDto, differences: IEnumerable<FileSystemDifference>)
+                                            =
                                             task {
                                                 if differences.Count() > 0 then
                                                     let! (updatedGraceStatus, newDirectoryVersions) =
@@ -3616,18 +3168,12 @@ module Branch =
                                             }
 
                                         /// Upload new DirectoryVersion records to the server.
-                                        let uploadNewDirectoryVersions
-                                            (currentBranch: BranchDto)
-                                            (newDirectoryVersions: List<LocalDirectoryVersion>)
-                                            =
+                                        let uploadNewDirectoryVersions (currentBranch: BranchDto) (newDirectoryVersions: List<LocalDirectoryVersion>) =
                                             task {
                                                 if currentBranch.SaveEnabled && newDirectoryVersions.Any() then
                                                     let saveParameters = SaveDirectoryVersionsParameters()
 
-                                                    saveParameters.DirectoryVersions <-
-                                                        newDirectoryVersions
-                                                            .Select(fun dv -> dv.ToDirectoryVersion)
-                                                            .ToList()
+                                                    saveParameters.DirectoryVersions <- newDirectoryVersions.Select(fun dv -> dv.ToDirectoryVersion).ToList()
 
                                                     match! Directory.SaveDirectoryVersions saveParameters with
                                                     | Ok returnValue -> return Ok()
@@ -3643,34 +3189,23 @@ module Branch =
                                             // Update the GraceStatus file with the new file versions (and therefore new LocalDirectoryVersion's) we just put in place.
                                             // filesToDownload is, conveniently, the list of files we're changing in the rebase.
                                             match!
-                                                getNewGraceStatusAndDirectoryVersions (
-                                                    parseResult |> hasOutput,
-                                                    graceStatus,
-                                                    branchDto,
-                                                    filesToDownload
-                                                )
+                                                getNewGraceStatusAndDirectoryVersions (parseResult |> hasOutput, graceStatus, branchDto, filesToDownload)
                                             with
                                             | Ok(updatedGraceStatus, newDirectoryVersions) ->
                                                 // Ensure that previous DirectoryVersions for a given path are deleted from GraceStatus.
                                                 newDirectoryVersions
                                                 |> Seq.iter (fun localDirectoryVersion ->
                                                     let directoryVersionsWithSameRelativePath =
-                                                        updatedGraceStatus.Index.Values.Where(fun dv ->
-                                                            dv.RelativePath = localDirectoryVersion.RelativePath)
+                                                        updatedGraceStatus.Index.Values.Where(fun dv -> dv.RelativePath = localDirectoryVersion.RelativePath)
 
                                                     if directoryVersionsWithSameRelativePath.Count() > 1 then
                                                         // Delete all but the most recent DirectoryVersion for this path.
                                                         directoryVersionsWithSameRelativePath
-                                                        |> Seq.where (fun dv ->
-                                                            dv.DirectoryId <> localDirectoryVersion.DirectoryId)
+                                                        |> Seq.where (fun dv -> dv.DirectoryId <> localDirectoryVersion.DirectoryId)
                                                         |> Seq.iter (fun dv ->
-                                                            let mutable localDirectoryVersion =
-                                                                LocalDirectoryVersion.Default
+                                                            let mutable localDirectoryVersion = LocalDirectoryVersion.Default
 
-                                                            updatedGraceStatus.Index.Remove(
-                                                                dv.DirectoryId,
-                                                                &localDirectoryVersion
-                                                            )
+                                                            updatedGraceStatus.Index.Remove(dv.DirectoryId, &localDirectoryVersion)
                                                             |> ignore))
 
                                                 let! result = uploadNewDirectoryVersions branchDto newDirectoryVersions
@@ -3715,9 +3250,7 @@ module Branch =
                                                 | Ok returnValue ->
                                                     AnsiConsole.MarkupLine($"[{Colors.Important}]Rebase succeeded.[/]")
 
-                                                    AnsiConsole.MarkupLine(
-                                                        $"[{Colors.Verbose}]({serialize returnValue})[/]"
-                                                    )
+                                                    AnsiConsole.MarkupLine($"[{Colors.Verbose}]({serialize returnValue})[/]")
 
                                                     return 0
                                                 | Error error ->
@@ -3762,8 +3295,7 @@ module Branch =
                     do! File.WriteAllTextAsync(updateInProgressFileName, "`grace rebase` is in progress.")
                     let! graceStatus = readGraceStatusFile ()
 
-                    let! result =
-                        rebaseHandler parseResult (rebaseParameters |> normalizeIdsAndNames parseResult) graceStatus
+                    let! result = rebaseHandler parseResult (rebaseParameters |> normalizeIdsAndNames parseResult) graceStatus
 
                     return result
                 finally
@@ -3833,34 +3365,19 @@ module Branch =
                             let referenceDtos = returnValue.ReturnValue
 
                             let latestSave =
-                                referenceDtos.FirstOrDefault(
-                                    (fun ref -> ref.ReferenceId = branchDto.LatestSave),
-                                    ReferenceDto.Default
-                                )
+                                referenceDtos.FirstOrDefault((fun ref -> ref.ReferenceId = branchDto.LatestSave), ReferenceDto.Default)
 
                             let latestCheckpoint =
-                                referenceDtos.FirstOrDefault(
-                                    (fun ref -> ref.ReferenceId = branchDto.LatestCheckpoint),
-                                    ReferenceDto.Default
-                                )
+                                referenceDtos.FirstOrDefault((fun ref -> ref.ReferenceId = branchDto.LatestCheckpoint), ReferenceDto.Default)
 
                             let latestCommit =
-                                referenceDtos.FirstOrDefault(
-                                    (fun ref -> ref.ReferenceId = branchDto.LatestCommit),
-                                    ReferenceDto.Default
-                                )
+                                referenceDtos.FirstOrDefault((fun ref -> ref.ReferenceId = branchDto.LatestCommit), ReferenceDto.Default)
 
                             let latestParentBranchPromotion =
-                                referenceDtos.FirstOrDefault(
-                                    (fun ref -> ref.ReferenceId = parentBranchDto.LatestPromotion),
-                                    ReferenceDto.Default
-                                )
+                                referenceDtos.FirstOrDefault((fun ref -> ref.ReferenceId = parentBranchDto.LatestPromotion), ReferenceDto.Default)
 
                             let basedOn =
-                                referenceDtos.FirstOrDefault(
-                                    (fun ref -> ref.ReferenceId = branchDto.BasedOn),
-                                    ReferenceDto.Default
-                                )
+                                referenceDtos.FirstOrDefault((fun ref -> ref.ReferenceId = branchDto.BasedOn), ReferenceDto.Default)
 
                             let getReferencesParameters =
                                 Parameters.Branch.GetReferencesParameters(
@@ -3918,10 +3435,7 @@ module Branch =
                                 table.ShowHeaders <- false
 
                                 table
-                                    .AddColumns(
-                                        String.replicate (Current().OwnerName.Length) "_",
-                                        String.replicate (Current().OwnerName.Length) "_"
-                                    ) // Using Current().OwnerName.Length is aesthetically pleasing, there's no deeper reason for it.
+                                    .AddColumns(String.replicate (Current().OwnerName.Length) "_", String.replicate (Current().OwnerName.Length) "_") // Using Current().OwnerName.Length is aesthetically pleasing, there's no deeper reason for it.
                                     .AddRow(
                                         $"[{Colors.Important}]Owner[/]",
                                         $"[{Colors.Important}]{Current().OwnerName}[/] [{Colors.Deemphasized}]- {Current().OwnerId}[/]"
@@ -3963,17 +3477,11 @@ module Branch =
                                             $"[{Colors.Important}]Parent branch[/]",
                                             $"[{Colors.Important}]{parentBranchDto.BranchName}[/] - Allows {permissions parentBranchDto} [{Colors.Deemphasized}]- {parentBranchDto.BranchId}[/]"
                                         )
-                                        .AddRow(
-                                            $"  - latest promotion",
-                                            getReferenceRowValue latestParentBranchPromotion
-                                        )
+                                        .AddRow($"  - latest promotion", getReferenceRowValue latestParentBranchPromotion)
                                         .AddRow($"", $"  {latestParentBranchPromotion.ReferenceText}")
                                     |> ignore
                                 else
-                                    table.AddRow(
-                                        $"[{Colors.Important}]Parent branch[/]",
-                                        $"[{Colors.Important}]  None[/]"
-                                    )
+                                    table.AddRow($"[{Colors.Important}]Parent branch[/]", $"[{Colors.Important}]  None[/]")
                                     |> ignore
 
                                 // Need to add this portion of the header after everything else is rendered so we know the width.
@@ -4040,9 +3548,7 @@ module Branch =
                                 .StartAsync(fun progressContext ->
                                     task {
                                         let t0 =
-                                            progressContext.AddTask(
-                                                $"[{Color.DodgerBlue1}]Sending command to the server.[/]"
-                                            )
+                                            progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
 
                                         let! result = Branch.Delete(deleteParameters)
                                         t0.Increment(100.0)
@@ -4294,10 +3800,7 @@ module Branch =
         branchCommand.AddCommand(getCommand)
 
         let getReferencesCommand =
-            new Command(
-                "get-references",
-                Description = "Retrieves a list of the most recent references from the branch."
-            )
+            new Command("get-references", Description = "Retrieves a list of the most recent references from the branch.")
             |> addCommonOptions
             |> addOption Options.maxCount
             |> addOption Options.fullSha
@@ -4306,10 +3809,7 @@ module Branch =
         branchCommand.AddCommand(getReferencesCommand)
 
         let getPromotionsCommand =
-            new Command(
-                "get-promotions",
-                Description = "Retrieves a list of the most recent promotions from the branch."
-            )
+            new Command("get-promotions", Description = "Retrieves a list of the most recent promotions from the branch.")
             |> addCommonOptions
             |> addOption Options.maxCount
             |> addOption Options.fullSha
@@ -4327,10 +3827,7 @@ module Branch =
         branchCommand.AddCommand(getCommitsCommand)
 
         let getCheckpointsCommand =
-            new Command(
-                "get-checkpoints",
-                Description = "Retrieves a list of the most recent checkpoints from the branch."
-            )
+            new Command("get-checkpoints", Description = "Retrieves a list of the most recent checkpoints from the branch.")
             |> addCommonOptions
             |> addOption Options.maxCount
             |> addOption Options.fullSha

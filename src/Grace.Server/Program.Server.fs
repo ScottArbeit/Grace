@@ -35,8 +35,7 @@ module Program =
                     .UseKestrel(fun kestrelServerOptions ->
                         kestrelServerOptions.Listen(IPAddress.Any, 5000)
                         //kestrelServerOptions.Listen(IPAddress.Any, 5001, (fun listenOptions -> listenOptions.UseHttps("/etc/certificates/gracedevcert.pfx", "GraceDevCert") |> ignore))
-                        kestrelServerOptions.ConfigureEndpointDefaults(fun listenOptions ->
-                            listenOptions.Protocols <- HttpProtocols.Http1AndHttp2)
+                        kestrelServerOptions.ConfigureEndpointDefaults(fun listenOptions -> listenOptions.Protocols <- HttpProtocols.Http1AndHttp2)
 
                         kestrelServerOptions.ConfigureHttpsDefaults(fun options ->
                             options.SslProtocols <- SslProtocols.Tls12 ||| SslProtocols.Tls13

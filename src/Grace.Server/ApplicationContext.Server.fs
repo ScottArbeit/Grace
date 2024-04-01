@@ -125,9 +125,7 @@ module ApplicationContext =
                     if tcpListeners.Any(fun tcpListener -> tcpListener.Port = gRPCPort) then
                         logToConsole $"gRPC port is ready."
                         isReady <- true
-                    else if
-                        getCurrentInstant().Minus(startTime) > Duration.FromSeconds(secondsToWaitForDaprToBeReady)
-                    then
+                    else if getCurrentInstant().Minus(startTime) > Duration.FromSeconds(secondsToWaitForDaprToBeReady) then
                         logToConsole $"gRPC port is not ready after {secondsToWaitForDaprToBeReady} seconds. Exiting."
                         Environment.Exit(-1)
             else
@@ -175,11 +173,7 @@ module ApplicationContext =
 
             // Get a reference to the CosmosDB container.
             let containerProperties =
-                ContainerProperties(
-                    Id = cosmosContainerName,
-                    PartitionKeyPath = "/partitionKey",
-                    DefaultTimeToLive = 3600
-                )
+                ContainerProperties(Id = cosmosContainerName, PartitionKeyPath = "/partitionKey", DefaultTimeToLive = 3600)
 
             let! containerResponse = database.CreateContainerIfNotExistsAsync(containerProperties)
             let cosmosContainer = containerResponse.Container

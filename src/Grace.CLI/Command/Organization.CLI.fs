@@ -64,12 +64,7 @@ module Organization =
             )
 
         let organizationNameRequired =
-            new Option<String>(
-                "--organizationName",
-                IsRequired = true,
-                Description = "The name of the organization.",
-                Arity = ArgumentArity.ExactlyOne
-            )
+            new Option<String>("--organizationName", IsRequired = true, Description = "The name of the organization.", Arity = ArgumentArity.ExactlyOne)
 
         let organizationType =
             (new Option<String>(
@@ -90,42 +85,19 @@ module Organization =
                 .FromAmong(listCases<SearchVisibility> ())
 
         let description =
-            new Option<String>(
-                "--description",
-                IsRequired = true,
-                Description = "Description of the owner.",
-                Arity = ArgumentArity.ExactlyOne
-            )
+            new Option<String>("--description", IsRequired = true, Description = "Description of the owner.", Arity = ArgumentArity.ExactlyOne)
 
         let newName =
-            new Option<String>(
-                "--newName",
-                IsRequired = true,
-                Description = "The new name of the organization.",
-                Arity = ArgumentArity.ExactlyOne
-            )
+            new Option<String>("--newName", IsRequired = true, Description = "The new name of the organization.", Arity = ArgumentArity.ExactlyOne)
 
         let force =
-            new Option<bool>(
-                "--force",
-                IsRequired = false,
-                Description = "Delete even if there is data under this organization. [default: false]"
-            )
+            new Option<bool>("--force", IsRequired = false, Description = "Delete even if there is data under this organization. [default: false]")
 
         let includeDeleted =
-            new Option<bool>(
-                [| "--include-deleted"; "-d" |],
-                IsRequired = false,
-                Description = "Include deleted organizations in the result. [default: false]"
-            )
+            new Option<bool>([| "--include-deleted"; "-d" |], IsRequired = false, Description = "Include deleted organizations in the result. [default: false]")
 
         let deleteReason =
-            new Option<String>(
-                "--deleteReason",
-                IsRequired = true,
-                Description = "The reason for deleting the organization.",
-                Arity = ArgumentArity.ExactlyOne
-            )
+            new Option<String>("--deleteReason", IsRequired = true, Description = "The reason for deleting the organization.", Arity = ArgumentArity.ExactlyOne)
 
         let doNotSwitch =
             new Option<bool>(
@@ -135,13 +107,7 @@ module Organization =
                 Arity = ArgumentArity.ZeroOrOne
             )
 
-    let mustBeAValidGuid
-        (parseResult: ParseResult)
-        (parameters: CommonParameters)
-        (option: Option)
-        (value: string)
-        (error: OrganizationError)
-        =
+    let mustBeAValidGuid (parseResult: ParseResult) (parameters: CommonParameters) (option: Option) (value: string) (error: OrganizationError) =
         let mutable guid = Guid.Empty
 
         if
@@ -153,13 +119,7 @@ module Organization =
         else
             Ok(parseResult, parameters)
 
-    let mustBeAValidGraceName
-        (parseResult: ParseResult)
-        (parameters: CommonParameters)
-        (option: Option)
-        (value: string)
-        (error: OrganizationError)
-        =
+    let mustBeAValidGraceName (parseResult: ParseResult) (parameters: CommonParameters) (option: Option) (value: string) (error: OrganizationError) =
         if
             parseResult.CommandResult.FindResultFor(option) <> null
             && not <| Constants.GraceNameRegex.IsMatch(value)
@@ -176,20 +136,10 @@ module Organization =
             mustBeAValidGraceName parseResult parameters Options.ownerName parameters.OwnerName InvalidOwnerName
 
         let ``OrganizationId must be a Guid`` (parseResult: ParseResult, parameters: CommonParameters) =
-            mustBeAValidGuid
-                parseResult
-                parameters
-                Options.organizationId
-                parameters.OrganizationId
-                InvalidOrganizationId
+            mustBeAValidGuid parseResult parameters Options.organizationId parameters.OrganizationId InvalidOrganizationId
 
         let ``OrganizationName must be a valid Grace name`` (parseResult: ParseResult, parameters: CommonParameters) =
-            mustBeAValidGraceName
-                parseResult
-                parameters
-                Options.organizationName
-                parameters.OrganizationName
-                InvalidOrganizationName
+            mustBeAValidGraceName parseResult parameters Options.organizationName parameters.OrganizationName InvalidOrganizationName
 
         (parseResult, parameters)
         |> ``OwnerId must be a Guid``
@@ -205,11 +155,7 @@ module Organization =
         then
             Ok(parseResult, parameters)
         else
-            Error(
-                GraceError.Create
-                    (OrganizationError.getErrorMessage OrganizationNameIsRequired)
-                    (parameters.CorrelationId)
-            )
+            Error(GraceError.Create (OrganizationError.getErrorMessage OrganizationNameIsRequired) (parameters.CorrelationId))
 
     let ``Either OwnerId or OwnerName must be provided`` (parseResult: ParseResult, parameters: CommonParameters) =
         if
@@ -218,11 +164,7 @@ module Organization =
         then
             Ok(parseResult, parameters)
         else
-            Error(
-                GraceError.Create
-                    (OrganizationError.getErrorMessage EitherOwnerIdOrOwnerNameRequired)
-                    (parameters.CorrelationId)
-            )
+            Error(GraceError.Create (OrganizationError.getErrorMessage EitherOwnerIdOrOwnerNameRequired) (parameters.CorrelationId))
 
     /// Adjusts parameters to account for whether Id's or Name's were specified by the user, or should be taken from default values.
     let normalizeIdsAndNames<'T when 'T :> CommonParameters> (parseResult: ParseResult) (parameters: 'T) =
@@ -281,9 +223,7 @@ module Organization =
                                 .StartAsync(fun progressContext ->
                                     task {
                                         let t0 =
-                                            progressContext.AddTask(
-                                                $"[{Color.DodgerBlue1}]Sending command to the server.[/]"
-                                            )
+                                            progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
 
                                         let! result = Organization.Create(parameters)
                                         t0.Increment(100.0)
@@ -293,8 +233,7 @@ module Organization =
                         return! Organization.Create(parameters)
                 | Error error -> return Error error
             with ex ->
-                return
-                    Error(GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
+                return Error(GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
         }
 
     let private Create =
@@ -347,9 +286,7 @@ module Organization =
                                 .StartAsync(fun progressContext ->
                                     task {
                                         let t0 =
-                                            progressContext.AddTask(
-                                                $"[{Color.DodgerBlue1}]Sending command to the server.[/]"
-                                            )
+                                            progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
 
                                         let! result = Organization.Get(parameters)
                                         t0.Increment(100.0)
@@ -359,8 +296,7 @@ module Organization =
                         return! Organization.Get(parameters)
                 | Error error -> return Error error
             with ex ->
-                return
-                    Error(GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
+                return Error(GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
         }
 
     let private Get =
@@ -409,9 +345,7 @@ module Organization =
                                 .StartAsync(fun progressContext ->
                                     task {
                                         let t0 =
-                                            progressContext.AddTask(
-                                                $"[{Color.DodgerBlue1}]Sending command to the server.[/]"
-                                            )
+                                            progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
 
                                         let! result = Organization.SetName(parameters)
                                         t0.Increment(100.0)
@@ -421,8 +355,7 @@ module Organization =
                         return! Organization.SetName(parameters)
                 | Error error -> return Error error
             with ex ->
-                return
-                    Error(GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
+                return Error(GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
         }
 
     let private SetName =
@@ -464,9 +397,7 @@ module Organization =
                                 .StartAsync(fun progressContext ->
                                     task {
                                         let t0 =
-                                            progressContext.AddTask(
-                                                $"[{Color.DodgerBlue1}]Sending command to the server.[/]"
-                                            )
+                                            progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
 
                                         let! result = Organization.SetType(parameters)
                                         t0.Increment(100.0)
@@ -476,8 +407,7 @@ module Organization =
                         return! Organization.SetType(parameters)
                 | Error error -> return Error error
             with ex ->
-                return
-                    Error(GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
+                return Error(GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
         }
 
     let private SetType =
@@ -492,10 +422,7 @@ module Organization =
         inherit CommonParameters()
         member val public SearchVisibility: string = String.Empty with get, set
 
-    let private setSearchVisibilityHandler
-        (parseResult: ParseResult)
-        (setSearchVisibilityParameters: SearchVisibilityParameters)
-        =
+    let private setSearchVisibilityHandler (parseResult: ParseResult) (setSearchVisibilityParameters: SearchVisibilityParameters) =
         task {
             try
                 if parseResult |> verbose then
@@ -529,9 +456,7 @@ module Organization =
                                 .StartAsync(fun progressContext ->
                                     task {
                                         let t0 =
-                                            progressContext.AddTask(
-                                                $"[{Color.DodgerBlue1}]Sending command to the server.[/]"
-                                            )
+                                            progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
 
                                         let! result = Organization.SetSearchVisibility(parameters)
                                         t0.Increment(100.0)
@@ -541,21 +466,16 @@ module Organization =
                         return! Organization.SetSearchVisibility(parameters)
                 | Error error -> return Error error
             with ex ->
-                return
-                    Error(GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
+                return Error(GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
         }
 
     let private SetSearchVisibility =
-        CommandHandler.Create
-            (fun (parseResult: ParseResult) (setSearchVisibilityParameters: SearchVisibilityParameters) ->
-                task {
-                    let! result =
-                        setSearchVisibilityHandler
-                            parseResult
-                            (setSearchVisibilityParameters |> normalizeIdsAndNames parseResult)
+        CommandHandler.Create(fun (parseResult: ParseResult) (setSearchVisibilityParameters: SearchVisibilityParameters) ->
+            task {
+                let! result = setSearchVisibilityHandler parseResult (setSearchVisibilityParameters |> normalizeIdsAndNames parseResult)
 
-                    return result |> renderOutput parseResult
-                })
+                return result |> renderOutput parseResult
+            })
 
     // SetDescription subcommand
     type DescriptionParameters() =
@@ -590,9 +510,7 @@ module Organization =
                                 .StartAsync(fun progressContext ->
                                     task {
                                         let t0 =
-                                            progressContext.AddTask(
-                                                $"[{Color.DodgerBlue1}]Sending command to the server.[/]"
-                                            )
+                                            progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
 
                                         let! result = Organization.SetDescription(parameters)
                                         t0.Increment(100.0)
@@ -602,15 +520,13 @@ module Organization =
                         return! Organization.SetDescription(parameters)
                 | Error error -> return Error error
             with ex ->
-                return
-                    Error(GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
+                return Error(GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
         }
 
     let private SetDescription =
         CommandHandler.Create(fun (parseResult: ParseResult) (descriptionParameters: DescriptionParameters) ->
             task {
-                let! result =
-                    setDescriptionHandler parseResult (descriptionParameters |> normalizeIdsAndNames parseResult)
+                let! result = setDescriptionHandler parseResult (descriptionParameters |> normalizeIdsAndNames parseResult)
 
                 return result |> renderOutput parseResult
             })
@@ -649,9 +565,7 @@ module Organization =
                                 .StartAsync(fun progressContext ->
                                     task {
                                         let t0 =
-                                            progressContext.AddTask(
-                                                $"[{Color.DodgerBlue1}]Sending command to the server.[/]"
-                                            )
+                                            progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
 
                                         let! result = Organization.Delete(parameters)
                                         t0.Increment(100.0)
@@ -661,8 +575,7 @@ module Organization =
                         return! Organization.Delete(parameters)
                 | Error error -> return Error error
             with ex ->
-                return
-                    Error(GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
+                return Error(GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
         }
 
     let private Delete =
@@ -702,9 +615,7 @@ module Organization =
                                 .StartAsync(fun progressContext ->
                                     task {
                                         let t0 =
-                                            progressContext.AddTask(
-                                                $"[{Color.DodgerBlue1}]Sending command to the server.[/]"
-                                            )
+                                            progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
 
                                         let! result = Organization.Delete(parameters)
                                         t0.Increment(100.0)
@@ -714,8 +625,7 @@ module Organization =
                         return! Organization.Delete(parameters)
                 | Error error -> return Error error
             with ex ->
-                return
-                    Error(GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
+                return Error(GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
         }
 
     let private Undelete =

@@ -10,9 +10,7 @@ open Grace.Shared.Utilities
 type BranchDtoConverter() =
     inherit JsonConverter<BranchDto>()
 
-    override this.Read
-        ((reader: byref<Utf8JsonReader>), (typeToConvert: Type), (jsonSerializerOptions: JsonSerializerOptions))
-        : BranchDto =
+    override this.Read((reader: byref<Utf8JsonReader>), (typeToConvert: Type), (jsonSerializerOptions: JsonSerializerOptions)) : BranchDto =
         let dictionary = Dictionary<string, string>()
         let mutable branchDto = BranchDto.Default
 
@@ -46,5 +44,4 @@ type BranchDtoConverter() =
 
             branchDto
 
-    override this.Write((writer: Utf8JsonWriter), (value: BranchDto), (jsonSerializerOptions: JsonSerializerOptions)) =
-        ()
+    override this.Write((writer: Utf8JsonWriter), (value: BranchDto), (jsonSerializerOptions: JsonSerializerOptions)) = ()

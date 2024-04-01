@@ -69,12 +69,7 @@ module Services =
     let parseType (requestBodyType: Type) (context: HttpContext) =
         task {
             try
-                let! parameters =
-                    JsonSerializer.DeserializeAsync(
-                        context.Request.Body,
-                        requestBodyType,
-                        Constants.JsonSerializerOptions
-                    )
+                let! parameters = JsonSerializer.DeserializeAsync(context.Request.Body, requestBodyType, Constants.JsonSerializerOptions)
 
                 if not <| isNull parameters then
                     return Some parameters
@@ -101,8 +96,7 @@ module Services =
             with ex ->
                 let exceptionResponse = Utilities.createExceptionResponse ex
 
-                return!
-                    context.WriteJsonAsync(GraceError.Create (serialize exceptionResponse) (getCorrelationId context))
+                return! context.WriteJsonAsync(GraceError.Create (serialize exceptionResponse) (getCorrelationId context))
         }
 
     /// Adds common attributes to the current OpenTelemetry activity, and returns a 404 Not found status.

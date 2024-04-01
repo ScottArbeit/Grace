@@ -54,8 +54,7 @@ module Interfaces =
         inherit IActor
 
         /// Validates incoming commands and converts them to events that are stored in the database.
-        abstract member Handle:
-            command: Branch.BranchCommand -> eventMetadata: EventMetadata -> Task<GraceResult<string>>
+        abstract member Handle: command: Branch.BranchCommand -> eventMetadata: EventMetadata -> Task<GraceResult<string>>
 
         /// Validates that a branch with this BranchId exists.
         abstract member Exists: correlationId: CorrelationId -> Task<bool>
@@ -117,8 +116,7 @@ module Interfaces =
         abstract member GetSize: correlationId: CorrelationId -> Task<int64>
 
         /// Returns a list of DirectoryVersion objects for all subdirectories.
-        abstract member GetDirectoryVersionsRecursive:
-            forceRegenerate: bool -> correlationId: CorrelationId -> Task<List<DirectoryVersion>>
+        abstract member GetDirectoryVersionsRecursive: forceRegenerate: bool -> correlationId: CorrelationId -> Task<List<DirectoryVersion>>
 
         /// Returns the total size of files contained in this directory and all subdirectories.
         abstract member GetRecursiveSize: correlationId: CorrelationId -> Task<int64>
@@ -126,10 +124,7 @@ module Interfaces =
         abstract member Delete: correlationId: CorrelationId -> Task<GraceResult<string>>
 
         /// Validates incoming commands and converts them to events that are stored in the database.
-        abstract member Handle:
-            command: DirectoryVersion.DirectoryVersionCommand ->
-            eventMetadata: EventMetadata ->
-                Task<GraceResult<string>>
+        abstract member Handle: command: DirectoryVersion.DirectoryVersionCommand -> eventMetadata: EventMetadata -> Task<GraceResult<string>>
 
     ///Defines the operations for the Organization actor.
     [<Interface>]
@@ -145,12 +140,10 @@ module Interfaces =
         abstract member Get: correlationId: CorrelationId -> Task<OrganizationDto>
 
         /// Returns a list of the repositories under this organization.
-        abstract member ListRepositories:
-            correlationId: CorrelationId -> Task<IReadOnlyDictionary<RepositoryId, RepositoryName>>
+        abstract member ListRepositories: correlationId: CorrelationId -> Task<IReadOnlyDictionary<RepositoryId, RepositoryName>>
 
         /// Validates incoming commands and converts them to events that are stored in the database.
-        abstract member Handle:
-            command: Organization.OrganizationCommand -> eventMetadata: EventMetadata -> Task<GraceResult<string>>
+        abstract member Handle: command: Organization.OrganizationCommand -> eventMetadata: EventMetadata -> Task<GraceResult<string>>
 
     /// Defines the operations for the OrganizationName actor.
     [<Interface>]
@@ -175,8 +168,7 @@ module Interfaces =
         abstract member Get: correlationId: CorrelationId -> Task<OwnerDto>
 
         /// Returns a list of the organizations under this owner.
-        abstract member ListOrganizations:
-            correlationId: CorrelationId -> Task<IReadOnlyDictionary<OrganizationId, OrganizationName>>
+        abstract member ListOrganizations: correlationId: CorrelationId -> Task<IReadOnlyDictionary<OrganizationId, OrganizationName>>
 
         /// Validates incoming commands and converts them to events that are stored in the database.
         abstract member Handle: command: Owner.OwnerCommand -> eventMetadata: EventMetadata -> Task<GraceResult<string>>
@@ -226,8 +218,7 @@ module Interfaces =
         abstract member GetObjectStorageProvider: correlationId: CorrelationId -> Task<ObjectStorageProvider>
 
         /// Processes commands by checking that they're valid, and then converting them into events.
-        abstract member Handle:
-            command: Repository.RepositoryCommand -> eventMetadata: EventMetadata -> Task<GraceResult<string>>
+        abstract member Handle: command: Repository.RepositoryCommand -> eventMetadata: EventMetadata -> Task<GraceResult<string>>
 
     /// Defines the operations for the RepositoryName actor.
     [<Interface>]

@@ -47,20 +47,10 @@ module Owner =
             )
 
         let ownerNameRequired =
-            new Option<String>(
-                "--ownerName",
-                IsRequired = true,
-                Description = "The name of the owner.",
-                Arity = ArgumentArity.ExactlyOne
-            )
+            new Option<String>("--ownerName", IsRequired = true, Description = "The name of the owner.", Arity = ArgumentArity.ExactlyOne)
 
         let ownerTypeRequired =
-            (new Option<String>(
-                "--ownerType",
-                IsRequired = true,
-                Description = "The type of owner. [default: Public]",
-                Arity = ArgumentArity.ExactlyOne
-            ))
+            (new Option<String>("--ownerType", IsRequired = true, Description = "The type of owner. [default: Public]", Arity = ArgumentArity.ExactlyOne))
                 .FromAmong(Utilities.listCases<OwnerType> ())
 
         let searchVisibilityRequired =
@@ -73,42 +63,19 @@ module Owner =
                 .FromAmong(Utilities.listCases<SearchVisibility> ())
 
         let descriptionRequired =
-            new Option<String>(
-                "--description",
-                IsRequired = true,
-                Description = "Description of the owner.",
-                Arity = ArgumentArity.ExactlyOne
-            )
+            new Option<String>("--description", IsRequired = true, Description = "Description of the owner.", Arity = ArgumentArity.ExactlyOne)
 
         let newName =
-            new Option<String>(
-                "--newName",
-                IsRequired = true,
-                Description = "The new name of the organization.",
-                Arity = ArgumentArity.ExactlyOne
-            )
+            new Option<String>("--newName", IsRequired = true, Description = "The new name of the organization.", Arity = ArgumentArity.ExactlyOne)
 
         let force =
-            new Option<bool>(
-                "--force",
-                IsRequired = false,
-                Description = "Delete even if there is data under this owner. [default: false]"
-            )
+            new Option<bool>("--force", IsRequired = false, Description = "Delete even if there is data under this owner. [default: false]")
 
         let includeDeleted =
-            new Option<bool>(
-                [| "--include-deleted"; "-d" |],
-                IsRequired = false,
-                Description = "Include deleted owners in the result. [default: false]"
-            )
+            new Option<bool>([| "--include-deleted"; "-d" |], IsRequired = false, Description = "Include deleted owners in the result. [default: false]")
 
         let deleteReason =
-            new Option<String>(
-                "--deleteReason",
-                IsRequired = true,
-                Description = "The reason for deleting the owner.",
-                Arity = ArgumentArity.ExactlyOne
-            )
+            new Option<String>("--deleteReason", IsRequired = true, Description = "The reason for deleting the owner.", Arity = ArgumentArity.ExactlyOne)
 
         let doNotSwitch =
             new Option<bool>(
@@ -118,13 +85,7 @@ module Owner =
                 Arity = ArgumentArity.ZeroOrOne
             )
 
-    let mustBeAValidGuid
-        (parseResult: ParseResult)
-        (parameters: CommonParameters)
-        (option: Option)
-        (value: string)
-        (error: OwnerError)
-        =
+    let mustBeAValidGuid (parseResult: ParseResult) (parameters: CommonParameters) (option: Option) (value: string) (error: OwnerError) =
         let mutable guid = Guid.Empty
 
         if
@@ -136,13 +97,7 @@ module Owner =
         else
             Ok(parseResult, parameters)
 
-    let mustBeAValidGraceName
-        (parseResult: ParseResult)
-        (parameters: CommonParameters)
-        (option: Option)
-        (value: string)
-        (error: OwnerError)
-        =
+    let mustBeAValidGraceName (parseResult: ParseResult) (parameters: CommonParameters) (option: Option) (value: string) (error: OwnerError) =
         if
             parseResult.CommandResult.FindResultFor(option) <> null
             && not <| Constants.GraceNameRegex.IsMatch(value)
@@ -218,9 +173,7 @@ module Owner =
                                 .StartAsync(fun progressContext ->
                                     task {
                                         let t0 =
-                                            progressContext.AddTask(
-                                                $"[{Color.DodgerBlue1}]Sending command to the server.[/]"
-                                            )
+                                            progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
 
                                         let! result = Owner.Create(parameters)
                                         t0.Increment(100.0)
@@ -230,8 +183,7 @@ module Owner =
                         return! Owner.Create(parameters)
                 | Error error -> return Error error
             with ex ->
-                return
-                    Error(GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
+                return Error(GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
         }
 
     let private Create =
@@ -281,9 +233,7 @@ module Owner =
                                 .StartAsync(fun progressContext ->
                                     task {
                                         let t0 =
-                                            progressContext.AddTask(
-                                                $"[{Color.DodgerBlue1}]Sending command to the server.[/]"
-                                            )
+                                            progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
 
                                         let! result = Owner.Get(parameters)
                                         t0.Increment(100.0)
@@ -293,8 +243,7 @@ module Owner =
                         return! Owner.Get(parameters)
                 | Error error -> return Error error
             with ex ->
-                return
-                    Error(GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
+                return Error(GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
         }
 
     let private Get =
@@ -340,9 +289,7 @@ module Owner =
                                 .StartAsync(fun progressContext ->
                                     task {
                                         let t0 =
-                                            progressContext.AddTask(
-                                                $"[{Color.DodgerBlue1}]Sending command to the server.[/]"
-                                            )
+                                            progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
 
                                         let! result = Owner.SetName(parameters)
                                         t0.Increment(100.0)
@@ -352,8 +299,7 @@ module Owner =
                         return! Owner.SetName(parameters)
                 | Error error -> return Error error
             with ex ->
-                return
-                    Error(GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
+                return Error(GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
         }
 
     let private SetName =
@@ -392,9 +338,7 @@ module Owner =
                                 .StartAsync(fun progressContext ->
                                     task {
                                         let t0 =
-                                            progressContext.AddTask(
-                                                $"[{Color.DodgerBlue1}]Sending command to the server.[/]"
-                                            )
+                                            progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
 
                                         let! result = Owner.SetType(parameters)
                                         t0.Increment(100.0)
@@ -404,8 +348,7 @@ module Owner =
                         return! Owner.SetType(parameters)
                 | Error error -> return Error error
             with ex ->
-                return
-                    Error(GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
+                return Error(GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
         }
 
     let private SetType =
@@ -419,10 +362,7 @@ module Owner =
         inherit CommonParameters()
         member val public SearchVisibility: string = String.Empty with get, set
 
-    let private searchVisibilityHandler
-        (parseResult: ParseResult)
-        (setSearchVisibilityParameters: SetSearchVisibilityParameters)
-        =
+    let private searchVisibilityHandler (parseResult: ParseResult) (setSearchVisibilityParameters: SetSearchVisibilityParameters) =
         task {
             try
                 if parseResult |> verbose then
@@ -448,9 +388,7 @@ module Owner =
                                 .StartAsync(fun progressContext ->
                                     task {
                                         let t0 =
-                                            progressContext.AddTask(
-                                                $"[{Color.DodgerBlue1}]Sending command to the server.[/]"
-                                            )
+                                            progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
 
                                         let! result = Owner.SetSearchVisibility(parameters)
                                         t0.Increment(100.0)
@@ -460,21 +398,16 @@ module Owner =
                         return! Owner.SetSearchVisibility(parameters)
                 | Error error -> return Error error
             with ex ->
-                return
-                    Error(GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
+                return Error(GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
         }
 
     let private SetSearchVisibility =
-        CommandHandler.Create
-            (fun (parseResult: ParseResult) (setSearchVisibilityParameters: SetSearchVisibilityParameters) ->
-                task {
-                    let! result =
-                        searchVisibilityHandler
-                            parseResult
-                            (setSearchVisibilityParameters |> normalizeIdsAndNames parseResult)
+        CommandHandler.Create(fun (parseResult: ParseResult) (setSearchVisibilityParameters: SetSearchVisibilityParameters) ->
+            task {
+                let! result = searchVisibilityHandler parseResult (setSearchVisibilityParameters |> normalizeIdsAndNames parseResult)
 
-                    return result |> renderOutput parseResult
-                })
+                return result |> renderOutput parseResult
+            })
 
     type SetDescriptionParameters() =
         inherit CommonParameters()
@@ -506,9 +439,7 @@ module Owner =
                                 .StartAsync(fun progressContext ->
                                     task {
                                         let t0 =
-                                            progressContext.AddTask(
-                                                $"[{Color.DodgerBlue1}]Sending command to the server.[/]"
-                                            )
+                                            progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
 
                                         let! result = Owner.SetDescription(parameters)
                                         t0.Increment(100.0)
@@ -518,15 +449,13 @@ module Owner =
                         return! Owner.SetDescription(parameters)
                 | Error error -> return Error error
             with ex ->
-                return
-                    Error(GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
+                return Error(GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
         }
 
     let private SetDescription =
         CommandHandler.Create(fun (parseResult: ParseResult) (setDescriptionParameters: SetDescriptionParameters) ->
             task {
-                let! result =
-                    descriptionHandler parseResult (setDescriptionParameters |> normalizeIdsAndNames parseResult)
+                let! result = descriptionHandler parseResult (setDescriptionParameters |> normalizeIdsAndNames parseResult)
 
                 return result |> renderOutput parseResult
             })
@@ -562,9 +491,7 @@ module Owner =
                                 .StartAsync(fun progressContext ->
                                     task {
                                         let t0 =
-                                            progressContext.AddTask(
-                                                $"[{Color.DodgerBlue1}]Sending command to the server.[/]"
-                                            )
+                                            progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
 
                                         let! result = Owner.Delete(parameters)
                                         t0.Increment(100.0)
@@ -574,8 +501,7 @@ module Owner =
                         return! Owner.Delete(parameters)
                 | Error error -> return Error error
             with ex ->
-                return
-                    Error(GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
+                return Error(GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
         }
 
     let private Delete =
@@ -612,9 +538,7 @@ module Owner =
                                 .StartAsync(fun progressContext ->
                                     task {
                                         let t0 =
-                                            progressContext.AddTask(
-                                                $"[{Color.DodgerBlue1}]Sending command to the server.[/]"
-                                            )
+                                            progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
 
                                         let! result = Owner.Undelete(parameters)
                                         t0.Increment(100.0)
@@ -624,8 +548,7 @@ module Owner =
                         return! Owner.Undelete(parameters)
                 | Error error -> return Error error
             with ex ->
-                return
-                    Error(GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
+                return Error(GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
         }
 
     let private Undelete =

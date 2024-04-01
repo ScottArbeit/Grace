@@ -18,8 +18,7 @@ module en_US =
         | BranchDoesNotExist -> "The branch was not found."
         | BranchIdIsRequired -> "The BranchId must be provided."
         | BranchIdsAreRequired -> "The list of BranchIds must not be empty."
-        | BranchIsNotBasedOnLatestPromotion ->
-            "The promotion failed because the current branch is not based on the latest promotion from the parent branch."
+        | BranchIsNotBasedOnLatestPromotion -> "The promotion failed because the current branch is not based on the latest promotion from the parent branch."
         | BranchNameAlreadyExists -> "A branch with the provided BranchName already exists."
         | BranchNameIsRequired -> "The BranchName must be provided."
         | CheckpointIsDisabled -> "This branch has disabled checkpoints."
@@ -33,41 +32,34 @@ module en_US =
         | DirectorySha256HashAlreadyExists -> "A directory with the provided SHA-256 hash already exists."
         | DuplicateCorrelationId ->
             "The CorrelationId sent was a duplicate of one already used to modify this object. Because this likely indicates a retry of an operation that has already succeeded, this is not allowed."
-        | EitherBranchIdOrBranchNameIsRequired ->
-            "Either a BranchId or a BranchName must be provided. If both are provided, BranchId will be used."
+        | EitherBranchIdOrBranchNameIsRequired -> "Either a BranchId or a BranchName must be provided. If both are provided, BranchId will be used."
         | EitherDirectoryVersionIdOrSha256HashRequired ->
             "Either a DirectoryVersionId or a SHA-256 hash must be provided. If both are provided, DirectoryVersionId will be used."
         | EitherOrganizationIdOrOrganizationNameIsRequired ->
             "Either a OrganizationId or a OrganizationName must be provided. If both are provided, OrganizationId will be used."
-        | EitherOwnerIdOrOwnerNameIsRequired ->
-            "Either an OwnerId or an OwnerName must be provided. If both are provided, OwnerId will be used."
+        | EitherOwnerIdOrOwnerNameIsRequired -> "Either an OwnerId or an OwnerName must be provided. If both are provided, OwnerId will be used."
         | EitherRepositoryIdOrRepositoryNameIsRequired ->
             "Either a RepositoryId, or a RepositoryName, must be provided. If both are provided, RepositoryId will be used."
-        | EitherToBranchIdOrToBranchNameIsRequired ->
-            "Either a ToBranchId or a ToBranchName must be provided. If both are provided, ToBranchId will be used."
+        | EitherToBranchIdOrToBranchNameIsRequired -> "Either a ToBranchId or a ToBranchName must be provided. If both are provided, ToBranchId will be used."
         | ExceptionCaught -> "An exception was caught while processing the request."
         | FailedCommunicatingWithObjectStorage -> "A failure occurred when communicating with object storage."
-        | FailedCreatingEmptyDirectoryVersion ->
-            "A server error occurred while attempting to create an empty initial directory version."
+        | FailedCreatingEmptyDirectoryVersion -> "A server error occurred while attempting to create an empty initial directory version."
         | FailedCreatingInitialBranch -> "A server error occurred while attempting to create the initial branch."
         | FailedCreatingInitialPromotion -> "A server error occurred while attempting to create the initial promotion."
         | FailedRebasingInitialBranch -> "A server error occurred while attempting to rebase the initial branch."
-        | FailedToGetUploadUrls ->
-            "A server error occurred while retrieving the URLs to upload new files to object storage."
+        | FailedToGetUploadUrls -> "A server error occurred while retrieving the URLs to upload new files to object storage."
         | FailedToRetrieveBranch -> "A server error occurred while retrieving the branch information."
         | FailedUploadingFilesToObjectStorage -> "One or more files could not be uploaded to object storage."
         | FailedWhileApplyingEvent -> "A server error occurred while attempting to update the data transfer object."
         | FailedWhileSavingEvent -> "A server error occurred while attempting to save the event."
         | FilesMustNotBeEmpty -> "A non-empty list of files must be provided."
         | FileNotFoundInObjectStorage -> "The file was not found in object storage."
-        | FileSha256HashDoesNotMatch ->
-            "The provided SHA-256 hash of the file does not match the SHA-256 hash calculated by Grace Server."
+        | FileSha256HashDoesNotMatch -> "The provided SHA-256 hash of the file does not match the SHA-256 hash calculated by Grace Server."
         | GettingCurrentBranch -> "Getting the current branch from the server."
         | GettingLatestVersion -> "Getting the latest version of the branch you're switching to."
         | GraceConfigFileNotFound ->
             $"No {Constants.GraceConfigFileName} file found along current path. Please run `grace config write` if you would like to create one."
-        | IndexFileNotFound ->
-            "The Grace index file was not found. Please run `grace maintenance update-index` to re-create it."
+        | IndexFileNotFound -> "The Grace index file was not found. Please run `grace maintenance update-index` to re-create it."
         | InitialPromotionMessage -> "Initial, empty promotion."
         | InterprocessFileDeleted -> "Inter-process communication file deleted."
         | InvalidBranchId -> "The provided BranchId is not a valid Guid."
@@ -96,19 +88,16 @@ module en_US =
         | InvalidRepositoryStatus -> "The repository status provided is not valid."
         | InvalidSaveDaysValue -> "The provided value for SaveDays is invalid."
         | InvalidSearchVisibility -> "The SearchVisibility provided is not a valid SearchVisibility value."
-        | InvalidServerApiVersion ->
-            "The provided ServerApiVersion is not recognized. Please use a published Grace API version identifier."
+        | InvalidServerApiVersion -> "The provided ServerApiVersion is not recognized. Please use a published Grace API version identifier."
         | InvalidSha256Hash -> "The provided SHA-256 hash is not a valid SHA-256 hash value."
-        | InvalidSize ->
-            "The provided size does not match the size calculated by adding the sizes of all files in the directory."
+        | InvalidSize -> "The provided size does not match the size calculated by adding the sizes of all files in the directory."
         | InvalidVisibilityValue -> "The provided visibility value is not valid."
         | PromotionIsDisabled -> "This branch has disabled promotions."
         | PromotionNotAvailableBecauseThereAreNoPromotableReferences ->
             "Promotion is not available because there are no commits or promotions in the current branch to promote to the parent branch."
         | MessageIsRequired -> "A message is required for this reference."
         | NotImplemented -> "This feature is not yet implemented."
-        | ObjectCacheFileNotFound ->
-            "The Grace object cache file was not found. Please run `grace maintenance scan` to recreate it."
+        | ObjectCacheFileNotFound -> "The Grace object cache file was not found. Please run `grace maintenance scan` to recreate it."
         | ObjectStorageException -> "An exception occurred when communicating with the object storage provider."
         | OrganizationIdAlreadyExists -> "An Organization with the provided OrganizationId already exists."
         | OrganizationNameAlreadyExists -> "An organization with the same name and owner already exists."
@@ -157,8 +146,7 @@ module en_US =
         | ServerRequestsMustIncludeXCorrelationIdHeader ->
             "Grace requires every server request to include an X-Correlation-Id header. This header should contain a unique string for each call."
         | Sha256HashDoesNotExist -> "The Sha256Hash value was not found."
-        | Sha256HashDoesNotMatch ->
-            "The provided SHA-256 hash for this directory version does not match the SHA-256 hash calculated by Grace Server."
+        | Sha256HashDoesNotMatch -> "The provided SHA-256 hash for this directory version does not match the SHA-256 hash calculated by Grace Server."
         | Sha256HashIsRequired -> "The Sha256Hash value is required."
         | StringIsTooLong -> "The provided string is longer than allowed."
         | TagIsDisabled -> "This branch has disabled tags."

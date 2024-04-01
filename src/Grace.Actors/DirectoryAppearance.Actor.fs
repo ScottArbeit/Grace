@@ -80,10 +80,7 @@ module DirectoryAppearance =
 
                             if deleteSucceeded then
                                 let directoryVersionActorProxy =
-                                    Services.actorProxyFactory.CreateActorProxy<IDirectoryVersionActor>(
-                                        this.Id,
-                                        Constants.ActorName.DirectoryVersion
-                                    )
+                                    Services.actorProxyFactory.CreateActorProxy<IDirectoryVersionActor>(this.Id, Constants.ActorName.DirectoryVersion)
 
                                 let! result = directoryVersionActorProxy.Delete(correlationId)
 

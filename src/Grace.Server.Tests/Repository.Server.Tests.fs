@@ -50,11 +50,7 @@ type Repository() =
                                 repositoryParameters.RepositoryId <- repositoryId
                                 repositoryParameters.RepositoryName <- $"TestRepository{rnd.Next(100000):X4}"
                                 //Console.WriteLine(serialize repositoryParameters)
-                                let! response =
-                                    Services.Client.PostAsync(
-                                        "/repository/create",
-                                        createJsonContent repositoryParameters
-                                    )
+                                let! response = Services.Client.PostAsync("/repository/create", createJsonContent repositoryParameters)
 
                                 let! content = response.Content.ReadAsStringAsync()
                                 //Console.WriteLine($"{content}");
@@ -81,11 +77,7 @@ type Repository() =
                                 repositoryDeleteParameters.RepositoryId <- repositoryId
                                 repositoryDeleteParameters.DeleteReason <- "Deleting test repository"
 
-                                let! response =
-                                    Services.Client.PostAsync(
-                                        "/repository/delete",
-                                        createJsonContent repositoryDeleteParameters
-                                    )
+                                let! response = Services.Client.PostAsync("/repository/delete", createJsonContent repositoryDeleteParameters)
 
                                 let! content = response.Content.ReadAsStringAsync()
                                 //Console.WriteLine($"{content}");
@@ -102,8 +94,7 @@ type Repository() =
             organizationDeleteParameters.OrganizationId <- organizationId
             organizationDeleteParameters.DeleteReason <- "Deleting test organization"
 
-            let! response =
-                Services.Client.PostAsync("/organization/delete", createJsonContent organizationDeleteParameters)
+            let! response = Services.Client.PostAsync("/organization/delete", createJsonContent organizationDeleteParameters)
 
             let ownerDeleteParameters = Parameters.Owner.DeleteOwnerParameters()
             ownerDeleteParameters.OwnerId <- ownerId

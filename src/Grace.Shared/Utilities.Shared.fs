@@ -253,9 +253,7 @@ module Utilities =
         else
             let relativeDirectoryPath =
                 relativePathParts[0..^1]
-                |> Array.fold
-                    (fun (sb: StringBuilder) currentPart -> sb.Append($"{currentPart}/"))
-                    (StringBuilder(standardizedFilePath.Length))
+                |> Array.fold (fun (sb: StringBuilder) currentPart -> sb.Append($"{currentPart}/")) (StringBuilder(standardizedFilePath.Length))
 
             relativeDirectoryPath.Remove(relativeDirectoryPath.Length - 1, 1) |> ignore // Remove trailing slash.
             //logToConsole $"relativeDirectoryPath.ToString(): {relativeDirectoryPath.ToString()}"
@@ -348,8 +346,7 @@ module Utilities =
         override this.ToString() =
             match this.innerException with
             | null -> $"Exception: {this.``exception``}{Environment.NewLine}{Environment.NewLine}"
-            | innerEx ->
-                $"Exception: {this.``exception``}{Environment.NewLine}{Environment.NewLine}Inner exception: {this.innerException}{Environment.NewLine}"
+            | innerEx -> $"Exception: {this.``exception``}{Environment.NewLine}{Environment.NewLine}Inner exception: {this.innerException}{Environment.NewLine}"
     //(serialize this).Replace("\\\\\\\\", @"\").Replace("\\\\", @"\").Replace(@"\r\n", Environment.NewLine)
 
     /// Converts an Exception-based instance into an ExceptionResponse instance.

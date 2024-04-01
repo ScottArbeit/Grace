@@ -90,13 +90,7 @@ module Repository =
             logScope <- log.BeginScope("Actor {actorName}", actorName)
             currentCommand <- String.Empty
 
-            log.LogTrace(
-                "{CurrentInstant}: Started {ActorName}.{MethodName}, Id: {Id}.",
-                getCurrentInstantExtended (),
-                actorName,
-                context.MethodName,
-                this.Id
-            )
+            log.LogTrace("{CurrentInstant}: Started {ActorName}.{MethodName}, Id: {Id}.", getCurrentInstantExtended (), actorName, context.MethodName, this.Id)
 
             // This checks if the actor is still active, but in an undefined state, which will _almost_ never happen.
             // isDisposed is set when the actor is deleted, or if an error occurs where we're not sure of the state and want to reload from the database.
@@ -136,12 +130,7 @@ module Repository =
             Task.CompletedTask
 
         member private this.SetMaintenanceReminder() =
-            this.RegisterReminderAsync(
-                ReminderType.Maintenance,
-                Array.empty<byte>,
-                TimeSpan.FromDays(7.0),
-                TimeSpan.FromDays(7.0)
-            )
+            this.RegisterReminderAsync(ReminderType.Maintenance, Array.empty<byte>, TimeSpan.FromDays(7.0), TimeSpan.FromDays(7.0))
 
         member private this.UnregisterMaintenanceReminder() =
             this.UnregisterReminderAsync(ReminderType.Maintenance)
@@ -250,15 +239,11 @@ module Repository =
 
                     repositoryEvents.Add(repositoryEvent)
 
-                    do!
-                        DefaultAsyncRetryPolicy.ExecuteAsync(fun () ->
-                            stateManager.SetStateAsync(eventsStateName, repositoryEvents))
+                    do! DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> stateManager.SetStateAsync(eventsStateName, repositoryEvents))
 
                     repositoryDto <- repositoryDto |> this.updateDto repositoryEvent
 
-                    do!
-                        DefaultAsyncRetryPolicy.ExecuteAsync(fun () ->
-                            stateManager.SetStateAsync(dtoStateName, repositoryDto))
+                    do! DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> stateManager.SetStateAsync(dtoStateName, repositoryDto))
 
                     let processGraceError (repositoryError: RepositoryError) repositoryEvent previousGraceError =
                         Error(
@@ -278,10 +263,7 @@ module Repository =
                                 let branchActorId = Branch.GetActorId(branchId)
 
                                 let branchActor =
-                                    Services.actorProxyFactory.CreateActorProxy<IBranchActor>(
-                                        branchActorId,
-                                        ActorName.Branch
-                                    )
+                                    Services.actorProxyFactory.CreateActorProxy<IBranchActor>(branchActorId, ActorName.Branch)
 
                                 // Only allow promotions and tags on the initial branch.
                                 let initialBranchPermissions = [| ReferenceType.Promotion; ReferenceType.Tag |]
@@ -302,10 +284,7 @@ module Repository =
                                     let emptyDirectoryId = DirectoryId.NewGuid()
 
                                     let emptySha256Hash =
-                                        computeSha256ForDirectory
-                                            Constants.RootDirectoryPath
-                                            (List<LocalDirectoryVersion>())
-                                            (List<LocalFileVersion>())
+                                        computeSha256ForDirectory Constants.RootDirectoryPath (List<LocalDirectoryVersion>()) (List<LocalFileVersion>())
 
                                     let directoryVersionActorProxy =
                                         Services.actorProxyFactory.CreateActorProxy<IDirectoryVersionActor>(
@@ -325,9 +304,7 @@ module Repository =
 
                                     let! directoryResult =
                                         directoryVersionActorProxy.Handle
-                                            (Commands.DirectoryVersion.DirectoryVersionCommand.Create(
-                                                emptyDirectoryVersion
-                                            ))
+                                            (Commands.DirectoryVersion.DirectoryVersionCommand.Create(emptyDirectoryVersion))
                                             repositoryEvent.Metadata
 
                                     let! promotionResult =
@@ -345,27 +322,14 @@ module Repository =
                                         let referenceId =
                                             Guid.Parse(promotionGraceReturnValue.Properties[nameof (ReferenceId)])
 
-                                        let! rebaseResult =
-                                            branchActor.Handle
-                                                (Commands.Branch.BranchCommand.Rebase(referenceId))
-                                                repositoryEvent.Metadata
+                                        let! rebaseResult = branchActor.Handle (Commands.Branch.BranchCommand.Rebase(referenceId)) repositoryEvent.Metadata
 
                                         match rebaseResult with
                                         | Ok rebaseGraceReturn -> return Ok(branchId, referenceId)
-                                        | Error graceError ->
-                                            return
-                                                processGraceError FailedRebasingInitialBranch repositoryEvent graceError
-                                    | (_, Error graceError) ->
-                                        return
-                                            processGraceError FailedCreatingInitialPromotion repositoryEvent graceError
-                                    | (Error graceError, _) ->
-                                        return
-                                            processGraceError
-                                                FailedCreatingEmptyDirectoryVersion
-                                                repositoryEvent
-                                                graceError
-                                | Error graceError ->
-                                    return processGraceError FailedCreatingInitialBranch repositoryEvent graceError
+                                        | Error graceError -> return processGraceError FailedRebasingInitialBranch repositoryEvent graceError
+                                    | (_, Error graceError) -> return processGraceError FailedCreatingInitialPromotion repositoryEvent graceError
+                                    | (Error graceError, _) -> return processGraceError FailedCreatingEmptyDirectoryVersion repositoryEvent graceError
+                                | Error graceError -> return processGraceError FailedCreatingInitialBranch repositoryEvent graceError
                             | _ -> return Ok(BranchId.Empty, ReferenceId.Empty)
                         }
 
@@ -377,9 +341,7 @@ module Repository =
                         do! daprClient.PublishEventAsync(GracePubSubService, GraceEventStreamTopic, graceEvent)
 
                         let returnValue =
-                            GraceReturnValue.Create
-                                $"Repository command succeeded."
-                                repositoryEvent.Metadata.CorrelationId
+                            GraceReturnValue.Create $"Repository command succeeded." repositoryEvent.Metadata.CorrelationId
 
                         returnValue.Properties.Add(nameof (OwnerId), $"{repositoryDto.OwnerId}")
                         returnValue.Properties.Add(nameof (OrganizationId), $"{repositoryDto.OrganizationId}")
@@ -391,26 +353,19 @@ module Repository =
                             returnValue.Properties.Add(nameof (BranchName), $"{Constants.InitialBranchName}")
                             returnValue.Properties.Add(nameof (ReferenceId), $"{referenceId}")
 
-                        returnValue.Properties.Add(
-                            "EventType",
-                            $"{getDiscriminatedUnionFullName repositoryEvent.Event}"
-                        )
+                        returnValue.Properties.Add("EventType", $"{getDiscriminatedUnionFullName repositoryEvent.Event}")
 
                         return Ok returnValue
                     | Error graceError -> return Error graceError
                 with ex ->
                     let graceError =
-                        GraceError.Create
-                            (RepositoryError.getErrorMessage RepositoryError.FailedWhileApplyingEvent)
-                            repositoryEvent.Metadata.CorrelationId
+                        GraceError.Create (RepositoryError.getErrorMessage RepositoryError.FailedWhileApplyingEvent) repositoryEvent.Metadata.CorrelationId
 
                     return Error graceError
             }
 
         /// Deletes all of the branches provided, by sending a DeleteLogical command to each branch.
-        member private this.LogicalDeleteBranches
-            (branches: List<BranchDto>, metadata: EventMetadata, deleteReason: string)
-            =
+        member private this.LogicalDeleteBranches(branches: List<BranchDto>, metadata: EventMetadata, deleteReason: string) =
             task {
                 let results = ConcurrentQueue<GraceResult<string>>()
 
@@ -424,10 +379,7 @@ module Repository =
                                 task {
                                     if branch.DeletedAt |> Option.isNone then
                                         let branchActor =
-                                            actorProxyFactory.CreateActorProxy<IBranchActor>(
-                                                ActorId($"{branch.BranchId}"),
-                                                Constants.ActorName.Branch
-                                            )
+                                            actorProxyFactory.CreateActorProxy<IBranchActor>(ActorId($"{branch.BranchId}"), Constants.ActorName.Branch)
 
                                         let! result =
                                             branchActor.Handle
@@ -491,18 +443,11 @@ module Repository =
                         repositoryEvents.AddRange(events)
 
                         let newRepositoryDto =
-                            repositoryEvents.Aggregate(
-                                RepositoryDto.Default,
-                                (fun state evnt -> (this.updateDto evnt state))
-                            )
+                            repositoryEvents.Aggregate(RepositoryDto.Default, (fun state evnt -> (this.updateDto evnt state)))
 
-                        do!
-                            DefaultAsyncRetryPolicy.ExecuteAsync(fun () ->
-                                stateManager.SetStateAsync(eventsStateName, this.RepositoryEvents))
+                        do! DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> stateManager.SetStateAsync(eventsStateName, this.RepositoryEvents))
 
-                        do!
-                            DefaultAsyncRetryPolicy.ExecuteAsync(fun () ->
-                                stateManager.SetStateAsync(dtoStateName, newRepositoryDto))
+                        do! DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> stateManager.SetStateAsync(dtoStateName, newRepositoryDto))
 
                         return Ok repositoryEvents.Count
                     with ex ->
@@ -526,23 +471,16 @@ module Repository =
                                 let revertedEvents = repositoryEvents.Take(eventsToKeep)
 
                                 let newRepositoryDto =
-                                    revertedEvents.Aggregate(
-                                        RepositoryDto.Default,
-                                        (fun state evnt -> (this.updateDto evnt state))
-                                    )
+                                    revertedEvents.Aggregate(RepositoryDto.Default, (fun state evnt -> (this.updateDto evnt state)))
 
                                 match persist with
                                 | PersistAction.Save ->
                                     repositoryEvents.Clear()
                                     repositoryEvents.AddRange(revertedEvents)
 
-                                    do!
-                                        DefaultAsyncRetryPolicy.ExecuteAsync(fun () ->
-                                            stateManager.SetStateAsync(eventsStateName, revertedEvents))
+                                    do! DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> stateManager.SetStateAsync(eventsStateName, revertedEvents))
 
-                                    do!
-                                        DefaultAsyncRetryPolicy.ExecuteAsync(fun () ->
-                                            stateManager.SetStateAsync(dtoStateName, newRepositoryDto))
+                                    do! DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> stateManager.SetStateAsync(dtoStateName, newRepositoryDto))
                                 | DoNotSave -> ()
 
                                 return Ok newRepositoryDto
@@ -576,13 +514,9 @@ module Repository =
                                         repositoryEvents.Clear()
                                         repositoryEvents.AddRange(revertedEvents)
 
-                                        do!
-                                            DefaultAsyncRetryPolicy.ExecuteAsync(fun () ->
-                                                stateManager.SetStateAsync(eventsStateName, revertedEvents))
+                                        do! DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> stateManager.SetStateAsync(eventsStateName, revertedEvents))
 
-                                        do!
-                                            DefaultAsyncRetryPolicy.ExecuteAsync(fun () ->
-                                                stateManager.SetStateAsync(dtoStateName, newRepositoryDto))
+                                        do! DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> stateManager.SetStateAsync(dtoStateName, newRepositoryDto))
                                     }
                                     |> ignore
                                 | DoNotSave -> ()
@@ -627,34 +561,17 @@ module Repository =
                         let! repositoryEvents = this.RepositoryEvents()
 
                         if repositoryEvents.Exists(fun ev -> ev.Metadata.CorrelationId = metadata.CorrelationId) then
-                            return
-                                Error(
-                                    GraceError.Create
-                                        (RepositoryError.getErrorMessage DuplicateCorrelationId)
-                                        metadata.CorrelationId
-                                )
+                            return Error(GraceError.Create (RepositoryError.getErrorMessage DuplicateCorrelationId) metadata.CorrelationId)
                         else
                             match command with
                             | RepositoryCommand.Create(_, _, _, _) ->
                                 match repositoryDto.UpdatedAt with
-                                | Some _ ->
-                                    return
-                                        Error(
-                                            GraceError.Create
-                                                (RepositoryError.getErrorMessage RepositoryIdAlreadyExists)
-                                                metadata.CorrelationId
-                                        )
+                                | Some _ -> return Error(GraceError.Create (RepositoryError.getErrorMessage RepositoryIdAlreadyExists) metadata.CorrelationId)
                                 | None -> return Ok command
                             | _ ->
                                 match repositoryDto.UpdatedAt with
                                 | Some _ -> return Ok command
-                                | None ->
-                                    return
-                                        Error(
-                                            GraceError.Create
-                                                (RepositoryError.getErrorMessage RepositoryIdDoesNotExist)
-                                                metadata.CorrelationId
-                                        )
+                                | None -> return Error(GraceError.Create (RepositoryError.getErrorMessage RepositoryIdDoesNotExist) metadata.CorrelationId)
                     }
 
                 let processCommand command (metadata: EventMetadata) =
@@ -666,20 +583,14 @@ module Repository =
                                     | Create(repositoryName, repositoryId, ownerId, organizationId) ->
                                         return Created(repositoryName, repositoryId, ownerId, organizationId)
                                     | Initialize -> return Initialized
-                                    | SetObjectStorageProvider objectStorageProvider ->
-                                        return ObjectStorageProviderSet objectStorageProvider
-                                    | SetStorageAccountName storageAccountName ->
-                                        return StorageAccountNameSet storageAccountName
-                                    | SetStorageContainerName containerName ->
-                                        return StorageContainerNameSet containerName
-                                    | SetRepositoryStatus repositoryStatus ->
-                                        return RepositoryStatusSet repositoryStatus
-                                    | SetVisibility repositoryVisibility ->
-                                        return RepositoryVisibilitySet repositoryVisibility
+                                    | SetObjectStorageProvider objectStorageProvider -> return ObjectStorageProviderSet objectStorageProvider
+                                    | SetStorageAccountName storageAccountName -> return StorageAccountNameSet storageAccountName
+                                    | SetStorageContainerName containerName -> return StorageContainerNameSet containerName
+                                    | SetRepositoryStatus repositoryStatus -> return RepositoryStatusSet repositoryStatus
+                                    | SetVisibility repositoryVisibility -> return RepositoryVisibilitySet repositoryVisibility
                                     | SetRecordSaves recordSaves -> return RecordSavesSet recordSaves
                                     | SetDefaultServerApiVersion version -> return DefaultServerApiVersionSet version
-                                    | SetDefaultBranchName defaultBranchName ->
-                                        return DefaultBranchNameSet defaultBranchName
+                                    | SetDefaultBranchName defaultBranchName -> return DefaultBranchNameSet defaultBranchName
                                     | SetSaveDays days -> return SaveDaysSet days
                                     | SetCheckpointDays days -> return CheckpointDaysSet days
                                     | SetDirectoryVersionCacheDays days -> return DirectoryVersionCacheDaysSet days
@@ -703,8 +614,7 @@ module Repository =
                                         else
                                             // We have --force specified, so delete the branches that aren't already deleted.
                                             match! this.LogicalDeleteBranches(branches, metadata, deleteReason) with
-                                            | Ok _ ->
-                                                this.SchedulePhysicalDeletion(deleteReason, metadata.CorrelationId)
+                                            | Ok _ -> this.SchedulePhysicalDeletion(deleteReason, metadata.CorrelationId)
                                             | Error error -> raise (ApplicationException($"{error}"))
 
                                             return LogicalDeleted(force, deleteReason)
@@ -716,12 +626,7 @@ module Repository =
 
                             return! this.ApplyEvent { Event = event; Metadata = metadata }
                         with ex ->
-                            return
-                                Error(
-                                    GraceError.Create
-                                        $"{createExceptionResponse ex}{Environment.NewLine}{metadata}"
-                                        metadata.CorrelationId
-                                )
+                            return Error(GraceError.Create $"{createExceptionResponse ex}{Environment.NewLine}{metadata}" metadata.CorrelationId)
                     }
 
                 task {

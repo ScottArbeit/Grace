@@ -92,13 +92,7 @@ module Diff =
             let inlineDiff = DiffPlex.DiffBuilder.InlineDiffBuilder(Differ.Instance)
 
             let inlineDiffPaneModel =
-                inlineDiff.BuildDiffModel(
-                    fileContents1,
-                    fileContents2,
-                    ignoreWhitespace = true,
-                    ignoreCase = false,
-                    chunker = lineChunker
-                )
+                inlineDiff.BuildDiffModel(fileContents1, fileContents2, ignoreWhitespace = true, ignoreCase = false, chunker = lineChunker)
 
             let sideBySideDiff =
                 DiffBuilder.SideBySideDiffBuilder(Differ.Instance, lineChunker, wordChunker)

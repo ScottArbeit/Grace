@@ -46,8 +46,7 @@ module Storage =
             | AWSS3 -> return false
             | GoogleCloudStorage -> return false
             | ObjectStorageProvider.Unknown ->
-                logToConsole
-                    $"Error: Unknown ObjectStorageProvider in fileExists for repository {repositoryDto.RepositoryId} - {repositoryDto.RepositoryName}."
+                logToConsole $"Error: Unknown ObjectStorageProvider in fileExists for repository {repositoryDto.RepositoryId} - {repositoryDto.RepositoryName}."
 
                 logToConsole (sprintf "%A" repositoryDto)
                 return false
@@ -94,16 +93,13 @@ module Storage =
                     | Error error ->
                         context.SetStatusCode StatusCodes.Status500InternalServerError
 
-                        logToConsole
-                            $"Error generating download Uri: fileVersion: {fileVersion.RelativePath}; Error: {error}"
+                        logToConsole $"Error generating download Uri: fileVersion: {fileVersion.RelativePath}; Error: {error}"
 
-                        return!
-                            context.WriteStringAsync $"Error creating download uri for {fileVersion.GetObjectFileName}."
+                        return! context.WriteStringAsync $"Error creating download uri for {fileVersion.GetObjectFileName}."
                 with ex ->
                     context.SetStatusCode StatusCodes.Status500InternalServerError
 
-                    return!
-                        context.WriteTextAsync $"Error in {context.Request.Path} at {DateTime.Now.ToLongTimeString()}."
+                    return! context.WriteTextAsync $"Error in {context.Request.Path} at {DateTime.Now.ToLongTimeString()}."
             }
 
     /// Gets an upload URI for the specified file version that can be used by a Grace client.
@@ -117,20 +113,14 @@ module Storage =
                     let! uploadUri = getWriteSharedAccessSignature repositoryDto fileVersion (getCorrelationId context)
                     context.SetStatusCode StatusCodes.Status200OK
 
-                    log.LogDebug(
-                        "In GetUploadUri(): fileVersion.RelativePath: {relativePath}; uploadUri: {uploadUri}",
-                        fileVersion.RelativePath,
-                        uploadUri
-                    )
+                    log.LogDebug("In GetUploadUri(): fileVersion.RelativePath: {relativePath}; uploadUri: {uploadUri}", fileVersion.RelativePath, uploadUri)
 
                     return! context.WriteStringAsync $"{uploadUri}"
                 with ex ->
                     context.SetStatusCode StatusCodes.Status500InternalServerError
                     logToConsole $"Exception in GetUploadUri: {(createExceptionResponse ex)}"
 
-                    return!
-                        context.WriteTextAsync
-                            $"{getCurrentInstantExtended ()} Error in {context.Request.Path} at {DateTime.Now.ToLongTimeString()}."
+                    return! context.WriteTextAsync $"{getCurrentInstantExtended ()} Error in {context.Request.Path} at {DateTime.Now.ToLongTimeString()}."
             }
 
     /// Checks if a list of files already exists in object storage, and if any do not, return a URL that the client can use to upload the file.
@@ -157,11 +147,7 @@ module Storage =
                                             let! fileExists = fileExists repositoryDto fileVersion context
 
                                             if not <| fileExists then
-                                                let! blobUriWithSasToken =
-                                                    getWriteSharedAccessSignature
-                                                        repositoryDto
-                                                        fileVersion
-                                                        (getCorrelationId context)
+                                                let! blobUriWithSasToken = getWriteSharedAccessSignature repositoryDto fileVersion (getCorrelationId context)
 
                                                 uploadMetadata.Enqueue(
                                                     { BlobUriWithSasToken = blobUriWithSasToken
@@ -182,25 +168,15 @@ module Storage =
 
                         return!
                             context
-                            |> result200Ok (
-                                GraceReturnValue.Create (uploadMetadata.ToList()) (getCorrelationId context)
-                            )
+                            |> result200Ok (GraceReturnValue.Create (uploadMetadata.ToList()) (getCorrelationId context))
                     else
                         return!
                             context
-                            |> result400BadRequest (
-                                GraceError.Create
-                                    (StorageError.getErrorMessage FilesMustNotBeEmpty)
-                                    (getCorrelationId context)
-                            )
+                            |> result400BadRequest (GraceError.Create (StorageError.getErrorMessage FilesMustNotBeEmpty) (getCorrelationId context))
                 with ex ->
                     return!
                         context
-                        |> result500ServerError (
-                            GraceError.Create
-                                (StorageError.getErrorMessage ObjectStorageException)
-                                (getCorrelationId context)
-                        )
+                        |> result500ServerError (GraceError.Create (StorageError.getErrorMessage ObjectStorageException) (getCorrelationId context))
             }
 
     /// Deletes all documents from Cosmos DB. After calling, the web connection will time-out, but the method will continue to run until Cosmos DB is empty.
@@ -223,9 +199,7 @@ module Storage =
 
                     return!
                         context
-                        |> result200Ok (
-                            GraceReturnValue.Create "Deleted all rows from Cosmos DB." (getCorrelationId context)
-                        )
+                        |> result200Ok (GraceReturnValue.Create "Deleted all rows from Cosmos DB." (getCorrelationId context))
                 else
                     let sb = StringBuilder()
 

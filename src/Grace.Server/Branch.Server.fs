@@ -49,28 +49,15 @@ module Branch =
            Input.eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
            Guid.isValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId
            String.isValidGraceName parameters.OrganizationName InvalidOrganizationName
-           Input.eitherIdOrNameMustBeProvided
-               parameters.OrganizationId
-               parameters.OrganizationName
-               EitherOrganizationIdOrOrganizationNameRequired
+           Input.eitherIdOrNameMustBeProvided parameters.OrganizationId parameters.OrganizationName EitherOrganizationIdOrOrganizationNameRequired
            Guid.isValidAndNotEmpty parameters.RepositoryId InvalidRepositoryId
            String.isValidGraceName parameters.RepositoryName InvalidRepositoryName
-           Input.eitherIdOrNameMustBeProvided
-               parameters.RepositoryId
-               parameters.RepositoryName
-               EitherRepositoryIdOrRepositoryNameIsRequired
+           Input.eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherRepositoryIdOrRepositoryNameIsRequired
            Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
            String.isValidGraceName parameters.BranchName InvalidBranchName
-           Input.eitherIdOrNameMustBeProvided
-               parameters.BranchId
-               parameters.BranchName
-               EitherBranchIdOrBranchNameRequired |]
+           Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired |]
 
-    let processCommand<'T when 'T :> BranchParameters>
-        (context: HttpContext)
-        (validations: Validations<'T>)
-        (command: 'T -> ValueTask<BranchCommand>)
-        =
+    let processCommand<'T when 'T :> BranchParameters> (context: HttpContext) (validations: Validations<'T>) (command: 'T -> ValueTask<BranchCommand>) =
         task {
             try
                 let commandName = context.Items["Command"] :?> string
@@ -121,12 +108,7 @@ module Branch =
                 if validationsPassed then
                     let! cmd = command parameters
 
-                    let! branchId =
-                        resolveBranchId
-                            graceIds.RepositoryId
-                            parameters.BranchId
-                            parameters.BranchName
-                            parameters.CorrelationId
+                    let! branchId = resolveBranchId graceIds.RepositoryId parameters.BranchId parameters.BranchName parameters.CorrelationId
 
                     match branchId, commandName = nameof (Create) with
                     | Some branchId, _ ->
@@ -149,21 +131,14 @@ module Branch =
 
                         return!
                             context
-                            |> result400BadRequest (
-                                GraceError.Create
-                                    (BranchError.getErrorMessage RepositoryDoesNotExist)
-                                    (getCorrelationId context)
-                            )
+                            |> result400BadRequest (GraceError.Create (BranchError.getErrorMessage RepositoryDoesNotExist) (getCorrelationId context))
                 else
                     let! error = combinedValidations |> getFirstError
                     let errorMessage = BranchError.getErrorMessage error
                     log.LogDebug("{currentInstant}: error: {error}", getCurrentInstantExtended (), errorMessage)
 
                     let graceError =
-                        GraceError.CreateWithMetadata
-                            errorMessage
-                            (getCorrelationId context)
-                            (getPropertiesAsDictionary parameters)
+                        GraceError.CreateWithMetadata errorMessage (getCorrelationId context) (getPropertiesAsDictionary parameters)
 
                     graceError.Properties.Add("Path", context.Request.Path)
                     graceError.Properties.Add("Error", errorMessage)
@@ -193,13 +168,7 @@ module Branch =
                 let! validationsPassed = validationResults |> allPass
 
                 if validationsPassed then
-                    match!
-                        resolveBranchId
-                            parameters.RepositoryId
-                            parameters.BranchId
-                            parameters.BranchName
-                            parameters.CorrelationId
-                    with
+                    match! resolveBranchId parameters.RepositoryId parameters.BranchId parameters.BranchName parameters.CorrelationId with
                     | Some branchId ->
                         let actorProxy = getActorProxy context branchId
                         let! queryResult = query context maxCount actorProxy
@@ -219,11 +188,7 @@ module Branch =
                     | None ->
                         return!
                             context
-                            |> result400BadRequest (
-                                GraceError.Create
-                                    (BranchError.getErrorMessage BranchDoesNotExist)
-                                    (getCorrelationId context)
-                            )
+                            |> result400BadRequest (GraceError.Create (BranchError.getErrorMessage BranchDoesNotExist) (getCorrelationId context))
                 else
                     let! error = validationResults |> getFirstError
 
@@ -235,9 +200,7 @@ module Branch =
             with ex ->
                 return!
                     context
-                    |> result500ServerError (
-                        GraceError.Create $"{Utilities.createExceptionResponse ex}" (getCorrelationId context)
-                    )
+                    |> result500ServerError (GraceError.Create $"{Utilities.createExceptionResponse ex}" (getCorrelationId context))
         }
 
     /// Creates a new branch.
@@ -292,13 +255,7 @@ module Branch =
 
                 let command (parameters: CreateBranchParameters) =
                     task {
-                        match!
-                            (resolveBranchId
-                                parameters.RepositoryId
-                                parameters.ParentBranchId
-                                parameters.ParentBranchName
-                                parameters.CorrelationId)
-                        with
+                        match! (resolveBranchId parameters.RepositoryId parameters.ParentBranchId parameters.ParentBranchName parameters.CorrelationId) with
                         | Some parentBranchId ->
                             let parentBranchActorId = ActorId(parentBranchId)
 
@@ -453,30 +410,11 @@ module Branch =
 
                             let! directoryVersion = directoryVersionActorProxy.Get(parameters.CorrelationId)
 
-                            return
-                                Some(
-                                    Assign(
-                                        parameters.DirectoryVersionId,
-                                        directoryVersion.Sha256Hash,
-                                        ReferenceText parameters.Message
-                                    )
-                                )
+                            return Some(Assign(parameters.DirectoryVersionId, directoryVersion.Sha256Hash, ReferenceText parameters.Message))
                         elif not <| String.IsNullOrEmpty(parameters.Sha256Hash) then
-                            match!
-                                getDirectoryBySha256Hash
-                                    (Guid.Parse(graceIds.RepositoryId))
-                                    parameters.Sha256Hash
-                                    parameters.CorrelationId
-                            with
+                            match! getDirectoryBySha256Hash (Guid.Parse(graceIds.RepositoryId)) parameters.Sha256Hash parameters.CorrelationId with
                             | Some directoryVersion ->
-                                return
-                                    Some(
-                                        Assign(
-                                            directoryVersion.DirectoryId,
-                                            directoryVersion.Sha256Hash,
-                                            ReferenceText parameters.Message
-                                        )
-                                    )
+                                return Some(Assign(directoryVersion.DirectoryId, directoryVersion.Sha256Hash, ReferenceText parameters.Message))
                             | None -> return None
                         else
                             return None
@@ -488,15 +426,12 @@ module Branch =
                 context.Request.Body.Seek(0L, IO.SeekOrigin.Begin) |> ignore
 
                 match! command parameters with
-                | Some command ->
-                    return! processCommand context validations (fun parameters -> ValueTask<BranchCommand>(command))
+                | Some command -> return! processCommand context validations (fun parameters -> ValueTask<BranchCommand>(command))
                 | None ->
                     return!
                         context
                         |> result400BadRequest (
-                            GraceError.Create
-                                (BranchError.getErrorMessage EitherDirectoryVersionIdOrSha256HashRequired)
-                                (getCorrelationId context)
+                            GraceError.Create (BranchError.getErrorMessage EitherDirectoryVersionIdOrSha256HashRequired) (getCorrelationId context)
                         )
             }
 
@@ -611,11 +546,7 @@ module Branch =
                            CommitIsDisabled |]
 
                 let command (parameters: CreateReferenceParameters) =
-                    BranchCommand.Commit(
-                        parameters.DirectoryVersionId,
-                        parameters.Sha256Hash,
-                        ReferenceText parameters.Message
-                    )
+                    BranchCommand.Commit(parameters.DirectoryVersionId, parameters.Sha256Hash, ReferenceText parameters.Message)
                     |> returnValueTask
 
                 context.Items.Add("Command", nameof (Commit))
@@ -629,10 +560,7 @@ module Branch =
                 let validations (parameters: CreateReferenceParameters) =
                     [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
                        String.isValidGraceName parameters.BranchName InvalidBranchName
-                       Input.eitherIdOrNameMustBeProvided
-                           parameters.BranchId
-                           parameters.BranchName
-                           EitherBranchIdOrBranchNameRequired
+                       Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
                        String.maxLength parameters.Message 2048 StringIsTooLong
                        String.isValidSha256Hash parameters.Sha256Hash Sha256HashIsRequired
                        Owner.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
@@ -677,11 +605,7 @@ module Branch =
                            CheckpointIsDisabled |]
 
                 let command (parameters: CreateReferenceParameters) =
-                    BranchCommand.Checkpoint(
-                        parameters.DirectoryVersionId,
-                        parameters.Sha256Hash,
-                        ReferenceText parameters.Message
-                    )
+                    BranchCommand.Checkpoint(parameters.DirectoryVersionId, parameters.Sha256Hash, ReferenceText parameters.Message)
                     |> returnValueTask
 
                 context.Items.Add("Command", nameof (Checkpoint))
@@ -695,10 +619,7 @@ module Branch =
                 let validations (parameters: CreateReferenceParameters) =
                     [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
                        String.isValidGraceName parameters.BranchName InvalidBranchName
-                       Input.eitherIdOrNameMustBeProvided
-                           parameters.BranchId
-                           parameters.BranchName
-                           EitherBranchIdOrBranchNameRequired
+                       Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
                        String.maxLength parameters.Message 4096 StringIsTooLong
                        String.isValidSha256Hash parameters.Sha256Hash Sha256HashIsRequired
                        Owner.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
@@ -743,11 +664,7 @@ module Branch =
                            SaveIsDisabled |]
 
                 let command (parameters: CreateReferenceParameters) =
-                    BranchCommand.Save(
-                        parameters.DirectoryVersionId,
-                        parameters.Sha256Hash,
-                        ReferenceText parameters.Message
-                    )
+                    BranchCommand.Save(parameters.DirectoryVersionId, parameters.Sha256Hash, ReferenceText parameters.Message)
                     |> returnValueTask
 
                 context.Items.Add("Command", nameof (Save))
@@ -761,10 +678,7 @@ module Branch =
                 let validations (parameters: CreateReferenceParameters) =
                     [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
                        String.isValidGraceName parameters.BranchName InvalidBranchName
-                       Input.eitherIdOrNameMustBeProvided
-                           parameters.BranchId
-                           parameters.BranchName
-                           EitherBranchIdOrBranchNameRequired
+                       Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
                        String.maxLength parameters.Message 2048 StringIsTooLong
                        String.isValidSha256Hash parameters.Sha256Hash Sha256HashIsRequired
                        Owner.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
@@ -809,11 +723,7 @@ module Branch =
                            TagIsDisabled |]
 
                 let command (parameters: CreateReferenceParameters) =
-                    BranchCommand.Tag(
-                        parameters.DirectoryVersionId,
-                        parameters.Sha256Hash,
-                        ReferenceText parameters.Message
-                    )
+                    BranchCommand.Tag(parameters.DirectoryVersionId, parameters.Sha256Hash, ReferenceText parameters.Message)
                     |> returnValueTask
 
                 context.Items.Add("Command", nameof (Tag))
@@ -827,10 +737,7 @@ module Branch =
                 let validations (parameters: EnableFeatureParameters) =
                     [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
                        String.isValidGraceName parameters.BranchName InvalidBranchName
-                       Input.eitherIdOrNameMustBeProvided
-                           parameters.BranchId
-                           parameters.BranchName
-                           EitherBranchIdOrBranchNameRequired
+                       Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
                        Owner.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
                        Organization.organizationExists
                            parameters.OwnerId
@@ -874,10 +781,7 @@ module Branch =
                 let validations (parameters: EnableFeatureParameters) =
                     [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
                        String.isValidGraceName parameters.BranchName InvalidBranchName
-                       Input.eitherIdOrNameMustBeProvided
-                           parameters.BranchId
-                           parameters.BranchName
-                           EitherBranchIdOrBranchNameRequired
+                       Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
                        Owner.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
                        Organization.organizationExists
                            parameters.OwnerId
@@ -921,10 +825,7 @@ module Branch =
                 let validations (parameters: EnableFeatureParameters) =
                     [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
                        String.isValidGraceName parameters.BranchName InvalidBranchName
-                       Input.eitherIdOrNameMustBeProvided
-                           parameters.BranchId
-                           parameters.BranchName
-                           EitherBranchIdOrBranchNameRequired
+                       Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
                        Owner.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
                        Organization.organizationExists
                            parameters.OwnerId
@@ -968,10 +869,7 @@ module Branch =
                 let validations (parameters: EnableFeatureParameters) =
                     [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
                        String.isValidGraceName parameters.BranchName InvalidBranchName
-                       Input.eitherIdOrNameMustBeProvided
-                           parameters.BranchId
-                           parameters.BranchName
-                           EitherBranchIdOrBranchNameRequired
+                       Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
                        Owner.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
                        Organization.organizationExists
                            parameters.OwnerId
@@ -1015,10 +913,7 @@ module Branch =
                 let validations (parameters: EnableFeatureParameters) =
                     [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
                        String.isValidGraceName parameters.BranchName InvalidBranchName
-                       Input.eitherIdOrNameMustBeProvided
-                           parameters.BranchId
-                           parameters.BranchName
-                           EitherBranchIdOrBranchNameRequired
+                       Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
                        Owner.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
                        Organization.organizationExists
                            parameters.OwnerId
@@ -1062,10 +957,7 @@ module Branch =
                 let validations (parameters: EnableFeatureParameters) =
                     [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
                        String.isValidGraceName parameters.BranchName InvalidBranchName
-                       Input.eitherIdOrNameMustBeProvided
-                           parameters.BranchId
-                           parameters.BranchName
-                           EitherBranchIdOrBranchNameRequired
+                       Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
                        Owner.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
                        Organization.organizationExists
                            parameters.OwnerId
@@ -1109,10 +1001,7 @@ module Branch =
                 let validations (parameters: EnableFeatureParameters) =
                     [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
                        String.isValidGraceName parameters.BranchName InvalidBranchName
-                       Input.eitherIdOrNameMustBeProvided
-                           parameters.BranchId
-                           parameters.BranchName
-                           EitherBranchIdOrBranchNameRequired
+                       Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
                        Owner.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
                        Organization.organizationExists
                            parameters.OwnerId
@@ -1156,10 +1045,7 @@ module Branch =
                 let validations (parameters: DeleteBranchParameters) =
                     [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
                        String.isValidGraceName parameters.BranchName InvalidBranchName
-                       Input.eitherIdOrNameMustBeProvided
-                           parameters.BranchId
-                           parameters.BranchName
-                           EitherBranchIdOrBranchNameRequired
+                       Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
                        Owner.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
                        Organization.organizationExists
                            parameters.OwnerId
@@ -1207,10 +1093,7 @@ module Branch =
                     let validations (parameters: GetBranchParameters) =
                         [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
                            String.isValidGraceName parameters.BranchName InvalidBranchName
-                           Input.eitherIdOrNameMustBeProvided
-                               parameters.BranchId
-                               parameters.BranchName
-                               EitherBranchIdOrBranchNameRequired
+                           Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
                            Owner.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
                            Organization.organizationExists
                                parameters.OwnerId
@@ -1278,9 +1161,7 @@ module Branch =
 
                     return!
                         context
-                        |> result500ServerError (
-                            GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context)
-                        )
+                        |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
             }
 
     /// Gets the events handled by this branch.
@@ -1294,10 +1175,7 @@ module Branch =
                     let validations (parameters: GetBranchParameters) =
                         [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
                            String.isValidGraceName parameters.BranchName InvalidBranchName
-                           Input.eitherIdOrNameMustBeProvided
-                               parameters.BranchId
-                               parameters.BranchName
-                               EitherBranchIdOrBranchNameRequired
+                           Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
                            Owner.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
                            Organization.organizationExists
                                parameters.OwnerId
@@ -1366,9 +1244,7 @@ module Branch =
 
                     return!
                         context
-                        |> result500ServerError (
-                            GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context)
-                        )
+                        |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
             }
 
     /// Gets details about the parent branch of the provided branch.
@@ -1382,10 +1258,7 @@ module Branch =
                     let validations (parameters: BranchParameters) =
                         [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
                            String.isValidGraceName parameters.BranchName InvalidBranchName
-                           Input.eitherIdOrNameMustBeProvided
-                               parameters.BranchId
-                               parameters.BranchName
-                               EitherBranchIdOrBranchNameRequired
+                           Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
                            Owner.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
                            Organization.organizationExists
                                parameters.OwnerId
@@ -1453,9 +1326,7 @@ module Branch =
 
                     return!
                         context
-                        |> result500ServerError (
-                            GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context)
-                        )
+                        |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
             }
 
     /// Gets details about the reference with the provided ReferenceId.
@@ -1469,10 +1340,7 @@ module Branch =
                     let validations (parameters: GetReferenceParameters) =
                         [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
                            String.isValidGraceName parameters.BranchName InvalidBranchName
-                           Input.eitherIdOrNameMustBeProvided
-                               parameters.BranchId
-                               parameters.BranchName
-                               EitherBranchIdOrBranchNameRequired
+                           Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
                            Owner.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
                            Organization.organizationExists
                                parameters.OwnerId
@@ -1507,10 +1375,7 @@ module Branch =
                             let referenceActorId = ActorId(context.Items["ReferenceId"] :?> string)
 
                             let referenceActorProxy =
-                                ApplicationContext.actorProxyFactory.CreateActorProxy<IReferenceActor>(
-                                    referenceActorId,
-                                    ActorName.Reference
-                                )
+                                ApplicationContext.actorProxyFactory.CreateActorProxy<IReferenceActor>(referenceActorId, ActorName.Reference)
 
                             let! referenceDto = referenceActorProxy.Get(getCorrelationId context)
                             return referenceDto
@@ -1549,9 +1414,7 @@ module Branch =
 
                     return!
                         context
-                        |> result500ServerError (
-                            GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context)
-                        )
+                        |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
             }
 
     /// Gets details about multiple references in one API call.
@@ -1565,10 +1428,7 @@ module Branch =
                     let validations (parameters: GetReferencesParameters) =
                         [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
                            String.isValidGraceName parameters.BranchName InvalidBranchName
-                           Input.eitherIdOrNameMustBeProvided
-                               parameters.BranchId
-                               parameters.BranchName
-                               EitherBranchIdOrBranchNameRequired
+                           Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
                            Number.isPositiveOrZero parameters.MaxCount ValueMustBePositive
                            Owner.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
                            Organization.organizationExists
@@ -1638,9 +1498,7 @@ module Branch =
 
                     return!
                         context
-                        |> result500ServerError (
-                            GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context)
-                        )
+                        |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
             }
 
     /// Retrieves the diffs between references in a branch by ReferenceType.
@@ -1654,15 +1512,10 @@ module Branch =
                     let validations (parameters: GetDiffsForReferenceTypeParameters) =
                         [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
                            String.isValidGraceName parameters.BranchName InvalidBranchName
-                           Input.eitherIdOrNameMustBeProvided
-                               parameters.BranchId
-                               parameters.BranchName
-                               EitherBranchIdOrBranchNameRequired
+                           Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
                            Number.isPositiveOrZero parameters.MaxCount ValueMustBePositive
                            String.isNotEmpty parameters.ReferenceType ReferenceTypeMustBeProvided
-                           DiscriminatedUnion.isMemberOf<ReferenceType, BranchError>
-                               parameters.ReferenceType
-                               InvalidReferenceType
+                           DiscriminatedUnion.isMemberOf<ReferenceType, BranchError> parameters.ReferenceType InvalidReferenceType
                            Owner.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
                            Organization.organizationExists
                                parameters.OwnerId
@@ -1717,15 +1570,10 @@ module Branch =
                                         ValueTask(
                                             task {
                                                 let diffActorId =
-                                                    Diff.GetActorId
-                                                        sortedRefs[i].DirectoryId
-                                                        sortedRefs[i + 1].DirectoryId
+                                                    Diff.GetActorId sortedRefs[i].DirectoryId sortedRefs[i + 1].DirectoryId
 
                                                 let diffActorProxy =
-                                                    ApplicationContext.actorProxyFactory.CreateActorProxy<IDiffActor>(
-                                                        diffActorId,
-                                                        ActorName.Diff
-                                                    )
+                                                    ApplicationContext.actorProxyFactory.CreateActorProxy<IDiffActor>(diffActorId, ActorName.Diff)
 
                                                 let! diffDto = diffActorProxy.GetDiff(getCorrelationId context)
                                                 diffDtos.Add(diffDto)
@@ -1737,10 +1585,7 @@ module Branch =
                                 (sortedRefs,
                                  diffDtos
                                      .OrderByDescending(fun diffDto ->
-                                         Math.Max(
-                                             diffDto.Directory1CreatedAt.ToUnixTimeMilliseconds(),
-                                             diffDto.Directory2CreatedAt.ToUnixTimeMilliseconds()
-                                         ))
+                                         Math.Max(diffDto.Directory1CreatedAt.ToUnixTimeMilliseconds(), diffDto.Directory2CreatedAt.ToUnixTimeMilliseconds()))
                                      .ToList())
                         }
 
@@ -1777,9 +1622,7 @@ module Branch =
 
                     return!
                         context
-                        |> result500ServerError (
-                            GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context)
-                        )
+                        |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
             }
 
     /// Gets the promotions in a branch.
@@ -1793,10 +1636,7 @@ module Branch =
                     let validations (parameters: GetReferencesParameters) =
                         [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
                            String.isValidGraceName parameters.BranchName InvalidBranchName
-                           Input.eitherIdOrNameMustBeProvided
-                               parameters.BranchId
-                               parameters.BranchName
-                               EitherBranchIdOrBranchNameRequired
+                           Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
                            Number.isPositiveOrZero parameters.MaxCount ValueMustBePositive
                            Owner.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
                            Organization.organizationExists
@@ -1866,9 +1706,7 @@ module Branch =
 
                     return!
                         context
-                        |> result500ServerError (
-                            GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context)
-                        )
+                        |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
             }
 
     /// Gets the commits in a branch.
@@ -1882,10 +1720,7 @@ module Branch =
                     let validations (parameters: GetReferencesParameters) =
                         [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
                            String.isValidGraceName parameters.BranchName InvalidBranchName
-                           Input.eitherIdOrNameMustBeProvided
-                               parameters.BranchId
-                               parameters.BranchName
-                               EitherBranchIdOrBranchNameRequired
+                           Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
                            Number.isPositiveOrZero parameters.MaxCount ValueMustBePositive
                            Owner.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
                            Organization.organizationExists
@@ -1955,9 +1790,7 @@ module Branch =
 
                     return!
                         context
-                        |> result500ServerError (
-                            GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context)
-                        )
+                        |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
             }
 
     /// Gets the checkpoints in a branch.
@@ -1971,10 +1804,7 @@ module Branch =
                     let validations (parameters: GetReferencesParameters) =
                         [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
                            String.isValidGraceName parameters.BranchName InvalidBranchName
-                           Input.eitherIdOrNameMustBeProvided
-                               parameters.BranchId
-                               parameters.BranchName
-                               EitherBranchIdOrBranchNameRequired
+                           Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
                            Number.isPositiveOrZero parameters.MaxCount ValueMustBePositive
                            Owner.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
                            Organization.organizationExists
@@ -2044,9 +1874,7 @@ module Branch =
 
                     return!
                         context
-                        |> result500ServerError (
-                            GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context)
-                        )
+                        |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
             }
 
     /// Gets the saves in a branch.
@@ -2060,10 +1888,7 @@ module Branch =
                     let validations (parameters: GetReferencesParameters) =
                         [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
                            String.isValidGraceName parameters.BranchName InvalidBranchName
-                           Input.eitherIdOrNameMustBeProvided
-                               parameters.BranchId
-                               parameters.BranchName
-                               EitherBranchIdOrBranchNameRequired
+                           Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
                            Number.isPositiveOrZero parameters.MaxCount ValueMustBePositive
                            Owner.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
                            Organization.organizationExists
@@ -2134,9 +1959,7 @@ module Branch =
 
                     return!
                         context
-                        |> result500ServerError (
-                            GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context)
-                        )
+                        |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
             }
 
     /// Gets the tags in a branch.
@@ -2150,10 +1973,7 @@ module Branch =
                     let validations (parameters: GetReferencesParameters) =
                         [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
                            String.isValidGraceName parameters.BranchName InvalidBranchName
-                           Input.eitherIdOrNameMustBeProvided
-                               parameters.BranchId
-                               parameters.BranchName
-                               EitherBranchIdOrBranchNameRequired
+                           Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
                            Number.isPositiveOrZero parameters.MaxCount ValueMustBePositive
                            Owner.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
                            Organization.organizationExists
@@ -2223,9 +2043,7 @@ module Branch =
 
                     return!
                         context
-                        |> result500ServerError (
-                            GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context)
-                        )
+                        |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
             }
 
     let GetRecursiveSize: HttpHandler =
@@ -2238,10 +2056,7 @@ module Branch =
                     let validations (parameters: ListContentsParameters) =
                         [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
                            String.isValidGraceName parameters.BranchName InvalidBranchName
-                           Input.eitherIdOrNameMustBeProvided
-                               parameters.BranchId
-                               parameters.BranchName
-                               EitherBranchIdOrBranchNameRequired
+                           Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
                            String.isEmptyOrValidSha256Hash parameters.Sha256Hash InvalidSha256Hash
                            Guid.isValidAndNotEmpty parameters.ReferenceId InvalidReferenceId
                            Owner.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
@@ -2291,10 +2106,7 @@ module Branch =
                                     let directoryActorId = DirectoryVersion.GetActorId latestReference.DirectoryId
 
                                     let directoryActorProxy =
-                                        actorProxyFactory.CreateActorProxy<IDirectoryVersionActor>(
-                                            directoryActorId,
-                                            ActorName.DirectoryVersion
-                                        )
+                                        actorProxyFactory.CreateActorProxy<IDirectoryVersionActor>(directoryActorId, ActorName.DirectoryVersion)
 
                                     let! directoryVersion = directoryActorProxy.Get(getCorrelationId context)
                                     let! recursiveSize = directoryActorProxy.GetRecursiveSize(getCorrelationId context)
@@ -2305,19 +2117,13 @@ module Branch =
                                 let referenceActorId = ActorId(listContentsParameters.ReferenceId)
 
                                 let referenceActorProxy =
-                                    actorProxyFactory.CreateActorProxy<IReferenceActor>(
-                                        referenceActorId,
-                                        ActorName.Reference
-                                    )
+                                    actorProxyFactory.CreateActorProxy<IReferenceActor>(referenceActorId, ActorName.Reference)
 
                                 let! referenceDto = referenceActorProxy.Get(getCorrelationId context)
                                 let directoryActorId = DirectoryVersion.GetActorId referenceDto.DirectoryId
 
                                 let directoryActorProxy =
-                                    actorProxyFactory.CreateActorProxy<IDirectoryVersionActor>(
-                                        directoryActorId,
-                                        ActorName.DirectoryVersion
-                                    )
+                                    actorProxyFactory.CreateActorProxy<IDirectoryVersionActor>(directoryActorId, ActorName.DirectoryVersion)
 
                                 let! recursiveSize = directoryActorProxy.GetRecursiveSize(getCorrelationId context)
                                 return recursiveSize
@@ -2333,10 +2139,7 @@ module Branch =
                                     let directoryActorId = DirectoryVersion.GetActorId directoryVersion.DirectoryId
 
                                     let directoryActorProxy =
-                                        actorProxyFactory.CreateActorProxy<IDirectoryVersionActor>(
-                                            directoryActorId,
-                                            ActorName.DirectoryVersion
-                                        )
+                                        actorProxyFactory.CreateActorProxy<IDirectoryVersionActor>(directoryActorId, ActorName.DirectoryVersion)
 
                                     let! recursiveSize = directoryActorProxy.GetRecursiveSize(getCorrelationId context)
                                     return recursiveSize
@@ -2376,9 +2179,7 @@ module Branch =
 
                     return!
                         context
-                        |> result500ServerError (
-                            GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context)
-                        )
+                        |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
             }
 
     let ListContents: HttpHandler =
@@ -2391,10 +2192,7 @@ module Branch =
                     let validations (parameters: ListContentsParameters) =
                         [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
                            String.isValidGraceName parameters.BranchName InvalidBranchName
-                           Input.eitherIdOrNameMustBeProvided
-                               parameters.BranchId
-                               parameters.BranchName
-                               EitherBranchIdOrBranchNameRequired
+                           Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
                            String.isEmptyOrValidSha256Hash parameters.Sha256Hash InvalidSha256Hash
                            Guid.isValidAndNotEmpty parameters.ReferenceId InvalidReferenceId
                            Owner.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
@@ -2444,17 +2242,12 @@ module Branch =
                                     let directoryActorId = DirectoryVersion.GetActorId latestReference.DirectoryId
 
                                     let directoryActorProxy =
-                                        actorProxyFactory.CreateActorProxy<IDirectoryVersionActor>(
-                                            directoryActorId,
-                                            ActorName.DirectoryVersion
-                                        )
+                                        actorProxyFactory.CreateActorProxy<IDirectoryVersionActor>(directoryActorId, ActorName.DirectoryVersion)
 
                                     let! directoryVersion = directoryActorProxy.Get(getCorrelationId context)
 
                                     let! contents =
-                                        directoryActorProxy.GetDirectoryVersionsRecursive
-                                            listContentsParameters.ForceRecompute
-                                            (getCorrelationId context)
+                                        directoryActorProxy.GetDirectoryVersionsRecursive listContentsParameters.ForceRecompute (getCorrelationId context)
 
                                     return contents
                                 | None -> return List<DirectoryVersion>()
@@ -2463,24 +2256,16 @@ module Branch =
                                 let referenceActorId = ActorId(listContentsParameters.ReferenceId)
 
                                 let referenceActorProxy =
-                                    actorProxyFactory.CreateActorProxy<IReferenceActor>(
-                                        referenceActorId,
-                                        ActorName.Reference
-                                    )
+                                    actorProxyFactory.CreateActorProxy<IReferenceActor>(referenceActorId, ActorName.Reference)
 
                                 let! referenceDto = referenceActorProxy.Get(getCorrelationId context)
                                 let directoryActorId = DirectoryVersion.GetActorId referenceDto.DirectoryId
 
                                 let directoryActorProxy =
-                                    actorProxyFactory.CreateActorProxy<IDirectoryVersionActor>(
-                                        directoryActorId,
-                                        ActorName.DirectoryVersion
-                                    )
+                                    actorProxyFactory.CreateActorProxy<IDirectoryVersionActor>(directoryActorId, ActorName.DirectoryVersion)
 
                                 let! contents =
-                                    directoryActorProxy.GetDirectoryVersionsRecursive
-                                        listContentsParameters.ForceRecompute
-                                        (getCorrelationId context)
+                                    directoryActorProxy.GetDirectoryVersionsRecursive listContentsParameters.ForceRecompute (getCorrelationId context)
 
                                 return contents
                             else
@@ -2495,15 +2280,10 @@ module Branch =
                                     let directoryActorId = DirectoryVersion.GetActorId directoryVersion.DirectoryId
 
                                     let directoryActorProxy =
-                                        actorProxyFactory.CreateActorProxy<IDirectoryVersionActor>(
-                                            directoryActorId,
-                                            ActorName.DirectoryVersion
-                                        )
+                                        actorProxyFactory.CreateActorProxy<IDirectoryVersionActor>(directoryActorId, ActorName.DirectoryVersion)
 
                                     let! contents =
-                                        directoryActorProxy.GetDirectoryVersionsRecursive
-                                            listContentsParameters.ForceRecompute
-                                            (getCorrelationId context)
+                                        directoryActorProxy.GetDirectoryVersionsRecursive listContentsParameters.ForceRecompute (getCorrelationId context)
 
                                     return contents
                                 | None -> return List<DirectoryVersion>()
@@ -2542,9 +2322,7 @@ module Branch =
 
                     return!
                         context
-                        |> result500ServerError (
-                            GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context)
-                        )
+                        |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
             }
 
     let GetVersion: HttpHandler =
@@ -2557,10 +2335,7 @@ module Branch =
                     let validations (parameters: GetBranchVersionParameters) =
                         [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
                            String.isValidGraceName parameters.BranchName InvalidBranchName
-                           Input.eitherIdOrNameMustBeProvided
-                               parameters.BranchId
-                               parameters.BranchName
-                               EitherBranchIdOrBranchNameRequired
+                           Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
                            String.isEmptyOrValidSha256Hash parameters.Sha256Hash InvalidSha256Hash
                            Guid.isValidAndNotEmpty parameters.ReferenceId InvalidReferenceId
                            Owner.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
@@ -2602,28 +2377,16 @@ module Branch =
                             let! rootDirectoryVersion =
                                 task {
                                     if not <| String.IsNullOrEmpty(parameters.Sha256Hash) then
-                                        return!
-                                            getRootDirectoryBySha256Hash
-                                                repositoryId
-                                                parameters.Sha256Hash
-                                                (getCorrelationId context)
+                                        return! getRootDirectoryBySha256Hash repositoryId parameters.Sha256Hash (getCorrelationId context)
                                     elif not <| String.IsNullOrEmpty(parameters.ReferenceId) then
-                                        return!
-                                            getRootDirectoryByReferenceId
-                                                repositoryId
-                                                (Guid.Parse(parameters.ReferenceId))
-                                                (getCorrelationId context)
+                                        return! getRootDirectoryByReferenceId repositoryId (Guid.Parse(parameters.ReferenceId)) (getCorrelationId context)
                                     else
                                         let! branchDto = actorProxy.Get(getCorrelationId context)
                                         let! latestReference = getLatestReference branchDto.BranchId
 
                                         match latestReference with
                                         | Some referenceDto ->
-                                            return!
-                                                getRootDirectoryBySha256Hash
-                                                    repositoryId
-                                                    referenceDto.Sha256Hash
-                                                    (getCorrelationId context)
+                                            return! getRootDirectoryBySha256Hash repositoryId referenceDto.Sha256Hash (getCorrelationId context)
                                         | None -> return None
                                 }
 
@@ -2637,10 +2400,7 @@ module Branch =
                                         ActorName.DirectoryVersion
                                     )
 
-                                let! directoryVersions =
-                                    directoryVersionActorProxy.GetDirectoryVersionsRecursive
-                                        false
-                                        (getCorrelationId context)
+                                let! directoryVersions = directoryVersionActorProxy.GetDirectoryVersionsRecursive false (getCorrelationId context)
 
                                 let directoryIds = directoryVersions.Select(fun dv -> dv.DirectoryId).ToList()
                                 return directoryIds
@@ -2667,16 +2427,9 @@ module Branch =
                             not <| String.IsNullOrEmpty(parameters.BranchId)
                             || not <| String.IsNullOrEmpty(parameters.BranchName)
                         then
-                            logToConsole
-                                $"In Branch.GetVersion: parameters.BranchId: {parameters.BranchId}; parameters.BranchName: {parameters.BranchName}"
+                            logToConsole $"In Branch.GetVersion: parameters.BranchId: {parameters.BranchId}; parameters.BranchName: {parameters.BranchName}"
 
-                            match!
-                                resolveBranchId
-                                    repositoryId
-                                    parameters.BranchId
-                                    parameters.BranchName
-                                    parameters.CorrelationId
-                            with
+                            match! resolveBranchId repositoryId parameters.BranchId parameters.BranchName parameters.CorrelationId with
                             | Some branchId -> parameters.BranchId <- branchId
                             | None -> () // This should never happen because it would get caught in validations.
                         elif not <| String.IsNullOrEmpty(parameters.ReferenceId) then
@@ -2684,10 +2437,7 @@ module Branch =
                             let referenceActorId = ActorId(parameters.ReferenceId)
 
                             let referenceActorProxy =
-                                ApplicationContext.actorProxyFactory.CreateActorProxy<IReferenceActor>(
-                                    referenceActorId,
-                                    ActorName.Reference
-                                )
+                                ApplicationContext.actorProxyFactory.CreateActorProxy<IReferenceActor>(referenceActorId, ActorName.Reference)
 
                             let! referenceDto = referenceActorProxy.Get(getCorrelationId context)
                             logToConsole $"referenceDto.ReferenceId: {referenceDto.ReferenceId}"
@@ -2720,7 +2470,5 @@ module Branch =
 
                     return!
                         context
-                        |> result500ServerError (
-                            GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context)
-                        )
+                        |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
             }

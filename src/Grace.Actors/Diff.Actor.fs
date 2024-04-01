@@ -58,10 +58,7 @@ module Diff =
 
             for directoryVersion in graceIndex.Values do
                 // Add the directory to the lookup cache.
-                lookupCache.TryAdd(
-                    (FileSystemEntryType.Directory, directoryVersion.RelativePath),
-                    directoryVersion.Sha256Hash
-                )
+                lookupCache.TryAdd((FileSystemEntryType.Directory, directoryVersion.RelativePath), directoryVersion.Sha256Hash)
                 |> ignore
                 // Add each file to the lookup cache.
                 for file in directoryVersion.Files do
@@ -114,10 +111,7 @@ module Diff =
 
                 let directory =
                     ActorProxyFactory()
-                        .CreateActorProxy<IDirectoryVersionActor>(
-                            DirectoryVersion.GetActorId(directoryId),
-                            ActorName.DirectoryVersion
-                        )
+                        .CreateActorProxy<IDirectoryVersionActor>(DirectoryVersion.GetActorId(directoryId), ActorName.DirectoryVersion)
 
                 let! directoryCreatedAt = directory.GetCreatedAt correlationId
                 let! directoryContents = directory.GetDirectoryVersionsRecursive false correlationId
@@ -156,12 +150,7 @@ module Diff =
         /// Sets a delete reminder for this actor's state.
         member private this.setDeleteReminder() =
             let task =
-                this.RegisterReminderAsync(
-                    "DeleteReminder",
-                    Array.empty<byte>,
-                    TimeSpan.FromDays(7.0),
-                    TimeSpan.FromMilliseconds(-1.0)
-                )
+                this.RegisterReminderAsync("DeleteReminder", Array.empty<byte>, TimeSpan.FromDays(7.0), TimeSpan.FromMilliseconds(-1.0))
 
             task.Wait()
 
@@ -200,13 +189,7 @@ module Diff =
             actorStartTime <- getCurrentInstant ()
             logScope <- log.BeginScope("Actor {actorName}", actorName)
 
-            log.LogTrace(
-                "{CurrentInstant}: Started {ActorName}.{MethodName} Id: {Id}.",
-                getCurrentInstantExtended (),
-                actorName,
-                context.MethodName,
-                this.Id
-            )
+            log.LogTrace("{CurrentInstant}: Started {ActorName}.{MethodName} Id: {Id}.", getCurrentInstantExtended (), actorName, context.MethodName, this.Id)
 
             Task.CompletedTask
 
@@ -246,16 +229,13 @@ module Diff =
                     task {
                         let (directoryId1, directoryId2) = deconstructActorId this.Id
 
-                        logToConsole
-                            $"In DiffActor.Populate(); DirectoryId1: {directoryId1}; DirectoryId2: {directoryId2}"
+                        logToConsole $"In DiffActor.Populate(); DirectoryId1: {directoryId1}; DirectoryId2: {directoryId2}"
 
                         try
                             // Build a GraceIndex for each DirectoryId.
-                            let! (graceIndex1, createdAt1, repositoryId1) =
-                                this.buildGraceIndex directoryId1 correlationId
+                            let! (graceIndex1, createdAt1, repositoryId1) = this.buildGraceIndex directoryId1 correlationId
 
-                            let! (graceIndex2, createdAt2, repositoryId2) =
-                                this.buildGraceIndex directoryId2 correlationId
+                            let! (graceIndex2, createdAt2, repositoryId2) = this.buildGraceIndex directoryId2 correlationId
                             //logToConsole $"In DiffActor.Populate(); createdAt1: {createdAt1}; createdAt2: {createdAt2}."
 
                             // Compare the GraceIndices.
@@ -276,10 +256,7 @@ module Diff =
                                         let repositoryActorId = ActorId($"{repositoryId1}")
 
                                         let repositoryActorProxy =
-                                            actorProxyFactory.CreateActorProxy<IRepositoryActor>(
-                                                repositoryActorId,
-                                                ActorName.Repository
-                                            )
+                                            actorProxyFactory.CreateActorProxy<IRepositoryActor>(repositoryActorId, ActorName.Repository)
 
                                         let! repositoryDtoFromActor = repositoryActorProxy.Get correlationId
                                         return repositoryDtoFromActor
@@ -288,11 +265,7 @@ module Diff =
                                 }
 
                             /// Gets a Stream for a given RelativePath.
-                            let getFileStream
-                                (graceIndex: ServerGraceIndex)
-                                (relativePath: RelativePath)
-                                (repositoryDto: RepositoryDto)
-                                =
+                            let getFileStream (graceIndex: ServerGraceIndex) (relativePath: RelativePath) (repositoryDto: RepositoryDto) =
                                 task {
                                     let relativeDirectoryPath =
                                         getRelativeDirectory relativePath Constants.RootDirectoryPath
@@ -321,17 +294,9 @@ module Diff =
                                                     | Directory -> () // Might have to revisit this.
                                                     | File ->
                                                         // Get streams for both file versions.
-                                                        let! (fileStream1, fileVersion1) =
-                                                            getFileStream
-                                                                graceIndex1
-                                                                difference.RelativePath
-                                                                repositoryDto
+                                                        let! (fileStream1, fileVersion1) = getFileStream graceIndex1 difference.RelativePath repositoryDto
 
-                                                        let! (fileStream2, fileVersion2) =
-                                                            getFileStream
-                                                                graceIndex2
-                                                                difference.RelativePath
-                                                                repositoryDto
+                                                        let! (fileStream2, fileVersion2) = getFileStream graceIndex2 difference.RelativePath repositoryDto
 
                                                         // Compare the streams using DiffPlex, and get the Inline and Side-by-Side diffs.
                                                         let! diffResults =

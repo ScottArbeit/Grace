@@ -163,15 +163,7 @@ module Types =
 
         /// Converts a FileVersion to a LocalFileVersion.
         member this.ToLocalFileVersion lastWriteTimeUtc =
-            LocalFileVersion.Create
-                this.RepositoryId
-                this.RelativePath
-                this.Sha256Hash
-                this.IsBinary
-                this.Size
-                this.CreatedAt
-                true
-                lastWriteTimeUtc
+            LocalFileVersion.Create this.RepositoryId this.RelativePath this.Sha256Hash this.IsBinary this.Size this.CreatedAt true lastWriteTimeUtc
 
         /// Get the object directory file name, which includes the SHA256 Hash value. Example: hello.js -> hello_04bef0a4b298de9c02930234.js
         member this.GetObjectFileName = getObjectFileName this.RelativePath this.Sha256Hash
@@ -463,11 +455,7 @@ module Types =
               CorrelationId = correlationId
               Properties = new Dictionary<String, String>() }
 
-        static member CreateWithMetadata
-            (error: string)
-            (correlationId: string)
-            (properties: Dictionary<String, String>)
-            =
+        static member CreateWithMetadata (error: string) (correlationId: string) (properties: Dictionary<String, String>) =
             { Error = error
               EventTime = getCurrentInstant ()
               CorrelationId = correlationId
@@ -480,9 +468,7 @@ module Types =
         override this.ToString() =
             let properties =
                 this.Properties
-                |> Seq.fold
-                    (fun (state: StringBuilder) kvp -> state.AppendLine($"  {kvp.Key}: {kvp.Value}; "))
-                    (StringBuilder())
+                |> Seq.fold (fun (state: StringBuilder) kvp -> state.AppendLine($"  {kvp.Key}: {kvp.Value}; ")) (StringBuilder())
 
             if properties.Length >= 2 then
                 properties.Remove(properties.Length - 2, 2) |> ignore

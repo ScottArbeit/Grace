@@ -107,10 +107,7 @@ module Reference =
                 this.correlationId <- correlationId
                 referenceDto.Value.ReferenceType |> returnTask
 
-            member this.Create
-                (referenceId, branchId, directoryId, sha256Hash, referenceType, referenceText)
-                correlationId
-                =
+            member this.Create (referenceId, branchId, directoryId, sha256Hash, referenceType, referenceText) correlationId =
                 this.correlationId <- correlationId
                 let stateManager = this.StateManager
 

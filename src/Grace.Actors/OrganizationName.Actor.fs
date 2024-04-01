@@ -34,12 +34,7 @@ module OrganizationName =
         member val private correlationId: CorrelationId = String.Empty with get, set
 
         override this.OnActivateAsync() =
-            log.LogInformation(
-                "{CurrentInstant} Activated {ActorType} {ActorId}.",
-                getCurrentInstantExtended (),
-                this.GetType().Name,
-                host.Id
-            )
+            log.LogInformation("{CurrentInstant} Activated {ActorType} {ActorId}.", getCurrentInstantExtended (), this.GetType().Name, host.Id)
 
             Task.CompletedTask
 
@@ -48,13 +43,7 @@ module OrganizationName =
             actorStartTime <- getCurrentInstant ()
             logScope <- log.BeginScope("Actor {actorName}", actorName)
 
-            log.LogTrace(
-                "{CurrentInstant}: Started {ActorName}.{MethodName} Id: {Id}.",
-                getCurrentInstantExtended (),
-                actorName,
-                context.MethodName,
-                this.Id
-            )
+            log.LogTrace("{CurrentInstant}: Started {ActorName}.{MethodName} Id: {Id}.", getCurrentInstantExtended (), actorName, context.MethodName, this.Id)
 
             Task.CompletedTask
 

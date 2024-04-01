@@ -39,13 +39,7 @@ module RepositoryName =
             actorStartTime <- getCurrentInstant ()
             logScope <- log.BeginScope("Actor {actorName}", actorName)
 
-            log.LogTrace(
-                "{CurrentInstant}: Started {ActorName}.{MethodName} Id: {Id}.",
-                getCurrentInstantExtended (),
-                actorName,
-                context.MethodName,
-                this.Id
-            )
+            log.LogTrace("{CurrentInstant}: Started {ActorName}.{MethodName} Id: {Id}.", getCurrentInstantExtended (), actorName, context.MethodName, this.Id)
 
             Task.CompletedTask
 

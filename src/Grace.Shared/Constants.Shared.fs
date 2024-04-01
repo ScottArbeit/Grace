@@ -192,30 +192,18 @@ module Constants =
     /// See https://regexper.com for a diagram.
     /// </summary>
     let GraceNameRegex =
-        new Regex(
-            GraceNameRegexText,
-            RegexOptions.CultureInvariant ||| RegexOptions.Compiled,
-            TimeSpan.FromSeconds(2.0)
-        )
+        new Regex(GraceNameRegexText, RegexOptions.CultureInvariant ||| RegexOptions.Compiled, TimeSpan.FromSeconds(2.0))
     // Note: The timeout value of 2s is a crazy big maximum time; matching against this should take less than 1ms.
 
     /// Validates that a string is a full or partial valid SHA-256 hash value, between 2 and 64 hexadecimal characters.
     ///
     /// Regex: ^[0-9a-fA-F]{2,64}$
     let Sha256Regex =
-        new Regex(
-            "^[0-9a-fA-F]{2,64}$",
-            RegexOptions.CultureInvariant ||| RegexOptions.Compiled,
-            TimeSpan.FromSeconds(1.0)
-        )
+        new Regex("^[0-9a-fA-F]{2,64}$", RegexOptions.CultureInvariant ||| RegexOptions.Compiled, TimeSpan.FromSeconds(1.0))
 
     /// The backoff policy used by Grace for server requests.
     let private backoffWithJitter =
-        Backoff.DecorrelatedJitterBackoffV2(
-            medianFirstRetryDelay = (TimeSpan.FromSeconds(0.25)),
-            retryCount = 7,
-            fastFirst = false
-        )
+        Backoff.DecorrelatedJitterBackoffV2(medianFirstRetryDelay = (TimeSpan.FromSeconds(0.25)), retryCount = 7, fastFirst = false)
 
     /// An exponential retry policy, with backoffs starting at 0.25s, and retrying 8 times.
     let DefaultRetryPolicy =
@@ -230,12 +218,7 @@ module Constants =
             .WaitAndRetryAsync(backoffWithJitter)
 
     let private fileCopyBackoff =
-        Backoff.LinearBackoff(
-            initialDelay = (TimeSpan.FromSeconds(1.0)),
-            retryCount = 16,
-            factor = 1.5,
-            fastFirst = false
-        )
+        Backoff.LinearBackoff(initialDelay = (TimeSpan.FromSeconds(1.0)), retryCount = 16, factor = 1.5, fastFirst = false)
 
     /// A linear retry policy for copying files locally, with backoffs starting at 1s and retrying 16 times.
     // This retry policy helps with large files. `grace watch` will see that the file is arriving, but if that file takes longer to be written than the next tick,

@@ -50,10 +50,7 @@ module Load =
             let organizationId = Guid.NewGuid()
             let organizationName = $"Organization{suffixes[0]}"
 
-            let! r =
-                Owner.Create(
-                    Owner.CreateOwnerParameters(OwnerId = $"{ownerId}", OwnerName = ownerName, CorrelationId = g ())
-                )
+            let! r = Owner.Create(Owner.CreateOwnerParameters(OwnerId = $"{ownerId}", OwnerName = ownerName, CorrelationId = g ()))
 
             showResult r
 
@@ -95,8 +92,7 @@ module Load =
 
                                 match repo with
                                 | Ok r ->
-                                    logToConsole
-                                        $"Adding parentBranchId {i}; r.Properties[nameof(BranchId)]: {r.Properties[nameof (BranchId)]}."
+                                    logToConsole $"Adding parentBranchId {i}; r.Properties[nameof(BranchId)]: {r.Properties[nameof (BranchId)]}."
 
                                     parentBranchIds.AddOrUpdate(
                                         i,
@@ -416,14 +412,7 @@ module Load =
 
             showResult r
 
-            let! r =
-                Owner.Delete(
-                    Owner.DeleteOwnerParameters(
-                        OwnerId = $"{ownerId}",
-                        DeleteReason = "performance test",
-                        CorrelationId = g ()
-                    )
-                )
+            let! r = Owner.Delete(Owner.DeleteOwnerParameters(OwnerId = $"{ownerId}", DeleteReason = "performance test", CorrelationId = g ()))
 
             showResult r
 

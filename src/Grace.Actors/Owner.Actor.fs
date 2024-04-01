@@ -113,12 +113,7 @@ module Owner =
 
         member private this.SetMaintenanceReminder() =
             this
-                .RegisterReminderAsync(
-                    ReminderType.Maintenance,
-                    Array.empty<byte>,
-                    TimeSpan.FromDays(7.0),
-                    TimeSpan.FromDays(7.0)
-                )
+                .RegisterReminderAsync(ReminderType.Maintenance, Array.empty<byte>, TimeSpan.FromDays(7.0), TimeSpan.FromDays(7.0))
                 .Wait()
 
         member private this.UnregisterMaintenanceReminder() =
@@ -144,13 +139,7 @@ module Owner =
             logScope <- log.BeginScope("Actor {actorName}", actorName)
             currentCommand <- String.Empty
 
-            log.LogTrace(
-                "{CurrentInstant}: Started {ActorName}.{MethodName} Id: {Id}.",
-                getCurrentInstantExtended (),
-                actorName,
-                context.MethodName,
-                this.Id
-            )
+            log.LogTrace("{CurrentInstant}: Started {ActorName}.{MethodName} Id: {Id}.", getCurrentInstantExtended (), actorName, context.MethodName, this.Id)
 
             // This checks if the actor is still active, but in an undefined state, which will _almost_ never happen.
             // isDisposed is set when the actor is deleted, or if an error occurs where we're not sure of the state and want to reload from the database.
@@ -218,15 +207,11 @@ module Owner =
 
                     ownerEvents.Add(ownerEvent)
 
-                    do!
-                        DefaultAsyncRetryPolicy.ExecuteAsync(fun () ->
-                            stateManager.SetStateAsync(eventsStateName, ownerEvents))
+                    do! DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> stateManager.SetStateAsync(eventsStateName, ownerEvents))
 
                     ownerDto <- ownerDto |> updateDto ownerEvent.Event
 
-                    do!
-                        DefaultAsyncRetryPolicy.ExecuteAsync(fun () ->
-                            stateManager.SetStateAsync(dtoStateName, ownerDto))
+                    do! DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> stateManager.SetStateAsync(dtoStateName, ownerDto))
 
                     // Publish the event to the rest of the world.
                     let graceEvent = Events.GraceEvent.OwnerEvent ownerEvent
@@ -242,24 +227,17 @@ module Owner =
                     return Ok returnValue
                 with ex ->
                     let graceError =
-                        GraceError.Create
-                            (OwnerError.getErrorMessage OwnerError.FailedWhileApplyingEvent)
-                            ownerEvent.Metadata.CorrelationId
+                        GraceError.Create (OwnerError.getErrorMessage OwnerError.FailedWhileApplyingEvent) ownerEvent.Metadata.CorrelationId
 
                     let exceptionResponse = createExceptionResponse ex
 
-                    graceError.Properties.Add(
-                        "Exception details",
-                        exceptionResponse.``exception`` + exceptionResponse.innerException
-                    )
+                    graceError.Properties.Add("Exception details", exceptionResponse.``exception`` + exceptionResponse.innerException)
 
                     return Error graceError
             }
 
         /// Sends a DeleteLogical command to each organization provided.
-        member private this.LogicalDeleteOrganizations
-            (organizations: List<OrganizationDto>, metadata: EventMetadata, deleteReason: string)
-            =
+        member private this.LogicalDeleteOrganizations(organizations: List<OrganizationDto>, metadata: EventMetadata, deleteReason: string) =
             // Loop through the orgs, sending a DeleteLogical command to each. If any of them fail, return the first error.
             task {
                 let results = ConcurrentQueue<GraceResult<string>>()
@@ -348,34 +326,17 @@ module Owner =
                         let! ownerEvents = this.OwnerEvents()
 
                         if ownerEvents.Exists(fun ev -> ev.Metadata.CorrelationId = metadata.CorrelationId) then
-                            return
-                                Error(
-                                    GraceError.Create
-                                        (OwnerError.getErrorMessage DuplicateCorrelationId)
-                                        metadata.CorrelationId
-                                )
+                            return Error(GraceError.Create (OwnerError.getErrorMessage DuplicateCorrelationId) metadata.CorrelationId)
                         else
                             match command with
                             | OwnerCommand.Create(_, _) ->
                                 match ownerDto.UpdatedAt with
-                                | Some _ ->
-                                    return
-                                        Error(
-                                            GraceError.Create
-                                                (OwnerError.getErrorMessage OwnerIdAlreadyExists)
-                                                metadata.CorrelationId
-                                        )
+                                | Some _ -> return Error(GraceError.Create (OwnerError.getErrorMessage OwnerIdAlreadyExists) metadata.CorrelationId)
                                 | None -> return Ok command
                             | _ ->
                                 match ownerDto.UpdatedAt with
                                 | Some _ -> return Ok command
-                                | None ->
-                                    return
-                                        Error(
-                                            GraceError.Create
-                                                (OwnerError.getErrorMessage OwnerIdDoesNotExist)
-                                                metadata.CorrelationId
-                                        )
+                                | None -> return Error(GraceError.Create (OwnerError.getErrorMessage OwnerIdDoesNotExist) metadata.CorrelationId)
                     }
 
                 let processCommand (command: OwnerCommand) (metadata: EventMetadata) =
@@ -384,14 +345,11 @@ module Owner =
                             let! eventResult =
                                 task {
                                     match command with
-                                    | OwnerCommand.Create(ownerId, ownerName) ->
-                                        return Ok(OwnerEventType.Created(ownerId, ownerName))
+                                    | OwnerCommand.Create(ownerId, ownerName) -> return Ok(OwnerEventType.Created(ownerId, ownerName))
                                     | OwnerCommand.SetName ownerName -> return Ok(OwnerEventType.NameSet ownerName)
                                     | OwnerCommand.SetType ownerType -> return Ok(OwnerEventType.TypeSet ownerType)
-                                    | OwnerCommand.SetSearchVisibility searchVisibility ->
-                                        return Ok(OwnerEventType.SearchVisibilitySet searchVisibility)
-                                    | OwnerCommand.SetDescription description ->
-                                        return Ok(OwnerEventType.DescriptionSet description)
+                                    | OwnerCommand.SetSearchVisibility searchVisibility -> return Ok(OwnerEventType.SearchVisibilitySet searchVisibility)
+                                    | OwnerCommand.SetDescription description -> return Ok(OwnerEventType.DescriptionSet description)
                                     | OwnerCommand.DeleteLogical(force, deleteReason) ->
                                         // Get the list of organizations that aren't already deleted.
                                         let! organizations = getOrganizations ownerDto.OwnerId Int32.MaxValue false
@@ -400,8 +358,7 @@ module Owner =
                                         if
                                             not <| force
                                             && organizations.Count > 0
-                                            && organizations.Any(fun organization ->
-                                                organization.DeletedAt |> Option.isNone)
+                                            && organizations.Any(fun organization -> organization.DeletedAt |> Option.isNone)
                                         then
                                             return
                                                 Error(
@@ -412,9 +369,7 @@ module Owner =
                                                 )
                                         else
                                             // Delete the organizations.
-                                            match!
-                                                this.LogicalDeleteOrganizations(organizations, metadata, deleteReason)
-                                            with
+                                            match! this.LogicalDeleteOrganizations(organizations, metadata, deleteReason) with
                                             | Ok _ ->
                                                 this.SchedulePhysicalDeletion(deleteReason, metadata.CorrelationId)
                                                 return Ok(LogicalDeleted(force, deleteReason))
@@ -429,13 +384,7 @@ module Owner =
                             | Ok event -> return! this.ApplyEvent { Event = event; Metadata = metadata }
                             | Error error -> return Error error
                         with ex ->
-                            return
-                                Error(
-                                    GraceError.CreateWithMetadata
-                                        $"{createExceptionResponse ex}"
-                                        metadata.CorrelationId
-                                        metadata.Properties
-                                )
+                            return Error(GraceError.CreateWithMetadata $"{createExceptionResponse ex}" metadata.CorrelationId metadata.Properties)
                     }
 
                 task {

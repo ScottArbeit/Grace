@@ -148,20 +148,9 @@ module Diff =
             )
 
         let tag =
-            new Option<string>(
-                "--tag",
-                IsRequired = true,
-                Description = "The tag to compare the current version to.",
-                Arity = ArgumentArity.ExactlyOne
-            )
+            new Option<string>("--tag", IsRequired = true, Description = "The tag to compare the current version to.", Arity = ArgumentArity.ExactlyOne)
 
-    let mustBeAValidGuid
-        (parseResult: ParseResult)
-        (parameters: CommonParameters)
-        (option: Option)
-        (value: string)
-        (error: DiffError)
-        =
+    let mustBeAValidGuid (parseResult: ParseResult) (parameters: CommonParameters) (option: Option) (value: string) (error: DiffError) =
         let mutable guid = Guid.Empty
 
         if
@@ -173,13 +162,7 @@ module Diff =
         else
             Ok(parseResult, parameters)
 
-    let mustBeAValidGraceName
-        (parseResult: ParseResult)
-        (parameters: CommonParameters)
-        (option: Option)
-        (value: string)
-        (error: DiffError)
-        =
+    let mustBeAValidGraceName (parseResult: ParseResult) (parameters: CommonParameters) (option: Option) (value: string) (error: DiffError) =
         if
             parseResult.CommandResult.FindResultFor(option) <> null
             && not <| Constants.GraceNameRegex.IsMatch(value)
@@ -196,31 +179,16 @@ module Diff =
             mustBeAValidGraceName parseResult parameters Options.ownerName parameters.OwnerName InvalidOwnerName
 
         let ``OrganizationId must be a Guid`` (parseResult: ParseResult, parameters: CommonParameters) =
-            mustBeAValidGuid
-                parseResult
-                parameters
-                Options.organizationId
-                parameters.OrganizationId
-                InvalidOrganizationId
+            mustBeAValidGuid parseResult parameters Options.organizationId parameters.OrganizationId InvalidOrganizationId
 
         let ``OrganizationName must be a valid Grace name`` (parseResult: ParseResult, parameters: CommonParameters) =
-            mustBeAValidGraceName
-                parseResult
-                parameters
-                Options.organizationName
-                parameters.OrganizationName
-                InvalidOrganizationName
+            mustBeAValidGraceName parseResult parameters Options.organizationName parameters.OrganizationName InvalidOrganizationName
 
         let ``RepositoryId must be a Guid`` (parseResult: ParseResult, parameters: CommonParameters) =
             mustBeAValidGuid parseResult parameters Options.repositoryId parameters.RepositoryId InvalidRepositoryId
 
         let ``RepositoryName must be a valid Grace name`` (parseResult: ParseResult, parameters: CommonParameters) =
-            mustBeAValidGraceName
-                parseResult
-                parameters
-                Options.repositoryName
-                parameters.RepositoryName
-                InvalidRepositoryName
+            mustBeAValidGraceName parseResult parameters Options.repositoryName parameters.RepositoryName InvalidRepositoryName
 
         (parseResult, parameters)
         |> ``OwnerId must be a Guid``
@@ -242,9 +210,7 @@ module Diff =
         >>= ``DirectoryId2 must be a Guid``
 
     let private sha256Validations (parseResult, parameters) =
-        let ``Sha256Hash1 must be a valid SHA-256 hash value``
-            (parseResult: ParseResult, (parameters: GetDiffBySha256HashParameters))
-            =
+        let ``Sha256Hash1 must be a valid SHA-256 hash value`` (parseResult: ParseResult, (parameters: GetDiffBySha256HashParameters)) =
             if
                 parseResult.CommandResult.FindResultFor(Options.sha256Hash1) <> null
                 && not <| Constants.Sha256Regex.IsMatch(parameters.Sha256Hash1)
@@ -253,18 +219,11 @@ module Diff =
                 properties.Add("repositoryId", $"{parameters.RepositoryId}")
                 properties.Add("sha256Hash1", parameters.Sha256Hash1)
 
-                Error(
-                    GraceError.CreateWithMetadata
-                        (DiffError.getErrorMessage InvalidSha256Hash)
-                        (parameters.CorrelationId)
-                        properties
-                )
+                Error(GraceError.CreateWithMetadata (DiffError.getErrorMessage InvalidSha256Hash) (parameters.CorrelationId) properties)
             else
                 Ok(parseResult, parameters)
 
-        let ``Sha256Hash2 must be a valid SHA-256 hash value``
-            (parseResult: ParseResult, (parameters: GetDiffBySha256HashParameters))
-            =
+        let ``Sha256Hash2 must be a valid SHA-256 hash value`` (parseResult: ParseResult, (parameters: GetDiffBySha256HashParameters)) =
             if
                 parseResult.CommandResult.FindResultFor(Options.sha256Hash2) <> null
                 && not <| Constants.Sha256Regex.IsMatch(parameters.Sha256Hash2)
@@ -313,16 +272,12 @@ module Diff =
                 match diff.FileSystemEntryType with
                 | FileSystemEntryType.File ->
                     addToOutput (
-                        Markup(
-                            $"[{Colors.Important}]{getDiscriminatedUnionCaseName diff.DifferenceType}[/] [{Colors.Highlighted}]{diff.RelativePath}[/]"
-                        )
+                        Markup($"[{Colors.Important}]{getDiscriminatedUnionCaseName diff.DifferenceType}[/] [{Colors.Highlighted}]{diff.RelativePath}[/]")
                     )
                 | FileSystemEntryType.Directory ->
                     if diff.DifferenceType <> DifferenceType.Change then
                         addToOutput (
-                            Markup(
-                                $"[{Colors.Important}]{getDiscriminatedUnionCaseName diff.DifferenceType}[/] [{Colors.Highlighted}]{diff.RelativePath}[/]"
-                            )
+                            Markup($"[{Colors.Important}]{getDiscriminatedUnionCaseName diff.DifferenceType}[/] [{Colors.Highlighted}]{diff.RelativePath}[/]")
                         )
 
             for fileDiff in diffDto.FileDiffs.OrderBy(fun fileDiff -> fileDiff.RelativePath) do
@@ -355,11 +310,7 @@ module Diff =
         member val public BranchId = String.Empty with get, set
         member val public BranchName = BranchName String.Empty with get, set
 
-    let private diffToReferenceType
-        (parseResult: ParseResult)
-        (parameters: GetDiffByReferenceTypeParameters)
-        (referenceType: ReferenceType)
-        =
+    let private diffToReferenceType (parseResult: ParseResult) (parameters: GetDiffByReferenceTypeParameters) (referenceType: ReferenceType) =
         task {
             if parseResult |> verbose then
                 printParseResult parseResult
@@ -378,34 +329,19 @@ module Diff =
                                         progressContext.AddTask($"[{Color.DodgerBlue1}]Reading Grace index file.[/]")
 
                                     let t1 =
-                                        progressContext.AddTask(
-                                            $"[{Color.DodgerBlue1}]Scanning working directory for changes.[/]",
-                                            autoStart = false
-                                        )
+                                        progressContext.AddTask($"[{Color.DodgerBlue1}]Scanning working directory for changes.[/]", autoStart = false)
 
                                     let t2 =
-                                        progressContext.AddTask(
-                                            $"[{Color.DodgerBlue1}]Creating new directory verions.[/]",
-                                            autoStart = false
-                                        )
+                                        progressContext.AddTask($"[{Color.DodgerBlue1}]Creating new directory verions.[/]", autoStart = false)
 
                                     let t3 =
-                                        progressContext.AddTask(
-                                            $"[{Color.DodgerBlue1}]Uploading changed files to object storage.[/]",
-                                            autoStart = false
-                                        )
+                                        progressContext.AddTask($"[{Color.DodgerBlue1}]Uploading changed files to object storage.[/]", autoStart = false)
 
                                     let t4 =
-                                        progressContext.AddTask(
-                                            $"[{Color.DodgerBlue1}]Uploading new directory versions.[/]",
-                                            autoStart = false
-                                        )
+                                        progressContext.AddTask($"[{Color.DodgerBlue1}]Uploading new directory versions.[/]", autoStart = false)
 
                                     let t5 =
-                                        progressContext.AddTask(
-                                            $"[{Color.DodgerBlue1}]Creating a save reference.[/]",
-                                            autoStart = false
-                                        )
+                                        progressContext.AddTask($"[{Color.DodgerBlue1}]Creating a save reference.[/]", autoStart = false)
 
                                     let t6 =
                                         progressContext.AddTask(
@@ -414,10 +350,7 @@ module Diff =
                                         )
 
                                     let t7 =
-                                        progressContext.AddTask(
-                                            $"[{Color.DodgerBlue1}]Sending diff request to server.[/]",
-                                            autoStart = false
-                                        )
+                                        progressContext.AddTask($"[{Color.DodgerBlue1}]Sending diff request to server.[/]", autoStart = false)
 
                                     let mutable rootDirectoryId = DirectoryId.Empty
                                     let mutable rootDirectorySha256Hash = Sha256Hash String.Empty
@@ -446,8 +379,7 @@ module Diff =
 
                                         t2.StartTask()
 
-                                        let! (updatedGraceStatus, newDirectoryVersions) =
-                                            getNewGraceStatusAndDirectoryVersions previousGraceStatus differences
+                                        let! (updatedGraceStatus, newDirectoryVersions) = getNewGraceStatusAndDirectoryVersions previousGraceStatus differences
 
                                         do! writeGraceStatusFile updatedGraceStatus
                                         rootDirectoryId <- updatedGraceStatus.RootDirectoryId
@@ -457,14 +389,9 @@ module Diff =
 
                                         t3.StartTask()
 
-                                        match!
-                                            uploadFilesToObjectStorage newFileVersions (getCorrelationId parseResult)
-                                        with
+                                        match! uploadFilesToObjectStorage newFileVersions (getCorrelationId parseResult) with
                                         | Ok returnValue -> ()
-                                        | Error error ->
-                                            logToAnsiConsole
-                                                Colors.Error
-                                                $"Failed to upload changed files to object storage. {error}"
+                                        | Error error -> logToAnsiConsole Colors.Error $"Failed to upload changed files to object storage. {error}"
 
                                         t3.Value <- 100.0
 
@@ -475,18 +402,11 @@ module Diff =
                                                 let saveDirectoryVersionsParameters = SaveDirectoryVersionsParameters()
 
                                                 saveDirectoryVersionsParameters.DirectoryVersions <-
-                                                    newDirectoryVersions
-                                                        .Select(fun dv -> dv.ToDirectoryVersion)
-                                                        .ToList()
+                                                    newDirectoryVersions.Select(fun dv -> dv.ToDirectoryVersion).ToList()
 
-                                                match!
-                                                    Directory.SaveDirectoryVersions saveDirectoryVersionsParameters
-                                                with
+                                                match! Directory.SaveDirectoryVersions saveDirectoryVersionsParameters with
                                                 | Ok returnValue -> ()
-                                                | Error error ->
-                                                    logToAnsiConsole
-                                                        Colors.Error
-                                                        $"Failed to upload new directory versions. {error}"
+                                                | Error error -> logToAnsiConsole Colors.Error $"Failed to upload new directory versions. {error}"
                                             })
                                                 .Wait()
 
@@ -503,10 +423,7 @@ module Diff =
                                                         (getCorrelationId parseResult)
                                                 with
                                                 | Ok saveReference -> ()
-                                                | Error error ->
-                                                    logToAnsiConsole
-                                                        Colors.Error
-                                                        $"Failed to create a save reference. {error}"
+                                                | Error error -> logToAnsiConsole Colors.Error $"Failed to create a save reference. {error}"
                                             })
                                                 .Wait()
 
@@ -570,11 +487,7 @@ module Diff =
                                                             CorrelationId = parameters.CorrelationId
                                                         )
 
-                                                    match!
-                                                        Repository.GetReferencesByReferenceId(
-                                                            getReferencesByIdParameters
-                                                        )
-                                                    with
+                                                    match! Repository.GetReferencesByReferenceId(getReferencesByIdParameters) with
                                                     | Ok returnValue ->
                                                         if returnValue.ReturnValue.Count() > 0 then
                                                             // We're only taking the first one because we've only asked for one in the parameters.
@@ -588,28 +501,19 @@ module Diff =
 
                                                             ()
                                                     | Error error ->
-                                                        logToAnsiConsole
-                                                            Colors.Error
-                                                            "Error in GetReferencesByReferenceId."
+                                                        logToAnsiConsole Colors.Error "Error in GetReferencesByReferenceId."
 
                                                         logToAnsiConsole Colors.Error (Markup.Escape($"{error}"))
 
                                                         if parseResult |> json || parseResult |> verbose then
                                                             logToAnsiConsole Colors.Verbose (serialize error)
                                                 | Error error ->
-                                                    logToAnsiConsole
-                                                        Colors.Error
-                                                        (Markup.Escape($"Error in Branch.Get: {error}"))
+                                                    logToAnsiConsole Colors.Error (Markup.Escape($"Error in Branch.Get: {error}"))
 
                                                     if parseResult |> json || parseResult |> verbose then
                                                         logToAnsiConsole Colors.Verbose (serialize error)
 
-                                                return
-                                                    Ok(
-                                                        GraceReturnValue.Create
-                                                            (promotions :> IEnumerable<ReferenceDto>)
-                                                            parameters.CorrelationId
-                                                    )
+                                                return Ok(GraceReturnValue.Create (promotions :> IEnumerable<ReferenceDto>) parameters.CorrelationId)
                                         }
 
                                     let latestReference =
@@ -622,15 +526,11 @@ module Diff =
                                                 //logToAnsiConsole Colors.Verbose $"Got latest reference: {references.First().ReferenceText}; {references.First().CreatedAt}; {getShortenedSha256Hash (references.First().Sha256Hash)}; {references.First().DirectoryId}."
                                                 references.First()
                                             else
-                                                logToAnsiConsole
-                                                    Colors.Error
-                                                    $"Error getting latest reference. No matching references were found."
+                                                logToAnsiConsole Colors.Error $"Error getting latest reference. No matching references were found."
 
                                                 ReferenceDto.Default
                                         | Error error ->
-                                            logToAnsiConsole
-                                                Colors.Error
-                                                $"Error getting latest reference: {Markup.Escape(error.Error)}."
+                                            logToAnsiConsole Colors.Error $"Error getting latest reference: {Markup.Escape(error.Error)}."
 
                                             ReferenceDto.Default
 
@@ -640,10 +540,7 @@ module Diff =
                                     t7.StartTask()
                                     //logToAnsiConsole Colors.Verbose $"latestReference.DirectoryId: {latestReference.DirectoryId}; rootDirectoryId: {rootDirectoryId}."
                                     let getDiffParameters =
-                                        GetDiffParameters(
-                                            DirectoryId1 = latestReference.DirectoryId,
-                                            DirectoryId2 = rootDirectoryId
-                                        )
+                                        GetDiffParameters(DirectoryId1 = latestReference.DirectoryId, DirectoryId2 = rootDirectoryId)
 
                                     let! getDiffResult = Diff.GetDiff(getDiffParameters)
 
@@ -735,45 +632,25 @@ module Diff =
                                 .StartAsync(fun progressContext ->
                                     task {
                                         let t0 =
-                                            progressContext.AddTask(
-                                                $"[{Color.DodgerBlue1}]Reading Grace index file.[/]"
-                                            )
+                                            progressContext.AddTask($"[{Color.DodgerBlue1}]Reading Grace index file.[/]")
 
                                         let t1 =
-                                            progressContext.AddTask(
-                                                $"[{Color.DodgerBlue1}]Scanning working directory for changes.[/]",
-                                                autoStart = false
-                                            )
+                                            progressContext.AddTask($"[{Color.DodgerBlue1}]Scanning working directory for changes.[/]", autoStart = false)
 
                                         let t2 =
-                                            progressContext.AddTask(
-                                                $"[{Color.DodgerBlue1}]Creating new directory verions.[/]",
-                                                autoStart = false
-                                            )
+                                            progressContext.AddTask($"[{Color.DodgerBlue1}]Creating new directory verions.[/]", autoStart = false)
 
                                         let t3 =
-                                            progressContext.AddTask(
-                                                $"[{Color.DodgerBlue1}]Uploading changed files to object storage.[/]",
-                                                autoStart = false
-                                            )
+                                            progressContext.AddTask($"[{Color.DodgerBlue1}]Uploading changed files to object storage.[/]", autoStart = false)
 
                                         let t4 =
-                                            progressContext.AddTask(
-                                                $"[{Color.DodgerBlue1}]Uploading new directory versions.[/]",
-                                                autoStart = false
-                                            )
+                                            progressContext.AddTask($"[{Color.DodgerBlue1}]Uploading new directory versions.[/]", autoStart = false)
 
                                         let t5 =
-                                            progressContext.AddTask(
-                                                $"[{Color.DodgerBlue1}]Creating a save reference.[/]",
-                                                autoStart = false
-                                            )
+                                            progressContext.AddTask($"[{Color.DodgerBlue1}]Creating a save reference.[/]", autoStart = false)
 
                                         let t6 =
-                                            progressContext.AddTask(
-                                                $"[{Color.DodgerBlue1}]Sending diff request to server.[/]",
-                                                autoStart = false
-                                            )
+                                            progressContext.AddTask($"[{Color.DodgerBlue1}]Sending diff request to server.[/]", autoStart = false)
 
                                         let mutable rootDirectoryId = DirectoryId.Empty
                                         let mutable rootDirectorySha256Hash = Sha256Hash String.Empty
@@ -813,16 +690,9 @@ module Diff =
 
                                             t3.StartTask()
 
-                                            match!
-                                                uploadFilesToObjectStorage
-                                                    newFileVersions
-                                                    (getCorrelationId parseResult)
-                                            with
+                                            match! uploadFilesToObjectStorage newFileVersions (getCorrelationId parseResult) with
                                             | Ok returnValue -> ()
-                                            | Error error ->
-                                                logToAnsiConsole
-                                                    Colors.Error
-                                                    $"Failed to upload changed files to object storage. {error}"
+                                            | Error error -> logToAnsiConsole Colors.Error $"Failed to upload changed files to object storage. {error}"
 
                                             t3.Value <- 100.0
 
@@ -830,23 +700,14 @@ module Diff =
 
                                             if (newDirectoryVersions.Count > 0) then
                                                 (task {
-                                                    let saveDirectoryVersionsParameters =
-                                                        SaveDirectoryVersionsParameters()
+                                                    let saveDirectoryVersionsParameters = SaveDirectoryVersionsParameters()
 
                                                     saveDirectoryVersionsParameters.DirectoryVersions <-
-                                                        newDirectoryVersions
-                                                            .Select(fun dv -> dv.ToDirectoryVersion)
-                                                            .ToList()
+                                                        newDirectoryVersions.Select(fun dv -> dv.ToDirectoryVersion).ToList()
 
-                                                    match!
-                                                        Directory.SaveDirectoryVersions
-                                                            saveDirectoryVersionsParameters
-                                                    with
+                                                    match! Directory.SaveDirectoryVersions saveDirectoryVersionsParameters with
                                                     | Ok returnValue -> ()
-                                                    | Error error ->
-                                                        logToAnsiConsole
-                                                            Colors.Error
-                                                            $"Failed to upload new directory versions. {error}"
+                                                    | Error error -> logToAnsiConsole Colors.Error $"Failed to upload new directory versions. {error}"
                                                 })
                                                     .Wait()
 
@@ -863,10 +724,7 @@ module Diff =
                                                             (getCorrelationId parseResult)
                                                     with
                                                     | Ok saveReference -> ()
-                                                    | Error error ->
-                                                        logToAnsiConsole
-                                                            Colors.Error
-                                                            $"Failed to create a save reference. {error}"
+                                                    | Error error -> logToAnsiConsole Colors.Error $"Failed to create a save reference. {error}"
                                                 })
                                                     .Wait()
 
@@ -890,10 +748,7 @@ module Diff =
                                             let diffDto = returnValue.ReturnValue
                                             printDiffResults diffDto
                                             t6.Value <- 100.0
-                                        | Error error ->
-                                            logToAnsiConsole
-                                                Colors.Error
-                                                $"Failed to get diff by sha256 hash. {error}"
+                                        | Error error -> logToAnsiConsole Colors.Error $"Failed to get diff by sha256 hash. {error}"
 
                                         t6.Value <- 100.0
                                     })
@@ -926,11 +781,7 @@ module Diff =
             new Command("diff", Description = "Displays the difference between two versions of your repository.")
 
         let promotionCommand =
-            new Command(
-                "promotion",
-                Description =
-                    "Displays the difference between the promotion that this branch is based on and your current version."
-            )
+            new Command("promotion", Description = "Displays the difference between the promotion that this branch is based on and your current version.")
             |> addCommonOptions
             |> addBranchOptions
 
@@ -938,10 +789,7 @@ module Diff =
         diffCommand.AddCommand(promotionCommand)
 
         let commitCommand =
-            new Command(
-                "commit",
-                Description = "Displays the difference between the most recent commit and your current version."
-            )
+            new Command("commit", Description = "Displays the difference between the most recent commit and your current version.")
             |> addCommonOptions
             |> addBranchOptions
 
@@ -949,10 +797,7 @@ module Diff =
         diffCommand.AddCommand(commitCommand)
 
         let checkpointCommand =
-            new Command(
-                "checkpoint",
-                Description = "Displays the difference between the most recent checkpoint and your current version."
-            )
+            new Command("checkpoint", Description = "Displays the difference between the most recent checkpoint and your current version.")
             |> addCommonOptions
             |> addBranchOptions
 
@@ -960,10 +805,7 @@ module Diff =
         diffCommand.AddCommand(checkpointCommand)
 
         let saveCommand =
-            new Command(
-                "save",
-                Description = "Displays the difference between the most recent save and your current version."
-            )
+            new Command("save", Description = "Displays the difference between the most recent save and your current version.")
             |> addCommonOptions
             |> addBranchOptions
 
@@ -971,10 +813,7 @@ module Diff =
         diffCommand.AddCommand(saveCommand)
 
         let tagCommand =
-            new Command(
-                "tag",
-                Description = "Displays the difference between the specified tag and your current version."
-            )
+            new Command("tag", Description = "Displays the difference between the specified tag and your current version.")
             |> addCommonOptions
             |> addBranchOptions
             |> addOption Options.tag

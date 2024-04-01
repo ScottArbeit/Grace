@@ -28,12 +28,7 @@ module Connect =
 
     module private Options =
         let repositoryId =
-            new Option<String>(
-                [| "--repositoryId"; "-r" |],
-                IsRequired = false,
-                Description = "The repository's ID <Guid>.",
-                Arity = ArgumentArity.ExactlyOne
-            )
+            new Option<String>([| "--repositoryId"; "-r" |], IsRequired = false, Description = "The repository's ID <Guid>.", Arity = ArgumentArity.ExactlyOne)
 
         let repositoryName =
             new Option<String>(
@@ -44,20 +39,10 @@ module Connect =
             )
 
         let ownerId =
-            new Option<String>(
-                "--ownerId",
-                IsRequired = false,
-                Description = "The repository's owner ID <Guid>.",
-                Arity = ArgumentArity.ExactlyOne
-            )
+            new Option<String>("--ownerId", IsRequired = false, Description = "The repository's owner ID <Guid>.", Arity = ArgumentArity.ExactlyOne)
 
         let ownerName =
-            new Option<String>(
-                "--ownerName",
-                IsRequired = false,
-                Description = "The repository's owner name.",
-                Arity = ArgumentArity.ExactlyOne
-            )
+            new Option<String>("--ownerName", IsRequired = false, Description = "The repository's owner name.", Arity = ArgumentArity.ExactlyOne)
 
         let organizationId =
             new Option<String>(
@@ -68,12 +53,7 @@ module Connect =
             )
 
         let organizationName =
-            new Option<String>(
-                "--organizationName",
-                IsRequired = false,
-                Description = "The repository's organization name.",
-                Arity = ArgumentArity.ZeroOrOne
-            )
+            new Option<String>("--organizationName", IsRequired = false, Description = "The repository's organization name.", Arity = ArgumentArity.ZeroOrOne)
 
         let correlationId =
             new Option<String>(
@@ -95,8 +75,7 @@ module Connect =
             new Option<bool>(
                 [| "--retrieveDefaultBranch" |],
                 IsRequired = false,
-                Description =
-                    "True to retrieve the default branch after connecting; false to connect but not download any files.",
+                Description = "True to retrieve the default branch after connecting; false to connect but not download any files.",
                 Arity = ArgumentArity.ExactlyOne
             )
 

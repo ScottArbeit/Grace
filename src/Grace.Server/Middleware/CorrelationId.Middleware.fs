@@ -16,8 +16,7 @@ type CorrelationIdMiddleware(next: RequestDelegate) =
 #if DEBUG
         let middlewareTraceHeader = context.Request.Headers["X-MiddlewareTraceIn"]
 
-        context.Request.Headers["X-MiddlewareTraceIn"] <-
-            $"{middlewareTraceHeader}{nameof (CorrelationIdMiddleware)} --> "
+        context.Request.Headers["X-MiddlewareTraceIn"] <- $"{middlewareTraceHeader}{nameof (CorrelationIdMiddleware)} --> "
 #endif
 
         let correlationId =
@@ -38,7 +37,6 @@ type CorrelationIdMiddleware(next: RequestDelegate) =
 #if DEBUG
         let middlewareTraceOutHeader = context.Request.Headers["X-MiddlewareTraceOut"]
 
-        context.Request.Headers["X-MiddlewareTraceOut"] <-
-            $"{middlewareTraceOutHeader}{nameof (CorrelationIdMiddleware)} --> "
+        context.Request.Headers["X-MiddlewareTraceOut"] <- $"{middlewareTraceOutHeader}{nameof (CorrelationIdMiddleware)} --> "
 #endif
         nextTask

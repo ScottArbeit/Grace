@@ -85,8 +85,7 @@ module DirectoryVersion =
                 let mutable message = String.Empty
 
                 try
-                    let! retrievedEvents =
-                        Storage.RetrieveState<List<DirectoryVersionEvent>> stateManager eventsStateName
+                    let! retrievedEvents = Storage.RetrieveState<List<DirectoryVersionEvent>> stateManager eventsStateName
 
                     match retrievedEvents with
                     | Some retrievedEvents ->
@@ -95,8 +94,7 @@ module DirectoryVersion =
                         directoryVersionDto <-
                             retrievedEvents
                             |> Seq.fold
-                                (fun directoryVersionDto directoryVersionEvent ->
-                                    directoryVersionDto |> updateDto directoryVersionEvent.Event)
+                                (fun directoryVersionDto directoryVersionEvent -> directoryVersionDto |> updateDto directoryVersionEvent.Event)
                                 DirectoryVersionDto.Default
 
                         message <- "Retrieved from database."
@@ -106,12 +104,7 @@ module DirectoryVersion =
                 with ex ->
                     let exc = createExceptionResponse ex
 
-                    log.LogError(
-                        "{CurrentInstant} Error in {ActorType} {ActorId}.",
-                        getCurrentInstantExtended (),
-                        this.GetType().Name,
-                        host.Id
-                    )
+                    log.LogError("{CurrentInstant} Error in {ActorType} {ActorId}.", getCurrentInstantExtended (), this.GetType().Name, host.Id)
 
                     log.LogError("{CurrentInstant} {ExceptionDetails}", getCurrentInstantExtended (), exc.ToString())
 
@@ -145,13 +138,7 @@ module DirectoryVersion =
             currentCommand <- String.Empty
             logScope <- log.BeginScope("Actor {actorName}", actorName)
 
-            log.LogTrace(
-                "{CurrentInstant}: Started {ActorName}.{MethodName} Id: {Id}.",
-                getCurrentInstantExtended (),
-                actorName,
-                context.MethodName,
-                this.Id
-            )
+            log.LogTrace("{CurrentInstant}: Started {ActorName}.{MethodName} Id: {Id}.", getCurrentInstantExtended (), actorName, context.MethodName, this.Id)
 
             // This checks if the actor is still active, but in an undefined state, which will _almost_ never happen.
             // isDisposed is set when the actor is deleted, or if an error occurs where we're not sure of the state and want to reload from the database.
@@ -191,12 +178,7 @@ module DirectoryVersion =
             Task.CompletedTask
 
         member private this.SetReminderToDeleteCachedState() =
-            this.RegisterReminderAsync(
-                ReminderType.DeleteCachedState,
-                Array.empty<byte>,
-                TimeSpan.FromDays(1.0),
-                TimeSpan.Zero
-            )
+            this.RegisterReminderAsync(ReminderType.DeleteCachedState, Array.empty<byte>, TimeSpan.FromDays(1.0), TimeSpan.Zero)
 
         member private this.OnFirstWrite() = ()
 
@@ -227,9 +209,7 @@ module DirectoryVersion =
 
                     directoryVersionEvents.Add(directoryVersionEvent)
 
-                    do!
-                        DefaultAsyncRetryPolicy.ExecuteAsync(fun () ->
-                            stateManager.SetStateAsync(eventsStateName, directoryVersionEvents))
+                    do! DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> stateManager.SetStateAsync(eventsStateName, directoryVersionEvents))
 
                     directoryVersionDto <- directoryVersionDto |> updateDto directoryVersionEvent.Event
 
@@ -238,38 +218,22 @@ module DirectoryVersion =
                     do! daprClient.PublishEventAsync(GracePubSubService, GraceEventStreamTopic, graceEvent)
 
                     let returnValue =
-                        GraceReturnValue.Create
-                            "Directory version command succeeded."
-                            directoryVersionEvent.Metadata.CorrelationId
+                        GraceReturnValue.Create "Directory version command succeeded." directoryVersionEvent.Metadata.CorrelationId
 
-                    returnValue.Properties.Add(
-                        nameof (DirectoryId),
-                        $"{directoryVersionDto.DirectoryVersion.DirectoryId}"
-                    )
+                    returnValue.Properties.Add(nameof (DirectoryId), $"{directoryVersionDto.DirectoryVersion.DirectoryId}")
 
-                    returnValue.Properties.Add(
-                        nameof (Sha256Hash),
-                        $"{directoryVersionDto.DirectoryVersion.Sha256Hash}"
-                    )
+                    returnValue.Properties.Add(nameof (Sha256Hash), $"{directoryVersionDto.DirectoryVersion.Sha256Hash}")
 
-                    returnValue.Properties.Add(
-                        "EventType",
-                        $"{getDiscriminatedUnionFullName directoryVersionEvent.Event}"
-                    )
+                    returnValue.Properties.Add("EventType", $"{getDiscriminatedUnionFullName directoryVersionEvent.Event}")
 
                     return Ok returnValue
                 with ex ->
                     let graceError =
-                        GraceError.Create
-                            (DirectoryVersionError.getErrorMessage FailedWhileApplyingEvent)
-                            directoryVersionEvent.Metadata.CorrelationId
+                        GraceError.Create (DirectoryVersionError.getErrorMessage FailedWhileApplyingEvent) directoryVersionEvent.Metadata.CorrelationId
 
                     let exceptionResponse = createExceptionResponse ex
 
-                    graceError.Properties.Add(
-                        "Exception details",
-                        exceptionResponse.``exception`` + exceptionResponse.innerException
-                    )
+                    graceError.Properties.Add("Exception details", exceptionResponse.``exception`` + exceptionResponse.innerException)
 
                     return Error graceError
             }
@@ -345,10 +309,7 @@ module DirectoryVersion =
                         let cachedSubdirectoryVersions =
                             task {
                                 if not <| forceRegenerate then
-                                    return!
-                                        Storage.RetrieveState<List<DirectoryVersion>>
-                                            stateManager
-                                            directoryVersionCacheStateName
+                                    return! Storage.RetrieveState<List<DirectoryVersion>> stateManager directoryVersionCacheStateName
                                 else
                                     return None
                             }
@@ -356,10 +317,7 @@ module DirectoryVersion =
                         // If they have, return them.
                         match! cachedSubdirectoryVersions with
                         | Some subdirectoryVersions ->
-                            log.LogDebug(
-                                "In DirectoryVersionActor.GetDirectoryVersionsRecursive({id}). Retrieved SubdirectoryVersions from cache.",
-                                this.Id
-                            )
+                            log.LogDebug("In DirectoryVersionActor.GetDirectoryVersionsRecursive({id}). Retrieved SubdirectoryVersions from cache.", this.Id)
 
                             return subdirectoryVersions
                         // If they haven't, generate them by calling each subdirectory in parallel.
@@ -383,15 +341,9 @@ module DirectoryVersion =
                                                 let actorId = GetActorId directoryId
 
                                                 let subdirectoryActor =
-                                                    actorProxyFactory.CreateActorProxy<IDirectoryVersionActor>(
-                                                        actorId,
-                                                        ActorName.DirectoryVersion
-                                                    )
+                                                    actorProxyFactory.CreateActorProxy<IDirectoryVersionActor>(actorId, ActorName.DirectoryVersion)
 
-                                                let! subdirectoryContents =
-                                                    subdirectoryActor.GetDirectoryVersionsRecursive
-                                                        forceRegenerate
-                                                        correlationId
+                                                let! subdirectoryContents = subdirectoryActor.GetDirectoryVersionsRecursive forceRegenerate correlationId
 
                                                 for directoryVersion in subdirectoryContents do
                                                     subdirectoryVersions.Enqueue(directoryVersion)
@@ -402,17 +354,11 @@ module DirectoryVersion =
                             let subdirectoryVersionsList = subdirectoryVersions.ToList()
                             do! Storage.SaveState stateManager directoryVersionCacheStateName subdirectoryVersionsList
 
-                            log.LogDebug(
-                                "In DirectoryVersionActor.GetDirectoryVersionsRecursive({id}); Storing subdirectoryVersion list.",
-                                this.Id
-                            )
+                            log.LogDebug("In DirectoryVersionActor.GetDirectoryVersionsRecursive({id}); Storing subdirectoryVersion list.", this.Id)
 
                             let! _ = this.SetReminderToDeleteCachedState()
 
-                            log.LogDebug(
-                                "In DirectoryVersionActor.GetDirectoryVersionsRecursive({id}); Delete cached state reminder was set.",
-                                this.Id
-                            )
+                            log.LogDebug("In DirectoryVersionActor.GetDirectoryVersionsRecursive({id}); Delete cached state reminder was set.", this.Id)
 
                             return subdirectoryVersionsList
                     with ex ->
@@ -440,8 +386,7 @@ module DirectoryVersion =
                                 return
                                     Error(
                                         GraceError.Create
-                                            (DirectoryVersionError.getErrorMessage
-                                                DirectoryVersionError.DirectoryAlreadyExists)
+                                            (DirectoryVersionError.getErrorMessage DirectoryVersionError.DirectoryAlreadyExists)
                                             metadata.CorrelationId
                                     )
                             else
@@ -449,12 +394,7 @@ module DirectoryVersion =
 
                         | _ ->
                             if directoryVersionDto.DirectoryVersion.CreatedAt = DirectoryVersion.Default.CreatedAt then
-                                return
-                                    Error(
-                                        GraceError.Create
-                                            (DirectoryVersionError.getErrorMessage DirectoryDoesNotExist)
-                                            metadata.CorrelationId
-                                    )
+                                return Error(GraceError.Create (DirectoryVersionError.getErrorMessage DirectoryDoesNotExist) metadata.CorrelationId)
                             else
                                 return Ok command
                     }
@@ -480,13 +420,7 @@ module DirectoryVersion =
                             | Ok event -> return! this.ApplyEvent { Event = event; Metadata = metadata }
                             | Error error -> return Error error
                         with ex ->
-                            return
-                                Error(
-                                    GraceError.CreateWithMetadata
-                                        $"{createExceptionResponse ex}"
-                                        metadata.CorrelationId
-                                        metadata.Properties
-                                )
+                            return Error(GraceError.CreateWithMetadata $"{createExceptionResponse ex}" metadata.CorrelationId metadata.Properties)
                     }
 
                 task {
@@ -503,17 +437,12 @@ module DirectoryVersion =
 
                 task {
                     if directoryVersionDto.RecursiveSize = Constants.InitialDirectorySize then
-                        let! directoryVersions =
-                            (this :> IDirectoryVersionActor).GetDirectoryVersionsRecursive false correlationId
+                        let! directoryVersions = (this :> IDirectoryVersionActor).GetDirectoryVersionsRecursive false correlationId
 
                         let recursiveSize =
                             directoryVersions |> Seq.sumBy (fun directoryVersion -> directoryVersion.Size)
 
-                        match!
-                            (this :> IDirectoryVersionActor).Handle
-                                (SetRecursiveSize recursiveSize)
-                                (EventMetadata.New correlationId "GraceSystem")
-                        with
+                        match! (this :> IDirectoryVersionActor).Handle (SetRecursiveSize recursiveSize) (EventMetadata.New correlationId "GraceSystem") with
                         | Ok returnValue -> return recursiveSize
                         | Error error -> return Constants.InitialDirectorySize
                     else

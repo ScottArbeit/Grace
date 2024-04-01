@@ -61,25 +61,18 @@ module Errors =
                 | BranchAlreadyExists -> getLocalizedString StringResourceName.BranchAlreadyExists
                 | BranchDoesNotExist -> getLocalizedString StringResourceName.BranchDoesNotExist
                 | BranchIdIsRequired -> getLocalizedString StringResourceName.BranchIdIsRequired
-                | BranchIsNotBasedOnLatestPromotion ->
-                    getLocalizedString StringResourceName.BranchIsNotBasedOnLatestPromotion
+                | BranchIsNotBasedOnLatestPromotion -> getLocalizedString StringResourceName.BranchIsNotBasedOnLatestPromotion
                 | BranchNameAlreadyExists -> getLocalizedString StringResourceName.BranchNameAlreadyExists
                 | BranchNameIsRequired -> getLocalizedString StringResourceName.BranchNameIsRequired
                 | CheckpointIsDisabled -> getLocalizedString StringResourceName.CheckpointIsDisabled
                 | CommitIsDisabled -> getLocalizedString StringResourceName.CommitIsDisabled
                 | DuplicateCorrelationId -> getLocalizedString StringResourceName.DuplicateCorrelationId
-                | EitherBranchIdOrBranchNameRequired ->
-                    getLocalizedString StringResourceName.EitherBranchIdOrBranchNameIsRequired
-                | EitherDirectoryVersionIdOrSha256HashRequired ->
-                    getLocalizedString StringResourceName.EitherDirectoryVersionIdOrSha256HashRequired
-                | EitherOrganizationIdOrOrganizationNameRequired ->
-                    getLocalizedString StringResourceName.EitherOrganizationIdOrOrganizationNameIsRequired
-                | EitherOwnerIdOrOwnerNameRequired ->
-                    getLocalizedString StringResourceName.EitherOwnerIdOrOwnerNameIsRequired
-                | EitherRepositoryIdOrRepositoryNameIsRequired ->
-                    getLocalizedString StringResourceName.EitherRepositoryIdOrRepositoryNameIsRequired
-                | EitherToBranchIdOrToBranchNameIsRequired ->
-                    getLocalizedString StringResourceName.EitherToBranchIdOrToBranchNameIsRequired
+                | EitherBranchIdOrBranchNameRequired -> getLocalizedString StringResourceName.EitherBranchIdOrBranchNameIsRequired
+                | EitherDirectoryVersionIdOrSha256HashRequired -> getLocalizedString StringResourceName.EitherDirectoryVersionIdOrSha256HashRequired
+                | EitherOrganizationIdOrOrganizationNameRequired -> getLocalizedString StringResourceName.EitherOrganizationIdOrOrganizationNameIsRequired
+                | EitherOwnerIdOrOwnerNameRequired -> getLocalizedString StringResourceName.EitherOwnerIdOrOwnerNameIsRequired
+                | EitherRepositoryIdOrRepositoryNameIsRequired -> getLocalizedString StringResourceName.EitherRepositoryIdOrRepositoryNameIsRequired
+                | EitherToBranchIdOrToBranchNameIsRequired -> getLocalizedString StringResourceName.EitherToBranchIdOrToBranchNameIsRequired
                 | FailedToRetrieveBranch -> getLocalizedString StringResourceName.FailedToRetrieveBranch
                 | FailedWhileApplyingEvent -> getLocalizedString StringResourceName.FailedWhileApplyingEvent
                 | IndexFileNotFound -> getLocalizedString StringResourceName.IndexFileNotFound
@@ -192,8 +185,7 @@ module Errors =
                 match directoryError with
                 | DirectoryAlreadyExists -> getLocalizedString StringResourceName.DirectoryAlreadyExists
                 | DirectoryDoesNotExist -> getLocalizedString StringResourceName.DirectoryDoesNotExist
-                | DirectorySha256HashAlreadyExists ->
-                    getLocalizedString StringResourceName.DirectorySha256HashAlreadyExists
+                | DirectorySha256HashAlreadyExists -> getLocalizedString StringResourceName.DirectorySha256HashAlreadyExists
                 | FailedWhileApplyingEvent -> getLocalizedString StringResourceName.FailedWhileApplyingEvent
                 | FileNotFoundInObjectStorage -> getLocalizedString StringResourceName.FileNotFoundInObjectStorage
                 | FileSha256HashDoesNotMatch -> getLocalizedString StringResourceName.FileSha256HashDoesNotMatch
@@ -240,8 +232,7 @@ module Errors =
                 | DeleteReasonIsRequired -> getLocalizedString StringResourceName.DeleteReasonIsRequired
                 | DescriptionIsRequired -> getLocalizedString StringResourceName.DescriptionIsRequired
                 | DuplicateCorrelationId -> getLocalizedString StringResourceName.DuplicateCorrelationId
-                | EitherOwnerIdOrOwnerNameRequired ->
-                    getLocalizedString StringResourceName.EitherOwnerIdOrOwnerNameIsRequired
+                | EitherOwnerIdOrOwnerNameRequired -> getLocalizedString StringResourceName.EitherOwnerIdOrOwnerNameIsRequired
                 | FailedWhileApplyingEvent -> getLocalizedString StringResourceName.FailedWhileApplyingEvent
                 | FailedWhileSavingEvent -> getLocalizedString StringResourceName.FailedWhileSavingEvent
                 | InvalidOwnerId -> getLocalizedString StringResourceName.InvalidOwnerId
@@ -304,10 +295,8 @@ module Errors =
                 | DeleteReasonIsRequired -> getLocalizedString StringResourceName.DeleteReasonIsRequired
                 | DescriptionIsRequired -> getLocalizedString StringResourceName.DescriptionIsRequired
                 | DuplicateCorrelationId -> getLocalizedString StringResourceName.DuplicateCorrelationId
-                | EitherOrganizationIdOrOrganizationNameRequired ->
-                    getLocalizedString StringResourceName.EitherOrganizationIdOrOrganizationNameIsRequired
-                | EitherOwnerIdOrOwnerNameRequired ->
-                    getLocalizedString StringResourceName.EitherOwnerIdOrOwnerNameIsRequired
+                | EitherOrganizationIdOrOrganizationNameRequired -> getLocalizedString StringResourceName.EitherOrganizationIdOrOrganizationNameIsRequired
+                | EitherOwnerIdOrOwnerNameRequired -> getLocalizedString StringResourceName.EitherOwnerIdOrOwnerNameIsRequired
                 | ExceptionCaught -> getLocalizedString StringResourceName.ExceptionCaught
                 | FailedWhileApplyingEvent -> getLocalizedString StringResourceName.FailedWhileApplyingEvent
                 | FailedWhileSavingEvent -> getLocalizedString StringResourceName.FailedWhileSavingEvent
@@ -321,8 +310,7 @@ module Errors =
                 | InvalidSearchVisibility -> getLocalizedString StringResourceName.InvalidSearchVisibility
                 | OrganizationIdAlreadyExists -> getLocalizedString StringResourceName.OrganizationIdAlreadyExists
                 | OrganizationNameAlreadyExists -> getLocalizedString StringResourceName.OrganizationNameAlreadyExists
-                | OrganizationContainsRepositories ->
-                    getLocalizedString StringResourceName.OrganizationContainsRepositories
+                | OrganizationContainsRepositories -> getLocalizedString StringResourceName.OrganizationContainsRepositories
                 | OrganizationDescriptionIsRequired -> getLocalizedString StringResourceName.DescriptionIsRequired
                 | OrganizationDoesNotExist -> getLocalizedString StringResourceName.OrganizationDoesNotExist
                 | OrganizationIdIsRequired -> getLocalizedString StringResourceName.OrganizationIdIsRequired
@@ -394,14 +382,10 @@ module Errors =
                 | DescriptionIsRequired -> getLocalizedString StringResourceName.DescriptionIsRequired
                 | DeleteReasonIsRequired -> getLocalizedString StringResourceName.DeleteReasonIsRequired
                 | DuplicateCorrelationId -> getLocalizedString StringResourceName.DuplicateCorrelationId
-                | EitherOrganizationIdOrOrganizationNameRequired ->
-                    getLocalizedString StringResourceName.EitherOrganizationIdOrOrganizationNameIsRequired
-                | EitherOwnerIdOrOwnerNameRequired ->
-                    getLocalizedString StringResourceName.EitherOwnerIdOrOwnerNameIsRequired
-                | EitherRepositoryIdOrRepositoryNameRequired ->
-                    getLocalizedString StringResourceName.EitherRepositoryIdOrRepositoryNameIsRequired
-                | FailedCreatingEmptyDirectoryVersion ->
-                    getLocalizedString StringResourceName.FailedCreatingEmptyDirectoryVersion
+                | EitherOrganizationIdOrOrganizationNameRequired -> getLocalizedString StringResourceName.EitherOrganizationIdOrOrganizationNameIsRequired
+                | EitherOwnerIdOrOwnerNameRequired -> getLocalizedString StringResourceName.EitherOwnerIdOrOwnerNameIsRequired
+                | EitherRepositoryIdOrRepositoryNameRequired -> getLocalizedString StringResourceName.EitherRepositoryIdOrRepositoryNameIsRequired
+                | FailedCreatingEmptyDirectoryVersion -> getLocalizedString StringResourceName.FailedCreatingEmptyDirectoryVersion
                 | FailedCreatingInitialBranch -> getLocalizedString StringResourceName.FailedCreatingInitialBranch
                 | FailedCreatingInitialPromotion -> getLocalizedString StringResourceName.FailedCreatingInitialPromotion
                 | FailedRebasingInitialBranch -> getLocalizedString StringResourceName.FailedRebasingInitialBranch
@@ -410,8 +394,7 @@ module Errors =
                 | InvalidCheckpointDaysValue -> getLocalizedString StringResourceName.InvalidCheckpointDaysValue
                 | InvalidDiffCacheDaysValue -> getLocalizedString StringResourceName.InvalidDiffCacheDaysValue
                 | InvalidDirectory -> getLocalizedString StringResourceName.InvalidDirectoryPath
-                | InvalidDirectoryVersionCacheDaysValue ->
-                    getLocalizedString StringResourceName.InvalidDirectoryVersionCacheDaysValue
+                | InvalidDirectoryVersionCacheDaysValue -> getLocalizedString StringResourceName.InvalidDirectoryVersionCacheDaysValue
                 | InvalidMaxCountValue -> getLocalizedString StringResourceName.InvalidMaxCountValue
                 | InvalidObjectStorageProvider -> getLocalizedString StringResourceName.InvalidObjectStorageProvider
                 | InvalidOwnerId -> getLocalizedString StringResourceName.InvalidOwnerId
@@ -458,11 +441,9 @@ module Errors =
 
             static member getErrorMessage(storageError: StorageError) : string =
                 match storageError with
-                | FailedCommunicatingWithObjectStorage ->
-                    getLocalizedString StringResourceName.FailedCommunicatingWithObjectStorage
+                | FailedCommunicatingWithObjectStorage -> getLocalizedString StringResourceName.FailedCommunicatingWithObjectStorage
                 | FailedToGetUploadUrls -> getLocalizedString StringResourceName.FailedToGetUploadUrls
-                | FailedUploadingFilesToObjectStorage ->
-                    getLocalizedString StringResourceName.FailedUploadingFilesToObjectStorage
+                | FailedUploadingFilesToObjectStorage -> getLocalizedString StringResourceName.FailedUploadingFilesToObjectStorage
                 | FilesMustNotBeEmpty -> getLocalizedString StringResourceName.FilesMustNotBeEmpty
                 | NotImplemented -> getLocalizedString StringResourceName.NotImplemented
                 | ObjectStorageException -> getLocalizedString StringResourceName.ObjectStorageException

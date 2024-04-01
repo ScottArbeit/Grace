@@ -36,12 +36,7 @@ module Storage =
 
     /// Saves the actor's state to storage.
     let SaveState<'T> (stateManager: IActorStateManager) actorStateName actorState =
-        task {
-            do!
-                DefaultAsyncRetryPolicy.ExecuteAsync(fun () ->
-                    stateManager.SetStateAsync<'T>(actorStateName, actorState))
-        }
-        :> Task
+        task { do! DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> stateManager.SetStateAsync<'T>(actorStateName, actorState)) } :> Task
 
     /// Deletes the actor's state from storage.
     let DeleteState (stateManager: IActorStateManager) actorStateName =

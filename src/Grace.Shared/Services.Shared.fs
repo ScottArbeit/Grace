@@ -91,11 +91,7 @@ module Services =
     /// Computes the SHA-256 value for a given relative directory.
     ///
     /// Sha256Hash values for directories are computed by concatenating the relative path of the directory, and the Sha256Hash values of all subdirectories and files.
-    let computeSha256ForDirectory
-        (relativeDirectoryPath: RelativePath)
-        (directories: List<LocalDirectoryVersion>)
-        (files: List<LocalFileVersion>)
-        =
+    let computeSha256ForDirectory (relativeDirectoryPath: RelativePath) (directories: List<LocalDirectoryVersion>) (files: List<LocalFileVersion>) =
         let hasher = incrementalHashPool.Get()
 
         try

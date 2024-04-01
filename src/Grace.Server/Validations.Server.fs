@@ -52,11 +52,7 @@ module Validations =
 
                         if exists then
                             use newCacheEntry =
-                                memoryCache.CreateEntry(
-                                    ownerGuid,
-                                    Value = null,
-                                    AbsoluteExpirationRelativeToNow = DefaultExpirationTime
-                                )
+                                memoryCache.CreateEntry(ownerGuid, Value = null, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
 
                             return Ok()
                         else
@@ -125,20 +121,12 @@ module Validations =
 
                         if isDeleted then
                             use newCacheEntry =
-                                memoryCache.CreateEntry(
-                                    $"{ownerGuid}deleted",
-                                    Value = boxedTrue,
-                                    AbsoluteExpirationRelativeToNow = DefaultExpirationTime
-                                )
+                                memoryCache.CreateEntry($"{ownerGuid}deleted", Value = boxedTrue, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
 
                             return Ok()
                         else
                             use newCacheEntry =
-                                memoryCache.CreateEntry(
-                                    $"{ownerGuid}deleted",
-                                    Value = boxedFalse,
-                                    AbsoluteExpirationRelativeToNow = DefaultExpirationTime
-                                )
+                                memoryCache.CreateEntry($"{ownerGuid}deleted", Value = boxedFalse, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
 
                             return Error error
                 | None -> return Error error
@@ -192,11 +180,7 @@ module Validations =
 
                         if exists then
                             use newCacheEntry =
-                                memoryCache.CreateEntry(
-                                    organizationGuid,
-                                    Value = null,
-                                    AbsoluteExpirationRelativeToNow = DefaultExpirationTime
-                                )
+                                memoryCache.CreateEntry(organizationGuid, Value = null, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
 
                             return Ok()
                         else
@@ -219,13 +203,7 @@ module Validations =
             |> ValueTask<Result<unit, 'T>>
 
         /// Validates that the given organizationName does not already exist for this owner.
-        let organizationNameIsUnique<'T>
-            (ownerId: string)
-            (ownerName: string)
-            (organizationName: string)
-            correlationId
-            (error: 'T)
-            =
+        let organizationNameIsUnique<'T> (ownerId: string) (ownerName: string) (organizationName: string) correlationId (error: 'T) =
             task {
                 if not <| String.IsNullOrEmpty(organizationName) then
                     match! organizationNameIsUnique ownerId ownerName organizationName correlationId with
@@ -256,20 +234,13 @@ module Validations =
                                 let actorId = Organization.GetActorId(organizationGuid)
 
                                 let organizationActorProxy =
-                                    actorProxyFactory.CreateActorProxy<IOrganizationActor>(
-                                        actorId,
-                                        ActorName.Organization
-                                    )
+                                    actorProxyFactory.CreateActorProxy<IOrganizationActor>(actorId, ActorName.Organization)
 
                                 let! exists = organizationActorProxy.Exists correlationId
 
                                 if exists then
                                     use newCacheEntry =
-                                        memoryCache.CreateEntry(
-                                            organizationGuid,
-                                            Value = null,
-                                            AbsoluteExpirationRelativeToNow = DefaultExpirationTime
-                                        )
+                                        memoryCache.CreateEntry(organizationGuid, Value = null, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
 
                                     return Ok()
                                 else
@@ -278,11 +249,7 @@ module Validations =
                             return Ok()
                     | None -> return Error error
                 with ex ->
-                    log.LogError(
-                        ex,
-                        "{currentInstant}: Exception in Grace.Server.Validations.organizationExists.",
-                        getCurrentInstantExtended ()
-                    )
+                    log.LogError(ex, "{currentInstant}: Exception in Grace.Server.Validations.organizationExists.", getCurrentInstantExtended ())
 
                     return Error error
             }
@@ -373,11 +340,7 @@ module Validations =
 
                         if exists then
                             use newCacheEntry =
-                                memoryCache.CreateEntry(
-                                    repositoryGuid,
-                                    Value = null,
-                                    AbsoluteExpirationRelativeToNow = DefaultExpirationTime
-                                )
+                                memoryCache.CreateEntry(repositoryGuid, Value = null, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
 
                             return Ok()
                         else
@@ -400,29 +363,11 @@ module Validations =
             |> ValueTask<Result<unit, 'T>>
 
         /// Validates that the repository exists.
-        let repositoryExists<'T>
-            ownerId
-            ownerName
-            organizationId
-            organizationName
-            repositoryId
-            repositoryName
-            correlationId
-            (error: 'T)
-            =
+        let repositoryExists<'T> ownerId ownerName organizationId organizationName repositoryId repositoryName correlationId (error: 'T) =
             task {
                 let mutable repositoryGuid = Guid.Empty
 
-                match!
-                    resolveRepositoryId
-                        ownerId
-                        ownerName
-                        organizationId
-                        organizationName
-                        repositoryId
-                        repositoryName
-                        correlationId
-                with
+                match! resolveRepositoryId ownerId ownerName organizationId organizationName repositoryId repositoryName correlationId with
                 | Some repositoryId ->
                     if Guid.TryParse(repositoryId, &repositoryGuid) then
                         let mutable x = null
@@ -432,20 +377,13 @@ module Validations =
                             return Ok()
                         else
                             let repositoryActorProxy =
-                                actorProxyFactory.CreateActorProxy<IRepositoryActor>(
-                                    ActorId(repositoryId),
-                                    ActorName.Repository
-                                )
+                                actorProxyFactory.CreateActorProxy<IRepositoryActor>(ActorId(repositoryId), ActorName.Repository)
 
                             let! exists = repositoryActorProxy.Exists correlationId
 
                             if exists then
                                 use newCacheEntry =
-                                    memoryCache.CreateEntry(
-                                        repositoryGuid,
-                                        Value = null,
-                                        AbsoluteExpirationRelativeToNow = DefaultExpirationTime
-                                    )
+                                    memoryCache.CreateEntry(repositoryGuid, Value = null, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
 
                                 return Ok()
                             else
@@ -457,29 +395,11 @@ module Validations =
             |> ValueTask<Result<unit, 'T>>
 
         /// Validates that the repository is deleted.
-        let repositoryIsDeleted<'T>
-            ownerId
-            ownerName
-            organizationId
-            organizationName
-            repositoryId
-            repositoryName
-            correlationId
-            (error: 'T)
-            =
+        let repositoryIsDeleted<'T> ownerId ownerName organizationId organizationName repositoryId repositoryName correlationId (error: 'T) =
             task {
                 let mutable guid = Guid.Empty
 
-                match!
-                    resolveRepositoryId
-                        ownerId
-                        ownerName
-                        organizationId
-                        organizationName
-                        repositoryId
-                        repositoryName
-                        correlationId
-                with
+                match! resolveRepositoryId ownerId ownerName organizationId organizationName repositoryId repositoryName correlationId with
                 | Some repositoryId ->
                     let repositoryGuid = Guid.Parse(repositoryId)
                     let mutable isDeleted = new obj ()
@@ -497,20 +417,12 @@ module Validations =
 
                         if isDeleted then
                             use newCacheEntry =
-                                memoryCache.CreateEntry(
-                                    $"{repositoryGuid}deleted",
-                                    Value = boxedTrue,
-                                    AbsoluteExpirationRelativeToNow = DefaultExpirationTime
-                                )
+                                memoryCache.CreateEntry($"{repositoryGuid}deleted", Value = boxedTrue, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
 
                             return Ok()
                         else
                             use newCacheEntry =
-                                memoryCache.CreateEntry(
-                                    $"{repositoryGuid}deleted",
-                                    Value = boxedFalse,
-                                    AbsoluteExpirationRelativeToNow = DefaultExpirationTime
-                                )
+                                memoryCache.CreateEntry($"{repositoryGuid}deleted", Value = boxedFalse, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
 
                             return Error error
                 | None -> return Error error
@@ -518,53 +430,18 @@ module Validations =
             |> ValueTask<Result<unit, 'T>>
 
         /// Validates that the repository is not deleted.
-        let repositoryIsNotDeleted<'T>
-            ownerId
-            ownerName
-            organizationId
-            organizationName
-            repositoryId
-            repositoryName
-            correlationId
-            (error: 'T)
-            =
+        let repositoryIsNotDeleted<'T> ownerId ownerName organizationId organizationName repositoryId repositoryName correlationId (error: 'T) =
             task {
-                match!
-                    repositoryIsDeleted
-                        ownerId
-                        ownerName
-                        organizationId
-                        organizationName
-                        repositoryId
-                        repositoryName
-                        correlationId
-                        error
-                with
+                match! repositoryIsDeleted ownerId ownerName organizationId organizationName repositoryId repositoryName correlationId error with
                 | Ok _ -> return Error error
                 | Error _ -> return Ok()
             }
             |> ValueTask<Result<unit, 'T>>
 
-        let repositoryNameIsUnique<'T>
-            ownerId
-            ownerName
-            organizationId
-            organizationName
-            repositoryName
-            correlationId
-            (error: 'T)
-            =
+        let repositoryNameIsUnique<'T> ownerId ownerName organizationId organizationName repositoryName correlationId (error: 'T) =
             task {
                 if not <| String.IsNullOrEmpty(repositoryName) then
-                    match!
-                        repositoryNameIsUnique
-                            ownerId
-                            ownerName
-                            organizationId
-                            organizationName
-                            repositoryName
-                            correlationId
-                    with
+                    match! repositoryNameIsUnique ownerId ownerName organizationId organizationName repositoryName correlationId with
                     | Ok isUnique -> if isUnique then return Ok() else return Error error
                     | Error internalError ->
                         logToConsole internalError
@@ -597,11 +474,7 @@ module Validations =
 
                         if exists then
                             use newCacheEntry =
-                                memoryCache.CreateEntry(
-                                    branchGuid,
-                                    Value = null,
-                                    AbsoluteExpirationRelativeToNow = DefaultExpirationTime
-                                )
+                                memoryCache.CreateEntry(branchGuid, Value = null, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
 
                             return Ok()
                         else
@@ -631,31 +504,11 @@ module Validations =
             |> ValueTask<Result<unit, 'T>>
 
         /// Validates that the branch exists in the database.
-        let branchExists<'T>
-            ownerId
-            ownerName
-            organizationId
-            organizationName
-            repositoryId
-            repositoryName
-            branchId
-            branchName
-            correlationId
-            (error: 'T)
-            =
+        let branchExists<'T> ownerId ownerName organizationId organizationName repositoryId repositoryName branchId branchName correlationId (error: 'T) =
             task {
                 let mutable branchGuid = Guid.Empty
 
-                match!
-                    resolveRepositoryId
-                        ownerId
-                        ownerName
-                        organizationId
-                        organizationName
-                        repositoryId
-                        repositoryName
-                        correlationId
-                with
+                match! resolveRepositoryId ownerId ownerName organizationId organizationName repositoryId repositoryName correlationId with
                 | Some repositoryId ->
                     match! resolveBranchId repositoryId branchId branchName correlationId with
                     | Some branchId ->
@@ -675,11 +528,7 @@ module Validations =
 
                                 if exists then
                                     use newCacheEntry =
-                                        memoryCache.CreateEntry(
-                                            branchGuid,
-                                            Value = null,
-                                            AbsoluteExpirationRelativeToNow = DefaultExpirationTime
-                                        )
+                                        memoryCache.CreateEntry(branchGuid, Value = null, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
 
                                     return Ok()
                                 else
@@ -708,16 +557,7 @@ module Validations =
             task {
                 let mutable guid = Guid.Empty
 
-                match!
-                    resolveRepositoryId
-                        ownerId
-                        ownerName
-                        organizationId
-                        organizationName
-                        repositoryId
-                        repositoryName
-                        correlationId
-                with
+                match! resolveRepositoryId ownerId ownerName organizationId organizationName repositoryId repositoryName correlationId with
                 | Some repositoryId ->
                     match! resolveBranchId repositoryId branchId branchName correlationId with
                     | Some branchId ->
@@ -757,31 +597,11 @@ module Validations =
 
 
         /// Validates that a branch allows assign to create promotion references.
-        let branchAllowsAssign<'T>
-            ownerId
-            ownerName
-            organizationId
-            organizationName
-            repositoryId
-            repositoryName
-            branchId
-            branchName
-            correlationId
-            (error: 'T)
-            =
+        let branchAllowsAssign<'T> ownerId ownerName organizationId organizationName repositoryId repositoryName branchId branchName correlationId (error: 'T) =
             task {
                 let mutable guid = Guid.Empty
 
-                match!
-                    resolveRepositoryId
-                        ownerId
-                        ownerName
-                        organizationId
-                        organizationName
-                        repositoryId
-                        repositoryName
-                        correlationId
-                with
+                match! resolveRepositoryId ownerId ownerName organizationId organizationName repositoryId repositoryName correlationId with
                 | Some repositoryId ->
                     match! resolveBranchId repositoryId branchId branchName correlationId with
                     | Some branchId ->
@@ -800,11 +620,7 @@ module Validations =
                             let allowed = branchDto.AssignEnabled
 
                             use newCacheEntry =
-                                memoryCache.CreateEntry(
-                                    $"{branchId}AssignAllowed",
-                                    Value = allowed,
-                                    AbsoluteExpirationRelativeToNow = DefaultExpirationTime
-                                )
+                                memoryCache.CreateEntry($"{branchId}AssignAllowed", Value = allowed, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
 
                             if allowed then return Ok() else return Error error
                     | None -> return Error error
@@ -813,28 +629,9 @@ module Validations =
             |> ValueTask<Result<unit, 'T>>
 
         /// Validates that the given branchName does not exist in the database.
-        let branchNameDoesNotExist<'T>
-            ownerId
-            ownerName
-            organizationId
-            organizationName
-            repositoryId
-            repositoryName
-            branchName
-            correlationId
-            (error: 'T)
-            =
+        let branchNameDoesNotExist<'T> ownerId ownerName organizationId organizationName repositoryId repositoryName branchName correlationId (error: 'T) =
             task {
-                match!
-                    resolveRepositoryId
-                        ownerId
-                        ownerName
-                        organizationId
-                        organizationName
-                        repositoryId
-                        repositoryName
-                        correlationId
-                with
+                match! resolveRepositoryId ownerId ownerName organizationId organizationName repositoryId repositoryName correlationId with
                 | Some repositoryId ->
                     match! resolveBranchId repositoryId String.Empty branchName correlationId with
                     | Some branchId -> return Error error
@@ -872,20 +669,13 @@ module Validations =
                     let actorId = DirectoryVersion.GetActorId(directoryId)
 
                     let directoryVersionActorProxy =
-                        ApplicationContext.actorProxyFactory.CreateActorProxy<IDirectoryVersionActor>(
-                            actorId,
-                            ActorName.DirectoryVersion
-                        )
+                        ApplicationContext.actorProxyFactory.CreateActorProxy<IDirectoryVersionActor>(actorId, ActorName.DirectoryVersion)
 
                     let! exists = directoryVersionActorProxy.Exists correlationId
 
                     if exists then
                         use newCacheEntry =
-                            memoryCache.CreateEntry(
-                                directoryId,
-                                Value = null,
-                                AbsoluteExpirationRelativeToNow = DefaultExpirationTime
-                            )
+                            memoryCache.CreateEntry(directoryId, Value = null, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
 
                         return Ok()
                     else

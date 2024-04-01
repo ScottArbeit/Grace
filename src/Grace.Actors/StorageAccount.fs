@@ -26,14 +26,11 @@ module StorageAccount =
         //abstract member GetConnectionString: unit -> Task<StorageConnectionString>
         //abstract member GetContainerClient: string -> Task<BlobContainerClient>
         //abstract member GetReadOnlyConnectionString: unit -> Task<StorageConnectionString>
-        abstract member GetReadSharedAccessSignature:
-            containerName: StorageContainerName -> relativePath: RelativePath -> Task<UriWithSharedAccessSignature>
+        abstract member GetReadSharedAccessSignature: containerName: StorageContainerName -> relativePath: RelativePath -> Task<UriWithSharedAccessSignature>
 
-        abstract member GetWriteSharedAccessSignature:
-            containerName: StorageContainerName -> relativePath: RelativePath -> Task<UriWithSharedAccessSignature>
+        abstract member GetWriteSharedAccessSignature: containerName: StorageContainerName -> relativePath: RelativePath -> Task<UriWithSharedAccessSignature>
 
-    type StorageAccount
-        (host: ActorHost, name: StorageAccountName, storageProvider: ObjectStorageProvider, daprClient: DaprClient) =
+    type StorageAccount(host: ActorHost, name: StorageAccountName, storageProvider: ObjectStorageProvider, daprClient: DaprClient) =
         inherit Actor(host)
 
         //static let jsonSerializerOptions = JsonSerializerOptions(PropertyNameCaseInsensitive = true)
@@ -73,20 +70,14 @@ module StorageAccount =
 
             //member this.GetReadOnlyConnectionString() = Task.FromResult(readOnlyConnectionString)
 
-            member this.GetReadSharedAccessSignature
-                (containerName: StorageContainerName)
-                (relativePath: RelativePath)
-                =
+            member this.GetReadSharedAccessSignature (containerName: StorageContainerName) (relativePath: RelativePath) =
                 match storageProvider with
                 | AzureBlobStorage ->
                     Storage.AzureBlobStorage.GetReadSharedAccessSignature
                     let blobContainerClient = getContainerClient containerName
 
                     let blobSasBuilder =
-                        BlobSasBuilder(
-                            BlobSasPermissions.Read,
-                            DateTimeOffset.UtcNow.AddMinutes(Constants.SharedAccessSignatureExpiration)
-                        )
+                        BlobSasBuilder(BlobSasPermissions.Read, DateTimeOffset.UtcNow.AddMinutes(Constants.SharedAccessSignatureExpiration))
 
                     blobSasBuilder.BlobName <- relativePath.ToString()
                     Task.FromResult(blobContainerClient.GenerateSasUri(blobSasBuilder).ToString())
@@ -94,10 +85,7 @@ module StorageAccount =
                 | GoogleCloudStorage -> Task.FromResult(String.Empty)
                 | Nul -> Task.FromResult(String.Empty)
 
-            member this.GetWriteSharedAccessSignature
-                (containerName: StorageContainerName)
-                (relativePath: RelativePath)
-                =
+            member this.GetWriteSharedAccessSignature (containerName: StorageContainerName) (relativePath: RelativePath) =
                 match storageProvider with
                 | AzureBlobStorage ->
                     let blobContainerClient = getContainerClient containerName

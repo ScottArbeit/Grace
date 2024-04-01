@@ -64,8 +64,7 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
         if
             not
             <| (ignorePaths
-                |> Seq.exists (fun ignorePath ->
-                    path.StartsWith(ignorePath, StringComparison.InvariantCultureIgnoreCase)))
+                |> Seq.exists (fun ignorePath -> path.StartsWith(ignorePath, StringComparison.InvariantCultureIgnoreCase)))
         then
             let endpoint = context.GetEndpoint()
 
@@ -89,11 +88,7 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
 
                 requestBodyType
             else
-                log.LogDebug(
-                    "{currentInstant}: Path: {path}; endpoint.Metadata.Count = 0.",
-                    getCurrentInstantExtended (),
-                    path
-                )
+                log.LogDebug("{currentInstant}: Path: {path}; endpoint.Metadata.Count = 0.", getCurrentInstantExtended (), path)
 
                 None
         else
@@ -108,8 +103,7 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
             let startTime = getCurrentInstant ()
             let middlewareTraceHeader = context.Request.Headers["X-MiddlewareTraceIn"]
 
-            context.Request.Headers["X-MiddlewareTraceIn"] <-
-                $"{middlewareTraceHeader}{nameof (ValidateIdsMiddleware)} --> "
+            context.Request.Headers["X-MiddlewareTraceIn"] <- $"{middlewareTraceHeader}{nameof (ValidateIdsMiddleware)} --> "
 #endif
 
             try
@@ -230,14 +224,7 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
                                         HasOrganization = true }
                             else
                                 // Resolve the OrganizationId based on the provided Id and Name.
-                                match!
-                                    resolveOrganizationId
-                                        graceIds.OwnerId
-                                        String.Empty
-                                        organizationId
-                                        organizationName
-                                        correlationId
-                                with
+                                match! resolveOrganizationId graceIds.OwnerId String.Empty organizationId organizationName correlationId with
                                 | Some resolvedOrganizationId ->
                                     graceIds <-
                                         { graceIds with
@@ -352,16 +339,14 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
 #if DEBUG
                     let middlewareTraceOutHeader = context.Request.Headers["X-MiddlewareTraceOut"]
 
-                    context.Request.Headers["X-MiddlewareTraceOut"] <-
-                        $"{middlewareTraceOutHeader}{nameof (ValidateIdsMiddleware)} --> "
+                    context.Request.Headers["X-MiddlewareTraceOut"] <- $"{middlewareTraceOutHeader}{nameof (ValidateIdsMiddleware)} --> "
 
                     let elapsed = getCurrentInstant().Minus(startTime).TotalMilliseconds
 
                     if
                         not
                         <| (ignorePaths
-                            |> Seq.exists (fun ignorePath ->
-                                path.StartsWith(ignorePath, StringComparison.InvariantCultureIgnoreCase)))
+                            |> Seq.exists (fun ignorePath -> path.StartsWith(ignorePath, StringComparison.InvariantCultureIgnoreCase)))
                     then
                         log.LogDebug(
                             "{currentInstant}: Path: {path}; Elapsed: {elapsed}ms; Status code: {statusCode}; graceIds: {graceIds}",
@@ -383,10 +368,7 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
 
                 context.Response.StatusCode <- 500
 
-                do!
-                    context.Response.WriteAsync(
-                        $"{getCurrentInstantExtended ()}: An unhandled exception occurred in the ValidateIdsMiddleware middleware."
-                    )
+                do! context.Response.WriteAsync($"{getCurrentInstantExtended ()}: An unhandled exception occurred in the ValidateIdsMiddleware middleware.")
 
         }
         :> Task

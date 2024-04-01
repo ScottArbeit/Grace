@@ -181,12 +181,7 @@ module Branch =
             :> Task
 
         member private this.SetMaintenanceReminder() =
-            this.RegisterReminderAsync(
-                "MaintenanceReminder",
-                Array.empty<byte>,
-                TimeSpan.FromDays(7.0),
-                TimeSpan.FromDays(7.0)
-            )
+            this.RegisterReminderAsync("MaintenanceReminder", Array.empty<byte>, TimeSpan.FromDays(7.0), TimeSpan.FromDays(7.0))
 
         member private this.UnregisterMaintenanceReminder() =
             this.UnregisterReminderAsync("MaintenanceReminder")
@@ -204,13 +199,7 @@ module Branch =
             logScope <- log.BeginScope("Actor {actorName}", actorName)
             currentCommand <- String.Empty
 
-            log.LogTrace(
-                "{CurrentInstant}: Started {ActorName}.{MethodName} Id: {Id}.",
-                getCurrentInstantExtended (),
-                actorName,
-                context.MethodName,
-                this.Id
-            )
+            log.LogTrace("{CurrentInstant}: Started {ActorName}.{MethodName} Id: {Id}.", getCurrentInstantExtended (), actorName, context.MethodName, this.Id)
 
             // This checks if the actor is still active, but in an undefined state, which will _almost_ never happen.
             // isDisposed is set when the actor is deleted, or if an error occurs where we're not sure of the state and want to reload from the database.
@@ -263,26 +252,17 @@ module Branch =
 
                     branchEvents.Add(branchEvent)
 
-                    do!
-                        Constants.DefaultAsyncRetryPolicy.ExecuteAsync(fun () ->
-                            stateManager.SetStateAsync(eventsStateName, branchEvents))
+                    do! Constants.DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> stateManager.SetStateAsync(eventsStateName, branchEvents))
 
                     branchDto <- branchDto |> updateDto branchEvent.Event
 
-                    do!
-                        Constants.DefaultAsyncRetryPolicy.ExecuteAsync(fun () ->
-                            stateManager.SetStateAsync(dtoStateName, branchDto))
+                    do! Constants.DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> stateManager.SetStateAsync(dtoStateName, branchDto))
 
                     // Publish the event to the rest of the world.
                     let graceEvent = Events.GraceEvent.BranchEvent branchEvent
                     let message = serialize graceEvent
 
-                    do!
-                        daprClient.PublishEventAsync(
-                            Constants.GracePubSubService,
-                            Constants.GraceEventStreamTopic,
-                            graceEvent
-                        )
+                    do! daprClient.PublishEventAsync(Constants.GracePubSubService, Constants.GraceEventStreamTopic, graceEvent)
 
                     //let httpClient = getHttpClient branchEvent.Metadata.CorrelationId
                     //httpClient.BaseAddress <- Uri $"http://127.0.0.1:5000"
@@ -301,19 +281,14 @@ module Branch =
 
                     // If the event has a referenceId, add it to the return properties.
                     if branchEvent.Metadata.Properties.ContainsKey(nameof (ReferenceId)) then
-                        returnValue.Properties.Add(
-                            nameof (ReferenceId),
-                            branchEvent.Metadata.Properties[nameof (ReferenceId)]
-                        )
+                        returnValue.Properties.Add(nameof (ReferenceId), branchEvent.Metadata.Properties[nameof (ReferenceId)])
 
                     return Ok returnValue
                 with ex ->
                     logToConsole (createExceptionResponse ex)
 
                     let graceError =
-                        GraceError.Create
-                            (BranchError.getErrorMessage FailedWhileApplyingEvent)
-                            branchEvent.Metadata.CorrelationId
+                        GraceError.Create (BranchError.getErrorMessage FailedWhileApplyingEvent) branchEvent.Metadata.CorrelationId
 
                     return Error graceError
             }
@@ -351,39 +326,17 @@ module Branch =
                             branchEvents.Exists(fun ev -> ev.Metadata.CorrelationId = metadata.CorrelationId)
                             && (branchEvents.Count > 3)
                         then
-                            return
-                                Error(
-                                    GraceError.Create
-                                        (BranchError.getErrorMessage DuplicateCorrelationId)
-                                        metadata.CorrelationId
-                                )
+                            return Error(GraceError.Create (BranchError.getErrorMessage DuplicateCorrelationId) metadata.CorrelationId)
                         else
                             match command with
-                            | BranchCommand.Create(branchId,
-                                                   branchName,
-                                                   parentBranchId,
-                                                   basedOn,
-                                                   repositoryId,
-                                                   branchPermissions) ->
+                            | BranchCommand.Create(branchId, branchName, parentBranchId, basedOn, repositoryId, branchPermissions) ->
                                 match branchDto.UpdatedAt with
-                                | Some _ ->
-                                    return
-                                        Error(
-                                            GraceError.Create
-                                                (BranchError.getErrorMessage BranchAlreadyExists)
-                                                metadata.CorrelationId
-                                        )
+                                | Some _ -> return Error(GraceError.Create (BranchError.getErrorMessage BranchAlreadyExists) metadata.CorrelationId)
                                 | None -> return Ok command
                             | _ ->
                                 match branchDto.UpdatedAt with
                                 | Some _ -> return Ok command
-                                | None ->
-                                    return
-                                        Error(
-                                            GraceError.Create
-                                                (BranchError.getErrorMessage BranchDoesNotExist)
-                                                metadata.CorrelationId
-                                        )
+                                | None -> return Error(GraceError.Create (BranchError.getErrorMessage BranchDoesNotExist) metadata.CorrelationId)
                     }
 
                 let addReference directoryId sha256Hash referenceText referenceType =
@@ -408,21 +361,8 @@ module Branch =
                             let! event =
                                 task {
                                     match command with
-                                    | Create(branchId,
-                                             branchName,
-                                             parentBranchId,
-                                             basedOn,
-                                             repositoryId,
-                                             branchPermissions) ->
-                                        return
-                                            Created(
-                                                branchId,
-                                                branchName,
-                                                parentBranchId,
-                                                basedOn,
-                                                repositoryId,
-                                                branchPermissions
-                                            )
+                                    | Create(branchId, branchName, parentBranchId, basedOn, repositoryId, branchPermissions) ->
+                                        return Created(branchId, branchName, parentBranchId, basedOn, repositoryId, branchPermissions)
                                     | Rebase referenceId ->
                                         metadata.Properties.Add(nameof (ReferenceId), $"{referenceId}")
                                         metadata.Properties.Add(nameof (BranchId), $"{this.Id}")
@@ -430,12 +370,7 @@ module Branch =
                                         return Rebased referenceId
                                     | SetName branchName -> return NameSet branchName
                                     | BranchCommand.Assign(directoryVersionId, sha256Hash, referenceText) ->
-                                        let! referenceId =
-                                            addReference
-                                                directoryVersionId
-                                                sha256Hash
-                                                referenceText
-                                                ReferenceType.Promotion
+                                        let! referenceId = addReference directoryVersionId sha256Hash referenceText ReferenceType.Promotion
 
                                         metadata.Properties.Add(nameof (ReferenceId), $"{referenceId}")
                                         metadata.Properties.Add(nameof (DirectoryId), $"{directoryVersionId}")
@@ -445,12 +380,7 @@ module Branch =
                                         metadata.Properties.Add(nameof (BranchName), $"{branchDto.BranchName}")
                                         return Assigned(referenceId, directoryVersionId, sha256Hash, referenceText)
                                     | BranchCommand.Promote(directoryVersionId, sha256Hash, referenceText) ->
-                                        let! referenceId =
-                                            addReference
-                                                directoryVersionId
-                                                sha256Hash
-                                                referenceText
-                                                ReferenceType.Promotion
+                                        let! referenceId = addReference directoryVersionId sha256Hash referenceText ReferenceType.Promotion
 
                                         metadata.Properties.Add(nameof (ReferenceId), $"{referenceId}")
                                         metadata.Properties.Add(nameof (DirectoryId), $"{directoryVersionId}")
@@ -460,12 +390,7 @@ module Branch =
                                         metadata.Properties.Add(nameof (BranchName), $"{branchDto.BranchName}")
                                         return Promoted(referenceId, directoryVersionId, sha256Hash, referenceText)
                                     | BranchCommand.Commit(directoryVersionId, sha256Hash, referenceText) ->
-                                        let! referenceId =
-                                            addReference
-                                                directoryVersionId
-                                                sha256Hash
-                                                referenceText
-                                                ReferenceType.Commit
+                                        let! referenceId = addReference directoryVersionId sha256Hash referenceText ReferenceType.Commit
 
                                         metadata.Properties.Add(nameof (ReferenceId), $"{referenceId}")
                                         metadata.Properties.Add(nameof (DirectoryId), $"{directoryVersionId}")
@@ -475,12 +400,7 @@ module Branch =
                                         metadata.Properties.Add(nameof (BranchName), $"{branchDto.BranchName}")
                                         return Committed(referenceId, directoryVersionId, sha256Hash, referenceText)
                                     | BranchCommand.Checkpoint(directoryVersionId, sha256Hash, referenceText) ->
-                                        let! referenceId =
-                                            addReference
-                                                directoryVersionId
-                                                sha256Hash
-                                                referenceText
-                                                ReferenceType.Checkpoint
+                                        let! referenceId = addReference directoryVersionId sha256Hash referenceText ReferenceType.Checkpoint
 
                                         metadata.Properties.Add(nameof (ReferenceId), $"{referenceId}")
                                         metadata.Properties.Add(nameof (DirectoryId), $"{directoryVersionId}")
@@ -490,8 +410,7 @@ module Branch =
                                         metadata.Properties.Add(nameof (BranchName), $"{branchDto.BranchName}")
                                         return Checkpointed(referenceId, directoryVersionId, sha256Hash, referenceText)
                                     | BranchCommand.Save(directoryVersionId, sha256Hash, referenceText) ->
-                                        let! referenceId =
-                                            addReference directoryVersionId sha256Hash referenceText ReferenceType.Save
+                                        let! referenceId = addReference directoryVersionId sha256Hash referenceText ReferenceType.Save
 
                                         metadata.Properties.Add(nameof (ReferenceId), $"{referenceId}")
                                         metadata.Properties.Add(nameof (DirectoryId), $"{directoryVersionId}")
@@ -501,8 +420,7 @@ module Branch =
                                         metadata.Properties.Add(nameof (BranchName), $"{branchDto.BranchName}")
                                         return Saved(referenceId, directoryVersionId, sha256Hash, referenceText)
                                     | BranchCommand.Tag(directoryVersionId, sha256Hash, referenceText) ->
-                                        let! referenceId =
-                                            addReference directoryVersionId sha256Hash referenceText ReferenceType.Tag
+                                        let! referenceId = addReference directoryVersionId sha256Hash referenceText ReferenceType.Tag
 
                                         metadata.Properties.Add(nameof (ReferenceId), $"{referenceId}")
                                         metadata.Properties.Add(nameof (DirectoryId), $"{directoryVersionId}")

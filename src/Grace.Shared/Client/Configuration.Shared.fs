@@ -116,11 +116,7 @@ module Configuration =
 
             while String.IsNullOrEmpty(graceConfigPath) && not (isNull currentDirectory) do
                 let fullPath =
-                    Path.Combine(
-                        currentDirectory.FullName,
-                        Constants.GraceConfigDirectory,
-                        Constants.GraceConfigFileName
-                    )
+                    Path.Combine(currentDirectory.FullName, Constants.GraceConfigDirectory, Constants.GraceConfigFileName)
                 //printfn $"Searching for configuration in {currentDirectory}..."
                 if File.Exists(fullPath) then
                     graceConfigPath <- fullPath
@@ -135,8 +131,7 @@ module Configuration =
                 //Directory.CreateDirectory(FileInfo(graceConfigPath).DirectoryName) |> ignore
                 //saveDefaultConfig graceConfigPath
                 //Result.Ok graceConfigPath
-                Error
-                    $"No {Constants.GraceConfigFileName} file found along current path. Please run `grace config write` to create one."
+                Error $"No {Constants.GraceConfigFileName} file found along current path. Please run `grace config write` to create one."
 
         with
         | :? System.IO.IOException as ex -> Error $"Exception while parsing directory paths: {ex.Message}"
@@ -195,24 +190,18 @@ module Configuration =
 
                     graceConfiguration <- graceConfigurationFromFile
 
-                    graceConfiguration.RootDirectory <-
-                        Path.GetFullPath(Path.Combine(graceConfigurationDirectory, ".."))
+                    graceConfiguration.RootDirectory <- Path.GetFullPath(Path.Combine(graceConfigurationDirectory, ".."))
 
                     graceConfiguration.GraceDirectory <- Path.GetFullPath(graceConfigurationDirectory)
 
-                    graceConfiguration.ObjectDirectory <-
-                        Path.GetFullPath(Path.Combine(graceConfigurationDirectory, Constants.GraceObjectsDirectory))
+                    graceConfiguration.ObjectDirectory <- Path.GetFullPath(Path.Combine(graceConfigurationDirectory, Constants.GraceObjectsDirectory))
 
-                    graceConfiguration.GraceObjectCacheFile <-
-                        Path.Combine(graceConfiguration.ObjectDirectory, Constants.GraceObjectCacheFile)
+                    graceConfiguration.GraceObjectCacheFile <- Path.Combine(graceConfiguration.ObjectDirectory, Constants.GraceObjectCacheFile)
 
-                    graceConfiguration.GraceStatusFile <-
-                        Path.Combine(graceConfiguration.GraceDirectory, Constants.GraceStatusFileName)
+                    graceConfiguration.GraceStatusFile <- Path.Combine(graceConfiguration.GraceDirectory, Constants.GraceStatusFileName)
 
                     graceConfiguration.DirectoryVersionCache <-
-                        Path.GetFullPath(
-                            Path.Combine(graceConfigurationDirectory, Constants.GraceDirectoryVersionCacheName)
-                        )
+                        Path.GetFullPath(Path.Combine(graceConfigurationDirectory, Constants.GraceDirectoryVersionCacheName))
 
                     graceConfiguration.ConfigurationDirectory <- FileInfo(graceConfigurationFilePath).DirectoryName
                     graceConfiguration.ActivitySource <- new ActivitySource("Grace", "0.1")

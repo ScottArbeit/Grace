@@ -120,8 +120,7 @@ module Services =
                 let blobContainerClient =
                     BlobContainerClient(azureStorageConnectionString, $"{containerName}")
 
-                let! azureResponse =
-                    blobContainerClient.CreateIfNotExistsAsync(publicAccessType = Models.PublicAccessType.None)
+                let! azureResponse = blobContainerClient.CreateIfNotExistsAsync(publicAccessType = Models.PublicAccessType.None)
 
                 containerClients[key] <- blobContainerClient
                 return blobContainerClient
@@ -170,37 +169,23 @@ module Services =
                 let! blobContainerClient = getContainerClient repositoryDto.StorageAccountName containerName
 
                 let blobSasBuilder =
-                    BlobSasBuilder(
-                        permission,
-                        DateTimeOffset.UtcNow.Add(TimeSpan.FromMinutes(Constants.SharedAccessSignatureExpiration))
-                    )
+                    BlobSasBuilder(permission, DateTimeOffset.UtcNow.Add(TimeSpan.FromMinutes(Constants.SharedAccessSignatureExpiration)))
 
                 blobSasBuilder.BlobName <- Path.Combine($"{fileVersion.RelativePath}", fileVersion.GetObjectFileName)
                 blobSasBuilder.BlobContainerName <- containerName
                 blobSasBuilder.StartsOn <- DateTimeOffset.UtcNow.Subtract(TimeSpan.FromSeconds(15.0))
                 let sasUriParameters = blobSasBuilder.ToSasQueryParameters(sharedKeyCredential)
 
-                return
-                    Ok
-                        $"{blobContainerClient.Uri}/{fileVersion.RelativePath}/{fileVersion.GetObjectFileName}?{sasUriParameters}"
+                return Ok $"{blobContainerClient.Uri}/{fileVersion.RelativePath}/{fileVersion.GetObjectFileName}?{sasUriParameters}"
             | Error error -> return Error error
         }
 
     /// Gets a shared access signature for reading from the object storage provider.
-    let getReadSharedAccessSignature
-        (repositoryDto: RepositoryDto)
-        (fileVersion: FileVersion)
-        (correlationId: CorrelationId)
-        =
+    let getReadSharedAccessSignature (repositoryDto: RepositoryDto) (fileVersion: FileVersion) (correlationId: CorrelationId) =
         task {
             match repositoryDto.ObjectStorageProvider with
             | AzureBlobStorage ->
-                let! sas =
-                    createAzureBlobSasUri
-                        repositoryDto
-                        fileVersion
-                        (BlobSasPermissions.Read ||| BlobSasPermissions.List)
-                        correlationId
+                let! sas = createAzureBlobSasUri repositoryDto fileVersion (BlobSasPermissions.Read ||| BlobSasPermissions.List) correlationId
 
                 match sas with
                 | Ok sas -> return Ok(sas.ToString())
@@ -211,11 +196,7 @@ module Services =
         }
 
     /// Gets a shared access signature for writing to the object storage provider.
-    let getWriteSharedAccessSignature
-        (repositoryDto: RepositoryDto)
-        (fileVersion: FileVersion)
-        (correlationId: CorrelationId)
-        =
+    let getWriteSharedAccessSignature (repositoryDto: RepositoryDto) (fileVersion: FileVersion) (correlationId: CorrelationId) =
         task {
             match repositoryDto.ObjectStorageProvider with
             | AWSS3 -> return Uri("http://localhost:3500")
@@ -268,11 +249,7 @@ module Services =
                     let! exists = actorProxy.Exists correlationId
 
                     use newCacheEntry =
-                        memoryCache.CreateEntry(
-                            ownerGuid,
-                            Value = exists,
-                            AbsoluteExpirationRelativeToNow = DefaultExpirationTime
-                        )
+                        memoryCache.CreateEntry(ownerGuid, Value = exists, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
 
                     if exists then return Some ownerId else return None
             elif String.IsNullOrEmpty(ownerName) then
@@ -291,20 +268,13 @@ module Services =
                 else
                     // Check if we have an active OwnerName actor with a cached result.
                     let ownerNameActorProxy =
-                        actorProxyFactory.CreateActorProxy<IOwnerNameActor>(
-                            (getOwnerNameActorId ownerName),
-                            ActorName.OwnerName
-                        )
+                        actorProxyFactory.CreateActorProxy<IOwnerNameActor>((getOwnerNameActorId ownerName), ActorName.OwnerName)
 
                     match! ownerNameActorProxy.GetOwnerId correlationId with
                     | Some ownerId ->
                         // Add this OwnerName to the MemoryCache.
                         use newCacheEntry =
-                            memoryCache.CreateEntry(
-                                $"OwN:{ownerName}",
-                                Value = ownerGuid,
-                                AbsoluteExpirationRelativeToNow = DefaultExpirationTime
-                            )
+                            memoryCache.CreateEntry($"OwN:{ownerName}", Value = ownerGuid, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
 
                         return Some $"{ownerId}"
                     | None ->
@@ -320,8 +290,7 @@ module Services =
                                     .WithParameter("@class", "OwnerDto")
 
                             let iterator =
-                                DefaultRetryPolicy.Execute(fun () ->
-                                    cosmosContainer.GetItemQueryIterator<OwnerIdRecord>(queryDefinition))
+                                DefaultRetryPolicy.Execute(fun () -> cosmosContainer.GetItemQueryIterator<OwnerIdRecord>(queryDefinition))
 
                             if iterator.HasMoreResults then
                                 let! currentResultSet = iterator.ReadNextAsync()
@@ -342,18 +311,10 @@ module Services =
                                     ownerGuid <- Guid.Parse(ownerId)
 
                                     use newCacheEntry1 =
-                                        memoryCache.CreateEntry(
-                                            $"OwN:{ownerName}",
-                                            Value = ownerGuid,
-                                            AbsoluteExpirationRelativeToNow = DefaultExpirationTime
-                                        )
+                                        memoryCache.CreateEntry($"OwN:{ownerName}", Value = ownerGuid, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
 
                                     use newCacheEntry2 =
-                                        memoryCache.CreateEntry(
-                                            ownerGuid,
-                                            Value = true,
-                                            AbsoluteExpirationRelativeToNow = DefaultExpirationTime
-                                        )
+                                        memoryCache.CreateEntry(ownerGuid, Value = true, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
                                     // Set the OwnerId in the OwnerName actor.
                                     do! ownerNameActorProxy.SetOwnerId ownerId correlationId
                                     return Some ownerId
@@ -363,13 +324,7 @@ module Services =
         }
 
     /// Gets the OrganizationId by either returning OrganizationId if provided, or searching by OrganizationName.
-    let resolveOrganizationId
-        (ownerId: string)
-        (ownerName: string)
-        (organizationId: string)
-        (organizationName: string)
-        (correlationId: CorrelationId)
-        =
+    let resolveOrganizationId (ownerId: string) (ownerName: string) (organizationId: string) (organizationName: string) (correlationId: CorrelationId) =
         task {
             let mutable organizationGuid = Guid.Empty
 
@@ -391,19 +346,12 @@ module Services =
                     else
                         // Call the Organization actor to check if the organization exists.
                         let actorProxy =
-                            actorProxyFactory.CreateActorProxy<IOrganizationActor>(
-                                ActorId(organizationId),
-                                ActorName.Organization
-                            )
+                            actorProxyFactory.CreateActorProxy<IOrganizationActor>(ActorId(organizationId), ActorName.Organization)
 
                         let! exists = actorProxy.Exists correlationId
 
                         use newCacheEntry =
-                            memoryCache.CreateEntry(
-                                organizationGuid,
-                                Value = exists,
-                                AbsoluteExpirationRelativeToNow = DefaultExpirationTime
-                            )
+                            memoryCache.CreateEntry(organizationGuid, Value = exists, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
 
                         if exists then return Some organizationId else return None
                 elif String.IsNullOrEmpty(organizationName) then
@@ -443,8 +391,7 @@ module Services =
                                         .WithParameter("@class", "OrganizationDto")
 
                                 let iterator =
-                                    DefaultRetryPolicy.Execute(fun () ->
-                                        cosmosContainer.GetItemQueryIterator<OrganizationIdRecord>(queryDefinition))
+                                    DefaultRetryPolicy.Execute(fun () -> cosmosContainer.GetItemQueryIterator<OrganizationIdRecord>(queryDefinition))
 
                                 if iterator.HasMoreResults then
                                     let! currentResultSet = iterator.ReadNextAsync()
@@ -476,11 +423,7 @@ module Services =
                                             )
 
                                         use newCacheEntry2 =
-                                            memoryCache.CreateEntry(
-                                                organizationGuid,
-                                                Value = true,
-                                                AbsoluteExpirationRelativeToNow = DefaultExpirationTime
-                                            )
+                                            memoryCache.CreateEntry(organizationGuid, Value = true, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
                                         // Set the OrganizationId in the OrganizationName actor.
                                         do! organizationNameActorProxy.SetOrganizationId organizationId correlationId
                                         return Some organizationId
@@ -523,19 +466,12 @@ module Services =
                         else
                             // Call the Repository actor to check if the repository exists.
                             let actorProxy =
-                                actorProxyFactory.CreateActorProxy<IRepositoryActor>(
-                                    ActorId(repositoryId),
-                                    ActorName.Repository
-                                )
+                                actorProxyFactory.CreateActorProxy<IRepositoryActor>(ActorId(repositoryId), ActorName.Repository)
 
                             let! exists = actorProxy.Exists correlationId
 
                             use newCacheEntry =
-                                memoryCache.CreateEntry(
-                                    repositoryGuid,
-                                    Value = exists,
-                                    AbsoluteExpirationRelativeToNow = DefaultExpirationTime
-                                )
+                                memoryCache.CreateEntry(repositoryGuid, Value = exists, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
 
                             if exists then return Some repositoryId else return None
                     elif String.IsNullOrEmpty(repositoryName) then
@@ -581,9 +517,7 @@ module Services =
                                         let! currentResultSet = iterator.ReadNextAsync()
 
                                         let repositoryId =
-                                            currentResultSet
-                                                .FirstOrDefault({ repositoryId = String.Empty })
-                                                .repositoryId
+                                            currentResultSet.FirstOrDefault({ repositoryId = String.Empty }).repositoryId
 
                                         if String.IsNullOrEmpty(repositoryId) then
                                             // We didn't find the RepositoryId, so add this RepositoryName to the MemoryCache and indicate that we have already checked.
@@ -607,11 +541,7 @@ module Services =
                                                 )
 
                                             use newCacheEntry2 =
-                                                memoryCache.CreateEntry(
-                                                    repositoryGuid,
-                                                    Value = true,
-                                                    AbsoluteExpirationRelativeToNow = DefaultExpirationTime
-                                                )
+                                                memoryCache.CreateEntry(repositoryGuid, Value = true, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
                                             // Set the RepositoryId in the RepositoryName actor.
                                             do! repositoryNameActorProxy.SetRepositoryId repositoryId correlationId
                                             return Some repositoryId
@@ -645,11 +575,7 @@ module Services =
                     let! exists = actorProxy.Exists correlationId
 
                     use newCacheEntry =
-                        memoryCache.CreateEntry(
-                            branchGuid,
-                            Value = exists,
-                            AbsoluteExpirationRelativeToNow = DefaultExpirationTime
-                        )
+                        memoryCache.CreateEntry(branchGuid, Value = exists, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
 
                     if exists then return Some branchId else return None
             elif String.IsNullOrEmpty(branchName) then
@@ -668,10 +594,7 @@ module Services =
                 else
                     // Check if we have an active BranchName actor with a cached result.
                     let branchNameActorProxy =
-                        actorProxyFactory.CreateActorProxy<IBranchNameActor>(
-                            getBranchNameActorId repositoryId branchName,
-                            ActorName.BranchName
-                        )
+                        actorProxyFactory.CreateActorProxy<IBranchNameActor>(getBranchNameActorId repositoryId branchName, ActorName.BranchName)
 
                     match! branchNameActorProxy.GetBranchId correlationId with
                     | Some branchId -> return Some $"{branchId}"
@@ -689,8 +612,7 @@ module Services =
                                     .WithParameter("@class", "BranchDto")
 
                             let iterator =
-                                DefaultRetryPolicy.Execute(fun () ->
-                                    cosmosContainer.GetItemQueryIterator<BranchIdRecord>(queryDefinition))
+                                DefaultRetryPolicy.Execute(fun () -> cosmosContainer.GetItemQueryIterator<BranchIdRecord>(queryDefinition))
 
                             if iterator.HasMoreResults then
                                 let! currentResultSet = iterator.ReadNextAsync()
@@ -718,11 +640,7 @@ module Services =
                                         )
 
                                     use newCacheEntry2 =
-                                        memoryCache.CreateEntry(
-                                            branchGuid,
-                                            Value = true,
-                                            AbsoluteExpirationRelativeToNow = DefaultExpirationTime
-                                        )
+                                        memoryCache.CreateEntry(branchGuid, Value = true, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
                                     // Set the BranchId in the BranchName actor.
                                     do! branchNameActorProxy.SetBranchId branchGuid correlationId
                                     return Some branchId
@@ -778,10 +696,7 @@ module Services =
                             .WithParameter("@class", "OrganizationDto")
 
                     let iterator =
-                        cosmosContainer.GetItemQueryIterator<OrganizationDtoValue>(
-                            queryDefinition,
-                            requestOptions = queryRequestOptions
-                        )
+                        cosmosContainer.GetItemQueryIterator<OrganizationDtoValue>(queryDefinition, requestOptions = queryRequestOptions)
 
                     while iterator.HasMoreResults do
                         let! results = iterator.ReadNextAsync()
@@ -802,12 +717,7 @@ module Services =
         }
 
     /// Checks if the specified organization name is unique for the specified owner.
-    let organizationNameIsUnique<'T>
-        (ownerId: string)
-        (ownerName: string)
-        (organizationName: string)
-        (correlationId: CorrelationId)
-        =
+    let organizationNameIsUnique<'T> (ownerId: string) (ownerName: string) (organizationName: string) (correlationId: CorrelationId) =
         task {
             match actorStateStorageProvider with
             | Unknown -> return Ok false
@@ -824,10 +734,7 @@ module Services =
                                 .WithParameter("@class", "OrganizationDto")
                         //logToConsole (queryDefinition.QueryText.Replace("@ownerId", $"\"{ownerId}\"").Replace("@organizationName", $"\"{organizationName}\"").Replace("@class", "\"OrganizationDto\""))
                         let iterator =
-                            cosmosContainer.GetItemQueryIterator<OrganizationIdRecord>(
-                                queryDefinition,
-                                requestOptions = queryRequestOptions
-                            )
+                            cosmosContainer.GetItemQueryIterator<OrganizationIdRecord>(queryDefinition, requestOptions = queryRequestOptions)
 
                         if iterator.HasMoreResults then
                             let! currentResultSet = iterator.ReadNextAsync()
@@ -876,10 +783,7 @@ module Services =
                                 .WithParameter("@class", "RepositoryDto")
                         //logToConsole (queryDefinition.QueryText.Replace("@organizationId", $"\"{organizationId}\"").Replace("@repositoryName", $"\"{repositoryName}\""))
                         let iterator =
-                            cosmosContainer.GetItemQueryIterator<RepositoryIdRecord>(
-                                queryDefinition,
-                                requestOptions = queryRequestOptions
-                            )
+                            cosmosContainer.GetItemQueryIterator<RepositoryIdRecord>(queryDefinition, requestOptions = queryRequestOptions)
 
                         if iterator.HasMoreResults then
                             let! currentResultSet = iterator.ReadNextAsync()
@@ -928,10 +832,7 @@ module Services =
                             .WithParameter("@class", "RepositoryDto")
 
                     let iterator =
-                        cosmosContainer.GetItemQueryIterator<RepositoryDtoValue>(
-                            queryDefinition,
-                            requestOptions = queryRequestOptions
-                        )
+                        cosmosContainer.GetItemQueryIterator<RepositoryDtoValue>(queryDefinition, requestOptions = queryRequestOptions)
 
                     while iterator.HasMoreResults do
                         let! results = iterator.ReadNextAsync()
@@ -978,10 +879,7 @@ module Services =
                             .WithParameter("@class", "BranchDto")
 
                     let iterator =
-                        cosmosContainer.GetItemQueryIterator<BranchDtoValue>(
-                            queryDefinition,
-                            requestOptions = queryRequestOptions
-                        )
+                        cosmosContainer.GetItemQueryIterator<BranchDtoValue>(queryDefinition, requestOptions = queryRequestOptions)
 
                     while iterator.HasMoreResults do
                         let! results = iterator.ReadNextAsync()
@@ -1013,17 +911,12 @@ module Services =
                 let requestCharge = StringBuilder()
 
                 let queryDefinition =
-                    QueryDefinition(
-                        """SELECT * FROM c WHERE c["value"].Class = @class AND c["value"].ReferenceId = @referenceId"""
-                    )
+                    QueryDefinition("""SELECT * FROM c WHERE c["value"].Class = @class AND c["value"].ReferenceId = @referenceId""")
                         .WithParameter("@referenceId", $"{referenceId}")
                         .WithParameter("@class", "ReferenceDto")
 
                 let iterator =
-                    cosmosContainer.GetItemQueryIterator<ReferenceDto>(
-                        queryDefinition,
-                        requestOptions = queryRequestOptions
-                    )
+                    cosmosContainer.GetItemQueryIterator<ReferenceDto>(queryDefinition, requestOptions = queryRequestOptions)
 
                 while iterator.HasMoreResults do
                     let! results = DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> iterator.ReadNextAsync())
@@ -1054,17 +947,12 @@ module Services =
                 let requestCharge = StringBuilder()
 
                 let queryDefinition =
-                    QueryDefinition(
-                        """SELECT * FROM c["value"] c WHERE c.Class = @class AND STARTSWITH(c.Sha256Hash, @sha256Hash, true)"""
-                    )
+                    QueryDefinition("""SELECT * FROM c["value"] c WHERE c.Class = @class AND STARTSWITH(c.Sha256Hash, @sha256Hash, true)""")
                         .WithParameter("@sha256Hash", $"{sha256Hash}")
                         .WithParameter("@class", "ReferenceDto")
 
                 let iterator =
-                    cosmosContainer.GetItemQueryIterator<ReferenceDto>(
-                        queryDefinition,
-                        requestOptions = queryRequestOptions
-                    )
+                    cosmosContainer.GetItemQueryIterator<ReferenceDto>(queryDefinition, requestOptions = queryRequestOptions)
 
                 while iterator.HasMoreResults do
                     let! results = DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> iterator.ReadNextAsync())
@@ -1103,10 +991,7 @@ module Services =
                         .WithParameter("@class", "ReferenceDto")
 
                 let iterator =
-                    cosmosContainer.GetItemQueryIterator<ReferenceDto>(
-                        queryDefinition,
-                        requestOptions = queryRequestOptions
-                    )
+                    cosmosContainer.GetItemQueryIterator<ReferenceDto>(queryDefinition, requestOptions = queryRequestOptions)
 
                 while iterator.HasMoreResults do
                     let! results = DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> iterator.ReadNextAsync())
@@ -1142,24 +1027,19 @@ module Services =
 
                 let itemRequestOptions = ItemRequestOptions()
 
-                itemRequestOptions.AddRequestHeaders <-
-                    fun headers -> headers.Add(Constants.CorrelationIdHeaderKey, "Deleting all records from CosmosDB")
+                itemRequestOptions.AddRequestHeaders <- fun headers -> headers.Add(Constants.CorrelationIdHeaderKey, "Deleting all records from CosmosDB")
 
                 let queryDefinition =
                     QueryDefinition("SELECT c.id, c.partitionKey FROM c ORDER BY c.partitionKey")
 
                 let iterator =
-                    cosmosContainer.GetItemQueryIterator<DocumentIdentifier>(
-                        queryDefinition,
-                        requestOptions = queryRequestOptions
-                    )
+                    cosmosContainer.GetItemQueryIterator<DocumentIdentifier>(queryDefinition, requestOptions = queryRequestOptions)
 
                 while iterator.HasMoreResults do
                     let startTime = getCurrentInstant ()
                     let! results = iterator.ReadNextAsync()
 
-                    logToConsole
-                        $"In Services.deleteAllFromCosmosDB(): results.Resource.Count: {results.Resource.Count()}."
+                    logToConsole $"In Services.deleteAllFromCosmosDB(): results.Resource.Count: {results.Resource.Count()}."
 
                     do!
                         Parallel.ForEachAsync(
@@ -1169,11 +1049,7 @@ module Services =
                                 ValueTask(
                                     task {
                                         let! deleteResponse =
-                                            cosmosContainer.DeleteItemAsync(
-                                                document.id,
-                                                PartitionKey(document.partitionKey),
-                                                itemRequestOptions
-                                            )
+                                            cosmosContainer.DeleteItemAsync(document.id, PartitionKey(document.partitionKey), itemRequestOptions)
 
                                         if deleteResponse.StatusCode <> HttpStatusCode.NoContent then
                                             failed.Add(document.id)
@@ -1188,8 +1064,7 @@ module Services =
 
                     let duration_s = getCurrentInstant().Minus(startTime).TotalSeconds
 
-                    logToConsole
-                        $"In Services.deleteAllFromCosmosDB(): duration (s): {duration_s:F3}; requests/second: {rps:F3}; failed.Count: {failed.Count}."
+                    logToConsole $"In Services.deleteAllFromCosmosDB(): duration (s): {duration_s:F3}; requests/second: {rps:F3}; failed.Count: {failed.Count}."
 
                 return failed
             with ex ->
@@ -1253,10 +1128,7 @@ module Services =
                         .WithParameter("@class", "ReferenceDto")
 
                 let iterator =
-                    cosmosContainer.GetItemQueryIterator<ReferenceDto>(
-                        queryDefinition,
-                        requestOptions = queryRequestOptions
-                    )
+                    cosmosContainer.GetItemQueryIterator<ReferenceDto>(queryDefinition, requestOptions = queryRequestOptions)
 
                 while iterator.HasMoreResults do
                     let! results = DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> iterator.ReadNextAsync())
@@ -1295,10 +1167,7 @@ module Services =
                         .WithParameter("@class", nameof (ReferenceDto))
 
                 let iterator =
-                    cosmosContainer.GetItemQueryIterator<ReferenceDtoValue>(
-                        queryDefinition,
-                        requestOptions = queryRequestOptions
-                    )
+                    cosmosContainer.GetItemQueryIterator<ReferenceDtoValue>(queryDefinition, requestOptions = queryRequestOptions)
 
                 let mutable referenceDto = ReferenceDto.Default
 
@@ -1340,10 +1209,7 @@ module Services =
                         .WithParameter("@class", nameof (ReferenceDto))
 
                 let iterator =
-                    cosmosContainer.GetItemQueryIterator<ReferenceDtoValue>(
-                        queryDefinition,
-                        requestOptions = queryRequestOptions
-                    )
+                    cosmosContainer.GetItemQueryIterator<ReferenceDtoValue>(queryDefinition, requestOptions = queryRequestOptions)
 
                 let mutable referenceDto = ReferenceDto.Default
 
@@ -1407,10 +1273,7 @@ module Services =
 
                 try
                     let iterator =
-                        cosmosContainer.GetItemQueryIterator<DirectoryVersionEventValue>(
-                            queryDefinition,
-                            requestOptions = queryRequestOptions
-                        )
+                        cosmosContainer.GetItemQueryIterator<DirectoryVersionEventValue>(queryDefinition, requestOptions = queryRequestOptions)
 
                     while iterator.HasMoreResults do
                         let! results = DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> iterator.ReadNextAsync())
@@ -1420,8 +1283,7 @@ module Services =
                         if results.Resource.Count() > 0 then
                             directoryVersion <-
                                 match results.Resource.FirstOrDefault().event.Event with
-                                | DirectoryVersion.DirectoryVersionEventType.Created directoryVersion ->
-                                    directoryVersion
+                                | DirectoryVersion.DirectoryVersionEventType.Created directoryVersion -> directoryVersion
                                 | _ -> DirectoryVersion.Default
 
                     Activity.Current
@@ -1469,10 +1331,7 @@ module Services =
 
                 try
                     let iterator =
-                        cosmosContainer.GetItemQueryIterator<DirectoryVersionEventValue>(
-                            queryDefinition,
-                            requestOptions = queryRequestOptions
-                        )
+                        cosmosContainer.GetItemQueryIterator<DirectoryVersionEventValue>(queryDefinition, requestOptions = queryRequestOptions)
 
                     while iterator.HasMoreResults do
                         let! results = iterator.ReadNextAsync()
@@ -1482,8 +1341,7 @@ module Services =
                         if results.Resource.Count() > 0 then
                             directoryVersion <-
                                 match results.Resource.FirstOrDefault().event.Event with
-                                | DirectoryVersion.DirectoryVersionEventType.Created directoryVersion ->
-                                    directoryVersion
+                                | DirectoryVersion.DirectoryVersionEventType.Created directoryVersion -> directoryVersion
                                 | _ -> DirectoryVersion.Default
 
                     Activity.Current
@@ -1493,9 +1351,7 @@ module Services =
                 with ex ->
                     let parameters =
                         queryDefinition.GetQueryParameters()
-                        |> Seq.fold
-                            (fun (state: StringBuilder) (struct (k, v)) -> state.Append($"{k} = {v}; "))
-                            (StringBuilder())
+                        |> Seq.fold (fun (state: StringBuilder) (struct (k, v)) -> state.Append($"{k} = {v}; ")) (StringBuilder())
 
                     log.Value.LogError(
                         ex,
@@ -1550,10 +1406,7 @@ module Services =
                             .WithParameter("@class", "DirectoryVersion")
 
                     let iterator =
-                        cosmosContainer.GetItemQueryIterator<DirectoryVersion>(
-                            queryDefinition,
-                            requestOptions = queryRequestOptions
-                        )
+                        cosmosContainer.GetItemQueryIterator<DirectoryVersion>(queryDefinition, requestOptions = queryRequestOptions)
 
                     while iterator.HasMoreResults do
                         let! results = iterator.ReadNextAsync()
@@ -1585,9 +1438,7 @@ module Services =
                 // In order to build the IN clause, we need to create a parameter for each referenceId. (I tried just using string concatenation, it didn't work for some reason. Anyway...)
                 // The query starts with:
                 let queryText =
-                    StringBuilder(
-                        @"SELECT TOP @maxCount c[""value""] FROM c WHERE c[""value""].Class = @class and c[""value""].ReferenceId IN ("
-                    )
+                    StringBuilder(@"SELECT TOP @maxCount c[""value""] FROM c WHERE c[""value""].Class = @class and c[""value""].ReferenceId IN (")
                 // Then we add a parameter for each referenceId.
                 referenceIds
                 |> Seq.iteri (fun i referenceId -> queryText.Append($"@referenceId{i},") |> ignore)
@@ -1602,15 +1453,11 @@ module Services =
 
                 // Add a .WithParameter for each referenceId.
                 referenceIds
-                |> Seq.iteri (fun i referenceId ->
-                    queryDefinition.WithParameter($"@referenceId{i}", $"{referenceId}") |> ignore)
+                |> Seq.iteri (fun i referenceId -> queryDefinition.WithParameter($"@referenceId{i}", $"{referenceId}") |> ignore)
 
                 // Execute the query.
                 let iterator =
-                    cosmosContainer.GetItemQueryIterator<ReferenceDtoValue>(
-                        queryDefinition,
-                        requestOptions = queryRequestOptions
-                    )
+                    cosmosContainer.GetItemQueryIterator<ReferenceDtoValue>(queryDefinition, requestOptions = queryRequestOptions)
 
                 // The query will return fewer results than the number of referenceIds if the supplied referenceIds have duplicates.
                 //   This is normal for `grace status` (BasedOn and Latest Promotion are likely to be the same, for instance).
@@ -1646,12 +1493,7 @@ module Services =
         }
 
     /// Gets a list of BranchDtos based on BranchIds.
-    let getBranchesByBranchId
-        (repositoryId: RepositoryId)
-        (branchIds: IEnumerable<BranchId>)
-        (maxCount: int)
-        includeDeleted
-        =
+    let getBranchesByBranchId (repositoryId: RepositoryId) (branchIds: IEnumerable<BranchId>) (maxCount: int) includeDeleted =
         task {
             let branchDtos = List<BranchDto>()
 
@@ -1685,10 +1527,7 @@ module Services =
                             .WithParameter("@class", "BranchDto")
 
                     let iterator =
-                        cosmosContainer.GetItemQueryIterator<BranchDtoValue>(
-                            queryDefinition,
-                            requestOptions = queryRequestOptions
-                        )
+                        cosmosContainer.GetItemQueryIterator<BranchDtoValue>(queryDefinition, requestOptions = queryRequestOptions)
 
                     while iterator.HasMoreResults do
                         let! results = iterator.ReadNextAsync()

@@ -81,11 +81,7 @@ module Commands =
     module Repository =
         [<KnownType("GetKnownTypes")>]
         type RepositoryCommand =
-            | Create of
-                repositoryName: RepositoryName *
-                repositoryId: RepositoryId *
-                ownerId: OwnerId *
-                organizationId: OrganizationId
+            | Create of repositoryName: RepositoryName * repositoryId: RepositoryId * ownerId: OwnerId * organizationId: OrganizationId
             | Initialize
             | SetObjectStorageProvider of objectStorageProvider: ObjectStorageProvider
             | SetStorageAccountName of storageAccountName: StorageAccountName

@@ -47,8 +47,7 @@ open System.IO
 module Application =
     type FunctionThat_AddsOrUpdatesFile = DirectoryVersion -> FileVersion -> DirectoryVersion
 
-    type FunctionThat_ChecksIfAFileIsInAnyOfTheseDirectories =
-        DirectoryVersion array -> (FileVersion -> DirectoryVersion -> bool) -> DirectoryVersion array
+    type FunctionThat_ChecksIfAFileIsInAnyOfTheseDirectories = DirectoryVersion array -> (FileVersion -> DirectoryVersion -> bool) -> DirectoryVersion array
 
     type Startup(configuration: IConfiguration) =
 
@@ -74,8 +73,7 @@ module Application =
                     route
                         "/healthz"
                         (warbler (fun _ ->
-                            htmlString
-                                $"<h1>Grace server seems healthy!</h1><br/><p>The current server time is: {getCurrentInstantExtended ()}.</p>")) ]
+                            htmlString $"<h1>Grace server seems healthy!</h1><br/><p>The current server time is: {getCurrentInstantExtended ()}.</p>")) ]
               PUT []
               subRoute
                   "/branch"
@@ -318,17 +316,11 @@ module Application =
             globalOpenTelemetryAttributes.Add("host.name", Environment.MachineName)
             globalOpenTelemetryAttributes.Add("process.pid", Environment.ProcessId)
 
-            globalOpenTelemetryAttributes.Add(
-                "process.starttime",
-                Process.GetCurrentProcess().StartTime.ToUniversalTime().ToString("u")
-            )
+            globalOpenTelemetryAttributes.Add("process.starttime", Process.GetCurrentProcess().StartTime.ToUniversalTime().ToString("u"))
 
             globalOpenTelemetryAttributes.Add("process.executable.name", Process.GetCurrentProcess().ProcessName)
 
-            globalOpenTelemetryAttributes.Add(
-                "process.runtime.version",
-                System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription
-            )
+            globalOpenTelemetryAttributes.Add("process.runtime.version", System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription)
 
             // Set up the ActorProxyFactory for the application.
             let actorProxyOptions = ActorProxyOptions() // DaprApiToken = Environment.GetEnvironmentVariable("DAPR_API_TOKEN")) (when we actually implement auth)
@@ -345,8 +337,7 @@ module Application =
 
             let openApiInfo = new OpenApiInfo()
 
-            openApiInfo.Description <-
-                "Grace is a version control system. Code and documentation can be found at https://gracevcs.com."
+            openApiInfo.Description <- "Grace is a version control system. Code and documentation can be found at https://gracevcs.com."
 
             openApiInfo.Title <- "Grace Server API"
             openApiInfo.Version <- "v0.1"
@@ -358,8 +349,7 @@ module Application =
             // Telemetry configuration
             services
                 .AddOpenTelemetry()
-                .ConfigureResource(fun resourceBuilder ->
-                    resourceBuilder.AddService(Constants.GraceServerAppId) |> ignore)
+                .ConfigureResource(fun resourceBuilder -> resourceBuilder.AddService(Constants.GraceServerAppId) |> ignore)
                 .WithTracing(fun tracerProviderBuilder ->
                     tracerProviderBuilder
                         .AddSource(Constants.GraceServerAppId)
@@ -372,15 +362,13 @@ module Application =
                         )
                         .AddAspNetCoreInstrumentation(fun options -> options.EnrichWithHttpRequest <- enrichTelemetry)
                         .AddHttpClientInstrumentation()
-                        .AddAzureMonitorTraceExporter(fun options ->
-                            options.ConnectionString <- azureMonitorConnectionString)
+                        .AddAzureMonitorTraceExporter(fun options -> options.ConnectionString <- azureMonitorConnectionString)
                     |> ignore)
                 .WithMetrics(fun meterProviderBuilder ->
                     meterProviderBuilder
                         .AddAspNetCoreInstrumentation()
                         .AddHttpClientInstrumentation()
-                        .AddAzureMonitorMetricExporter(fun options ->
-                            options.ConnectionString <- azureMonitorConnectionString)
+                        .AddAzureMonitorMetricExporter(fun options -> options.ConnectionString <- azureMonitorConnectionString)
                         .AddOtlpExporter()
                     |> ignore)
             //.StartWithHost()
@@ -407,8 +395,7 @@ module Application =
                 .AddW3CLogging(fun options ->
                     options.FileName <- "Grace.Server.log-"
 
-                    options.LogDirectory <-
-                        Path.Combine(Environment.GetEnvironmentVariable("TEMP"), "Grace.Server.Logs"))
+                    options.LogDirectory <- Path.Combine(Environment.GetEnvironmentVariable("TEMP"), "Grace.Server.Logs"))
                 .AddSingleton<ActorProxyOptions>(actorProxyOptions)
                 .AddSingleton<IActorProxyFactory>(actorProxyFactory)
                 .AddDaprClient(fun daprClientBuilder ->

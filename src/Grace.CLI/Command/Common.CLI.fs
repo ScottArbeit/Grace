@@ -57,12 +57,7 @@ module Common =
         correlationId.SetDefaultValue(generateCorrelationId ())
 
         let output =
-            (new Option<String>(
-                [| "--output"; "-o" |],
-                IsRequired = false,
-                Description = "The style of output.",
-                Arity = ArgumentArity.ExactlyOne
-            ))
+            (new Option<String>([| "--output"; "-o" |], IsRequired = false, Description = "The style of output.", Arity = ArgumentArity.ExactlyOne))
                 .FromAmong(listCases<OutputFormat> ())
 
         output.SetDefaultValue("Normal")
@@ -72,11 +67,7 @@ module Common =
         if parseResult.HasOption(Options.output) then
             let format = parseResult.FindResultFor(Options.output).GetValueOrDefault<String>()
 
-            String.Equals(
-                format,
-                getDiscriminatedUnionCaseName (outputFormat),
-                StringComparison.CurrentCultureIgnoreCase
-            )
+            String.Equals(format, getDiscriminatedUnionCaseName (outputFormat), StringComparison.CurrentCultureIgnoreCase)
         else if outputFormat = OutputFormat.Normal then
             true
         else
@@ -137,9 +128,7 @@ module Common =
     /// Prints output to the console, depending on the output format.
     let renderOutput (parseResult: ParseResult) (result: GraceResult<'T>) =
         let outputFormat =
-            discriminatedUnionFromString<OutputFormat>(
-                parseResult.FindResultFor(Options.output).GetValueOrDefault<String>()
-            )
+            discriminatedUnionFromString<OutputFormat>(parseResult.FindResultFor(Options.output).GetValueOrDefault<String>())
                 .Value
 
         match result with
@@ -151,15 +140,11 @@ module Common =
             | Verbose ->
                 AnsiConsole.WriteLine()
 
-                AnsiConsole.MarkupLine(
-                    $"""[{Colors.Verbose}]EventTime: {formatInstantExtended graceReturnValue.EventTime}[/]"""
-                )
+                AnsiConsole.MarkupLine($"""[{Colors.Verbose}]EventTime: {formatInstantExtended graceReturnValue.EventTime}[/]""")
 
                 AnsiConsole.MarkupLine($"""[{Colors.Verbose}]CorrelationId: "{graceReturnValue.CorrelationId}"[/]""")
 
-                AnsiConsole.MarkupLine(
-                    $"""[{Colors.Verbose}]Properties: {Markup.Escape(serialize graceReturnValue.Properties)}[/]"""
-                )
+                AnsiConsole.MarkupLine($"""[{Colors.Verbose}]Properties: {Markup.Escape(serialize graceReturnValue.Properties)}[/]""")
 
                 AnsiConsole.WriteLine()
             | Normal -> () // Return unit because in the Normal case, we expect to print output within each command.

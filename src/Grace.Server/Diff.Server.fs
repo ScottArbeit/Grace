@@ -123,9 +123,7 @@ module Diff =
             with ex ->
                 return!
                     context
-                    |> result500ServerError (
-                        GraceError.Create $"{Utilities.createExceptionResponse ex}" (getCorrelationId context)
-                    )
+                    |> result500ServerError (GraceError.Create $"{Utilities.createExceptionResponse ex}" (getCorrelationId context))
         }
 
     /// Populates the diff actor, without returning the diff. This is meant to be used when generating the diff through reacting to an event.
@@ -136,14 +134,8 @@ module Diff =
                     let validations (parameters: PopulateParameters) =
                         [| Guid.isNotEmpty parameters.DirectoryId1 DiffError.InvalidDirectoryId
                            Guid.isNotEmpty parameters.DirectoryId2 DiffError.InvalidDirectoryId
-                           DirectoryVersion.directoryIdExists
-                               parameters.DirectoryId1
-                               parameters.CorrelationId
-                               DiffError.DirectoryDoesNotExist
-                           DirectoryVersion.directoryIdExists
-                               parameters.DirectoryId2
-                               parameters.CorrelationId
-                               DiffError.DirectoryDoesNotExist |]
+                           DirectoryVersion.directoryIdExists parameters.DirectoryId1 parameters.CorrelationId DiffError.DirectoryDoesNotExist
+                           DirectoryVersion.directoryIdExists parameters.DirectoryId2 parameters.CorrelationId DiffError.DirectoryDoesNotExist |]
 
                     let query (context: HttpContext) _ (actorProxy: IDiffActor) =
                         task {
@@ -156,9 +148,7 @@ module Diff =
                 with ex ->
                     return!
                         context
-                        |> result500ServerError (
-                            GraceError.Create $"{Utilities.createExceptionResponse ex}" (getCorrelationId context)
-                        )
+                        |> result500ServerError (GraceError.Create $"{Utilities.createExceptionResponse ex}" (getCorrelationId context))
             }
 
     /// Retrieves the contents of the diff.
@@ -169,14 +159,8 @@ module Diff =
                     let validations (parameters: GetDiffParameters) =
                         [| Guid.isNotEmpty parameters.DirectoryId1 DiffError.InvalidDirectoryId
                            Guid.isNotEmpty parameters.DirectoryId2 DiffError.InvalidDirectoryId
-                           DirectoryVersion.directoryIdExists
-                               parameters.DirectoryId1
-                               parameters.CorrelationId
-                               DiffError.DirectoryDoesNotExist
-                           DirectoryVersion.directoryIdExists
-                               parameters.DirectoryId2
-                               parameters.CorrelationId
-                               DiffError.DirectoryDoesNotExist |]
+                           DirectoryVersion.directoryIdExists parameters.DirectoryId1 parameters.CorrelationId DiffError.DirectoryDoesNotExist
+                           DirectoryVersion.directoryIdExists parameters.DirectoryId2 parameters.CorrelationId DiffError.DirectoryDoesNotExist |]
 
                     let query (context: HttpContext) _ (actorProxy: IDiffActor) =
                         task {
@@ -190,9 +174,7 @@ module Diff =
                 with ex ->
                     return!
                         context
-                        |> result500ServerError (
-                            GraceError.Create $"{Utilities.createExceptionResponse ex}" (getCorrelationId context)
-                        )
+                        |> result500ServerError (GraceError.Create $"{Utilities.createExceptionResponse ex}" (getCorrelationId context))
             }
 
     /// Retrieves a diff taken by comparing two DirectoryVersions by Sha256Hash.
@@ -217,7 +199,5 @@ module Diff =
                 with ex ->
                     return!
                         context
-                        |> result500ServerError (
-                            GraceError.Create $"{Utilities.createExceptionResponse ex}" (getCorrelationId context)
-                        )
+                        |> result500ServerError (GraceError.Create $"{Utilities.createExceptionResponse ex}" (getCorrelationId context))
             }

@@ -14,10 +14,7 @@ type HttpSecurityHeadersMiddleware(next: RequestDelegate) =
         new KeyValuePair<string, StringValues>("Access-Control-Allow-Methods", new StringValues("GET,POST,PUT"))
 
     let Access_Control_Allow_Headers =
-        new KeyValuePair<string, StringValues>(
-            "Access-Control-Allow-Headers",
-            new StringValues("Origin, X-Correlation-Id")
-        )
+        new KeyValuePair<string, StringValues>("Access-Control-Allow-Headers", new StringValues("Origin, X-Correlation-Id"))
 
     let X_Content_Type_Options =
         new KeyValuePair<string, StringValues>("X-Content-Type-Options", new StringValues("nosniff"))
@@ -49,8 +46,7 @@ type HttpSecurityHeadersMiddleware(next: RequestDelegate) =
 #if DEBUG
         let middlewareTraceHeader = context.Request.Headers["X-MiddlewareTraceIn"]
 
-        context.Request.Headers["X-MiddlewareTraceIn"] <-
-            $"{middlewareTraceHeader}{nameof (HttpSecurityHeadersMiddleware)} --> "
+        context.Request.Headers["X-MiddlewareTraceIn"] <- $"{middlewareTraceHeader}{nameof (HttpSecurityHeadersMiddleware)} --> "
 #endif
 
         let headers = context.Response.Headers
@@ -74,8 +70,7 @@ type HttpSecurityHeadersMiddleware(next: RequestDelegate) =
 #if DEBUG
         let middlewareTraceOutHeader = context.Request.Headers["X-MiddlewareTraceOut"]
 
-        context.Request.Headers["X-MiddlewareTraceOut"] <-
-            $"{middlewareTraceOutHeader}{nameof (HttpSecurityHeadersMiddleware)} --> "
+        context.Request.Headers["X-MiddlewareTraceOut"] <- $"{middlewareTraceOutHeader}{nameof (HttpSecurityHeadersMiddleware)} --> "
 #endif
 
         nextTask

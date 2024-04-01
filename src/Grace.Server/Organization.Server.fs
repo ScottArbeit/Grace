@@ -128,10 +128,7 @@ module Organization =
                     log.LogDebug("{currentInstant}: error: {error}", getCurrentInstantExtended (), errorMessage)
 
                     let graceError =
-                        GraceError.CreateWithMetadata
-                            errorMessage
-                            (getCorrelationId context)
-                            (getPropertiesAsDictionary parameters)
+                        GraceError.CreateWithMetadata errorMessage (getCorrelationId context) (getPropertiesAsDictionary parameters)
 
                     graceError.Properties.Add("Path", context.Request.Path)
                     graceError.Properties.Add("Error", errorMessage)
@@ -146,9 +143,7 @@ module Organization =
 
                 return!
                     context
-                    |> result500ServerError (
-                        GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context)
-                    )
+                    |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
         }
 
     let processQuery<'T, 'U when 'T :> OrganizationParameters>
@@ -191,11 +186,7 @@ module Organization =
                     | None ->
                         return!
                             context
-                            |> result400BadRequest (
-                                GraceError.Create
-                                    (OrganizationError.getErrorMessage OrganizationDoesNotExist)
-                                    (getCorrelationId context)
-                            )
+                            |> result400BadRequest (GraceError.Create (OrganizationError.getErrorMessage OrganizationDoesNotExist) (getCorrelationId context))
                 else
                     let! error = validationResults |> getFirstError
 
@@ -207,9 +198,7 @@ module Organization =
             with ex ->
                 return!
                     context
-                    |> result500ServerError (
-                        GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context)
-                    )
+                    |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
         }
 
     /// Create an organization.
@@ -219,10 +208,7 @@ module Organization =
                 let validations (parameters: CreateOrganizationParameters) =
                     [| Guid.isValidAndNotEmpty parameters.OwnerId InvalidOwnerId
                        String.isValidGraceName parameters.OwnerName InvalidOwnerName
-                       Input.eitherIdOrNameMustBeProvided
-                           parameters.OwnerId
-                           parameters.OwnerName
-                           EitherOwnerIdOrOwnerNameRequired
+                       Input.eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
                        String.isNotEmpty parameters.OrganizationId OrganizationIdIsRequired
                        Guid.isValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId
                        String.isNotEmpty parameters.OrganizationName OrganizationNameIsRequired
@@ -263,16 +249,10 @@ module Organization =
                 let validations (parameters: SetOrganizationNameParameters) =
                     [| Guid.isValidAndNotEmpty parameters.OwnerId InvalidOwnerId
                        String.isValidGraceName parameters.OwnerName InvalidOwnerName
-                       Input.eitherIdOrNameMustBeProvided
-                           parameters.OwnerId
-                           parameters.OwnerName
-                           EitherOwnerIdOrOwnerNameRequired
+                       Input.eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
                        Guid.isValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId
                        String.isValidGraceName parameters.OrganizationName InvalidOrganizationName
-                       Input.eitherIdOrNameMustBeProvided
-                           parameters.OrganizationId
-                           parameters.OrganizationName
-                           EitherOrganizationIdOrOrganizationNameRequired
+                       Input.eitherIdOrNameMustBeProvided parameters.OrganizationId parameters.OrganizationName EitherOrganizationIdOrOrganizationNameRequired
                        String.isNotEmpty parameters.NewName OrganizationNameIsRequired
                        String.isValidGraceName parameters.NewName InvalidOrganizationName
                        Owner.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
@@ -305,19 +285,11 @@ module Organization =
                 let validations (parameters: SetOrganizationTypeParameters) =
                     [| Guid.isValidAndNotEmpty parameters.OwnerId InvalidOwnerId
                        String.isValidGraceName parameters.OwnerName InvalidOwnerName
-                       Input.eitherIdOrNameMustBeProvided
-                           parameters.OwnerId
-                           parameters.OwnerName
-                           EitherOwnerIdOrOwnerNameRequired
+                       Input.eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
                        Guid.isValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId
                        String.isValidGraceName parameters.OrganizationName InvalidOrganizationName
-                       Input.eitherIdOrNameMustBeProvided
-                           parameters.OrganizationId
-                           parameters.OrganizationName
-                           EitherOrganizationIdOrOrganizationNameRequired
-                       DiscriminatedUnion.isMemberOf<OrganizationType, OrganizationError>
-                           parameters.OrganizationType
-                           InvalidOrganizationType
+                       Input.eitherIdOrNameMustBeProvided parameters.OrganizationId parameters.OrganizationName EitherOrganizationIdOrOrganizationNameRequired
+                       DiscriminatedUnion.isMemberOf<OrganizationType, OrganizationError> parameters.OrganizationType InvalidOrganizationType
                        Owner.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
                        Organization.organizationExists
                            parameters.OwnerId
@@ -352,20 +324,12 @@ module Organization =
                 let validations (parameters: SetOrganizationSearchVisibilityParameters) =
                     [| Guid.isValidAndNotEmpty parameters.OwnerId InvalidOwnerId
                        String.isValidGraceName parameters.OwnerName InvalidOwnerName
-                       Input.eitherIdOrNameMustBeProvided
-                           parameters.OwnerId
-                           parameters.OwnerName
-                           EitherOwnerIdOrOwnerNameRequired
+                       Input.eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
                        Guid.isValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId
                        String.isValidGraceName parameters.OrganizationName InvalidOrganizationName
-                       Input.eitherIdOrNameMustBeProvided
-                           parameters.OrganizationId
-                           parameters.OrganizationName
-                           EitherOrganizationIdOrOrganizationNameRequired
+                       Input.eitherIdOrNameMustBeProvided parameters.OrganizationId parameters.OrganizationName EitherOrganizationIdOrOrganizationNameRequired
                        String.isNotEmpty parameters.SearchVisibility SearchVisibilityIsRequired
-                       DiscriminatedUnion.isMemberOf<SearchVisibility, OrganizationError>
-                           parameters.SearchVisibility
-                           InvalidSearchVisibility
+                       DiscriminatedUnion.isMemberOf<SearchVisibility, OrganizationError> parameters.SearchVisibility InvalidSearchVisibility
                        Owner.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
                        Organization.organizationExists
                            parameters.OwnerId
@@ -400,16 +364,10 @@ module Organization =
                 let validations (parameters: SetOrganizationDescriptionParameters) =
                     [| Guid.isValidAndNotEmpty parameters.OwnerId InvalidOwnerId
                        String.isValidGraceName parameters.OwnerName InvalidOwnerName
-                       Input.eitherIdOrNameMustBeProvided
-                           parameters.OwnerId
-                           parameters.OwnerName
-                           EitherOwnerIdOrOwnerNameRequired
+                       Input.eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
                        Guid.isValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId
                        String.isValidGraceName parameters.OrganizationName InvalidOrganizationName
-                       Input.eitherIdOrNameMustBeProvided
-                           parameters.OrganizationId
-                           parameters.OrganizationName
-                           EitherOrganizationIdOrOrganizationNameRequired
+                       Input.eitherIdOrNameMustBeProvided parameters.OrganizationId parameters.OrganizationName EitherOrganizationIdOrOrganizationNameRequired
                        String.isNotEmpty parameters.Description OrganizationDescriptionIsRequired
                        Owner.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
                        Organization.organizationExists
@@ -442,10 +400,7 @@ module Organization =
                     let validations (parameters: ListRepositoriesParameters) =
                         [| Guid.isValidAndNotEmpty parameters.OwnerId InvalidOwnerId
                            String.isValidGraceName parameters.OwnerName InvalidOwnerName
-                           Input.eitherIdOrNameMustBeProvided
-                               parameters.OwnerId
-                               parameters.OwnerName
-                               EitherOwnerIdOrOwnerNameRequired
+                           Input.eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
                            Guid.isValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId
                            String.isValidGraceName parameters.OrganizationName InvalidOrganizationName
                            Input.eitherIdOrNameMustBeProvided
@@ -479,9 +434,7 @@ module Organization =
                 with ex ->
                     return!
                         context
-                        |> result500ServerError (
-                            GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context)
-                        )
+                        |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
             }
 
     /// Delete an organization.
@@ -491,16 +444,10 @@ module Organization =
                 let validations (parameters: DeleteOrganizationParameters) =
                     [| Guid.isValidAndNotEmpty parameters.OwnerId InvalidOwnerId
                        String.isValidGraceName parameters.OwnerName InvalidOwnerName
-                       Input.eitherIdOrNameMustBeProvided
-                           parameters.OwnerId
-                           parameters.OwnerName
-                           EitherOwnerIdOrOwnerNameRequired
+                       Input.eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
                        Guid.isValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId
                        String.isValidGraceName parameters.OrganizationName InvalidOrganizationName
-                       Input.eitherIdOrNameMustBeProvided
-                           parameters.OrganizationId
-                           parameters.OrganizationName
-                           EitherOrganizationIdOrOrganizationNameRequired
+                       Input.eitherIdOrNameMustBeProvided parameters.OrganizationId parameters.OrganizationName EitherOrganizationIdOrOrganizationNameRequired
                        String.isNotEmpty parameters.DeleteReason DeleteReasonIsRequired
                        Owner.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
                        Organization.organizationExists
@@ -532,20 +479,11 @@ module Organization =
                 let validations (parameters: OrganizationParameters) =
                     [| Guid.isValidAndNotEmpty parameters.OwnerId InvalidOwnerId
                        String.isValidGraceName parameters.OwnerName InvalidOwnerName
-                       Input.eitherIdOrNameMustBeProvided
-                           parameters.OwnerId
-                           parameters.OwnerName
-                           EitherOwnerIdOrOwnerNameRequired
+                       Input.eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
                        Guid.isValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId
                        String.isValidGraceName parameters.OrganizationName InvalidOrganizationName
-                       Input.eitherIdOrNameMustBeProvided
-                           parameters.OrganizationId
-                           parameters.OrganizationName
-                           EitherOrganizationIdOrOrganizationNameRequired
-                       Input.eitherIdOrNameMustBeProvided
-                           parameters.OrganizationId
-                           parameters.OrganizationName
-                           EitherOrganizationIdOrOrganizationNameRequired
+                       Input.eitherIdOrNameMustBeProvided parameters.OrganizationId parameters.OrganizationName EitherOrganizationIdOrOrganizationNameRequired
+                       Input.eitherIdOrNameMustBeProvided parameters.OrganizationId parameters.OrganizationName EitherOrganizationIdOrOrganizationNameRequired
                        Owner.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
                        Organization.organizationExists
                            parameters.OwnerId
@@ -576,10 +514,7 @@ module Organization =
                     let validations (parameters: GetOrganizationParameters) =
                         [| Guid.isValidAndNotEmpty parameters.OwnerId InvalidOwnerId
                            String.isValidGraceName parameters.OwnerName InvalidOwnerName
-                           Input.eitherIdOrNameMustBeProvided
-                               parameters.OwnerId
-                               parameters.OwnerName
-                               EitherOwnerIdOrOwnerNameRequired
+                           Input.eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
                            Guid.isValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId
                            String.isValidGraceName parameters.OrganizationName InvalidOrganizationName
                            Input.eitherIdOrNameMustBeProvided
@@ -610,7 +545,5 @@ module Organization =
                 with ex ->
                     return!
                         context
-                        |> result500ServerError (
-                            GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context)
-                        )
+                        |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
             }

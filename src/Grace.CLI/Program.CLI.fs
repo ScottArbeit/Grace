@@ -191,8 +191,7 @@ module GraceCommand =
                         // First, check if this is an alias for an option.
                         match
                             allAliases
-                            |> Seq.tryFind (fun alias ->
-                                alias.Equals(token, StringComparison.InvariantCultureIgnoreCase))
+                            |> Seq.tryFind (fun alias -> alias.Equals(token, StringComparison.InvariantCultureIgnoreCase))
                         with
                         | Some alias ->
                             // We found an alias, so we'll use the alias from the option definition to get the case exactly right.
@@ -207,11 +206,7 @@ module GraceCommand =
 
                                 match
                                     commandOptions
-                                    |> Seq.tryFind (fun option ->
-                                        option.Aliases.Contains(
-                                            previousToken,
-                                            StringComparer.InvariantCultureIgnoreCase
-                                        ))
+                                    |> Seq.tryFind (fun option -> option.Aliases.Contains(previousToken, StringComparer.InvariantCultureIgnoreCase))
                                 with
                                 | Some option ->
                                     // We found an option for the previous token, so we'll check if it has completions.
@@ -224,11 +219,7 @@ module GraceCommand =
                                     if completions.Length > 0 then
                                         newTokens.Add(
                                             completions.FirstOrDefault(
-                                                (fun completion ->
-                                                    token.Equals(
-                                                        completion,
-                                                        StringComparison.InvariantCultureIgnoreCase
-                                                    )),
+                                                (fun completion -> token.Equals(completion, StringComparison.InvariantCultureIgnoreCase)),
                                                 token
                                             )
                                         )
@@ -265,9 +256,7 @@ module GraceCommand =
                             tokens
                         else
                             // Convert the first two tokens to lower-case.
-                            Array.append
-                                [| tokens[0].ToLowerInvariant(); tokens[1].ToLowerInvariant() |]
-                                (getCorrectTokenCase tokens[2..])
+                            Array.append [| tokens[0].ToLowerInvariant(); tokens[1].ToLowerInvariant() |] (getCorrectTokenCase tokens[2..])
 
                 // Replace the old ParseResult with one based on the updated tokens with exact casing.
                 context.ParseResult <- context.Parser.Parse(newTokens)
@@ -298,10 +287,7 @@ module GraceCommand =
                             .GetLayout()
                             .Where(fun section ->
                                 not
-                                <| section.Method.Name.Contains(
-                                    "Synopsis",
-                                    StringComparison.InvariantCultureIgnoreCase
-                                )))
+                                <| section.Method.Name.Contains("Synopsis", StringComparison.InvariantCultureIgnoreCase)))
 
                 // We're passing a new List<Option> here, because we're going to be adding to it recursively in gatherAllOptions.
                 let allOptions = gatherAllOptions helpContext.Command (List<Option>())
@@ -352,21 +338,14 @@ module GraceCommand =
                         if
                             helpContext.Command.Aliases.Any(fun alias -> alias = "create")
                             && helpContext.Command.Parents.Any(fun parent ->
-                                parent.Name.Equals(
-                                    optionToUpdate.command,
-                                    StringComparison.InvariantCultureIgnoreCase
-                                ))
+                                parent.Name.Equals(optionToUpdate.command, StringComparison.InvariantCultureIgnoreCase))
                         then
-                            helpContext.HelpBuilder.CustomizeSymbol(
-                                option,
-                                defaultValue = optionToUpdate.displayOnCreate
-                            )
+                            helpContext.HelpBuilder.CustomizeSymbol(option, defaultValue = optionToUpdate.displayOnCreate)
                         else
                             helpContext.HelpBuilder.CustomizeSymbol(option, defaultValue = optionToUpdate.display)))
 
                 // Add the feedback section at the end.
-                helpContext.HelpBuilder.CustomizeLayout(fun layoutContext ->
-                    HelpBuilder.Default.GetLayout().Append(feedbackSection)))
+                helpContext.HelpBuilder.CustomizeLayout(fun layoutContext -> HelpBuilder.Default.GetLayout().Append(feedbackSection)))
             .AddMiddleware(noErrorIfNoArgumentsMiddleware, MiddlewareOrder.ExceptionHandler)
             .AddMiddleware(decideIfThisInstanceShouldBeCaseInsensitiveMiddleware, MiddlewareOrder.ExceptionHandler)
             .AddMiddleware(aliasHandlerMiddleware, MiddlewareOrder.ExceptionHandler)
@@ -443,9 +422,7 @@ module GraceCommand =
                         // If this instance is `grace watch`, we'll actually delete the IPC file in the finally clause below, but
                         //   we'll write the "we deleted the file" message to the console here, so it comes before the last Rule() is written.
                         if parseResult |> isGraceWatch then
-                            logToAnsiConsole
-                                Colors.Important
-                                (getLocalizedString StringResourceName.InterprocessFileDeleted)
+                            logToAnsiConsole Colors.Important (getLocalizedString StringResourceName.InterprocessFileDeleted)
 
                         // If we're writing output, write the final Rule() to the console.
                         if parseResult |> hasOutput then
@@ -461,9 +438,7 @@ module GraceCommand =
                                 )
                             else
                                 AnsiConsole.Write(
-                                    (new Rule(
-                                        $"[{Colors.Important}]Elapsed: {elapsed.TotalSeconds:F3}s. Exit code: {returnValue}.[/]"
-                                    ))
+                                    (new Rule($"[{Colors.Important}]Elapsed: {elapsed.TotalSeconds:F3}s. Exit code: {returnValue}.[/]"))
                                         .RightJustified()
                                 )
 
@@ -476,18 +451,14 @@ module GraceCommand =
                             let! returnValue = command.InvokeAsync(args)
                             ()
                         else
-                            AnsiConsole.MarkupLine(
-                                $"[{Colors.Important}]{getLocalizedString StringResourceName.GraceConfigFileNotFound}[/]"
-                            )
+                            AnsiConsole.MarkupLine($"[{Colors.Important}]{getLocalizedString StringResourceName.GraceConfigFileNotFound}[/]")
 
                         printParseResult parseResult
                         let finishTime = getCurrentInstant ()
                         let elapsed = (finishTime - startTime).Plus(Duration.FromMilliseconds(110.0)) // Adding 110ms for .NET Runtime startup time.
 
                         AnsiConsole.Write(
-                            (new Rule(
-                                $"[{Colors.Important}]Elapsed: {elapsed.TotalSeconds:F3}s. Exit code: {returnValue}.[/]"
-                            ))
+                            (new Rule($"[{Colors.Important}]Elapsed: {elapsed.TotalSeconds:F3}s. Exit code: {returnValue}.[/]"))
                                 .RightJustified()
                         )
 

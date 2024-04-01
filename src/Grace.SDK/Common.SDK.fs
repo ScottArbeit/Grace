@@ -29,10 +29,7 @@ module Common =
         // In debug mode, we'll accept only TLS 1.2 and allow no encryption to enable access to the CosmosDB emulator without having to deal with certificates.
         // TLS 1.3 requires a non-null cipher, so limiting ourselves to TLS 1.2 lets us get away with using this.
         // AllowNoEncryption means: Prefer secure connections, but if there's a null cipher (which we'll get from the CosmosDB emulator because it has a self-signed certificate), we'll allow it.
-        SslClientAuthenticationOptions(
-            EncryptionPolicy = EncryptionPolicy.AllowNoEncryption,
-            EnabledSslProtocols = Security.Authentication.SslProtocols.Tls12
-        )
+        SslClientAuthenticationOptions(EncryptionPolicy = EncryptionPolicy.AllowNoEncryption, EnabledSslProtocols = Security.Authentication.SslProtocols.Tls12)
 #else
         // In release mode, we'll accept TLS 1.2 and TLS 1.3.
         SslClientAuthenticationOptions(
@@ -102,15 +99,12 @@ module Common =
 
                 let serverUri = Uri($"{daprServerUri}:{graceServerPort}/{route}")
 
-                let! response =
-                    Constants.DefaultAsyncRetryPolicy.ExecuteAsync(fun _ ->
-                        httpClient.GetAsync(new Uri($"{serverUri}")))
+                let! response = Constants.DefaultAsyncRetryPolicy.ExecuteAsync(fun _ -> httpClient.GetAsync(new Uri($"{serverUri}")))
 
                 let endTime = getCurrentInstant ()
 
                 if response.IsSuccessStatusCode then
-                    let! graceReturn =
-                        response.Content.ReadFromJsonAsync<GraceReturnValue<'U>>(Constants.JsonSerializerOptions)
+                    let! graceReturn = response.Content.ReadFromJsonAsync<GraceReturnValue<'U>>(Constants.JsonSerializerOptions)
 
                     return
                         Ok graceReturn
@@ -146,8 +140,7 @@ module Common =
                 let endTime = getCurrentInstant ()
 
                 if response.IsSuccessStatusCode then
-                    let! graceReturnValue =
-                        response.Content.ReadFromJsonAsync<GraceReturnValue<'U>>(Constants.JsonSerializerOptions)
+                    let! graceReturnValue = response.Content.ReadFromJsonAsync<GraceReturnValue<'U>>(Constants.JsonSerializerOptions)
                     //let! blah = response.Content.ReadAsStringAsync()
                     //let graceReturnValue = JsonSerializer.Deserialize<GraceReturnValue<'U>>(blah, Constants.JsonSerializerOptions)
                     return
