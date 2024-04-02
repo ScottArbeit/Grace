@@ -84,14 +84,11 @@ module Organization =
             ))
                 .FromAmong(listCases<SearchVisibility> ())
 
-        let description =
-            new Option<String>("--description", IsRequired = true, Description = "Description of the owner.", Arity = ArgumentArity.ExactlyOne)
+        let description = new Option<String>("--description", IsRequired = true, Description = "Description of the owner.", Arity = ArgumentArity.ExactlyOne)
 
-        let newName =
-            new Option<String>("--newName", IsRequired = true, Description = "The new name of the organization.", Arity = ArgumentArity.ExactlyOne)
+        let newName = new Option<String>("--newName", IsRequired = true, Description = "The new name of the organization.", Arity = ArgumentArity.ExactlyOne)
 
-        let force =
-            new Option<bool>("--force", IsRequired = false, Description = "Delete even if there is data under this organization. [default: false]")
+        let force = new Option<bool>("--force", IsRequired = false, Description = "Delete even if there is data under this organization. [default: false]")
 
         let includeDeleted =
             new Option<bool>([| "--include-deleted"; "-d" |], IsRequired = false, Description = "Include deleted organizations in the result. [default: false]")
@@ -194,8 +191,7 @@ module Organization =
     let private createHandler (parseResult: ParseResult) (createParameters: CreateParameters) =
         task {
             try
-                if parseResult |> verbose then
-                    printParseResult parseResult
+                if parseResult |> verbose then printParseResult parseResult
 
                 let validateIncomingParameters = CommonValidations(parseResult, createParameters)
 
@@ -222,8 +218,7 @@ module Organization =
                                 .Columns(progressColumns)
                                 .StartAsync(fun progressContext ->
                                     task {
-                                        let t0 =
-                                            progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
+                                        let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
 
                                         let! result = Organization.Create(parameters)
                                         t0.Increment(100.0)
@@ -262,8 +257,7 @@ module Organization =
     let private getHandler (parseResult: ParseResult) (getParameters: GetParameters) =
         task {
             try
-                if parseResult |> verbose then
-                    printParseResult parseResult
+                if parseResult |> verbose then printParseResult parseResult
 
                 let validateIncomingParameters = CommonValidations(parseResult, getParameters)
 
@@ -285,8 +279,7 @@ module Organization =
                                 .Columns(progressColumns)
                                 .StartAsync(fun progressContext ->
                                     task {
-                                        let t0 =
-                                            progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
+                                        let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
 
                                         let! result = Organization.Get(parameters)
                                         t0.Increment(100.0)
@@ -321,8 +314,7 @@ module Organization =
     let private setNameHandler (parseResult: ParseResult) (setNameParameters: NameParameters) =
         task {
             try
-                if parseResult |> verbose then
-                    printParseResult parseResult
+                if parseResult |> verbose then printParseResult parseResult
 
                 let validateIncomingParameters = CommonValidations(parseResult, setNameParameters)
 
@@ -344,8 +336,7 @@ module Organization =
                                 .Columns(progressColumns)
                                 .StartAsync(fun progressContext ->
                                     task {
-                                        let t0 =
-                                            progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
+                                        let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
 
                                         let! result = Organization.SetName(parameters)
                                         t0.Increment(100.0)
@@ -373,8 +364,7 @@ module Organization =
     let private setTypeHandler (parseResult: ParseResult) (setTypeParameters: TypeParameters) =
         task {
             try
-                if parseResult |> verbose then
-                    printParseResult parseResult
+                if parseResult |> verbose then printParseResult parseResult
 
                 let validateIncomingParameters = CommonValidations(parseResult, setTypeParameters)
 
@@ -396,8 +386,7 @@ module Organization =
                                 .Columns(progressColumns)
                                 .StartAsync(fun progressContext ->
                                     task {
-                                        let t0 =
-                                            progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
+                                        let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
 
                                         let! result = Organization.SetType(parameters)
                                         t0.Increment(100.0)
@@ -425,11 +414,9 @@ module Organization =
     let private setSearchVisibilityHandler (parseResult: ParseResult) (setSearchVisibilityParameters: SearchVisibilityParameters) =
         task {
             try
-                if parseResult |> verbose then
-                    printParseResult parseResult
+                if parseResult |> verbose then printParseResult parseResult
 
-                let validateIncomingParameters =
-                    CommonValidations(parseResult, setSearchVisibilityParameters)
+                let validateIncomingParameters = CommonValidations(parseResult, setSearchVisibilityParameters)
 
                 match validateIncomingParameters with
                 | Ok _ ->
@@ -455,8 +442,7 @@ module Organization =
                                 .Columns(progressColumns)
                                 .StartAsync(fun progressContext ->
                                     task {
-                                        let t0 =
-                                            progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
+                                        let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
 
                                         let! result = Organization.SetSearchVisibility(parameters)
                                         t0.Increment(100.0)
@@ -485,11 +471,9 @@ module Organization =
     let private setDescriptionHandler (parseResult: ParseResult) (descriptionParameters: DescriptionParameters) =
         task {
             try
-                if parseResult |> verbose then
-                    printParseResult parseResult
+                if parseResult |> verbose then printParseResult parseResult
 
-                let validateIncomingParameters =
-                    CommonValidations(parseResult, descriptionParameters)
+                let validateIncomingParameters = CommonValidations(parseResult, descriptionParameters)
 
                 match validateIncomingParameters with
                 | Ok _ ->
@@ -509,8 +493,7 @@ module Organization =
                                 .Columns(progressColumns)
                                 .StartAsync(fun progressContext ->
                                     task {
-                                        let t0 =
-                                            progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
+                                        let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
 
                                         let! result = Organization.SetDescription(parameters)
                                         t0.Increment(100.0)
@@ -540,8 +523,7 @@ module Organization =
     let private deleteHandler (parseResult: ParseResult) (deleteParameters: DeleteParameters) =
         task {
             try
-                if parseResult |> verbose then
-                    printParseResult parseResult
+                if parseResult |> verbose then printParseResult parseResult
 
                 let validateIncomingParameters = CommonValidations(parseResult, deleteParameters)
 
@@ -564,8 +546,7 @@ module Organization =
                                 .Columns(progressColumns)
                                 .StartAsync(fun progressContext ->
                                     task {
-                                        let t0 =
-                                            progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
+                                        let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
 
                                         let! result = Organization.Delete(parameters)
                                         t0.Increment(100.0)
@@ -592,8 +573,7 @@ module Organization =
     let private undeleteHandler (parseResult: ParseResult) (undeleteParameters: UndeleteParameters) =
         task {
             try
-                if parseResult |> verbose then
-                    printParseResult parseResult
+                if parseResult |> verbose then printParseResult parseResult
 
                 let validateIncomingParameters = CommonValidations(parseResult, undeleteParameters)
 
@@ -614,8 +594,7 @@ module Organization =
                                 .Columns(progressColumns)
                                 .StartAsync(fun progressContext ->
                                     task {
-                                        let t0 =
-                                            progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
+                                        let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
 
                                         let! result = Organization.Delete(parameters)
                                         t0.Increment(100.0)
@@ -648,8 +627,7 @@ module Organization =
             |> addCommonOptionsWithoutOrganizationName
 
         // Create main command and aliases, if any.
-        let organizationCommand =
-            new Command("organization", Description = "Create, change, or delete organization-level information.")
+        let organizationCommand = new Command("organization", Description = "Create, change, or delete organization-level information.")
 
         organizationCommand.AddAlias("org")
 

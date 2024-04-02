@@ -37,8 +37,7 @@ module Services =
     type QueryResult<'T, 'U when 'T :> IActor> = HttpContext -> int -> 'T -> Task<'U>
 
     /// Gets the CorrelationId from HttpContext.Items.
-    let getCorrelationId (context: HttpContext) : CorrelationId =
-        (context.Items[Constants.CorrelationId] :?> string)
+    let getCorrelationId (context: HttpContext) : CorrelationId = (context.Items[Constants.CorrelationId] :?> string)
 
     /// Gets the GraceIds record from HttpContext.Items.
     let getGraceIds (context: HttpContext) =
@@ -71,10 +70,7 @@ module Services =
             try
                 let! parameters = JsonSerializer.DeserializeAsync(context.Request.Body, requestBodyType, Constants.JsonSerializerOptions)
 
-                if not <| isNull parameters then
-                    return Some parameters
-                else
-                    return None
+                if not <| isNull parameters then return Some parameters else return None
             with ex ->
                 return None
         }
@@ -121,5 +117,4 @@ module Services =
     // let result404NotFound<'T> = returnResult<'T> StatusCodes.Status404NotFound
 
     /// Adds common attributes to the current OpenTelemetry activity, and returns the result with a 500 Internal server error status.
-    let result500ServerError<'T> =
-        returnResult<'T> StatusCodes.Status500InternalServerError
+    let result500ServerError<'T> = returnResult<'T> StatusCodes.Status500InternalServerError

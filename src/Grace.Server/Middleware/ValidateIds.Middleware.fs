@@ -136,11 +136,9 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
                             // We haven't seen this request body type before, so we need to figure out which properties are available.
 
                             // Get all of the properties on the request body type.
-                            let properties =
-                                requestBodyType.GetProperties(BindingFlags.Public ||| BindingFlags.Instance)
+                            let properties = requestBodyType.GetProperties(BindingFlags.Public ||| BindingFlags.Instance)
 
-                            let findProperty name =
-                                properties |> Seq.tryFind (fun p -> p.Name = name)
+                            let findProperty name = properties |> Seq.tryFind (fun p -> p.Name = name)
 
                             // Check if these indivudal properties exist on the request body type.
                             entityProperties <-
@@ -187,18 +185,11 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
 
                             if path.EndsWith("/create", StringComparison.InvariantCultureIgnoreCase) then
                                 // If we're creating a new Owner, we don't need to resolve the Id.
-                                graceIds <-
-                                    { graceIds with
-                                        OwnerId = ownerId
-                                        HasOwner = true }
+                                graceIds <- { graceIds with OwnerId = ownerId; HasOwner = true }
                             else
                                 // Resolve the OwnerId based on the provided Id and Name.
                                 match! resolveOwnerId ownerId ownerName correlationId with
-                                | Some resolvedOwnerId ->
-                                    graceIds <-
-                                        { graceIds with
-                                            OwnerId = resolvedOwnerId
-                                            HasOwner = true }
+                                | Some resolvedOwnerId -> graceIds <- { graceIds with OwnerId = resolvedOwnerId; HasOwner = true }
                                 | None ->
                                     badRequest <-
                                         if not <| String.IsNullOrEmpty(ownerId) then
@@ -218,18 +209,11 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
 
                             if path.EndsWith("/create", StringComparison.InvariantCultureIgnoreCase) then
                                 // If we're creating a new Organization, we don't need to resolve the Id.
-                                graceIds <-
-                                    { graceIds with
-                                        OrganizationId = organizationId
-                                        HasOrganization = true }
+                                graceIds <- { graceIds with OrganizationId = organizationId; HasOrganization = true }
                             else
                                 // Resolve the OrganizationId based on the provided Id and Name.
                                 match! resolveOrganizationId graceIds.OwnerId String.Empty organizationId organizationName correlationId with
-                                | Some resolvedOrganizationId ->
-                                    graceIds <-
-                                        { graceIds with
-                                            OrganizationId = resolvedOrganizationId
-                                            HasOrganization = true }
+                                | Some resolvedOrganizationId -> graceIds <- { graceIds with OrganizationId = resolvedOrganizationId; HasOrganization = true }
                                 | None ->
                                     badRequest <-
                                         if not <| String.IsNullOrEmpty(organizationId) then
@@ -249,10 +233,7 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
 
                             if path.EndsWith("/create", StringComparison.InvariantCultureIgnoreCase) then
                                 // If we're creating a new Repository, we don't need to resolve the Id.
-                                graceIds <-
-                                    { graceIds with
-                                        RepositoryId = repositoryId
-                                        HasRepository = true }
+                                graceIds <- { graceIds with RepositoryId = repositoryId; HasRepository = true }
                             else
                                 // Resolve the RepositoryId based on the provided Id and Name.
                                 match!
@@ -265,11 +246,7 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
                                         repositoryName
                                         correlationId
                                 with
-                                | Some resolvedRepositoryId ->
-                                    graceIds <-
-                                        { graceIds with
-                                            RepositoryId = resolvedRepositoryId
-                                            HasRepository = true }
+                                | Some resolvedRepositoryId -> graceIds <- { graceIds with RepositoryId = resolvedRepositoryId; HasRepository = true }
                                 | None ->
                                     badRequest <-
                                         if not <| String.IsNullOrEmpty(repositoryId) then
@@ -289,18 +266,11 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
 
                             if path.EndsWith("/create", StringComparison.InvariantCultureIgnoreCase) then
                                 // If we're creating a new Branch, we don't need to resolve the Id.
-                                graceIds <-
-                                    { graceIds with
-                                        BranchId = branchId
-                                        HasBranch = true }
+                                graceIds <- { graceIds with BranchId = branchId; HasBranch = true }
                             else
                                 // Resolve the BranchId based on the provided Id and Name.
                                 match! resolveBranchId graceIds.RepositoryId branchId branchName correlationId with
-                                | Some resolvedBranchId ->
-                                    graceIds <-
-                                        { graceIds with
-                                            BranchId = resolvedBranchId
-                                            HasBranch = true }
+                                | Some resolvedBranchId -> graceIds <- { graceIds with BranchId = resolvedBranchId; HasBranch = true }
                                 | None ->
                                     badRequest <-
                                         if not <| String.IsNullOrEmpty(branchId) then

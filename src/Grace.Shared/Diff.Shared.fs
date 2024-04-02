@@ -94,11 +94,9 @@ module Diff =
             let inlineDiffPaneModel =
                 inlineDiff.BuildDiffModel(fileContents1, fileContents2, ignoreWhitespace = true, ignoreCase = false, chunker = lineChunker)
 
-            let sideBySideDiff =
-                DiffBuilder.SideBySideDiffBuilder(Differ.Instance, lineChunker, wordChunker)
+            let sideBySideDiff = DiffBuilder.SideBySideDiffBuilder(Differ.Instance, lineChunker, wordChunker)
 
-            let sideBySideDiffModel =
-                sideBySideDiff.BuildDiffModel(fileContents1, fileContents2, ignoreWhitespace = true, ignoreCase = false)
+            let sideBySideDiffModel = sideBySideDiff.BuildDiffModel(fileContents1, fileContents2, ignoreWhitespace = true, ignoreCase = false)
 
             let inlineDiffSections =
                 if inlineDiffPaneModel.HasDifferences then
@@ -121,8 +119,5 @@ module Diff =
                 else
                     List<DiffPiece[]>()
 
-            return
-                {| InlineDiff = inlineDiffSections
-                   SideBySideOld = sideBySideOldSections
-                   SideBySideNew = sideBySideNewSections |}
+            return {| InlineDiff = inlineDiffSections; SideBySideOld = sideBySideOldSections; SideBySideNew = sideBySideNewSections |}
         }

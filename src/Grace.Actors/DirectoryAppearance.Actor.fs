@@ -14,10 +14,7 @@ module DirectoryAppearance =
 
     let GetActorId (directoryId: DirectoryId) = ActorId($"{directoryId}")
 
-    type Appearance =
-        { Root: DirectoryId
-          Parent: DirectoryId
-          Created: Instant }
+    type Appearance = { Root: DirectoryId; Parent: DirectoryId; Created: Instant }
 
     type AppearancesList = SortedSet<Appearance>
 
@@ -63,8 +60,7 @@ module DirectoryAppearance =
                 task {
                     let wasAdded = dto.Appearances.Add(appearance)
 
-                    if wasAdded then
-                        do! Storage.SaveState stateManager dtoStateName dto
+                    if wasAdded then do! Storage.SaveState stateManager dtoStateName dto
                 }
                 :> Task
 
@@ -96,7 +92,6 @@ module DirectoryAppearance =
                 }
                 :> Task
 
-            member this.Contains(appearance) =
-                Task.FromResult(dto.Appearances.Contains(appearance))
+            member this.Contains(appearance) = Task.FromResult(dto.Appearances.Contains(appearance))
 
             member this.Appearances() = Task.FromResult(dto.Appearances)

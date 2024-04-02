@@ -46,8 +46,7 @@ module ContainerName =
             Task.CompletedTask
 
         override this.OnPostActorMethodAsync context =
-            let duration_ms =
-                (getCurrentInstant().Minus(actorStartTime).TotalMilliseconds).ToString("F3")
+            let duration_ms = (getCurrentInstant().Minus(actorStartTime).TotalMilliseconds).ToString("F3")
 
             log.LogInformation(
                 "{CurrentInstant}: CorrelationId: {correlationId}; Finished {ActorName}.{MethodName}; Id: {Id}; Duration: {duration_ms}ms.",
@@ -81,15 +80,13 @@ module ContainerName =
 
                             let organizationActorId = Organization.GetActorId repositoryDto.OrganizationId
 
-                            let organizationActorProxy =
-                                actorProxyFactory.CreateActorProxy<IOrganizationActor>(organizationActorId, ActorName.Organization)
+                            let organizationActorProxy = actorProxyFactory.CreateActorProxy<IOrganizationActor>(organizationActorId, ActorName.Organization)
 
                             let! organizationDto = organizationActorProxy.Get correlationId
 
                             let ownerActorId = Owner.GetActorId repositoryDto.OwnerId
 
-                            let ownerActorProxy =
-                                actorProxyFactory.CreateActorProxy<IOwnerActor>(ownerActorId, ActorName.Owner)
+                            let ownerActorProxy = actorProxyFactory.CreateActorProxy<IOwnerActor>(ownerActorId, ActorName.Owner)
 
                             let! ownerDto = ownerActorProxy.Get correlationId
 

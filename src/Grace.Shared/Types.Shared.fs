@@ -64,16 +64,14 @@ module Types =
         | MongoDB
         | Unknown // Not calling it None because that really belongs to Option.
         // etc.
-        static member GetKnownTypes() =
-            GetKnownTypes<ActorStateStorageProvider>()
+        static member GetKnownTypes() = GetKnownTypes<ActorStateStorageProvider>()
 
     [<KnownType("GetKnownTypes")>]
     type OwnerType =
         | Public
         | Private
 
-        override this.ToString() =
-            Utilities.getDiscriminatedUnionFullName this
+        override this.ToString() = Utilities.getDiscriminatedUnionFullName this
 
         static member GetKnownTypes() = GetKnownTypes<OwnerType>()
 
@@ -82,8 +80,7 @@ module Types =
         | Public
         | Private
 
-        override this.ToString() =
-            Utilities.getDiscriminatedUnionFullName this
+        override this.ToString() = Utilities.getDiscriminatedUnionFullName this
 
         static member GetKnownTypes() = GetKnownTypes<OrganizationType>()
 
@@ -92,8 +89,7 @@ module Types =
         | Visible
         | NotVisible
 
-        override this.ToString() =
-            Utilities.getDiscriminatedUnionFullName this
+        override this.ToString() = Utilities.getDiscriminatedUnionFullName this
 
         static member GetKnownTypes() = GetKnownTypes<SearchVisibility>()
 
@@ -105,11 +101,9 @@ module Types =
         | Save
         | Tag
 
-        override this.ToString() =
-            Utilities.getDiscriminatedUnionFullName this
+        override this.ToString() = Utilities.getDiscriminatedUnionFullName this
 
-        static member FromString s =
-            Utilities.discriminatedUnionFromString<ReferenceType> s
+        static member FromString s = Utilities.discriminatedUnionFromString<ReferenceType> s
 
         static member GetKnownTypes() = GetKnownTypes<ReferenceType>()
 
@@ -125,10 +119,7 @@ module Types =
         override this.ToString() = serialize this
 
         static member New correlationId principal =
-            { Timestamp = getCurrentInstant ()
-              CorrelationId = correlationId
-              Principal = principal
-              Properties = Dictionary<string, string>() }
+            { Timestamp = getCurrentInstant (); CorrelationId = correlationId; Principal = principal; Properties = Dictionary<string, string>() }
 
     /// A FileVersion represents a version of a file in a repository with unique contents, and therefore with a unique SHA-256 hash. It is immutable.
     ///
@@ -207,8 +198,7 @@ module Types =
               LastWriteTimeUtc = lastWriteTimeUtc }
 
         /// Converts a LocalFileVersion to a FileVersion. NOTE: at this point, we don't know the BlobUri.
-        member this.ToFileVersion =
-            FileVersion.Create this.RepositoryId this.RelativePath this.Sha256Hash String.Empty this.IsBinary this.Size
+        member this.ToFileVersion = FileVersion.Create this.RepositoryId this.RelativePath this.Sha256Hash String.Empty this.IsBinary this.Size
 
         /// Get the object directory file name, which includes the SHA256 Hash value. Example: hello.js -> hello_04bef0a4b298de9c02930234.js
         member this.GetObjectFileName = getObjectFileName this.RelativePath this.Sha256Hash
@@ -398,17 +388,13 @@ module Types =
     ///
     /// This is combined with a RelativePath to define a PathPermission.
     [<KnownType("GetKnownTypes")>]
-    type ClaimPermission =
-        { Claim: string
-          DirectoryPermission: DirectoryPermission }
+    type ClaimPermission = { Claim: string; DirectoryPermission: DirectoryPermission }
 
     /// Defines a set of claims and their permissions that should be applied to a relative path in the repository.
     ///
     /// NOTE: This type is being used only at the directory level for now, but I intend to implement it at the file level as well.
     [<KnownType("GetKnownTypes")>]
-    type PathPermission =
-        { Path: RelativePath
-          Permissions: List<ClaimPermission> }
+    type PathPermission = { Path: RelativePath; Permissions: List<ClaimPermission> }
 
     /// Cleans up extra backslashes (escape characters) and converts \r\n to Environment.NewLine.
     let cleanJson (s: string) =
@@ -425,10 +411,7 @@ module Types =
           Properties: Dictionary<String, String> }
 
         static member Create<'T> (returnValue: 'T) (correlationId: string) =
-            { ReturnValue = returnValue
-              EventTime = getCurrentInstant ()
-              CorrelationId = correlationId
-              Properties = new Dictionary<String, String>() }
+            { ReturnValue = returnValue; EventTime = getCurrentInstant (); CorrelationId = correlationId; Properties = new Dictionary<String, String>() }
 
         member this.enhance(key, value) =
             this.Properties.Add(key, value)
@@ -444,22 +427,13 @@ module Types =
           Properties: Dictionary<String, String> }
 
         static member Default =
-            { Error = "Empty error message"
-              EventTime = getCurrentInstant ()
-              CorrelationId = String.Empty
-              Properties = new Dictionary<String, String>() }
+            { Error = "Empty error message"; EventTime = getCurrentInstant (); CorrelationId = String.Empty; Properties = new Dictionary<String, String>() }
 
         static member Create (error: string) (correlationId: string) =
-            { Error = error
-              EventTime = getCurrentInstant ()
-              CorrelationId = correlationId
-              Properties = new Dictionary<String, String>() }
+            { Error = error; EventTime = getCurrentInstant (); CorrelationId = correlationId; Properties = new Dictionary<String, String>() }
 
         static member CreateWithMetadata (error: string) (correlationId: string) (properties: Dictionary<String, String>) =
-            { Error = error
-              EventTime = getCurrentInstant ()
-              CorrelationId = correlationId
-              Properties = properties }
+            { Error = error; EventTime = getCurrentInstant (); CorrelationId = correlationId; Properties = properties }
 
         member this.enhance(key, value) =
             this.Properties.Add(key, value)
@@ -486,8 +460,7 @@ module Types =
 
         static member GetKnownTypes() = GetKnownTypes<FileSystemEntryType>()
 
-        override this.ToString() =
-            Utilities.getDiscriminatedUnionFullName this
+        override this.ToString() = Utilities.getDiscriminatedUnionFullName this
 
     /// Specifies whether a change detected in a diff is an add, change, or delete.
     [<KnownType("GetKnownTypes")>]
@@ -498,8 +471,7 @@ module Types =
 
         static member GetKnownTypes() = GetKnownTypes<DifferenceType>()
 
-        override this.ToString() =
-            Utilities.getDiscriminatedUnionFullName this
+        override this.ToString() = Utilities.getDiscriminatedUnionFullName this
 
     /// A file system difference is a change detected (at a file level) in a diff. It specifies the type of change (add, change, or delete), the type of file system entry (directory or file), and the relative path of the entry.
     type FileSystemDifference =
@@ -508,13 +480,9 @@ module Types =
           RelativePath: RelativePath }
 
         static member Create differenceType fileSystemEntryType relativePath =
-            { DifferenceType = differenceType
-              FileSystemEntryType = fileSystemEntryType
-              RelativePath = relativePath }
+            { DifferenceType = differenceType; FileSystemEntryType = fileSystemEntryType; RelativePath = relativePath }
 
-    type UploadMetadata =
-        { BlobUriWithSasToken: Uri
-          Sha256Hash: Sha256Hash }
+    type UploadMetadata = { BlobUriWithSasToken: Uri; Sha256Hash: Sha256Hash }
 
     /// GraceIndex is Grace's representation of the contents of the local object cache. It is an index from the DirectoryId of a LocalDirectoryVersion to the LocalDirectoryVersion itself.
     type GraceIndex = ConcurrentDictionary<Guid, LocalDirectoryVersion>
@@ -590,8 +558,7 @@ module Types =
 
         static member GetKnownTypes() = GetKnownTypes<PromotionType>()
 
-        override this.ToString() =
-            Utilities.getDiscriminatedUnionFullName this
+        override this.ToString() = Utilities.getDiscriminatedUnionFullName this
 
     /// Holds the entity Id's involved in an API call. It's populated in ValidateIds.Middleware.fs.
     type GraceIds =

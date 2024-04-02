@@ -46,8 +46,7 @@ module Owner =
                 Arity = ArgumentArity.ExactlyOne
             )
 
-        let ownerNameRequired =
-            new Option<String>("--ownerName", IsRequired = true, Description = "The name of the owner.", Arity = ArgumentArity.ExactlyOne)
+        let ownerNameRequired = new Option<String>("--ownerName", IsRequired = true, Description = "The name of the owner.", Arity = ArgumentArity.ExactlyOne)
 
         let ownerTypeRequired =
             (new Option<String>("--ownerType", IsRequired = true, Description = "The type of owner. [default: Public]", Arity = ArgumentArity.ExactlyOne))
@@ -65,11 +64,9 @@ module Owner =
         let descriptionRequired =
             new Option<String>("--description", IsRequired = true, Description = "Description of the owner.", Arity = ArgumentArity.ExactlyOne)
 
-        let newName =
-            new Option<String>("--newName", IsRequired = true, Description = "The new name of the organization.", Arity = ArgumentArity.ExactlyOne)
+        let newName = new Option<String>("--newName", IsRequired = true, Description = "The new name of the organization.", Arity = ArgumentArity.ExactlyOne)
 
-        let force =
-            new Option<bool>("--force", IsRequired = false, Description = "Delete even if there is data under this owner. [default: false]")
+        let force = new Option<bool>("--force", IsRequired = false, Description = "Delete even if there is data under this owner. [default: false]")
 
         let includeDeleted =
             new Option<bool>([| "--include-deleted"; "-d" |], IsRequired = false, Description = "Include deleted owners in the result. [default: false]")
@@ -146,8 +143,7 @@ module Owner =
     let private createHandler (parseResult: ParseResult) (createParameters: CreateParameters) =
         task {
             try
-                if parseResult |> verbose then
-                    printParseResult parseResult
+                if parseResult |> verbose then printParseResult parseResult
 
                 let validateIncomingParameters = CommonValidations(parseResult, createParameters)
 
@@ -172,8 +168,7 @@ module Owner =
                                 .Columns(progressColumns)
                                 .StartAsync(fun progressContext ->
                                     task {
-                                        let t0 =
-                                            progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
+                                        let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
 
                                         let! result = Owner.Create(parameters)
                                         t0.Increment(100.0)
@@ -211,8 +206,7 @@ module Owner =
     let private getHandler (parseResult: ParseResult) (getParameters: GetParameters) =
         task {
             try
-                if parseResult |> verbose then
-                    printParseResult parseResult
+                if parseResult |> verbose then printParseResult parseResult
 
                 let validateIncomingParameters = CommonValidations(parseResult, getParameters)
 
@@ -232,8 +226,7 @@ module Owner =
                                 .Columns(progressColumns)
                                 .StartAsync(fun progressContext ->
                                     task {
-                                        let t0 =
-                                            progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
+                                        let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
 
                                         let! result = Owner.Get(parameters)
                                         t0.Increment(100.0)
@@ -267,8 +260,7 @@ module Owner =
     let private setNameHandler (parseResult: ParseResult) (setNameParameters: SetNameParameters) =
         task {
             try
-                if parseResult |> verbose then
-                    printParseResult parseResult
+                if parseResult |> verbose then printParseResult parseResult
 
                 let validateIncomingParameters = CommonValidations(parseResult, setNameParameters)
 
@@ -288,8 +280,7 @@ module Owner =
                                 .Columns(progressColumns)
                                 .StartAsync(fun progressContext ->
                                     task {
-                                        let t0 =
-                                            progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
+                                        let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
 
                                         let! result = Owner.SetName(parameters)
                                         t0.Increment(100.0)
@@ -316,8 +307,7 @@ module Owner =
     let private setTypeHandler (parseResult: ParseResult) (setTypeParameters: SetTypeParameters) =
         task {
             try
-                if parseResult |> verbose then
-                    printParseResult parseResult
+                if parseResult |> verbose then printParseResult parseResult
 
                 let validateIncomingParameters = CommonValidations(parseResult, setTypeParameters)
 
@@ -337,8 +327,7 @@ module Owner =
                                 .Columns(progressColumns)
                                 .StartAsync(fun progressContext ->
                                     task {
-                                        let t0 =
-                                            progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
+                                        let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
 
                                         let! result = Owner.SetType(parameters)
                                         t0.Increment(100.0)
@@ -365,11 +354,9 @@ module Owner =
     let private searchVisibilityHandler (parseResult: ParseResult) (setSearchVisibilityParameters: SetSearchVisibilityParameters) =
         task {
             try
-                if parseResult |> verbose then
-                    printParseResult parseResult
+                if parseResult |> verbose then printParseResult parseResult
 
-                let validateIncomingParameters =
-                    CommonValidations(parseResult, setSearchVisibilityParameters)
+                let validateIncomingParameters = CommonValidations(parseResult, setSearchVisibilityParameters)
 
                 match validateIncomingParameters with
                 | Ok _ ->
@@ -387,8 +374,7 @@ module Owner =
                                 .Columns(progressColumns)
                                 .StartAsync(fun progressContext ->
                                     task {
-                                        let t0 =
-                                            progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
+                                        let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
 
                                         let! result = Owner.SetSearchVisibility(parameters)
                                         t0.Increment(100.0)
@@ -416,11 +402,9 @@ module Owner =
     let private descriptionHandler (parseResult: ParseResult) (setDescriptionParameters: SetDescriptionParameters) =
         task {
             try
-                if parseResult |> verbose then
-                    printParseResult parseResult
+                if parseResult |> verbose then printParseResult parseResult
 
-                let validateIncomingParameters =
-                    CommonValidations(parseResult, setDescriptionParameters)
+                let validateIncomingParameters = CommonValidations(parseResult, setDescriptionParameters)
 
                 match validateIncomingParameters with
                 | Ok _ ->
@@ -438,8 +422,7 @@ module Owner =
                                 .Columns(progressColumns)
                                 .StartAsync(fun progressContext ->
                                     task {
-                                        let t0 =
-                                            progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
+                                        let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
 
                                         let! result = Owner.SetDescription(parameters)
                                         t0.Increment(100.0)
@@ -468,8 +451,7 @@ module Owner =
     let private deleteHandler (parseResult: ParseResult) (deleteParameters: DeleteParameters) =
         task {
             try
-                if parseResult |> verbose then
-                    printParseResult parseResult
+                if parseResult |> verbose then printParseResult parseResult
 
                 let validateIncomingParameters = CommonValidations(parseResult, deleteParameters)
 
@@ -490,8 +472,7 @@ module Owner =
                                 .Columns(progressColumns)
                                 .StartAsync(fun progressContext ->
                                     task {
-                                        let t0 =
-                                            progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
+                                        let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
 
                                         let! result = Owner.Delete(parameters)
                                         t0.Increment(100.0)
@@ -517,8 +498,7 @@ module Owner =
     let private undeleteHandler (parseResult: ParseResult) (undeleteParameters: UndeleteParameters) =
         task {
             try
-                if parseResult |> verbose then
-                    printParseResult parseResult
+                if parseResult |> verbose then printParseResult parseResult
 
                 let validateIncomingParameters = CommonValidations(parseResult, undeleteParameters)
 
@@ -537,8 +517,7 @@ module Owner =
                                 .Columns(progressColumns)
                                 .StartAsync(fun progressContext ->
                                     task {
-                                        let t0 =
-                                            progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
+                                        let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
 
                                         let! result = Owner.Undelete(parameters)
                                         t0.Increment(100.0)
@@ -559,12 +538,10 @@ module Owner =
             })
 
     let Build =
-        let addCommonOptions (command: Command) =
-            command |> addOption Options.ownerName |> addOption Options.ownerId
+        let addCommonOptions (command: Command) = command |> addOption Options.ownerName |> addOption Options.ownerId
 
         // Create main command and aliases, if any.`
-        let ownerCommand =
-            new Command("owner", Description = "Create, change, or delete owner-level information.")
+        let ownerCommand = new Command("owner", Description = "Create, change, or delete owner-level information.")
 
         // Add subcommands.
         let ownerCreateCommand =

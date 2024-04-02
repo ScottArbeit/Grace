@@ -149,10 +149,7 @@ module Storage =
                                             if not <| fileExists then
                                                 let! blobUriWithSasToken = getWriteSharedAccessSignature repositoryDto fileVersion (getCorrelationId context)
 
-                                                uploadMetadata.Enqueue(
-                                                    { BlobUriWithSasToken = blobUriWithSasToken
-                                                      Sha256Hash = fileVersion.Sha256Hash }
-                                                )
+                                                uploadMetadata.Enqueue({ BlobUriWithSasToken = blobUriWithSasToken; Sha256Hash = fileVersion.Sha256Hash })
                                         }
                                     ))
                             )

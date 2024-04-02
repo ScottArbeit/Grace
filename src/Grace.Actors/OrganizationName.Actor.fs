@@ -48,8 +48,7 @@ module OrganizationName =
             Task.CompletedTask
 
         override this.OnPostActorMethodAsync(context) =
-            let duration_ms =
-                (getCurrentInstant().Minus(actorStartTime).TotalMilliseconds).ToString("F3")
+            let duration_ms = (getCurrentInstant().Minus(actorStartTime).TotalMilliseconds).ToString("F3")
 
             log.LogInformation(
                 "{CurrentInstant}: CorrelationId: {correlationId}; Finished {ActorName}.{MethodName}; OwnerId: {OwnerId}; OrganizationName: {OrganizationName}; OrganizationId: {OrganizationId}; Duration: {duration_ms}ms.",

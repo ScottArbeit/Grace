@@ -13,8 +13,7 @@ type Validations() =
 
     [<Test>]
     member this.``valid Guid returns Ok``() =
-        let result =
-            (Guid.isValidAndNotEmpty "6fddb3c1-24c2-4e2e-8f57-98d0838c0c3f" "error").Result
+        let result = (Guid.isValidAndNotEmpty "6fddb3c1-24c2-4e2e-8f57-98d0838c0c3f" "error").Result
 
         Assert.That(result, Is.EqualTo(Common.okResult))
 

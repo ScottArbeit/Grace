@@ -44,8 +44,7 @@ module RepositoryName =
             Task.CompletedTask
 
         override this.OnPostActorMethodAsync(context) =
-            let duration_ms =
-                (getCurrentInstant().Minus(actorStartTime).TotalMilliseconds).ToString("F3")
+            let duration_ms = (getCurrentInstant().Minus(actorStartTime).TotalMilliseconds).ToString("F3")
 
             log.LogInformation(
                 "{CurrentInstant}: CorrelationId: {correlationId}; Finished {ActorName}.{MethodName}; OwnerId: {OwnerId}; OrganizationId: {OrganizationId}; RepositoryName: {RepositoryName}; RepositoryId: {RepositoryId}; Duration: {duration_ms}ms.",
@@ -56,10 +55,7 @@ module RepositoryName =
                 ownerId,
                 organizationId,
                 repositoryName,
-                (if Option.isSome cachedRepositoryId then
-                     cachedRepositoryId.Value
-                 else
-                     "None"),
+                (if Option.isSome cachedRepositoryId then cachedRepositoryId.Value else "None"),
                 duration_ms
             )
 

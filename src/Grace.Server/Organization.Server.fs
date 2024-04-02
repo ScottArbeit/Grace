@@ -70,9 +70,7 @@ module Organization =
 
                             return!
                                 context
-                                |> result400BadRequest
-                                    { graceError with
-                                        Properties = getPropertiesAsDictionary parameters }
+                                |> result400BadRequest { graceError with Properties = getPropertiesAsDictionary parameters }
                     }
 
                 let validationResults = validations parameters
@@ -127,8 +125,7 @@ module Organization =
                     let errorMessage = OrganizationError.getErrorMessage error
                     log.LogDebug("{currentInstant}: error: {error}", getCurrentInstantExtended (), errorMessage)
 
-                    let graceError =
-                        GraceError.CreateWithMetadata errorMessage (getCorrelationId context) (getPropertiesAsDictionary parameters)
+                    let graceError = GraceError.CreateWithMetadata errorMessage (getCorrelationId context) (getPropertiesAsDictionary parameters)
 
                     graceError.Properties.Add("Path", context.Request.Path)
                     graceError.Properties.Add("Error", errorMessage)
@@ -173,8 +170,7 @@ module Organization =
                         let actorProxy = getActorProxy context organizationId
                         let! queryResult = query context maxCount actorProxy
 
-                        let graceReturnValue =
-                            GraceReturnValue.Create queryResult (getCorrelationId context)
+                        let graceReturnValue = GraceReturnValue.Create queryResult (getCorrelationId context)
 
                         match getGraceIds context with
                         | Some graceIds ->
@@ -190,8 +186,7 @@ module Organization =
                 else
                     let! error = validationResults |> getFirstError
 
-                    let graceError =
-                        GraceError.Create (OrganizationError.getErrorMessage error) (getCorrelationId context)
+                    let graceError = GraceError.Create (OrganizationError.getErrorMessage error) (getCorrelationId context)
 
                     graceError.Properties.Add("Path", context.Request.Path)
                     return! context |> result400BadRequest graceError
@@ -271,8 +266,7 @@ module Organization =
                            parameters.CorrelationId
                            OrganizationIsDeleted |]
 
-                let command (parameters: SetOrganizationNameParameters) =
-                    SetName(OrganizationName parameters.NewName) |> returnValueTask
+                let command (parameters: SetOrganizationNameParameters) = SetName(OrganizationName parameters.NewName) |> returnValueTask
 
                 context.Items.Add("Command", nameof (SetName))
                 return! processCommand context validations command
@@ -385,8 +379,7 @@ module Organization =
                            parameters.CorrelationId
                            OrganizationIsDeleted |]
 
-                let command (parameters: SetOrganizationDescriptionParameters) =
-                    SetDescription(parameters.Description) |> returnValueTask
+                let command (parameters: SetOrganizationDescriptionParameters) = SetDescription(parameters.Description) |> returnValueTask
 
                 context.Items.Add("Command", nameof (SetDescription))
                 return! processCommand context validations command
@@ -465,8 +458,7 @@ module Organization =
                            parameters.CorrelationId
                            OrganizationIsDeleted |]
 
-                let command (parameters: DeleteOrganizationParameters) =
-                    DeleteLogical(parameters.Force, parameters.DeleteReason) |> returnValueTask
+                let command (parameters: DeleteOrganizationParameters) = DeleteLogical(parameters.Force, parameters.DeleteReason) |> returnValueTask
 
                 context.Items.Add("Command", nameof (DeleteLogical))
                 return! processCommand context validations command

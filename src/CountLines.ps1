@@ -7,7 +7,7 @@ foreach ($codeFile in ($codeFiles | Where-Object {$_.FullName -notlike "*\obj\*"
     $stream.Close()
 
     $lines = 0
-    foreach ($line in $fileContents.Split([System.Environment]::NewLine)) {
+    foreach ($line in $fileContents.Split("`n")) {
         if (-not [System.String]::IsNullOrEmpty($line) -and -not [System.String]::IsNullOrWhiteSpace($line)) {
             $lines += 1
         }

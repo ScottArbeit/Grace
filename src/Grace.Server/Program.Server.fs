@@ -70,8 +70,7 @@ module Program =
         //     Console.WriteLine($"{kvp.Key}: {kvp.Value}");
 
         // Just placing some much-used services into ApplicationContext where they're easy to find.
-        let loggerFactory =
-            host.Services.GetService(typeof<ILoggerFactory>) :?> ILoggerFactory
+        let loggerFactory = host.Services.GetService(typeof<ILoggerFactory>) :?> ILoggerFactory
 
         ApplicationContext.setLoggerFactory (loggerFactory)
 

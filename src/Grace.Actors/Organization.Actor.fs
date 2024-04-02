@@ -51,34 +51,16 @@ module Organization =
             let newOrganizationDto =
                 match organizationEventType with
                 | Created(organizationId, organizationName, ownerId) ->
-                    { OrganizationDto.Default with
-                        OrganizationId = organizationId
-                        OrganizationName = organizationName
-                        OwnerId = ownerId }
-                | NameSet(organizationName) ->
-                    { currentOrganizationDto with
-                        OrganizationName = organizationName }
-                | TypeSet(organizationType) ->
-                    { currentOrganizationDto with
-                        OrganizationType = organizationType }
-                | SearchVisibilitySet(searchVisibility) ->
-                    { currentOrganizationDto with
-                        SearchVisibility = searchVisibility }
-                | DescriptionSet(description) ->
-                    { currentOrganizationDto with
-                        Description = description }
-                | LogicalDeleted(_, deleteReason) ->
-                    { currentOrganizationDto with
-                        DeleteReason = deleteReason
-                        DeletedAt = Some(getCurrentInstant ()) }
+                    { OrganizationDto.Default with OrganizationId = organizationId; OrganizationName = organizationName; OwnerId = ownerId }
+                | NameSet(organizationName) -> { currentOrganizationDto with OrganizationName = organizationName }
+                | TypeSet(organizationType) -> { currentOrganizationDto with OrganizationType = organizationType }
+                | SearchVisibilitySet(searchVisibility) -> { currentOrganizationDto with SearchVisibility = searchVisibility }
+                | DescriptionSet(description) -> { currentOrganizationDto with Description = description }
+                | LogicalDeleted(_, deleteReason) -> { currentOrganizationDto with DeleteReason = deleteReason; DeletedAt = Some(getCurrentInstant ()) }
                 | PhysicalDeleted -> currentOrganizationDto // Do nothing because it's about to be deleted anyway.
-                | Undeleted ->
-                    { currentOrganizationDto with
-                        DeletedAt = None
-                        DeleteReason = String.Empty }
+                | Undeleted -> { currentOrganizationDto with DeletedAt = None; DeleteReason = String.Empty }
 
-            { newOrganizationDto with
-                UpdatedAt = Some(getCurrentInstant ()) }
+            { newOrganizationDto with UpdatedAt = Some(getCurrentInstant ()) }
 
         member val private correlationId: CorrelationId = String.Empty with get, set
 
@@ -98,8 +80,7 @@ module Organization =
                     organizationDto <- OrganizationDto.Default
                     message <- "Not found in database."
 
-                let duration_ms =
-                    getCurrentInstant().Minus(activateStartTime).TotalMilliseconds.ToString("F3")
+                let duration_ms = getCurrentInstant().Minus(activateStartTime).TotalMilliseconds.ToString("F3")
 
                 log.LogInformation(
                     "{CurrentInstant}: Activated {ActorType} {ActorId}. {message} Duration: {duration_ms}ms.",
@@ -115,8 +96,7 @@ module Organization =
         member private this.SetMaintenanceReminder() =
             this.RegisterReminderAsync(ReminderType.Maintenance, Array.empty<byte>, TimeSpan.FromDays(7.0), TimeSpan.FromDays(7.0))
 
-        member private this.UnregisterMaintenanceReminder() =
-            this.UnregisterReminderAsync(ReminderType.Maintenance)
+        member private this.UnregisterMaintenanceReminder() = this.UnregisterReminderAsync(ReminderType.Maintenance)
 
         member private this.OnFirstWrite() =
             task {
@@ -141,8 +121,7 @@ module Organization =
             Task.CompletedTask
 
         override this.OnPostActorMethodAsync(context) =
-            let duration_ms =
-                (getCurrentInstant().Minus(actorStartTime).TotalMilliseconds).ToString("F3")
+            let duration_ms = (getCurrentInstant().Minus(actorStartTime).TotalMilliseconds).ToString("F3")
 
             if String.IsNullOrEmpty(currentCommand) then
                 log.LogInformation(
@@ -193,8 +172,7 @@ module Organization =
                 try
                     let! organizationEvents = this.OrganizationEvents()
 
-                    if organizationEvents.Count = 0 then
-                        do! this.OnFirstWrite()
+                    if organizationEvents.Count = 0 then do! this.OnFirstWrite()
 
                     organizationEvents.Add(organizationEvent)
 
@@ -210,8 +188,7 @@ module Organization =
 
                     do! DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> stateManager.SetStateAsync(dtoStateName, organizationDto))
 
-                    let returnValue =
-                        GraceReturnValue.Create "Organization command succeeded." organizationEvent.Metadata.CorrelationId
+                    let returnValue = GraceReturnValue.Create "Organization command succeeded." organizationEvent.Metadata.CorrelationId
 
                     returnValue.Properties.Add(nameof (OwnerId), $"{organizationDto.OwnerId}")
                     returnValue.Properties.Add(nameof (OrganizationId), $"{organizationDto.OrganizationId}")

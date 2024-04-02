@@ -22,11 +22,7 @@ module Storage =
                         try
                             let! conditionalValue = stateManager.TryGetStateAsync<'T>(actorStateName)
 
-                            return
-                                if conditionalValue.HasValue then
-                                    Some conditionalValue.Value
-                                else
-                                    None
+                            return if conditionalValue.HasValue then Some conditionalValue.Value else None
                         with ex ->
                             logToConsole $"{createExceptionResponse ex}"
                             raise ex
@@ -39,8 +35,7 @@ module Storage =
         task { do! DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> stateManager.SetStateAsync<'T>(actorStateName, actorState)) } :> Task
 
     /// Deletes the actor's state from storage.
-    let DeleteState (stateManager: IActorStateManager) actorStateName =
-        task { return! stateManager.TryRemoveStateAsync(actorStateName) }
+    let DeleteState (stateManager: IActorStateManager) actorStateName = task { return! stateManager.TryRemoveStateAsync(actorStateName) }
 
 //module AzureBlobStorage =
 

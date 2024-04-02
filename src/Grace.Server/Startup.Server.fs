@@ -53,8 +53,7 @@ module Application =
 
         do ApplicationContext.setConfiguration configuration
 
-        let notLoggedIn =
-            RequestErrors.UNAUTHORIZED "Basic" "Some Realm" "You must be logged in."
+        let notLoggedIn = RequestErrors.UNAUTHORIZED "Basic" "Some Realm" "You must be logged in."
 
         let mustBeLoggedIn = requiresAuthentication notLoggedIn
 
@@ -308,8 +307,7 @@ module Application =
                     .ImplementationInstance)
                 :?> HostingEnvironment
 
-            let azureMonitorConnectionString =
-                Environment.GetEnvironmentVariable("APPLICATIONINSIGHTS_CONNECTION_STRING")
+            let azureMonitorConnectionString = Environment.GetEnvironmentVariable("APPLICATIONINSIGHTS_CONNECTION_STRING")
 
             // OpenTelemetry trace attribute specifications: https://github.com/open-telemetry/opentelemetry-specification/tree/main/specification/trace/semantic_conventions
             let globalOpenTelemetryAttributes = Dictionary<string, obj>()

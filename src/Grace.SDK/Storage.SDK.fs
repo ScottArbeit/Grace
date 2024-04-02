@@ -49,11 +49,9 @@ module Storage =
                         else
                             getNativeFilePath fileVersion.RelativeDirectory
 
-                    let tempFilePath =
-                        Path.Combine(Path.GetTempPath(), relativeDirectory, fileVersion.GetObjectFileName)
+                    let tempFilePath = Path.Combine(Path.GetTempPath(), relativeDirectory, fileVersion.GetObjectFileName)
 
-                    let objectFilePath =
-                        Path.Combine(Current().ObjectDirectory, fileVersion.RelativePath, fileVersion.GetObjectFileName)
+                    let objectFilePath = Path.Combine(Current().ObjectDirectory, fileVersion.RelativePath, fileVersion.GetObjectFileName)
 
                     let tempFileInfo = FileInfo(tempFilePath)
                     let objectFileInfo = FileInfo(objectFilePath)
@@ -87,8 +85,7 @@ module Storage =
                     else
                         tempFileInfo.Delete()
 
-                        let error =
-                            GraceError.Create (StorageError.getErrorMessage FailedCommunicatingWithObjectStorage) correlationId
+                        let error = GraceError.Create (StorageError.getErrorMessage FailedCommunicatingWithObjectStorage) correlationId
 
                         error.Properties.Add("StatusCode", $"HTTP {azureResponse.Status}")
                         error.Properties.Add("ReasonPhrase", $"Reason: {azureResponse.ReasonPhrase}")
@@ -119,8 +116,7 @@ module Storage =
                         else
                             let! errorMessage = response.Content.ReadAsStringAsync()
 
-                            let graceError =
-                                (GraceError.Create $"{StorageError.getErrorMessage FailedToGetUploadUrls}; {errorMessage}" correlationId)
+                            let graceError = (GraceError.Create $"{StorageError.getErrorMessage FailedToGetUploadUrls}; {errorMessage}" correlationId)
 
                             let fileVersionList = StringBuilder()
 
@@ -142,8 +138,7 @@ module Storage =
         task {
             try
                 //logToConsole $"In SDK.Storage.SaveFileToObjectStorageWithMetadata: fileVersion.RelativePath: {fileVersion.RelativePath}."
-                let fileInfo =
-                    FileInfo(Path.Combine(Current().RootDirectory, fileVersion.RelativePath))
+                let fileInfo = FileInfo(Path.Combine(Current().RootDirectory, fileVersion.RelativePath))
 
                 metadata.TryAdd("CorrelationId", correlationId) |> ignore
                 metadata.TryAdd("OwnerId", $"{Current().OwnerId}") |> ignore
@@ -173,11 +168,9 @@ module Storage =
 
                         // If it doesn't exist, upload it.
                         if not <| (blobAlreadyExists.Value) then
-                            let storageTransferOptions =
-                                StorageTransferOptions(MaximumConcurrency = Constants.ParallelOptions.MaxDegreeOfParallelism)
+                            let storageTransferOptions = StorageTransferOptions(MaximumConcurrency = Constants.ParallelOptions.MaxDegreeOfParallelism)
 
-                            let blobUploadOptions =
-                                BlobUploadOptions(Metadata = metadata, Tags = metadata, TransferOptions = storageTransferOptions)
+                            let blobUploadOptions = BlobUploadOptions(Metadata = metadata, Tags = metadata, TransferOptions = storageTransferOptions)
 
                             blobUploadOptions.HttpHeaders <-
                                 BlobHttpHeaders(
@@ -192,8 +185,7 @@ module Storage =
 
                             let normalizedObjectFilePath = Path.GetFullPath(objectFilePath)
 
-                            use fileStream =
-                                File.Open(normalizedObjectFilePath, FileMode.Open, FileAccess.Read, FileShare.Read)
+                            use fileStream = File.Open(normalizedObjectFilePath, FileMode.Open, FileAccess.Read, FileShare.Read)
 
                             let! blobContentInfo =
                                 task {
@@ -213,21 +205,18 @@ module Storage =
                                 }
 
                             if blobContentInfo.GetRawResponse().Status = 201 then
-                                let returnValue =
-                                    GraceReturnValue.Create "File successfully saved to object storage." correlationId
+                                let returnValue = GraceReturnValue.Create "File successfully saved to object storage." correlationId
 
                                 returnValue.Properties.Add(nameof (Sha256Hash), $"{fileVersion.Sha256Hash}")
                                 returnValue.Properties.Add(nameof (RelativePath), $"{fileVersion.RelativePath}")
                                 returnValue.Properties.Add(nameof (RepositoryId), $"{fileVersion.RepositoryId}")
                                 return Ok returnValue
                             else
-                                let error =
-                                    (GraceError.Create $"Failed to upload file {normalizedObjectFilePath} to object storage." correlationId)
+                                let error = (GraceError.Create $"Failed to upload file {normalizedObjectFilePath} to object storage." correlationId)
 
                                 return Error error
                         else
-                            let returnValue =
-                                GraceReturnValue.Create "File already uploaded to object storage." correlationId
+                            let returnValue = GraceReturnValue.Create "File already uploaded to object storage." correlationId
 
                             returnValue.Properties.Add(nameof (Sha256Hash), $"{fileVersion.Sha256Hash}")
                             returnValue.Properties.Add(nameof (RelativePath), $"{fileVersion.RelativePath}")

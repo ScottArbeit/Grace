@@ -89,13 +89,10 @@ module Branch =
 
                             return!
                                 context
-                                |> result400BadRequest
-                                    { graceError with
-                                        Properties = getPropertiesAsDictionary parameters }
+                                |> result400BadRequest { graceError with Properties = getPropertiesAsDictionary parameters }
                     }
 
-                let combinedValidations =
-                    Array.append (commonValidations parameters) (validations parameters)
+                let combinedValidations = Array.append (commonValidations parameters) (validations parameters)
 
                 let! validationsPassed = combinedValidations |> allPass
 
@@ -137,15 +134,13 @@ module Branch =
                     let errorMessage = BranchError.getErrorMessage error
                     log.LogDebug("{currentInstant}: error: {error}", getCurrentInstantExtended (), errorMessage)
 
-                    let graceError =
-                        GraceError.CreateWithMetadata errorMessage (getCorrelationId context) (getPropertiesAsDictionary parameters)
+                    let graceError = GraceError.CreateWithMetadata errorMessage (getCorrelationId context) (getPropertiesAsDictionary parameters)
 
                     graceError.Properties.Add("Path", context.Request.Path)
                     graceError.Properties.Add("Error", errorMessage)
                     return! context |> result400BadRequest graceError
             with ex ->
-                let graceError =
-                    GraceError.Create $"{Utilities.createExceptionResponse ex}" (getCorrelationId context)
+                let graceError = GraceError.Create $"{Utilities.createExceptionResponse ex}" (getCorrelationId context)
 
                 graceError.Properties.Add("Path", context.Request.Path)
                 return! context |> result500ServerError graceError
@@ -162,8 +157,7 @@ module Branch =
             use activity = activitySource.StartActivity("processQuery", ActivityKind.Server)
 
             try
-                let validationResults =
-                    Array.append (commonValidations parameters) (validations parameters)
+                let validationResults = Array.append (commonValidations parameters) (validations parameters)
 
                 let! validationsPassed = validationResults |> allPass
 
@@ -173,8 +167,7 @@ module Branch =
                         let actorProxy = getActorProxy context branchId
                         let! queryResult = query context maxCount actorProxy
 
-                        let graceReturnValue =
-                            GraceReturnValue.Create queryResult (getCorrelationId context)
+                        let graceReturnValue = GraceReturnValue.Create queryResult (getCorrelationId context)
 
                         match getGraceIds context with
                         | Some graceIds ->
@@ -192,8 +185,7 @@ module Branch =
                 else
                     let! error = validationResults |> getFirstError
 
-                    let graceError =
-                        GraceError.Create (BranchError.getErrorMessage error) (getCorrelationId context)
+                    let graceError = GraceError.Create (BranchError.getErrorMessage error) (getCorrelationId context)
 
                     graceError.Properties.Add("Path", context.Request.Path)
                     return! context |> result400BadRequest graceError
@@ -259,8 +251,7 @@ module Branch =
                         | Some parentBranchId ->
                             let parentBranchActorId = ActorId(parentBranchId)
 
-                            let parentBranchActorProxy =
-                                actorProxyFactory.CreateActorProxy<IBranchActor>(parentBranchActorId, ActorName.Branch)
+                            let parentBranchActorProxy = actorProxyFactory.CreateActorProxy<IBranchActor>(parentBranchActorId, ActorName.Branch)
 
                             let! parentBranch = parentBranchActorProxy.Get parameters.CorrelationId
 
@@ -339,8 +330,7 @@ module Branch =
                            parameters.CorrelationId
                            CommitIsDisabled |]
 
-                let command (parameters: RebaseParameters) =
-                    Rebase(parameters.BasedOn) |> returnValueTask
+                let command (parameters: RebaseParameters) = Rebase(parameters.BasedOn) |> returnValueTask
 
                 context.Items.Add("Command", nameof (Rebase))
                 return! processCommand context validations command
@@ -767,8 +757,7 @@ module Branch =
                            parameters.CorrelationId
                            BranchDoesNotExist |]
 
-                let command (parameters: EnableFeatureParameters) =
-                    EnableAssign(parameters.Enabled) |> returnValueTask
+                let command (parameters: EnableFeatureParameters) = EnableAssign(parameters.Enabled) |> returnValueTask
 
                 context.Items.Add("Command", nameof (EnableAssign))
                 return! processCommand context validations command
@@ -811,8 +800,7 @@ module Branch =
                            parameters.CorrelationId
                            BranchDoesNotExist |]
 
-                let command (parameters: EnableFeatureParameters) =
-                    EnablePromotion(parameters.Enabled) |> returnValueTask
+                let command (parameters: EnableFeatureParameters) = EnablePromotion(parameters.Enabled) |> returnValueTask
 
                 context.Items.Add("Command", nameof (EnablePromotion))
                 return! processCommand context validations command
@@ -855,8 +843,7 @@ module Branch =
                            parameters.CorrelationId
                            BranchDoesNotExist |]
 
-                let command (parameters: EnableFeatureParameters) =
-                    EnableCommit(parameters.Enabled) |> returnValueTask
+                let command (parameters: EnableFeatureParameters) = EnableCommit(parameters.Enabled) |> returnValueTask
 
                 context.Items.Add("Command", nameof (EnableCommit))
                 return! processCommand context validations command
@@ -899,8 +886,7 @@ module Branch =
                            parameters.CorrelationId
                            BranchDoesNotExist |]
 
-                let command (parameters: EnableFeatureParameters) =
-                    EnableCheckpoint(parameters.Enabled) |> returnValueTask
+                let command (parameters: EnableFeatureParameters) = EnableCheckpoint(parameters.Enabled) |> returnValueTask
 
                 context.Items.Add("Command", nameof (EnableCheckpoint))
                 return! processCommand context validations command
@@ -943,8 +929,7 @@ module Branch =
                            parameters.CorrelationId
                            ParentBranchDoesNotExist |]
 
-                let command (parameters: EnableFeatureParameters) =
-                    EnableSave(parameters.Enabled) |> returnValueTask
+                let command (parameters: EnableFeatureParameters) = EnableSave(parameters.Enabled) |> returnValueTask
 
                 context.Items.Add("Command", nameof (EnableSave))
                 return! processCommand context validations command
@@ -987,8 +972,7 @@ module Branch =
                            parameters.CorrelationId
                            BranchDoesNotExist |]
 
-                let command (parameters: EnableFeatureParameters) =
-                    EnableTag(parameters.Enabled) |> returnValueTask
+                let command (parameters: EnableFeatureParameters) = EnableTag(parameters.Enabled) |> returnValueTask
 
                 context.Items.Add("Command", nameof (EnableTag))
                 return! processCommand context validations command
@@ -1031,8 +1015,7 @@ module Branch =
                            parameters.CorrelationId
                            BranchDoesNotExist |]
 
-                let command (parameters: EnableFeatureParameters) =
-                    EnableAutoRebase(parameters.Enabled) |> returnValueTask
+                let command (parameters: EnableFeatureParameters) = EnableAutoRebase(parameters.Enabled) |> returnValueTask
 
                 context.Items.Add("Command", nameof (EnableAutoRebase))
                 return! processCommand context validations command
@@ -1075,8 +1058,7 @@ module Branch =
                            parameters.CorrelationId
                            BranchDoesNotExist |]
 
-                let command (parameters: DeleteBranchParameters) =
-                    DeleteLogical(parameters.Force, parameters.DeleteReason) |> returnValueTask
+                let command (parameters: DeleteBranchParameters) = DeleteLogical(parameters.Force, parameters.DeleteReason) |> returnValueTask
 
                 context.Items.Add("Command", nameof (DeleteLogical))
                 return! processCommand context validations command
@@ -1132,8 +1114,7 @@ module Branch =
                     let! parameters = context |> parse<GetBranchParameters>
                     let! result = processQuery context parameters validations 1 query
 
-                    let duration_ms =
-                        (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
+                    let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
 
                     log.LogInformation(
                         "{CurrentInstant}: CorrelationId: {correlationId}; Finished {path}; BranchId: {branchId}; Duration: {duration_ms}ms.",
@@ -1146,8 +1127,7 @@ module Branch =
 
                     return result
                 with ex ->
-                    let duration_ms =
-                        (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
+                    let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
 
                     log.LogError(
                         ex,
@@ -1215,8 +1195,7 @@ module Branch =
                     let! parameters = context |> parse<GetBranchParameters>
                     let! result = processQuery context parameters validations 1 query
 
-                    let duration_ms =
-                        (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
+                    let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
 
                     log.LogInformation(
                         "{CurrentInstant}: CorrelationId: {correlationId}; Finished {path}; BranchId: {branchId}; Duration: {duration_ms}ms.",
@@ -1229,8 +1208,7 @@ module Branch =
 
                     return result
                 with ex ->
-                    let duration_ms =
-                        (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
+                    let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
 
                     log.LogError(
                         ex,
@@ -1297,8 +1275,7 @@ module Branch =
                     let! parameters = context |> parse<BranchParameters>
                     let! result = processQuery context parameters validations 1 query
 
-                    let duration_ms =
-                        (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
+                    let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
 
                     log.LogInformation(
                         "{CurrentInstant}: CorrelationId: {correlationId}; Finished {path}; BranchId: {branchId}; Duration: {duration_ms}ms.",
@@ -1311,8 +1288,7 @@ module Branch =
 
                     return result
                 with ex ->
-                    let duration_ms =
-                        (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
+                    let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
 
                     log.LogError(
                         ex,
@@ -1385,8 +1361,7 @@ module Branch =
                     context.Items.Add("ReferenceId", parameters.ReferenceId)
                     let! result = processQuery context parameters validations 1 query
 
-                    let duration_ms =
-                        (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
+                    let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
 
                     log.LogInformation(
                         "{CurrentInstant}: CorrelationId: {correlationId}; Finished {path}; BranchId: {branchId}; Duration: {duration_ms}ms.",
@@ -1399,8 +1374,7 @@ module Branch =
 
                     return result
                 with ex ->
-                    let duration_ms =
-                        (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
+                    let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
 
                     log.LogError(
                         ex,
@@ -1469,8 +1443,7 @@ module Branch =
                     let! parameters = context |> parse<GetReferencesParameters>
                     let! result = processQuery context parameters validations (parameters.MaxCount) query
 
-                    let duration_ms =
-                        (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
+                    let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
 
                     log.LogInformation(
                         "{CurrentInstant}: CorrelationId: {correlationId}; Finished {path}; BranchId: {branchId}; Duration: {duration_ms}ms.",
@@ -1483,8 +1456,7 @@ module Branch =
 
                     return result
                 with ex ->
-                    let duration_ms =
-                        (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
+                    let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
 
                     log.LogError(
                         ex,
@@ -1569,8 +1541,7 @@ module Branch =
                                     (fun i ct ->
                                         ValueTask(
                                             task {
-                                                let diffActorId =
-                                                    Diff.GetActorId sortedRefs[i].DirectoryId sortedRefs[i + 1].DirectoryId
+                                                let diffActorId = Diff.GetActorId sortedRefs[i].DirectoryId sortedRefs[i + 1].DirectoryId
 
                                                 let diffActorProxy =
                                                     ApplicationContext.actorProxyFactory.CreateActorProxy<IDiffActor>(diffActorId, ActorName.Diff)
@@ -1593,8 +1564,7 @@ module Branch =
                     context.Items.Add(nameof (ReferenceType), parameters.ReferenceType)
                     let! result = processQuery context parameters validations (parameters.MaxCount) query
 
-                    let duration_ms =
-                        (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
+                    let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
 
                     log.LogInformation(
                         "{CurrentInstant}: CorrelationId: {correlationId}; Finished {path}; BranchId: {branchId}; Duration: {duration_ms}ms.",
@@ -1607,8 +1577,7 @@ module Branch =
 
                     return result
                 with ex ->
-                    let duration_ms =
-                        (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
+                    let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
 
                     log.LogError(
                         ex,
@@ -1677,8 +1646,7 @@ module Branch =
                     let! parameters = context |> parse<GetReferencesParameters>
                     let! result = processQuery context parameters validations (parameters.MaxCount) query
 
-                    let duration_ms =
-                        (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
+                    let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
 
                     log.LogInformation(
                         "{CurrentInstant}: CorrelationId: {correlationId}; Finished {path}; BranchId: {branchId}; Duration: {duration_ms}ms.",
@@ -1691,8 +1659,7 @@ module Branch =
 
                     return result
                 with ex ->
-                    let duration_ms =
-                        (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
+                    let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
 
                     log.LogError(
                         ex,
@@ -1761,8 +1728,7 @@ module Branch =
                     let! parameters = context |> parse<GetReferencesParameters>
                     let! result = processQuery context parameters validations (parameters.MaxCount) query
 
-                    let duration_ms =
-                        (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
+                    let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
 
                     log.LogInformation(
                         "{CurrentInstant}: CorrelationId: {correlationId}; Finished {path}; BranchId: {branchId}; Duration: {duration_ms}ms.",
@@ -1775,8 +1741,7 @@ module Branch =
 
                     return result
                 with ex ->
-                    let duration_ms =
-                        (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
+                    let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
 
                     log.LogError(
                         ex,
@@ -1845,8 +1810,7 @@ module Branch =
                     let! parameters = context |> parse<GetReferencesParameters>
                     let! result = processQuery context parameters validations (parameters.MaxCount) query
 
-                    let duration_ms =
-                        (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
+                    let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
 
                     log.LogInformation(
                         "{CurrentInstant}: CorrelationId: {correlationId}; Finished {path}; BranchId: {branchId}; Duration: {duration_ms}ms.",
@@ -1859,8 +1823,7 @@ module Branch =
 
                     return result
                 with ex ->
-                    let duration_ms =
-                        (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
+                    let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
 
                     log.LogError(
                         ex,
@@ -1930,8 +1893,7 @@ module Branch =
                     let! parameters = context |> parse<GetReferencesParameters>
                     let! result = processQuery context parameters validations (parameters.MaxCount) query
 
-                    let duration_ms =
-                        (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
+                    let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
 
                     log.LogInformation(
                         "{CurrentInstant}: CorrelationId: {correlationId}; Finished {path}; BranchId: {branchId}; Duration: {duration_ms}ms.",
@@ -1944,8 +1906,7 @@ module Branch =
 
                     return result
                 with ex ->
-                    let duration_ms =
-                        (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
+                    let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
 
                     log.LogError(
                         ex,
@@ -2014,8 +1975,7 @@ module Branch =
                     let! parameters = context |> parse<GetReferencesParameters>
                     let! result = processQuery context parameters validations (parameters.MaxCount) query
 
-                    let duration_ms =
-                        (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
+                    let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
 
                     log.LogInformation(
                         "{CurrentInstant}: CorrelationId: {correlationId}; Finished {path}; BranchId: {branchId}; Duration: {duration_ms}ms.",
@@ -2028,8 +1988,7 @@ module Branch =
 
                     return result
                 with ex ->
-                    let duration_ms =
-                        (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
+                    let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
 
                     log.LogError(
                         ex,
@@ -2090,8 +2049,7 @@ module Branch =
 
                     let query (context: HttpContext) maxCount (actorProxy: IBranchActor) =
                         task {
-                            let listContentsParameters =
-                                context.Items["ListContentsParameters"] :?> ListContentsParameters
+                            let listContentsParameters = context.Items["ListContentsParameters"] :?> ListContentsParameters
 
                             if
                                 String.IsNullOrEmpty(listContentsParameters.ReferenceId)
@@ -2116,8 +2074,7 @@ module Branch =
                                 // We have a ReferenceId, so we'll get the DirectoryVersion from that reference.
                                 let referenceActorId = ActorId(listContentsParameters.ReferenceId)
 
-                                let referenceActorProxy =
-                                    actorProxyFactory.CreateActorProxy<IReferenceActor>(referenceActorId, ActorName.Reference)
+                                let referenceActorProxy = actorProxyFactory.CreateActorProxy<IReferenceActor>(referenceActorId, ActorName.Reference)
 
                                 let! referenceDto = referenceActorProxy.Get(getCorrelationId context)
                                 let directoryActorId = DirectoryVersion.GetActorId referenceDto.DirectoryId
@@ -2150,8 +2107,7 @@ module Branch =
                     context.Items["ListContentsParameters"] <- parameters
                     let! result = processQuery context parameters validations 1 query
 
-                    let duration_ms =
-                        (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
+                    let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
 
                     log.LogInformation(
                         "{CurrentInstant}: CorrelationId: {correlationId}; Finished {path}; BranchId: {branchId}; Duration: {duration_ms}ms.",
@@ -2164,8 +2120,7 @@ module Branch =
 
                     return result
                 with ex ->
-                    let duration_ms =
-                        (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
+                    let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
 
                     log.LogError(
                         ex,
@@ -2226,8 +2181,7 @@ module Branch =
 
                     let query (context: HttpContext) maxCount (actorProxy: IBranchActor) =
                         task {
-                            let listContentsParameters =
-                                context.Items["ListContentsParameters"] :?> ListContentsParameters
+                            let listContentsParameters = context.Items["ListContentsParameters"] :?> ListContentsParameters
 
                             if
                                 String.IsNullOrEmpty(listContentsParameters.ReferenceId)
@@ -2255,8 +2209,7 @@ module Branch =
                                 // We have a ReferenceId, so we'll get the DirectoryVersion from that reference.
                                 let referenceActorId = ActorId(listContentsParameters.ReferenceId)
 
-                                let referenceActorProxy =
-                                    actorProxyFactory.CreateActorProxy<IReferenceActor>(referenceActorId, ActorName.Reference)
+                                let referenceActorProxy = actorProxyFactory.CreateActorProxy<IReferenceActor>(referenceActorId, ActorName.Reference)
 
                                 let! referenceDto = referenceActorProxy.Get(getCorrelationId context)
                                 let directoryActorId = DirectoryVersion.GetActorId referenceDto.DirectoryId
@@ -2293,8 +2246,7 @@ module Branch =
                     context.Items["ListContentsParameters"] <- parameters
                     let! result = processQuery context parameters validations 1 query
 
-                    let duration_ms =
-                        (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
+                    let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
 
                     log.LogInformation(
                         "{CurrentInstant}: CorrelationId: {correlationId}; Finished {path}; BranchId: {branchId}; Duration: {duration_ms}ms.",
@@ -2307,8 +2259,7 @@ module Branch =
 
                     return result
                 with ex ->
-                    let duration_ms =
-                        (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
+                    let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
 
                     log.LogError(
                         ex,
@@ -2369,8 +2320,7 @@ module Branch =
 
                     let query (context: HttpContext) maxCount (actorProxy: IBranchActor) =
                         task {
-                            let parameters =
-                                context.Items["GetVersionParameters"] :?> GetBranchVersionParameters
+                            let parameters = context.Items["GetVersionParameters"] :?> GetBranchVersionParameters
 
                             let repositoryId = Guid.Parse(parameters.RepositoryId)
 
@@ -2455,8 +2405,7 @@ module Branch =
                     context.Items.Add("GetVersionParameters", parameters)
                     return! processQuery context parameters validations 1 query
                 with ex ->
-                    let duration_ms =
-                        (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
+                    let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
 
                     log.LogError(
                         ex,

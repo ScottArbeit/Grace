@@ -45,14 +45,12 @@ module Validations =
                     else
                         let actorId = Owner.GetActorId(ownerGuid)
 
-                        let ownerActorProxy =
-                            actorProxyFactory.CreateActorProxy<IOwnerActor>(actorId, ActorName.Owner)
+                        let ownerActorProxy = actorProxyFactory.CreateActorProxy<IOwnerActor>(actorId, ActorName.Owner)
 
                         let! exists = ownerActorProxy.Exists correlationId
 
                         if exists then
-                            use newCacheEntry =
-                                memoryCache.CreateEntry(ownerGuid, Value = null, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
+                            use newCacheEntry = memoryCache.CreateEntry(ownerGuid, Value = null, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
 
                             return Ok()
                         else
@@ -70,8 +68,7 @@ module Validations =
                 if (not <| String.IsNullOrEmpty(ownerId)) && Guid.TryParse(ownerId, &ownerGuid) then
                     let actorId = Owner.GetActorId(ownerGuid)
 
-                    let ownerActorProxy =
-                        actorProxyFactory.CreateActorProxy<IOwnerActor>(actorId, ActorName.Owner)
+                    let ownerActorProxy = actorProxyFactory.CreateActorProxy<IOwnerActor>(actorId, ActorName.Owner)
 
                     let! exists = ownerActorProxy.Exists correlationId
                     if exists then return Error error else return Ok()
@@ -114,8 +111,7 @@ module Validations =
                     else
                         let actorId = Owner.GetActorId(ownerGuid)
 
-                        let ownerActorProxy =
-                            actorProxyFactory.CreateActorProxy<IOwnerActor>(actorId, ActorName.Owner)
+                        let ownerActorProxy = actorProxyFactory.CreateActorProxy<IOwnerActor>(actorId, ActorName.Owner)
 
                         let! isDeleted = ownerActorProxy.IsDeleted correlationId
 
@@ -173,14 +169,12 @@ module Validations =
                     else
                         let actorId = Organization.GetActorId(organizationGuid)
 
-                        let organizationActorProxy =
-                            actorProxyFactory.CreateActorProxy<IOrganizationActor>(actorId, ActorName.Organization)
+                        let organizationActorProxy = actorProxyFactory.CreateActorProxy<IOrganizationActor>(actorId, ActorName.Organization)
 
                         let! exists = organizationActorProxy.Exists correlationId
 
                         if exists then
-                            use newCacheEntry =
-                                memoryCache.CreateEntry(organizationGuid, Value = null, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
+                            use newCacheEntry = memoryCache.CreateEntry(organizationGuid, Value = null, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
 
                             return Ok()
                         else
@@ -233,8 +227,7 @@ module Validations =
                             else
                                 let actorId = Organization.GetActorId(organizationGuid)
 
-                                let organizationActorProxy =
-                                    actorProxyFactory.CreateActorProxy<IOrganizationActor>(actorId, ActorName.Organization)
+                                let organizationActorProxy = actorProxyFactory.CreateActorProxy<IOrganizationActor>(actorId, ActorName.Organization)
 
                                 let! exists = organizationActorProxy.Exists correlationId
 
@@ -278,8 +271,7 @@ module Validations =
                     else
                         let actorId = Organization.GetActorId(organizationGuid)
 
-                        let organizationActorProxy =
-                            actorProxyFactory.CreateActorProxy<IOrganizationActor>(actorId, ActorName.Organization)
+                        let organizationActorProxy = actorProxyFactory.CreateActorProxy<IOrganizationActor>(actorId, ActorName.Organization)
 
                         let! isDeleted = organizationActorProxy.IsDeleted correlationId
 
@@ -333,14 +325,12 @@ module Validations =
                     else
                         let actorId = ActorId(repositoryId)
 
-                        let repositoryActorProxy =
-                            actorProxyFactory.CreateActorProxy<IRepositoryActor>(actorId, ActorName.Repository)
+                        let repositoryActorProxy = actorProxyFactory.CreateActorProxy<IRepositoryActor>(actorId, ActorName.Repository)
 
                         let! exists = repositoryActorProxy.Exists correlationId
 
                         if exists then
-                            use newCacheEntry =
-                                memoryCache.CreateEntry(repositoryGuid, Value = null, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
+                            use newCacheEntry = memoryCache.CreateEntry(repositoryGuid, Value = null, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
 
                             return Ok()
                         else
@@ -376,8 +366,7 @@ module Validations =
                         if cached then
                             return Ok()
                         else
-                            let repositoryActorProxy =
-                                actorProxyFactory.CreateActorProxy<IRepositoryActor>(ActorId(repositoryId), ActorName.Repository)
+                            let repositoryActorProxy = actorProxyFactory.CreateActorProxy<IRepositoryActor>(ActorId(repositoryId), ActorName.Repository)
 
                             let! exists = repositoryActorProxy.Exists correlationId
 
@@ -410,8 +399,7 @@ module Validations =
                     else
                         let actorId = Repository.GetActorId(repositoryGuid)
 
-                        let repositoryActorProxy =
-                            actorProxyFactory.CreateActorProxy<IRepositoryActor>(actorId, ActorName.Repository)
+                        let repositoryActorProxy = actorProxyFactory.CreateActorProxy<IRepositoryActor>(actorId, ActorName.Repository)
 
                         let! isDeleted = repositoryActorProxy.IsDeleted correlationId
 
@@ -467,14 +455,12 @@ module Validations =
                     else
                         let actorId = ActorId(branchId)
 
-                        let branchActorProxy =
-                            actorProxyFactory.CreateActorProxy<IBranchActor>(actorId, ActorName.Branch)
+                        let branchActorProxy = actorProxyFactory.CreateActorProxy<IBranchActor>(actorId, ActorName.Branch)
 
                         let! exists = branchActorProxy.Exists correlationId
 
                         if exists then
-                            use newCacheEntry =
-                                memoryCache.CreateEntry(branchGuid, Value = null, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
+                            use newCacheEntry = memoryCache.CreateEntry(branchGuid, Value = null, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
 
                             return Ok()
                         else
@@ -493,8 +479,7 @@ module Validations =
                 if (not <| String.IsNullOrEmpty(branchId)) && Guid.TryParse(branchId, &guid) then
                     let actorId = ActorId($"{guid}")
 
-                    let branchActorProxy =
-                        actorProxyFactory.CreateActorProxy<IBranchActor>(actorId, ActorName.Branch)
+                    let branchActorProxy = actorProxyFactory.CreateActorProxy<IBranchActor>(actorId, ActorName.Branch)
 
                     let! exists = branchActorProxy.Exists correlationId
                     if exists then return Error error else return Ok()
@@ -521,8 +506,7 @@ module Validations =
                             else
                                 let actorId = ActorId($"{branchGuid}")
 
-                                let branchActorProxy =
-                                    actorProxyFactory.CreateActorProxy<IBranchActor>(actorId, ActorName.Branch)
+                                let branchActorProxy = actorProxyFactory.CreateActorProxy<IBranchActor>(actorId, ActorName.Branch)
 
                                 let! exists = branchActorProxy.Exists correlationId
 
@@ -569,8 +553,7 @@ module Validations =
                         else
                             let actorId = ActorId(branchId)
 
-                            let branchActorProxy =
-                                actorProxyFactory.CreateActorProxy<IBranchActor>(actorId, ActorName.Branch)
+                            let branchActorProxy = actorProxyFactory.CreateActorProxy<IBranchActor>(actorId, ActorName.Branch)
 
                             let! branchDto = branchActorProxy.Get correlationId
 
@@ -613,8 +596,7 @@ module Validations =
                         else
                             let actorId = ActorId(branchId)
 
-                            let branchActorProxy =
-                                actorProxyFactory.CreateActorProxy<IBranchActor>(actorId, ActorName.Branch)
+                            let branchActorProxy = actorProxyFactory.CreateActorProxy<IBranchActor>(actorId, ActorName.Branch)
 
                             let! branchDto = branchActorProxy.Get correlationId
                             let allowed = branchDto.AssignEnabled
@@ -646,8 +628,7 @@ module Validations =
                 if not <| (referenceId = Guid.Empty) then
                     let actorId = ActorId($"{referenceId}")
 
-                    let referenceActorProxy =
-                        actorProxyFactory.CreateActorProxy<IReferenceActor>(actorId, ActorName.Reference)
+                    let referenceActorProxy = actorProxyFactory.CreateActorProxy<IReferenceActor>(actorId, ActorName.Reference)
 
                     let! exists = referenceActorProxy.Exists correlationId
                     if exists then return Ok() else return Error error
@@ -674,8 +655,7 @@ module Validations =
                     let! exists = directoryVersionActorProxy.Exists correlationId
 
                     if exists then
-                        use newCacheEntry =
-                            memoryCache.CreateEntry(directoryId, Value = null, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
+                        use newCacheEntry = memoryCache.CreateEntry(directoryId, Value = null, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
 
                         return Ok()
                     else
@@ -693,8 +673,7 @@ module Validations =
                     let directoryId = directoryIdStack.Dequeue()
                     let actorId = DirectoryVersion.GetActorId(directoryId)
 
-                    let directoryVersionActorProxy =
-                        actorProxyFactory.CreateActorProxy<IDirectoryVersionActor>(actorId, ActorName.DirectoryVersion)
+                    let directoryVersionActorProxy = actorProxyFactory.CreateActorProxy<IDirectoryVersionActor>(actorId, ActorName.DirectoryVersion)
 
                     let! exists = directoryVersionActorProxy.Exists correlationId
                     allExist <- exists
@@ -708,8 +687,7 @@ module Validations =
             task {
                 let actorId = ActorId($"{repositoryId}")
 
-                let repositoryActorProxy =
-                    actorProxyFactory.CreateActorProxy<IRepositoryActor>(actorId, ActorName.Repository)
+                let repositoryActorProxy = actorProxyFactory.CreateActorProxy<IRepositoryActor>(actorId, ActorName.Repository)
 
                 match! getDirectoryBySha256Hash repositoryId sha256Hash correlationId with
                 | Some directoryVersion -> return Ok()

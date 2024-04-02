@@ -85,8 +85,7 @@ module Config =
     let private writeHandler =
         CommandHandler.Create(fun (parseResult: ParseResult) (parameters: WriteParameters) ->
             task {
-                if parseResult |> verbose then
-                    printParseResult parseResult
+                if parseResult |> verbose then printParseResult parseResult
 
                 let validateIncomingParameters = (parseResult, parameters) |> CommonValidations
 
@@ -129,11 +128,9 @@ module Config =
             :> Task)
 
     let Build =
-        let addCommonOptions (command: Command) =
-            command |> addOption Options.directory |> addOption Options.overwrite
+        let addCommonOptions (command: Command) = command |> addOption Options.directory |> addOption Options.overwrite
 
-        let configCommand =
-            new Command("config", Description = "Initializes a repository with the default Grace configuration.")
+        let configCommand = new Command("config", Description = "Initializes a repository with the default Grace configuration.")
 
         let writeCommand =
             new Command("write", Description = "Initializes a repository with a default Grace configuration.")

@@ -40,15 +40,13 @@ module Combinators =
 
 module Utilities =
     /// Gets the current instant.
-    let getCurrentInstant () =
-        SystemClock.Instance.GetCurrentInstant()
+    let getCurrentInstant () = SystemClock.Instance.GetCurrentInstant()
 
     /// Formats an instant as a string in ExtendedIso format.
     ///
     /// Example: "2019-06-15T13:45:30.9040833Z".
     let formatInstantExtended (instant: Instant) =
-        let instantString =
-            instant.ToString(InstantPattern.ExtendedIso.PatternText, CultureInfo.InvariantCulture)
+        let instantString = instant.ToString(InstantPattern.ExtendedIso.PatternText, CultureInfo.InvariantCulture)
 
         if instantString.Length = 28 then
             instantString
@@ -63,20 +61,17 @@ module Utilities =
     /// Gets the current instant as a string in ExtendedIso format.
     ///
     /// Example: "2031-06-15T13:45:30.9040833Z".
-    let getCurrentInstantExtended () =
-        getCurrentInstant () |> formatInstantExtended
+    let getCurrentInstantExtended () = getCurrentInstant () |> formatInstantExtended
 
     /// Formats an instant as a string in General format.
     ///
     /// Example: "2019-06-15T13:45:30Z".
-    let formatInstantGeneral (instant: Instant) =
-        instant.ToString(InstantPattern.General.PatternText, CultureInfo.InvariantCulture)
+    let formatInstantGeneral (instant: Instant) = instant.ToString(InstantPattern.General.PatternText, CultureInfo.InvariantCulture)
 
     /// Gets the current instant as a string in General format.
     ///
     /// Example: "2019-06-15T13:45:30Z".
-    let getCurrentInstantGeneral () =
-        getCurrentInstant () |> formatInstantGeneral
+    let getCurrentInstantGeneral () = getCurrentInstant () |> formatInstantGeneral
 
     /// Converts an Instant to local time, and produces a string in short date/time format, using the CurrentUICulture.
     let instantToLocalTime (instant: Instant) =
@@ -86,8 +81,7 @@ module Utilities =
             .ToString("g", CultureInfo.CurrentUICulture)
 
     /// Gets the current instant in local time as a string in short date/time format, using the CurrentUICulture.
-    let getCurrentInstantLocal () =
-        getCurrentInstant () |> instantToLocalTime
+    let getCurrentInstantLocal () = getCurrentInstant () |> instantToLocalTime
 
     /// Ensures that the DateTime is printed in exactly the same number of characters, so the output is aligned.
     let formatDateTimeAligned (dateTime: DateTime) =
@@ -97,19 +91,13 @@ module Utilities =
         sprintf "%s %s" datePart formattedTimePart
 
     /// Ensures that the Instant is printed in exactly the same number of characters, so the output is aligned.
-    let formatInstantAligned (instant: Instant) =
-        formatDateTimeAligned (instant.ToDateTimeUtc())
+    let formatInstantAligned (instant: Instant) = formatDateTimeAligned (instant.ToDateTimeUtc())
 
     /// Logs the message to the console, with the current instant and thread ID.
-    let logToConsole message =
-        printfn $"{getCurrentInstantExtended ()} {Environment.CurrentManagedThreadId:X2} {message}"
+    let logToConsole message = printfn $"{getCurrentInstantExtended ()} {Environment.CurrentManagedThreadId:X2} {message}"
 
     /// Gets the first eight characters of a SHA256 hash.
-    let getShortSha256Hash (sha256Hash: String) =
-        if sha256Hash.Length >= 8 then
-            sha256Hash.Substring(0, 8)
-        else
-            String.Empty
+    let getShortSha256Hash (sha256Hash: String) = if sha256Hash.Length >= 8 then sha256Hash.Substring(0, 8) else String.Empty
 
     /// Converts both the type name and case name of a discriminated union to a string.
     ///
@@ -141,8 +129,7 @@ module Utilities =
     /// Gets the cases of a discriminated union as an array of strings.
     ///
     /// Example: listCases<Animal> -> [| "Dog"; "Cat" |]
-    let listCases<'T> () =
-        FSharpType.GetUnionCases typeof<'T> |> Array.map (fun c -> c.Name)
+    let listCases<'T> () = FSharpType.GetUnionCases typeof<'T> |> Array.map (fun c -> c.Name)
 
     /// Gets the cases of discriminated union for serialization.
     let GetKnownTypes<'T> () =
@@ -150,24 +137,19 @@ module Utilities =
         |> Array.filter FSharpType.IsUnion
 
     /// Serializes an object to JSON, using Grace's custom JsonSerializerOptions.
-    let serialize<'T> item =
-        JsonSerializer.Serialize<'T>(item, Constants.JsonSerializerOptions)
+    let serialize<'T> item = JsonSerializer.Serialize<'T>(item, Constants.JsonSerializerOptions)
 
     /// Serializes an object to JSON and writes it to a stream, using Grace's custom JsonSerializerOptions.
-    let serializeAsync<'T> stream item =
-        task { return! JsonSerializer.SerializeAsync<'T>(stream, item, Constants.JsonSerializerOptions) }
+    let serializeAsync<'T> stream item = task { return! JsonSerializer.SerializeAsync<'T>(stream, item, Constants.JsonSerializerOptions) }
 
     /// Deserializes a JSON string to a provided type, using Grace's custom JsonSerializerOptions.
-    let deserialize<'T> (s: string) =
-        JsonSerializer.Deserialize<'T>(s, Constants.JsonSerializerOptions)
+    let deserialize<'T> (s: string) = JsonSerializer.Deserialize<'T>(s, Constants.JsonSerializerOptions)
 
     /// Deserializes a stream of JSON to a provided type, using Grace's custom JsonSerializerOptions.
-    let deserializeAsync<'T> stream =
-        task { return! JsonSerializer.DeserializeAsync<'T>(stream, Constants.JsonSerializerOptions) }
+    let deserializeAsync<'T> stream = task { return! JsonSerializer.DeserializeAsync<'T>(stream, Constants.JsonSerializerOptions) }
 
     /// Create JsonContent from the provided object, using Grace's custom JsonSerializerOptions.
-    let createJsonContent<'T> item =
-        JsonContent.Create(item, options = Constants.JsonSerializerOptions)
+    let createJsonContent<'T> item = JsonContent.Create(item, options = Constants.JsonSerializerOptions)
 
     /// Retrieves the localized version of a system resource string.
     ///
@@ -205,11 +187,7 @@ module Utilities =
     let normalizeFilePath (filePath: string) = filePath.Replace(@"\", "/")
 
     /// Switches "/" to "\" when we're running on Windows.
-    let getNativeFilePath (filePath: string) =
-        if runningOnWindows then
-            filePath.Replace("/", @"\")
-        else
-            filePath
+    let getNativeFilePath (filePath: string) = if runningOnWindows then filePath.Replace("/", @"\") else filePath
 
     /// Checks if a file is a binary file by scanning the first 8K for a 0x00 character; if it finds one, we assume the file is binary.
     ///
@@ -356,12 +334,8 @@ module Utilities =
             $"Message: {ex.Message}{Environment.NewLine}{Environment.NewLine}Stack trace:{Environment.NewLine}{ex.StackTrace}{Environment.NewLine}"
 
         match ex.InnerException with
-        | null ->
-            { ``exception`` = exceptionMessage ex
-              innerException = "null" }
-        | innerEx ->
-            { ``exception`` = exceptionMessage ex
-              innerException = exceptionMessage ex.InnerException }
+        | null -> { ``exception`` = exceptionMessage ex; innerException = "null" }
+        | innerEx -> { ``exception`` = exceptionMessage ex; innerException = exceptionMessage ex.InnerException }
     //#else
     //        {|message = $"Internal server error, and, yes, it's been logged. The correlationId is in the X-Correlation-Id header."|}
     //#endif
@@ -422,8 +396,7 @@ module Utilities =
         if path = Constants.RootDirectoryPath then
             None
         else
-            let lastIndex =
-                path.LastIndexOfAny([| Path.DirectorySeparatorChar; Path.AltDirectorySeparatorChar |])
+            let lastIndex = path.LastIndexOfAny([| Path.DirectorySeparatorChar; Path.AltDirectorySeparatorChar |])
 
             if lastIndex = -1 then
                 Some Constants.RootDirectoryPath
@@ -437,12 +410,9 @@ module Utilities =
     let getContentType (fileInfo: FileInfo) isBinary =
         let mutable mimeType = String.Empty
 
-        if MimeTypes.MimeTypeMap.TryGetMimeType(fileInfo.Name, &mimeType) then
-            mimeType
-        elif isBinary then
-            "application/octet-stream"
-        else
-            "application/text"
+        if MimeTypes.MimeTypeMap.TryGetMimeType(fileInfo.Name, &mimeType) then mimeType
+        elif isBinary then "application/octet-stream"
+        else "application/text"
 
     /// Creates a Span<`T> on the stack to minimize heap usage and GC. This is an F# implementation of the C# keyword `stackalloc`.
     /// This should be used for smaller allocations, as the stack has ~1MB size.
@@ -453,8 +423,7 @@ module Utilities =
 
     /// Creates a dictionary from the properties of an object.
     let getPropertiesAsDictionary<'T> (obj: 'T) =
-        let properties =
-            typeof<'T>.GetProperties(BindingFlags.Instance ||| BindingFlags.Public)
+        let properties = typeof<'T>.GetProperties(BindingFlags.Instance ||| BindingFlags.Public)
 
         let dict = Dictionary<string, string>()
 
@@ -499,8 +468,7 @@ module Utilities =
         let traceId = byteArrayToString (traceIdBytes)
         let parentId = byteArrayToString (parentIdBytes)
 
-        let httpClient =
-            new HttpClient(handler = socketsHttpHandler, disposeHandler = false)
+        let httpClient = new HttpClient(handler = socketsHttpHandler, disposeHandler = false)
 
         httpClient.DefaultRequestVersion <- HttpVersion.Version20 // We'll aggressively move to Version30 as soon as we can.
         httpClient.DefaultRequestHeaders.Add(Constants.Traceparent, $"00-{traceId}-{parentId}-01")

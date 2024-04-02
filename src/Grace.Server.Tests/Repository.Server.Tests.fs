@@ -87,8 +87,7 @@ type Repository() =
                         ))
                 )
 
-            let organizationDeleteParameters =
-                Parameters.Organization.DeleteOrganizationParameters()
+            let organizationDeleteParameters = Parameters.Organization.DeleteOrganizationParameters()
 
             organizationDeleteParameters.OwnerId <- ownerId
             organizationDeleteParameters.OrganizationId <- organizationId
@@ -111,8 +110,7 @@ type Repository() =
     [<Repeat(1)>]
     member public this.SetDescriptionWithValidValues() =
         task {
-            let parameters =
-                Grace.Shared.Parameters.Repository.SetRepositoryDescriptionParameters()
+            let parameters = Grace.Shared.Parameters.Repository.SetRepositoryDescriptionParameters()
 
             parameters.Description <- $"Description set at {getCurrentInstantGeneral ()}."
             parameters.OwnerId <- ownerId
@@ -281,8 +279,7 @@ type Repository() =
     [<Repeat(1)>]
     member public this.SetVisibilityWithValidValues() =
         task {
-            let parameters =
-                Grace.Shared.Parameters.Repository.SetRepositoryVisibilityParameters()
+            let parameters = Grace.Shared.Parameters.Repository.SetRepositoryVisibilityParameters()
 
             parameters.OwnerId <- ownerId
             parameters.OrganizationId <- organizationId
@@ -300,8 +297,7 @@ type Repository() =
     [<Repeat(1)>]
     member public this.SetVisibilityWithInvalidValues() =
         task {
-            let parameters =
-                Grace.Shared.Parameters.Repository.SetRepositoryVisibilityParameters()
+            let parameters = Grace.Shared.Parameters.Repository.SetRepositoryVisibilityParameters()
 
             parameters.OwnerId <- ownerId
             parameters.OrganizationId <- organizationId

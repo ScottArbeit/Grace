@@ -17,8 +17,7 @@ open System.Collections.Concurrent
 
 module StorageAccount =
 
-    let GetActorId (storageProvider: ObjectStorageProvider) (name: StorageAccountName) =
-        ActorId($"{storageProvider}{Constants.GraceNameDelimiter}{name}")
+    let GetActorId (storageProvider: ObjectStorageProvider) (name: StorageAccountName) = ActorId($"{storageProvider}{Constants.GraceNameDelimiter}{name}")
 
     type IStorageAccount =
         inherit IActor
@@ -76,8 +75,7 @@ module StorageAccount =
                     Storage.AzureBlobStorage.GetReadSharedAccessSignature
                     let blobContainerClient = getContainerClient containerName
 
-                    let blobSasBuilder =
-                        BlobSasBuilder(BlobSasPermissions.Read, DateTimeOffset.UtcNow.AddMinutes(Constants.SharedAccessSignatureExpiration))
+                    let blobSasBuilder = BlobSasBuilder(BlobSasPermissions.Read, DateTimeOffset.UtcNow.AddMinutes(Constants.SharedAccessSignatureExpiration))
 
                     blobSasBuilder.BlobName <- relativePath.ToString()
                     Task.FromResult(blobContainerClient.GenerateSasUri(blobSasBuilder).ToString())

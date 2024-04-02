@@ -19,8 +19,7 @@ module Theme =
         let Important = "important"
         let Verbose = "verbose"
 
-    let format (color: Color) =
-        $"#{color.R:X2}{color.G:X2}{color.B:X2}"
+    let format (color: Color) = $"#{color.R:X2}{color.G:X2}{color.B:X2}"
 
     type Theme =
         { Name: string
@@ -39,8 +38,7 @@ module Theme =
             displayColorOptions.Add(DisplayColor.Important, format colors[6])
             displayColorOptions.Add(DisplayColor.Verbose, format colors[7])
 
-            { Name = name
-              DisplayColorOptions = displayColorOptions }
+            { Name = name; DisplayColorOptions = displayColorOptions }
 
     let private defaultColors =
         [| Color.FromArgb(0x00, 0xaf, 0x5f)

@@ -89,30 +89,21 @@ module Common =
     let verbose parseResult = parseResult |> isOutputFormat Verbose
 
     /// Checks if the output format from the command line is either Normal or Verbose; i.e. it has output.
-    let hasOutput parseResult =
-        parseResult |> normal || parseResult |> verbose
+    let hasOutput parseResult = parseResult |> normal || parseResult |> verbose
 
-    let startProgressTask showOutput (t: ProgressTask) =
-        if showOutput then
-            t.StartTask()
+    let startProgressTask showOutput (t: ProgressTask) = if showOutput then t.StartTask()
 
-    let setProgressTaskValue showOutput (value: float) (t: ProgressTask) =
-        if showOutput then
-            t.Value <- value
+    let setProgressTaskValue showOutput (value: float) (t: ProgressTask) = if showOutput then t.Value <- value
 
-    let incrementProgressTaskValue showOutput (value: float) (t: ProgressTask) =
-        if showOutput then
-            t.Increment(value)
+    let incrementProgressTaskValue showOutput (value: float) (t: ProgressTask) = if showOutput then t.Increment(value)
 
     let emptyTask = ProgressTask(0, "Empty progress task", 0.0, autoStart = false)
 
     /// Gets the correlationId parameter from the command line.
-    let getCorrelationId (parseResult: ParseResult) =
-        parseResult.FindResultFor(Options.correlationId).GetValueOrDefault<String>()
+    let getCorrelationId (parseResult: ParseResult) = parseResult.FindResultFor(Options.correlationId).GetValueOrDefault<String>()
 
     /// Rewrites "[" to "[[" and "]" to "]]".
-    let escapeBrackets s =
-        s.ToString().Replace("[", "[[").Replace("]", "]]")
+    let escapeBrackets s = s.ToString().Replace("[", "[[").Replace("]", "]]")
 
     /// Prints the ParseResult with markup.
     let printParseResult (parseResult: ParseResult) =
@@ -195,5 +186,4 @@ module Common =
            percentageColumn
            spinnerColumn |]
 
-    let progress =
-        AnsiConsole.Progress(AutoRefresh = true, AutoClear = false, HideCompleted = false)
+    let progress = AnsiConsole.Progress(AutoRefresh = true, AutoClear = false, HideCompleted = false)

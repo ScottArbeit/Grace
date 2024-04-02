@@ -115,8 +115,7 @@ module Configuration =
             let mutable graceConfigPath = String.Empty
 
             while String.IsNullOrEmpty(graceConfigPath) && not (isNull currentDirectory) do
-                let fullPath =
-                    Path.Combine(currentDirectory.FullName, Constants.GraceConfigDirectory, Constants.GraceConfigFileName)
+                let fullPath = Path.Combine(currentDirectory.FullName, Constants.GraceConfigDirectory, Constants.GraceConfigFileName)
                 //printfn $"Searching for configuration in {currentDirectory}..."
                 if File.Exists(fullPath) then
                     graceConfigPath <- fullPath
@@ -146,8 +145,7 @@ module Configuration =
         try
             let configurationContents = File.ReadAllText(graceConfigurationFilePath)
 
-            let graceConfiguration =
-                JsonSerializer.Deserialize<GraceConfiguration>(configurationContents, Constants.JsonSerializerOptions)
+            let graceConfiguration = JsonSerializer.Deserialize<GraceConfiguration>(configurationContents, Constants.JsonSerializerOptions)
 
             Ok graceConfiguration
         with ex ->
@@ -183,8 +181,7 @@ module Configuration =
 
                 match (parseConfigurationFile graceConfigurationFilePath) with
                 | Ok graceConfigurationFromFile ->
-                    let graceIgnoreFullPath =
-                        (Path.Combine(graceConfigurationDirectory, Constants.GraceIgnoreFileName))
+                    let graceIgnoreFullPath = (Path.Combine(graceConfigurationDirectory, Constants.GraceIgnoreFileName))
 
                     let graceIgnoreEntries = getGraceIgnoreEntries graceIgnoreFullPath
 

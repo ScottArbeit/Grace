@@ -4,12 +4,18 @@ root = true
 
 [*.{fs,fsi,fsproj,cs,csproj}]
 charset = utf-8
-indent_style = space
-indent_size = 4
 end_of_line = lf
+fsharp_max_function_binding_width = 160
+fsharp_max_if_then_short_width = 80
+fsharp_max_if_then_else_short_width = 80
+fsharp_max_record_width = 160
+fsharp_max_value_binding_width = 160
+indent_size = 4
+indent_style = space
 insert_final_newline = true
-trim_trailing_whitespace = true
 max_line_length = 160
+trim_trailing_whitespace = true
+
 
 [*.hbs]
 insert_final_newline = false

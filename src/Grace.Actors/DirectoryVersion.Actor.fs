@@ -34,10 +34,7 @@ module DirectoryVersion =
           DeleteReason: string }
 
         static member Default =
-            { DirectoryVersion = DirectoryVersion.Default
-              RecursiveSize = Constants.InitialDirectorySize
-              DeletedAt = None
-              DeleteReason = String.Empty }
+            { DirectoryVersion = DirectoryVersion.Default; RecursiveSize = Constants.InitialDirectorySize; DeletedAt = None; DeleteReason = String.Empty }
 
     type DirectoryVersionActor(host: ActorHost) =
         inherit Actor(host)
@@ -59,21 +56,11 @@ module DirectoryVersion =
 
         let updateDto directoryVersionEvent currentDirectoryVersionDto =
             match directoryVersionEvent with
-            | Created directoryVersion ->
-                { currentDirectoryVersionDto with
-                    DirectoryVersion = directoryVersion }
-            | RecursiveSizeSet recursiveSize ->
-                { currentDirectoryVersionDto with
-                    RecursiveSize = recursiveSize }
-            | LogicalDeleted deleteReason ->
-                { currentDirectoryVersionDto with
-                    DeletedAt = Some(getCurrentInstant ())
-                    DeleteReason = deleteReason }
+            | Created directoryVersion -> { currentDirectoryVersionDto with DirectoryVersion = directoryVersion }
+            | RecursiveSizeSet recursiveSize -> { currentDirectoryVersionDto with RecursiveSize = recursiveSize }
+            | LogicalDeleted deleteReason -> { currentDirectoryVersionDto with DeletedAt = Some(getCurrentInstant ()); DeleteReason = deleteReason }
             | PhysicalDeleted -> currentDirectoryVersionDto // Do nothing because it's about to be deleted anyway.
-            | Undeleted ->
-                { currentDirectoryVersionDto with
-                    DeletedAt = None
-                    DeleteReason = String.Empty }
+            | Undeleted -> { currentDirectoryVersionDto with DeletedAt = None; DeleteReason = String.Empty }
 
         member val private correlationId: CorrelationId = String.Empty with get, set
 
@@ -108,8 +95,7 @@ module DirectoryVersion =
 
                     log.LogError("{CurrentInstant} {ExceptionDetails}", getCurrentInstantExtended (), exc.ToString())
 
-                let duration_ms =
-                    getCurrentInstant().Minus(activateStartTime).TotalMilliseconds.ToString("F3")
+                let duration_ms = getCurrentInstant().Minus(activateStartTime).TotalMilliseconds.ToString("F3")
 
                 log.LogInformation(
                     "{CurrentInstant}: Activated {ActorType} {ActorId}. {message} Duration: {duration_ms}ms.",
@@ -149,8 +135,7 @@ module DirectoryVersion =
             Task.CompletedTask
 
         override this.OnPostActorMethodAsync(context) =
-            let duration_ms =
-                (getCurrentInstant().Minus(actorStartTime).TotalMilliseconds).ToString("F3")
+            let duration_ms = (getCurrentInstant().Minus(actorStartTime).TotalMilliseconds).ToString("F3")
 
             if String.IsNullOrEmpty(currentCommand) then
                 log.LogInformation(
@@ -204,8 +189,7 @@ module DirectoryVersion =
 
             task {
                 try
-                    if directoryVersionEvents.Count = 0 then
-                        this.OnFirstWrite()
+                    if directoryVersionEvents.Count = 0 then this.OnFirstWrite()
 
                     directoryVersionEvents.Add(directoryVersionEvent)
 
@@ -217,8 +201,7 @@ module DirectoryVersion =
                     let graceEvent = Events.GraceEvent.DirectoryVersionEvent directoryVersionEvent
                     do! daprClient.PublishEventAsync(GracePubSubService, GraceEventStreamTopic, graceEvent)
 
-                    let returnValue =
-                        GraceReturnValue.Create "Directory version command succeeded." directoryVersionEvent.Metadata.CorrelationId
+                    let returnValue = GraceReturnValue.Create "Directory version command succeeded." directoryVersionEvent.Metadata.CorrelationId
 
                     returnValue.Properties.Add(nameof (DirectoryId), $"{directoryVersionDto.DirectoryVersion.DirectoryId}")
 
@@ -439,8 +422,7 @@ module DirectoryVersion =
                     if directoryVersionDto.RecursiveSize = Constants.InitialDirectorySize then
                         let! directoryVersions = (this :> IDirectoryVersionActor).GetDirectoryVersionsRecursive false correlationId
 
-                        let recursiveSize =
-                            directoryVersions |> Seq.sumBy (fun directoryVersion -> directoryVersion.Size)
+                        let recursiveSize = directoryVersions |> Seq.sumBy (fun directoryVersion -> directoryVersion.Size)
 
                         match! (this :> IDirectoryVersionActor).Handle (SetRecursiveSize recursiveSize) (EventMetadata.New correlationId "GraceSystem") with
                         | Ok returnValue -> return recursiveSize

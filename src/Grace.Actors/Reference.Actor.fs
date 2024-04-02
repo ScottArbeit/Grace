@@ -48,8 +48,7 @@ module Reference =
                     message <- "Retrieved from database."
                 | None -> message <- "Not found in database."
 
-                let duration_ms =
-                    getCurrentInstant().Minus(activateStartTime).TotalMilliseconds.ToString("F3")
+                let duration_ms = getCurrentInstant().Minus(activateStartTime).TotalMilliseconds.ToString("F3")
 
                 log.LogInformation(
                     "{CurrentInstant}: Activated {ActorType} {ActorId}. {message} Duration: {duration_ms}ms.",
@@ -78,8 +77,7 @@ module Reference =
             Task.CompletedTask
 
         override this.OnPostActorMethodAsync(context) =
-            let duration_ms =
-                (getCurrentInstant().Minus(actorStartTime).TotalMilliseconds).ToString("F3")
+            let duration_ms = (getCurrentInstant().Minus(actorStartTime).TotalMilliseconds).ToString("F3")
 
             log.LogInformation(
                 "{CurrentInstant}: CorrelationID: {correlationID}; Finished {ActorName}.{MethodName}; ReferenceId: {ReferenceId}; Duration: {duration_ms}ms.",

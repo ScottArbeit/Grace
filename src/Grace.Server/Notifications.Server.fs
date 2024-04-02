@@ -37,8 +37,7 @@ module Notifications =
     type NotificationHub() =
         inherit Hub<IGraceClientConnection>()
 
-        override this.OnConnectedAsync() =
-            task { logToConsole $"NotificationHub ConnectionId {this.Context.ConnectionId} established." }
+        override this.OnConnectedAsync() = task { logToConsole $"NotificationHub ConnectionId {this.Context.ConnectionId} established." }
 
         //override this.OnDisconnectedAsync(ex: Exception) =
         //    task {
@@ -116,8 +115,7 @@ module Notifications =
         task {
             let referenceActorId = Reference.GetActorId referenceId
 
-            let referenceActorProxy =
-                actorProxyFactory.CreateActorProxy<IReferenceActor>(referenceActorId, ActorName.Reference)
+            let referenceActorProxy = actorProxyFactory.CreateActorProxy<IReferenceActor>(referenceActorId, ActorName.Reference)
 
             return! referenceActorProxy.Get correlationId
         }
@@ -127,8 +125,7 @@ module Notifications =
         task {
             let branchActorId = Branch.GetActorId branchId
 
-            let branchActorProxy =
-                actorProxyFactory.CreateActorProxy<IBranchActor>(branchActorId, ActorName.Branch)
+            let branchActorProxy = actorProxyFactory.CreateActorProxy<IBranchActor>(branchActorId, ActorName.Branch)
 
             return! branchActorProxy.Get correlationId
         }
@@ -139,8 +136,7 @@ module Notifications =
             task {
                 logToConsole $"In Notifications.Post."
 
-                let hubContext =
-                    context.GetService<IHubContext<NotificationHub, IGraceClientConnection>>()
+                let hubContext = context.GetService<IHubContext<NotificationHub, IGraceClientConnection>>()
 
                 let! graceEvent = context.BindJsonAsync<GraceEvent>()
                 //logToConsole $"{serialize graceEvent}"
@@ -150,8 +146,7 @@ module Notifications =
                     task {
                         let diffActorId = Diff.GetActorId directoryId1 directoryId2
 
-                        let diffActorProxy =
-                            actorProxyFactory.CreateActorProxy<IDiffActor>(diffActorId, ActorName.Diff)
+                        let diffActorProxy = actorProxyFactory.CreateActorProxy<IDiffActor>(diffActorId, ActorName.Diff)
 
                         let! x = diffActorProxy.Populate(getCorrelationId context)
                         ()

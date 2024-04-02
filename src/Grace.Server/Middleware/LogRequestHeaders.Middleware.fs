@@ -12,8 +12,7 @@ open System.Text
 /// Checks the incoming request for an X-Correlation-Id header. If there's no CorrelationId header, it generates one and adds it to the response headers.
 type LogRequestHeadersMiddleware(next: RequestDelegate) =
 
-    let log =
-        ApplicationContext.loggerFactory.CreateLogger(nameof (LogRequestHeadersMiddleware))
+    let log = ApplicationContext.loggerFactory.CreateLogger(nameof (LogRequestHeadersMiddleware))
 
     member this.Invoke(context: HttpContext) =
 

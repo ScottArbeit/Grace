@@ -47,8 +47,7 @@ module Commands =
             | DeletePhysical
             | Undelete
 
-            static member GetKnownTypes() =
-                GetKnownTypes<DirectoryVersionCommand>()
+            static member GetKnownTypes() = GetKnownTypes<DirectoryVersionCommand>()
 
     module Organization =
         [<KnownType("GetKnownTypes")>]

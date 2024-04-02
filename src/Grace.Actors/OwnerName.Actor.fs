@@ -39,8 +39,7 @@ module OwnerName =
             Task.CompletedTask
 
         override this.OnPostActorMethodAsync(context) =
-            let duration_ms =
-                (getCurrentInstant().Minus(actorStartTime).TotalMilliseconds).ToString("F3")
+            let duration_ms = (getCurrentInstant().Minus(actorStartTime).TotalMilliseconds).ToString("F3")
 
             log.LogInformation(
                 "{CurrentInstant}: CorrelationID: {correlationID}; Finished {ActorName}.{MethodName}; OwnerName: {OwnerName}; OwnerId: {ownerId}; Duration: {duration_ms}ms.",
@@ -49,10 +48,7 @@ module OwnerName =
                 actorName,
                 context.MethodName,
                 this.Id,
-                (if Option.isSome cachedOwnerId then
-                     $"{cachedOwnerId.Value}"
-                 else
-                     "None"),
+                (if Option.isSome cachedOwnerId then $"{cachedOwnerId.Value}" else "None"),
                 duration_ms
             )
 

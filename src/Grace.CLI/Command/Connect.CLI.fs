@@ -38,11 +38,9 @@ module Connect =
                 Arity = ArgumentArity.ExactlyOne
             )
 
-        let ownerId =
-            new Option<String>("--ownerId", IsRequired = false, Description = "The repository's owner ID <Guid>.", Arity = ArgumentArity.ExactlyOne)
+        let ownerId = new Option<String>("--ownerId", IsRequired = false, Description = "The repository's owner ID <Guid>.", Arity = ArgumentArity.ExactlyOne)
 
-        let ownerName =
-            new Option<String>("--ownerName", IsRequired = false, Description = "The repository's owner name.", Arity = ArgumentArity.ExactlyOne)
+        let ownerName = new Option<String>("--ownerName", IsRequired = false, Description = "The repository's owner name.", Arity = ArgumentArity.ExactlyOne)
 
         let organizationId =
             new Option<String>(
@@ -158,11 +156,9 @@ module Connect =
     let private Connect =
         CommandHandler.Create(fun (parseResult: ParseResult) (commonParameters: CommonParameters) ->
             try
-                if parseResult |> verbose then
-                    printParseResult parseResult
+                if parseResult |> verbose then printParseResult parseResult
 
-                let validateIncomingParameters =
-                    ValidateIncomingParameters parseResult commonParameters
+                let validateIncomingParameters = ValidateIncomingParameters parseResult commonParameters
 
                 match validateIncomingParameters with
                 | Result.Ok r -> printfn ("ok")
@@ -174,8 +170,7 @@ module Connect =
 
     let Build =
         // Create main command and aliases, if any.
-        let connectCommand =
-            new Command("connect", Description = "Connect to a Grace repository.")
+        let connectCommand = new Command("connect", Description = "Connect to a Grace repository.")
 
         connectCommand.AddOption(Options.repositoryId)
         connectCommand.AddOption(Options.repositoryName)

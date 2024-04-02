@@ -70,8 +70,7 @@ module Repository =
                     repositoryDto <- RepositoryDto.Default
                     message <- "Not found in database."
 
-                let duration_ms =
-                    getCurrentInstant().Minus(activateStartTime).TotalMilliseconds.ToString("F3")
+                let duration_ms = getCurrentInstant().Minus(activateStartTime).TotalMilliseconds.ToString("F3")
 
                 log.LogInformation(
                     "{CurrentInstant}: Activated {ActorType} {ActorId}. {message} Duration: {duration_ms}ms.",
@@ -101,8 +100,7 @@ module Repository =
             Task.CompletedTask
 
         override this.OnPostActorMethodAsync(context) =
-            let duration_ms =
-                (getCurrentInstant().Minus(actorStartTime).TotalMilliseconds).ToString("F3")
+            let duration_ms = (getCurrentInstant().Minus(actorStartTime).TotalMilliseconds).ToString("F3")
 
             if String.IsNullOrEmpty(currentCommand) then
                 log.LogInformation(
@@ -132,8 +130,7 @@ module Repository =
         member private this.SetMaintenanceReminder() =
             this.RegisterReminderAsync(ReminderType.Maintenance, Array.empty<byte>, TimeSpan.FromDays(7.0), TimeSpan.FromDays(7.0))
 
-        member private this.UnregisterMaintenanceReminder() =
-            this.UnregisterReminderAsync(ReminderType.Maintenance)
+        member private this.UnregisterMaintenanceReminder() = this.UnregisterReminderAsync(ReminderType.Maintenance)
 
         member private this.OnFirstWrite() =
             task {
@@ -153,62 +150,26 @@ module Repository =
                         ObjectStorageProvider = Constants.DefaultObjectStorageProvider
                         StorageAccountName = Constants.DefaultObjectStorageAccount
                         StorageContainerName = StorageContainerName Constants.DefaultObjectStorageContainerName }
-                | Initialized ->
-                    { currentRepositoryDto with
-                        InitializedAt = Some(getCurrentInstant ()) }
-                | ObjectStorageProviderSet objectStorageProvider ->
-                    { currentRepositoryDto with
-                        ObjectStorageProvider = objectStorageProvider }
-                | StorageAccountNameSet storageAccountName ->
-                    { currentRepositoryDto with
-                        StorageAccountName = storageAccountName }
-                | StorageContainerNameSet containerName ->
-                    { currentRepositoryDto with
-                        StorageContainerName = containerName }
-                | RepositoryStatusSet repositoryStatus ->
-                    { currentRepositoryDto with
-                        RepositoryStatus = repositoryStatus }
-                | RepositoryVisibilitySet repositoryVisibility ->
-                    { currentRepositoryDto with
-                        RepositoryVisibility = repositoryVisibility }
-                | RecordSavesSet recordSaves ->
-                    { currentRepositoryDto with
-                        RecordSaves = recordSaves }
-                | DefaultServerApiVersionSet version ->
-                    { currentRepositoryDto with
-                        DefaultServerApiVersion = version }
-                | DefaultBranchNameSet defaultBranchName ->
-                    { currentRepositoryDto with
-                        DefaultBranchName = defaultBranchName }
-                | SaveDaysSet days ->
-                    { currentRepositoryDto with
-                        SaveDays = days }
-                | CheckpointDaysSet days ->
-                    { currentRepositoryDto with
-                        CheckpointDays = days }
-                | DirectoryVersionCacheDaysSet days ->
-                    { currentRepositoryDto with
-                        DirectoryVersionCacheDays = days }
-                | DiffCacheDaysSet days ->
-                    { currentRepositoryDto with
-                        DiffCacheDays = days }
-                | NameSet repositoryName ->
-                    { currentRepositoryDto with
-                        RepositoryName = repositoryName }
-                | DescriptionSet description ->
-                    { currentRepositoryDto with
-                        Description = description }
-                | LogicalDeleted _ ->
-                    { currentRepositoryDto with
-                        DeletedAt = Some(getCurrentInstant ()) }
+                | Initialized -> { currentRepositoryDto with InitializedAt = Some(getCurrentInstant ()) }
+                | ObjectStorageProviderSet objectStorageProvider -> { currentRepositoryDto with ObjectStorageProvider = objectStorageProvider }
+                | StorageAccountNameSet storageAccountName -> { currentRepositoryDto with StorageAccountName = storageAccountName }
+                | StorageContainerNameSet containerName -> { currentRepositoryDto with StorageContainerName = containerName }
+                | RepositoryStatusSet repositoryStatus -> { currentRepositoryDto with RepositoryStatus = repositoryStatus }
+                | RepositoryVisibilitySet repositoryVisibility -> { currentRepositoryDto with RepositoryVisibility = repositoryVisibility }
+                | RecordSavesSet recordSaves -> { currentRepositoryDto with RecordSaves = recordSaves }
+                | DefaultServerApiVersionSet version -> { currentRepositoryDto with DefaultServerApiVersion = version }
+                | DefaultBranchNameSet defaultBranchName -> { currentRepositoryDto with DefaultBranchName = defaultBranchName }
+                | SaveDaysSet days -> { currentRepositoryDto with SaveDays = days }
+                | CheckpointDaysSet days -> { currentRepositoryDto with CheckpointDays = days }
+                | DirectoryVersionCacheDaysSet days -> { currentRepositoryDto with DirectoryVersionCacheDays = days }
+                | DiffCacheDaysSet days -> { currentRepositoryDto with DiffCacheDays = days }
+                | NameSet repositoryName -> { currentRepositoryDto with RepositoryName = repositoryName }
+                | DescriptionSet description -> { currentRepositoryDto with Description = description }
+                | LogicalDeleted _ -> { currentRepositoryDto with DeletedAt = Some(getCurrentInstant ()) }
                 | PhysicalDeleted -> currentRepositoryDto // Do nothing because it's about to be deleted anyway.
-                | Undeleted ->
-                    { currentRepositoryDto with
-                        DeletedAt = None
-                        DeleteReason = String.Empty }
+                | Undeleted -> { currentRepositoryDto with DeletedAt = None; DeleteReason = String.Empty }
 
-            { newRepositoryDto with
-                UpdatedAt = Some(getCurrentInstant ()) }
+            { newRepositoryDto with UpdatedAt = Some(getCurrentInstant ()) }
 
         // This is essentially an object-oriented implementation of the Lazy<T> pattern. I was having issues with Lazy<T>,
         //   and after a solid day wrestling with it, I dropped it and did this. Works a treat.
@@ -234,8 +195,7 @@ module Repository =
                 try
                     let! repositoryEvents = this.RepositoryEvents()
 
-                    if repositoryEvents.Count = 0 then
-                        do! this.OnFirstWrite()
+                    if repositoryEvents.Count = 0 then do! this.OnFirstWrite()
 
                     repositoryEvents.Add(repositoryEvent)
 
@@ -262,8 +222,7 @@ module Repository =
                                 let branchId = (Guid.NewGuid())
                                 let branchActorId = Branch.GetActorId(branchId)
 
-                                let branchActor =
-                                    Services.actorProxyFactory.CreateActorProxy<IBranchActor>(branchActorId, ActorName.Branch)
+                                let branchActor = Services.actorProxyFactory.CreateActorProxy<IBranchActor>(branchActorId, ActorName.Branch)
 
                                 // Only allow promotions and tags on the initial branch.
                                 let initialBranchPermissions = [| ReferenceType.Promotion; ReferenceType.Tag |]
@@ -319,8 +278,7 @@ module Repository =
                                     match directoryResult, promotionResult with
                                     | (Ok directoryVersionGraceReturnValue, Ok promotionGraceReturnValue) ->
                                         // Set current, empty directory as the based-on reference.
-                                        let referenceId =
-                                            Guid.Parse(promotionGraceReturnValue.Properties[nameof (ReferenceId)])
+                                        let referenceId = Guid.Parse(promotionGraceReturnValue.Properties[nameof (ReferenceId)])
 
                                         let! rebaseResult = branchActor.Handle (Commands.Branch.BranchCommand.Rebase(referenceId)) repositoryEvent.Metadata
 
@@ -340,8 +298,7 @@ module Repository =
                         let message = serialize graceEvent
                         do! daprClient.PublishEventAsync(GracePubSubService, GraceEventStreamTopic, graceEvent)
 
-                        let returnValue =
-                            GraceReturnValue.Create $"Repository command succeeded." repositoryEvent.Metadata.CorrelationId
+                        let returnValue = GraceReturnValue.Create $"Repository command succeeded." repositoryEvent.Metadata.CorrelationId
 
                         returnValue.Properties.Add(nameof (OwnerId), $"{repositoryDto.OwnerId}")
                         returnValue.Properties.Add(nameof (OrganizationId), $"{repositoryDto.OrganizationId}")
@@ -442,8 +399,7 @@ module Repository =
                         repositoryEvents.Clear()
                         repositoryEvents.AddRange(events)
 
-                        let newRepositoryDto =
-                            repositoryEvents.Aggregate(RepositoryDto.Default, (fun state evnt -> (this.updateDto evnt state)))
+                        let newRepositoryDto = repositoryEvents.Aggregate(RepositoryDto.Default, (fun state evnt -> (this.updateDto evnt state)))
 
                         do! DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> stateManager.SetStateAsync(eventsStateName, this.RepositoryEvents))
 
@@ -470,8 +426,7 @@ module Repository =
                             else
                                 let revertedEvents = repositoryEvents.Take(eventsToKeep)
 
-                                let newRepositoryDto =
-                                    revertedEvents.Aggregate(RepositoryDto.Default, (fun state evnt -> (this.updateDto evnt state)))
+                                let newRepositoryDto = revertedEvents.Aggregate(RepositoryDto.Default, (fun state evnt -> (this.updateDto evnt state)))
 
                                 match persist with
                                 | PersistAction.Save ->
@@ -498,8 +453,7 @@ module Repository =
                         let! repositoryEvents = this.RepositoryEvents()
 
                         if repositoryEvents.Count > 0 then
-                            let revertedEvents =
-                                repositoryEvents.Where(fun evnt -> evnt.Metadata.Timestamp < whenToRevertTo)
+                            let revertedEvents = repositoryEvents.Where(fun evnt -> evnt.Metadata.Timestamp < whenToRevertTo)
 
                             if revertedEvents.Count() = 0 then
                                 return Error RevertError.OutOfRange

@@ -154,8 +154,7 @@ module Repository =
                 Arity = ArgumentArity.ExactlyOne
             )
 
-        let newName =
-            new Option<String>("--newName", IsRequired = true, Description = "The new name for the repository.", Arity = ArgumentArity.ExactlyOne)
+        let newName = new Option<String>("--newName", IsRequired = true, Description = "The new name for the repository.", Arity = ArgumentArity.ExactlyOne)
 
         let deleteReason =
             new Option<String>("--deleteReason", IsRequired = true, Description = "The reason for deleting the repository.", Arity = ArgumentArity.ExactlyOne)
@@ -326,8 +325,7 @@ module Repository =
         task {
             try
                 //if parseResult |> verbose then printParseResult parseResult
-                if verbose parseResult then
-                    printParseResult parseResult
+                if verbose parseResult then printParseResult parseResult
 
                 let validateIncomingParameters =
                     CommonValidations(parseResult, createParameters)
@@ -381,8 +379,7 @@ module Repository =
                                 .Columns(progressColumns)
                                 .StartAsync(fun progressContext ->
                                     task {
-                                        let t0 =
-                                            progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
+                                        let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
 
                                         let! result = Repository.Create(enhancedParameters)
                                         t0.Increment(100.0)
@@ -434,11 +431,9 @@ module Repository =
     let private initHandler (parseResult: ParseResult) (parameters: InitParameters) =
         task {
             try
-                if parseResult |> verbose then
-                    printParseResult parseResult
+                if parseResult |> verbose then printParseResult parseResult
 
-                let directoryIsValid =
-                    (parseResult, parameters) |> ``Directory must be a valid path``
+                let directoryIsValid = (parseResult, parameters) |> ``Directory must be a valid path``
 
                 match directoryIsValid with
                 | Ok _ ->
@@ -470,8 +465,7 @@ module Repository =
                                             .Columns(progressColumns)
                                             .StartAsync(fun progressContext ->
                                                 task {
-                                                    let t0 =
-                                                        progressContext.AddTask($"[{Color.DodgerBlue1}]Reading existing Grace index file.[/]")
+                                                    let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Reading existing Grace index file.[/]")
 
                                                     let t1 =
                                                         progressContext.AddTask($"[{Color.DodgerBlue1}]Computing new Grace index file.[/]", autoStart = false)
@@ -721,8 +715,7 @@ module Repository =
                                                     while not <| errors.IsEmpty do
                                                         errors.TryDequeue(&error) |> ignore
 
-                                                        if error.Error.Contains("TRetval") then
-                                                            logToConsole $"********* {error.Error}"
+                                                        if error.Error.Contains("TRetval") then logToConsole $"********* {error.Error}"
 
                                                         AnsiConsole.MarkupLine($"[{Colors.Error}]{error.Error.EscapeMarkup()}[/]")
 
@@ -735,11 +728,9 @@ module Repository =
                                             .Select(fun directoryVersion -> directoryVersion.Files.Count)
                                             .Sum()
 
-                                    let totalFileSize =
-                                        graceStatus.Index.Values.Sum(fun directoryVersion -> directoryVersion.Files.Sum(fun f -> int64 f.Size))
+                                    let totalFileSize = graceStatus.Index.Values.Sum(fun directoryVersion -> directoryVersion.Files.Sum(fun f -> int64 f.Size))
 
-                                    let rootDirectoryVersion =
-                                        graceStatus.Index.Values.First(fun d -> d.RelativePath = Constants.RootDirectoryPath)
+                                    let rootDirectoryVersion = graceStatus.Index.Values.First(fun d -> d.RelativePath = Constants.RootDirectoryPath)
 
                                     AnsiConsole.MarkupLine($"[{Colors.Highlighted}]Number of directories scanned: {graceStatus.Index.Count}.[/]")
 
@@ -786,8 +777,7 @@ module Repository =
     let private getHandler (parseResult: ParseResult) (getParameters: GetParameters) =
         task {
             try
-                if parseResult |> verbose then
-                    printParseResult parseResult
+                if parseResult |> verbose then printParseResult parseResult
 
                 let validateIncomingParameters = CommonValidations(parseResult, getParameters)
 
@@ -810,8 +800,7 @@ module Repository =
                                 .Columns(progressColumns)
                                 .StartAsync(fun progressContext ->
                                     task {
-                                        let t0 =
-                                            progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
+                                        let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
 
                                         let! result = Repository.Get(parameters)
                                         t0.Increment(100.0)
@@ -846,8 +835,7 @@ module Repository =
     let private getBranchesHandler (parseResult: ParseResult) (parameters: GetBranchesParameters) =
         task {
             try
-                if parseResult |> verbose then
-                    printParseResult parseResult
+                if parseResult |> verbose then printParseResult parseResult
 
                 let validateIncomingParameters = CommonValidations(parseResult, parameters)
 
@@ -873,8 +861,7 @@ module Repository =
                                 .Columns(progressColumns)
                                 .StartAsync(fun progressContext ->
                                     task {
-                                        let t0 =
-                                            progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
+                                        let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
 
                                         let! result = Repository.GetBranches(getBranchesParameters)
                                         t0.Increment(100.0)
@@ -976,8 +963,7 @@ module Repository =
     let private setVisibilityHandler (parseResult: ParseResult) (parameters: SetVisibilityParameters) =
         task {
             try
-                if parseResult |> verbose then
-                    printParseResult parseResult
+                if parseResult |> verbose then printParseResult parseResult
 
                 let validateIncomingParameters = CommonValidations(parseResult, parameters)
 
@@ -1003,8 +989,7 @@ module Repository =
                                 .Columns(progressColumns)
                                 .StartAsync(fun progressContext ->
                                     task {
-                                        let t0 =
-                                            progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
+                                        let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
 
                                         let! result = Repository.SetVisibility(visibilityParameters)
                                         t0.Increment(100.0)
@@ -1032,8 +1017,7 @@ module Repository =
     let private setStatusHandler (parseResult: ParseResult) (parameters: StatusParameters) =
         task {
             try
-                if parseResult |> verbose then
-                    printParseResult parseResult
+                if parseResult |> verbose then printParseResult parseResult
 
                 let validateIncomingParameters = CommonValidations(parseResult, parameters)
 
@@ -1059,8 +1043,7 @@ module Repository =
                                 .Columns(progressColumns)
                                 .StartAsync(fun progressContext ->
                                     task {
-                                        let t0 =
-                                            progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
+                                        let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
 
                                         let! result = Repository.SetStatus(statusParameters)
                                         t0.Increment(100.0)
@@ -1088,8 +1071,7 @@ module Repository =
     let private setRecordSavesHandler (parseResult: ParseResult) (parameters: RecordSavesParameters) =
         task {
             try
-                if parseResult |> verbose then
-                    printParseResult parseResult
+                if parseResult |> verbose then printParseResult parseResult
 
                 let validateIncomingParameters = CommonValidations(parseResult, parameters)
 
@@ -1115,8 +1097,7 @@ module Repository =
                                 .Columns(progressColumns)
                                 .StartAsync(fun progressContext ->
                                     task {
-                                        let t0 =
-                                            progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
+                                        let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
 
                                         let! result = Repository.SetRecordSaves(recordSavesParameters)
                                         t0.Increment(100.0)
@@ -1144,8 +1125,7 @@ module Repository =
     let private setSaveDaysHandler (parseResult: ParseResult) (parameters: SaveDaysParameters) =
         task {
             try
-                if parseResult |> verbose then
-                    printParseResult parseResult
+                if parseResult |> verbose then printParseResult parseResult
 
                 let validateIncomingParameters = CommonValidations(parseResult, parameters)
 
@@ -1171,8 +1151,7 @@ module Repository =
                                 .Columns(progressColumns)
                                 .StartAsync(fun progressContext ->
                                     task {
-                                        let t0 =
-                                            progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
+                                        let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
 
                                         let! result = Repository.SetSaveDays(setSaveDaysParameters)
                                         t0.Increment(100.0)
@@ -1200,8 +1179,7 @@ module Repository =
     let private setCheckpointDaysHandler (parseResult: ParseResult) (parameters: CheckpointDaysParameters) =
         task {
             try
-                if parseResult |> verbose then
-                    printParseResult parseResult
+                if parseResult |> verbose then printParseResult parseResult
 
                 let validateIncomingParameters = CommonValidations(parseResult, parameters)
 
@@ -1227,8 +1205,7 @@ module Repository =
                                 .Columns(progressColumns)
                                 .StartAsync(fun progressContext ->
                                     task {
-                                        let t0 =
-                                            progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
+                                        let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
 
                                         let! result = Repository.SetCheckpointDays(checkpointDaysParameters)
                                         t0.Increment(100.0)
@@ -1255,8 +1232,7 @@ module Repository =
     let private setDiffCacheDaysHandler (parseResult: ParseResult) (parameters: DiffCacheDaysParameters) =
         task {
             try
-                if parseResult |> verbose then
-                    printParseResult parseResult
+                if parseResult |> verbose then printParseResult parseResult
 
                 let validateIncomingParameters = CommonValidations(parseResult, parameters)
 
@@ -1282,8 +1258,7 @@ module Repository =
                                 .Columns(progressColumns)
                                 .StartAsync(fun progressContext ->
                                     task {
-                                        let t0 =
-                                            progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
+                                        let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
 
                                         let! result = Repository.SetDiffCacheDays(diffCacheDaysParameters)
                                         t0.Increment(100.0)
@@ -1310,8 +1285,7 @@ module Repository =
     let private setDirectoryVersionCacheDaysHandler (parseResult: ParseResult) (parameters: DirectoryVersionCacheDaysParameters) =
         task {
             try
-                if parseResult |> verbose then
-                    printParseResult parseResult
+                if parseResult |> verbose then printParseResult parseResult
 
                 let validateIncomingParameters = CommonValidations(parseResult, parameters)
 
@@ -1337,8 +1311,7 @@ module Repository =
                                 .Columns(progressColumns)
                                 .StartAsync(fun progressContext ->
                                     task {
-                                        let t0 =
-                                            progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
+                                        let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
 
                                         let! result = Repository.SetDirectoryVersionCacheDays(directoryVersionCacheDaysParameters)
 
@@ -1374,8 +1347,7 @@ module Repository =
         =
         task {
             try
-                if parseResult |> verbose then
-                    printParseResult parseResult
+                if parseResult |> verbose then printParseResult parseResult
 
                 let validateIncomingParameters = CommonValidations(parseResult, parameters)
 
@@ -1401,8 +1373,7 @@ module Repository =
                                 .Columns(progressColumns)
                                 .StartAsync(fun progressContext ->
                                     task {
-                                        let t0 =
-                                            progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
+                                        let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
 
                                         let! result = command enablePromotionTypeParameters
                                         t0.Increment(100.0)
@@ -1423,8 +1394,7 @@ module Repository =
     let private setDefaultServerApiVersionHandler (parseResult: ParseResult) (parameters: DefaultServerApiVersionParameters) =
         task {
             try
-                if parseResult |> verbose then
-                    printParseResult parseResult
+                if parseResult |> verbose then printParseResult parseResult
 
                 let validateIncomingParameters = CommonValidations(parseResult, parameters)
 
@@ -1450,8 +1420,7 @@ module Repository =
                                 .Columns(progressColumns)
                                 .StartAsync(fun progressContext ->
                                     task {
-                                        let t0 =
-                                            progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
+                                        let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
 
                                         let! result = Repository.SetDefaultServerApiVersion(defaultServerApiVersionParameters)
 
@@ -1480,8 +1449,7 @@ module Repository =
     let private setNameHandler (parseResult: ParseResult) (parameters: SetNameParameters) =
         task {
             try
-                if parseResult |> verbose then
-                    printParseResult parseResult
+                if parseResult |> verbose then printParseResult parseResult
 
                 let validateIncomingParameters = CommonValidations(parseResult, parameters)
 
@@ -1507,8 +1475,7 @@ module Repository =
                                 .Columns(progressColumns)
                                 .StartAsync(fun progressContext ->
                                     task {
-                                        let t0 =
-                                            progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
+                                        let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
 
                                         let! result = Repository.SetName(setNameParameters)
                                         t0.Increment(100.0)
@@ -1536,16 +1503,13 @@ module Repository =
     let private setDescriptionHandler (parseResult: ParseResult) (setDescriptionParameters: SetDescriptionParameters) =
         task {
             try
-                if parseResult |> verbose then
-                    printParseResult parseResult
+                if parseResult |> verbose then printParseResult parseResult
 
-                let validateIncomingParameters =
-                    CommonValidations(parseResult, setDescriptionParameters)
+                let validateIncomingParameters = CommonValidations(parseResult, setDescriptionParameters)
 
                 match validateIncomingParameters with
                 | Ok _ ->
-                    let normalizedParameters =
-                        setDescriptionParameters |> normalizeIdsAndNames parseResult
+                    let normalizedParameters = setDescriptionParameters |> normalizeIdsAndNames parseResult
 
                     let setDescriptionParameters =
                         Repository.SetRepositoryDescriptionParameters(
@@ -1565,8 +1529,7 @@ module Repository =
                                 .Columns(progressColumns)
                                 .StartAsync(fun progressContext ->
                                     task {
-                                        let t0 =
-                                            progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
+                                        let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
 
                                         let! result = Repository.SetDescription(setDescriptionParameters)
                                         t0.Increment(100.0)
@@ -1595,8 +1558,7 @@ module Repository =
     let private deleteHandler (parseResult: ParseResult) (parameters: DeleteParameters) =
         task {
             try
-                if parseResult |> verbose then
-                    printParseResult parseResult
+                if parseResult |> verbose then printParseResult parseResult
 
                 let validateIncomingParameters = CommonValidations(parseResult, parameters)
 
@@ -1623,8 +1585,7 @@ module Repository =
                                 .Columns(progressColumns)
                                 .StartAsync(fun progressContext ->
                                     task {
-                                        let t0 =
-                                            progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
+                                        let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
 
                                         let! result = Repository.Delete(enhancedParameters)
                                         t0.Increment(100.0)
@@ -1651,8 +1612,7 @@ module Repository =
     let private undeleteHandler (parseResult: ParseResult) (parameters: UndeleteParameters) =
         task {
             try
-                if parseResult |> verbose then
-                    printParseResult parseResult
+                if parseResult |> verbose then printParseResult parseResult
 
                 let validateIncomingParameters = CommonValidations(parseResult, parameters)
 
@@ -1677,8 +1637,7 @@ module Repository =
                                 .Columns(progressColumns)
                                 .StartAsync(fun progressContext ->
                                     task {
-                                        let t0 =
-                                            progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
+                                        let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
 
                                         let! result = Repository.Undelete(undeleteParameters)
                                         t0.Increment(100.0)
@@ -1714,8 +1673,7 @@ module Repository =
             |> addCommonOptionsExceptForRepositoryInfo
 
         // Create main command and aliases, if any.
-        let repositoryCommand =
-            new Command("repository", Description = "Creates, changes, and deletes repository-level information.")
+        let repositoryCommand = new Command("repository", Description = "Creates, changes, and deletes repository-level information.")
 
         repositoryCommand.AddAlias("repo")
 

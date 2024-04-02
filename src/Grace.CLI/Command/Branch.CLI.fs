@@ -140,8 +140,7 @@ module Branch =
                 getDefaultValue = (fun _ -> $"{Current().BranchName}")
             )
 
-        let newName =
-            new Option<String>("--newName", IsRequired = true, Description = "The new name of the branch.", Arity = ArgumentArity.ExactlyOne)
+        let newName = new Option<String>("--newName", IsRequired = true, Description = "The new name of the branch.", Arity = ArgumentArity.ExactlyOne)
 
         let message =
             new Option<String>(
@@ -171,8 +170,7 @@ module Branch =
                 Arity = ArgumentArity.ZeroOrOne
             )
 
-        let fullSha =
-            new Option<bool>("--fullSha", IsRequired = false, Description = "Show the full SHA-256 value in output.", Arity = ArgumentArity.ZeroOrOne)
+        let fullSha = new Option<bool>("--fullSha", IsRequired = false, Description = "Show the full SHA-256 value in output.", Arity = ArgumentArity.ZeroOrOne)
 
         let maxCount =
             new Option<int>("--maxCount", IsRequired = false, Description = "The maximum number of results to return.", Arity = ArgumentArity.ExactlyOne)
@@ -196,8 +194,7 @@ module Branch =
         let includeDeleted =
             new Option<bool>([| "--include-deleted"; "-d" |], IsRequired = false, Description = "Include deleted branches in the result. [default: false]")
 
-        let showEvents =
-            new Option<bool>([| "--show-events"; "-e" |], IsRequired = false, Description = "Include actor events in the result. [default: false]")
+        let showEvents = new Option<bool>([| "--show-events"; "-e" |], IsRequired = false, Description = "Include actor events in the result. [default: false]")
 
         let initialPermissions =
             new Option<ReferenceType array>(
@@ -416,8 +413,7 @@ module Branch =
     let private createHandler (parseResult: ParseResult) (createParameters: CreateParameters) =
         task {
             try
-                if parseResult |> verbose then
-                    printParseResult parseResult
+                if parseResult |> verbose then printParseResult parseResult
 
                 let validateIncomingParameters =
                     CommonValidations parseResult createParameters
@@ -453,8 +449,7 @@ module Branch =
                                 .Columns(progressColumns)
                                 .StartAsync(fun progressContext ->
                                     task {
-                                        let t0 =
-                                            progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
+                                        let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
 
                                         let! result = Branch.Create(parameters)
                                         t0.Increment(100.0)
@@ -496,11 +491,9 @@ module Branch =
     let getRecursiveSizeHandler (parseResult: ParseResult) (getRecursiveSizeParameters: GetRecursiveSizeParameters) =
         task {
             try
-                if parseResult |> verbose then
-                    printParseResult parseResult
+                if parseResult |> verbose then printParseResult parseResult
 
-                let validateIncomingParameters =
-                    CommonValidations parseResult getRecursiveSizeParameters
+                let validateIncomingParameters = CommonValidations parseResult getRecursiveSizeParameters
 
                 match validateIncomingParameters with
                 | Ok _ ->
@@ -528,8 +521,7 @@ module Branch =
                                 .Columns(progressColumns)
                                 .StartAsync(fun progressContext ->
                                     task {
-                                        let t0 =
-                                            progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
+                                        let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
 
                                         let! result = Branch.GetRecursiveSize(sdkParameters)
                                         t0.Increment(100.0)
@@ -605,11 +597,9 @@ module Branch =
     let private listContentsHandler (parseResult: ParseResult) (listContentsParameters: ListContentsParameters) =
         task {
             try
-                if parseResult |> verbose then
-                    printParseResult parseResult
+                if parseResult |> verbose then printParseResult parseResult
 
-                let validateIncomingParameters =
-                    CommonValidations parseResult listContentsParameters
+                let validateIncomingParameters = CommonValidations parseResult listContentsParameters
 
                 match validateIncomingParameters with
                 | Ok _ ->
@@ -638,8 +628,7 @@ module Branch =
                                 .Columns(progressColumns)
                                 .StartAsync(fun progressContext ->
                                     task {
-                                        let t0 =
-                                            progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
+                                        let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
 
                                         let! result = Branch.ListContents(sdkParameters)
                                         t0.Increment(100.0)
@@ -661,8 +650,7 @@ module Branch =
                 | Ok returnValue ->
                     let! graceStatus = readGraceStatusFile ()
 
-                    let directoryVersions =
-                        returnValue.ReturnValue |> Seq.sortBy (fun dv -> dv.RelativePath)
+                    let directoryVersions = returnValue.ReturnValue |> Seq.sortBy (fun dv -> dv.RelativePath)
 
                     let directoryCount = directoryVersions.Count()
 
@@ -671,11 +659,9 @@ module Branch =
                             .Select(fun directoryVersion -> directoryVersion.Files.Count)
                             .Sum()
 
-                    let totalFileSize =
-                        directoryVersions.Sum(fun directoryVersion -> directoryVersion.Files.Sum(fun f -> f.Size))
+                    let totalFileSize = directoryVersions.Sum(fun directoryVersion -> directoryVersion.Files.Sum(fun f -> f.Size))
 
-                    let rootDirectoryVersion =
-                        directoryVersions.First(fun d -> d.RelativePath = Constants.RootDirectoryPath)
+                    let rootDirectoryVersion = directoryVersions.First(fun d -> d.RelativePath = Constants.RootDirectoryPath)
 
                     AnsiConsole.MarkupLine($"[{Colors.Important}]All values taken from the selected version of this branch from the server.[/]")
 
@@ -697,8 +683,7 @@ module Branch =
     let private setNameHandler (parseResult: ParseResult) (setNameParameters: SetNameParameters) =
         task {
             try
-                if parseResult |> verbose then
-                    printParseResult parseResult
+                if parseResult |> verbose then printParseResult parseResult
 
                 let validateIncomingParameters = CommonValidations parseResult setNameParameters
 
@@ -718,8 +703,7 @@ module Branch =
                                 .Columns(progressColumns)
                                 .StartAsync(fun progressContext ->
                                     task {
-                                        let t0 =
-                                            progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
+                                        let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
 
                                         let! result = Branch.SetName(parameters)
                                         t0.Increment(100.0)
@@ -747,8 +731,7 @@ module Branch =
     let assignHandler (parseResult: ParseResult) (assignParameters: AssignParameters) =
         task {
             try
-                if parseResult |> verbose then
-                    printParseResult parseResult
+                if parseResult |> verbose then printParseResult parseResult
 
                 let validateIncomingParameters = CommonValidations parseResult assignParameters
 
@@ -782,8 +765,7 @@ module Branch =
                                 .Columns(progressColumns)
                                 .StartAsync(fun progressContext ->
                                     task {
-                                        let t0 =
-                                            progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
+                                        let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
 
                                         let! result = Branch.Assign(parameters)
                                         t0.Increment(100.0)
@@ -813,8 +795,7 @@ module Branch =
     let createReferenceHandler (parseResult: ParseResult) (parameters: CreateRefParameters) (command: CreateReferenceCommand) (commandType: string) =
         task {
             try
-                if parseResult |> verbose then
-                    printParseResult parseResult
+                if parseResult |> verbose then printParseResult parseResult
 
                 let validateIncomingParameters = CommonValidations parseResult parameters
 
@@ -829,23 +810,18 @@ module Branch =
                                 .Columns(progressColumns)
                                 .StartAsync(fun progressContext ->
                                     task {
-                                        let t0 =
-                                            progressContext.AddTask($"[{Color.DodgerBlue1}]Reading Grace status file.[/]")
+                                        let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Reading Grace status file.[/]")
 
-                                        let t1 =
-                                            progressContext.AddTask($"[{Color.DodgerBlue1}]Scanning working directory for changes.[/]", autoStart = false)
+                                        let t1 = progressContext.AddTask($"[{Color.DodgerBlue1}]Scanning working directory for changes.[/]", autoStart = false)
 
-                                        let t2 =
-                                            progressContext.AddTask($"[{Color.DodgerBlue1}]Creating new directory verions.[/]", autoStart = false)
+                                        let t2 = progressContext.AddTask($"[{Color.DodgerBlue1}]Creating new directory verions.[/]", autoStart = false)
 
                                         let t3 =
                                             progressContext.AddTask($"[{Color.DodgerBlue1}]Uploading changed files to object storage.[/]", autoStart = false)
 
-                                        let t4 =
-                                            progressContext.AddTask($"[{Color.DodgerBlue1}]Uploading new directory versions.[/]", autoStart = false)
+                                        let t4 = progressContext.AddTask($"[{Color.DodgerBlue1}]Uploading new directory versions.[/]", autoStart = false)
 
-                                        let t5 =
-                                            progressContext.AddTask($"[{Color.DodgerBlue1}]Creating new {commandType}.[/]", autoStart = false)
+                                        let t5 = progressContext.AddTask($"[{Color.DodgerBlue1}]Creating new {commandType}.[/]", autoStart = false)
 
                                         //let mutable rootDirectoryId = DirectoryId.Empty
                                         //let mutable rootDirectorySha256Hash = Sha256Hash String.Empty
@@ -918,8 +894,7 @@ module Branch =
 
                                             t4.StartTask() // Upload directory versions.
 
-                                            let mutable lastDirectoryVersionUpload =
-                                                newGraceStatus.LastSuccessfulDirectoryVersionUpload
+                                            let mutable lastDirectoryVersionUpload = newGraceStatus.LastSuccessfulDirectoryVersionUpload
 
                                             if newDirectoryVersions.Count > 0 then
                                                 let saveParameters = SaveDirectoryVersionsParameters()
@@ -1029,8 +1004,7 @@ module Branch =
     let promotionHandler (parseResult: ParseResult) (parameters: CreateRefParameters) =
         task {
             try
-                if parseResult |> verbose then
-                    printParseResult parseResult
+                if parseResult |> verbose then printParseResult parseResult
 
                 let validateIncomingParameters = CommonValidations parseResult parameters
 
@@ -1042,14 +1016,11 @@ module Branch =
                                 .Columns(progressColumns)
                                 .StartAsync(fun progressContext ->
                                     task {
-                                        let t0 =
-                                            progressContext.AddTask($"[{Color.DodgerBlue1}]Reading Grace status file.[/]")
+                                        let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Reading Grace status file.[/]")
 
-                                        let t1 =
-                                            progressContext.AddTask($"[{Color.DodgerBlue1}]Checking if the promotion is valid.[/]", autoStart = false)
+                                        let t1 = progressContext.AddTask($"[{Color.DodgerBlue1}]Checking if the promotion is valid.[/]", autoStart = false)
 
-                                        let t2 =
-                                            progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]", autoStart = false)
+                                        let t2 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]", autoStart = false)
 
                                         // Read Grace status file.
                                         let! graceStatus = readGraceStatusFile ()
@@ -1233,8 +1204,7 @@ module Branch =
     let private Commit =
         CommandHandler.Create(fun (parseResult: ParseResult) (createReferencesParameters: CreateRefParameters) ->
             task {
-                let command (parameters: CreateReferenceParameters) =
-                    task { return! Branch.Commit(parameters) }
+                let command (parameters: CreateReferenceParameters) = task { return! Branch.Commit(parameters) }
 
                 let! result =
                     createReferenceHandler
@@ -1249,8 +1219,7 @@ module Branch =
     let private Checkpoint =
         CommandHandler.Create(fun (parseResult: ParseResult) (createReferencesParameters: CreateRefParameters) ->
             task {
-                let command (parameters: CreateReferenceParameters) =
-                    task { return! Branch.Checkpoint(parameters) }
+                let command (parameters: CreateReferenceParameters) = task { return! Branch.Checkpoint(parameters) }
 
                 let! result =
                     createReferenceHandler
@@ -1265,8 +1234,7 @@ module Branch =
     let private Save =
         CommandHandler.Create(fun (parseResult: ParseResult) (createReferencesParameters: CreateRefParameters) ->
             task {
-                let command (parameters: CreateReferenceParameters) =
-                    task { return! Branch.Save(parameters) }
+                let command (parameters: CreateReferenceParameters) = task { return! Branch.Save(parameters) }
 
                 let! result =
                     createReferenceHandler
@@ -1325,8 +1293,7 @@ module Branch =
     let private EnableAssign =
         CommandHandler.Create(fun (parseResult: ParseResult) (enableFeaturesParams: EnableFeatureParams) ->
             task {
-                let command (parameters: EnableFeatureParameters) =
-                    task { return! Branch.EnableAssign(parameters) }
+                let command (parameters: EnableFeatureParameters) = task { return! Branch.EnableAssign(parameters) }
 
                 let! result = enableFeatureHandler parseResult (enableFeaturesParams |> normalizeIdsAndNames parseResult) command "assign"
 
@@ -1336,8 +1303,7 @@ module Branch =
     let private EnablePromotion =
         CommandHandler.Create(fun (parseResult: ParseResult) (enableFeaturesParams: EnableFeatureParams) ->
             task {
-                let command (parameters: EnableFeatureParameters) =
-                    task { return! Branch.EnablePromotion(parameters) }
+                let command (parameters: EnableFeatureParameters) = task { return! Branch.EnablePromotion(parameters) }
 
                 let! result = enableFeatureHandler parseResult (enableFeaturesParams |> normalizeIdsAndNames parseResult) command "promotion"
 
@@ -1347,8 +1313,7 @@ module Branch =
     let private EnableCommit =
         CommandHandler.Create(fun (parseResult: ParseResult) (enableFeaturesParams: EnableFeatureParams) ->
             task {
-                let command (parameters: EnableFeatureParameters) =
-                    task { return! Branch.EnableCommit(parameters) }
+                let command (parameters: EnableFeatureParameters) = task { return! Branch.EnableCommit(parameters) }
 
                 let! result = enableFeatureHandler parseResult (enableFeaturesParams |> normalizeIdsAndNames parseResult) command "commit"
 
@@ -1358,8 +1323,7 @@ module Branch =
     let private EnableCheckpoint =
         CommandHandler.Create(fun (parseResult: ParseResult) (enableFeaturesParams: EnableFeatureParams) ->
             task {
-                let command (parameters: EnableFeatureParameters) =
-                    task { return! Branch.EnableCheckpoint(parameters) }
+                let command (parameters: EnableFeatureParameters) = task { return! Branch.EnableCheckpoint(parameters) }
 
                 let! result = enableFeatureHandler parseResult (enableFeaturesParams |> normalizeIdsAndNames parseResult) command "checkpoint"
 
@@ -1369,8 +1333,7 @@ module Branch =
     let private EnableSave =
         CommandHandler.Create(fun (parseResult: ParseResult) (enableFeaturesParams: EnableFeatureParams) ->
             task {
-                let command (parameters: EnableFeatureParameters) =
-                    task { return! Branch.EnableSave(parameters) }
+                let command (parameters: EnableFeatureParameters) = task { return! Branch.EnableSave(parameters) }
 
                 let! result = enableFeatureHandler parseResult (enableFeaturesParams |> normalizeIdsAndNames parseResult) command "save"
 
@@ -1380,8 +1343,7 @@ module Branch =
     let private EnableTag =
         CommandHandler.Create(fun (parseResult: ParseResult) (enableFeaturesParams: EnableFeatureParams) ->
             task {
-                let command (parameters: EnableFeatureParameters) =
-                    task { return! Branch.EnableTag(parameters) }
+                let command (parameters: EnableFeatureParameters) = task { return! Branch.EnableTag(parameters) }
 
                 let! result = enableFeatureHandler parseResult (enableFeaturesParams |> normalizeIdsAndNames parseResult) command "tag"
 
@@ -1391,8 +1353,7 @@ module Branch =
     let private EnableAutoRebase =
         CommandHandler.Create(fun (parseResult: ParseResult) (enableFeaturesParams: EnableFeatureParams) ->
             task {
-                let command (parameters: EnableFeatureParameters) =
-                    task { return! Branch.EnableAutoRebase(parameters) }
+                let command (parameters: EnableFeatureParameters) = task { return! Branch.EnableAutoRebase(parameters) }
 
                 let! result = enableFeatureHandler parseResult (enableFeaturesParams |> normalizeIdsAndNames parseResult) command "auto-rebase"
 
@@ -1408,8 +1369,7 @@ module Branch =
     let private getHandler (parseResult: ParseResult) (parameters: GetParameters) =
         task {
             try
-                if parseResult |> verbose then
-                    printParseResult parseResult
+                if parseResult |> verbose then printParseResult parseResult
 
                 let validateIncomingParameters = CommonValidations parseResult parameters
 
@@ -1435,8 +1395,7 @@ module Branch =
                                 .Columns(progressColumns)
                                 .StartAsync(fun progressContext ->
                                     task {
-                                        let t0 =
-                                            progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
+                                        let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
 
                                         let! result = Branch.Get(sdkParameters)
                                         t0.Increment(100.0)
@@ -1476,8 +1435,7 @@ module Branch =
                                 .Columns(progressColumns)
                                 .StartAsync(fun progressContext ->
                                     task {
-                                        let t0 =
-                                            progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
+                                        let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
 
                                         let! result = Branch.GetEvents(sdkParameters)
                                         t0.Increment(100.0)
@@ -1533,8 +1491,7 @@ module Branch =
     let getReferenceHandler (parseResult: ParseResult) (parameters: GetRefParameters) (query: GetReferenceQuery) =
         task {
             try
-                if parseResult |> verbose then
-                    printParseResult parseResult
+                if parseResult |> verbose then printParseResult parseResult
 
                 let validateIncomingParameters = CommonValidations parseResult parameters
 
@@ -1573,8 +1530,7 @@ module Branch =
                                 .Columns(progressColumns)
                                 .StartAsync(fun progressContext ->
                                     task {
-                                        let t0 =
-                                            progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
+                                        let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
 
                                         let branchDtoResult = Branch.Get(getBranchParameters)
                                         let getReferencesResult = query getReferencesParameters
@@ -1637,8 +1593,7 @@ module Branch =
 
                 let localCreatedAtTime = row.CreatedAt.ToDateTimeUtc().ToLocalTime()
 
-                let referenceTime =
-                    $"""{localCreatedAtTime.ToString("g", CultureInfo.CurrentUICulture)}"""
+                let referenceTime = $"""{localCreatedAtTime.ToString("g", CultureInfo.CurrentUICulture)}"""
 
                 if parseResult |> verbose then
                     table.AddRow(
@@ -1666,8 +1621,7 @@ module Branch =
     let private GetReferences =
         CommandHandler.Create(fun (parseResult: ParseResult) (getReferencesParameters: GetRefParameters) ->
             task {
-                let query (parameters: GetReferencesParameters) =
-                    task { return! Branch.GetReferences(parameters) }
+                let query (parameters: GetReferencesParameters) = task { return! Branch.GetReferences(parameters) }
 
                 let! result = getReferenceHandler parseResult (getReferencesParameters |> normalizeIdsAndNames parseResult) query
 
@@ -1686,8 +1640,7 @@ module Branch =
     let private GetPromotions =
         CommandHandler.Create(fun (parseResult: ParseResult) (getReferencesParameters: GetRefParameters) ->
             task {
-                let query (parameters: GetReferencesParameters) =
-                    task { return! Branch.GetPromotions(parameters) }
+                let query (parameters: GetReferencesParameters) = task { return! Branch.GetPromotions(parameters) }
 
                 let! result = getReferenceHandler parseResult (getReferencesParameters |> normalizeIdsAndNames parseResult) query
 
@@ -1707,8 +1660,7 @@ module Branch =
     let private GetCommits =
         CommandHandler.Create(fun (parseResult: ParseResult) (getReferencesParameters: GetRefParameters) ->
             task {
-                let query (parameters: GetReferencesParameters) =
-                    task { return! Branch.GetCommits(parameters) }
+                let query (parameters: GetReferencesParameters) = task { return! Branch.GetCommits(parameters) }
 
                 let! result = getReferenceHandler parseResult (getReferencesParameters |> normalizeIdsAndNames parseResult) query
 
@@ -1765,8 +1717,7 @@ module Branch =
     let private GetSaves =
         CommandHandler.Create(fun (parseResult: ParseResult) (getReferencesParameters: GetRefParameters) ->
             task {
-                let query (parameters: GetReferencesParameters) =
-                    task { return! Branch.GetSaves(parameters) }
+                let query (parameters: GetReferencesParameters) = task { return! Branch.GetSaves(parameters) }
 
                 let! result = getReferenceHandler parseResult (getReferencesParameters |> normalizeIdsAndNames parseResult) query
 
@@ -1786,8 +1737,7 @@ module Branch =
     let private GetTags =
         CommandHandler.Create(fun (parseResult: ParseResult) (getReferencesParameters: GetRefParameters) ->
             task {
-                let query (parameters: GetReferencesParameters) =
-                    task { return! Branch.GetTags(parameters) }
+                let query (parameters: GetReferencesParameters) = task { return! Branch.GetTags(parameters) }
 
                 let! result = getReferenceHandler parseResult (getReferencesParameters |> normalizeIdsAndNames parseResult) query
 
@@ -1827,8 +1777,7 @@ module Branch =
 
                 let showOutput = parseResult |> hasOutput
 
-                if parseResult |> verbose then
-                    printParseResult parseResult
+                if parseResult |> verbose then printParseResult parseResult
 
                 // Validate the incoming parameters.
                 let validateIncomingParameters (showOutput, parseResult: ParseResult, parameters: CommonParameters) =
@@ -2301,11 +2250,9 @@ module Branch =
                             .Columns(progressColumns)
                             .StartAsync(fun progressContext ->
                                 task {
-                                    let t0 =
-                                        progressContext.AddTask($"[{Color.DodgerBlue1}]{UIString.getString GettingCurrentBranch}[/]", autoStart = false)
+                                    let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]{UIString.getString GettingCurrentBranch}[/]", autoStart = false)
 
-                                    let t1 =
-                                        progressContext.AddTask($"[{Color.DodgerBlue1}]{UIString.getString ReadingGraceStatus}[/]", autoStart = false)
+                                    let t1 = progressContext.AddTask($"[{Color.DodgerBlue1}]{UIString.getString ReadingGraceStatus}[/]", autoStart = false)
 
                                     let t2 =
                                         progressContext.AddTask($"[{Color.DodgerBlue1}]{UIString.getString ScanningWorkingDirectory}[/]", autoStart = false)
@@ -2316,23 +2263,19 @@ module Branch =
                                             autoStart = false
                                         )
 
-                                    let t4 =
-                                        progressContext.AddTask($"[{Color.DodgerBlue1}]{UIString.getString UploadingFiles}[/]", autoStart = false)
+                                    let t4 = progressContext.AddTask($"[{Color.DodgerBlue1}]{UIString.getString UploadingFiles}[/]", autoStart = false)
 
                                     let t5 =
                                         progressContext.AddTask($"[{Color.DodgerBlue1}]{UIString.getString SavingDirectoryVersions}[/]", autoStart = false)
 
-                                    let t6 =
-                                        progressContext.AddTask($"[{Color.DodgerBlue1}]{UIString.getString CreatingSaveReference}[/]", autoStart = false)
+                                    let t6 = progressContext.AddTask($"[{Color.DodgerBlue1}]{UIString.getString CreatingSaveReference}[/]", autoStart = false)
 
-                                    let t7 =
-                                        progressContext.AddTask($"[{Color.DodgerBlue1}]{UIString.getString GettingLatestVersion}[/]", autoStart = false)
+                                    let t7 = progressContext.AddTask($"[{Color.DodgerBlue1}]{UIString.getString GettingLatestVersion}[/]", autoStart = false)
 
                                     let t8 =
                                         progressContext.AddTask($"[{Color.DodgerBlue1}]{UIString.getString UpdatingWorkingDirectory}[/]", autoStart = false)
 
-                                    let t9 =
-                                        progressContext.AddTask($"[{Color.DodgerBlue1}]{UIString.getString CreatingSaveReference}[/]", autoStart = false)
+                                    let t9 = progressContext.AddTask($"[{Color.DodgerBlue1}]{UIString.getString CreatingSaveReference}[/]", autoStart = false)
 
                                     return! generateResult [| t0; t1; t2; t3; t4; t5; t6; t7; t8; t9 |]
                                 })
@@ -2360,8 +2303,7 @@ module Branch =
     let private switchHandler parseResult (parameters: SwitchParameters) =
         task {
             try
-                if parseResult |> verbose then
-                    printParseResult parseResult
+                if parseResult |> verbose then printParseResult parseResult
 
                 let validateIncomingParameters = CommonValidations parseResult parameters
 
@@ -2391,14 +2333,12 @@ module Branch =
                                     .Columns(progressColumns)
                                     .StartAsync(fun progressContext ->
                                         task {
-                                            let t0 =
-                                                progressContext.AddTask($"[{Color.DodgerBlue1}]Reading Grace index file.[/]")
+                                            let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Reading Grace index file.[/]")
 
                                             let t1 =
                                                 progressContext.AddTask($"[{Color.DodgerBlue1}]Scanning working directory for changes.[/]", autoStart = false)
 
-                                            let t2 =
-                                                progressContext.AddTask($"[{Color.DodgerBlue1}]Creating new directory verions.[/]", autoStart = false)
+                                            let t2 = progressContext.AddTask($"[{Color.DodgerBlue1}]Creating new directory verions.[/]", autoStart = false)
 
                                             let t3 =
                                                 progressContext.AddTask(
@@ -2406,11 +2346,9 @@ module Branch =
                                                     autoStart = false
                                                 )
 
-                                            let t4 =
-                                                progressContext.AddTask($"[{Color.DodgerBlue1}]Uploading new directory versions.[/]", autoStart = false)
+                                            let t4 = progressContext.AddTask($"[{Color.DodgerBlue1}]Uploading new directory versions.[/]", autoStart = false)
 
-                                            let t5 =
-                                                progressContext.AddTask($"[{Color.DodgerBlue1}]Create a save reference.[/]", autoStart = false)
+                                            let t5 = progressContext.AddTask($"[{Color.DodgerBlue1}]Create a save reference.[/]", autoStart = false)
 
                                             let t6 =
                                                 progressContext.AddTask(
@@ -2812,8 +2750,7 @@ module Branch =
                                             // Create a new version of GraceStatus that includes the new DirectoryVersions.
                                             let newDirectoryVersions = returnValue.ReturnValue
 
-                                            let newerGraceStatus =
-                                                updateGraceStatusWithNewDirectoryVersionsFromServer newGraceStatus newDirectoryVersions
+                                            let newerGraceStatus = updateGraceStatusWithNewDirectoryVersionsFromServer newGraceStatus newDirectoryVersions
                                             //logToAnsiConsole Colors.Verbose $"Succeeded calling updateGraceStatusWithNewDirectoryVersions."
 
                                             // Identify files that we don't already have in object cache and download them.
@@ -2937,14 +2874,12 @@ module Branch =
                         | Ok returnValue ->
                             let referenceDtos = returnValue.ReturnValue
 
-                            let latestCommit =
-                                referenceDtos.FirstOrDefault((fun ref -> ref.ReferenceId = branchDto.LatestCommit), ReferenceDto.Default)
+                            let latestCommit = referenceDtos.FirstOrDefault((fun ref -> ref.ReferenceId = branchDto.LatestCommit), ReferenceDto.Default)
 
                             let parentLatestPromotion =
                                 referenceDtos.FirstOrDefault((fun ref -> ref.ReferenceId = parentBranchDto.LatestPromotion), ReferenceDto.Default)
 
-                            let basedOn =
-                                referenceDtos.FirstOrDefault((fun ref -> ref.ReferenceId = branchDto.BasedOn), ReferenceDto.Default)
+                            let basedOn = referenceDtos.FirstOrDefault((fun ref -> ref.ReferenceId = branchDto.BasedOn), ReferenceDto.Default)
 
                             // Get the latest reference from the current branch.
                             let getReferencesParameters =
@@ -3081,11 +3016,9 @@ module Branch =
                                         let parentLatestPromotionDirectoryVersions = directories[0].ReturnValue
                                         let latestReferenceDirectoryVersions = directories[1].ReturnValue
 
-                                        let parentLatestPromotionLookup =
-                                            createFileVersionLookupDictionary parentLatestPromotionDirectoryVersions
+                                        let parentLatestPromotionLookup = createFileVersionLookupDictionary parentLatestPromotionDirectoryVersions
 
-                                        let latestReferenceLookup =
-                                            createFileVersionLookupDictionary latestReferenceDirectoryVersions
+                                        let latestReferenceLookup = createFileVersionLookupDictionary latestReferenceDirectoryVersions
 
                                         // Get the specific FileVersions for those files from the contents of the parent's latest promotion.
                                         let fileVersionsToDownload =
@@ -3132,8 +3065,7 @@ module Branch =
                                                 let fileVersion1 =
                                                     parentLatestPromotionLookup.FirstOrDefault(fun kvp -> kvp.Key = $"{diff1Difference.RelativePath}")
                                                 //let fileVersion2 = latestReferenceLookup[$"{diff2Difference.RelativePath}"]
-                                                let fileVersion2 =
-                                                    latestReferenceLookup.FirstOrDefault(fun kvp -> kvp.Key = $"{diff2Difference.RelativePath}")
+                                                let fileVersion2 = latestReferenceLookup.FirstOrDefault(fun kvp -> kvp.Key = $"{diff2Difference.RelativePath}")
                                                 //if (not <| isNull(fileVersion1) && not <| isNull(fileVersion2)) && (fileVersion1.Value.Sha256Hash <> fileVersion2.Value.Sha256Hash) then
                                                 if (fileVersion1.Value.Sha256Hash <> fileVersion2.Value.Sha256Hash) then
                                                     // Compare them at a line level; if there are no overlapping lines, we can just modify the working-directory version.
@@ -3317,8 +3249,7 @@ module Branch =
     let private statusHandler parseResult (parameters: StatusParameters) =
         task {
             try
-                if parseResult |> verbose then
-                    printParseResult parseResult
+                if parseResult |> verbose then printParseResult parseResult
                 // Show repo and branch names.
                 let getParameters =
                     GetBranchParameters(
@@ -3364,20 +3295,16 @@ module Branch =
                         | Ok returnValue ->
                             let referenceDtos = returnValue.ReturnValue
 
-                            let latestSave =
-                                referenceDtos.FirstOrDefault((fun ref -> ref.ReferenceId = branchDto.LatestSave), ReferenceDto.Default)
+                            let latestSave = referenceDtos.FirstOrDefault((fun ref -> ref.ReferenceId = branchDto.LatestSave), ReferenceDto.Default)
 
-                            let latestCheckpoint =
-                                referenceDtos.FirstOrDefault((fun ref -> ref.ReferenceId = branchDto.LatestCheckpoint), ReferenceDto.Default)
+                            let latestCheckpoint = referenceDtos.FirstOrDefault((fun ref -> ref.ReferenceId = branchDto.LatestCheckpoint), ReferenceDto.Default)
 
-                            let latestCommit =
-                                referenceDtos.FirstOrDefault((fun ref -> ref.ReferenceId = branchDto.LatestCommit), ReferenceDto.Default)
+                            let latestCommit = referenceDtos.FirstOrDefault((fun ref -> ref.ReferenceId = branchDto.LatestCommit), ReferenceDto.Default)
 
                             let latestParentBranchPromotion =
                                 referenceDtos.FirstOrDefault((fun ref -> ref.ReferenceId = parentBranchDto.LatestPromotion), ReferenceDto.Default)
 
-                            let basedOn =
-                                referenceDtos.FirstOrDefault((fun ref -> ref.ReferenceId = branchDto.BasedOn), ReferenceDto.Default)
+                            let basedOn = referenceDtos.FirstOrDefault((fun ref -> ref.ReferenceId = branchDto.BasedOn), ReferenceDto.Default)
 
                             let getReferencesParameters =
                                 Parameters.Branch.GetReferencesParameters(
@@ -3411,23 +3338,17 @@ module Branch =
                                 let permissions (branchDto: Dto.Branch.BranchDto) =
                                     let sb = StringBuilder()
 
-                                    if branchDto.PromotionEnabled then
-                                        sb.Append("Promotion/") |> ignore
+                                    if branchDto.PromotionEnabled then sb.Append("Promotion/") |> ignore
 
-                                    if branchDto.CommitEnabled then
-                                        sb.Append("Commit/") |> ignore
+                                    if branchDto.CommitEnabled then sb.Append("Commit/") |> ignore
 
-                                    if branchDto.CheckpointEnabled then
-                                        sb.Append("Checkpoint/") |> ignore
+                                    if branchDto.CheckpointEnabled then sb.Append("Checkpoint/") |> ignore
 
-                                    if branchDto.SaveEnabled then
-                                        sb.Append("Save/") |> ignore
+                                    if branchDto.SaveEnabled then sb.Append("Save/") |> ignore
 
-                                    if branchDto.TagEnabled then
-                                        sb.Append("Tag") |> ignore
+                                    if branchDto.TagEnabled then sb.Append("Tag") |> ignore
 
-                                    if sb[sb.Length - 1] = '/' then
-                                        sb.Remove(sb.Length - 1, 1) |> ignore
+                                    if sb[sb.Length - 1] = '/' then sb.Remove(sb.Length - 1, 1) |> ignore
 
                                     sb.ToString()
 
@@ -3519,8 +3440,7 @@ module Branch =
     let private deleteHandler (parseResult: ParseResult) (parameters: DeleteParameters) =
         task {
             try
-                if parseResult |> verbose then
-                    printParseResult parseResult
+                if parseResult |> verbose then printParseResult parseResult
 
                 let validateIncomingParameters = CommonValidations parseResult parameters
 
@@ -3547,8 +3467,7 @@ module Branch =
                                 .Columns(progressColumns)
                                 .StartAsync(fun progressContext ->
                                     task {
-                                        let t0 =
-                                            progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
+                                        let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
 
                                         let! result = Branch.Delete(deleteParameters)
                                         t0.Increment(100.0)
@@ -3613,8 +3532,7 @@ module Branch =
             |> addOption Options.branchId
 
         // Create main command and aliases, if any.`
-        let branchCommand =
-            new Command("branch", Description = "Create, change, or delete branch-level information.")
+        let branchCommand = new Command("branch", Description = "Create, change, or delete branch-level information.")
 
         branchCommand.AddAlias("br")
 
@@ -3853,8 +3771,7 @@ module Branch =
         getTagsCommand.Handler <- GetTags
         branchCommand.AddCommand(getTagsCommand)
 
-        let deleteCommand =
-            new Command("delete", Description = "Delete the branch.") |> addCommonOptions
+        let deleteCommand = new Command("delete", Description = "Delete the branch.") |> addCommonOptions
 
         deleteCommand.Handler <- Delete
         branchCommand.AddCommand(deleteCommand)

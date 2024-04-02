@@ -147,8 +147,7 @@ module Diff =
                 Arity = ArgumentArity.ExactlyOne
             )
 
-        let tag =
-            new Option<string>("--tag", IsRequired = true, Description = "The tag to compare the current version to.", Arity = ArgumentArity.ExactlyOne)
+        let tag = new Option<string>("--tag", IsRequired = true, Description = "The tag to compare the current version to.", Arity = ArgumentArity.ExactlyOne)
 
     let mustBeAValidGuid (parseResult: ParseResult) (parameters: CommonParameters) (option: Option) (value: string) (error: DiffError) =
         let mutable guid = Guid.Empty
@@ -312,8 +311,7 @@ module Diff =
 
     let private diffToReferenceType (parseResult: ParseResult) (parameters: GetDiffByReferenceTypeParameters) (referenceType: ReferenceType) =
         task {
-            if parseResult |> verbose then
-                printParseResult parseResult
+            if parseResult |> verbose then printParseResult parseResult
 
             let validateIncomingParameters = (parseResult, parameters) |> CommonValidations
 
@@ -325,23 +323,17 @@ module Diff =
                             .Columns(progressColumns)
                             .StartAsync(fun progressContext ->
                                 task {
-                                    let t0 =
-                                        progressContext.AddTask($"[{Color.DodgerBlue1}]Reading Grace index file.[/]")
+                                    let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Reading Grace index file.[/]")
 
-                                    let t1 =
-                                        progressContext.AddTask($"[{Color.DodgerBlue1}]Scanning working directory for changes.[/]", autoStart = false)
+                                    let t1 = progressContext.AddTask($"[{Color.DodgerBlue1}]Scanning working directory for changes.[/]", autoStart = false)
 
-                                    let t2 =
-                                        progressContext.AddTask($"[{Color.DodgerBlue1}]Creating new directory verions.[/]", autoStart = false)
+                                    let t2 = progressContext.AddTask($"[{Color.DodgerBlue1}]Creating new directory verions.[/]", autoStart = false)
 
-                                    let t3 =
-                                        progressContext.AddTask($"[{Color.DodgerBlue1}]Uploading changed files to object storage.[/]", autoStart = false)
+                                    let t3 = progressContext.AddTask($"[{Color.DodgerBlue1}]Uploading changed files to object storage.[/]", autoStart = false)
 
-                                    let t4 =
-                                        progressContext.AddTask($"[{Color.DodgerBlue1}]Uploading new directory versions.[/]", autoStart = false)
+                                    let t4 = progressContext.AddTask($"[{Color.DodgerBlue1}]Uploading new directory versions.[/]", autoStart = false)
 
-                                    let t5 =
-                                        progressContext.AddTask($"[{Color.DodgerBlue1}]Creating a save reference.[/]", autoStart = false)
+                                    let t5 = progressContext.AddTask($"[{Color.DodgerBlue1}]Creating a save reference.[/]", autoStart = false)
 
                                     let t6 =
                                         progressContext.AddTask(
@@ -349,8 +341,7 @@ module Diff =
                                             autoStart = false
                                         )
 
-                                    let t7 =
-                                        progressContext.AddTask($"[{Color.DodgerBlue1}]Sending diff request to server.[/]", autoStart = false)
+                                    let t7 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending diff request to server.[/]", autoStart = false)
 
                                     let mutable rootDirectoryId = DirectoryId.Empty
                                     let mutable rootDirectorySha256Hash = Sha256Hash String.Empty
@@ -539,8 +530,7 @@ module Diff =
                                     // Sending diff request to server.
                                     t7.StartTask()
                                     //logToAnsiConsole Colors.Verbose $"latestReference.DirectoryId: {latestReference.DirectoryId}; rootDirectoryId: {rootDirectoryId}."
-                                    let getDiffParameters =
-                                        GetDiffParameters(DirectoryId1 = latestReference.DirectoryId, DirectoryId2 = rootDirectoryId)
+                                    let getDiffParameters = GetDiffParameters(DirectoryId1 = latestReference.DirectoryId, DirectoryId2 = rootDirectoryId)
 
                                     let! getDiffResult = Diff.GetDiff(getDiffParameters)
 
@@ -598,11 +588,9 @@ module Diff =
     let private DirectoryIdCommand =
         CommandHandler.Create(fun (parseResult: ParseResult) (parameters: DirectoryIdParameters) ->
             task {
-                if parseResult |> verbose then
-                    printParseResult parseResult
+                if parseResult |> verbose then printParseResult parseResult
 
-                let validateIncomingParameters =
-                    (parseResult, parameters) |> CommonValidations >>= DirectoryIdValidations
+                let validateIncomingParameters = (parseResult, parameters) |> CommonValidations >>= DirectoryIdValidations
 
                 match validateIncomingParameters with
                 | Ok _ -> return 0
@@ -618,8 +606,7 @@ module Diff =
     let private shaHandler =
         CommandHandler.Create(fun (parseResult: ParseResult) (parameters: ShaParameters) ->
             task {
-                if parseResult |> verbose then
-                    printParseResult parseResult
+                if parseResult |> verbose then printParseResult parseResult
 
                 let validateIncomingParameters = (parseResult, parameters) |> CommonValidations
 
@@ -631,26 +618,21 @@ module Diff =
                                 .Columns(progressColumns)
                                 .StartAsync(fun progressContext ->
                                     task {
-                                        let t0 =
-                                            progressContext.AddTask($"[{Color.DodgerBlue1}]Reading Grace index file.[/]")
+                                        let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Reading Grace index file.[/]")
 
                                         let t1 =
                                             progressContext.AddTask($"[{Color.DodgerBlue1}]Scanning working directory for changes.[/]", autoStart = false)
 
-                                        let t2 =
-                                            progressContext.AddTask($"[{Color.DodgerBlue1}]Creating new directory verions.[/]", autoStart = false)
+                                        let t2 = progressContext.AddTask($"[{Color.DodgerBlue1}]Creating new directory verions.[/]", autoStart = false)
 
                                         let t3 =
                                             progressContext.AddTask($"[{Color.DodgerBlue1}]Uploading changed files to object storage.[/]", autoStart = false)
 
-                                        let t4 =
-                                            progressContext.AddTask($"[{Color.DodgerBlue1}]Uploading new directory versions.[/]", autoStart = false)
+                                        let t4 = progressContext.AddTask($"[{Color.DodgerBlue1}]Uploading new directory versions.[/]", autoStart = false)
 
-                                        let t5 =
-                                            progressContext.AddTask($"[{Color.DodgerBlue1}]Creating a save reference.[/]", autoStart = false)
+                                        let t5 = progressContext.AddTask($"[{Color.DodgerBlue1}]Creating a save reference.[/]", autoStart = false)
 
-                                        let t6 =
-                                            progressContext.AddTask($"[{Color.DodgerBlue1}]Sending diff request to server.[/]", autoStart = false)
+                                        let t6 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending diff request to server.[/]", autoStart = false)
 
                                         let mutable rootDirectoryId = DirectoryId.Empty
                                         let mutable rootDirectorySha256Hash = Sha256Hash String.Empty
@@ -774,11 +756,9 @@ module Diff =
             |> addOption Options.repositoryName
             |> addOption Options.repositoryId
 
-        let addBranchOptions (command: Command) =
-            command |> addOption Options.branchName |> addOption Options.branchId
+        let addBranchOptions (command: Command) = command |> addOption Options.branchName |> addOption Options.branchId
 
-        let diffCommand =
-            new Command("diff", Description = "Displays the difference between two versions of your repository.")
+        let diffCommand = new Command("diff", Description = "Displays the difference between two versions of your repository.")
 
         let promotionCommand =
             new Command("promotion", Description = "Displays the difference between the promotion that this branch is based on and your current version.")

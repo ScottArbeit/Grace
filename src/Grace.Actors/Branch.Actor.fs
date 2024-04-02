@@ -62,75 +62,36 @@ module Branch =
                     for referenceType in initialPermissions do
                         branchDto <-
                             match referenceType with
-                            | ReferenceType.Promotion ->
-                                { branchDto with
-                                    PromotionEnabled = true }
+                            | ReferenceType.Promotion -> { branchDto with PromotionEnabled = true }
                             | ReferenceType.Commit -> { branchDto with CommitEnabled = true }
-                            | ReferenceType.Checkpoint ->
-                                { branchDto with
-                                    CheckpointEnabled = true }
+                            | ReferenceType.Checkpoint -> { branchDto with CheckpointEnabled = true }
                             | ReferenceType.Save -> { branchDto with SaveEnabled = true }
                             | ReferenceType.Tag -> { branchDto with TagEnabled = true }
 
                     branchDto
-                | Rebased referenceId ->
-                    { currentBranchDto with
-                        BasedOn = referenceId }
-                | NameSet branchName ->
-                    { currentBranchDto with
-                        BranchName = branchName }
+                | Rebased referenceId -> { currentBranchDto with BasedOn = referenceId }
+                | NameSet branchName -> { currentBranchDto with BranchName = branchName }
                 | Assigned(referenceId, directoryVersion, sha256Hash, referenceText) ->
-                    { currentBranchDto with
-                        LatestPromotion = referenceId
-                        BasedOn = referenceId }
+                    { currentBranchDto with LatestPromotion = referenceId; BasedOn = referenceId }
                 | Promoted(referenceId, directoryVersion, sha256Hash, referenceText) ->
-                    { currentBranchDto with
-                        LatestPromotion = referenceId
-                        BasedOn = referenceId }
-                | Committed(referenceId, directoryVersion, sha256Hash, referenceText) ->
-                    { currentBranchDto with
-                        LatestCommit = referenceId }
-                | Checkpointed(referenceId, directoryVersion, sha256Hash, referenceText) ->
-                    { currentBranchDto with
-                        LatestCheckpoint = referenceId }
-                | Saved(referenceId, directoryVersion, sha256Hash, referenceText) ->
-                    { currentBranchDto with
-                        LatestSave = referenceId }
+                    { currentBranchDto with LatestPromotion = referenceId; BasedOn = referenceId }
+                | Committed(referenceId, directoryVersion, sha256Hash, referenceText) -> { currentBranchDto with LatestCommit = referenceId }
+                | Checkpointed(referenceId, directoryVersion, sha256Hash, referenceText) -> { currentBranchDto with LatestCheckpoint = referenceId }
+                | Saved(referenceId, directoryVersion, sha256Hash, referenceText) -> { currentBranchDto with LatestSave = referenceId }
                 | Tagged(referenceId, directoryVersion, sha256Hash, referenceText) -> currentBranchDto
-                | EnabledAssign enabled ->
-                    { currentBranchDto with
-                        AssignEnabled = enabled }
-                | EnabledPromotion enabled ->
-                    { currentBranchDto with
-                        PromotionEnabled = enabled }
-                | EnabledCommit enabled ->
-                    { currentBranchDto with
-                        CommitEnabled = enabled }
-                | EnabledCheckpoint enabled ->
-                    { currentBranchDto with
-                        CheckpointEnabled = enabled }
-                | EnabledSave enabled ->
-                    { currentBranchDto with
-                        SaveEnabled = enabled }
-                | EnabledTag enabled ->
-                    { currentBranchDto with
-                        TagEnabled = enabled }
-                | EnabledAutoRebase enabled ->
-                    { currentBranchDto with
-                        AutoRebaseEnabled = enabled }
+                | EnabledAssign enabled -> { currentBranchDto with AssignEnabled = enabled }
+                | EnabledPromotion enabled -> { currentBranchDto with PromotionEnabled = enabled }
+                | EnabledCommit enabled -> { currentBranchDto with CommitEnabled = enabled }
+                | EnabledCheckpoint enabled -> { currentBranchDto with CheckpointEnabled = enabled }
+                | EnabledSave enabled -> { currentBranchDto with SaveEnabled = enabled }
+                | EnabledTag enabled -> { currentBranchDto with TagEnabled = enabled }
+                | EnabledAutoRebase enabled -> { currentBranchDto with AutoRebaseEnabled = enabled }
                 | ReferenceRemoved _ -> currentBranchDto
-                | LogicalDeleted(force, deleteReason) ->
-                    { currentBranchDto with
-                        DeletedAt = Some(getCurrentInstant ())
-                        DeleteReason = deleteReason }
+                | LogicalDeleted(force, deleteReason) -> { currentBranchDto with DeletedAt = Some(getCurrentInstant ()); DeleteReason = deleteReason }
                 | PhysicalDeleted -> currentBranchDto // Do nothing because it's about to be deleted anyway.
-                | Undeleted ->
-                    { currentBranchDto with
-                        DeletedAt = None
-                        DeleteReason = String.Empty }
+                | Undeleted -> { currentBranchDto with DeletedAt = None; DeleteReason = String.Empty }
 
-            { newBranchDto with
-                UpdatedAt = Some(getCurrentInstant ()) }
+            { newBranchDto with UpdatedAt = Some(getCurrentInstant ()) }
 
         member val private correlationId: CorrelationId = String.Empty with get, set
 
@@ -165,8 +126,7 @@ module Branch =
                     branchDto <- BranchDto.Default
                     message <- "Not found in database."
 
-                let duration_ms =
-                    getCurrentInstant().Minus(activateStartTime).TotalMilliseconds.ToString("F3")
+                let duration_ms = getCurrentInstant().Minus(activateStartTime).TotalMilliseconds.ToString("F3")
 
                 log.LogInformation(
                     "{CurrentInstant}: Activated {ActorType} {ActorId}. BranchName: {BranchName}; {message} Duration: {duration_ms}ms.",
@@ -183,8 +143,7 @@ module Branch =
         member private this.SetMaintenanceReminder() =
             this.RegisterReminderAsync("MaintenanceReminder", Array.empty<byte>, TimeSpan.FromDays(7.0), TimeSpan.FromDays(7.0))
 
-        member private this.UnregisterMaintenanceReminder() =
-            this.UnregisterReminderAsync("MaintenanceReminder")
+        member private this.UnregisterMaintenanceReminder() = this.UnregisterReminderAsync("MaintenanceReminder")
 
         member private this.OnFirstWrite() =
             task {
@@ -210,8 +169,7 @@ module Branch =
             Task.CompletedTask
 
         override this.OnPostActorMethodAsync(context) =
-            let duration_ms =
-                (getCurrentInstant().Minus(actorStartTime).TotalMilliseconds).ToString("F3")
+            let duration_ms = (getCurrentInstant().Minus(actorStartTime).TotalMilliseconds).ToString("F3")
 
             if String.IsNullOrEmpty(currentCommand) then
                 log.LogInformation(
@@ -247,8 +205,7 @@ module Branch =
                 try
                     let! branchEvents = this.BranchEvents()
 
-                    if branchEvents.Count = 0 then
-                        do! this.OnFirstWrite()
+                    if branchEvents.Count = 0 then do! this.OnFirstWrite()
 
                     branchEvents.Add(branchEvent)
 
@@ -270,8 +227,7 @@ module Branch =
                     //if not <| response.IsSuccessStatusCode then
                     //    log.LogError("Failed to send SignalR notification. Event: {event}", message)
 
-                    let returnValue =
-                        GraceReturnValue.Create "Branch command succeeded." branchEvent.Metadata.CorrelationId
+                    let returnValue = GraceReturnValue.Create "Branch command succeeded." branchEvent.Metadata.CorrelationId
 
                     returnValue.Properties.Add(nameof (RepositoryId), $"{branchDto.RepositoryId}")
                     returnValue.Properties.Add(nameof (BranchId), $"{branchDto.BranchId}")
@@ -287,8 +243,7 @@ module Branch =
                 with ex ->
                     logToConsole (createExceptionResponse ex)
 
-                    let graceError =
-                        GraceError.Create (BranchError.getErrorMessage FailedWhileApplyingEvent) branchEvent.Metadata.CorrelationId
+                    let graceError = GraceError.Create (BranchError.getErrorMessage FailedWhileApplyingEvent) branchEvent.Metadata.CorrelationId
 
                     return Error graceError
             }
@@ -344,8 +299,7 @@ module Branch =
                         let referenceId: ReferenceId = ReferenceId.NewGuid()
                         let actorId = Reference.GetActorId referenceId
 
-                        let referenceActor =
-                            actorProxyFactory.CreateActorProxy<IReferenceActor>(actorId, Constants.ActorName.Reference)
+                        let referenceActor = actorProxyFactory.CreateActorProxy<IReferenceActor>(actorId, Constants.ActorName.Reference)
 
                         let! referenceDto =
                             referenceActor.Create
@@ -469,8 +423,7 @@ module Branch =
                     this.correlationId <- correlationId
                     let actorId = ActorId($"{branchDto.ParentBranchId}")
 
-                    let branchActorProxy =
-                        this.Host.ProxyFactory.CreateActorProxy<IBranchActor>(actorId, ActorName.Branch)
+                    let branchActorProxy = this.Host.ProxyFactory.CreateActorProxy<IBranchActor>(actorId, ActorName.Branch)
 
                     return! branchActorProxy.Get correlationId
                 }

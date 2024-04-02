@@ -62,14 +62,12 @@ module DirectoryVersion =
                 else
                     let! error = validationResults |> getFirstError
 
-                    let graceError =
-                        GraceError.Create (DirectoryVersionError.getErrorMessage error) (getCorrelationId context)
+                    let graceError = GraceError.Create (DirectoryVersionError.getErrorMessage error) (getCorrelationId context)
 
                     graceError.Properties.Add("Path", context.Request.Path)
                     return! context |> result400BadRequest graceError
             with ex ->
-                let graceError =
-                    GraceError.Create $"{Utilities.createExceptionResponse ex}" (getCorrelationId context)
+                let graceError = GraceError.Create $"{Utilities.createExceptionResponse ex}" (getCorrelationId context)
 
                 graceError.Properties.Add("Path", context.Request.Path)
                 return! context |> result500ServerError graceError
@@ -93,8 +91,7 @@ module DirectoryVersion =
                     let actorProxy = getActorProxy context parameters.DirectoryId
                     let! queryResult = query context maxCount actorProxy
 
-                    let graceReturnValue =
-                        GraceReturnValue.Create queryResult (getCorrelationId context)
+                    let graceReturnValue = GraceReturnValue.Create queryResult (getCorrelationId context)
 
                     match getGraceIds context with
                     | Some graceIds ->
@@ -108,8 +105,7 @@ module DirectoryVersion =
                 else
                     let! error = validationResults |> getFirstError
 
-                    let graceError =
-                        GraceError.Create (DirectoryVersionError.getErrorMessage error) (getCorrelationId context)
+                    let graceError = GraceError.Create (DirectoryVersionError.getErrorMessage error) (getCorrelationId context)
 
                     graceError.Properties.Add("Path", context.Request.Path)
                     return! context |> result400BadRequest graceError
@@ -140,8 +136,7 @@ module DirectoryVersion =
                     task {
                         let actorId = GetActorId parameters.DirectoryVersion.DirectoryId
 
-                        let actorProxy =
-                            ApplicationContext.actorProxyFactory.CreateActorProxy<IDirectoryVersionActor>(actorId, ActorName.DirectoryVersion)
+                        let actorProxy = ApplicationContext.actorProxyFactory.CreateActorProxy<IDirectoryVersionActor>(actorId, ActorName.DirectoryVersion)
 
                         return! actorProxy.Handle (DirectoryVersion.Create parameters.DirectoryVersion) (Services.createMetadata context)
                     }
@@ -209,8 +204,7 @@ module DirectoryVersion =
                     task {
                         let directoryVersions = List<DirectoryVersion>()
 
-                        let directoryIds =
-                            context.Items[nameof (GetByDirectoryIdsParameters)] :?> List<DirectoryId>
+                        let directoryIds = context.Items[nameof (GetByDirectoryIdsParameters)] :?> List<DirectoryId>
 
                         for directoryId in directoryIds do
                             let actorProxy =
@@ -242,8 +236,7 @@ module DirectoryVersion =
 
                 let query (context: HttpContext) (maxCount: int) (actorProxy: IDirectoryVersionActor) =
                     task {
-                        let parameters =
-                            context.Items[nameof (GetBySha256HashParameters)] :?> GetBySha256HashParameters
+                        let parameters = context.Items[nameof (GetBySha256HashParameters)] :?> GetBySha256HashParameters
 
                         match! getDirectoryBySha256Hash (Guid.Parse(parameters.RepositoryId)) (Sha256Hash parameters.Sha256Hash) (getCorrelationId context) with
                         | Some directoryVersion -> return directoryVersion
@@ -260,8 +253,7 @@ module DirectoryVersion =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let validations (parameters: SaveDirectoryVersionsParameters) =
-                    let mutable allValidations: ValueTask<Result<unit, DirectoryVersionError>> array =
-                        Array.Empty()
+                    let mutable allValidations: ValueTask<Result<unit, DirectoryVersionError>> array = Array.Empty()
 
                     for directoryVersion in parameters.DirectoryVersions do
                         let validations =

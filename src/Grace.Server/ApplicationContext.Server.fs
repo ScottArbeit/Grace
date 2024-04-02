@@ -33,8 +33,7 @@ module ApplicationContext =
 
     let mutable actorProxyFactory: IActorProxyFactory = null
 
-    let mutable actorStateStorageProvider: ActorStateStorageProvider =
-        ActorStateStorageProvider.Unknown
+    let mutable actorStateStorageProvider: ActorStateStorageProvider = ActorStateStorageProvider.Unknown
 
     let mutable loggerFactory: ILoggerFactory = null
     let mutable memoryCache: IMemoryCache = null
@@ -61,9 +60,7 @@ module ApplicationContext =
         Grace.Actors.Services.setLoggerFactory loggerFactory
 
     /// Holds information about each Azure Storage Account used by the application.
-    type StorageAccount =
-        { StorageAccountName: string
-          StorageAccountConnectionString: string }
+    type StorageAccount = { StorageAccountName: string; StorageAccountConnectionString: string }
 
     let daprHttpEndpoint =
         $"{Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.DaprServerUri)}:{Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.DaprHttpPort)}"
@@ -105,8 +102,7 @@ module ApplicationContext =
 
             let mutable gRPCPort: int = 50001 // This is Dapr's default gRPC port.
 
-            let grpcPortString =
-                Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.DaprGrpcPort)
+            let grpcPortString = Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.DaprGrpcPort)
 
             if Int32.TryParse(grpcPortString, &gRPCPort) then
                 let startTime = getCurrentInstant ()
@@ -132,19 +128,15 @@ module ApplicationContext =
                 logToConsole $"Could not parse gRPC port {grpcPortString} as a port number. Exiting."
                 Environment.Exit(-1)
 
-            let storageKey =
-                Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.AzureStorageKey)
+            let storageKey = Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.AzureStorageKey)
 
             sharedKeyCredential <- StorageSharedKeyCredential(DefaultObjectStorageAccount, storageKey)
 
-            let cosmosDbConnectionString =
-                Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.AzureCosmosDBConnectionString)
+            let cosmosDbConnectionString = Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.AzureCosmosDBConnectionString)
 
-            let cosmosDatabaseName =
-                Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.CosmosDatabaseName)
+            let cosmosDatabaseName = Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.CosmosDatabaseName)
 
-            let cosmosContainerName =
-                Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.CosmosContainerName)
+            let cosmosContainerName = Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.CosmosContainerName)
 
             // Get a reference to the CosmosDB database.
             let cosmosClientOptions =
@@ -172,8 +164,7 @@ module ApplicationContext =
             let database = databaseResponse.Database
 
             // Get a reference to the CosmosDB container.
-            let containerProperties =
-                ContainerProperties(Id = cosmosContainerName, PartitionKeyPath = "/partitionKey", DefaultTimeToLive = 3600)
+            let containerProperties = ContainerProperties(Id = cosmosContainerName, PartitionKeyPath = "/partitionKey", DefaultTimeToLive = 3600)
 
             let! containerResponse = database.CreateContainerIfNotExistsAsync(containerProperties)
             let cosmosContainer = containerResponse.Container

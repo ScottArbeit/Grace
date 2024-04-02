@@ -70,9 +70,7 @@ module Owner =
 
                             return!
                                 context
-                                |> result400BadRequest
-                                    { graceError with
-                                        Properties = getPropertiesAsDictionary parameters }
+                                |> result400BadRequest { graceError with Properties = getPropertiesAsDictionary parameters }
                     }
 
                 let validationResults = validations parameters
@@ -91,8 +89,7 @@ module Owner =
                     match ownerId, commandName = nameof (Create) with
                     | Some ownerId, _ ->
                         // If ownerId is Some, then we have a valid ownerId.
-                        if String.IsNullOrEmpty(parameters.OwnerId) then
-                            parameters.OwnerId <- ownerId
+                        if String.IsNullOrEmpty(parameters.OwnerId) then parameters.OwnerId <- ownerId
 
                         return! handleCommand ownerId cmd
                     | None, true ->
@@ -122,8 +119,7 @@ module Owner =
                     let errorMessage = OwnerError.getErrorMessage error
                     log.LogDebug("{currentInstant}: error: {error}", getCurrentInstantExtended (), errorMessage)
 
-                    let graceError =
-                        GraceError.CreateWithMetadata errorMessage (getCorrelationId context) (getPropertiesAsDictionary parameters)
+                    let graceError = GraceError.CreateWithMetadata errorMessage (getCorrelationId context) (getPropertiesAsDictionary parameters)
 
                     graceError.Properties.Add("Path", context.Request.Path)
                     graceError.Properties.Add("Error", errorMessage)
@@ -162,8 +158,7 @@ module Owner =
                         let actorProxy = getActorProxy context ownerId
                         let! queryResult = query context maxCount actorProxy
 
-                        let graceReturnValue =
-                            GraceReturnValue.Create queryResult (getCorrelationId context)
+                        let graceReturnValue = GraceReturnValue.Create queryResult (getCorrelationId context)
 
                         match getGraceIds context with
                         | Some graceIds -> graceReturnValue.Properties[nameof (OwnerId)] <- graceIds.OwnerId
@@ -177,8 +172,7 @@ module Owner =
                 else
                     let! error = validationResults |> getFirstError
 
-                    let graceError =
-                        GraceError.Create (OwnerError.getErrorMessage error) (getCorrelationId context)
+                    let graceError = GraceError.Create (OwnerError.getErrorMessage error) (getCorrelationId context)
 
                     graceError.Properties.Add("Path", context.Request.Path)
                     return! context |> result400BadRequest graceError
@@ -222,8 +216,7 @@ module Owner =
                        Owner.ownerIsNotDeleted parameters.OwnerId parameters.OwnerName parameters.CorrelationId OwnerIsDeleted
                        Owner.ownerNameDoesNotExist parameters.NewName parameters.CorrelationId OwnerNameAlreadyExists |]
 
-                let command (parameters: SetOwnerNameParameters) =
-                    SetName(OwnerName parameters.NewName) |> returnValueTask
+                let command (parameters: SetOwnerNameParameters) = SetName(OwnerName parameters.NewName) |> returnValueTask
 
                 context.Items.Add("Command", nameof (SetName))
                 return! processCommand context validations command
@@ -286,8 +279,7 @@ module Owner =
                        Owner.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
                        Owner.ownerIsNotDeleted parameters.OwnerId parameters.OwnerName parameters.CorrelationId OwnerIsDeleted |]
 
-                let command (parameters: SetOwnerDescriptionParameters) =
-                    OwnerCommand.SetDescription(parameters.Description) |> returnValueTask
+                let command (parameters: SetOwnerDescriptionParameters) = OwnerCommand.SetDescription(parameters.Description) |> returnValueTask
 
                 context.Items.Add("Command", nameof (SetDescription))
                 return! processCommand context validations command
@@ -298,8 +290,7 @@ module Owner =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 try
-                    let validations (parameters: ListOrganizationsParameters) =
-                        [| Guid.isValidAndNotEmpty parameters.OwnerId InvalidOwnerId |]
+                    let validations (parameters: ListOrganizationsParameters) = [| Guid.isValidAndNotEmpty parameters.OwnerId InvalidOwnerId |]
 
                     let query (context: HttpContext) (maxCount: int) (actorProxy: IOwnerActor) =
                         task {
@@ -346,8 +337,7 @@ module Owner =
                        Owner.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
                        Owner.ownerIsDeleted parameters.OwnerId parameters.OwnerName parameters.CorrelationId OwnerIsNotDeleted |]
 
-                let command (parameters: OwnerParameters) =
-                    OwnerCommand.Undelete |> returnValueTask
+                let command (parameters: OwnerParameters) = OwnerCommand.Undelete |> returnValueTask
 
                 context.Items.Add("Command", nameof (Undelete))
                 return! processCommand context validations command
@@ -365,8 +355,7 @@ module Owner =
                            Owner.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
                            Owner.ownerIsNotDeleted parameters.OwnerId parameters.OwnerName parameters.CorrelationId OwnerIsDeleted |]
 
-                    let query (context: HttpContext) (maxCount: int) (actorProxy: IOwnerActor) =
-                        task { return! actorProxy.Get(getCorrelationId context) }
+                    let query (context: HttpContext) (maxCount: int) (actorProxy: IOwnerActor) = task { return! actorProxy.Get(getCorrelationId context) }
 
                     let! parameters = context |> parse<GetOwnerParameters>
                     return! processQuery context parameters validations 1 query

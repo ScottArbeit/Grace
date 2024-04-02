@@ -32,8 +32,7 @@ module Configuration =
 
     type GraceCLIConfiguration = { GraceWatchStatus: GraceWatchStatus }
 
-    let mutable private cliConfiguration =
-        { GraceWatchStatus = GraceWatchStatus.Default }
+    let mutable private cliConfiguration = { GraceWatchStatus = GraceWatchStatus.Default }
 
     let CLIConfiguration () = cliConfiguration
     let updateConfiguration (config: GraceCLIConfiguration) = cliConfiguration <- config
@@ -42,11 +41,7 @@ module GraceCommand =
 
     let mutable private caseInsensitive = true
 
-    type OptionToUpdate =
-        { optionName: string
-          command: string
-          display: string
-          displayOnCreate: string }
+    type OptionToUpdate = { optionName: string; command: string; display: string; displayOnCreate: string }
 
     /// Built-in aliases for Grace commands.
     let private aliases =
@@ -159,11 +154,7 @@ module GraceCommand =
             let tokens = context.ParseResult.Tokens.Select(fun token -> token.Value).ToList()
 
             if tokens.Count > 0 then
-                let firstToken =
-                    if caseInsensitive then
-                        tokens[0].ToLowerInvariant()
-                    else
-                        tokens[0]
+                let firstToken = if caseInsensitive then tokens[0].ToLowerInvariant() else tokens[0]
 
                 if aliases.ContainsKey(firstToken) then
                     tokens.RemoveAt(0)
@@ -305,26 +296,11 @@ module GraceCommand =
                 // Without setting the display values here, by default, we'd get something like "[default: thing-we-said-in-the-Option-definition] [default:e4def31b-4547-4f6b-9324-56eba666b4b2]"
                 //   i.e. whatever the generated Guid value on create might be.
                 let optionsToUpdate =
-                    [ { optionName = "correlationId"
-                        command = String.Empty
-                        display = "new NanoId"
-                        displayOnCreate = "new NanoId" }
-                      { optionName = "branchId"
-                        command = "Branch"
-                        display = "current branch"
-                        displayOnCreate = "new Guid" }
-                      { optionName = "organizationId"
-                        command = "Organization"
-                        display = "current organization"
-                        displayOnCreate = "new Guid" }
-                      { optionName = "ownerId"
-                        command = "Owner"
-                        display = "current owner"
-                        displayOnCreate = "new Guid" }
-                      { optionName = "repositoryId"
-                        command = "Repository"
-                        display = "current repository"
-                        displayOnCreate = "new Guid" }
+                    [ { optionName = "correlationId"; command = String.Empty; display = "new NanoId"; displayOnCreate = "new NanoId" }
+                      { optionName = "branchId"; command = "Branch"; display = "current branch"; displayOnCreate = "new Guid" }
+                      { optionName = "organizationId"; command = "Organization"; display = "current organization"; displayOnCreate = "new Guid" }
+                      { optionName = "ownerId"; command = "Owner"; display = "current owner"; displayOnCreate = "new Guid" }
+                      { optionName = "repositoryId"; command = "Repository"; display = "current repository"; displayOnCreate = "new Guid" }
                       { optionName = "parentBranchId"
                         command = "Branch"
                         display = "current branch, empty if parentBranchName is provided"
@@ -355,11 +331,7 @@ module GraceCommand =
             .Build()
 
     /// Checks if the command is a `grace watch` command.
-    let isGraceWatch (parseResult: ParseResult) =
-        if (parseResult.CommandResult.Command.Name = "watch") then
-            true
-        else
-            false
+    let isGraceWatch (parseResult: ParseResult) = if (parseResult.CommandResult.Command.Name = "watch") then true else false
 
     /// Checks if the command is a `grace config` command.
     let isGraceConfig (parseResult: ParseResult) =

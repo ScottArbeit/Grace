@@ -94,8 +94,7 @@ module Diff =
                 let! validationsPassed = validationResults |> allPass
 
                 if validationsPassed then
-                    let actorProxy =
-                        getActorProxy parameters.DirectoryId1 parameters.DirectoryId2 context
+                    let actorProxy = getActorProxy parameters.DirectoryId1 parameters.DirectoryId2 context
 
                     //// Need to figure this whole part out next.
                     //// Then add SDK implementation of GetDiff.
@@ -113,8 +112,7 @@ module Diff =
                 else
                     let! error = validationResults |> getFirstError
 
-                    let graceError =
-                        GraceError.Create (DiffError.getErrorMessage error) (getCorrelationId context)
+                    let graceError = GraceError.Create (DiffError.getErrorMessage error) (getCorrelationId context)
 
                     graceError.Properties.Add("Path", context.Request.Path)
                     graceError.Properties.Add($"DirectoryId1", $"{parameters.DirectoryId1}")

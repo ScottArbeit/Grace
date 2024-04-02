@@ -7,29 +7,21 @@ open Microsoft.Extensions.DependencyInjection
 
 type HttpSecurityHeadersMiddleware(next: RequestDelegate) =
 
-    let Access_Control_Allow_Credentials =
-        new KeyValuePair<string, StringValues>("Access-Control-Allow-Credentials", new StringValues("true"))
+    let Access_Control_Allow_Credentials = new KeyValuePair<string, StringValues>("Access-Control-Allow-Credentials", new StringValues("true"))
 
-    let Access_Control_Allow_Methods =
-        new KeyValuePair<string, StringValues>("Access-Control-Allow-Methods", new StringValues("GET,POST,PUT"))
+    let Access_Control_Allow_Methods = new KeyValuePair<string, StringValues>("Access-Control-Allow-Methods", new StringValues("GET,POST,PUT"))
 
-    let Access_Control_Allow_Headers =
-        new KeyValuePair<string, StringValues>("Access-Control-Allow-Headers", new StringValues("Origin, X-Correlation-Id"))
+    let Access_Control_Allow_Headers = new KeyValuePair<string, StringValues>("Access-Control-Allow-Headers", new StringValues("Origin, X-Correlation-Id"))
 
-    let X_Content_Type_Options =
-        new KeyValuePair<string, StringValues>("X-Content-Type-Options", new StringValues("nosniff"))
+    let X_Content_Type_Options = new KeyValuePair<string, StringValues>("X-Content-Type-Options", new StringValues("nosniff"))
 
-    let X_Frame_Options =
-        new KeyValuePair<string, StringValues>("X-Frame-Options", new StringValues("SAMEORIGIN"))
+    let X_Frame_Options = new KeyValuePair<string, StringValues>("X-Frame-Options", new StringValues("SAMEORIGIN"))
 
-    let X_Permitted_Cross_Domain_Policies =
-        new KeyValuePair<string, StringValues>("X-Permitted-Cross-Domain-Policies", new StringValues("none"))
+    let X_Permitted_Cross_Domain_Policies = new KeyValuePair<string, StringValues>("X-Permitted-Cross-Domain-Policies", new StringValues("none"))
 
-    let X_XSS_Protection =
-        new KeyValuePair<string, StringValues>("X-XSS-Protection", new StringValues("1; mode=block"))
+    let X_XSS_Protection = new KeyValuePair<string, StringValues>("X-XSS-Protection", new StringValues("1; mode=block"))
 
-    let Referrer_Policy =
-        new KeyValuePair<string, StringValues>("Referrer-Policy", new StringValues("strict-origin-when-cross-origin"))
+    let Referrer_Policy = new KeyValuePair<string, StringValues>("Referrer-Policy", new StringValues("strict-origin-when-cross-origin"))
 
     let Feature_Policy =
         new KeyValuePair<string, StringValues>(

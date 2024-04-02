@@ -10,8 +10,7 @@ open System.Net.Http.Json
 
 module Dapr =
 
-    let private daprServerUri =
-        Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.DaprServerUri)
+    let private daprServerUri = Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.DaprServerUri)
 
     let serverUri =
         if String.IsNullOrEmpty(daprServerUri) then
@@ -19,8 +18,7 @@ module Dapr =
         else
             $"{daprServerUri}"
 
-    let private daprHttpPort =
-        Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.DaprHttpPort)
+    let private daprHttpPort = Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.DaprHttpPort)
 
     let daprHttpEndpoint =
         if String.IsNullOrEmpty(daprHttpPort) then
@@ -28,8 +26,7 @@ module Dapr =
         else
             $"{serverUri}:{daprHttpPort}"
 
-    let private daprGrpcPort =
-        Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.DaprGrpcPort)
+    let private daprGrpcPort = Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.DaprGrpcPort)
 
     let daprGrpcEndpoint =
         if String.IsNullOrEmpty(daprHttpPort) then

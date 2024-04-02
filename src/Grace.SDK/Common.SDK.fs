@@ -62,8 +62,7 @@ module Common =
         let traceId = byteArrayToString (traceIdBytes)
         let parentId = byteArrayToString (parentIdBytes)
 
-        let httpClient =
-            new HttpClient(handler = socketsHttpHandler, disposeHandler = false)
+        let httpClient = new HttpClient(handler = socketsHttpHandler, disposeHandler = false)
 
         httpClient.DefaultRequestVersion <- HttpVersion.Version20 // We'll aggressively move to Version30 as soon as we can.
         httpClient.DefaultRequestHeaders.Add(Constants.Traceparent, $"00-{traceId}-{parentId}-01")
@@ -91,11 +90,9 @@ module Common =
                 use httpClient = getHttpClient parameters.CorrelationId
                 let startTime = getCurrentInstant ()
 
-                let daprServerUri =
-                    Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.DaprServerUri)
+                let daprServerUri = Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.DaprServerUri)
 
-                let graceServerPort =
-                    Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.GraceAppPort)
+                let graceServerPort = Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.GraceAppPort)
 
                 let serverUri = Uri($"{daprServerUri}:{graceServerPort}/{route}")
 
@@ -184,7 +181,6 @@ module Common =
     ///
     /// Example: foo.txt with a SHA-256 hash of "8e798...980c" -> "foo_8e798...980c.txt".
     let getObjectFileName (fileVersion: FileVersion) =
-        let file =
-            FileInfo(Path.Combine(Current().RootDirectory, $"{fileVersion.RelativePath}"))
+        let file = FileInfo(Path.Combine(Current().RootDirectory, $"{fileVersion.RelativePath}"))
 
         $"{file.Name.Replace(file.Extension, String.Empty)}_{fileVersion.Sha256Hash}{file.Extension}"

@@ -62,8 +62,7 @@ module Maintenance =
     let private UpdateIndex =
         CommandHandler.Create(fun (parseResult: ParseResult) (parameters: CommonParameters) ->
             task {
-                if parseResult |> verbose then
-                    printParseResult parseResult
+                if parseResult |> verbose then printParseResult parseResult
 
                 if parseResult |> hasOutput then
                     let! graceStatus =
@@ -71,20 +70,15 @@ module Maintenance =
                             .Columns(progressColumns)
                             .StartAsync(fun progressContext ->
                                 task {
-                                    let t0 =
-                                        progressContext.AddTask($"[{Color.DodgerBlue1}]Reading existing Grace index file.[/]")
+                                    let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Reading existing Grace index file.[/]")
 
-                                    let t1 =
-                                        progressContext.AddTask($"[{Color.DodgerBlue1}]Computing new Grace index file.[/]", autoStart = false)
+                                    let t1 = progressContext.AddTask($"[{Color.DodgerBlue1}]Computing new Grace index file.[/]", autoStart = false)
 
-                                    let t2 =
-                                        progressContext.AddTask($"[{Color.DodgerBlue1}]Writing new Grace index file.[/]", autoStart = false)
+                                    let t2 = progressContext.AddTask($"[{Color.DodgerBlue1}]Writing new Grace index file.[/]", autoStart = false)
 
-                                    let t3 =
-                                        progressContext.AddTask($"[{Color.DodgerBlue1}]Ensure files are in the object cache.[/]", autoStart = false)
+                                    let t3 = progressContext.AddTask($"[{Color.DodgerBlue1}]Ensure files are in the object cache.[/]", autoStart = false)
 
-                                    let t4 =
-                                        progressContext.AddTask($"[{Color.DodgerBlue1}]Ensure object cache index is up-to-date.[/]", autoStart = false)
+                                    let t4 = progressContext.AddTask($"[{Color.DodgerBlue1}]Ensure object cache index is up-to-date.[/]", autoStart = false)
 
                                     let t5 =
                                         progressContext.AddTask($"[{Color.DodgerBlue1}]Ensure files are uploaded to object storage.[/]", autoStart = false)
@@ -324,8 +318,7 @@ module Maintenance =
                                     while not <| errors.IsEmpty do
                                         errors.TryDequeue(&error) |> ignore
 
-                                        if error.Error.Contains("TRetval") then
-                                            logToConsole $"********* {error.Error}"
+                                        if error.Error.Contains("TRetval") then logToConsole $"********* {error.Error}"
 
                                         AnsiConsole.MarkupLine($"[{Colors.Error}]{error.Error.EscapeMarkup()}[/]")
 
@@ -337,11 +330,9 @@ module Maintenance =
                             .Select(fun directoryVersion -> directoryVersion.Files.Count)
                             .Sum()
 
-                    let totalFileSize =
-                        graceStatus.Index.Values.Sum(fun directoryVersion -> directoryVersion.Files.Sum(fun f -> int64 f.Size))
+                    let totalFileSize = graceStatus.Index.Values.Sum(fun directoryVersion -> directoryVersion.Files.Sum(fun f -> int64 f.Size))
 
-                    let rootDirectoryVersion =
-                        graceStatus.Index.Values.First(fun d -> d.RelativePath = Constants.RootDirectoryPath)
+                    let rootDirectoryVersion = graceStatus.Index.Values.First(fun d -> d.RelativePath = Constants.RootDirectoryPath)
 
                     AnsiConsole.MarkupLine($"[{Colors.Highlighted}]Number of directories scanned: {graceStatus.Index.Count}.[/]")
 
@@ -450,8 +441,7 @@ module Maintenance =
     let private Scan =
         CommandHandler.Create(fun (parseResult: ParseResult) (parameters: CommonParameters) ->
             task {
-                if parseResult |> verbose then
-                    printParseResult parseResult
+                if parseResult |> verbose then printParseResult parseResult
 
                 if parseResult |> hasOutput then
                     let! (differences, newDirectoryVersions) =
@@ -459,14 +449,11 @@ module Maintenance =
                             .Columns(progressColumns)
                             .StartAsync(fun progressContext ->
                                 task {
-                                    let t0 =
-                                        progressContext.AddTask($"[{Color.DodgerBlue1}]Reading Grace index file.[/]")
+                                    let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Reading Grace index file.[/]")
 
-                                    let t1 =
-                                        progressContext.AddTask($"[{Color.DodgerBlue1}]Scanning working directory for changes.[/]", autoStart = false)
+                                    let t1 = progressContext.AddTask($"[{Color.DodgerBlue1}]Scanning working directory for changes.[/]", autoStart = false)
 
-                                    let t2 =
-                                        progressContext.AddTask($"[{Color.DodgerBlue1}]Computing root directory SHA-256 value.[/]", autoStart = false)
+                                    let t2 = progressContext.AddTask($"[{Color.DodgerBlue1}]Computing root directory SHA-256 value.[/]", autoStart = false)
 
                                     t0.Increment(0.0)
                                     let! previousGraceStatus = readGraceStatusFile ()
@@ -519,8 +506,7 @@ module Maintenance =
     let private Stats =
         CommandHandler.Create(fun (parseResult: ParseResult) (parameters: CommonParameters) ->
             task {
-                if parseResult |> verbose then
-                    printParseResult parseResult
+                if parseResult |> verbose then printParseResult parseResult
 
                 let! graceStatus = readGraceStatusFile ()
                 let directoryCount = graceStatus.Index.Count
@@ -530,11 +516,9 @@ module Maintenance =
                         .Select(fun directoryVersion -> directoryVersion.Files.Count)
                         .Sum()
 
-                let totalFileSize =
-                    graceStatus.Index.Values.Sum(fun directoryVersion -> directoryVersion.Files.Sum(fun f -> int64 f.Size))
+                let totalFileSize = graceStatus.Index.Values.Sum(fun directoryVersion -> directoryVersion.Files.Sum(fun f -> int64 f.Size))
 
-                let rootDirectoryVersion =
-                    graceStatus.Index.Values.First(fun d -> d.RelativePath = Constants.RootDirectoryPath)
+                let rootDirectoryVersion = graceStatus.Index.Values.First(fun d -> d.RelativePath = Constants.RootDirectoryPath)
 
                 AnsiConsole.MarkupLine($"[{Colors.Important}]All values taken from the local Grace status file.[/]")
                 AnsiConsole.MarkupLine($"[{Colors.Highlighted}]Number of directories: {directoryCount}.[/]")
@@ -554,8 +538,7 @@ module Maintenance =
     let private ListContents =
         CommandHandler.Create(fun (parseResult: ParseResult) (parameters: ListContentsParameters) ->
             task {
-                if parseResult |> verbose then
-                    printParseResult parseResult
+                if parseResult |> verbose then printParseResult parseResult
 
                 let! graceStatus = readGraceStatusFile ()
                 let directoryCount = graceStatus.Index.Count
@@ -565,11 +548,9 @@ module Maintenance =
                         .Select(fun directoryVersion -> directoryVersion.Files.Count)
                         .Sum()
 
-                let totalFileSize =
-                    graceStatus.Index.Values.Sum(fun directoryVersion -> directoryVersion.Files.Sum(fun f -> int64 f.Size))
+                let totalFileSize = graceStatus.Index.Values.Sum(fun directoryVersion -> directoryVersion.Files.Sum(fun f -> int64 f.Size))
 
-                let rootDirectoryVersion =
-                    graceStatus.Index.Values.First(fun d -> d.RelativePath = Constants.RootDirectoryPath)
+                let rootDirectoryVersion = graceStatus.Index.Values.First(fun d -> d.RelativePath = Constants.RootDirectoryPath)
 
                 AnsiConsole.MarkupLine($"[{Colors.Important}]All values taken from the local Grace status file.[/]")
                 AnsiConsole.MarkupLine($"[{Colors.Highlighted}]Number of directories: {directoryCount}.[/]")
@@ -584,8 +565,7 @@ module Maintenance =
                     let additionalImportantDashes = String.replicate (longestRelativePath + 3) "-"
                     let additionalDeemphasizedDashes = String.replicate (38) "-"
 
-                    let sortedDirectoryVersions =
-                        graceStatus.Index.Values.OrderBy(fun dv -> dv.RelativePath)
+                    let sortedDirectoryVersions = graceStatus.Index.Values.OrderBy(fun dv -> dv.RelativePath)
 
                     sortedDirectoryVersions
                     |> Seq.iteri (fun i directoryVersion ->
@@ -619,8 +599,7 @@ module Maintenance =
             :> Task)
 
     let Build =
-        let maintenanceCommand =
-            new Command("maintenance", Description = "Performs various maintenance tasks.")
+        let maintenanceCommand = new Command("maintenance", Description = "Performs various maintenance tasks.")
 
         maintenanceCommand.AddAlias("maint")
 
@@ -630,14 +609,12 @@ module Maintenance =
         updateIndexCommand.Handler <- UpdateIndex
         maintenanceCommand.AddCommand(updateIndexCommand)
 
-        let scanCommand =
-            new Command("scan", Description = "Scans the working directory contents for changes.")
+        let scanCommand = new Command("scan", Description = "Scans the working directory contents for changes.")
 
         scanCommand.Handler <- Scan
         maintenanceCommand.AddCommand(scanCommand)
 
-        let statsCommand =
-            new Command("stats", Description = "Displays statistics about the current working directory.")
+        let statsCommand = new Command("stats", Description = "Displays statistics about the current working directory.")
 
         statsCommand.Handler <- Stats
         maintenanceCommand.AddCommand(statsCommand)

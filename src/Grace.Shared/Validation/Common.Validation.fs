@@ -33,11 +33,7 @@ module Common =
     module Number =
 
         /// Validates that the given number is positive.
-        let isPositiveOrZero<'T> (n: double) (error: 'T) =
-            if n >= 0.0 then
-                Ok() |> returnValueTask
-            else
-                Error error |> returnValueTask
+        let isPositiveOrZero<'T> (n: double) (error: 'T) = if n >= 0.0 then Ok() |> returnValueTask else Error error |> returnValueTask
 
         /// Validates that a number is found between the supplied lower and upper bounds.
         let isWithinRange<'T, 'U when 'T: comparison> (n: 'T) (lower: 'T) (upper: 'T) (error: 'U) =
@@ -108,10 +104,7 @@ module Common =
         let listIsNonEmpty<'T, 'U> (list: IEnumerable<'T>) (error: 'U) =
             let xs = List<'T>(list)
 
-            if xs.Count > 0 then
-                Ok() |> returnValueTask
-            else
-                Error error |> returnValueTask
+            if xs.Count > 0 then Ok() |> returnValueTask else Error error |> returnValueTask
 
         /// Validates that one of the values passed in the array is not null, if it's a string, it's not empty, and if it's a Guid, it's not Guid.Empty.
         let oneOfTheseValuesMustBeProvided (values: Object array) (error: 'T) =

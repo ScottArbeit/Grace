@@ -50,34 +50,16 @@ module Owner =
         let updateDto ownerEvent currentOwnerDto =
             let newOwnerDto =
                 match ownerEvent with
-                | Created(ownerId, ownerName) ->
-                    { OwnerDto.Default with
-                        OwnerId = ownerId
-                        OwnerName = ownerName }
-                | NameSet(ownerName) ->
-                    { currentOwnerDto with
-                        OwnerName = ownerName }
-                | TypeSet(ownerType) ->
-                    { currentOwnerDto with
-                        OwnerType = ownerType }
-                | SearchVisibilitySet(searchVisibility) ->
-                    { currentOwnerDto with
-                        SearchVisibility = searchVisibility }
-                | DescriptionSet(description) ->
-                    { currentOwnerDto with
-                        Description = description }
-                | LogicalDeleted(_, deleteReason) ->
-                    { currentOwnerDto with
-                        DeletedAt = Some(getCurrentInstant ())
-                        DeleteReason = deleteReason }
+                | Created(ownerId, ownerName) -> { OwnerDto.Default with OwnerId = ownerId; OwnerName = ownerName }
+                | NameSet(ownerName) -> { currentOwnerDto with OwnerName = ownerName }
+                | TypeSet(ownerType) -> { currentOwnerDto with OwnerType = ownerType }
+                | SearchVisibilitySet(searchVisibility) -> { currentOwnerDto with SearchVisibility = searchVisibility }
+                | DescriptionSet(description) -> { currentOwnerDto with Description = description }
+                | LogicalDeleted(_, deleteReason) -> { currentOwnerDto with DeletedAt = Some(getCurrentInstant ()); DeleteReason = deleteReason }
                 | PhysicalDeleted -> currentOwnerDto // Do nothing because it's about to be deleted anyway.
-                | Undeleted ->
-                    { currentOwnerDto with
-                        DeletedAt = None
-                        DeleteReason = String.Empty }
+                | Undeleted -> { currentOwnerDto with DeletedAt = None; DeleteReason = String.Empty }
 
-            { newOwnerDto with
-                UpdatedAt = Some(getCurrentInstant ()) }
+            { newOwnerDto with UpdatedAt = Some(getCurrentInstant ()) }
 
         member val private correlationId: CorrelationId = String.Empty with get, set
 
@@ -97,8 +79,7 @@ module Owner =
                     ownerDto <- OwnerDto.Default
                     message <- "Not found in database."
 
-                let duration_ms =
-                    getCurrentInstant().Minus(activateStartTime).TotalMilliseconds.ToString("F3")
+                let duration_ms = getCurrentInstant().Minus(activateStartTime).TotalMilliseconds.ToString("F3")
 
                 log.LogInformation(
                     "{CurrentInstant}: Activated {ActorType} {ActorId}. {message} Duration: {duration_ms}ms.",
@@ -116,8 +97,7 @@ module Owner =
                 .RegisterReminderAsync(ReminderType.Maintenance, Array.empty<byte>, TimeSpan.FromDays(7.0), TimeSpan.FromDays(7.0))
                 .Wait()
 
-        member private this.UnregisterMaintenanceReminder() =
-            this.UnregisterReminderAsync(ReminderType.Maintenance).Wait()
+        member private this.UnregisterMaintenanceReminder() = this.UnregisterReminderAsync(ReminderType.Maintenance).Wait()
 
         member private this.OnFirstWrite() =
             //this.SetMaintenanceReminder()
@@ -150,8 +130,7 @@ module Owner =
             Task.CompletedTask
 
         override this.OnPostActorMethodAsync(context) =
-            let duration_ms =
-                (getCurrentInstant().Minus(actorStartTime).TotalMilliseconds).ToString("F3")
+            let duration_ms = (getCurrentInstant().Minus(actorStartTime).TotalMilliseconds).ToString("F3")
 
             if String.IsNullOrEmpty(currentCommand) then
                 log.LogInformation(
@@ -202,8 +181,7 @@ module Owner =
                 try
                     let! ownerEvents = this.OwnerEvents()
 
-                    if ownerEvents.Count = 0 then
-                        this.OnFirstWrite()
+                    if ownerEvents.Count = 0 then this.OnFirstWrite()
 
                     ownerEvents.Add(ownerEvent)
 
@@ -218,16 +196,14 @@ module Owner =
                     let message = serialize graceEvent
                     do! daprClient.PublishEventAsync(GracePubSubService, GraceEventStreamTopic, graceEvent)
 
-                    let returnValue =
-                        GraceReturnValue.Create "Owner command succeeded." ownerEvent.Metadata.CorrelationId
+                    let returnValue = GraceReturnValue.Create "Owner command succeeded." ownerEvent.Metadata.CorrelationId
 
                     returnValue.Properties.Add(nameof (OwnerId), $"{ownerDto.OwnerId}")
                     returnValue.Properties.Add(nameof (OwnerName), $"{ownerDto.OwnerName}")
                     returnValue.Properties.Add("EventType", $"{getDiscriminatedUnionFullName ownerEvent.Event}")
                     return Ok returnValue
                 with ex ->
-                    let graceError =
-                        GraceError.Create (OwnerError.getErrorMessage OwnerError.FailedWhileApplyingEvent) ownerEvent.Metadata.CorrelationId
+                    let graceError = GraceError.Create (OwnerError.getErrorMessage OwnerError.FailedWhileApplyingEvent) ownerEvent.Metadata.CorrelationId
 
                     let exceptionResponse = createExceptionResponse ex
 

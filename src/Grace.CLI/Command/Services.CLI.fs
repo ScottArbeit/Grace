@@ -89,8 +89,7 @@ module Services =
     // Extension methods for dealing with local files.
     type LocalFileVersion with
         /// Gets the full path for this file in the working directory.
-        member this.FullName =
-            getNativeFilePath (Path.Combine(Current().RootDirectory, $"{this.RelativePath}"))
+        member this.FullName = getNativeFilePath (Path.Combine(Current().RootDirectory, $"{this.RelativePath}"))
 
         /// Gets the full working directory path for this file.
         member this.FullRelativePath = FileInfo(this.FullName).DirectoryName
@@ -98,12 +97,10 @@ module Services =
         member this.FileInfo = FileInfo(this.FullName)
 
         /// Gets the RelativeDirectory for this file.
-        member this.RelativeDirectory =
-            Path.GetRelativePath(Current().RootDirectory, this.FileInfo.DirectoryName)
+        member this.RelativeDirectory = Path.GetRelativePath(Current().RootDirectory, this.FileInfo.DirectoryName)
 
         /// Gets the full name of the object file for this LocalFileVersion.
-        member this.FullObjectPath =
-            getNativeFilePath (Path.Combine(Current().ObjectDirectory, this.RelativePath, this.GetObjectFileName))
+        member this.FullObjectPath = getNativeFilePath (Path.Combine(Current().ObjectDirectory, this.RelativePath, this.GetObjectFileName))
 
     /// Flag to determine if we should do case-insensitive file name processing on the current platform.
     let ignoreCase = runningOnWindows
@@ -112,8 +109,7 @@ module Services =
     let checkIgnoreLineAgainstFile (fileToCheck: FilePath) (graceIgnoreEntry: string) =
         let fileName = Path.GetFileName(fileToCheck)
 
-        let ignoreEntryMatches =
-            FileSystemName.MatchesSimpleExpression(graceIgnoreEntry, fileName, ignoreCase)
+        let ignoreEntryMatches = FileSystemName.MatchesSimpleExpression(graceIgnoreEntry, fileName, ignoreCase)
 
         ignoreEntryMatches
 
@@ -189,8 +185,7 @@ module Services =
             shouldIgnoreDirectory
 
     /// Returns true if directoryPath should not be ignored by Grace, otherwise returns false.
-    let shouldNotIgnoreDirectory (directoryPath: string) =
-        not <| shouldIgnoreDirectory directoryPath
+    let shouldNotIgnoreDirectory (directoryPath: string) = not <| shouldIgnoreDirectory directoryPath
 
     /// Creates a LocalFileVersion for the given FileInfo instance.
     let createLocalFileVersion (fileInfo: FileInfo) =
@@ -225,15 +220,13 @@ module Services =
             LocalDirectoryVersion.Default
         )
 
-    let localWriteTimes =
-        ConcurrentDictionary<FileSystemEntryType * RelativePath, DateTime>()
+    let localWriteTimes = ConcurrentDictionary<FileSystemEntryType * RelativePath, DateTime>()
 
     /// Gets a dictionary of local paths and their last write times.
     let rec getWorkingDirectoryWriteTimes (directoryInfo: DirectoryInfo) =
         if shouldNotIgnoreDirectory directoryInfo.FullName then
             // Add the current directory to the lookup dictionary
-            let directoryFullPath =
-                RelativePath(normalizeFilePath (Path.GetRelativePath(Current().RootDirectory, directoryInfo.FullName)))
+            let directoryFullPath = RelativePath(normalizeFilePath (Path.GetRelativePath(Current().RootDirectory, directoryInfo.FullName)))
 
             localWriteTimes.AddOrUpdate(
                 (FileSystemEntryType.Directory, directoryFullPath),
@@ -244,8 +237,7 @@ module Services =
 
             // Add each file to the lookup dictionary
             for f in directoryInfo.GetFiles().Where(fun f -> not <| shouldIgnoreFile f.FullName) do
-                let fileFullPath =
-                    RelativePath(normalizeFilePath (Path.GetRelativePath(Current().RootDirectory, f.FullName)))
+                let fileFullPath = RelativePath(normalizeFilePath (Path.GetRelativePath(Current().RootDirectory, f.FullName)))
 
                 localWriteTimes.AddOrUpdate((FileSystemEntryType.File, fileFullPath), (fun _ -> f.LastWriteTimeUtc), (fun _ _ -> f.LastWriteTimeUtc))
                 |> ignore
@@ -265,11 +257,9 @@ module Services =
     let readGraceStatusFile () =
         task {
             if File.Exists(Current().GraceStatusFile) then
-                use fileStream =
-                    Constants.DefaultRetryPolicy.Execute(fun _ -> File.Open(Current().GraceStatusFile, FileMode.Open, FileAccess.Read))
+                use fileStream = Constants.DefaultRetryPolicy.Execute(fun _ -> File.Open(Current().GraceStatusFile, FileMode.Open, FileAccess.Read))
 
-                use gzStream =
-                    new GZipStream(fileStream, CompressionMode.Decompress, leaveOpen = false)
+                use gzStream = new GZipStream(fileStream, CompressionMode.Decompress, leaveOpen = false)
 
                 let! graceStatus = deserializeAsync<GraceStatus> gzStream
                 //logToAnsiConsole Colors.Important $"Read Grace Status file from disk."
@@ -284,8 +274,7 @@ module Services =
             use fileStream =
                 Constants.DefaultRetryPolicy.Execute(fun _ -> File.Open(Current().GraceStatusFile, FileMode.Create, FileAccess.Write, FileShare.None))
 
-            use gzStream =
-                new GZipStream(fileStream, CompressionLevel.SmallestSize, leaveOpen = false)
+            use gzStream = new GZipStream(fileStream, CompressionLevel.SmallestSize, leaveOpen = false)
 
             do! serializeAsync gzStream graceStatus
         //logToAnsiConsole Colors.Important $"Wrote new Grace Status file to disk."
@@ -296,11 +285,9 @@ module Services =
     let readGraceObjectCacheFile () =
         task {
             if File.Exists(Current().GraceObjectCacheFile) then
-                use fileStream =
-                    Constants.DefaultRetryPolicy.Execute(fun _ -> File.Open(Current().GraceStatusFile, FileMode.Open, FileAccess.Read))
+                use fileStream = Constants.DefaultRetryPolicy.Execute(fun _ -> File.Open(Current().GraceStatusFile, FileMode.Open, FileAccess.Read))
 
-                use gzStream =
-                    new GZipStream(fileStream, CompressionMode.Decompress, leaveOpen = false)
+                use gzStream = new GZipStream(fileStream, CompressionMode.Decompress, leaveOpen = false)
 
                 return! deserializeAsync<GraceObjectCache> gzStream
 
@@ -314,8 +301,7 @@ module Services =
             use fileStream =
                 Constants.DefaultRetryPolicy.Execute(fun _ -> File.Open(Current().GraceObjectCacheFile, FileMode.Create, FileAccess.Write, FileShare.None))
 
-            use gzStream =
-                new GZipStream(fileStream, CompressionLevel.SmallestSize, leaveOpen = false)
+            use gzStream = new GZipStream(fileStream, CompressionLevel.SmallestSize, leaveOpen = false)
 
             do! serializeAsync gzStream graceObjectCache
         })
@@ -325,8 +311,7 @@ module Services =
     let scanForDifferences (previousGraceStatus: GraceStatus) =
         task {
             try
-                let lookupCache =
-                    Dictionary<FileSystemEntryType * RelativePath, (DateTime * Sha256Hash)>()
+                let lookupCache = Dictionary<FileSystemEntryType * RelativePath, (DateTime * Sha256Hash)>()
 
                 let differences = ConcurrentStack<FileSystemDifference>()
 
@@ -345,8 +330,7 @@ module Services =
                         |> ignore
 
                 // Get an indexed lookup dictionary of path -> lastWriteTimeUtc from the working directory.
-                let localWriteTimes =
-                    getWorkingDirectoryWriteTimes (DirectoryInfo(Current().RootDirectory))
+                let localWriteTimes = getWorkingDirectoryWriteTimes (DirectoryInfo(Current().RootDirectory))
 
                 // Loop through the working directory list and compare it to the Grace Status index.
                 for kvp in localWriteTimes do
@@ -357,8 +341,7 @@ module Services =
 
                     // Check for changes
                     if lookupCache.ContainsKey((fileSystemEntryType, relativePath)) then
-                        let (knownLastWriteTimeUtc, existingSha256Hash) =
-                            lookupCache[(fileSystemEntryType, relativePath)]
+                        let (knownLastWriteTimeUtc, existingSha256Hash) = lookupCache[(fileSystemEntryType, relativePath)]
                         // Has the LastWriteTimeUtc changed from the one in GraceStatus?
                         if lastWriteTimeUtc <> knownLastWriteTimeUtc then
                             match fileSystemEntryType with
@@ -430,8 +413,7 @@ module Services =
                         (fun subdirectoryInfo continuationToken ->
                             ValueTask(
                                 task {
-                                    let subdirectoryRelativePath =
-                                        Path.GetRelativePath(Current().RootDirectory, subdirectoryInfo.FullName)
+                                    let subdirectoryRelativePath = Path.GetRelativePath(Current().RootDirectory, subdirectoryInfo.FullName)
 
                                     let! (subdirectoryVersions: List<LocalDirectoryVersion>, filesInSubdirectory: List<LocalFileVersion>, sha256Hash) =
                                         collectDirectoriesAndFiles subdirectoryRelativePath previousDirectoryVersions newGraceStatus parseResult
@@ -495,8 +477,7 @@ module Services =
             }
 
         task {
-            let directoryInfo =
-                DirectoryInfo(Path.Combine(Current().RootDirectory, relativeDirectoryPath))
+            let directoryInfo = DirectoryInfo(Path.Combine(Current().RootDirectory, relativeDirectoryPath))
 
             let! (directories, files) = getDirectoryContents previousDirectoryVersions directoryInfo
             //for file in files do processedThings.Enqueue(file.RelativePath)
@@ -575,10 +556,7 @@ module Services =
             //do! File.WriteAllTextAsync(@$"C:\Intel\ProcessedThings{sb.Length}.txt", sb.ToString())
             let rootDirectoryVersion = getRootDirectoryVersion newGraceStatus
 
-            return
-                { newGraceStatus with
-                    RootDirectoryId = rootDirectoryVersion.DirectoryId
-                    RootDirectorySha256Hash = rootDirectoryVersion.Sha256Hash }
+            return { newGraceStatus with RootDirectoryId = rootDirectoryVersion.DirectoryId; RootDirectorySha256Hash = rootDirectoryVersion.Sha256Hash }
         }
 
     /// Adds a LocalDirectoryVersion to the local object cache.
@@ -635,8 +613,7 @@ module Services =
                         | Error _ -> false)
 
                 if errors.Count() > 0 then
-                    let sb =
-                        StringBuilder($"Some files could not be downloaded from object storage.{Environment.NewLine}")
+                    let sb = StringBuilder($"Some files could not be downloaded from object storage.{Environment.NewLine}")
 
                     errors
                     |> Seq.iter (fun e ->
@@ -691,8 +668,7 @@ module Services =
                             // use Seq.fold to create a single error message from the ConcurrentQueue<GraceError>
                             let errorMessage = errors |> Seq.fold (fun acc error -> $"{acc}\n{error.Error}") ""
 
-                            let graceError =
-                                GraceError.Create (StorageError.getErrorMessage StorageError.FailedUploadingFilesToObjectStorage) correlationId
+                            let graceError = GraceError.Create (StorageError.getErrorMessage StorageError.FailedUploadingFilesToObjectStorage) correlationId
 
                             return Error graceError |> enhance ("Errors", errorMessage)
                     | Error error -> return Error error
@@ -744,11 +720,9 @@ module Services =
                 List<LocalDirectoryVersion>()
 
         // Get the new SHA-256 hash for the updated contents of this directory.
-        let sha256Hash =
-            computeSha256ForDirectory (localDirectoryVersion.RelativePath) subdirectoryVersions localDirectoryVersion.Files
+        let sha256Hash = computeSha256ForDirectory (localDirectoryVersion.RelativePath) subdirectoryVersions localDirectoryVersion.Files
 
-        let directoryInfo =
-            DirectoryInfo(Path.Combine(Current().RootDirectory, localDirectoryVersion.RelativePath))
+        let directoryInfo = DirectoryInfo(Path.Combine(Current().RootDirectory, localDirectoryVersion.RelativePath))
 
         // Create a new LocalDirectoryVersion that contains the updated SHA-256 hash.
         let newDirectoryVersion =
@@ -779,15 +753,12 @@ module Services =
     let getNewGraceStatusAndDirectoryVersions (previousGraceStatus: GraceStatus) (differences: IEnumerable<FileSystemDifference>) =
         task {
             /// Holds DirectoryVersions that have already been changed, so we can make more changes to them if needed.
-            let changedDirectoryVersions =
-                ConcurrentDictionary<RelativePath, LocalDirectoryVersion>()
+            let changedDirectoryVersions = ConcurrentDictionary<RelativePath, LocalDirectoryVersion>()
 
             let rootDirectoryVersion = getRootDirectoryVersion previousGraceStatus
 
             // Making a copy of the contents of previousGraceIndex for newGraceIndex.
-            let mutable newGraceStatus =
-                { previousGraceStatus with
-                    Index = GraceIndex(previousGraceStatus.Index) }
+            let mutable newGraceStatus = { previousGraceStatus with Index = GraceIndex(previousGraceStatus.Index) }
 
             // First, process the directory changes.
             for difference in differences.Where(fun d -> isDirectoryChange d) do
@@ -805,8 +776,7 @@ module Services =
 
                     if existingDirectoryVersion.DirectoryId <> Guid.Empty then
                         // This is an existing directory; so we need to update it.
-                        let updatedDirectoryVersion =
-                            processChangedDirectoryVersion newGraceStatus existingDirectoryVersion
+                        let updatedDirectoryVersion = processChangedDirectoryVersion newGraceStatus existingDirectoryVersion
 
                         newGraceStatus.Index.AddOrUpdate(
                             updatedDirectoryVersion.DirectoryId,
@@ -817,11 +787,9 @@ module Services =
                     //logToAnsiConsole Colors.Verbose $"Updated directory {difference.RelativePath} in GraceIndex."
                     else
                         // This is a new directory relative path. We need to create a new LocalDirectoryVersion instance and add it to Grace Index.
-                        let directoryInfo =
-                            DirectoryInfo(Path.Combine(Current().RootDirectory, difference.RelativePath))
+                        let directoryInfo = DirectoryInfo(Path.Combine(Current().RootDirectory, difference.RelativePath))
 
-                        let sha256Hash =
-                            computeSha256ForDirectory difference.RelativePath (List<LocalDirectoryVersion>()) (List<LocalFileVersion>())
+                        let sha256Hash = computeSha256ForDirectory difference.RelativePath (List<LocalDirectoryVersion>()) (List<LocalFileVersion>())
 
                         let localDirectoryVersion =
                             LocalDirectoryVersion.Create
@@ -847,8 +815,7 @@ module Services =
                         changedDirectoryVersions.AddOrUpdate(difference.RelativePath, (fun _ -> localDirectoryVersion), (fun _ _ -> localDirectoryVersion))
                         |> ignore
                 | Delete ->
-                    let mutable directoryVersion =
-                        newGraceStatus.Index.Values.First(fun dv -> dv.RelativePath = difference.RelativePath)
+                    let mutable directoryVersion = newGraceStatus.Index.Values.First(fun dv -> dv.RelativePath = difference.RelativePath)
 
                     newGraceStatus.Index.TryRemove(directoryVersion.DirectoryId, &directoryVersion)
                     |> ignore
@@ -858,11 +825,9 @@ module Services =
                 match difference.DifferenceType with
                 | Add ->
                     //logToConsole $"Add file {relativePath}."
-                    let fileInfo =
-                        FileInfo(Path.Combine(Current().RootDirectory, difference.RelativePath))
+                    let fileInfo = FileInfo(Path.Combine(Current().RootDirectory, difference.RelativePath))
 
-                    let relativeDirectoryPath =
-                        getLocalRelativeDirectory fileInfo.DirectoryName (Current().RootDirectory)
+                    let relativeDirectoryPath = getLocalRelativeDirectory fileInfo.DirectoryName (Current().RootDirectory)
 
                     let directoryVersion =
                         // Check if we've already modified this DirectoryVersion, if so, use that one.
@@ -879,20 +844,16 @@ module Services =
                     | Some fileVersion -> directoryVersion.Files.Add(fileVersion)
                     | None -> ()
 
-                    let updatedWithNewSize =
-                        { directoryVersion with
-                            Size = directoryVersion.Files.Sum(fun file -> int64 (file.Size)) }
+                    let updatedWithNewSize = { directoryVersion with Size = directoryVersion.Files.Sum(fun file -> int64 (file.Size)) }
 
                     // Add this directoryVersion for further processing.
                     changedDirectoryVersions.AddOrUpdate(directoryVersion.RelativePath, (fun _ -> updatedWithNewSize), (fun _ _ -> updatedWithNewSize))
                     |> ignore
                 | Change ->
                     //logToAnsiConsole Colors.Verbose $"Change file {difference.RelativePath}."
-                    let fileInfo =
-                        FileInfo(Path.Combine(Current().RootDirectory, difference.RelativePath))
+                    let fileInfo = FileInfo(Path.Combine(Current().RootDirectory, difference.RelativePath))
 
-                    let relativeDirectoryPath =
-                        normalizeFilePath (getLocalRelativeDirectory fileInfo.DirectoryName (Current().RootDirectory))
+                    let relativeDirectoryPath = normalizeFilePath (getLocalRelativeDirectory fileInfo.DirectoryName (Current().RootDirectory))
                     //logToAnsiConsole Colors.Verbose $"{fileInfo.FullName}; {fileInfo.DirectoryName}; relativeDirectoryPath: {relativeDirectoryPath}"
 
                     let directoryVersion =
@@ -903,8 +864,7 @@ module Services =
                             //logToAnsiConsole Colors.Verbose $"Already changed: alreadyChanged: {serialize alreadyChanged}"
                             alreadyChanged
                         else
-                            let localDirectoryVersion =
-                                newGraceStatus.Index.Values.First(fun dv -> dv.RelativePath = relativeDirectoryPath)
+                            let localDirectoryVersion = newGraceStatus.Index.Values.First(fun dv -> dv.RelativePath = relativeDirectoryPath)
                             //logToAnsiConsole Colors.Verbose $"Not already changed; localDirectoryVersion: {serialize localDirectoryVersion}."
                             localDirectoryVersion
 
@@ -917,8 +877,7 @@ module Services =
 
                     // Get a fileVersion for this file, including Sha256Hash, and see if it matches with the previous value.
                     // If it's changed, we have a new file version; if Sha256Hash matches, then the file was updated but then changed back to the same contents.
-                    let existingFileIndex =
-                        directoryVersion.Files.FindIndex(fun file -> file.RelativePath = difference.RelativePath)
+                    let existingFileIndex = directoryVersion.Files.FindIndex(fun file -> file.RelativePath = difference.RelativePath)
                     //logToAnsiConsole Colors.Verbose $"difference.RelativePath: {difference.RelativePath}; existingFileIndex: {existingFileIndex}."
                     let existingFileVersion = directoryVersion.Files[existingFileIndex]
 
@@ -931,9 +890,7 @@ module Services =
                             // Add new version of this file to the cache.
                             directoryVersion.Files.Add(fileVersion)
 
-                            let updatedWithNewSize =
-                                { directoryVersion with
-                                    Size = directoryVersion.Files.Sum(fun file -> int64 (file.Size)) }
+                            let updatedWithNewSize = { directoryVersion with Size = directoryVersion.Files.Sum(fun file -> int64 (file.Size)) }
 
                             // Add this directoryVersion for further processing.
                             changedDirectoryVersions.AddOrUpdate(directoryVersion.RelativePath, (fun _ -> updatedWithNewSize), (fun _ _ -> updatedWithNewSize))
@@ -942,11 +899,9 @@ module Services =
                 | Delete ->
                     // Have to remove this file from the directory it's in. That directory might already have been deleted above.
                     //logToConsole $"Delete file {relativePath}."
-                    let fileInfo =
-                        FileInfo(Path.Combine(Current().RootDirectory, difference.RelativePath))
+                    let fileInfo = FileInfo(Path.Combine(Current().RootDirectory, difference.RelativePath))
 
-                    let relativeDirectoryPath =
-                        getLocalRelativeDirectory fileInfo.DirectoryName (Current().RootDirectory)
+                    let relativeDirectoryPath = getLocalRelativeDirectory fileInfo.DirectoryName (Current().RootDirectory)
 
                     // Search for this relativePath in the index.
                     let directoryVersion =
@@ -960,14 +915,11 @@ module Services =
                         let directoryVersion = directoryVersion[0]
 
                         // Remove this file from the cache.
-                        let index =
-                            directoryVersion.Files.FindIndex(fun file -> file.RelativePath = difference.RelativePath)
+                        let index = directoryVersion.Files.FindIndex(fun file -> file.RelativePath = difference.RelativePath)
 
                         directoryVersion.Files.RemoveAt(index)
 
-                        let updatedWithNewSize =
-                            { directoryVersion with
-                                Size = directoryVersion.Files.Sum(fun file -> int64 (file.Size)) }
+                        let updatedWithNewSize = { directoryVersion with Size = directoryVersion.Files.Sum(fun file -> int64 (file.Size)) }
 
                         // Add this directoryVersion for further processing.
                         changedDirectoryVersions.AddOrUpdate(directoryVersion.RelativePath, (fun _ -> updatedWithNewSize), (fun _ _ -> updatedWithNewSize))
@@ -998,8 +950,7 @@ module Services =
                     //logToConsole $"previousDirectoryVersion.RelativePath: {previousDirectoryVersion.RelativePath}; DirectoryId: {previousDirectoryVersion.DirectoryId}; Sha256Hash: {previousDirectoryVersion.Sha256Hash.Substring(0, 8)}"
 
                     // Get the new DirectoryVersion, including new SHA-256 hash
-                    let newDirectoryVersion =
-                        processChangedDirectoryVersion newGraceStatus previousDirectoryVersion
+                    let newDirectoryVersion = processChangedDirectoryVersion newGraceStatus previousDirectoryVersion
 
                     // Add it to the list that we'll return
                     newDirectoryVersions.Add(newDirectoryVersion)
@@ -1007,11 +958,9 @@ module Services =
                     // Remove the previous DirectoryVersion for this relative path, and replace it with the new one.
                     let mutable previous = LocalDirectoryVersion.Default
 
-                    let foundPrevious =
-                        newGraceStatus.Index.TryRemove(previousDirectoryVersion.DirectoryId, &previous)
+                    let foundPrevious = newGraceStatus.Index.TryRemove(previousDirectoryVersion.DirectoryId, &previous)
 
-                    let added =
-                        newGraceStatus.Index.TryAdd(newDirectoryVersion.DirectoryId, newDirectoryVersion)
+                    let added = newGraceStatus.Index.TryAdd(newDirectoryVersion.DirectoryId, newDirectoryVersion)
 
                     // Add the parent DirectoryVersion to changed list, since we have to process up the tree.
                     match getParentPath relativePath with
@@ -1029,8 +978,7 @@ module Services =
 
                         // If we found a previous version of a subdirectory and removed it from newGraceIndex,
                         //   remove it from the parent's subdirectory list as well.
-                        if foundPrevious then
-                            dv.Directories.Remove(previous.DirectoryId) |> ignore
+                        if foundPrevious then dv.Directories.Remove(previous.DirectoryId) |> ignore
 
                         // Add the new directory version to the parent's subdirectory list.
                         dv.Directories.Add(newDirectoryVersion.DirectoryId) |> ignore
@@ -1068,11 +1016,9 @@ module Services =
     /// Ensures that the provided directory versions are uploaded to Grace Server.
     /// This will add new directory versions, and ignore existing directory versions, as they are immutable.
     let uploadDirectoryVersions (localDirectoryVersions: List<LocalDirectoryVersion>) correlationId =
-        let directoryVersions =
-            localDirectoryVersions.Select(fun ldv -> ldv.ToDirectoryVersion).ToList()
+        let directoryVersions = localDirectoryVersions.Select(fun ldv -> ldv.ToDirectoryVersion).ToList()
 
-        let parameters =
-            SaveDirectoryVersionsParameters(CorrelationId = correlationId, DirectoryVersions = directoryVersions)
+        let parameters = SaveDirectoryVersionsParameters(CorrelationId = correlationId, DirectoryVersions = directoryVersions)
 
         Directory.SaveDirectoryVersions parameters
 
@@ -1082,8 +1028,7 @@ module Services =
     //    }
 
     /// The full path of the inter-process communication file that grace watch uses to communicate with other invocations of Grace.
-    let IpcFileName () =
-        Path.Combine(Path.GetTempPath(), "Grace", Current().BranchName, Constants.IpcFileName)
+    let IpcFileName () = Path.Combine(Path.GetTempPath(), "Grace", Current().BranchName, Constants.IpcFileName)
 
     /// Updates the contents of the `grace watch` status inter-process communication file.
     let updateGraceWatchInterprocessFile (graceStatus: GraceStatus) =
@@ -1101,8 +1046,7 @@ module Services =
 
                 Directory.CreateDirectory(Path.GetDirectoryName(IpcFileName())) |> ignore
 
-                use fileStream =
-                    new FileStream(IpcFileName(), FileMode.Create, FileAccess.Write, FileShare.None)
+                use fileStream = new FileStream(IpcFileName(), FileMode.Create, FileAccess.Write, FileShare.None)
 
                 do! serializeAsync fileStream newGraceWatchStatus
                 graceWatchStatusUpdateTime <- newGraceWatchStatus.UpdatedAt
@@ -1121,8 +1065,7 @@ module Services =
                 // If the file exists, `grace watch` is running.
                 if File.Exists(IpcFileName()) then
                     //logToAnsiConsole Colors.Verbose $"File {IpcFileName} exists."
-                    use fileStream =
-                        new FileStream(IpcFileName(), FileMode.Open, FileAccess.Read, FileShare.Read)
+                    use fileStream = new FileStream(IpcFileName(), FileMode.Open, FileAccess.Read, FileShare.Read)
 
                     let! graceWatchStatus = deserializeAsync<GraceWatchStatus> fileStream
 
@@ -1150,8 +1093,7 @@ module Services =
         task {
             let objectFileName = fileVersion.GetObjectFileName
 
-            let objectFilePath =
-                Path.Combine(Current().ObjectDirectory, fileVersion.RelativeDirectory, objectFileName)
+            let objectFilePath = Path.Combine(Current().ObjectDirectory, fileVersion.RelativeDirectory, objectFileName)
 
             return File.Exists(objectFilePath)
         }
@@ -1159,8 +1101,7 @@ module Services =
     /// Checks if a file version is already found in the object cache index.
     let isFileVersionInObjectCacheIndex (objectCache: GraceObjectCache) (fileVersion: LocalFileVersion) =
         // Find the DirectoryVersions that match the relative directory.
-        let directoryVersions =
-            objectCache.Index.Values.Where(fun dv -> dv.RelativePath = fileVersion.RelativeDirectory)
+        let directoryVersions = objectCache.Index.Values.Where(fun dv -> dv.RelativePath = fileVersion.RelativeDirectory)
         // Check the ones that match for the same RelativePath and Sha256Hash as the fileVersion.
         let matchingDirectoryVersions =
             directoryVersions.Where(fun dv ->
@@ -1170,10 +1111,7 @@ module Services =
                         && fv.Sha256Hash = fileVersion.Sha256Hash)
                     .Count() > 0)
         // If any of the DirectoryVersions in the object cache have the file, return true.
-        if matchingDirectoryVersions.Count() > 0 then
-            true
-        else
-            false
+        if matchingDirectoryVersions.Count() > 0 then true else false
 
     /// Checks if a directory version is already found in the object cache index.
     let isDirectoryVersionInObjectCache (objectCache: GraceObjectCache) (directoryVersion: LocalDirectoryVersion) =
@@ -1230,8 +1168,7 @@ module Services =
             then
                 newGraceIndex.TryRemove(directoryVersion.DirectoryId, &dvForDeletions) |> ignore
 
-        let rootDirectoryVersion =
-            newGraceIndex.Values.First(fun dv -> dv.RelativePath = Constants.RootDirectoryPath)
+        let rootDirectoryVersion = newGraceIndex.Values.First(fun dv -> dv.RelativePath = Constants.RootDirectoryPath)
 
         let newGraceStatus =
             { Index = newGraceIndex
@@ -1271,8 +1208,7 @@ module Services =
                 let directoryInfo = Directory.CreateDirectory(newDirectoryVersion.FullName)
 
                 // Copy new and existing files into place.
-                let newLocalFileVersions =
-                    newDirectoryVersion.Files.Select(fun file -> file.ToLocalFileVersion DateTime.UtcNow)
+                let newLocalFileVersions = newDirectoryVersion.Files.Select(fun file -> file.ToLocalFileVersion DateTime.UtcNow)
 
                 for fileVersion in newLocalFileVersions do
                     let existingFileOnDisk = FileInfo(fileVersion.FullName)
@@ -1295,12 +1231,10 @@ module Services =
 
                     if existingFileOnDisk.Exists then
                         // Need to compare existing file to new version from the object cache.
-                        let findFileVersionFromPreviousGraceStatus =
-                            previousDirectoryVersion.Files.Where(fun f -> f.RelativePath = fileVersion.RelativePath)
+                        let findFileVersionFromPreviousGraceStatus = previousDirectoryVersion.Files.Where(fun f -> f.RelativePath = fileVersion.RelativePath)
 
                         if findFileVersionFromPreviousGraceStatus.Count() > 0 then
-                            let fileVersionFromPreviousGraceStatus =
-                                findFileVersionFromPreviousGraceStatus.First()
+                            let fileVersionFromPreviousGraceStatus = findFileVersionFromPreviousGraceStatus.First()
                             // If the length is different, or the Sha256Hash is changing in the new version, we'll delete the
                             //   file in the working directory, and copy the version from the object cache to replace it.
                             if
@@ -1328,14 +1262,12 @@ module Services =
                     Colors.Verbose
                     $"Services.CLI.fs: updateWorkingDirectory(): {Markup.Escape(serialize (newDirectoryVersions.Select(fun x -> x.DirectoryId)))}"
 
-                let subdirectoryVersions =
-                    newDirectoryVersion.Directories.Select(fun directoryId -> updatedGraceStatus.Index[directoryId])
+                let subdirectoryVersions = newDirectoryVersion.Directories.Select(fun directoryId -> updatedGraceStatus.Index[directoryId])
                 // Loop through the actual subdirectories on disk.
                 for subdirectoryInfo in directoryInfo.EnumerateDirectories().ToArray() do
                     // If we don't have this subdirectory listed in new parent DirectoryVersion, and it's a directory that we shouldn't ignore,
                     //    that means that it was deleted, and we should delete it from the working directory.
-                    let relativeSubdirectoryPath =
-                        Path.GetRelativePath(Current().RootDirectory, subdirectoryInfo.FullName)
+                    let relativeSubdirectoryPath = Path.GetRelativePath(Current().RootDirectory, subdirectoryInfo.FullName)
 
                     if
                         not
@@ -1399,8 +1331,7 @@ module Services =
     /// Generates a temporary file name within the ObjectDirectory, and returns the full file path.
     /// This file name will be used to copy modified files into before renaming them with their proper names and SHA256 values.
     let getTemporaryFilePath () =
-        let tempDirectory =
-            Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), "Grace", Current().BranchName))
+        let tempDirectory = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), "Grace", Current().BranchName))
 
         Path.GetFullPath(Path.Combine(tempDirectory.FullName, $"{Path.GetRandomFileName()}.gracetmp"))
 
@@ -1422,8 +1353,7 @@ module Services =
                     // Now that we've copied it, compute the SHA-256 hash.
                     let relativeFilePath = Path.GetRelativePath(Current().RootDirectory, filePath)
 
-                    use tempFileStream =
-                        File.Open(tempFilePath, FileMode.Open, FileAccess.Read, FileShare.Read)
+                    use tempFileStream = File.Open(tempFilePath, FileMode.Open, FileAccess.Read, FileShare.Read)
 
                     let! sha256Hash = computeSha256ForFile tempFileStream relativeFilePath
                     //logToConsole $"filePath: {filePath}; tempFilePath: {tempFilePath}; SHA256: {sha256Hash}"
@@ -1432,13 +1362,11 @@ module Services =
                     tempFileStream.Dispose()
 
                     // Get the new name for this version of the file, including the SHA-256 hash.
-                    let relativeDirectoryPath =
-                        getLocalRelativeDirectory filePath (Current().RootDirectory)
+                    let relativeDirectoryPath = getLocalRelativeDirectory filePath (Current().RootDirectory)
 
                     let objectFileName = getObjectFileName filePath sha256Hash
 
-                    let objectDirectoryPath =
-                        Path.Combine(Current().ObjectDirectory, relativeDirectoryPath)
+                    let objectDirectoryPath = Path.Combine(Current().ObjectDirectory, relativeDirectoryPath)
 
                     let objectFilePath = Path.Combine(objectDirectoryPath, objectFileName)
                     //logToConsole $"relativeDirectoryPath: {relativeDirectoryPath}; objectFileName: {objectFileName}; objectFilePath: {objectFilePath}"

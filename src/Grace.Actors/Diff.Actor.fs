@@ -128,8 +128,7 @@ module Diff =
                 this.correlationId <- correlationId
                 let repositoryActorId = Repository.GetActorId(fileVersion.RepositoryId)
 
-                let repositoryActorProxy =
-                    actorProxyFactory.CreateActorProxy<IRepositoryActor>(repositoryActorId, ActorName.Repository)
+                let repositoryActorProxy = actorProxyFactory.CreateActorProxy<IRepositoryActor>(repositoryActorId, ActorName.Repository)
 
                 let! objectStorageProvider = repositoryActorProxy.GetObjectStorageProvider correlationId
 
@@ -149,8 +148,7 @@ module Diff =
 
         /// Sets a delete reminder for this actor's state.
         member private this.setDeleteReminder() =
-            let task =
-                this.RegisterReminderAsync("DeleteReminder", Array.empty<byte>, TimeSpan.FromDays(7.0), TimeSpan.FromMilliseconds(-1.0))
+            let task = this.RegisterReminderAsync("DeleteReminder", Array.empty<byte>, TimeSpan.FromDays(7.0), TimeSpan.FromMilliseconds(-1.0))
 
             task.Wait()
 
@@ -170,8 +168,7 @@ module Diff =
                     diffDto <- DiffDto.Default
                     message <- "Not found in database."
 
-                let duration_ms =
-                    getCurrentInstant().Minus(activateStartTime).TotalMilliseconds.ToString("F3")
+                let duration_ms = getCurrentInstant().Minus(activateStartTime).TotalMilliseconds.ToString("F3")
 
                 log.LogInformation(
                     "{CurrentInstant}: Activated {ActorType} {ActorId}. {message} Duration: {duration_ms}ms.",
@@ -194,8 +191,7 @@ module Diff =
             Task.CompletedTask
 
         override this.OnPostActorMethodAsync(context) =
-            let duration_ms =
-                (getCurrentInstant().Minus(actorStartTime).TotalMilliseconds).ToString("F3")
+            let duration_ms = (getCurrentInstant().Minus(actorStartTime).TotalMilliseconds).ToString("F3")
 
             log.LogInformation(
                 "{CurrentInstant}: CorrelationId: {correlationId}; Finished {ActorName}.{MethodName}; Id: {Id}; Duration: {duration_ms}ms.",
@@ -255,8 +251,7 @@ module Diff =
                                     if differences.Count > 0 then
                                         let repositoryActorId = ActorId($"{repositoryId1}")
 
-                                        let repositoryActorProxy =
-                                            actorProxyFactory.CreateActorProxy<IRepositoryActor>(repositoryActorId, ActorName.Repository)
+                                        let repositoryActorProxy = actorProxyFactory.CreateActorProxy<IRepositoryActor>(repositoryActorId, ActorName.Repository)
 
                                         let! repositoryDtoFromActor = repositoryActorProxy.Get correlationId
                                         return repositoryDtoFromActor
@@ -267,8 +262,7 @@ module Diff =
                             /// Gets a Stream for a given RelativePath.
                             let getFileStream (graceIndex: ServerGraceIndex) (relativePath: RelativePath) (repositoryDto: RepositoryDto) =
                                 task {
-                                    let relativeDirectoryPath =
-                                        getRelativeDirectory relativePath Constants.RootDirectoryPath
+                                    let relativeDirectoryPath = getRelativeDirectory relativePath Constants.RootDirectoryPath
                                     //logToConsole $"In DiffActor.getFileStream(); relativePath: {relativePath}; relativeDirectoryPath: {relativeDirectoryPath}; graceIndex.Count: {graceIndex.Count}."
                                     let directory = graceIndex[relativeDirectoryPath]
                                     let fileVersion = directory.Files.First(fun f -> f.RelativePath = relativePath)
@@ -309,11 +303,9 @@ module Diff =
                                                                     return! diffTwoFiles fileStream2 fileStream1
                                                             }
 
-                                                        if not <| isNull (fileStream1) then
-                                                            do! fileStream1.DisposeAsync()
+                                                        if not <| isNull (fileStream1) then do! fileStream1.DisposeAsync()
 
-                                                        if not <| isNull (fileStream2) then
-                                                            do! fileStream2.DisposeAsync()
+                                                        if not <| isNull (fileStream2) then do! fileStream2.DisposeAsync()
 
                                                         // Create a FileDiff with the DiffPlex results and corresponding Sha256Hash values.
                                                         let fileDiff =

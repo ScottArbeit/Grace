@@ -58,8 +58,7 @@ module Watch =
     let mutable graceStatusMemoryStream: MemoryStream = null
     let mutable graceStatusHasChanged = false
 
-    let fileDeleted filePath =
-        logToConsole $"In Delete: filePath: {filePath}"
+    let fileDeleted filePath = logToConsole $"In Delete: filePath: {filePath}"
 
     let isNotDirectory path = not <| Directory.Exists(path)
     let updateInProgress () = File.Exists(updateInProgressFileName)
@@ -216,9 +215,7 @@ module Watch =
                 if (differences.Count > 0) then
                     match! createSaveReference (getRootDirectoryVersion newGraceStatus) message correlationId with
                     | Ok returnValue ->
-                        let newGraceStatusWithUpdatedTime =
-                            { newGraceStatus with
-                                LastSuccessfulDirectoryVersionUpload = getCurrentInstant () }
+                        let newGraceStatusWithUpdatedTime = { newGraceStatus with LastSuccessfulDirectoryVersionUpload = getCurrentInstant () }
                         // Write the new Grace Status file to disk.
                         do! writeGraceStatusFile newGraceStatusWithUpdatedTime
                         //logToAnsiConsole Colors.Important $"Setting graceStatusHasChanged to false in updateGraceStatus(). Current value: {graceStatusHasChanged}."
@@ -270,8 +267,7 @@ module Watch =
             logToAnsiConsole Colors.Verbose $"Storing Grace Status in compressed memory stream."
             graceStatusMemoryStream <- new MemoryStream()
 
-            use gzStream =
-                new GZipStream(graceStatusMemoryStream, CompressionLevel.SmallestSize, leaveOpen = true)
+            use gzStream = new GZipStream(graceStatusMemoryStream, CompressionLevel.SmallestSize, leaveOpen = true)
 
             do! serializeAsync gzStream graceStatus
             do! gzStream.FlushAsync()
@@ -305,9 +301,7 @@ module Watch =
                         do! copyFileToObjectDirectoryAndUploadToStorage (FilePath fileName) correlationId
                         lastFileUploadInstant <- getCurrentInstant ()
 
-                graceStatus <-
-                    { graceStatus with
-                        LastSuccessfulFileUpload = lastFileUploadInstant }
+                graceStatus <- { graceStatus with LastSuccessfulFileUpload = lastFileUploadInstant }
 
                 // If we've drained all of the files that changed (and we'll almost always have done so), update all the things:
                 //   GraceStatus, directory versions, etc.
@@ -335,8 +329,7 @@ module Watch =
             task {
                 try
                     // Create the FileSystemWatcher, but don't enable it yet.
-                    use rootDirectoryFileSystemWatcher =
-                        createFileSystemWatcher (Current().RootDirectory)
+                    use rootDirectoryFileSystemWatcher = createFileSystemWatcher (Current().RootDirectory)
 
                     use created =
                         Observable
@@ -371,8 +364,7 @@ module Watch =
                     Directory.CreateDirectory(Path.GetDirectoryName(updateInProgressFileName))
                     |> ignore
 
-                    use updateInProgressFileSystemWatcher =
-                        createFileSystemWatcher (Path.GetDirectoryName(updateInProgressFileName))
+                    use updateInProgressFileSystemWatcher = createFileSystemWatcher (Path.GetDirectoryName(updateInProgressFileName))
 
                     use updateInProgressChanged =
                         Observable
@@ -571,8 +563,7 @@ module Watch =
 
     let Build =
         // Create main command and aliases, if any.
-        let watchCommand =
-            new Command("watch", Description = "Watches your repo for changes, and uploads new versions of your files.")
+        let watchCommand = new Command("watch", Description = "Watches your repo for changes, and uploads new versions of your files.")
 
         watchCommand.AddAlias("w")
         watchCommand.Handler <- OnWatch

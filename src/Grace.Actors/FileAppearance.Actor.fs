@@ -10,13 +10,9 @@ open System.Threading.Tasks
 
 module FileAppearance =
 
-    let GetActorId (fileVersion: FileVersion) =
-        ActorId($"{fileVersion.RepositoryId}*{fileVersion.RelativePath}*{fileVersion.Sha256Hash}")
+    let GetActorId (fileVersion: FileVersion) = ActorId($"{fileVersion.RepositoryId}*{fileVersion.RelativePath}*{fileVersion.Sha256Hash}")
 
-    type Appearance =
-        { Root: DirectoryId
-          Parent: DirectoryId
-          Created: Instant }
+    type Appearance = { Root: DirectoryId; Parent: DirectoryId; Created: Instant }
 
     type AppearancesList = SortedSet<Appearance>
 
@@ -82,7 +78,6 @@ module FileAppearance =
                 }
                 :> Task
 
-            member this.Contains(appearance) =
-                Task.FromResult(dto.Appearances.Contains(appearance))
+            member this.Contains(appearance) = Task.FromResult(dto.Appearances.Contains(appearance))
 
             member this.Appearances() = Task.FromResult(dto.Appearances)

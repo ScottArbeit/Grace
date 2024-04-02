@@ -41,8 +41,7 @@ module BranchName =
             Task.CompletedTask
 
         override this.OnPostActorMethodAsync(context) =
-            let duration_ms =
-                (getCurrentInstant().Minus(actorStartTime).TotalMilliseconds).ToString("F3")
+            let duration_ms = (getCurrentInstant().Minus(actorStartTime).TotalMilliseconds).ToString("F3")
 
             log.LogInformation(
                 "{CurrentInstant}: CorrelationID: {correlationID}; Finished {ActorName}.{MethodName}; RepositoryId: {RepositoryId}; BranchName: {BranchName}; BranchId: {BranchId}; Duration: {duration_ms}ms.",
@@ -52,10 +51,7 @@ module BranchName =
                 context.MethodName,
                 repositoryId,
                 branchName,
-                (if Option.isSome cachedBranchId then
-                     $"{cachedBranchId.Value}"
-                 else
-                     "None"),
+                (if Option.isSome cachedBranchId then $"{cachedBranchId.Value}" else "None"),
                 duration_ms
             )
 

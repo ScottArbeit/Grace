@@ -93,13 +93,10 @@ module Repository =
 
                             return!
                                 context
-                                |> result400BadRequest
-                                    { graceError with
-                                        Properties = getPropertiesAsDictionary parameters }
+                                |> result400BadRequest { graceError with Properties = getPropertiesAsDictionary parameters }
                     }
 
-                let validationResults =
-                    Array.append (commonValidations parameters) (validations parameters)
+                let validationResults = Array.append (commonValidations parameters) (validations parameters)
 
                 let! validationsPassed = validationResults |> allPass
 
@@ -158,8 +155,7 @@ module Repository =
                     let errorMessage = RepositoryError.getErrorMessage error
                     log.LogDebug("{currentInstant}: error: {error}", getCurrentInstantExtended (), errorMessage)
 
-                    let graceError =
-                        GraceError.CreateWithMetadata errorMessage (getCorrelationId context) (getPropertiesAsDictionary parameters)
+                    let graceError = GraceError.CreateWithMetadata errorMessage (getCorrelationId context) (getPropertiesAsDictionary parameters)
 
                     graceError.Properties.Add("Path", context.Request.Path)
                     graceError.Properties.Add("Error", errorMessage)
@@ -189,8 +185,7 @@ module Repository =
             try
                 use activity = activitySource.StartActivity("processQuery", ActivityKind.Server)
                 //let! parameters = context |> parse<'T>
-                let validationResults =
-                    Array.append (commonValidations parameters) (validations parameters)
+                let validationResults = Array.append (commonValidations parameters) (validations parameters)
 
                 let! validationsPassed = validationResults |> allPass
 
@@ -209,8 +204,7 @@ module Repository =
                         let actorProxy = getActorProxy repositoryId
                         let! queryResult = query context maxCount actorProxy
 
-                        let graceReturnValue =
-                            GraceReturnValue.Create queryResult (getCorrelationId context)
+                        let graceReturnValue = GraceReturnValue.Create queryResult (getCorrelationId context)
 
                         match getGraceIds context with
                         | Some graceIds ->
@@ -227,8 +221,7 @@ module Repository =
                 else
                     let! error = validationResults |> getFirstError
 
-                    let graceError =
-                        GraceError.Create (RepositoryError.getErrorMessage error) (getCorrelationId context)
+                    let graceError = GraceError.Create (RepositoryError.getErrorMessage error) (getCorrelationId context)
 
                     graceError.Properties.Add("Path", context.Request.Path)
                     return! context |> result400BadRequest graceError
@@ -367,8 +360,7 @@ module Repository =
                            parameters.CorrelationId
                            RepositoryIsDeleted |]
 
-                let command (parameters: SetSaveDaysParameters) =
-                    SetSaveDays(parameters.SaveDays) |> returnValueTask
+                let command (parameters: SetSaveDaysParameters) = SetSaveDays(parameters.SaveDays) |> returnValueTask
 
                 context.Items.Add("Command", nameof (SetSaveDays))
                 return! processCommand context validations command
@@ -400,8 +392,7 @@ module Repository =
                            parameters.CorrelationId
                            RepositoryIsDeleted |]
 
-                let command (parameters: SetCheckpointDaysParameters) =
-                    SetCheckpointDays(parameters.CheckpointDays) |> returnValueTask
+                let command (parameters: SetCheckpointDaysParameters) = SetCheckpointDays(parameters.CheckpointDays) |> returnValueTask
 
                 context.Items.Add("Command", nameof (SetCheckpointDays))
                 return! processCommand context validations command
@@ -433,8 +424,7 @@ module Repository =
                            parameters.CorrelationId
                            RepositoryIsDeleted |]
 
-                let command (parameters: SetDiffCacheDaysParameters) =
-                    SetDiffCacheDays(parameters.DiffCacheDays) |> returnValueTask
+                let command (parameters: SetDiffCacheDaysParameters) = SetDiffCacheDays(parameters.DiffCacheDays) |> returnValueTask
 
                 context.Items.Add("Command", nameof (SetDiffCacheDays))
                 return! processCommand context validations command
@@ -567,8 +557,7 @@ module Repository =
                            parameters.CorrelationId
                            RepositoryIsDeleted |]
 
-                let command (parameters: RecordSavesParameters) =
-                    SetRecordSaves(parameters.RecordSaves) |> returnValueTask
+                let command (parameters: RecordSavesParameters) = SetRecordSaves(parameters.RecordSaves) |> returnValueTask
 
                 context.Items.Add("Command", nameof (SetRecordSaves))
                 return! processCommand context validations command
@@ -600,8 +589,7 @@ module Repository =
                            parameters.CorrelationId
                            RepositoryIsDeleted |]
 
-                let command (parameters: SetRepositoryDescriptionParameters) =
-                    SetDescription(parameters.Description) |> returnValueTask
+                let command (parameters: SetRepositoryDescriptionParameters) = SetDescription(parameters.Description) |> returnValueTask
 
                 context.Items.Add("Command", nameof (SetDescription))
                 return! processCommand context validations command
@@ -642,8 +630,7 @@ module Repository =
                            parameters.CorrelationId
                            RepositoryNameAlreadyExists |]
 
-                let command (parameters: SetRepositoryNameParameters) =
-                    SetName(parameters.NewName) |> returnValueTask
+                let command (parameters: SetRepositoryNameParameters) = SetName(parameters.NewName) |> returnValueTask
 
                 context.Items.Add("Command", nameof (SetName))
                 return! processCommand context validations command
@@ -675,8 +662,7 @@ module Repository =
                            parameters.CorrelationId
                            RepositoryIsDeleted |]
 
-                let command (parameters: DeleteRepositoryParameters) =
-                    DeleteLogical(parameters.Force, parameters.DeleteReason) |> returnValueTask
+                let command (parameters: DeleteRepositoryParameters) = DeleteLogical(parameters.Force, parameters.DeleteReason) |> returnValueTask
 
                 context.Items.Add("Command", nameof (DeleteLogical))
                 return! processCommand context validations command
@@ -740,8 +726,7 @@ module Repository =
                     let! parameters = context |> parse<RepositoryParameters>
                     let! result = processQuery context parameters validations 1 query
 
-                    let duration_ms =
-                        (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
+                    let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
 
                     log.LogInformation(
                         "{CurrentInstant}: CorrelationId: {correlationId}; Finished {path}; RepositoryId: {repositoryId}; Duration: {duration_ms}ms.",
@@ -754,8 +739,7 @@ module Repository =
 
                     return result
                 with ex ->
-                    let duration_ms =
-                        (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
+                    let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
 
                     log.LogError(
                         ex,
@@ -799,8 +783,7 @@ module Repository =
                     let! parameters = context |> parse<RepositoryParameters>
                     let! result = processQuery context parameters validations 1 query
 
-                    let duration_ms =
-                        (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
+                    let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
 
                     log.LogInformation(
                         "{CurrentInstant}: CorrelationId: {correlationId}; Finished {path}; RepositoryId: {repositoryId}; Duration: {duration_ms}ms.",
@@ -813,8 +796,7 @@ module Repository =
 
                     return result
                 with ex ->
-                    let duration_ms =
-                        (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
+                    let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
 
                     log.LogError(
                         ex,
@@ -853,14 +835,12 @@ module Repository =
                            String.isValidGraceName parameters.RepositoryName RepositoryNameIsRequired
                            Repository.repositoryIdExists parameters.RepositoryId parameters.CorrelationId RepositoryIdDoesNotExist |]
 
-                    let query (context: HttpContext) (maxCount: int) (actorProxy: IRepositoryActor) =
-                        task { return! actorProxy.Get(getCorrelationId context) }
+                    let query (context: HttpContext) (maxCount: int) (actorProxy: IRepositoryActor) = task { return! actorProxy.Get(getCorrelationId context) }
 
                     let! parameters = context |> parse<RepositoryParameters>
                     let! result = processQuery context parameters validations 1 query
 
-                    let duration_ms =
-                        (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
+                    let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
 
                     log.LogInformation(
                         "{CurrentInstant}: CorrelationId: {correlationId}; Finished {path}; RepositoryId: {repositoryId}; Duration: {duration_ms}ms.",
@@ -873,8 +853,7 @@ module Repository =
 
                     return result
                 with ex ->
-                    let duration_ms =
-                        (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
+                    let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
 
                     log.LogError(
                         ex,
@@ -926,8 +905,7 @@ module Repository =
                     context.Items.Add("IncludeDeleted", parameters.IncludeDeleted)
                     let! result = processQuery context parameters validations 1000 query
 
-                    let duration_ms =
-                        (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
+                    let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
 
                     log.LogInformation(
                         "{CurrentInstant}: CorrelationId: {correlationId}; Finished {path}; RepositoryId: {repositoryId}; Duration: {duration_ms}ms.",
@@ -940,8 +918,7 @@ module Repository =
 
                     return result
                 with ex ->
-                    let duration_ms =
-                        (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
+                    let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
 
                     log.LogError(
                         ex,
@@ -995,8 +972,7 @@ module Repository =
                     context.Items.Add("ReferenceIds", parameters.ReferenceIds)
                     let! result = processQuery context parameters validations parameters.MaxCount query
 
-                    let duration_ms =
-                        (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
+                    let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
 
                     log.LogInformation(
                         "{CurrentInstant}: CorrelationId: {correlationId}; Finished {path}; RepositoryId: {repositoryId}; Duration: {duration_ms}ms.",
@@ -1009,8 +985,7 @@ module Repository =
 
                     return result
                 with ex ->
-                    let duration_ms =
-                        (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
+                    let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
 
                     log.LogError(
                         ex,
@@ -1069,16 +1044,14 @@ module Repository =
 
                     let branchIdList = parameters.BranchIds.ToList() // We need .Count below, so may as well materialize it once here.
 
-                    let branchIds =
-                        branchIdList.Aggregate(StringBuilder(), (fun state branchId -> state.Append($"{branchId},")))
+                    let branchIds = branchIdList.Aggregate(StringBuilder(), (fun state branchId -> state.Append($"{branchId},")))
 
                     context.Items.Add("BranchIds", (branchIds.ToString())[0..^1])
                     context.Items.Add("IncludeDeleted", parameters.IncludeDeleted)
 
                     let! result = processQuery context parameters validations (branchIdList.Count) query
 
-                    let duration_ms =
-                        (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
+                    let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
 
                     log.LogInformation(
                         "{CurrentInstant}: CorrelationId: {correlationId}; Finished {path}; RepositoryId: {repositoryId}; Duration: {duration_ms}ms.",
@@ -1091,8 +1064,7 @@ module Repository =
 
                     return result
                 with ex ->
-                    let duration_ms =
-                        (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
+                    let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
 
                     log.LogError(
                         ex,

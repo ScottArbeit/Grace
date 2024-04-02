@@ -25,8 +25,7 @@ module Load =
 
     let g () = $"{Guid.NewGuid()}"
 
-    let ParallelOptions =
-        ParallelOptions(MaxDegreeOfParallelism = Environment.ProcessorCount * 1)
+    let ParallelOptions = ParallelOptions(MaxDegreeOfParallelism = Environment.ProcessorCount * 1)
 
     [<EntryPoint>]
     let main args =
@@ -42,8 +41,7 @@ module Load =
             let repositoryIds = ConcurrentDictionary<int, RepositoryId>()
             let parentBranchIds = ConcurrentDictionary<int, BranchId>()
 
-            let ids =
-                ConcurrentDictionary<int, OwnerId * OrganizationId * RepositoryId * BranchId>()
+            let ids = ConcurrentDictionary<int, OwnerId * OrganizationId * RepositoryId * BranchId>()
 
             let ownerId = Guid.NewGuid()
             let ownerName = $"Owner{suffixes[0]}"
@@ -160,8 +158,7 @@ module Load =
                     (fun (i: int) (cancellationToken: CancellationToken) ->
                         ValueTask(
                             task {
-                                if i % 250 = 0 then
-                                    logToConsole $"Processing event {i} of {numberOfEvents}."
+                                if i % 250 = 0 then logToConsole $"Processing event {i} of {numberOfEvents}."
 
                                 let rnd = Random.Shared.Next(ids.Count)
                                 let (ownerId, organizationId, repositoryId, branchId) = ids[rnd]
