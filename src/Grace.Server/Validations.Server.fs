@@ -1,4 +1,4 @@
-﻿namespace Grace.Server
+namespace Grace.Server
 
 open Dapr.Actors
 open Dapr.Actors.Client
@@ -564,6 +564,7 @@ module Validations =
                                 | Checkpoint -> if branchDto.CheckpointEnabled then true else false
                                 | Save -> if branchDto.SaveEnabled then true else false
                                 | Tag -> if branchDto.TagEnabled then true else false
+                                | External -> if branchDto.ExternalEnabled then true else false
 
                             use newCacheEntry =
                                 memoryCache.CreateEntry(

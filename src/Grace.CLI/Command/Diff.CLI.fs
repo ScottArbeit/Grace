@@ -1,4 +1,4 @@
-﻿namespace Grace.CLI.Command
+namespace Grace.CLI.Command
 
 open DiffPlex
 open DiffPlex.DiffBuilder.Model
@@ -444,6 +444,7 @@ module Diff =
                                             | Checkpoint -> return! Branch.GetCheckpoints getReferencesParameters
                                             | Save -> return! Branch.GetSaves getReferencesParameters
                                             | Tag -> return! Branch.GetTags getReferencesParameters
+                                            | External -> return! Branch.GetExternals getReferencesParameters
 
                                             // Promotions are different, because we actually want the promotion from the parent branch that this branch is based on.
                                             | Promotion ->

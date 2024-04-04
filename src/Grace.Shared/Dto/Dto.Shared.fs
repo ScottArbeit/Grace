@@ -1,4 +1,4 @@
-﻿namespace Grace.Shared
+namespace Grace.Shared
 
 open Grace.Shared.Types
 open Grace.Shared.Utilities
@@ -25,6 +25,7 @@ module Dto =
               CheckpointEnabled: bool
               SaveEnabled: bool
               TagEnabled: bool
+              ExternalEnabled: bool
               AutoRebaseEnabled: bool
               LatestPromotion: ReferenceId
               LatestCommit: ReferenceId
@@ -49,6 +50,7 @@ module Dto =
                   CheckpointEnabled = false
                   SaveEnabled = false
                   TagEnabled = false
+                  ExternalEnabled = false
                   AutoRebaseEnabled = true
                   LatestPromotion = ReferenceId.Empty
                   LatestCommit = ReferenceId.Empty

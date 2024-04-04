@@ -29,23 +29,14 @@ to be clear:
 ![](https://gracevcsdevelopment.blob.core.windows.net/static/Green.svg)
 ![](https://gracevcsdevelopment.blob.core.windows.net/static/Orange3.svg)
 ![](https://gracevcsdevelopment.blob.core.windows.net/static/Green.svg)
-### Hi friends from On .NET Live!
+### Grace at NDC Oslo 2023
 
-_08-Mar-2023_
+I gave my first conference talk about Grace at NDC Oslo 2023. You can watch it here:
 
-Thanks for stopping by. I really do appreciate it.
-
-I owe you some videos with the demos of Grace, and stuff in Grace's code, that I wanted to show you.
-
-To make those videos, I just bought a new computer (yeah, yeah...), with a serious GPU (of course...), and I'm learning a bit about recording and editing so they don't suck. I expect to publish them later this month. I appreciate your patience.
-
-If you'd like to be notified when each video is published, please subscribe to [this issue](https://github.com/ScottArbeit/Grace/issues/12). I'll update it to let you know.
-
-In the meantime, please feel free to comment or ask questions in the Discussions here. I'd love to know what you're curious about.
+https://youtu.be/lW0gxMbyLEM
 
 ![](https://gracevcsdevelopment.blob.core.windows.net/static/Green.svg)
 ![](https://gracevcsdevelopment.blob.core.windows.net/static/Orange3.svg)
-
 
 ## FAQ
 
@@ -115,7 +106,7 @@ Grace simplifies this by breaking these usages out into their own gestures and e
 
 - `grace checkpoint` - this means "I'm partially done", for you to keep track of your own progress
 - `grace commit` - this is "I'm really done" or "This version is a candidate for promotion"; you'd use a commit for a PR
-- `grace promote` - this is sort-of a merge; it's what you'd get after approving a PR, which Grace calls a  _promotion request_[^pr]
+- `grace promote` - in Grace, promotions replace merges; a promotion is how Grace moves code from a child branch to a parent branch
 
 and, introducing:
 
@@ -161,13 +152,25 @@ Auto-rebasing keeps you up-to-date and ready to go, because...
 
 ### Grace reduces merge conflicts
 
-Merge conflicts suck. Finding out that you have one, when you thought you were already done with your work, is one of the most anxiety-inducing parts of using source control. Grace helps you eliminate them by keeping your branch up-to-date.
+Merge conflicts suck. Finding out that you have one, when you thought you were already done with your work, is anxiety-inducing, and one of the most confusing parts of the user interface in Git. Grace helps you eliminate conflicts by keeping your branch up-to-date, automatically.
 
-When your parent branch gets updated, by default, `grace watch` will auto-rebase your branch on those changes, so you're always coding against the latest version that you'll have to promote to.
+When your parent branch gets updated, within seconds, `grace watch` will auto-rebase your branch on those changes, so you're always coding against the latest version that you'll have to promote to.
 
-Almost all of the time, when you rebase, nothing bad happens. You don't even notice it. The rest of the time, auto-rebase lets you find out right away, fix it while you're in flow, and skip the conflict later.
+Most-to-almost-all of the time, you don't even notice it. No errors, no conflicts.
 
-Let's shift left on promotion conflicts. Grace can't eliminate all of them, but it should reduce how often they happen.
+When there is a problem, auto-rebase lets you find out right away.
+
+You can fix it while you're in flow, and skip the conflict later.
+
+![](https://gracevcsdevelopment.blob.core.windows.net/static/Green.svg)
+
+### AI to help resolve conflicts
+
+And Grace doesn't just tell you there's a conflict. It uses AI to propose a resolution, and lets you accept it with a single click, or request that it tries again with a different proposal. You can even tell Grace to run a CI/CD pipeline on the resolution before proposing it to you.
+
+C'mon, it's 2024. There's got to be some AI in here, right?
+
+Let's shift left on promotion conflicts. Grace can't eliminate all of them, but it will reduce how often they happen, and it will proactively offer AI help to resolve them, so you don't have to worry about them ever again.
 
 ![](https://gracevcsdevelopment.blob.core.windows.net/static/Green.svg)
 
@@ -175,33 +178,35 @@ Let's shift left on promotion conflicts. Grace can't eliminate all of them, but 
 
 With Grace, there's no need for forking entire repositories just to make contributions. In open-source repos, you'll just create a personal branch against the repo.
 
-You'll own your personal branch, and you can make it public or private. When your change is ready you can submit PR's to get your personal branch's version promoted to a parent branch in the repo.
+You'll own your personal branch, and you can make it public or private. Your branch gets auto-rebased like any other branch in the repository, to keep your version up-to-date. When your change is ready you can submit PR's to get your personal branch's version promoted to a parent branch in the repo.
 
-This is how I expect a large, open-source project in Grace to be: dozens of contributors, each with personal branches, working on a public project that remains securely controlled with ACL's. Everyone auto-rebased with every update to their parent branch, so there are no surprises later. No networks of forks to manage, no multiple entire copies of the repo. Just individuals working on the same repo, securely, together.
+This is how I expect a large, open-source project in Grace to be: dozens of contributors, each with personal branches, working on a public project that remains securely controlled with ACL's. Everyone gets auto-rebased with every update to `main`. No networks of forks to manage, no entire copies of the repo. Just individuals working on the same repo, securely, together.
 
 ![](https://gracevcsdevelopment.blob.core.windows.net/static/Green.svg)
 
-### Simplified branching strategy
+### Simplified branching
 
-Grace's default branching strategy is called _single-step_ and is designed to help reduce merge conflicts, and to make it easier to work on and promote code to shipping branches (like `main`).
+Grace's branching strategy is called _single-step_ and is designed to help reduce conflicts, and to make it easier to work on and promote code to shipping branches (like `main`).
 
-Single-step branching is, we hope, both easy-to-use and powerful enough to be all that you need to run your projects.
+Single-step branching is both easy-to-use and powerful enough to be all that you need to run your projects.
 
 There's a [separate page](docs/Branching%20strategy.md) that describes it in more detail.
 
 ![](https://gracevcsdevelopment.blob.core.windows.net/static/Green.svg)
 
-### Run large repositories
+### Grace is built for monorepos
 
-Got a lot of files? a lot of users? a lot of versions?
+At GitHub, I've been fortunate to work with customers who run some of the largest monorepos in the world. I've seen the challenges they face, and I've seen what they need to build and ship code to production.
 
-In short... got a monorepo?
+Grace is ready for it.
 
-No problem, Grace is ready for it. So far, Grace has been tested on repositories as large as 100,000 files with 15,000 directories, with excellent performance (if you're running `grace watch`).
+Grace is designed to handle monorepos with ease. It's built to scale, and treats every repository, branch, directory version, and file version as a separate entity in a networked cluster of virtual actors. This design allows Grace to scale to handle arbitrarily large repositories, just as easily as it handles small- and medium-sized repositories.
+
+So far, Grace has been tested on repositories as large as 100,000 files with 15,000 directories, with excellent performance, and no limits in sight.
 
 ![](https://gracevcsdevelopment.blob.core.windows.net/static/Green.svg)
 
-### Store large files
+### Large, binary files welcome
 
 Grace has no problem storing large files. Really large files. It's been tested with 10GB files - not that I think files that large belong in version control - and it should handle even larger files well.
 
@@ -405,8 +410,6 @@ We intend to provide a Docker Compose template, as well as Kubernetes configurat
 [^grace]: Definition excerpted from https://www.thefreedictionary.com/grace.
 
 [^git]: Grace currently uses Git for its source control, and runs Grace in the same directory as a means of testing. Officially self-hosting Grace's source code on Grace will, of course, happen when it's safe to.
-
-[^pr]: They're not really "pull requests" because there isn't a "pull" gesture in Grace. It's still a "PR", though.
 
 [^stream]: One thing I'd like to do with the event log as a stream: detect invalid sequences and frequencies of events in Grace that would indicate bugs or attacks.
 

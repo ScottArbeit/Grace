@@ -1,4 +1,4 @@
-﻿namespace Grace.Actors
+namespace Grace.Actors
 
 open Dapr.Actors
 open Dapr.Actors.Runtime
@@ -62,11 +62,12 @@ module Branch =
                     for referenceType in initialPermissions do
                         branchDto <-
                             match referenceType with
-                            | ReferenceType.Promotion -> { branchDto with PromotionEnabled = true }
-                            | ReferenceType.Commit -> { branchDto with CommitEnabled = true }
-                            | ReferenceType.Checkpoint -> { branchDto with CheckpointEnabled = true }
-                            | ReferenceType.Save -> { branchDto with SaveEnabled = true }
-                            | ReferenceType.Tag -> { branchDto with TagEnabled = true }
+                            | Promotion -> { branchDto with PromotionEnabled = true }
+                            | Commit -> { branchDto with CommitEnabled = true }
+                            | Checkpoint -> { branchDto with CheckpointEnabled = true }
+                            | Save -> { branchDto with SaveEnabled = true }
+                            | Tag -> { branchDto with TagEnabled = true }
+                            | External -> { branchDto with ExternalEnabled = true }
 
                     branchDto
                 | Rebased referenceId -> { currentBranchDto with BasedOn = referenceId }
@@ -78,13 +79,15 @@ module Branch =
                 | Committed(referenceId, directoryVersion, sha256Hash, referenceText) -> { currentBranchDto with LatestCommit = referenceId }
                 | Checkpointed(referenceId, directoryVersion, sha256Hash, referenceText) -> { currentBranchDto with LatestCheckpoint = referenceId }
                 | Saved(referenceId, directoryVersion, sha256Hash, referenceText) -> { currentBranchDto with LatestSave = referenceId }
-                | Tagged(referenceId, directoryVersion, sha256Hash, referenceText) -> currentBranchDto
+                | Tagged(referenceId, directoryVersion, sha256Hash, referenceText) -> currentBranchDto // No changes to currentBranchDto.
+                | ExternalCreated(referenceId, directoryVersion, sha256Hash, referenceText) -> currentBranchDto // No changes to currentBranchDto.
                 | EnabledAssign enabled -> { currentBranchDto with AssignEnabled = enabled }
                 | EnabledPromotion enabled -> { currentBranchDto with PromotionEnabled = enabled }
                 | EnabledCommit enabled -> { currentBranchDto with CommitEnabled = enabled }
                 | EnabledCheckpoint enabled -> { currentBranchDto with CheckpointEnabled = enabled }
                 | EnabledSave enabled -> { currentBranchDto with SaveEnabled = enabled }
                 | EnabledTag enabled -> { currentBranchDto with TagEnabled = enabled }
+                | EnabledExternal enabled -> { currentBranchDto with ExternalEnabled = enabled }
                 | EnabledAutoRebase enabled -> { currentBranchDto with AutoRebaseEnabled = enabled }
                 | ReferenceRemoved _ -> currentBranchDto
                 | LogicalDeleted(force, deleteReason) -> { currentBranchDto with DeletedAt = Some(getCurrentInstant ()); DeleteReason = deleteReason }
@@ -383,12 +386,23 @@ module Branch =
                                         metadata.Properties.Add(nameof (BranchId), $"{this.Id}")
                                         metadata.Properties.Add(nameof (BranchName), $"{branchDto.BranchName}")
                                         return Tagged(referenceId, directoryVersionId, sha256Hash, referenceText)
+                                    | BranchCommand.CreateExternal(directoryVersionId, sha256Hash, referenceText) ->
+                                        let! referenceId = addReference directoryVersionId sha256Hash referenceText ReferenceType.External
+
+                                        metadata.Properties.Add(nameof (ReferenceId), $"{referenceId}")
+                                        metadata.Properties.Add(nameof (DirectoryId), $"{directoryVersionId}")
+                                        metadata.Properties.Add(nameof (Sha256Hash), $"{sha256Hash}")
+                                        metadata.Properties.Add(nameof (ReferenceText), $"{referenceText}")
+                                        metadata.Properties.Add(nameof (BranchId), $"{this.Id}")
+                                        metadata.Properties.Add(nameof (BranchName), $"{branchDto.BranchName}")
+                                        return ExternalCreated(referenceId, directoryVersionId, sha256Hash, referenceText)
                                     | EnableAssign enabled -> return EnabledAssign enabled
                                     | EnablePromotion enabled -> return EnabledPromotion enabled
                                     | EnableCommit enabled -> return EnabledCommit enabled
                                     | EnableCheckpoint enabled -> return EnabledCheckpoint enabled
                                     | EnableSave enabled -> return EnabledSave enabled
                                     | EnableTag enabled -> return EnabledTag enabled
+                                    | EnableExternal enabled -> return EnabledExternal enabled
                                     | EnableAutoRebase enabled -> return EnabledAutoRebase enabled
                                     | RemoveReference referenceId -> return ReferenceRemoved referenceId
                                     | DeleteLogical(force, deleteReason) ->

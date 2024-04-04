@@ -113,7 +113,8 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
                 let mutable graceIds = GraceIds.Default
                 let mutable badRequest = String.Empty
 
-                // If we haven't seen this endpoint before, get the parameter type for the endpoint.
+                // Get the parameter type for the endpoint from the cache.
+                // If we don't already have it, get it, and add it to the cache.
                 if not <| typeLookup.TryGetValue(path, &requestBodyType) then
                     match getBodyType context with
                     | Some t ->
@@ -124,16 +125,18 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
                 // If we have a request body type for the endpoint, parse the body of the request to get the Ids and Names.
                 // If the request body type is null, it's an endpoint (like /healthz) where we don't take these parameters.
                 if not <| isNull (requestBodyType) then
+                    // This allows us to read the request body multiple times.
                     context.Request.EnableBuffering()
 
-                    match! context |> parseType requestBodyType with
+                    // Deserialize the request body to the type for this endpoint.
+                    match! deserializeToType requestBodyType context with
+                    | None -> ()
                     | Some requestBody ->
-                        // Get the available entity properties for this endpoint from the dictionary.
-                        //   If we don't already have them, figure out which properties are available for this type, and cache that.
                         let mutable entityProperties: EntityProperties = EntityProperties.Default
 
+                        // Get the available entity properties for this endpoint from the cache.
+                        //   If we don't already have them, figure out which properties are available for this type, and cache that.
                         if not <| propertyLookup.TryGetValue(requestBodyType, &entityProperties) then
-                            // We haven't seen this request body type before, so we need to figure out which properties are available.
 
                             // Get all of the properties on the request body type.
                             let properties = requestBodyType.GetProperties(BindingFlags.Public ||| BindingFlags.Instance)
@@ -158,15 +161,6 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
                         // properties |> Array.iter (fun p -> sb.Append($"{p.Name}; ") |> ignore)
                         // logToConsole $"Path: {context.Request.Path}; Properties: {sb.ToString()}."
 
-                        let mutable ownerId = String.Empty
-                        let mutable ownerName = String.Empty
-                        let mutable organizationId = String.Empty
-                        let mutable organizationName = String.Empty
-                        let mutable repositoryId = String.Empty
-                        let mutable repositoryName = String.Empty
-                        let mutable branchId = String.Empty
-                        let mutable branchName = String.Empty
-
                         log.LogDebug(
                             "{currentInstant}: requestBodyType: {requestBodyType}; Request body: {requestBody}",
                             getCurrentInstantExtended (),
@@ -180,8 +174,8 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
                             && Option.isSome entityProperties.OwnerName
                         then
                             // Get the values from the request body.
-                            ownerId <- entityProperties.OwnerId.Value.GetValue(requestBody) :?> string
-                            ownerName <- entityProperties.OwnerName.Value.GetValue(requestBody) :?> string
+                            let ownerId = entityProperties.OwnerId.Value.GetValue(requestBody) :?> string
+                            let ownerName = entityProperties.OwnerName.Value.GetValue(requestBody) :?> string
 
                             if path.EndsWith("/create", StringComparison.InvariantCultureIgnoreCase) then
                                 // If we're creating a new Owner, we don't need to resolve the Id.
@@ -204,8 +198,8 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
                             && Option.isSome entityProperties.OrganizationName
                         then
                             // Get the values from the request body.
-                            organizationId <- entityProperties.OrganizationId.Value.GetValue(requestBody) :?> string
-                            organizationName <- entityProperties.OrganizationName.Value.GetValue(requestBody) :?> string
+                            let organizationId = entityProperties.OrganizationId.Value.GetValue(requestBody) :?> string
+                            let organizationName = entityProperties.OrganizationName.Value.GetValue(requestBody) :?> string
 
                             if path.EndsWith("/create", StringComparison.InvariantCultureIgnoreCase) then
                                 // If we're creating a new Organization, we don't need to resolve the Id.
@@ -228,8 +222,8 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
                             && Option.isSome entityProperties.RepositoryName
                         then
                             // Get the values from the request body.
-                            repositoryId <- entityProperties.RepositoryId.Value.GetValue(requestBody) :?> string
-                            repositoryName <- entityProperties.RepositoryName.Value.GetValue(requestBody) :?> string
+                            let repositoryId = entityProperties.RepositoryId.Value.GetValue(requestBody) :?> string
+                            let repositoryName = entityProperties.RepositoryName.Value.GetValue(requestBody) :?> string
 
                             if path.EndsWith("/create", StringComparison.InvariantCultureIgnoreCase) then
                                 // If we're creating a new Repository, we don't need to resolve the Id.
@@ -261,8 +255,8 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
                             && Option.isSome entityProperties.BranchName
                         then
                             // Get the values from the request body.
-                            branchId <- entityProperties.BranchId.Value.GetValue(requestBody) :?> string
-                            branchName <- entityProperties.BranchName.Value.GetValue(requestBody) :?> string
+                            let branchId = entityProperties.BranchId.Value.GetValue(requestBody) :?> string
+                            let branchName = entityProperties.BranchName.Value.GetValue(requestBody) :?> string
 
                             if path.EndsWith("/create", StringComparison.InvariantCultureIgnoreCase) then
                                 // If we're creating a new Branch, we don't need to resolve the Id.
@@ -277,7 +271,6 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
                                             $"Branch with Id: {branchId} not found."
                                         else
                                             $"Branch with Name: {branchName} not found."
-                    | None -> ()
 
                     // Add the parsed Id's and Names to the HttpContext.
                     context.Items.Add(nameof (GraceIds), graceIds)

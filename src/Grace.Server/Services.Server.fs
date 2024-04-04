@@ -65,7 +65,7 @@ module Services =
         }
 
     /// Parses the incoming request body into the provided type.
-    let parseType (requestBodyType: Type) (context: HttpContext) =
+    let deserializeToType (requestBodyType: Type) (context: HttpContext) =
         task {
             try
                 let! parameters = JsonSerializer.DeserializeAsync(context.Request.Body, requestBodyType, Constants.JsonSerializerOptions)

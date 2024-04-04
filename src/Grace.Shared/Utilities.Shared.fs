@@ -325,7 +325,6 @@ module Utilities =
             match this.innerException with
             | null -> $"Exception: {this.``exception``}{Environment.NewLine}{Environment.NewLine}"
             | innerEx -> $"Exception: {this.``exception``}{Environment.NewLine}{Environment.NewLine}Inner exception: {this.innerException}{Environment.NewLine}"
-    //(serialize this).Replace("\\\\\\\\", @"\").Replace("\\\\", @"\").Replace(@"\r\n", Environment.NewLine)
 
     /// Converts an Exception-based instance into an ExceptionResponse instance.
     let createExceptionResponse (ex: Exception) : ExceptionResponse =

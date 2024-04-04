@@ -1,4 +1,4 @@
-﻿namespace Grace.Shared
+namespace Grace.Shared
 
 open DiffPlex.DiffBuilder.Model
 open Grace.Shared.Utilities
@@ -100,6 +100,7 @@ module Types =
         | Checkpoint
         | Save
         | Tag
+        | External
 
         override this.ToString() = Utilities.getDiscriminatedUnionFullName this
 

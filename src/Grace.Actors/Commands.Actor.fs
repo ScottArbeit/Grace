@@ -1,4 +1,4 @@
-﻿namespace Grace.Actors
+namespace Grace.Actors
 
 open Grace.Shared.Types
 open Grace.Shared.Utilities
@@ -24,12 +24,14 @@ module Commands =
             | Checkpoint of directoryVersionId: DirectoryId * sha256Hash: Sha256Hash * referenceText: ReferenceText
             | Save of directoryVersionId: DirectoryId * sha256Hash: Sha256Hash * referenceText: ReferenceText
             | Tag of directoryVersionId: DirectoryId * sha256Hash: Sha256Hash * referenceText: ReferenceText
+            | CreateExternal of directoryVersionId: DirectoryId * sha256Hash: Sha256Hash * referenceText: ReferenceText
             | EnableAssign of enabled: bool
             | EnablePromotion of enabled: bool
             | EnableCommit of enabled: bool
             | EnableCheckpoint of enabled: bool
             | EnableSave of enabled: bool
             | EnableTag of enabled: bool
+            | EnableExternal of enabled: bool
             | EnableAutoRebase of enabled: bool
             | RemoveReference of referenceId: ReferenceId
             | DeleteLogical of force: bool * deleteReason: string

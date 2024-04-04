@@ -1261,6 +1261,17 @@ module Branch =
                 return result |> renderOutput parseResult
             })
 
+    let private CreateExternal =
+        CommandHandler.Create(fun (parseResult: ParseResult) (createReferencesParameters: CreateRefParameters) ->
+            task {
+                let command (parameters: CreateReferenceParameters) = task { return! Branch.CreateExternal(parameters) }
+
+                let! result =
+                    createReferenceHandler parseResult (createReferencesParameters |> normalizeIdsAndNames parseResult) command ("External".ToLowerInvariant())
+
+                return result |> renderOutput parseResult
+            })
+
     type EnableFeatureCommand = EnableFeatureParameters -> Task<GraceResult<string>>
 
     type EnableFeatureParams() =
@@ -1346,6 +1357,16 @@ module Branch =
                 let command (parameters: EnableFeatureParameters) = task { return! Branch.EnableTag(parameters) }
 
                 let! result = enableFeatureHandler parseResult (enableFeaturesParams |> normalizeIdsAndNames parseResult) command "tag"
+
+                return result |> renderOutput parseResult
+            })
+
+    let private EnableExternal =
+        CommandHandler.Create(fun (parseResult: ParseResult) (enableFeaturesParams: EnableFeatureParams) ->
+            task {
+                let command (parameters: EnableFeatureParameters) = task { return! Branch.EnableExternal(parameters) }
+
+                let! result = enableFeatureHandler parseResult (enableFeaturesParams |> normalizeIdsAndNames parseResult) command "external"
 
                 return result |> renderOutput parseResult
             })
@@ -1748,6 +1769,26 @@ module Branch =
 
                     if parseResult |> hasOutput then
                         printReferences parseResult branchDto references "Tags"
+                        AnsiConsole.MarkupLine($"[{Colors.Important}]Returned {references.Length} rows.[/]")
+
+                    return intReturn
+                | Error error -> return result |> renderOutput parseResult
+            })
+
+    let private GetExternals =
+        CommandHandler.Create(fun (parseResult: ParseResult) (getReferencesParameters: GetRefParameters) ->
+            task {
+                let query (parameters: GetReferencesParameters) = task { return! Branch.GetExternals(parameters) }
+
+                let! result = getReferenceHandler parseResult (getReferencesParameters |> normalizeIdsAndNames parseResult) query
+
+                match result with
+                | Ok graceReturnValue ->
+                    let (branchDto, references) = graceReturnValue.ReturnValue
+                    let intReturn = result |> renderOutput parseResult
+
+                    if parseResult |> hasOutput then
+                        printReferences parseResult branchDto references "Externals"
                         AnsiConsole.MarkupLine($"[{Colors.Important}]Returned {references.Length} rows.[/]")
 
                     return intReturn
@@ -3618,6 +3659,14 @@ module Branch =
         tagCommand.Handler <- Tag
         branchCommand.AddCommand(tagCommand)
 
+        let createExternalCommand =
+            new Command("create-external", Description = "Create an external reference.")
+            |> addOption Options.messageRequired
+            |> addCommonOptions
+
+        createExternalCommand.Handler <- CreateExternal
+        branchCommand.AddCommand(createExternalCommand)
+
         let rebaseCommand =
             new Command("rebase", Description = "Rebase this branch on a promotion from the parent branch.")
             |> addCommonOptions
@@ -3691,6 +3740,14 @@ module Branch =
 
         enableTagCommand.Handler <- EnableTag
         branchCommand.AddCommand(enableTagCommand)
+
+        let enableExternalCommand =
+            new Command("enable-external", Description = "Enable or disable external references on this branch.")
+            |> addOption Options.enabled
+            |> addCommonOptions
+
+        enableExternalCommand.Handler <- EnableExternal
+        branchCommand.AddCommand(enableExternalCommand)
 
         let enableAutoRebaseCommand =
             new Command("enable-auto-rebase", Description = "Enable or disable auto-rebase on this branch.")
@@ -3770,6 +3827,15 @@ module Branch =
 
         getTagsCommand.Handler <- GetTags
         branchCommand.AddCommand(getTagsCommand)
+
+        let getExternalsCommand =
+            new Command("get-externals", Description = "Retrieves a list of the most recent external references from the branch.")
+            |> addCommonOptions
+            |> addOption Options.maxCount
+            |> addOption Options.fullSha
+
+        getExternalsCommand.Handler <- GetExternals
+        branchCommand.AddCommand(getExternalsCommand)
 
         let deleteCommand = new Command("delete", Description = "Delete the branch.") |> addCommonOptions
 

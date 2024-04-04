@@ -1,4 +1,4 @@
-﻿namespace Grace.SDK
+namespace Grace.SDK
 
 open Grace.SDK.Common
 open Grace.Shared.Dto.Branch
@@ -46,6 +46,10 @@ type Branch() =
     static member public Tag(parameters: CreateReferenceParameters) =
         postServer<CreateReferenceParameters, string> (parameters |> ensureCorrelationIdIsSet, $"branch/{nameof (Branch.Tag)}")
 
+    /// Creates an external reference in this branch.
+    static member public CreateExternal(parameters: CreateReferenceParameters) =
+        postServer<CreateReferenceParameters, string> (parameters |> ensureCorrelationIdIsSet, $"branch/{nameof (Branch.CreateExternal)}")
+
     /// Sets the flag to allow `grace assign` in this branch.
     static member public EnableAssign(parameters: EnableFeatureParameters) =
         postServer<EnableFeatureParameters, string> (parameters |> ensureCorrelationIdIsSet, $"branch/{nameof (Branch.EnableAssign)}")
@@ -70,6 +74,10 @@ type Branch() =
     static member public EnableTag(parameters: EnableFeatureParameters) =
         postServer<EnableFeatureParameters, string> (parameters |> ensureCorrelationIdIsSet, $"branch/{nameof (Branch.EnableTag)}")
 
+    /// Sets the flag to allow external references in this branch.
+    static member public EnableExternal(parameters: EnableFeatureParameters) =
+        postServer<EnableFeatureParameters, string> (parameters |> ensureCorrelationIdIsSet, $"branch/{nameof (Branch.EnableExternal)}")
+
     /// Sets the flag to allow auto-rebase in this branch.
     static member public EnableAutoRebase(parameters: EnableFeatureParameters) =
         postServer<EnableFeatureParameters, string> (parameters |> ensureCorrelationIdIsSet, $"branch/{nameof (Branch.EnableAutoRebase)}")
@@ -85,52 +93,35 @@ type Branch() =
     static member public GetReference(parameters: GetReferenceParameters) =
         postServer<GetReferenceParameters, ReferenceDto> (parameters |> ensureCorrelationIdIsSet, $"branch/{nameof (Branch.GetReference)}")
 
-    /// <summary>
     /// Gets the references from a branch.
-    /// </summary>
-    /// <param name="parameters">Values to use when retrieving references from a branch.</param>
     static member public GetReferences(parameters: GetReferencesParameters) =
         postServer<GetReferencesParameters, IEnumerable<ReferenceDto>> (parameters |> ensureCorrelationIdIsSet, $"branch/{nameof (Branch.GetReferences)}")
 
-    /// <summary>
     /// Gets the promotions from a branch.
-    /// </summary>
-    /// <param name="parameters">Values to use when retrieving references from a branch.</param>
     static member public GetPromotions(parameters: GetReferencesParameters) =
         postServer<GetReferencesParameters, IEnumerable<ReferenceDto>> (parameters |> ensureCorrelationIdIsSet, $"branch/{nameof (Branch.GetPromotions)}")
 
-    /// <summary>
     /// Gets the commits from a branch.
-    /// </summary>
-    /// <param name="parameters">Values to use when retrieving references from a branch.</param>
     static member public GetCommits(parameters: GetReferencesParameters) =
         postServer<GetReferencesParameters, IEnumerable<ReferenceDto>> (parameters |> ensureCorrelationIdIsSet, $"branch/{nameof (Branch.GetCommits)}")
 
-    /// <summary>
     /// Gets the checkpoints from a branch.
-    /// </summary>
-    /// <param name="parameters">Values to use when retrieving references from a branch.</param>
     static member public GetCheckpoints(parameters: GetReferencesParameters) =
         postServer<GetReferencesParameters, IEnumerable<ReferenceDto>> (parameters |> ensureCorrelationIdIsSet, $"branch/{nameof (Branch.GetCheckpoints)}")
 
-    /// <summary>
     /// Gets the saves from a branch.
-    /// </summary>
-    /// <param name="parameters">Values to use when retrieving references from a branch.</param>
     static member public GetSaves(parameters: GetReferencesParameters) =
         postServer<GetReferencesParameters, IEnumerable<ReferenceDto>> (parameters |> ensureCorrelationIdIsSet, $"branch/{nameof (Branch.GetSaves)}")
 
-    /// <summary>
     /// Gets the tags from a branch.
-    /// </summary>
-    /// <param name="parameters">Values to use when retrieving references from a branch.</param>
     static member public GetTags(parameters: GetReferencesParameters) =
         postServer<GetReferencesParameters, IEnumerable<ReferenceDto>> (parameters |> ensureCorrelationIdIsSet, $"branch/{nameof (Branch.GetTags)}")
 
-    /// <summary>
+    /// Gets the external references from a branch.
+    static member public GetExternals(parameters: GetReferencesParameters) =
+        postServer<GetReferencesParameters, IEnumerable<ReferenceDto>> (parameters |> ensureCorrelationIdIsSet, $"branch/{nameof (Branch.GetExternals)}")
+
     /// Sets the name of a branch.
-    /// </summary>
-    /// <param name="parameters">Values to use when setting the name of the branch.</param>
     static member public SetName(parameters: SetBranchNameParameters) =
         postServer<SetBranchNameParameters, string> (parameters |> ensureCorrelationIdIsSet, $"branch/{nameof (Branch.SetName)}")
 

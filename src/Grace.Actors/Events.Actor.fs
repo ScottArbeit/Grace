@@ -1,4 +1,4 @@
-﻿namespace Grace.Actors
+namespace Grace.Actors
 
 open Grace.Shared.Types
 open Grace.Shared.Utilities
@@ -27,12 +27,14 @@ module Events =
             | Checkpointed of referenceId: ReferenceId * directoryVersionId: DirectoryId * sha256Hash: Sha256Hash * referenceText: ReferenceText
             | Saved of referenceId: ReferenceId * directoryVersionId: DirectoryId * sha256Hash: Sha256Hash * referenceText: ReferenceText
             | Tagged of referenceId: ReferenceId * directoryVersionId: DirectoryId * sha256Hash: Sha256Hash * referenceText: ReferenceText
+            | ExternalCreated of referenceId: ReferenceId * directoryVersionId: DirectoryId * sha256Hash: Sha256Hash * referenceText: ReferenceText
             | EnabledAssign of enabled: bool
             | EnabledPromotion of enabled: bool
             | EnabledCommit of enabled: bool
             | EnabledCheckpoint of enabled: bool
             | EnabledSave of enabled: bool
             | EnabledTag of enabled: bool
+            | EnabledExternal of enabled: bool
             | EnabledAutoRebase of enabled: bool
             | ReferenceRemoved of referenceId: ReferenceId
             | LogicalDeleted of force: bool * deleteReason: string

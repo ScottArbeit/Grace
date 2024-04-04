@@ -1,4 +1,4 @@
-﻿namespace Grace.Actors
+namespace Grace.Actors
 
 open Azure.Storage
 open Azure.Storage.Blobs
@@ -1108,6 +1108,7 @@ module Services =
     let getCheckpoints = getReferencesByType ReferenceType.Checkpoint
     let getSaves = getReferencesByType ReferenceType.Save
     let getTags = getReferencesByType ReferenceType.Tag
+    let getExternals = getReferencesByType ReferenceType.External
 
     let getLatestReference branchId =
         task {

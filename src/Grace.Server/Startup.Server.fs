@@ -76,8 +76,7 @@ module Application =
               PUT []
               subRoute
                   "/branch"
-                  [ GET []
-                    POST
+                  [ POST
                         [ route "/assign" Branch.Assign |> addMetadata typeof<Branch.AssignParameters>
                           route "/checkpoint" Branch.Checkpoint
                           |> addMetadata typeof<Branch.CreateReferenceParameters>
@@ -85,6 +84,8 @@ module Application =
                           |> addMetadata typeof<Branch.CreateReferenceParameters>
                           route "/create" Branch.Create
                           |> addMetadata typeof<Branch.CreateBranchParameters>
+                          route "/createExternal" Branch.CreateExternal
+                          |> addMetadata typeof<Branch.CreateReferenceParameters>
                           route "/delete" Branch.Delete
                           |> addMetadata typeof<Branch.DeleteBranchParameters>
                           route "/enableAssign" Branch.EnableAssign
@@ -95,6 +96,8 @@ module Application =
                           |> addMetadata typeof<Branch.EnableFeatureParameters>
                           route "/enableCommit" Branch.EnableCommit
                           |> addMetadata typeof<Branch.EnableFeatureParameters>
+                          route "/enableExternal" Branch.EnableExternal
+                          |> addMetadata typeof<Branch.EnableFeatureParameters>
                           route "/enablePromotion" Branch.EnablePromotion
                           |> addMetadata typeof<Branch.EnableFeatureParameters>
                           route "/enableSave" Branch.EnableSave
@@ -104,6 +107,8 @@ module Application =
                           route "/get" Branch.Get |> addMetadata typeof<Branch.GetBranchParameters>
                           route "/getEvents" Branch.GetEvents
                           |> addMetadata typeof<Branch.GetBranchParameters>
+                          route "/getExternals" Branch.GetExternals
+                          |> addMetadata typeof<Branch.GetReferenceParameters>
                           route "/getCheckpoints" Branch.GetCheckpoints
                           |> addMetadata typeof<Branch.GetBranchParameters>
                           route "/getCommits" Branch.GetCommits
@@ -136,16 +141,14 @@ module Application =
                           route "/tag" Branch.Tag |> addMetadata typeof<Branch.CreateReferenceParameters> ] ]
               subRoute
                   "/diff"
-                  [ GET []
-                    POST
+                  [ POST
                         [ route "/getDiff" Diff.GetDiff |> addMetadata typeof<Diff.GetDiffParameters>
                           route "/getDiffBySha256Hash" Diff.GetDiffBySha256Hash
                           |> addMetadata typeof<Diff.GetDiffBySha256HashParameters>
                           route "/populate" Diff.Populate |> addMetadata typeof<Diff.PopulateParameters> ] ]
               subRoute
                   "/directory"
-                  [ GET []
-                    POST
+                  [ POST
                         [ route "/create" DirectoryVersion.Create
                           |> addMetadata typeof<Directory.CreateParameters>
                           route "/get" DirectoryVersion.Get |> addMetadata typeof<Directory.GetParameters>
@@ -199,11 +202,7 @@ module Application =
                           |> addMetadata typeof<Owner.UndeleteOwnerParameters> ] ]
               subRoute
                   "/repository"
-                  [ GET
-                        [
-
-                        ]
-                    POST
+                  [ POST
                         [ route "/create" Repository.Create
                           |> addMetadata typeof<Repository.CreateRepositoryParameters>
                           route "/delete" Repository.Delete

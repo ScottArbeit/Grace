@@ -1,4 +1,4 @@
-﻿namespace Grace.Server
+namespace Grace.Server
 
 open Dapr.Actors
 open Dapr.Actors.Client
@@ -720,6 +720,66 @@ module Branch =
                 return! processCommand context validations command
             }
 
+    /// Creates an external reference pointing to the specified root directory version in the branch.
+    let CreateExternal: HttpHandler =
+        fun (next: HttpFunc) (context: HttpContext) ->
+            task {
+                let validations (parameters: CreateReferenceParameters) =
+                    [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
+                       String.isValidGraceName parameters.BranchName InvalidBranchName
+                       Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
+                       String.maxLength parameters.Message 2048 StringIsTooLong
+                       String.isValidSha256Hash parameters.Sha256Hash Sha256HashIsRequired
+                       Owner.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
+                       Organization.organizationExists
+                           parameters.OwnerId
+                           parameters.OwnerName
+                           parameters.OrganizationId
+                           parameters.OrganizationName
+                           parameters.CorrelationId
+                           OrganizationDoesNotExist
+                       Repository.repositoryExists
+                           parameters.OwnerId
+                           parameters.OwnerName
+                           parameters.OrganizationId
+                           parameters.OrganizationName
+                           parameters.RepositoryId
+                           parameters.RepositoryName
+                           parameters.CorrelationId
+                           RepositoryDoesNotExist
+                       Branch.branchExists
+                           parameters.OwnerId
+                           parameters.OwnerName
+                           parameters.OrganizationId
+                           parameters.OrganizationName
+                           parameters.RepositoryId
+                           parameters.RepositoryName
+                           parameters.BranchId
+                           parameters.BranchName
+                           parameters.CorrelationId
+                           BranchDoesNotExist
+                       Branch.branchAllowsReferenceType
+                           parameters.OwnerId
+                           parameters.OwnerName
+                           parameters.OrganizationId
+                           parameters.OrganizationName
+                           parameters.RepositoryId
+                           parameters.RepositoryName
+                           parameters.BranchId
+                           parameters.BranchName
+                           ReferenceType.Tag
+                           parameters.CorrelationId
+                           TagIsDisabled |]
+
+                let command (parameters: CreateReferenceParameters) =
+                    BranchCommand.CreateExternal(parameters.DirectoryVersionId, parameters.Sha256Hash, ReferenceText parameters.Message)
+                    |> returnValueTask
+
+                context.Items.Add("Command", nameof (CreateExternal))
+                return! processCommand context validations command
+            }
+
+
     /// Enables and disables `grace assign` commands in the provided branch.
     let EnableAssign: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
@@ -975,6 +1035,49 @@ module Branch =
                 let command (parameters: EnableFeatureParameters) = EnableTag(parameters.Enabled) |> returnValueTask
 
                 context.Items.Add("Command", nameof (EnableTag))
+                return! processCommand context validations command
+            }
+
+    /// Enables and disables external references in the provided branch.
+    let EnableExternal: HttpHandler =
+        fun (next: HttpFunc) (context: HttpContext) ->
+            task {
+                let validations (parameters: EnableFeatureParameters) =
+                    [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
+                       String.isValidGraceName parameters.BranchName InvalidBranchName
+                       Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
+                       Owner.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
+                       Organization.organizationExists
+                           parameters.OwnerId
+                           parameters.OwnerName
+                           parameters.OrganizationId
+                           parameters.OrganizationName
+                           parameters.CorrelationId
+                           OrganizationDoesNotExist
+                       Repository.repositoryExists
+                           parameters.OwnerId
+                           parameters.OwnerName
+                           parameters.OrganizationId
+                           parameters.OrganizationName
+                           parameters.RepositoryId
+                           parameters.RepositoryName
+                           parameters.CorrelationId
+                           RepositoryDoesNotExist
+                       Branch.branchExists
+                           parameters.OwnerId
+                           parameters.OwnerName
+                           parameters.OrganizationId
+                           parameters.OrganizationName
+                           parameters.RepositoryId
+                           parameters.RepositoryName
+                           parameters.BranchId
+                           parameters.BranchName
+                           parameters.CorrelationId
+                           BranchDoesNotExist |]
+
+                let command (parameters: EnableFeatureParameters) = EnableExternal(parameters.Enabled) |> returnValueTask
+
+                context.Items.Add("Command", nameof (EnableExternal))
                 return! processCommand context validations command
             }
 
@@ -1969,6 +2072,88 @@ module Branch =
                         task {
                             let! branchDto = actorProxy.Get(getCorrelationId context)
                             let! results = getTags branchDto.BranchId maxCount
+                            return results
+                        }
+
+                    let! parameters = context |> parse<GetReferencesParameters>
+                    let! result = processQuery context parameters validations (parameters.MaxCount) query
+
+                    let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
+
+                    log.LogInformation(
+                        "{CurrentInstant}: CorrelationId: {correlationId}; Finished {path}; BranchId: {branchId}; Duration: {duration_ms}ms.",
+                        getCurrentInstantExtended (),
+                        (getCorrelationId context),
+                        context.Request.Path,
+                        graceIds.BranchId,
+                        duration_ms
+                    )
+
+                    return result
+                with ex ->
+                    let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
+
+                    log.LogError(
+                        ex,
+                        "{CurrentInstant}: CorrelationId: {correlationId}; Error in {path}; BranchId: {branchId}; Duration: {duration_ms}ms.",
+                        getCurrentInstantExtended (),
+                        (getCorrelationId context),
+                        context.Request.Path,
+                        graceIds.BranchId,
+                        duration_ms
+                    )
+
+                    return!
+                        context
+                        |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
+            }
+
+    /// Gets the external references in a branch.
+    let GetExternals: HttpHandler =
+        fun (next: HttpFunc) (context: HttpContext) ->
+            task {
+                let startTime = getCurrentInstant ()
+                let graceIds = context.Items[nameof (GraceIds)] :?> GraceIds
+
+                try
+                    let validations (parameters: GetReferencesParameters) =
+                        [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
+                           String.isValidGraceName parameters.BranchName InvalidBranchName
+                           Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
+                           Number.isPositiveOrZero parameters.MaxCount ValueMustBePositive
+                           Owner.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
+                           Organization.organizationExists
+                               parameters.OwnerId
+                               parameters.OwnerName
+                               parameters.OrganizationId
+                               parameters.OrganizationName
+                               parameters.CorrelationId
+                               OrganizationDoesNotExist
+                           Repository.repositoryExists
+                               parameters.OwnerId
+                               parameters.OwnerName
+                               parameters.OrganizationId
+                               parameters.OrganizationName
+                               parameters.RepositoryId
+                               parameters.RepositoryName
+                               parameters.CorrelationId
+                               RepositoryDoesNotExist
+                           Branch.branchExists
+                               parameters.OwnerId
+                               parameters.OwnerName
+                               parameters.OrganizationId
+                               parameters.OrganizationName
+                               parameters.RepositoryId
+                               parameters.RepositoryName
+                               parameters.BranchId
+                               parameters.BranchName
+                               parameters.CorrelationId
+                               BranchDoesNotExist |]
+
+                    let query (context: HttpContext) maxCount (actorProxy: IBranchActor) =
+                        task {
+                            let! branchDto = actorProxy.Get(getCorrelationId context)
+                            let! results = getExternals branchDto.BranchId maxCount
                             return results
                         }
 
