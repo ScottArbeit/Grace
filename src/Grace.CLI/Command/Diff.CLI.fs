@@ -459,7 +459,8 @@ module Diff =
                                                         RepositoryId = parameters.RepositoryId,
                                                         RepositoryName = parameters.RepositoryName,
                                                         BranchId = parameters.BranchId,
-                                                        BranchName = parameters.BranchName
+                                                        BranchName = parameters.BranchName,
+                                                        CorrelationId = parameters.CorrelationId
                                                     )
 
                                                 match! Branch.Get(branchParameters) with
@@ -531,7 +532,18 @@ module Diff =
                                     // Sending diff request to server.
                                     t7.StartTask()
                                     //logToAnsiConsole Colors.Verbose $"latestReference.DirectoryId: {latestReference.DirectoryId}; rootDirectoryId: {rootDirectoryId}."
-                                    let getDiffParameters = GetDiffParameters(DirectoryId1 = latestReference.DirectoryId, DirectoryId2 = rootDirectoryId)
+                                    let getDiffParameters =
+                                        GetDiffParameters(
+                                            OwnerId = parameters.OwnerId,
+                                            OwnerName = parameters.OwnerName,
+                                            OrganizationId = parameters.OrganizationId,
+                                            OrganizationName = parameters.OrganizationName,
+                                            RepositoryId = parameters.RepositoryId,
+                                            RepositoryName = parameters.RepositoryName,
+                                            DirectoryId1 = latestReference.DirectoryId,
+                                            DirectoryId2 = rootDirectoryId,
+                                            CorrelationId = parameters.CorrelationId
+                                        )
 
                                     let! getDiffResult = Diff.GetDiff(getDiffParameters)
 
@@ -721,9 +733,9 @@ module Diff =
                                                 OwnerId = $"{Current().OwnerId}",
                                                 OrganizationId = $"{Current().OrganizationId}",
                                                 RepositoryId = $"{Current().RepositoryId}",
-                                                CorrelationId = parameters.CorrelationId,
                                                 Sha256Hash1 = parameters.Sha256Hash1,
-                                                Sha256Hash2 = parameters.Sha256Hash2
+                                                Sha256Hash2 = parameters.Sha256Hash2,
+                                                CorrelationId = parameters.CorrelationId
                                             )
 
                                         match! Diff.GetDiffBySha256Hash(getDiffBySha256HashParameters) with

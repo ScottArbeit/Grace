@@ -2195,7 +2195,8 @@ module Branch =
                             GetByDirectoryIdsParameters(
                                 RepositoryId = parameters.RepositoryId,
                                 DirectoryId = $"{rootDirectoryId}",
-                                DirectoryIds = missingDirectoryIds
+                                DirectoryIds = missingDirectoryIds,
+                                CorrelationId = parameters.CorrelationId
                             )
 
                         match! Directory.GetByDirectoryIds getByDirectoryIdParameters with
@@ -2574,7 +2575,8 @@ module Branch =
                                                             Parameters.Directory.GetByDirectoryIdsParameters(
                                                                 RepositoryId = parameters.RepositoryId,
                                                                 DirectoryId = $"{rootDirectoryId}",
-                                                                DirectoryIds = missingDirectoryIds
+                                                                DirectoryIds = missingDirectoryIds,
+                                                                CorrelationId = parameters.CorrelationId
                                                             )
 
                                                         match! Directory.GetByDirectoryIds getByDirectoryIdParameters with
@@ -2782,7 +2784,8 @@ module Branch =
                                             Parameters.Directory.GetByDirectoryIdsParameters(
                                                 RepositoryId = parameters.RepositoryId,
                                                 DirectoryId = $"{rootDirectoryId}",
-                                                DirectoryIds = missingDirectoryIds
+                                                DirectoryIds = missingDirectoryIds,
+                                                CorrelationId = parameters.CorrelationId
                                             )
 
                                         match! Directory.GetByDirectoryIds getByDirectoryIdParameters with

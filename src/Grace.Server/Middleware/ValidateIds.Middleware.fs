@@ -1,4 +1,4 @@
-﻿namespace Grace.Server.Middleware
+namespace Grace.Server.Middleware
 
 open Grace.Actors.Services
 open Grace.Server
@@ -282,7 +282,7 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
                     context.Items.Add("BadRequest", badRequest)
 
                     log.LogInformation(
-                        "{currentInstant}: The provided entity Id's and/or Names were not found in the database. {message}. CorrelationId: {correlationId}",
+                        "{currentInstant}: CorrelationId: {correlationId}; The provided entity Id's and/or Names were not found in the database. {message}.",
                         getCurrentInstantExtended (),
                         badRequest,
                         correlationId
