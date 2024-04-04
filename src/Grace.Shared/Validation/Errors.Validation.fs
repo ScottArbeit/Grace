@@ -1,4 +1,4 @@
-﻿namespace Grace.Shared.Validation
+namespace Grace.Shared.Validation
 
 open Grace.Shared.Utilities
 open Grace.Shared.Resources.Text
@@ -24,6 +24,7 @@ module Errors =
             | EitherOwnerIdOrOwnerNameRequired
             | EitherRepositoryIdOrRepositoryNameIsRequired
             | EitherToBranchIdOrToBranchNameIsRequired
+            | ExternalIsDisabled
             | FailedToRetrieveBranch
             | FailedWhileApplyingEvent
             | IndexFileNotFound
@@ -73,6 +74,7 @@ module Errors =
                 | EitherOwnerIdOrOwnerNameRequired -> getLocalizedString StringResourceName.EitherOwnerIdOrOwnerNameIsRequired
                 | EitherRepositoryIdOrRepositoryNameIsRequired -> getLocalizedString StringResourceName.EitherRepositoryIdOrRepositoryNameIsRequired
                 | EitherToBranchIdOrToBranchNameIsRequired -> getLocalizedString StringResourceName.EitherToBranchIdOrToBranchNameIsRequired
+                | ExternalIsDisabled -> getLocalizedString StringResourceName.ExternalIsDisabled
                 | FailedToRetrieveBranch -> getLocalizedString StringResourceName.FailedToRetrieveBranch
                 | FailedWhileApplyingEvent -> getLocalizedString StringResourceName.FailedWhileApplyingEvent
                 | IndexFileNotFound -> getLocalizedString StringResourceName.IndexFileNotFound

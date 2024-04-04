@@ -767,9 +767,9 @@ module Branch =
                            parameters.RepositoryName
                            parameters.BranchId
                            parameters.BranchName
-                           ReferenceType.Tag
+                           ReferenceType.External
                            parameters.CorrelationId
-                           TagIsDisabled |]
+                           ExternalIsDisabled |]
 
                 let command (parameters: CreateReferenceParameters) =
                     BranchCommand.CreateExternal(parameters.DirectoryVersionId, parameters.Sha256Hash, ReferenceText parameters.Message)

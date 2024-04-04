@@ -1,4 +1,4 @@
-﻿namespace Grace.Shared.Resources
+namespace Grace.Shared.Resources
 
 open Grace.Shared
 open Grace.Shared.Resources.Text
@@ -42,6 +42,7 @@ module en_US =
             "Either a RepositoryId, or a RepositoryName, must be provided. If both are provided, RepositoryId will be used."
         | EitherToBranchIdOrToBranchNameIsRequired -> "Either a ToBranchId or a ToBranchName must be provided. If both are provided, ToBranchId will be used."
         | ExceptionCaught -> "An exception was caught while processing the request."
+        | ExternalIsDisabled -> "This branch has disabled external references."
         | FailedCommunicatingWithObjectStorage -> "A failure occurred when communicating with object storage."
         | FailedCreatingEmptyDirectoryVersion -> "A server error occurred while attempting to create an empty initial directory version."
         | FailedCreatingInitialBranch -> "A server error occurred while attempting to create the initial branch."

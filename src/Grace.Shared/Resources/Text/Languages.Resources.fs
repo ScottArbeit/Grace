@@ -1,4 +1,4 @@
-﻿namespace Grace.Shared.Resources
+namespace Grace.Shared.Resources
 
 open NodaTime
 open System
@@ -36,6 +36,7 @@ module Text =
         | EitherRepositoryIdOrRepositoryNameIsRequired
         | EitherToBranchIdOrToBranchNameIsRequired
         | ExceptionCaught
+        | ExternalIsDisabled
         | FailedCommunicatingWithObjectStorage
         | FailedCreatingEmptyDirectoryVersion
         | FailedCreatingInitialBranch
