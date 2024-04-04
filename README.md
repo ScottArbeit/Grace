@@ -31,9 +31,10 @@ to be clear:
 ![](https://gracevcsdevelopment.blob.core.windows.net/static/Green.svg)
 ### Grace at NDC Oslo 2023
 
-I gave my first conference talk about Grace at NDC Oslo 2023. You can watch it here:
+I gave my first conference talk about Grace at NDC Oslo 2023. You can watch it [here](https://youtu.be/lW0gxMbyLEM):
 
-https://youtu.be/lW0gxMbyLEM
+![[image](https://youtu.be/lW0gxMbyLEM)](https://github.com/ScottArbeit/Grace/assets/2406993/2f20bf3a-9907-42d3-8596-84a7e1334f55)
+
 
 ![](https://gracevcsdevelopment.blob.core.windows.net/static/Green.svg)
 ![](https://gracevcsdevelopment.blob.core.windows.net/static/Orange3.svg)
