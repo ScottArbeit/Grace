@@ -35,7 +35,7 @@ module ContainerName =
         member val private correlationId: CorrelationId = String.Empty with get, set
 
         override this.OnActivateAsync() =
-            log.LogInformation("{CurrentInstant} Activated {ActorType} {ActorId}.", getCurrentInstantExtended (), this.GetType().Name, host.Id)
+            log.LogInformation("{CurrentInstant}: Activated {ActorType} {ActorId}.", getCurrentInstantExtended (), this.GetType().Name, host.Id)
 
             Task.CompletedTask
 

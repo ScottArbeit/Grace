@@ -124,21 +124,21 @@ module Branch =
                 match retrievedDto with
                 | Some retrievedDto ->
                     branchDto <- retrievedDto
-                    message <- "Retrieved from database."
+                    message <- "Retrieved from database"
                 | None ->
                     branchDto <- BranchDto.Default
-                    message <- "Not found in database."
+                    message <- "Not found in database"
 
-                let duration_ms = getCurrentInstant().Minus(activateStartTime).TotalMilliseconds.ToString("F3")
+                let duration_ms = getPaddedDuration_ms activateStartTime
 
                 log.LogInformation(
-                    "{CurrentInstant}: Activated {ActorType} {ActorId}. BranchName: {BranchName}; {message} Duration: {duration_ms}ms.",
+                    "{CurrentInstant}: Duration: {duration_ms}ms; Activated {ActorType} {ActorId}. BranchName: {BranchName}; {message}.",
                     getCurrentInstantExtended (),
+                    duration_ms,
                     actorName,
                     host.Id,
                     branchDto.BranchName,
-                    message,
-                    duration_ms
+                    message
                 )
             }
             :> Task
@@ -161,7 +161,13 @@ module Branch =
             logScope <- log.BeginScope("Actor {actorName}", actorName)
             currentCommand <- String.Empty
 
-            log.LogTrace("{CurrentInstant}: Started {ActorName}.{MethodName} Id: {Id}.", getCurrentInstantExtended (), actorName, context.MethodName, this.Id)
+            log.LogTrace(
+                "{CurrentInstant}: Started {ActorName}.{MethodName} BranchId: {Id}.",
+                getCurrentInstantExtended (),
+                actorName,
+                context.MethodName,
+                this.Id
+            )
 
             // This checks if the actor is still active, but in an undefined state, which will _almost_ never happen.
             // isDisposed is set when the actor is deleted, or if an error occurs where we're not sure of the state and want to reload from the database.
@@ -172,30 +178,30 @@ module Branch =
             Task.CompletedTask
 
         override this.OnPostActorMethodAsync(context) =
-            let duration_ms = (getCurrentInstant().Minus(actorStartTime).TotalMilliseconds).ToString("F3")
+            let duration_ms = getPaddedDuration_ms actorStartTime
 
             if String.IsNullOrEmpty(currentCommand) then
                 log.LogInformation(
-                    "{CurrentInstant}: CorrelationId: {correlationId}; Finished {ActorName}.{MethodName}; Id: {Id}; BranchName: {BranchName}; Duration: {duration_ms}ms.",
+                    "{CurrentInstant}: CorrelationId: {correlationId}; Duration: {duration_ms}ms; Finished {ActorName}.{MethodName}; BranchId: {Id}; BranchName: {BranchName}.",
                     getCurrentInstantExtended (),
                     this.correlationId,
+                    duration_ms,
                     actorName,
                     context.MethodName,
                     this.Id,
-                    branchDto.BranchName,
-                    duration_ms
+                    branchDto.BranchName
                 )
             else
                 log.LogInformation(
-                    "{CurrentInstant}: CorrelationId: {correlationId}; Finished {ActorName}.{MethodName}; Command: {Command}; Id: {Id}; BranchName: {BranchName}; Duration: {duration_ms}ms.",
+                    "{CurrentInstant}: CorrelationId: {correlationId}; Duration: {duration_ms}ms; Finished {ActorName}.{MethodName}; Command: {Command}; BranchId: {Id}; BranchName: {BranchName}.",
                     getCurrentInstantExtended (),
                     this.correlationId,
+                    duration_ms,
                     actorName,
                     context.MethodName,
                     currentCommand,
                     this.Id,
-                    branchDto.BranchName,
-                    duration_ms
+                    branchDto.BranchName
                 )
 
             logScope.Dispose()

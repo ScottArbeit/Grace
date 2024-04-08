@@ -1217,29 +1217,29 @@ module Branch =
                     let! parameters = context |> parse<GetBranchParameters>
                     let! result = processQuery context parameters validations 1 query
 
-                    let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
+                    let duration_ms = getPaddedDuration_ms startTime
 
                     log.LogInformation(
-                        "{CurrentInstant}: CorrelationId: {correlationId}; Finished {path}; BranchId: {branchId}; Duration: {duration_ms}ms.",
+                        "{CurrentInstant}: CorrelationId: {correlationId}; Duration: {duration_ms}ms; Finished {path}; BranchId: {branchId}.",
                         getCurrentInstantExtended (),
                         (getCorrelationId context),
+                        duration_ms,
                         context.Request.Path,
-                        graceIds.BranchId,
-                        duration_ms
+                        graceIds.BranchId
                     )
 
                     return result
                 with ex ->
-                    let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
+                    let duration_ms = getPaddedDuration_ms startTime
 
                     log.LogError(
                         ex,
-                        "{CurrentInstant}: CorrelationId: {correlationId}; Error in {path}; BranchId: {branchId}; Duration: {duration_ms}ms.",
+                        "{CurrentInstant}: CorrelationId: {correlationId}; Duration: {duration_ms}ms; Error in {path}; BranchId: {branchId}.",
                         getCurrentInstantExtended (),
                         (getCorrelationId context),
+                        duration_ms,
                         context.Request.Path,
-                        graceIds.BranchId,
-                        duration_ms
+                        graceIds.BranchId
                     )
 
                     return!
@@ -1298,29 +1298,29 @@ module Branch =
                     let! parameters = context |> parse<GetBranchParameters>
                     let! result = processQuery context parameters validations 1 query
 
-                    let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
+                    let duration_ms = getPaddedDuration_ms startTime
 
                     log.LogInformation(
-                        "{CurrentInstant}: CorrelationId: {correlationId}; Finished {path}; BranchId: {branchId}; Duration: {duration_ms}ms.",
+                        "{CurrentInstant}: CorrelationId: {correlationId}; Duration: {duration_ms}ms; Finished {path}; BranchId: {branchId}.",
                         getCurrentInstantExtended (),
                         (getCorrelationId context),
+                        duration_ms,
                         context.Request.Path,
-                        graceIds.BranchId,
-                        duration_ms
+                        graceIds.BranchId
                     )
 
                     return result
                 with ex ->
-                    let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
+                    let duration_ms = getPaddedDuration_ms startTime
 
                     log.LogError(
                         ex,
-                        "{CurrentInstant}: CorrelationId: {correlationId}; Error in {path}; BranchId: {branchId}; Duration: {duration_ms}ms.",
+                        "{CurrentInstant}: CorrelationId: {correlationId}; Duration: {duration_ms}ms; Error in {path}; BranchId: {branchId}.",
                         getCurrentInstantExtended (),
                         (getCorrelationId context),
+                        duration_ms,
                         context.Request.Path,
-                        graceIds.BranchId,
-                        duration_ms
+                        graceIds.BranchId
                     )
 
                     return!
@@ -1378,29 +1378,29 @@ module Branch =
                     let! parameters = context |> parse<BranchParameters>
                     let! result = processQuery context parameters validations 1 query
 
-                    let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
+                    let duration_ms = getPaddedDuration_ms startTime
 
                     log.LogInformation(
-                        "{CurrentInstant}: CorrelationId: {correlationId}; Finished {path}; BranchId: {branchId}; Duration: {duration_ms}ms.",
+                        "{CurrentInstant}: CorrelationId: {correlationId}; Duration: {duration_ms}ms; Finished {path}; BranchId: {branchId}.",
                         getCurrentInstantExtended (),
                         (getCorrelationId context),
+                        duration_ms,
                         context.Request.Path,
-                        graceIds.BranchId,
-                        duration_ms
+                        graceIds.BranchId
                     )
 
                     return result
                 with ex ->
-                    let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
+                    let duration_ms = getPaddedDuration_ms startTime
 
                     log.LogError(
                         ex,
-                        "{CurrentInstant}: CorrelationId: {correlationId}; Error in {path}; BranchId: {branchId}; Duration: {duration_ms}ms.",
+                        "{CurrentInstant}: CorrelationId: {correlationId}; Duration: {duration_ms}ms; Error in {path}; BranchId: {branchId}.",
                         getCurrentInstantExtended (),
                         (getCorrelationId context),
+                        duration_ms,
                         context.Request.Path,
-                        graceIds.BranchId,
-                        duration_ms
+                        graceIds.BranchId
                     )
 
                     return!
@@ -1464,29 +1464,29 @@ module Branch =
                     context.Items.Add("ReferenceId", parameters.ReferenceId)
                     let! result = processQuery context parameters validations 1 query
 
-                    let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
+                    let duration_ms = getPaddedDuration_ms startTime
 
                     log.LogInformation(
-                        "{CurrentInstant}: CorrelationId: {correlationId}; Finished {path}; BranchId: {branchId}; Duration: {duration_ms}ms.",
+                        "{CurrentInstant}: CorrelationId: {correlationId}; Duration: {duration_ms}ms; Finished {path}; BranchId: {branchId}.",
                         getCurrentInstantExtended (),
                         (getCorrelationId context),
+                        duration_ms,
                         context.Request.Path,
-                        graceIds.BranchId,
-                        duration_ms
+                        graceIds.BranchId
                     )
 
                     return result
                 with ex ->
-                    let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
+                    let duration_ms = getPaddedDuration_ms startTime
 
                     log.LogError(
                         ex,
-                        "{CurrentInstant}: CorrelationId: {correlationId}; Error in {path}; BranchId: {branchId}; Duration: {duration_ms}ms.",
+                        "{CurrentInstant}: CorrelationId: {correlationId}; Duration: {duration_ms}ms; Error in {path}; BranchId: {branchId}.",
                         getCurrentInstantExtended (),
                         (getCorrelationId context),
+                        duration_ms,
                         context.Request.Path,
-                        graceIds.BranchId,
-                        duration_ms
+                        graceIds.BranchId
                     )
 
                     return!
@@ -1546,29 +1546,29 @@ module Branch =
                     let! parameters = context |> parse<GetReferencesParameters>
                     let! result = processQuery context parameters validations (parameters.MaxCount) query
 
-                    let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
+                    let duration_ms = getPaddedDuration_ms startTime
 
                     log.LogInformation(
-                        "{CurrentInstant}: CorrelationId: {correlationId}; Finished {path}; BranchId: {branchId}; Duration: {duration_ms}ms.",
+                        "{CurrentInstant}: CorrelationId: {correlationId}; Duration: {duration_ms}ms; Finished {path}; BranchId: {branchId}.",
                         getCurrentInstantExtended (),
                         (getCorrelationId context),
+                        duration_ms,
                         context.Request.Path,
-                        graceIds.BranchId,
-                        duration_ms
+                        graceIds.BranchId
                     )
 
                     return result
                 with ex ->
-                    let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
+                    let duration_ms = getPaddedDuration_ms startTime
 
                     log.LogError(
                         ex,
-                        "{CurrentInstant}: CorrelationId: {correlationId}; Error in {path}; BranchId: {branchId}; Duration: {duration_ms}ms.",
+                        "{CurrentInstant}: CorrelationId: {correlationId}; Duration: {duration_ms}ms; Error in {path}; BranchId: {branchId}.",
                         getCurrentInstantExtended (),
                         (getCorrelationId context),
+                        duration_ms,
                         context.Request.Path,
-                        graceIds.BranchId,
-                        duration_ms
+                        graceIds.BranchId
                     )
 
                     return!
@@ -1667,29 +1667,29 @@ module Branch =
                     context.Items.Add(nameof (ReferenceType), parameters.ReferenceType)
                     let! result = processQuery context parameters validations (parameters.MaxCount) query
 
-                    let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
+                    let duration_ms = getPaddedDuration_ms startTime
 
                     log.LogInformation(
-                        "{CurrentInstant}: CorrelationId: {correlationId}; Finished {path}; BranchId: {branchId}; Duration: {duration_ms}ms.",
+                        "{CurrentInstant}: CorrelationId: {correlationId}; Duration: {duration_ms}ms; Finished {path}; BranchId: {branchId}.",
                         getCurrentInstantExtended (),
                         (getCorrelationId context),
+                        duration_ms,
                         context.Request.Path,
-                        graceIds.BranchId,
-                        duration_ms
+                        graceIds.BranchId
                     )
 
                     return result
                 with ex ->
-                    let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
+                    let duration_ms = getPaddedDuration_ms startTime
 
                     log.LogError(
                         ex,
-                        "{CurrentInstant}: CorrelationId: {correlationId}; Error in {path}; BranchId: {branchId}; Duration: {duration_ms}ms.",
+                        "{CurrentInstant}: CorrelationId: {correlationId}; Duration: {duration_ms}ms; Error in {path}; BranchId: {branchId}.",
                         getCurrentInstantExtended (),
                         (getCorrelationId context),
+                        duration_ms,
                         context.Request.Path,
-                        graceIds.BranchId,
-                        duration_ms
+                        graceIds.BranchId
                     )
 
                     return!
@@ -1749,29 +1749,29 @@ module Branch =
                     let! parameters = context |> parse<GetReferencesParameters>
                     let! result = processQuery context parameters validations (parameters.MaxCount) query
 
-                    let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
+                    let duration_ms = getPaddedDuration_ms startTime
 
                     log.LogInformation(
-                        "{CurrentInstant}: CorrelationId: {correlationId}; Finished {path}; BranchId: {branchId}; Duration: {duration_ms}ms.",
+                        "{CurrentInstant}: CorrelationId: {correlationId}; Duration: {duration_ms}ms; Finished {path}; BranchId: {branchId}.",
                         getCurrentInstantExtended (),
                         (getCorrelationId context),
+                        duration_ms,
                         context.Request.Path,
-                        graceIds.BranchId,
-                        duration_ms
+                        graceIds.BranchId
                     )
 
                     return result
                 with ex ->
-                    let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
+                    let duration_ms = getPaddedDuration_ms startTime
 
                     log.LogError(
                         ex,
-                        "{CurrentInstant}: CorrelationId: {correlationId}; Error in {path}; BranchId: {branchId}; Duration: {duration_ms}ms.",
+                        "{CurrentInstant}: CorrelationId: {correlationId}; Duration: {duration_ms}ms; Error in {path}; BranchId: {branchId}.",
                         getCurrentInstantExtended (),
                         (getCorrelationId context),
+                        duration_ms,
                         context.Request.Path,
-                        graceIds.BranchId,
-                        duration_ms
+                        graceIds.BranchId
                     )
 
                     return!
@@ -1831,29 +1831,29 @@ module Branch =
                     let! parameters = context |> parse<GetReferencesParameters>
                     let! result = processQuery context parameters validations (parameters.MaxCount) query
 
-                    let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
+                    let duration_ms = getPaddedDuration_ms startTime
 
                     log.LogInformation(
-                        "{CurrentInstant}: CorrelationId: {correlationId}; Finished {path}; BranchId: {branchId}; Duration: {duration_ms}ms.",
+                        "{CurrentInstant}: CorrelationId: {correlationId}; Duration: {duration_ms}ms; Finished {path}; BranchId: {branchId}.",
                         getCurrentInstantExtended (),
                         (getCorrelationId context),
+                        duration_ms,
                         context.Request.Path,
-                        graceIds.BranchId,
-                        duration_ms
+                        graceIds.BranchId
                     )
 
                     return result
                 with ex ->
-                    let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
+                    let duration_ms = getPaddedDuration_ms startTime
 
                     log.LogError(
                         ex,
-                        "{CurrentInstant}: CorrelationId: {correlationId}; Error in {path}; BranchId: {branchId}; Duration: {duration_ms}ms.",
+                        "{CurrentInstant}: CorrelationId: {correlationId}; Duration: {duration_ms}ms; Error in {path}; BranchId: {branchId}.",
                         getCurrentInstantExtended (),
                         (getCorrelationId context),
+                        duration_ms,
                         context.Request.Path,
-                        graceIds.BranchId,
-                        duration_ms
+                        graceIds.BranchId
                     )
 
                     return!
@@ -1913,29 +1913,29 @@ module Branch =
                     let! parameters = context |> parse<GetReferencesParameters>
                     let! result = processQuery context parameters validations (parameters.MaxCount) query
 
-                    let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
+                    let duration_ms = getPaddedDuration_ms startTime
 
                     log.LogInformation(
-                        "{CurrentInstant}: CorrelationId: {correlationId}; Finished {path}; BranchId: {branchId}; Duration: {duration_ms}ms.",
+                        "{CurrentInstant}: CorrelationId: {correlationId}; Duration: {duration_ms}ms; Finished {path}; BranchId: {branchId}.",
                         getCurrentInstantExtended (),
                         (getCorrelationId context),
+                        duration_ms,
                         context.Request.Path,
-                        graceIds.BranchId,
-                        duration_ms
+                        graceIds.BranchId
                     )
 
                     return result
                 with ex ->
-                    let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
+                    let duration_ms = getPaddedDuration_ms startTime
 
                     log.LogError(
                         ex,
-                        "{CurrentInstant}: CorrelationId: {correlationId}; Error in {path}; BranchId: {branchId}; Duration: {duration_ms}ms.",
+                        "{CurrentInstant}: CorrelationId: {correlationId}; Duration: {duration_ms}ms; Error in {path}; BranchId: {branchId}.",
                         getCurrentInstantExtended (),
                         (getCorrelationId context),
+                        duration_ms,
                         context.Request.Path,
-                        graceIds.BranchId,
-                        duration_ms
+                        graceIds.BranchId
                     )
 
                     return!
@@ -1996,29 +1996,29 @@ module Branch =
                     let! parameters = context |> parse<GetReferencesParameters>
                     let! result = processQuery context parameters validations (parameters.MaxCount) query
 
-                    let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
+                    let duration_ms = getPaddedDuration_ms startTime
 
                     log.LogInformation(
-                        "{CurrentInstant}: CorrelationId: {correlationId}; Finished {path}; BranchId: {branchId}; Duration: {duration_ms}ms.",
+                        "{CurrentInstant}: CorrelationId: {correlationId}; Duration: {duration_ms}ms; Finished {path}; BranchId: {branchId}.",
                         getCurrentInstantExtended (),
                         (getCorrelationId context),
+                        duration_ms,
                         context.Request.Path,
-                        graceIds.BranchId,
-                        duration_ms
+                        graceIds.BranchId
                     )
 
                     return result
                 with ex ->
-                    let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
+                    let duration_ms = getPaddedDuration_ms startTime
 
                     log.LogError(
                         ex,
-                        "{CurrentInstant}: CorrelationId: {correlationId}; Error in {path}; BranchId: {branchId}; Duration: {duration_ms}ms.",
+                        "{CurrentInstant}: CorrelationId: {correlationId}; Duration: {duration_ms}ms; Error in {path}; BranchId: {branchId}.",
                         getCurrentInstantExtended (),
                         (getCorrelationId context),
+                        duration_ms,
                         context.Request.Path,
-                        graceIds.BranchId,
-                        duration_ms
+                        graceIds.BranchId
                     )
 
                     return!
@@ -2078,29 +2078,29 @@ module Branch =
                     let! parameters = context |> parse<GetReferencesParameters>
                     let! result = processQuery context parameters validations (parameters.MaxCount) query
 
-                    let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
+                    let duration_ms = getPaddedDuration_ms startTime
 
                     log.LogInformation(
-                        "{CurrentInstant}: CorrelationId: {correlationId}; Finished {path}; BranchId: {branchId}; Duration: {duration_ms}ms.",
+                        "{CurrentInstant}: CorrelationId: {correlationId}; Duration: {duration_ms}ms; Finished {path}; BranchId: {branchId}.",
                         getCurrentInstantExtended (),
                         (getCorrelationId context),
+                        duration_ms,
                         context.Request.Path,
-                        graceIds.BranchId,
-                        duration_ms
+                        graceIds.BranchId
                     )
 
                     return result
                 with ex ->
-                    let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
+                    let duration_ms = getPaddedDuration_ms startTime
 
                     log.LogError(
                         ex,
-                        "{CurrentInstant}: CorrelationId: {correlationId}; Error in {path}; BranchId: {branchId}; Duration: {duration_ms}ms.",
+                        "{CurrentInstant}: CorrelationId: {correlationId}; Duration: {duration_ms}ms; Error in {path}; BranchId: {branchId}.",
                         getCurrentInstantExtended (),
                         (getCorrelationId context),
+                        duration_ms,
                         context.Request.Path,
-                        graceIds.BranchId,
-                        duration_ms
+                        graceIds.BranchId
                     )
 
                     return!
@@ -2160,29 +2160,29 @@ module Branch =
                     let! parameters = context |> parse<GetReferencesParameters>
                     let! result = processQuery context parameters validations (parameters.MaxCount) query
 
-                    let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
+                    let duration_ms = getPaddedDuration_ms startTime
 
                     log.LogInformation(
-                        "{CurrentInstant}: CorrelationId: {correlationId}; Finished {path}; BranchId: {branchId}; Duration: {duration_ms}ms.",
+                        "{CurrentInstant}: CorrelationId: {correlationId}; Duration: {duration_ms}ms; Finished {path}; BranchId: {branchId}.",
                         getCurrentInstantExtended (),
                         (getCorrelationId context),
+                        duration_ms,
                         context.Request.Path,
-                        graceIds.BranchId,
-                        duration_ms
+                        graceIds.BranchId
                     )
 
                     return result
                 with ex ->
-                    let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
+                    let duration_ms = getPaddedDuration_ms startTime
 
                     log.LogError(
                         ex,
-                        "{CurrentInstant}: CorrelationId: {correlationId}; Error in {path}; BranchId: {branchId}; Duration: {duration_ms}ms.",
+                        "{CurrentInstant}: CorrelationId: {correlationId}; Duration: {duration_ms}ms; Error in {path}; BranchId: {branchId}.",
                         getCurrentInstantExtended (),
                         (getCorrelationId context),
+                        duration_ms,
                         context.Request.Path,
-                        graceIds.BranchId,
-                        duration_ms
+                        graceIds.BranchId
                     )
 
                     return!
@@ -2292,29 +2292,29 @@ module Branch =
                     context.Items["ListContentsParameters"] <- parameters
                     let! result = processQuery context parameters validations 1 query
 
-                    let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
+                    let duration_ms = getPaddedDuration_ms startTime
 
                     log.LogInformation(
-                        "{CurrentInstant}: CorrelationId: {correlationId}; Finished {path}; BranchId: {branchId}; Duration: {duration_ms}ms.",
+                        "{CurrentInstant}: CorrelationId: {correlationId}; Duration: {duration_ms}ms; Finished {path}; BranchId: {branchId}.",
                         getCurrentInstantExtended (),
                         (getCorrelationId context),
+                        duration_ms,
                         context.Request.Path,
-                        graceIds.BranchId,
-                        duration_ms
+                        graceIds.BranchId
                     )
 
                     return result
                 with ex ->
-                    let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
+                    let duration_ms = getPaddedDuration_ms startTime
 
                     log.LogError(
                         ex,
-                        "{CurrentInstant}: CorrelationId: {correlationId}; Error in {path}; BranchId: {branchId}; Duration: {duration_ms}ms.",
+                        "{CurrentInstant}: CorrelationId: {correlationId}; Duration: {duration_ms}ms; Error in {path}; BranchId: {branchId}.",
                         getCurrentInstantExtended (),
                         (getCorrelationId context),
+                        duration_ms,
                         context.Request.Path,
-                        graceIds.BranchId,
-                        duration_ms
+                        graceIds.BranchId
                     )
 
                     return!
@@ -2431,29 +2431,29 @@ module Branch =
                     context.Items["ListContentsParameters"] <- parameters
                     let! result = processQuery context parameters validations 1 query
 
-                    let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
+                    let duration_ms = getPaddedDuration_ms startTime
 
                     log.LogInformation(
-                        "{CurrentInstant}: CorrelationId: {correlationId}; Finished {path}; BranchId: {branchId}; Duration: {duration_ms}ms.",
+                        "{CurrentInstant}: CorrelationId: {correlationId}; Duration: {duration_ms}ms; Finished {path}; BranchId: {branchId}.",
                         getCurrentInstantExtended (),
                         (getCorrelationId context),
+                        duration_ms,
                         context.Request.Path,
-                        graceIds.BranchId,
-                        duration_ms
+                        graceIds.BranchId
                     )
 
                     return result
                 with ex ->
-                    let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
+                    let duration_ms = getPaddedDuration_ms startTime
 
                     log.LogError(
                         ex,
-                        "{CurrentInstant}: CorrelationId: {correlationId}; Error in {path}; BranchId: {branchId}; Duration: {duration_ms}ms.",
+                        "{CurrentInstant}: CorrelationId: {correlationId}; Duration: {duration_ms}ms; Error in {path}; BranchId: {branchId}.",
                         getCurrentInstantExtended (),
                         (getCorrelationId context),
+                        duration_ms,
                         context.Request.Path,
-                        graceIds.BranchId,
-                        duration_ms
+                        graceIds.BranchId
                     )
 
                     return!
@@ -2590,16 +2590,16 @@ module Branch =
                     context.Items.Add("GetVersionParameters", parameters)
                     return! processQuery context parameters validations 1 query
                 with ex ->
-                    let duration_ms = (getCurrentInstant().Minus(startTime).TotalMilliseconds).ToString("F3")
+                    let duration_ms = getPaddedDuration_ms startTime
 
                     log.LogError(
                         ex,
-                        "{CurrentInstant}: CorrelationId: {correlationId}; Error in {path}; BranchId: {branchId}; Duration: {duration_ms}ms.",
+                        "{CurrentInstant}: CorrelationId: {correlationId}; Duration: {duration_ms}ms; Error in {path}; BranchId: {branchId}.",
                         getCurrentInstantExtended (),
                         (getCorrelationId context),
+                        duration_ms,
                         context.Request.Path,
-                        graceIds.BranchId,
-                        duration_ms
+                        graceIds.BranchId
                     )
 
                     return!

@@ -1,4 +1,4 @@
-﻿namespace Grace.Actors
+namespace Grace.Actors
 
 open Dapr.Actors
 open Dapr.Actors.Runtime
@@ -65,31 +65,37 @@ module Repository =
                 match retrievedDto with
                 | Some retrievedDto ->
                     repositoryDto <- retrievedDto
-                    message <- "Retrieved from database."
+                    message <- "Retrieved from database"
                 | None ->
                     repositoryDto <- RepositoryDto.Default
-                    message <- "Not found in database."
+                    message <- "Not found in database"
 
-                let duration_ms = getCurrentInstant().Minus(activateStartTime).TotalMilliseconds.ToString("F3")
+                let duration_ms = getPaddedDuration_ms activateStartTime
 
                 log.LogInformation(
-                    "{CurrentInstant}: Activated {ActorType} {ActorId}. {message} Duration: {duration_ms}ms.",
+                    "{CurrentInstant}: Duration: {duration_ms}ms; Activated {ActorType} {ActorId}. {message}.",
                     getCurrentInstantExtended (),
+                    duration_ms,
                     actorName,
                     host.Id,
-                    message,
-                    duration_ms
+                    message
                 )
             }
             :> Task
 
         override this.OnPreActorMethodAsync(context) =
-            this.correlationId <- String.Empty
             actorStartTime <- getCurrentInstant ()
+            this.correlationId <- String.Empty
             logScope <- log.BeginScope("Actor {actorName}", actorName)
             currentCommand <- String.Empty
 
-            log.LogTrace("{CurrentInstant}: Started {ActorName}.{MethodName}, Id: {Id}.", getCurrentInstantExtended (), actorName, context.MethodName, this.Id)
+            log.LogTrace(
+                "{CurrentInstant}: Started {ActorName}.{MethodName}, RepositoryId: {Id}.",
+                getCurrentInstantExtended (),
+                actorName,
+                context.MethodName,
+                this.Id
+            )
 
             // This checks if the actor is still active, but in an undefined state, which will _almost_ never happen.
             // isDisposed is set when the actor is deleted, or if an error occurs where we're not sure of the state and want to reload from the database.
@@ -100,28 +106,28 @@ module Repository =
             Task.CompletedTask
 
         override this.OnPostActorMethodAsync(context) =
-            let duration_ms = (getCurrentInstant().Minus(actorStartTime).TotalMilliseconds).ToString("F3")
+            let duration_ms = getPaddedDuration_ms actorStartTime
 
             if String.IsNullOrEmpty(currentCommand) then
                 log.LogInformation(
-                    "{CurrentInstant}: CorrelationId: {correlationId}; Finished {ActorName}.{MethodName}; Id: {Id}; Duration: {duration_ms}ms.",
+                    "{CurrentInstant}: CorrelationId: {correlationId}; Duration: {duration_ms}ms; Finished {ActorName}.{MethodName}; RepositoryId: {Id}.",
                     getCurrentInstantExtended (),
                     this.correlationId,
+                    duration_ms,
                     actorName,
                     context.MethodName,
-                    this.Id,
-                    duration_ms
+                    this.Id
                 )
             else
                 log.LogInformation(
-                    "{CurrentInstant}: CorrelationId: {correlationId}; Finished {ActorName}.{MethodName}; Command: {Command}; Id: {Id}; Duration: {duration_ms}ms.",
+                    "{CurrentInstant}: CorrelationId: {correlationId}; Duration: {duration_ms}ms; Finished {ActorName}.{MethodName}; Command: {Command}; RepositoryId: {Id}.",
                     getCurrentInstantExtended (),
                     this.correlationId,
+                    duration_ms,
                     actorName,
                     context.MethodName,
                     currentCommand,
-                    this.Id,
-                    duration_ms
+                    this.Id
                 )
 
             logScope.Dispose()

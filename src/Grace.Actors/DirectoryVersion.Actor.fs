@@ -1,4 +1,4 @@
-﻿namespace Grace.Actors
+namespace Grace.Actors
 
 open Dapr.Actors
 open Dapr.Actors.Client
@@ -22,6 +22,7 @@ open System.Collections.Generic
 open System.Diagnostics
 open System.Linq
 open System.Threading.Tasks
+open OrganizationName
 
 module DirectoryVersion =
 
@@ -95,15 +96,15 @@ module DirectoryVersion =
 
                     log.LogError("{CurrentInstant} {ExceptionDetails}", getCurrentInstantExtended (), exc.ToString())
 
-                let duration_ms = getCurrentInstant().Minus(activateStartTime).TotalMilliseconds.ToString("F3")
+                let duration_ms = getPaddedDuration_ms activateStartTime
 
                 log.LogInformation(
-                    "{CurrentInstant}: Activated {ActorType} {ActorId}. {message} Duration: {duration_ms}ms.",
+                    "{CurrentInstant}: Duration: {duration_ms}ms; Activated {ActorType} {ActorId}. {message}.",
                     getCurrentInstantExtended (),
+                    duration_ms,
                     actorName,
                     host.Id,
-                    message,
-                    duration_ms
+                    message
                 )
             }
             :> Task
@@ -135,28 +136,28 @@ module DirectoryVersion =
             Task.CompletedTask
 
         override this.OnPostActorMethodAsync(context) =
-            let duration_ms = (getCurrentInstant().Minus(actorStartTime).TotalMilliseconds).ToString("F3")
+            let duration_ms = getPaddedDuration_ms actorStartTime
 
             if String.IsNullOrEmpty(currentCommand) then
                 log.LogInformation(
-                    "{CurrentInstant}: CorrelationId: {correlationId}; Finished {ActorName}.{MethodName}; Id: {Id}; Duration: {duration_ms}ms.",
+                    "{CurrentInstant}: CorrelationId: {correlationId}; Duration: {duration_ms}ms; Finished {ActorName}.{MethodName}; Id: {Id}.",
                     getCurrentInstantExtended (),
                     this.correlationId,
+                    duration_ms,
                     actorName,
                     context.MethodName,
-                    this.Id,
-                    duration_ms
+                    this.Id
                 )
             else
                 log.LogInformation(
-                    "{CurrentInstant}: CorrelationId: {correlationId}; Finished {ActorName}.{MethodName}; Command: {Command}; Id: {Id}; Duration: {duration_ms}ms.",
+                    "{CurrentInstant}: CorrelationId: {correlationId}; Duration: {duration_ms}ms; Finished {ActorName}.{MethodName}; Command: {Command}; Id: {Id}.",
                     getCurrentInstantExtended (),
                     this.correlationId,
+                    duration_ms,
                     actorName,
                     context.MethodName,
                     currentCommand,
-                    this.Id,
-                    duration_ms
+                    this.Id
                 )
 
             logScope.Dispose()

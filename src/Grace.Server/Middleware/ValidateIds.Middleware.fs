@@ -278,19 +278,60 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
                     // Reset the Body to the beginning so that it can be read again later in the pipeline.
                     context.Request.Body.Seek(0L, IO.SeekOrigin.Begin) |> ignore
 
+                let duration_ms = getPaddedDuration_ms startTime
+
                 if not <| String.IsNullOrEmpty(badRequest) then
                     context.Items.Add("BadRequest", badRequest)
 
-                    log.LogInformation(
-                        "{currentInstant}: CorrelationId: {correlationId}; The provided entity Id's and/or Names were not found in the database. {message}.",
+                    log.LogWarning(
+                        "{currentInstant}: CorrelationId: {correlationId}; The provided entity Id's and/or Names were not found in the database. {message}; Duration: {duration_ms}ms.",
                         getCurrentInstantExtended (),
+                        correlationId,
                         badRequest,
-                        correlationId
+                        duration_ms
                     )
 
                     context.Response.StatusCode <- 400
                     do! context.Response.WriteAsync($"{badRequest}")
                 else
+                    if graceIds.HasBranch then
+                        log.LogInformation(
+                            "{currentInstant}: CorrelationId: {correlationId}; Duration: {duration_ms}ms; ValidateIds.Middleware: OwnerId: {OwnerId}; OrganizationId: {OrganizationId}; RepositoryId: {RepositoryId}; BranchId: {BranchId}.",
+                            getCurrentInstantExtended (),
+                            correlationId,
+                            duration_ms,
+                            graceIds.OwnerId,
+                            graceIds.OrganizationId,
+                            graceIds.RepositoryId,
+                            graceIds.BranchId
+                        )
+                    elif graceIds.HasRepository then
+                        log.LogInformation(
+                            "{currentInstant}: CorrelationId: {correlationId}; Duration: {duration_ms}ms; ValidateIds.Middleware: OwnerId: {OwnerId}; OrganizationId: {OrganizationId}; RepositoryId: {RepositoryId}.",
+                            getCurrentInstantExtended (),
+                            correlationId,
+                            duration_ms,
+                            graceIds.OwnerId,
+                            graceIds.OrganizationId,
+                            graceIds.RepositoryId
+                        )
+                    elif graceIds.HasOrganization then
+                        log.LogInformation(
+                            "{currentInstant}: CorrelationId: {correlationId}; Duration: {duration_ms}ms; ValidateIds.Middleware: OwnerId: {OwnerId}; OrganizationId: {OrganizationId}.",
+                            getCurrentInstantExtended (),
+                            correlationId,
+                            duration_ms,
+                            graceIds.OwnerId,
+                            graceIds.OrganizationId
+                        )
+                    elif graceIds.HasOwner then
+                        log.LogInformation(
+                            "{currentInstant}: CorrelationId: {correlationId}; Duration: {duration_ms}ms; ValidateIds.Middleware: OwnerId: {OwnerId}.",
+                            getCurrentInstantExtended (),
+                            correlationId,
+                            duration_ms,
+                            graceIds.OwnerId
+                        )
                     // -----------------------------------------------------------------------------------------------------
 
                     // Pass control to next middleware instance...
@@ -304,8 +345,6 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
 
                     context.Request.Headers["X-MiddlewareTraceOut"] <- $"{middlewareTraceOutHeader}{nameof (ValidateIdsMiddleware)} --> "
 
-                    let elapsed = getCurrentInstant().Minus(startTime).TotalMilliseconds
-
                     if
                         not
                         <| (ignorePaths
@@ -315,7 +354,7 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
                             "{currentInstant}: Path: {path}; Elapsed: {elapsed}ms; Status code: {statusCode}; graceIds: {graceIds}",
                             getCurrentInstantExtended (),
                             context.Request.Path,
-                            elapsed,
+                            duration_ms,
                             context.Response.StatusCode,
                             serialize graceIds
                         )

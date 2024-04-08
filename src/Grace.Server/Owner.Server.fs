@@ -1,4 +1,4 @@
-﻿namespace Grace.Server
+namespace Grace.Server
 
 open Dapr.Actors
 open Dapr.Actors.Client
@@ -97,8 +97,7 @@ module Owner =
                         return! handleCommand parameters.OwnerId cmd
                     | None, false ->
                         // If it's None, and this is not a Create command, then we have a bad request.
-                        log.Log(
-                            LogLevel.Information,
+                        log.LogInformation(
                             "{currentInstant}: Error: OwnerNotFound; OwnerId: {ownerId}; OwnerName: {ownerName}; command {commandName}.",
                             getCurrentInstantExtended (),
                             parameters.OwnerId,

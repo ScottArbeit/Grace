@@ -1,5 +1,6 @@
-﻿namespace Grace.Shared
+namespace Grace.Shared
 
+open Grace.Shared.Constants
 open Grace.Shared.Resources
 open Microsoft.FSharp.NativeInterop
 open Microsoft.FSharp.Reflection
@@ -19,7 +20,6 @@ open System.Net.Security
 open System.Net
 open System
 open System.Reflection
-open Constants
 
 #nowarn "9"
 
@@ -95,6 +95,16 @@ module Utilities =
 
     /// Logs the message to the console, with the current instant and thread ID.
     let logToConsole message = printfn $"{getCurrentInstantExtended ()} {Environment.CurrentManagedThreadId:X2} {message}"
+
+    /// Gets the elapsed time since the start time, in milliseconds, right-aligned in a string of not less than 7 characters.
+    ///
+    /// If the duration is less than 7 characters, it is padded with spaces.
+    /// If the duration is more than 7 characters, nothing is truncated.
+    let getPaddedDuration_ms (time: Instant) =
+        let milliseconds = $"{getCurrentInstant().Minus(time).TotalMilliseconds:F3}"
+        let result = (String.replicate (Math.Max(7 - milliseconds.Length, 0)) " ") + milliseconds // Right-align, 7 characters.
+        //logToConsole $"milliseconds: {milliseconds}; Math.Max(7 - milliseconds.Length, 0): {Math.Max(7 - milliseconds.Length, 0)}; result: |{result}|"
+        result
 
     /// Gets the first eight characters of a SHA256 hash.
     let getShortSha256Hash (sha256Hash: String) = if sha256Hash.Length >= 8 then sha256Hash.Substring(0, 8) else String.Empty

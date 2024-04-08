@@ -1,4 +1,4 @@
-﻿namespace Grace.Actors
+namespace Grace.Actors
 
 open Dapr.Actors
 open Dapr.Actors.Runtime
@@ -34,8 +34,7 @@ module OrganizationName =
         member val private correlationId: CorrelationId = String.Empty with get, set
 
         override this.OnActivateAsync() =
-            log.LogInformation("{CurrentInstant} Activated {ActorType} {ActorId}.", getCurrentInstantExtended (), this.GetType().Name, host.Id)
-
+            log.LogInformation("{CurrentInstant}: Activated {ActorType} {ActorId}.", getCurrentInstantExtended (), this.GetType().Name, host.Id)
             Task.CompletedTask
 
         override this.OnPreActorMethodAsync(context) =
@@ -48,12 +47,13 @@ module OrganizationName =
             Task.CompletedTask
 
         override this.OnPostActorMethodAsync(context) =
-            let duration_ms = (getCurrentInstant().Minus(actorStartTime).TotalMilliseconds).ToString("F3")
+            let duration_ms = getPaddedDuration_ms actorStartTime
 
             log.LogInformation(
-                "{CurrentInstant}: CorrelationId: {correlationId}; Finished {ActorName}.{MethodName}; OwnerId: {OwnerId}; OrganizationName: {OrganizationName}; OrganizationId: {OrganizationId}; Duration: {duration_ms}ms.",
+                "{CurrentInstant}: CorrelationId: {correlationId}; Duration: {duration_ms}ms; Finished {ActorName}.{MethodName}; OwnerId: {OwnerId}; OrganizationName: {OrganizationName}; OrganizationId: {OrganizationId}.",
                 getCurrentInstantExtended (),
                 this.correlationId,
+                duration_ms,
                 actorName,
                 context.MethodName,
                 ownerId,
@@ -61,8 +61,7 @@ module OrganizationName =
                 (if Option.isSome cachedOrganizationId then
                      $"{cachedOrganizationId.Value}"
                  else
-                     "None"),
-                duration_ms
+                     "None")
             )
 
             logScope.Dispose()

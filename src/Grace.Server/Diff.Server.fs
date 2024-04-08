@@ -1,4 +1,4 @@
-﻿namespace Grace.Server
+namespace Grace.Server
 
 open Dapr.Actors
 open Dapr.Actors.Client
@@ -26,6 +26,7 @@ open System.Globalization
 open System.Diagnostics
 open System.Threading.Tasks
 open System.Text.Json
+open Grace.Actors.Services
 
 module Diff =
     type Validations<'T when 'T :> DiffParameters> = 'T -> ValueTask<Result<unit, DiffError>> array
@@ -34,6 +35,7 @@ module Diff =
 
     let actorProxyFactory = ApplicationContext.actorProxyFactory
 
+    /// Gets the actor proxy for the diff between two DirectoryId's.
     let getActorProxy directoryId1 directoryId2 (context: HttpContext) =
         let actorId = Diff.GetActorId directoryId1 directoryId2
         actorProxyFactory.CreateActorProxy<IDiffActor>(actorId, ActorName.Diff)
@@ -193,6 +195,20 @@ module Diff =
                         }
 
                     let! parameters = context |> parse<GetDiffBySha256HashParameters>
+
+                    match getGraceIds context with
+                    | Some graceIds ->
+                        let repositoryId = Guid.Parse(graceIds.RepositoryId)
+                        let! directoryId1 = getDirectoryBySha256Hash repositoryId parameters.Sha256Hash1 (getCorrelationId context)
+                        let! directoryId2 = getDirectoryBySha256Hash repositoryId parameters.Sha256Hash2 (getCorrelationId context)
+
+                        match directoryId1, directoryId2 with
+                        | Some directoryId1, Some directoryId2 ->
+                            parameters.DirectoryId1 <- directoryId1.DirectoryId
+                            parameters.DirectoryId2 <- directoryId2.DirectoryId
+                        | _ -> ()
+                    | None -> ()
+
                     return! processQuery context parameters validations query
                 with ex ->
                     return!

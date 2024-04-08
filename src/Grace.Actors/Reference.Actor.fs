@@ -1,4 +1,4 @@
-﻿namespace Grace.Actors
+namespace Grace.Actors
 
 open Dapr.Actors
 open Dapr.Actors.Runtime
@@ -48,22 +48,22 @@ module Reference =
                     message <- "Retrieved from database."
                 | None -> message <- "Not found in database."
 
-                let duration_ms = getCurrentInstant().Minus(activateStartTime).TotalMilliseconds.ToString("F3")
+                let duration_ms = getPaddedDuration_ms activateStartTime
 
                 log.LogInformation(
-                    "{CurrentInstant}: Activated {ActorType} {ActorId}. {message} Duration: {duration_ms}ms.",
+                    "{CurrentInstant}: Duration: {duration_ms}ms; Activated {ActorType} {ActorId}. {message}.",
                     getCurrentInstantExtended (),
+                    duration_ms,
                     actorName,
                     host.Id,
-                    message,
-                    duration_ms
+                    message
                 )
             }
             :> Task
 
         override this.OnPreActorMethodAsync(context) =
-            this.correlationId <- String.Empty
             actorStartTime <- getCurrentInstant ()
+            this.correlationId <- String.Empty
             logScope <- log.BeginScope("Actor {actorName}", actorName)
 
             log.LogTrace(
@@ -77,16 +77,16 @@ module Reference =
             Task.CompletedTask
 
         override this.OnPostActorMethodAsync(context) =
-            let duration_ms = (getCurrentInstant().Minus(actorStartTime).TotalMilliseconds).ToString("F3")
+            let duration_ms = getPaddedDuration_ms actorStartTime
 
             log.LogInformation(
-                "{CurrentInstant}: CorrelationID: {correlationID}; Finished {ActorName}.{MethodName}; ReferenceId: {ReferenceId}; Duration: {duration_ms}ms.",
+                "{CurrentInstant}: CorrelationId: {correlationId}; Duration: {duration_ms}ms; Finished {ActorName}.{MethodName}; ReferenceId: {ReferenceId}.",
                 getCurrentInstantExtended (),
                 this.correlationId,
+                duration_ms,
                 actorName,
                 context.MethodName,
-                this.Id,
-                duration_ms
+                this.Id
             )
 
             logScope.Dispose()
