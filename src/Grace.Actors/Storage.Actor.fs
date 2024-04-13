@@ -1,4 +1,4 @@
-﻿namespace Grace.Actors
+namespace Grace.Actors
 
 open Azure.Storage
 open Azure.Storage.Blobs
@@ -36,15 +36,3 @@ module Storage =
 
     /// Deletes the actor's state from storage.
     let DeleteState (stateManager: IActorStateManager) actorStateName = task { return! stateManager.TryRemoveStateAsync(actorStateName) }
-
-//module AzureBlobStorage =
-
-//    let private getBlobClient (repositoryId: RepositoryId) (relativePath: RelativePath) =
-
-//        let blobClient = BlobClient(Uri())
-
-//    let GetReadSharedAccessSignature (repositoryId: RepositoryId) (containerName: StorageContainerName) (relativePath: RelativePath) =
-//        let blobContainerClient = getContainerClient containerName
-//        let blobSasBuilder = BlobSasBuilder(BlobSasPermissions.Read, DateTimeOffset.UtcNow.AddMinutes(Constants.SharedAccessSignatureExpiration))
-//        blobSasBuilder.BlobName <- relativePath.ToString()
-//        Task.FromResult(blobContainerClient.GenerateSasUri(blobSasBuilder).ToString())

@@ -196,18 +196,16 @@ module Diff =
 
                     let! parameters = context |> parse<GetDiffBySha256HashParameters>
 
-                    match getGraceIds context with
-                    | Some graceIds ->
-                        let repositoryId = Guid.Parse(graceIds.RepositoryId)
-                        let! directoryId1 = getDirectoryBySha256Hash repositoryId parameters.Sha256Hash1 (getCorrelationId context)
-                        let! directoryId2 = getDirectoryBySha256Hash repositoryId parameters.Sha256Hash2 (getCorrelationId context)
+                    let graceIds = getGraceIds context
+                    let repositoryId = Guid.Parse(graceIds.RepositoryId)
+                    let! directoryId1 = getDirectoryBySha256Hash repositoryId parameters.Sha256Hash1 (getCorrelationId context)
+                    let! directoryId2 = getDirectoryBySha256Hash repositoryId parameters.Sha256Hash2 (getCorrelationId context)
 
-                        match directoryId1, directoryId2 with
-                        | Some directoryId1, Some directoryId2 ->
-                            parameters.DirectoryId1 <- directoryId1.DirectoryId
-                            parameters.DirectoryId2 <- directoryId2.DirectoryId
-                        | _ -> ()
-                    | None -> ()
+                    match directoryId1, directoryId2 with
+                    | Some directoryId1, Some directoryId2 ->
+                        parameters.DirectoryId1 <- directoryId1.DirectoryId
+                        parameters.DirectoryId2 <- directoryId2.DirectoryId
+                    | _ -> ()
 
                     return! processQuery context parameters validations query
                 with ex ->

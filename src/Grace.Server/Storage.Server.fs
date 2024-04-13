@@ -1,4 +1,4 @@
-﻿namespace Grace.Server
+namespace Grace.Server
 
 open Azure.Core
 open Azure.Storage.Blobs
@@ -31,6 +31,8 @@ open System.Diagnostics
 
 module Storage =
 
+    let log = ApplicationContext.loggerFactory.CreateLogger("Storage.Server")
+
     /// Checks if a file version exists in the object storage provider.
     let fileExists (repositoryDto: RepositoryDto) (fileVersion: FileVersion) (context: HttpContext) =
         task {
@@ -46,7 +48,7 @@ module Storage =
             | AWSS3 -> return false
             | GoogleCloudStorage -> return false
             | ObjectStorageProvider.Unknown ->
-                logToConsole $"Error: Unknown ObjectStorageProvider in fileExists for repository {repositoryDto.RepositoryId} - {repositoryDto.RepositoryName}."
+                log.LogError $"Error: Unknown ObjectStorageProvider in fileExists for repository {repositoryDto.RepositoryId} - {repositoryDto.RepositoryName}."
 
                 logToConsole (sprintf "%A" repositoryDto)
                 return false
@@ -98,7 +100,6 @@ module Storage =
                         return! context.WriteStringAsync $"Error creating download uri for {fileVersion.GetObjectFileName}."
                 with ex ->
                     context.SetStatusCode StatusCodes.Status500InternalServerError
-
                     return! context.WriteTextAsync $"Error in {context.Request.Path} at {DateTime.Now.ToLongTimeString()}."
             }
 

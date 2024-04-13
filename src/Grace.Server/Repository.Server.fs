@@ -76,12 +76,10 @@ module Repository =
 
                         match! actorProxy.Handle cmd (createMetadata context) with
                         | Ok graceReturnValue ->
-                            match getGraceIds context with
-                            | Some graceIds ->
-                                graceReturnValue.Properties[nameof (OwnerId)] <- graceIds.OwnerId
-                                graceReturnValue.Properties[nameof (OrganizationId)] <- graceIds.OrganizationId
-                                graceReturnValue.Properties[nameof (RepositoryId)] <- graceIds.RepositoryId
-                            | None -> ()
+                            let graceIds = getGraceIds context
+                            graceReturnValue.Properties[nameof (OwnerId)] <- graceIds.OwnerId
+                            graceReturnValue.Properties[nameof (OrganizationId)] <- graceIds.OrganizationId
+                            graceReturnValue.Properties[nameof (RepositoryId)] <- graceIds.RepositoryId
 
                             return! context |> result200Ok graceReturnValue
                         | Error graceError ->
@@ -206,12 +204,10 @@ module Repository =
 
                         let graceReturnValue = GraceReturnValue.Create queryResult (getCorrelationId context)
 
-                        match getGraceIds context with
-                        | Some graceIds ->
-                            graceReturnValue.Properties[nameof (OwnerId)] <- graceIds.OwnerId
-                            graceReturnValue.Properties[nameof (OrganizationId)] <- graceIds.OrganizationId
-                            graceReturnValue.Properties[nameof (RepositoryId)] <- graceIds.RepositoryId
-                        | None -> ()
+                        let graceIds = getGraceIds context
+                        graceReturnValue.Properties[nameof (OwnerId)] <- graceIds.OwnerId
+                        graceReturnValue.Properties[nameof (OrganizationId)] <- graceIds.OrganizationId
+                        graceReturnValue.Properties[nameof (RepositoryId)] <- graceIds.RepositoryId
 
                         return! context |> result200Ok graceReturnValue
                     | None ->

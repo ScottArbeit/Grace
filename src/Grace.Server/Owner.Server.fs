@@ -56,9 +56,8 @@ module Owner =
 
                         match! actorProxy.Handle cmd (createMetadata context) with
                         | Ok graceReturnValue ->
-                            match getGraceIds context with
-                            | Some graceIds -> graceReturnValue.Properties[nameof (OwnerId)] <- graceIds.OwnerId
-                            | None -> ()
+                            let graceIds = getGraceIds context
+                            graceReturnValue.Properties[nameof (OwnerId)] <- graceIds.OwnerId
 
                             return! context |> result200Ok graceReturnValue
                         | Error graceError ->
@@ -159,9 +158,8 @@ module Owner =
 
                         let graceReturnValue = GraceReturnValue.Create queryResult (getCorrelationId context)
 
-                        match getGraceIds context with
-                        | Some graceIds -> graceReturnValue.Properties[nameof (OwnerId)] <- graceIds.OwnerId
-                        | None -> ()
+                        let graceIds = getGraceIds context
+                        graceReturnValue.Properties[nameof (OwnerId)] <- graceIds.OwnerId
 
                         return! context |> result200Ok graceReturnValue
                     | None ->

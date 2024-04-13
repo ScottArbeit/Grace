@@ -80,9 +80,8 @@ module Validations =
         /// Validates that the owner exists in the database.
         let ownerExists<'T> ownerId ownerName (context: HttpContext) (error: 'T) =
             let result =
-                match getGraceIds context with
-                | Some graceIds -> if graceIds.HasOwner then Ok() else Error error
-                | None -> Error error
+                let graceIds = getGraceIds context
+                if graceIds.HasOwner then Ok() else Error error
 
             ValueTask.FromResult(result)
 

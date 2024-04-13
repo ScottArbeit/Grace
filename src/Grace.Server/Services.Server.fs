@@ -1,4 +1,4 @@
-﻿namespace Grace.Server
+namespace Grace.Server
 
 open Dapr.Actors
 open Giraffe
@@ -37,14 +37,14 @@ module Services =
     type QueryResult<'T, 'U when 'T :> IActor> = HttpContext -> int -> 'T -> Task<'U>
 
     /// Gets the CorrelationId from HttpContext.Items.
-    let getCorrelationId (context: HttpContext) : CorrelationId = (context.Items[Constants.CorrelationId] :?> string)
+    let getCorrelationId (context: HttpContext) = (context.Items[Constants.CorrelationId] :?> CorrelationId)
 
     /// Gets the GraceIds record from HttpContext.Items.
     let getGraceIds (context: HttpContext) =
         if context.Items.ContainsKey(nameof (GraceIds)) then
-            Some(context.Items[nameof (GraceIds)] :?> GraceIds)
+            context.Items[nameof (GraceIds)] :?> GraceIds
         else
-            None
+            GraceIds.Default
 
     /// Creates common metadata for Grace events.
     let createMetadata (context: HttpContext) : EventMetadata =

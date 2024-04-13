@@ -1,4 +1,4 @@
-﻿namespace Grace.Server
+namespace Grace.Server
 
 open Dapr.Actors
 open Dapr.Actors.Client
@@ -54,11 +54,9 @@ module Organization =
 
                         match! actorProxy.Handle cmd (createMetadata context) with
                         | Ok graceReturnValue ->
-                            match getGraceIds context with
-                            | Some graceIds ->
-                                graceReturnValue.Properties[nameof (OwnerId)] <- graceIds.OwnerId
-                                graceReturnValue.Properties[nameof (OrganizationId)] <- graceIds.OrganizationId
-                            | None -> ()
+                            let graceIds = getGraceIds context
+                            graceReturnValue.Properties[nameof (OwnerId)] <- graceIds.OwnerId
+                            graceReturnValue.Properties[nameof (OrganizationId)] <- graceIds.OrganizationId
 
                             return! context |> result200Ok graceReturnValue
                         | Error graceError ->
@@ -172,11 +170,9 @@ module Organization =
 
                         let graceReturnValue = GraceReturnValue.Create queryResult (getCorrelationId context)
 
-                        match getGraceIds context with
-                        | Some graceIds ->
-                            graceReturnValue.Properties[nameof (OwnerId)] <- graceIds.OwnerId
-                            graceReturnValue.Properties[nameof (OrganizationId)] <- graceIds.OrganizationId
-                        | None -> ()
+                        let graceIds = getGraceIds context
+                        graceReturnValue.Properties[nameof (OwnerId)] <- graceIds.OwnerId
+                        graceReturnValue.Properties[nameof (OrganizationId)] <- graceIds.OrganizationId
 
                         return! context |> result200Ok graceReturnValue
                     | None ->

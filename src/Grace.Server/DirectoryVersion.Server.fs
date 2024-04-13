@@ -1,4 +1,4 @@
-﻿namespace Grace.Server
+namespace Grace.Server
 
 open Dapr.Actors
 open Dapr.Actors.Client
@@ -93,13 +93,11 @@ module DirectoryVersion =
 
                     let graceReturnValue = GraceReturnValue.Create queryResult (getCorrelationId context)
 
-                    match getGraceIds context with
-                    | Some graceIds ->
-                        graceReturnValue.Properties[nameof (OwnerId)] <- graceIds.OwnerId
-                        graceReturnValue.Properties[nameof (OrganizationId)] <- graceIds.OrganizationId
-                        graceReturnValue.Properties[nameof (RepositoryId)] <- graceIds.RepositoryId
-                        graceReturnValue.Properties[nameof (BranchId)] <- graceIds.BranchId
-                    | None -> ()
+                    let graceIds = getGraceIds context
+                    graceReturnValue.Properties[nameof (OwnerId)] <- graceIds.OwnerId
+                    graceReturnValue.Properties[nameof (OrganizationId)] <- graceIds.OrganizationId
+                    graceReturnValue.Properties[nameof (RepositoryId)] <- graceIds.RepositoryId
+                    graceReturnValue.Properties[nameof (BranchId)] <- graceIds.BranchId
 
                     return! context |> result200Ok graceReturnValue
                 else
