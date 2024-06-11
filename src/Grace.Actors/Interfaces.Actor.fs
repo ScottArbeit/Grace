@@ -1,4 +1,4 @@
-﻿namespace Grace.Actors
+namespace Grace.Actors
 
 open Dapr.Actors
 open Grace.Actors.Commands
@@ -36,10 +36,8 @@ module Interfaces =
     /// This is an experimental interface to explore how to back up and rehydrate actor instances.
     [<Interface>]
     type IExportable<'T> =
-        //abstract member Export: unit -> Task<Result<IList<RepositoryEvent>, ExportError>>
-        //abstract member Import: IList<RepositoryEvent> -> Task<Result<bool, ImportError>>
         abstract member Export: unit -> Task<Result<List<'T>, ExportError>>
-        abstract member Import: IList<'T> -> Task<Result<int, ImportError>>
+        abstract member Import: IReadOnlyList<'T> -> Task<Result<int, ImportError>>
 
     /// This is an experimental interface to explore how to implement important management functions for actors.
     [<Interface>]
@@ -61,7 +59,7 @@ module Interfaces =
         /// Retrieves the current state of the branch.
         abstract member Get: correlationId: CorrelationId -> Task<BranchDto>
         /// Retrieves the list of events handled by this branch.
-        abstract member GetEvents: correlationId: CorrelationId -> Task<IList<Events.Branch.BranchEvent>>
+        abstract member GetEvents: correlationId: CorrelationId -> Task<IReadOnlyList<Events.Branch.BranchEvent>>
         /// Retrieves the most recent commit from this branch.
         abstract member GetLatestCommit: correlationId: CorrelationId -> Task<ReferenceId>
         /// Retrieves the most recent promotion from this branch.

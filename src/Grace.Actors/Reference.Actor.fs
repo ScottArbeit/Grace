@@ -29,7 +29,7 @@ module Reference =
         let mutable actorStartTime = Instant.MinValue
         let log = loggerFactory.CreateLogger("Reference.Actor")
         let mutable logScope: IDisposable = null
-        let dtoStateName = "ReferenceDtoState"
+        let dtoStateName = StateName.Reference
         let mutable referenceDto = None
 
         member val private correlationId: CorrelationId = String.Empty with get, set
@@ -45,14 +45,15 @@ module Reference =
                 match retrievedDto with
                 | Some retrievedDto ->
                     referenceDto <- Some retrievedDto
-                    message <- "Retrieved from database."
-                | None -> message <- "Not found in database."
+                    message <- "Retrieved from database"
+                | None -> message <- "Not found in database"
 
                 let duration_ms = getPaddedDuration_ms activateStartTime
 
                 log.LogInformation(
-                    "{CurrentInstant}: Duration: {duration_ms}ms; Activated {ActorType} {ActorId}. {message}.",
+                    "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; Activated {ActorType} {ActorId}. {message}.",
                     getCurrentInstantExtended (),
+                    Environment.MachineName,
                     duration_ms,
                     actorName,
                     host.Id,
@@ -80,10 +81,11 @@ module Reference =
             let duration_ms = getPaddedDuration_ms actorStartTime
 
             log.LogInformation(
-                "{CurrentInstant}: CorrelationId: {correlationId}; Duration: {duration_ms}ms; Finished {ActorName}.{MethodName}; ReferenceId: {ReferenceId}.",
+                "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {ActorName}.{MethodName}; ReferenceId: {ReferenceId}.",
                 getCurrentInstantExtended (),
-                this.correlationId,
+                Environment.MachineName,
                 duration_ms,
+                this.correlationId,
                 actorName,
                 context.MethodName,
                 this.Id

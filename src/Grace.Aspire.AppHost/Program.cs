@@ -133,7 +133,7 @@ internal class Program
                     .WithEnvironment("ASPNETCORE_HTTPS_PORTS", "5001")
                     .WithEnvironment("ASPNETCORE_URLS", "https://+:5001;http://+:5000")
                     .WithEnvironment("APPLICATIONINSIGHTS_CONNECTION_STRING", applicationInsightsConnectionString)
-                    .WithEnvironment("DAPR_SERVER_URI", "http://127.0.0.1")
+                    .WithEnvironment("DAPR_SERVER_URI", "http://10.0.45.152")
                     .WithEnvironment("DAPR_APP_PORT", "5000")
                     .WithEnvironment("DAPR_HTTP_PORT", "3500")
                     .WithEnvironment("DAPR_GRPC_PORT", "50001")

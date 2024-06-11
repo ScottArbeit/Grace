@@ -11,6 +11,7 @@ module Errors =
             | AssignIsDisabled
             | BranchAlreadyExists
             | BranchDoesNotExist
+            | BranchIdDoesNotExist
             | BranchIdIsRequired
             | BranchIsNotBasedOnLatestPromotion
             | BranchNameAlreadyExists
@@ -61,6 +62,7 @@ module Errors =
                 | AssignIsDisabled -> getLocalizedString StringResourceName.AssignIsDisabled
                 | BranchAlreadyExists -> getLocalizedString StringResourceName.BranchAlreadyExists
                 | BranchDoesNotExist -> getLocalizedString StringResourceName.BranchDoesNotExist
+                | BranchIdDoesNotExist -> getLocalizedString StringResourceName.BranchIdDoesNotExist
                 | BranchIdIsRequired -> getLocalizedString StringResourceName.BranchIdIsRequired
                 | BranchIsNotBasedOnLatestPromotion -> getLocalizedString StringResourceName.BranchIsNotBasedOnLatestPromotion
                 | BranchNameAlreadyExists -> getLocalizedString StringResourceName.BranchNameAlreadyExists

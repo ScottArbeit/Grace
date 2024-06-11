@@ -1,7 +1,8 @@
-﻿namespace Grace.Actors
+namespace Grace.Actors
 
 open Dapr.Actors
 open Dapr.Actors.Runtime
+open Grace.Actors.Constants
 open Grace.Shared.Types
 open Grace.Shared
 open NodaTime
@@ -29,7 +30,7 @@ module FileAppearance =
     type FileAppearanceActor(host: ActorHost) =
         inherit Actor(host)
 
-        let dtoStateName = "fileAppearancesDtoState"
+        let dtoStateName = StateName.FileAppearance
         let mutable dto = FileAppearanceDto()
 
         override this.OnActivateAsync() =

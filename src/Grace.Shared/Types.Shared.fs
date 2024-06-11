@@ -27,6 +27,7 @@ module Types =
     type OrganizationName = string
     type OwnerId = Guid
     type OwnerName = string
+    type ParentBranchId = BranchId
     type ReferenceId = Guid
     type ReferenceName = string
     type ReferenceText = string

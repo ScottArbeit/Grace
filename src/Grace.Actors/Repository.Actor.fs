@@ -43,8 +43,8 @@ module Repository =
         let mutable logScope: IDisposable = null
         let mutable currentCommand = String.Empty
 
-        let dtoStateName = "repositoryDtoState"
-        let eventsStateName = "repositoryEventsState"
+        let dtoStateName = StateName.RepositoryDto
+        let eventsStateName = StateName.Repository
 
         /// Indicates that the actor is in an undefined state, and should be reset.
         let mutable isDisposed = false
@@ -73,8 +73,9 @@ module Repository =
                 let duration_ms = getPaddedDuration_ms activateStartTime
 
                 log.LogInformation(
-                    "{CurrentInstant}: Duration: {duration_ms}ms; Activated {ActorType} {ActorId}. {message}.",
+                    "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; Activated {ActorType} {ActorId}. {message}.",
                     getCurrentInstantExtended (),
+                    Environment.MachineName,
                     duration_ms,
                     actorName,
                     host.Id,
@@ -110,20 +111,22 @@ module Repository =
 
             if String.IsNullOrEmpty(currentCommand) then
                 log.LogInformation(
-                    "{CurrentInstant}: CorrelationId: {correlationId}; Duration: {duration_ms}ms; Finished {ActorName}.{MethodName}; RepositoryId: {Id}.",
+                    "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {ActorName}.{MethodName}; RepositoryId: {Id}.",
                     getCurrentInstantExtended (),
-                    this.correlationId,
+                    Environment.MachineName,
                     duration_ms,
+                    this.correlationId,
                     actorName,
                     context.MethodName,
                     this.Id
                 )
             else
                 log.LogInformation(
-                    "{CurrentInstant}: CorrelationId: {correlationId}; Duration: {duration_ms}ms; Finished {ActorName}.{MethodName}; Command: {Command}; RepositoryId: {Id}.",
+                    "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {ActorName}.{MethodName}; Command: {Command}; RepositoryId: {Id}.",
                     getCurrentInstantExtended (),
-                    this.correlationId,
+                    Environment.MachineName,
                     duration_ms,
+                    this.correlationId,
                     actorName,
                     context.MethodName,
                     currentCommand,
@@ -306,23 +309,39 @@ module Repository =
 
                         let returnValue = GraceReturnValue.Create $"Repository command succeeded." repositoryEvent.Metadata.CorrelationId
 
-                        returnValue.Properties.Add(nameof (OwnerId), $"{repositoryDto.OwnerId}")
-                        returnValue.Properties.Add(nameof (OrganizationId), $"{repositoryDto.OrganizationId}")
-                        returnValue.Properties.Add(nameof (RepositoryId), $"{repositoryDto.RepositoryId}")
-                        returnValue.Properties.Add(nameof (RepositoryName), $"{repositoryDto.RepositoryName}")
+                        returnValue
+                            .enhance(nameof (OwnerId), $"{repositoryDto.OwnerId}")
+                            .enhance(nameof (OrganizationId), $"{repositoryDto.OrganizationId}")
+                            .enhance(nameof (RepositoryId), $"{repositoryDto.RepositoryId}")
+                            .enhance(nameof (RepositoryName), $"{repositoryDto.RepositoryName}")
+                            .enhance (nameof (RepositoryEventType), $"{getDiscriminatedUnionFullName repositoryEvent.Event}")
+                        |> ignore
 
                         if branchId <> BranchId.Empty then
-                            returnValue.Properties.Add(nameof (BranchId), $"{branchId}")
-                            returnValue.Properties.Add(nameof (BranchName), $"{Constants.InitialBranchName}")
-                            returnValue.Properties.Add(nameof (ReferenceId), $"{referenceId}")
+                            returnValue
+                                .enhance(nameof (BranchId), $"{branchId}")
+                                .enhance(nameof (BranchName), $"{Constants.InitialBranchName}")
+                                .enhance (nameof (ReferenceId), $"{referenceId}")
+                            |> ignore
 
                         returnValue.Properties.Add("EventType", $"{getDiscriminatedUnionFullName repositoryEvent.Event}")
 
                         return Ok returnValue
                     | Error graceError -> return Error graceError
                 with ex ->
+                    let exceptionResponse = createExceptionResponse ex
+
                     let graceError =
                         GraceError.Create (RepositoryError.getErrorMessage RepositoryError.FailedWhileApplyingEvent) repositoryEvent.Metadata.CorrelationId
+
+                    graceError
+                        .enhance("Exception details", exceptionResponse.``exception`` + exceptionResponse.innerException)
+                        .enhance(nameof (OwnerId), $"{repositoryDto.OwnerId}")
+                        .enhance(nameof (OrganizationId), $"{repositoryDto.OrganizationId}")
+                        .enhance(nameof (RepositoryId), $"{repositoryDto.RepositoryId}")
+                        .enhance(nameof (RepositoryName), $"{repositoryDto.RepositoryName}")
+                        .enhance (nameof (RepositoryEventType), $"{getDiscriminatedUnionFullName repositoryEvent.Event}")
+                    |> ignore
 
                     return Error graceError
             }
@@ -375,7 +394,7 @@ module Repository =
             this
                 .RegisterReminderAsync(
                     ReminderType.PhysicalDeletion,
-                    convertToByteArray deleteReason,
+                    convertToByteArray (deleteReason, correlationId),
                     Constants.DefaultPhysicalDeletionReminderTime,
                     TimeSpan.FromMilliseconds(-1)
                 )
@@ -396,7 +415,7 @@ module Repository =
                         return Error(ExportError.Exception(createExceptionResponse ex))
                 }
 
-            member this.Import(events: IList<RepositoryEvent>) =
+            member this.Import(events: IReadOnlyList<RepositoryEvent>) =
                 let stateManager = this.StateManager
 
                 task {
@@ -613,6 +632,7 @@ module Repository =
                     task {
                         // Get values from state.
                         let (deleteReason, correlationId) = convertFromByteArray<string * string> state
+                        this.correlationId <- correlationId
 
                         // Physically delete the actor state.
                         let! deletedDtoState = stateManager.TryRemoveStateAsync(dtoStateName)
@@ -622,16 +642,14 @@ module Repository =
                         isDisposed <- true
 
                         log.LogInformation(
-                            "{currentInstant}: CorrelationId: {correlationId}; Deleted physical state for repository; RepositoryId: {}; RepositoryName: {}; OrganizationId: {organizationId}; OwnerId: {ownerId}; deleteReason: {deleteReason}; deletedDtoState: {deletedDtoState}; deletedEventsState: {deletedEventsState}.",
+                            "{currentInstant}: CorrelationId: {correlationId}; Deleted physical state for repository; RepositoryId: {}; RepositoryName: {}; OrganizationId: {organizationId}; OwnerId: {ownerId}; deleteReason: {deleteReason}.",
                             getCurrentInstantExtended (),
                             correlationId,
                             repositoryDto.RepositoryId,
                             repositoryDto.RepositoryName,
                             repositoryDto.OrganizationId,
                             repositoryDto.OwnerId,
-                            deleteReason,
-                            deletedDtoState,
-                            deletedEventsState
+                            deleteReason
                         )
 
                         // Set all values to default.

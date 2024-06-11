@@ -67,9 +67,7 @@ module Validations =
 
                 if (not <| String.IsNullOrEmpty(ownerId)) && Guid.TryParse(ownerId, &ownerGuid) then
                     let actorId = Owner.GetActorId(ownerGuid)
-
                     let ownerActorProxy = actorProxyFactory.CreateActorProxy<IOwnerActor>(actorId, ActorName.Owner)
-
                     let! exists = ownerActorProxy.Exists correlationId
                     if exists then return Error error else return Ok()
                 else
@@ -88,9 +86,8 @@ module Validations =
         /// Validates that the given ownerName does not already exist in the database.
         let ownerNameDoesNotExist<'T> (ownerName: string) correlationId (error: 'T) =
             task {
-                match! resolveOwnerId String.Empty ownerName correlationId with
-                | Some ownerId -> return Error error
-                | None -> return Ok()
+                let! ownerNameExists = ownerNameExists ownerName false correlationId
+                if ownerNameExists then return Error error else return Ok()
             }
             |> ValueTask<Result<unit, 'T>>
 
@@ -196,11 +193,17 @@ module Validations =
             |> ValueTask<Result<unit, 'T>>
 
         /// Validates that the given organizationName does not already exist for this owner.
-        let organizationNameIsUnique<'T> (ownerId: string) (ownerName: string) (organizationName: string) correlationId (error: 'T) =
+        let organizationNameIsUnique<'T> (ownerId: string) (ownerName: string) (organizationName: string) (context: HttpContext) correlationId (error: 'T) =
             task {
                 if not <| String.IsNullOrEmpty(organizationName) then
-                    match! organizationNameIsUnique ownerId ownerName organizationName correlationId with
-                    | Ok isUnique -> if isUnique then return Ok() else return Error error
+                    let graceIds = getGraceIds context
+
+                    match! organizationNameIsUnique graceIds.OwnerId organizationName correlationId with
+                    | Ok isUnique ->
+                        //logToConsole
+                        //    $"In organizationNameIsUnique: correlationId: {correlationId}; ownerId: {ownerId}; ownerName: {ownerName}; organizationName: {organizationName}; isUnique: {isUnique}"
+
+                        if isUnique then return Ok() else return Error error
                     | Error internalError ->
                         logToConsole internalError
                         return Error error

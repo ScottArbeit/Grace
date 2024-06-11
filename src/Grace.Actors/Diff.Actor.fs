@@ -1,4 +1,4 @@
-﻿namespace Grace.Actors
+namespace Grace.Actors
 
 open Azure.Storage.Blobs
 open Azure.Storage.Blobs.Specialized
@@ -45,9 +45,9 @@ module Diff =
     type DiffActor(host: ActorHost) =
         inherit Actor(host)
 
-        let dtoStateName = "DiffDtoState"
+        let dtoStateName = StateName.Diff
         let mutable diffDto: DiffDto = DiffDto.Default
-        let actorName = Constants.ActorName.Diff
+        let actorName = ActorName.Diff
         let log = loggerFactory.CreateLogger("Diff.Actor")
         let mutable actorStartTime = Instant.MinValue
         let mutable logScope: IDisposable = null
@@ -148,9 +148,9 @@ module Diff =
 
         /// Sets a delete reminder for this actor's state.
         member private this.setDeleteReminder() =
-            let task = this.RegisterReminderAsync("DeleteReminder", Array.empty<byte>, TimeSpan.FromDays(7.0), TimeSpan.FromMilliseconds(-1.0))
-
-            task.Wait()
+            //let task = this.RegisterReminderAsync("DeleteReminder", Array.empty<byte>, TimeSpan.FromDays(7.0), TimeSpan.FromMilliseconds(-1.0))
+            //task.Wait()
+            ()
 
         override this.OnActivateAsync() =
             let activateStartTime = getCurrentInstant ()

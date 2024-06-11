@@ -16,6 +16,7 @@ module en_US =
         | AssignIsDisabled -> "This branch has disabled assign."
         | BranchAlreadyExists -> "The branch already exists."
         | BranchDoesNotExist -> "The branch was not found."
+        | BranchIdDoesNotExist -> "A branch with the provided BranchId does not exist."
         | BranchIdIsRequired -> "The BranchId must be provided."
         | BranchIdsAreRequired -> "The list of BranchIds must not be empty."
         | BranchIsNotBasedOnLatestPromotion -> "The promotion failed because the current branch is not based on the latest promotion from the parent branch."

@@ -26,6 +26,7 @@ RUN dotnet publish "Grace.Server.fsproj" -c Debug -o /app/publish /p:UseAppHost=
 ENV ASPNETCORE_HTTPS_PORT=5001
 ENV ASPNETCORE_HTTP_PORT=5000
 ENV DOTNET_GENERATE_ASPNET_CERTIFICATE=false
+ENV DOTNET_EnableDiagnostics=1
 
 FROM base AS final
 WORKDIR /app

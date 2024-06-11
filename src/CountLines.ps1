@@ -19,4 +19,4 @@ foreach ($codeFile in ($codeFiles | Where-Object {$_.FullName -notlike "*\obj\*"
 
 $files | Format-Table -AutoSize
 
-Write-Host -ForegroundColor Magenta "Total lines: $totalLines"
+Write-Host -ForegroundColor Magenta "Total lines: $totalLines."

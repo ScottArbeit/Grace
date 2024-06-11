@@ -43,20 +43,6 @@ module Branch =
         let actorId = ActorId($"{branchId}")
         actorProxyFactory.CreateActorProxy<IBranchActor>(actorId, ActorName.Branch)
 
-    let commonValidations<'T when 'T :> BranchParameters> (parameters: 'T) =
-        [| Guid.isValidAndNotEmpty parameters.OwnerId InvalidOwnerId
-           String.isValidGraceName parameters.OwnerName InvalidOwnerName
-           Input.eitherIdOrNameMustBeProvided parameters.OwnerId parameters.OwnerName EitherOwnerIdOrOwnerNameRequired
-           Guid.isValidAndNotEmpty parameters.OrganizationId InvalidOrganizationId
-           String.isValidGraceName parameters.OrganizationName InvalidOrganizationName
-           Input.eitherIdOrNameMustBeProvided parameters.OrganizationId parameters.OrganizationName EitherOrganizationIdOrOrganizationNameRequired
-           Guid.isValidAndNotEmpty parameters.RepositoryId InvalidRepositoryId
-           String.isValidGraceName parameters.RepositoryName InvalidRepositoryName
-           Input.eitherIdOrNameMustBeProvided parameters.RepositoryId parameters.RepositoryName EitherRepositoryIdOrRepositoryNameIsRequired
-           Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
-           String.isValidGraceName parameters.BranchName InvalidBranchName
-           Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired |]
-
     let processCommand<'T when 'T :> BranchParameters> (context: HttpContext) (validations: Validations<'T>) (command: 'T -> ValueTask<BranchCommand>) =
         task {
             try
@@ -90,9 +76,9 @@ module Branch =
                                 |> result400BadRequest { graceError with Properties = getPropertiesAsDictionary parameters }
                     }
 
-                let combinedValidations = Array.append (commonValidations parameters) (validations parameters)
+                let validationResults = validations parameters
 
-                let! validationsPassed = combinedValidations |> allPass
+                let! validationsPassed = validationResults |> allPass
 
                 log.LogDebug(
                     "{currentInstant}: In Branch.Server.processCommand: validationsPassed: {validationsPassed}.",
@@ -128,7 +114,7 @@ module Branch =
                             context
                             |> result400BadRequest (GraceError.Create (BranchError.getErrorMessage RepositoryDoesNotExist) (getCorrelationId context))
                 else
-                    let! error = combinedValidations |> getFirstError
+                    let! error = validationResults |> getFirstError
                     let errorMessage = BranchError.getErrorMessage error
                     log.LogDebug("{currentInstant}: error: {error}", getCurrentInstantExtended (), errorMessage)
 
@@ -155,7 +141,7 @@ module Branch =
             use activity = activitySource.StartActivity("processQuery", ActivityKind.Server)
 
             try
-                let validationResults = Array.append (commonValidations parameters) (validations parameters)
+                let validationResults = validations parameters
 
                 let! validationsPassed = validationResults |> allPass
 
@@ -196,29 +182,8 @@ module Branch =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let validations (parameters: CreateBranchParameters) =
-                    [| String.isNotEmpty parameters.BranchId BranchIdIsRequired
-                       Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
-                       String.isNotEmpty parameters.BranchName BranchNameIsRequired
-                       String.isValidGraceName parameters.BranchName InvalidBranchName
-                       Guid.isValidAndNotEmpty parameters.ParentBranchId InvalidBranchId
+                    [| Guid.isValidAndNotEmpty parameters.ParentBranchId InvalidBranchId
                        String.isValidGraceName parameters.ParentBranchName InvalidBranchName
-                       Owner.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
-                       Organization.organizationExists
-                           parameters.OwnerId
-                           parameters.OwnerName
-                           parameters.OrganizationId
-                           parameters.OrganizationName
-                           parameters.CorrelationId
-                           OrganizationDoesNotExist
-                       Repository.repositoryExists
-                           parameters.OwnerId
-                           parameters.OwnerName
-                           parameters.OrganizationId
-                           parameters.OrganizationName
-                           parameters.RepositoryId
-                           parameters.RepositoryName
-                           parameters.CorrelationId
-                           RepositoryDoesNotExist
                        Branch.branchExists
                            parameters.OwnerId
                            parameters.OwnerName
@@ -282,37 +247,7 @@ module Branch =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let validations (parameters: RebaseParameters) =
-                    [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
-                       String.isValidGraceName parameters.BranchName InvalidBranchName
-                       Branch.referenceIdExists parameters.BasedOn parameters.CorrelationId ReferenceIdDoesNotExist
-                       Owner.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
-                       Organization.organizationExists
-                           parameters.OwnerId
-                           parameters.OwnerName
-                           parameters.OrganizationId
-                           parameters.OrganizationName
-                           parameters.CorrelationId
-                           OrganizationDoesNotExist
-                       Repository.repositoryExists
-                           parameters.OwnerId
-                           parameters.OwnerName
-                           parameters.OrganizationId
-                           parameters.OrganizationName
-                           parameters.RepositoryId
-                           parameters.RepositoryName
-                           parameters.CorrelationId
-                           RepositoryDoesNotExist
-                       Branch.branchExists
-                           parameters.OwnerId
-                           parameters.OwnerName
-                           parameters.OrganizationId
-                           parameters.OrganizationName
-                           parameters.RepositoryId
-                           parameters.RepositoryName
-                           parameters.BranchId
-                           parameters.BranchName
-                           parameters.CorrelationId
-                           ParentBranchDoesNotExist
+                    [| Branch.referenceIdExists parameters.BasedOn parameters.CorrelationId ReferenceIdDoesNotExist
                        Branch.branchAllowsReferenceType
                            parameters.OwnerId
                            parameters.OwnerName
@@ -339,40 +274,10 @@ module Branch =
                 let graceIds = context.Items[nameof (GraceIds)] :?> GraceIds
 
                 let validations (parameters: AssignParameters) =
-                    [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
-                       String.isValidGraceName parameters.BranchName InvalidBranchName
-                       String.isValidSha256Hash parameters.Sha256Hash Sha256HashIsRequired
+                    [| String.isValidSha256Hash parameters.Sha256Hash Sha256HashIsRequired
                        Input.oneOfTheseValuesMustBeProvided
                            [| parameters.DirectoryVersionId; parameters.Sha256Hash |]
                            EitherDirectoryVersionIdOrSha256HashRequired
-                       Owner.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
-                       Organization.organizationExists
-                           parameters.OwnerId
-                           parameters.OwnerName
-                           parameters.OrganizationId
-                           parameters.OrganizationName
-                           parameters.CorrelationId
-                           OrganizationDoesNotExist
-                       Repository.repositoryExists
-                           parameters.OwnerId
-                           parameters.OwnerName
-                           parameters.OrganizationId
-                           parameters.OrganizationName
-                           parameters.RepositoryId
-                           parameters.RepositoryName
-                           parameters.CorrelationId
-                           RepositoryDoesNotExist
-                       Branch.branchExists
-                           parameters.OwnerId
-                           parameters.OwnerName
-                           parameters.OrganizationId
-                           parameters.OrganizationName
-                           parameters.RepositoryId
-                           parameters.RepositoryName
-                           parameters.BranchId
-                           parameters.BranchName
-                           parameters.CorrelationId
-                           ParentBranchDoesNotExist
                        Branch.branchAllowsAssign
                            parameters.OwnerId
                            parameters.OwnerName
@@ -426,39 +331,9 @@ module Branch =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let validations (parameters: CreateReferenceParameters) =
-                    [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
-                       String.isValidGraceName parameters.BranchName InvalidBranchName
-                       String.isNotEmpty parameters.Message MessageIsRequired
+                    [| String.isNotEmpty parameters.Message MessageIsRequired
                        String.maxLength parameters.Message 2048 StringIsTooLong
                        String.isValidSha256Hash parameters.Sha256Hash Sha256HashIsRequired
-                       Owner.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
-                       Organization.organizationExists
-                           parameters.OwnerId
-                           parameters.OwnerName
-                           parameters.OrganizationId
-                           parameters.OrganizationName
-                           parameters.CorrelationId
-                           OrganizationDoesNotExist
-                       Repository.repositoryExists
-                           parameters.OwnerId
-                           parameters.OwnerName
-                           parameters.OrganizationId
-                           parameters.OrganizationName
-                           parameters.RepositoryId
-                           parameters.RepositoryName
-                           parameters.CorrelationId
-                           RepositoryDoesNotExist
-                       Branch.branchExists
-                           parameters.OwnerId
-                           parameters.OwnerName
-                           parameters.OrganizationId
-                           parameters.OrganizationName
-                           parameters.RepositoryId
-                           parameters.RepositoryName
-                           parameters.BranchId
-                           parameters.BranchName
-                           parameters.CorrelationId
-                           ParentBranchDoesNotExist
                        Branch.branchAllowsReferenceType
                            parameters.OwnerId
                            parameters.OwnerName
@@ -485,39 +360,9 @@ module Branch =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let validations (parameters: CreateReferenceParameters) =
-                    [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
-                       String.isValidGraceName parameters.BranchName InvalidBranchName
-                       String.isNotEmpty parameters.Message MessageIsRequired
+                    [| String.isNotEmpty parameters.Message MessageIsRequired
                        String.maxLength parameters.Message 2048 StringIsTooLong
                        String.isValidSha256Hash parameters.Sha256Hash Sha256HashIsRequired
-                       Owner.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
-                       Organization.organizationExists
-                           parameters.OwnerId
-                           parameters.OwnerName
-                           parameters.OrganizationId
-                           parameters.OrganizationName
-                           parameters.CorrelationId
-                           OrganizationDoesNotExist
-                       Repository.repositoryExists
-                           parameters.OwnerId
-                           parameters.OwnerName
-                           parameters.OrganizationId
-                           parameters.OrganizationName
-                           parameters.RepositoryId
-                           parameters.RepositoryName
-                           parameters.CorrelationId
-                           RepositoryDoesNotExist
-                       Branch.branchExists
-                           parameters.OwnerId
-                           parameters.OwnerName
-                           parameters.OrganizationId
-                           parameters.OrganizationName
-                           parameters.RepositoryId
-                           parameters.RepositoryName
-                           parameters.BranchId
-                           parameters.BranchName
-                           parameters.CorrelationId
-                           BranchDoesNotExist
                        Branch.branchAllowsReferenceType
                            parameters.OwnerId
                            parameters.OwnerName
@@ -544,39 +389,8 @@ module Branch =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let validations (parameters: CreateReferenceParameters) =
-                    [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
-                       String.isValidGraceName parameters.BranchName InvalidBranchName
-                       Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
-                       String.maxLength parameters.Message 2048 StringIsTooLong
+                    [| String.maxLength parameters.Message 2048 StringIsTooLong
                        String.isValidSha256Hash parameters.Sha256Hash Sha256HashIsRequired
-                       Owner.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
-                       Organization.organizationExists
-                           parameters.OwnerId
-                           parameters.OwnerName
-                           parameters.OrganizationId
-                           parameters.OrganizationName
-                           parameters.CorrelationId
-                           OrganizationDoesNotExist
-                       Repository.repositoryExists
-                           parameters.OwnerId
-                           parameters.OwnerName
-                           parameters.OrganizationId
-                           parameters.OrganizationName
-                           parameters.RepositoryId
-                           parameters.RepositoryName
-                           parameters.CorrelationId
-                           RepositoryDoesNotExist
-                       Branch.branchExists
-                           parameters.OwnerId
-                           parameters.OwnerName
-                           parameters.OrganizationId
-                           parameters.OrganizationName
-                           parameters.RepositoryId
-                           parameters.RepositoryName
-                           parameters.BranchId
-                           parameters.BranchName
-                           parameters.CorrelationId
-                           BranchDoesNotExist
                        Branch.branchAllowsReferenceType
                            parameters.OwnerId
                            parameters.OwnerName
@@ -603,39 +417,8 @@ module Branch =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let validations (parameters: CreateReferenceParameters) =
-                    [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
-                       String.isValidGraceName parameters.BranchName InvalidBranchName
-                       Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
-                       String.maxLength parameters.Message 4096 StringIsTooLong
+                    [| String.maxLength parameters.Message 4096 StringIsTooLong
                        String.isValidSha256Hash parameters.Sha256Hash Sha256HashIsRequired
-                       Owner.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
-                       Organization.organizationExists
-                           parameters.OwnerId
-                           parameters.OwnerName
-                           parameters.OrganizationId
-                           parameters.OrganizationName
-                           parameters.CorrelationId
-                           OrganizationDoesNotExist
-                       Repository.repositoryExists
-                           parameters.OwnerId
-                           parameters.OwnerName
-                           parameters.OrganizationId
-                           parameters.OrganizationName
-                           parameters.RepositoryId
-                           parameters.RepositoryName
-                           parameters.CorrelationId
-                           RepositoryDoesNotExist
-                       Branch.branchExists
-                           parameters.OwnerId
-                           parameters.OwnerName
-                           parameters.OrganizationId
-                           parameters.OrganizationName
-                           parameters.RepositoryId
-                           parameters.RepositoryName
-                           parameters.BranchId
-                           parameters.BranchName
-                           parameters.CorrelationId
-                           BranchDoesNotExist
                        Branch.branchAllowsReferenceType
                            parameters.OwnerId
                            parameters.OwnerName
@@ -662,39 +445,8 @@ module Branch =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let validations (parameters: CreateReferenceParameters) =
-                    [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
-                       String.isValidGraceName parameters.BranchName InvalidBranchName
-                       Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
-                       String.maxLength parameters.Message 2048 StringIsTooLong
+                    [| String.maxLength parameters.Message 2048 StringIsTooLong
                        String.isValidSha256Hash parameters.Sha256Hash Sha256HashIsRequired
-                       Owner.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
-                       Organization.organizationExists
-                           parameters.OwnerId
-                           parameters.OwnerName
-                           parameters.OrganizationId
-                           parameters.OrganizationName
-                           parameters.CorrelationId
-                           OrganizationDoesNotExist
-                       Repository.repositoryExists
-                           parameters.OwnerId
-                           parameters.OwnerName
-                           parameters.OrganizationId
-                           parameters.OrganizationName
-                           parameters.RepositoryId
-                           parameters.RepositoryName
-                           parameters.CorrelationId
-                           RepositoryDoesNotExist
-                       Branch.branchExists
-                           parameters.OwnerId
-                           parameters.OwnerName
-                           parameters.OrganizationId
-                           parameters.OrganizationName
-                           parameters.RepositoryId
-                           parameters.RepositoryName
-                           parameters.BranchId
-                           parameters.BranchName
-                           parameters.CorrelationId
-                           BranchDoesNotExist
                        Branch.branchAllowsReferenceType
                            parameters.OwnerId
                            parameters.OwnerName
@@ -721,39 +473,8 @@ module Branch =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let validations (parameters: CreateReferenceParameters) =
-                    [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
-                       String.isValidGraceName parameters.BranchName InvalidBranchName
-                       Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
-                       String.maxLength parameters.Message 2048 StringIsTooLong
+                    [| String.maxLength parameters.Message 2048 StringIsTooLong
                        String.isValidSha256Hash parameters.Sha256Hash Sha256HashIsRequired
-                       Owner.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
-                       Organization.organizationExists
-                           parameters.OwnerId
-                           parameters.OwnerName
-                           parameters.OrganizationId
-                           parameters.OrganizationName
-                           parameters.CorrelationId
-                           OrganizationDoesNotExist
-                       Repository.repositoryExists
-                           parameters.OwnerId
-                           parameters.OwnerName
-                           parameters.OrganizationId
-                           parameters.OrganizationName
-                           parameters.RepositoryId
-                           parameters.RepositoryName
-                           parameters.CorrelationId
-                           RepositoryDoesNotExist
-                       Branch.branchExists
-                           parameters.OwnerId
-                           parameters.OwnerName
-                           parameters.OrganizationId
-                           parameters.OrganizationName
-                           parameters.RepositoryId
-                           parameters.RepositoryName
-                           parameters.BranchId
-                           parameters.BranchName
-                           parameters.CorrelationId
-                           BranchDoesNotExist
                        Branch.branchAllowsReferenceType
                            parameters.OwnerId
                            parameters.OwnerName
@@ -780,38 +501,7 @@ module Branch =
     let EnableAssign: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
-                let validations (parameters: EnableFeatureParameters) =
-                    [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
-                       String.isValidGraceName parameters.BranchName InvalidBranchName
-                       Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
-                       Owner.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
-                       Organization.organizationExists
-                           parameters.OwnerId
-                           parameters.OwnerName
-                           parameters.OrganizationId
-                           parameters.OrganizationName
-                           parameters.CorrelationId
-                           OrganizationDoesNotExist
-                       Repository.repositoryExists
-                           parameters.OwnerId
-                           parameters.OwnerName
-                           parameters.OrganizationId
-                           parameters.OrganizationName
-                           parameters.RepositoryId
-                           parameters.RepositoryName
-                           parameters.CorrelationId
-                           RepositoryDoesNotExist
-                       Branch.branchExists
-                           parameters.OwnerId
-                           parameters.OwnerName
-                           parameters.OrganizationId
-                           parameters.OrganizationName
-                           parameters.RepositoryId
-                           parameters.RepositoryName
-                           parameters.BranchId
-                           parameters.BranchName
-                           parameters.CorrelationId
-                           BranchDoesNotExist |]
+                let validations (parameters: EnableFeatureParameters) = [||]
 
                 let command (parameters: EnableFeatureParameters) = EnableAssign(parameters.Enabled) |> returnValueTask
 
@@ -823,38 +513,7 @@ module Branch =
     let EnablePromotion: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
-                let validations (parameters: EnableFeatureParameters) =
-                    [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
-                       String.isValidGraceName parameters.BranchName InvalidBranchName
-                       Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
-                       Owner.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
-                       Organization.organizationExists
-                           parameters.OwnerId
-                           parameters.OwnerName
-                           parameters.OrganizationId
-                           parameters.OrganizationName
-                           parameters.CorrelationId
-                           OrganizationDoesNotExist
-                       Repository.repositoryExists
-                           parameters.OwnerId
-                           parameters.OwnerName
-                           parameters.OrganizationId
-                           parameters.OrganizationName
-                           parameters.RepositoryId
-                           parameters.RepositoryName
-                           parameters.CorrelationId
-                           RepositoryDoesNotExist
-                       Branch.branchExists
-                           parameters.OwnerId
-                           parameters.OwnerName
-                           parameters.OrganizationId
-                           parameters.OrganizationName
-                           parameters.RepositoryId
-                           parameters.RepositoryName
-                           parameters.BranchId
-                           parameters.BranchName
-                           parameters.CorrelationId
-                           BranchDoesNotExist |]
+                let validations (parameters: EnableFeatureParameters) = [||]
 
                 let command (parameters: EnableFeatureParameters) = EnablePromotion(parameters.Enabled) |> returnValueTask
 
@@ -866,38 +525,7 @@ module Branch =
     let EnableCommit: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
-                let validations (parameters: EnableFeatureParameters) =
-                    [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
-                       String.isValidGraceName parameters.BranchName InvalidBranchName
-                       Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
-                       Owner.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
-                       Organization.organizationExists
-                           parameters.OwnerId
-                           parameters.OwnerName
-                           parameters.OrganizationId
-                           parameters.OrganizationName
-                           parameters.CorrelationId
-                           OrganizationDoesNotExist
-                       Repository.repositoryExists
-                           parameters.OwnerId
-                           parameters.OwnerName
-                           parameters.OrganizationId
-                           parameters.OrganizationName
-                           parameters.RepositoryId
-                           parameters.RepositoryName
-                           parameters.CorrelationId
-                           RepositoryDoesNotExist
-                       Branch.branchExists
-                           parameters.OwnerId
-                           parameters.OwnerName
-                           parameters.OrganizationId
-                           parameters.OrganizationName
-                           parameters.RepositoryId
-                           parameters.RepositoryName
-                           parameters.BranchId
-                           parameters.BranchName
-                           parameters.CorrelationId
-                           BranchDoesNotExist |]
+                let validations (parameters: EnableFeatureParameters) = [||]
 
                 let command (parameters: EnableFeatureParameters) = EnableCommit(parameters.Enabled) |> returnValueTask
 
@@ -909,38 +537,7 @@ module Branch =
     let EnableCheckpoint: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
-                let validations (parameters: EnableFeatureParameters) =
-                    [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
-                       String.isValidGraceName parameters.BranchName InvalidBranchName
-                       Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
-                       Owner.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
-                       Organization.organizationExists
-                           parameters.OwnerId
-                           parameters.OwnerName
-                           parameters.OrganizationId
-                           parameters.OrganizationName
-                           parameters.CorrelationId
-                           OrganizationDoesNotExist
-                       Repository.repositoryExists
-                           parameters.OwnerId
-                           parameters.OwnerName
-                           parameters.OrganizationId
-                           parameters.OrganizationName
-                           parameters.RepositoryId
-                           parameters.RepositoryName
-                           parameters.CorrelationId
-                           RepositoryDoesNotExist
-                       Branch.branchExists
-                           parameters.OwnerId
-                           parameters.OwnerName
-                           parameters.OrganizationId
-                           parameters.OrganizationName
-                           parameters.RepositoryId
-                           parameters.RepositoryName
-                           parameters.BranchId
-                           parameters.BranchName
-                           parameters.CorrelationId
-                           BranchDoesNotExist |]
+                let validations (parameters: EnableFeatureParameters) = [||]
 
                 let command (parameters: EnableFeatureParameters) = EnableCheckpoint(parameters.Enabled) |> returnValueTask
 
@@ -952,38 +549,7 @@ module Branch =
     let EnableSave: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
-                let validations (parameters: EnableFeatureParameters) =
-                    [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
-                       String.isValidGraceName parameters.BranchName InvalidBranchName
-                       Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
-                       Owner.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
-                       Organization.organizationExists
-                           parameters.OwnerId
-                           parameters.OwnerName
-                           parameters.OrganizationId
-                           parameters.OrganizationName
-                           parameters.CorrelationId
-                           OrganizationDoesNotExist
-                       Repository.repositoryExists
-                           parameters.OwnerId
-                           parameters.OwnerName
-                           parameters.OrganizationId
-                           parameters.OrganizationName
-                           parameters.RepositoryId
-                           parameters.RepositoryName
-                           parameters.CorrelationId
-                           RepositoryDoesNotExist
-                       Branch.branchExists
-                           parameters.OwnerId
-                           parameters.OwnerName
-                           parameters.OrganizationId
-                           parameters.OrganizationName
-                           parameters.RepositoryId
-                           parameters.RepositoryName
-                           parameters.BranchId
-                           parameters.BranchName
-                           parameters.CorrelationId
-                           ParentBranchDoesNotExist |]
+                let validations (parameters: EnableFeatureParameters) = [||]
 
                 let command (parameters: EnableFeatureParameters) = EnableSave(parameters.Enabled) |> returnValueTask
 
@@ -995,38 +561,7 @@ module Branch =
     let EnableTag: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
-                let validations (parameters: EnableFeatureParameters) =
-                    [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
-                       String.isValidGraceName parameters.BranchName InvalidBranchName
-                       Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
-                       Owner.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
-                       Organization.organizationExists
-                           parameters.OwnerId
-                           parameters.OwnerName
-                           parameters.OrganizationId
-                           parameters.OrganizationName
-                           parameters.CorrelationId
-                           OrganizationDoesNotExist
-                       Repository.repositoryExists
-                           parameters.OwnerId
-                           parameters.OwnerName
-                           parameters.OrganizationId
-                           parameters.OrganizationName
-                           parameters.RepositoryId
-                           parameters.RepositoryName
-                           parameters.CorrelationId
-                           RepositoryDoesNotExist
-                       Branch.branchExists
-                           parameters.OwnerId
-                           parameters.OwnerName
-                           parameters.OrganizationId
-                           parameters.OrganizationName
-                           parameters.RepositoryId
-                           parameters.RepositoryName
-                           parameters.BranchId
-                           parameters.BranchName
-                           parameters.CorrelationId
-                           BranchDoesNotExist |]
+                let validations (parameters: EnableFeatureParameters) = [||]
 
                 let command (parameters: EnableFeatureParameters) = EnableTag(parameters.Enabled) |> returnValueTask
 
@@ -1038,38 +573,7 @@ module Branch =
     let EnableExternal: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
-                let validations (parameters: EnableFeatureParameters) =
-                    [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
-                       String.isValidGraceName parameters.BranchName InvalidBranchName
-                       Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
-                       Owner.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
-                       Organization.organizationExists
-                           parameters.OwnerId
-                           parameters.OwnerName
-                           parameters.OrganizationId
-                           parameters.OrganizationName
-                           parameters.CorrelationId
-                           OrganizationDoesNotExist
-                       Repository.repositoryExists
-                           parameters.OwnerId
-                           parameters.OwnerName
-                           parameters.OrganizationId
-                           parameters.OrganizationName
-                           parameters.RepositoryId
-                           parameters.RepositoryName
-                           parameters.CorrelationId
-                           RepositoryDoesNotExist
-                       Branch.branchExists
-                           parameters.OwnerId
-                           parameters.OwnerName
-                           parameters.OrganizationId
-                           parameters.OrganizationName
-                           parameters.RepositoryId
-                           parameters.RepositoryName
-                           parameters.BranchId
-                           parameters.BranchName
-                           parameters.CorrelationId
-                           BranchDoesNotExist |]
+                let validations (parameters: EnableFeatureParameters) = [||]
 
                 let command (parameters: EnableFeatureParameters) = EnableExternal(parameters.Enabled) |> returnValueTask
 
@@ -1081,38 +585,7 @@ module Branch =
     let EnableAutoRebase: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
-                let validations (parameters: EnableFeatureParameters) =
-                    [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
-                       String.isValidGraceName parameters.BranchName InvalidBranchName
-                       Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
-                       Owner.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
-                       Organization.organizationExists
-                           parameters.OwnerId
-                           parameters.OwnerName
-                           parameters.OrganizationId
-                           parameters.OrganizationName
-                           parameters.CorrelationId
-                           OrganizationDoesNotExist
-                       Repository.repositoryExists
-                           parameters.OwnerId
-                           parameters.OwnerName
-                           parameters.OrganizationId
-                           parameters.OrganizationName
-                           parameters.RepositoryId
-                           parameters.RepositoryName
-                           parameters.CorrelationId
-                           RepositoryDoesNotExist
-                       Branch.branchExists
-                           parameters.OwnerId
-                           parameters.OwnerName
-                           parameters.OrganizationId
-                           parameters.OrganizationName
-                           parameters.RepositoryId
-                           parameters.RepositoryName
-                           parameters.BranchId
-                           parameters.BranchName
-                           parameters.CorrelationId
-                           BranchDoesNotExist |]
+                let validations (parameters: EnableFeatureParameters) = [||]
 
                 let command (parameters: EnableFeatureParameters) = EnableAutoRebase(parameters.Enabled) |> returnValueTask
 
@@ -1124,38 +597,7 @@ module Branch =
     let Delete: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
-                let validations (parameters: DeleteBranchParameters) =
-                    [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
-                       String.isValidGraceName parameters.BranchName InvalidBranchName
-                       Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
-                       Owner.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
-                       Organization.organizationExists
-                           parameters.OwnerId
-                           parameters.OwnerName
-                           parameters.OrganizationId
-                           parameters.OrganizationName
-                           parameters.CorrelationId
-                           OrganizationDoesNotExist
-                       Repository.repositoryExists
-                           parameters.OwnerId
-                           parameters.OwnerName
-                           parameters.OrganizationId
-                           parameters.OrganizationName
-                           parameters.RepositoryId
-                           parameters.RepositoryName
-                           parameters.CorrelationId
-                           RepositoryDoesNotExist
-                       Branch.branchExists
-                           parameters.OwnerId
-                           parameters.OwnerName
-                           parameters.OrganizationId
-                           parameters.OrganizationName
-                           parameters.RepositoryId
-                           parameters.RepositoryName
-                           parameters.BranchId
-                           parameters.BranchName
-                           parameters.CorrelationId
-                           BranchDoesNotExist |]
+                let validations (parameters: DeleteBranchParameters) = [||]
 
                 let command (parameters: DeleteBranchParameters) = DeleteLogical(parameters.Force, parameters.DeleteReason) |> returnValueTask
 
@@ -1171,38 +613,7 @@ module Branch =
                 let graceIds = context.Items[nameof (GraceIds)] :?> GraceIds
 
                 try
-                    let validations (parameters: GetBranchParameters) =
-                        [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
-                           String.isValidGraceName parameters.BranchName InvalidBranchName
-                           Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
-                           Owner.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
-                           Organization.organizationExists
-                               parameters.OwnerId
-                               parameters.OwnerName
-                               parameters.OrganizationId
-                               parameters.OrganizationName
-                               parameters.CorrelationId
-                               OrganizationDoesNotExist
-                           Repository.repositoryExists
-                               parameters.OwnerId
-                               parameters.OwnerName
-                               parameters.OrganizationId
-                               parameters.OrganizationName
-                               parameters.RepositoryId
-                               parameters.RepositoryName
-                               parameters.CorrelationId
-                               RepositoryDoesNotExist
-                           Branch.branchExists
-                               parameters.OwnerId
-                               parameters.OwnerName
-                               parameters.OrganizationId
-                               parameters.OrganizationName
-                               parameters.RepositoryId
-                               parameters.RepositoryName
-                               parameters.BranchId
-                               parameters.BranchName
-                               parameters.CorrelationId
-                               BranchDoesNotExist |]
+                    let validations (parameters: GetBranchParameters) = [||]
 
                     let query (context: HttpContext) maxCount (actorProxy: IBranchActor) =
                         task {
@@ -1216,10 +627,11 @@ module Branch =
                     let duration_ms = getPaddedDuration_ms startTime
 
                     log.LogInformation(
-                        "{CurrentInstant}: CorrelationId: {correlationId}; Duration: {duration_ms}ms; Finished {path}; BranchId: {branchId}.",
+                        "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {path}; BranchId: {branchId}.",
                         getCurrentInstantExtended (),
-                        (getCorrelationId context),
+                        Environment.MachineName,
                         duration_ms,
+                        (getCorrelationId context),
                         context.Request.Path,
                         graceIds.BranchId
                     )
@@ -1230,10 +642,11 @@ module Branch =
 
                     log.LogError(
                         ex,
-                        "{CurrentInstant}: CorrelationId: {correlationId}; Duration: {duration_ms}ms; Error in {path}; BranchId: {branchId}.",
+                        "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Error in {path}; BranchId: {branchId}.",
                         getCurrentInstantExtended (),
-                        (getCorrelationId context),
+                        Environment.MachineName,
                         duration_ms,
+                        (getCorrelationId context),
                         context.Request.Path,
                         graceIds.BranchId
                     )
@@ -1251,38 +664,7 @@ module Branch =
                 let graceIds = context.Items[nameof (GraceIds)] :?> GraceIds
 
                 try
-                    let validations (parameters: GetBranchParameters) =
-                        [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
-                           String.isValidGraceName parameters.BranchName InvalidBranchName
-                           Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
-                           Owner.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
-                           Organization.organizationExists
-                               parameters.OwnerId
-                               parameters.OwnerName
-                               parameters.OrganizationId
-                               parameters.OrganizationName
-                               parameters.CorrelationId
-                               OrganizationDoesNotExist
-                           Repository.repositoryExists
-                               parameters.OwnerId
-                               parameters.OwnerName
-                               parameters.OrganizationId
-                               parameters.OrganizationName
-                               parameters.RepositoryId
-                               parameters.RepositoryName
-                               parameters.CorrelationId
-                               RepositoryDoesNotExist
-                           Branch.branchExists
-                               parameters.OwnerId
-                               parameters.OwnerName
-                               parameters.OrganizationId
-                               parameters.OrganizationName
-                               parameters.RepositoryId
-                               parameters.RepositoryName
-                               parameters.BranchId
-                               parameters.BranchName
-                               parameters.CorrelationId
-                               BranchDoesNotExist |]
+                    let validations (parameters: GetBranchParameters) = [||]
 
                     let query (context: HttpContext) maxCount (actorProxy: IBranchActor) =
                         task {
@@ -1297,10 +679,11 @@ module Branch =
                     let duration_ms = getPaddedDuration_ms startTime
 
                     log.LogInformation(
-                        "{CurrentInstant}: CorrelationId: {correlationId}; Duration: {duration_ms}ms; Finished {path}; BranchId: {branchId}.",
+                        "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {path}; BranchId: {branchId}.",
                         getCurrentInstantExtended (),
-                        (getCorrelationId context),
+                        Environment.MachineName,
                         duration_ms,
+                        (getCorrelationId context),
                         context.Request.Path,
                         graceIds.BranchId
                     )
@@ -1311,10 +694,11 @@ module Branch =
 
                     log.LogError(
                         ex,
-                        "{CurrentInstant}: CorrelationId: {correlationId}; Duration: {duration_ms}ms; Error in {path}; BranchId: {branchId}.",
+                        "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Error in {path}; BranchId: {branchId}.",
                         getCurrentInstantExtended (),
-                        (getCorrelationId context),
+                        Environment.MachineName,
                         duration_ms,
+                        (getCorrelationId context),
                         context.Request.Path,
                         graceIds.BranchId
                     )
@@ -1332,38 +716,7 @@ module Branch =
                 let graceIds = context.Items[nameof (GraceIds)] :?> GraceIds
 
                 try
-                    let validations (parameters: BranchParameters) =
-                        [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
-                           String.isValidGraceName parameters.BranchName InvalidBranchName
-                           Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
-                           Owner.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
-                           Organization.organizationExists
-                               parameters.OwnerId
-                               parameters.OwnerName
-                               parameters.OrganizationId
-                               parameters.OrganizationName
-                               parameters.CorrelationId
-                               OrganizationDoesNotExist
-                           Repository.repositoryExists
-                               parameters.OwnerId
-                               parameters.OwnerName
-                               parameters.OrganizationId
-                               parameters.OrganizationName
-                               parameters.RepositoryId
-                               parameters.RepositoryName
-                               parameters.CorrelationId
-                               RepositoryDoesNotExist
-                           Branch.branchExists
-                               parameters.OwnerId
-                               parameters.OwnerName
-                               parameters.OrganizationId
-                               parameters.OrganizationName
-                               parameters.RepositoryId
-                               parameters.RepositoryName
-                               parameters.BranchId
-                               parameters.BranchName
-                               parameters.CorrelationId
-                               ParentBranchDoesNotExist |]
+                    let validations (parameters: BranchParameters) = [||]
 
                     let query (context: HttpContext) maxCount (actorProxy: IBranchActor) =
                         task {
@@ -1377,10 +730,11 @@ module Branch =
                     let duration_ms = getPaddedDuration_ms startTime
 
                     log.LogInformation(
-                        "{CurrentInstant}: CorrelationId: {correlationId}; Duration: {duration_ms}ms; Finished {path}; BranchId: {branchId}.",
+                        "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {path}; BranchId: {branchId}.",
                         getCurrentInstantExtended (),
-                        (getCorrelationId context),
+                        Environment.MachineName,
                         duration_ms,
+                        (getCorrelationId context),
                         context.Request.Path,
                         graceIds.BranchId
                     )
@@ -1391,10 +745,11 @@ module Branch =
 
                     log.LogError(
                         ex,
-                        "{CurrentInstant}: CorrelationId: {correlationId}; Duration: {duration_ms}ms; Error in {path}; BranchId: {branchId}.",
+                        "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Error in {path}; BranchId: {branchId}.",
                         getCurrentInstantExtended (),
-                        (getCorrelationId context),
+                        Environment.MachineName,
                         duration_ms,
+                        (getCorrelationId context),
                         context.Request.Path,
                         graceIds.BranchId
                     )
@@ -1412,38 +767,7 @@ module Branch =
                 let graceIds = context.Items[nameof (GraceIds)] :?> GraceIds
 
                 try
-                    let validations (parameters: GetReferenceParameters) =
-                        [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
-                           String.isValidGraceName parameters.BranchName InvalidBranchName
-                           Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
-                           Owner.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
-                           Organization.organizationExists
-                               parameters.OwnerId
-                               parameters.OwnerName
-                               parameters.OrganizationId
-                               parameters.OrganizationName
-                               parameters.CorrelationId
-                               OrganizationDoesNotExist
-                           Repository.repositoryExists
-                               parameters.OwnerId
-                               parameters.OwnerName
-                               parameters.OrganizationId
-                               parameters.OrganizationName
-                               parameters.RepositoryId
-                               parameters.RepositoryName
-                               parameters.CorrelationId
-                               RepositoryDoesNotExist
-                           Branch.branchExists
-                               parameters.OwnerId
-                               parameters.OwnerName
-                               parameters.OrganizationId
-                               parameters.OrganizationName
-                               parameters.RepositoryId
-                               parameters.RepositoryName
-                               parameters.BranchId
-                               parameters.BranchName
-                               parameters.CorrelationId
-                               BranchDoesNotExist |]
+                    let validations (parameters: GetReferenceParameters) = [||]
 
                     let query (context: HttpContext) maxCount (actorProxy: IBranchActor) =
                         task {
@@ -1463,10 +787,11 @@ module Branch =
                     let duration_ms = getPaddedDuration_ms startTime
 
                     log.LogInformation(
-                        "{CurrentInstant}: CorrelationId: {correlationId}; Duration: {duration_ms}ms; Finished {path}; BranchId: {branchId}.",
+                        "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {path}; BranchId: {branchId}.",
                         getCurrentInstantExtended (),
-                        (getCorrelationId context),
+                        Environment.MachineName,
                         duration_ms,
+                        (getCorrelationId context),
                         context.Request.Path,
                         graceIds.BranchId
                     )
@@ -1477,10 +802,11 @@ module Branch =
 
                     log.LogError(
                         ex,
-                        "{CurrentInstant}: CorrelationId: {correlationId}; Duration: {duration_ms}ms; Error in {path}; BranchId: {branchId}.",
+                        "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Error in {path}; BranchId: {branchId}.",
                         getCurrentInstantExtended (),
-                        (getCorrelationId context),
+                        Environment.MachineName,
                         duration_ms,
+                        (getCorrelationId context),
                         context.Request.Path,
                         graceIds.BranchId
                     )
@@ -1498,39 +824,7 @@ module Branch =
                 let graceIds = context.Items[nameof (GraceIds)] :?> GraceIds
 
                 try
-                    let validations (parameters: GetReferencesParameters) =
-                        [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
-                           String.isValidGraceName parameters.BranchName InvalidBranchName
-                           Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
-                           Number.isPositiveOrZero parameters.MaxCount ValueMustBePositive
-                           Owner.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
-                           Organization.organizationExists
-                               parameters.OwnerId
-                               parameters.OwnerName
-                               parameters.OrganizationId
-                               parameters.OrganizationName
-                               parameters.CorrelationId
-                               OrganizationDoesNotExist
-                           Repository.repositoryExists
-                               parameters.OwnerId
-                               parameters.OwnerName
-                               parameters.OrganizationId
-                               parameters.OrganizationName
-                               parameters.RepositoryId
-                               parameters.RepositoryName
-                               parameters.CorrelationId
-                               RepositoryDoesNotExist
-                           Branch.branchExists
-                               parameters.OwnerId
-                               parameters.OwnerName
-                               parameters.OrganizationId
-                               parameters.OrganizationName
-                               parameters.RepositoryId
-                               parameters.RepositoryName
-                               parameters.BranchId
-                               parameters.BranchName
-                               parameters.CorrelationId
-                               BranchDoesNotExist |]
+                    let validations (parameters: GetReferencesParameters) = [| Number.isPositiveOrZero parameters.MaxCount ValueMustBePositive |]
 
                     let query (context: HttpContext) (maxCount: int) (actorProxy: IBranchActor) =
                         task {
@@ -1545,10 +839,11 @@ module Branch =
                     let duration_ms = getPaddedDuration_ms startTime
 
                     log.LogInformation(
-                        "{CurrentInstant}: CorrelationId: {correlationId}; Duration: {duration_ms}ms; Finished {path}; BranchId: {branchId}.",
+                        "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {path}; BranchId: {branchId}.",
                         getCurrentInstantExtended (),
-                        (getCorrelationId context),
+                        Environment.MachineName,
                         duration_ms,
+                        (getCorrelationId context),
                         context.Request.Path,
                         graceIds.BranchId
                     )
@@ -1559,10 +854,11 @@ module Branch =
 
                     log.LogError(
                         ex,
-                        "{CurrentInstant}: CorrelationId: {correlationId}; Duration: {duration_ms}ms; Error in {path}; BranchId: {branchId}.",
+                        "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Error in {path}; BranchId: {branchId}.",
                         getCurrentInstantExtended (),
-                        (getCorrelationId context),
+                        Environment.MachineName,
                         duration_ms,
+                        (getCorrelationId context),
                         context.Request.Path,
                         graceIds.BranchId
                     )
@@ -1581,40 +877,9 @@ module Branch =
 
                 try
                     let validations (parameters: GetDiffsForReferenceTypeParameters) =
-                        [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
-                           String.isValidGraceName parameters.BranchName InvalidBranchName
-                           Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
-                           Number.isPositiveOrZero parameters.MaxCount ValueMustBePositive
+                        [| Number.isPositiveOrZero parameters.MaxCount ValueMustBePositive
                            String.isNotEmpty parameters.ReferenceType ReferenceTypeMustBeProvided
-                           DiscriminatedUnion.isMemberOf<ReferenceType, BranchError> parameters.ReferenceType InvalidReferenceType
-                           Owner.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
-                           Organization.organizationExists
-                               parameters.OwnerId
-                               parameters.OwnerName
-                               parameters.OrganizationId
-                               parameters.OrganizationName
-                               parameters.CorrelationId
-                               OrganizationDoesNotExist
-                           Repository.repositoryExists
-                               parameters.OwnerId
-                               parameters.OwnerName
-                               parameters.OrganizationId
-                               parameters.OrganizationName
-                               parameters.RepositoryId
-                               parameters.RepositoryName
-                               parameters.CorrelationId
-                               RepositoryDoesNotExist
-                           Branch.branchExists
-                               parameters.OwnerId
-                               parameters.OwnerName
-                               parameters.OrganizationId
-                               parameters.OrganizationName
-                               parameters.RepositoryId
-                               parameters.RepositoryName
-                               parameters.BranchId
-                               parameters.BranchName
-                               parameters.CorrelationId
-                               BranchDoesNotExist |]
+                           DiscriminatedUnion.isMemberOf<ReferenceType, BranchError> parameters.ReferenceType InvalidReferenceType |]
 
                     let query (context: HttpContext) (maxCount: int) (actorProxy: IBranchActor) =
                         task {
@@ -1666,10 +931,11 @@ module Branch =
                     let duration_ms = getPaddedDuration_ms startTime
 
                     log.LogInformation(
-                        "{CurrentInstant}: CorrelationId: {correlationId}; Duration: {duration_ms}ms; Finished {path}; BranchId: {branchId}.",
+                        "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {path}; BranchId: {branchId}.",
                         getCurrentInstantExtended (),
-                        (getCorrelationId context),
+                        Environment.MachineName,
                         duration_ms,
+                        (getCorrelationId context),
                         context.Request.Path,
                         graceIds.BranchId
                     )
@@ -1680,10 +946,11 @@ module Branch =
 
                     log.LogError(
                         ex,
-                        "{CurrentInstant}: CorrelationId: {correlationId}; Duration: {duration_ms}ms; Error in {path}; BranchId: {branchId}.",
+                        "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Error in {path}; BranchId: {branchId}.",
                         getCurrentInstantExtended (),
-                        (getCorrelationId context),
+                        Environment.MachineName,
                         duration_ms,
+                        (getCorrelationId context),
                         context.Request.Path,
                         graceIds.BranchId
                     )
@@ -1701,39 +968,7 @@ module Branch =
                 let graceIds = context.Items[nameof (GraceIds)] :?> GraceIds
 
                 try
-                    let validations (parameters: GetReferencesParameters) =
-                        [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
-                           String.isValidGraceName parameters.BranchName InvalidBranchName
-                           Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
-                           Number.isPositiveOrZero parameters.MaxCount ValueMustBePositive
-                           Owner.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
-                           Organization.organizationExists
-                               parameters.OwnerId
-                               parameters.OwnerName
-                               parameters.OrganizationId
-                               parameters.OrganizationName
-                               parameters.CorrelationId
-                               OrganizationDoesNotExist
-                           Repository.repositoryExists
-                               parameters.OwnerId
-                               parameters.OwnerName
-                               parameters.OrganizationId
-                               parameters.OrganizationName
-                               parameters.RepositoryId
-                               parameters.RepositoryName
-                               parameters.CorrelationId
-                               RepositoryDoesNotExist
-                           Branch.branchExists
-                               parameters.OwnerId
-                               parameters.OwnerName
-                               parameters.OrganizationId
-                               parameters.OrganizationName
-                               parameters.RepositoryId
-                               parameters.RepositoryName
-                               parameters.BranchId
-                               parameters.BranchName
-                               parameters.CorrelationId
-                               BranchDoesNotExist |]
+                    let validations (parameters: GetReferencesParameters) = [| Number.isPositiveOrZero parameters.MaxCount ValueMustBePositive |]
 
                     let query (context: HttpContext) maxCount (actorProxy: IBranchActor) =
                         task {
@@ -1748,10 +983,11 @@ module Branch =
                     let duration_ms = getPaddedDuration_ms startTime
 
                     log.LogInformation(
-                        "{CurrentInstant}: CorrelationId: {correlationId}; Duration: {duration_ms}ms; Finished {path}; BranchId: {branchId}.",
+                        "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {path}; BranchId: {branchId}.",
                         getCurrentInstantExtended (),
-                        (getCorrelationId context),
+                        Environment.MachineName,
                         duration_ms,
+                        (getCorrelationId context),
                         context.Request.Path,
                         graceIds.BranchId
                     )
@@ -1762,10 +998,11 @@ module Branch =
 
                     log.LogError(
                         ex,
-                        "{CurrentInstant}: CorrelationId: {correlationId}; Duration: {duration_ms}ms; Error in {path}; BranchId: {branchId}.",
+                        "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Error in {path}; BranchId: {branchId}.",
                         getCurrentInstantExtended (),
-                        (getCorrelationId context),
+                        Environment.MachineName,
                         duration_ms,
+                        (getCorrelationId context),
                         context.Request.Path,
                         graceIds.BranchId
                     )
@@ -1783,39 +1020,7 @@ module Branch =
                 let graceIds = context.Items[nameof (GraceIds)] :?> GraceIds
 
                 try
-                    let validations (parameters: GetReferencesParameters) =
-                        [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
-                           String.isValidGraceName parameters.BranchName InvalidBranchName
-                           Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
-                           Number.isPositiveOrZero parameters.MaxCount ValueMustBePositive
-                           Owner.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
-                           Organization.organizationExists
-                               parameters.OwnerId
-                               parameters.OwnerName
-                               parameters.OrganizationId
-                               parameters.OrganizationName
-                               parameters.CorrelationId
-                               OrganizationDoesNotExist
-                           Repository.repositoryExists
-                               parameters.OwnerId
-                               parameters.OwnerName
-                               parameters.OrganizationId
-                               parameters.OrganizationName
-                               parameters.RepositoryId
-                               parameters.RepositoryName
-                               parameters.CorrelationId
-                               RepositoryDoesNotExist
-                           Branch.branchExists
-                               parameters.OwnerId
-                               parameters.OwnerName
-                               parameters.OrganizationId
-                               parameters.OrganizationName
-                               parameters.RepositoryId
-                               parameters.RepositoryName
-                               parameters.BranchId
-                               parameters.BranchName
-                               parameters.CorrelationId
-                               BranchDoesNotExist |]
+                    let validations (parameters: GetReferencesParameters) = [| Number.isPositiveOrZero parameters.MaxCount ValueMustBePositive |]
 
                     let query (context: HttpContext) maxCount (actorProxy: IBranchActor) =
                         task {
@@ -1830,10 +1035,11 @@ module Branch =
                     let duration_ms = getPaddedDuration_ms startTime
 
                     log.LogInformation(
-                        "{CurrentInstant}: CorrelationId: {correlationId}; Duration: {duration_ms}ms; Finished {path}; BranchId: {branchId}.",
+                        "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {path}; BranchId: {branchId}.",
                         getCurrentInstantExtended (),
-                        (getCorrelationId context),
+                        Environment.MachineName,
                         duration_ms,
+                        (getCorrelationId context),
                         context.Request.Path,
                         graceIds.BranchId
                     )
@@ -1844,10 +1050,11 @@ module Branch =
 
                     log.LogError(
                         ex,
-                        "{CurrentInstant}: CorrelationId: {correlationId}; Duration: {duration_ms}ms; Error in {path}; BranchId: {branchId}.",
+                        "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Error in {path}; BranchId: {branchId}.",
                         getCurrentInstantExtended (),
-                        (getCorrelationId context),
+                        Environment.MachineName,
                         duration_ms,
+                        (getCorrelationId context),
                         context.Request.Path,
                         graceIds.BranchId
                     )
@@ -1865,39 +1072,7 @@ module Branch =
                 let graceIds = context.Items[nameof (GraceIds)] :?> GraceIds
 
                 try
-                    let validations (parameters: GetReferencesParameters) =
-                        [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
-                           String.isValidGraceName parameters.BranchName InvalidBranchName
-                           Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
-                           Number.isPositiveOrZero parameters.MaxCount ValueMustBePositive
-                           Owner.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
-                           Organization.organizationExists
-                               parameters.OwnerId
-                               parameters.OwnerName
-                               parameters.OrganizationId
-                               parameters.OrganizationName
-                               parameters.CorrelationId
-                               OrganizationDoesNotExist
-                           Repository.repositoryExists
-                               parameters.OwnerId
-                               parameters.OwnerName
-                               parameters.OrganizationId
-                               parameters.OrganizationName
-                               parameters.RepositoryId
-                               parameters.RepositoryName
-                               parameters.CorrelationId
-                               RepositoryDoesNotExist
-                           Branch.branchExists
-                               parameters.OwnerId
-                               parameters.OwnerName
-                               parameters.OrganizationId
-                               parameters.OrganizationName
-                               parameters.RepositoryId
-                               parameters.RepositoryName
-                               parameters.BranchId
-                               parameters.BranchName
-                               parameters.CorrelationId
-                               BranchDoesNotExist |]
+                    let validations (parameters: GetReferencesParameters) = [| Number.isPositiveOrZero parameters.MaxCount ValueMustBePositive |]
 
                     let query (context: HttpContext) maxCount (actorProxy: IBranchActor) =
                         task {
@@ -1912,10 +1087,11 @@ module Branch =
                     let duration_ms = getPaddedDuration_ms startTime
 
                     log.LogInformation(
-                        "{CurrentInstant}: CorrelationId: {correlationId}; Duration: {duration_ms}ms; Finished {path}; BranchId: {branchId}.",
+                        "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {path}; BranchId: {branchId}.",
                         getCurrentInstantExtended (),
-                        (getCorrelationId context),
+                        Environment.MachineName,
                         duration_ms,
+                        (getCorrelationId context),
                         context.Request.Path,
                         graceIds.BranchId
                     )
@@ -1926,10 +1102,11 @@ module Branch =
 
                     log.LogError(
                         ex,
-                        "{CurrentInstant}: CorrelationId: {correlationId}; Duration: {duration_ms}ms; Error in {path}; BranchId: {branchId}.",
+                        "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Error in {path}; BranchId: {branchId}.",
                         getCurrentInstantExtended (),
-                        (getCorrelationId context),
+                        Environment.MachineName,
                         duration_ms,
+                        (getCorrelationId context),
                         context.Request.Path,
                         graceIds.BranchId
                     )
@@ -1947,39 +1124,7 @@ module Branch =
                 let graceIds = context.Items[nameof (GraceIds)] :?> GraceIds
 
                 try
-                    let validations (parameters: GetReferencesParameters) =
-                        [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
-                           String.isValidGraceName parameters.BranchName InvalidBranchName
-                           Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
-                           Number.isPositiveOrZero parameters.MaxCount ValueMustBePositive
-                           Owner.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
-                           Organization.organizationExists
-                               parameters.OwnerId
-                               parameters.OwnerName
-                               parameters.OrganizationId
-                               parameters.OrganizationName
-                               parameters.CorrelationId
-                               OrganizationDoesNotExist
-                           Repository.repositoryExists
-                               parameters.OwnerId
-                               parameters.OwnerName
-                               parameters.OrganizationId
-                               parameters.OrganizationName
-                               parameters.RepositoryId
-                               parameters.RepositoryName
-                               parameters.CorrelationId
-                               RepositoryDoesNotExist
-                           Branch.branchExists
-                               parameters.OwnerId
-                               parameters.OwnerName
-                               parameters.OrganizationId
-                               parameters.OrganizationName
-                               parameters.RepositoryId
-                               parameters.RepositoryName
-                               parameters.BranchId
-                               parameters.BranchName
-                               parameters.CorrelationId
-                               BranchDoesNotExist |]
+                    let validations (parameters: GetReferencesParameters) = [| Number.isPositiveOrZero parameters.MaxCount ValueMustBePositive |]
 
 
                     let query (context: HttpContext) maxCount (actorProxy: IBranchActor) =
@@ -1995,10 +1140,11 @@ module Branch =
                     let duration_ms = getPaddedDuration_ms startTime
 
                     log.LogInformation(
-                        "{CurrentInstant}: CorrelationId: {correlationId}; Duration: {duration_ms}ms; Finished {path}; BranchId: {branchId}.",
+                        "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {path}; BranchId: {branchId}.",
                         getCurrentInstantExtended (),
-                        (getCorrelationId context),
+                        Environment.MachineName,
                         duration_ms,
+                        (getCorrelationId context),
                         context.Request.Path,
                         graceIds.BranchId
                     )
@@ -2009,10 +1155,11 @@ module Branch =
 
                     log.LogError(
                         ex,
-                        "{CurrentInstant}: CorrelationId: {correlationId}; Duration: {duration_ms}ms; Error in {path}; BranchId: {branchId}.",
+                        "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Error in {path}; BranchId: {branchId}.",
                         getCurrentInstantExtended (),
-                        (getCorrelationId context),
+                        Environment.MachineName,
                         duration_ms,
+                        (getCorrelationId context),
                         context.Request.Path,
                         graceIds.BranchId
                     )
@@ -2030,39 +1177,7 @@ module Branch =
                 let graceIds = context.Items[nameof (GraceIds)] :?> GraceIds
 
                 try
-                    let validations (parameters: GetReferencesParameters) =
-                        [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
-                           String.isValidGraceName parameters.BranchName InvalidBranchName
-                           Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
-                           Number.isPositiveOrZero parameters.MaxCount ValueMustBePositive
-                           Owner.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
-                           Organization.organizationExists
-                               parameters.OwnerId
-                               parameters.OwnerName
-                               parameters.OrganizationId
-                               parameters.OrganizationName
-                               parameters.CorrelationId
-                               OrganizationDoesNotExist
-                           Repository.repositoryExists
-                               parameters.OwnerId
-                               parameters.OwnerName
-                               parameters.OrganizationId
-                               parameters.OrganizationName
-                               parameters.RepositoryId
-                               parameters.RepositoryName
-                               parameters.CorrelationId
-                               RepositoryDoesNotExist
-                           Branch.branchExists
-                               parameters.OwnerId
-                               parameters.OwnerName
-                               parameters.OrganizationId
-                               parameters.OrganizationName
-                               parameters.RepositoryId
-                               parameters.RepositoryName
-                               parameters.BranchId
-                               parameters.BranchName
-                               parameters.CorrelationId
-                               BranchDoesNotExist |]
+                    let validations (parameters: GetReferencesParameters) = [| Number.isPositiveOrZero parameters.MaxCount ValueMustBePositive |]
 
                     let query (context: HttpContext) maxCount (actorProxy: IBranchActor) =
                         task {
@@ -2077,10 +1192,11 @@ module Branch =
                     let duration_ms = getPaddedDuration_ms startTime
 
                     log.LogInformation(
-                        "{CurrentInstant}: CorrelationId: {correlationId}; Duration: {duration_ms}ms; Finished {path}; BranchId: {branchId}.",
+                        "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {path}; BranchId: {branchId}.",
                         getCurrentInstantExtended (),
-                        (getCorrelationId context),
+                        Environment.MachineName,
                         duration_ms,
+                        (getCorrelationId context),
                         context.Request.Path,
                         graceIds.BranchId
                     )
@@ -2091,10 +1207,11 @@ module Branch =
 
                     log.LogError(
                         ex,
-                        "{CurrentInstant}: CorrelationId: {correlationId}; Duration: {duration_ms}ms; Error in {path}; BranchId: {branchId}.",
+                        "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Error in {path}; BranchId: {branchId}.",
                         getCurrentInstantExtended (),
-                        (getCorrelationId context),
+                        Environment.MachineName,
                         duration_ms,
+                        (getCorrelationId context),
                         context.Request.Path,
                         graceIds.BranchId
                     )
@@ -2112,39 +1229,7 @@ module Branch =
                 let graceIds = context.Items[nameof (GraceIds)] :?> GraceIds
 
                 try
-                    let validations (parameters: GetReferencesParameters) =
-                        [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
-                           String.isValidGraceName parameters.BranchName InvalidBranchName
-                           Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
-                           Number.isPositiveOrZero parameters.MaxCount ValueMustBePositive
-                           Owner.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
-                           Organization.organizationExists
-                               parameters.OwnerId
-                               parameters.OwnerName
-                               parameters.OrganizationId
-                               parameters.OrganizationName
-                               parameters.CorrelationId
-                               OrganizationDoesNotExist
-                           Repository.repositoryExists
-                               parameters.OwnerId
-                               parameters.OwnerName
-                               parameters.OrganizationId
-                               parameters.OrganizationName
-                               parameters.RepositoryId
-                               parameters.RepositoryName
-                               parameters.CorrelationId
-                               RepositoryDoesNotExist
-                           Branch.branchExists
-                               parameters.OwnerId
-                               parameters.OwnerName
-                               parameters.OrganizationId
-                               parameters.OrganizationName
-                               parameters.RepositoryId
-                               parameters.RepositoryName
-                               parameters.BranchId
-                               parameters.BranchName
-                               parameters.CorrelationId
-                               BranchDoesNotExist |]
+                    let validations (parameters: GetReferencesParameters) = [| Number.isPositiveOrZero parameters.MaxCount ValueMustBePositive |]
 
                     let query (context: HttpContext) maxCount (actorProxy: IBranchActor) =
                         task {
@@ -2159,10 +1244,11 @@ module Branch =
                     let duration_ms = getPaddedDuration_ms startTime
 
                     log.LogInformation(
-                        "{CurrentInstant}: CorrelationId: {correlationId}; Duration: {duration_ms}ms; Finished {path}; BranchId: {branchId}.",
+                        "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {path}; BranchId: {branchId}.",
                         getCurrentInstantExtended (),
-                        (getCorrelationId context),
+                        Environment.MachineName,
                         duration_ms,
+                        (getCorrelationId context),
                         context.Request.Path,
                         graceIds.BranchId
                     )
@@ -2173,10 +1259,11 @@ module Branch =
 
                     log.LogError(
                         ex,
-                        "{CurrentInstant}: CorrelationId: {correlationId}; Duration: {duration_ms}ms; Error in {path}; BranchId: {branchId}.",
+                        "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Error in {path}; BranchId: {branchId}.",
                         getCurrentInstantExtended (),
-                        (getCorrelationId context),
+                        Environment.MachineName,
                         duration_ms,
+                        (getCorrelationId context),
                         context.Request.Path,
                         graceIds.BranchId
                     )
@@ -2194,39 +1281,8 @@ module Branch =
 
                 try
                     let validations (parameters: ListContentsParameters) =
-                        [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
-                           String.isValidGraceName parameters.BranchName InvalidBranchName
-                           Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
-                           String.isEmptyOrValidSha256Hash parameters.Sha256Hash InvalidSha256Hash
-                           Guid.isValidAndNotEmpty parameters.ReferenceId InvalidReferenceId
-                           Owner.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
-                           Organization.organizationExists
-                               parameters.OwnerId
-                               parameters.OwnerName
-                               parameters.OrganizationId
-                               parameters.OrganizationName
-                               parameters.CorrelationId
-                               OrganizationDoesNotExist
-                           Repository.repositoryExists
-                               parameters.OwnerId
-                               parameters.OwnerName
-                               parameters.OrganizationId
-                               parameters.OrganizationName
-                               parameters.RepositoryId
-                               parameters.RepositoryName
-                               parameters.CorrelationId
-                               RepositoryDoesNotExist
-                           Branch.branchExists
-                               parameters.OwnerId
-                               parameters.OwnerName
-                               parameters.OrganizationId
-                               parameters.OrganizationName
-                               parameters.RepositoryId
-                               parameters.RepositoryName
-                               parameters.BranchId
-                               parameters.BranchName
-                               parameters.CorrelationId
-                               BranchDoesNotExist |]
+                        [| String.isEmptyOrValidSha256Hash parameters.Sha256Hash InvalidSha256Hash
+                           Guid.isValidAndNotEmpty parameters.ReferenceId InvalidReferenceId |]
 
                     let query (context: HttpContext) maxCount (actorProxy: IBranchActor) =
                         task {
@@ -2291,10 +1347,11 @@ module Branch =
                     let duration_ms = getPaddedDuration_ms startTime
 
                     log.LogInformation(
-                        "{CurrentInstant}: CorrelationId: {correlationId}; Duration: {duration_ms}ms; Finished {path}; BranchId: {branchId}.",
+                        "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {path}; BranchId: {branchId}.",
                         getCurrentInstantExtended (),
-                        (getCorrelationId context),
+                        Environment.MachineName,
                         duration_ms,
+                        (getCorrelationId context),
                         context.Request.Path,
                         graceIds.BranchId
                     )
@@ -2305,10 +1362,11 @@ module Branch =
 
                     log.LogError(
                         ex,
-                        "{CurrentInstant}: CorrelationId: {correlationId}; Duration: {duration_ms}ms; Error in {path}; BranchId: {branchId}.",
+                        "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Error in {path}; BranchId: {branchId}.",
                         getCurrentInstantExtended (),
-                        (getCorrelationId context),
+                        Environment.MachineName,
                         duration_ms,
+                        (getCorrelationId context),
                         context.Request.Path,
                         graceIds.BranchId
                     )
@@ -2326,39 +1384,8 @@ module Branch =
 
                 try
                     let validations (parameters: ListContentsParameters) =
-                        [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
-                           String.isValidGraceName parameters.BranchName InvalidBranchName
-                           Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
-                           String.isEmptyOrValidSha256Hash parameters.Sha256Hash InvalidSha256Hash
-                           Guid.isValidAndNotEmpty parameters.ReferenceId InvalidReferenceId
-                           Owner.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
-                           Organization.organizationExists
-                               parameters.OwnerId
-                               parameters.OwnerName
-                               parameters.OrganizationId
-                               parameters.OrganizationName
-                               parameters.CorrelationId
-                               OrganizationDoesNotExist
-                           Repository.repositoryExists
-                               parameters.OwnerId
-                               parameters.OwnerName
-                               parameters.OrganizationId
-                               parameters.OrganizationName
-                               parameters.RepositoryId
-                               parameters.RepositoryName
-                               parameters.CorrelationId
-                               RepositoryDoesNotExist
-                           Branch.branchExists
-                               parameters.OwnerId
-                               parameters.OwnerName
-                               parameters.OrganizationId
-                               parameters.OrganizationName
-                               parameters.RepositoryId
-                               parameters.RepositoryName
-                               parameters.BranchId
-                               parameters.BranchName
-                               parameters.CorrelationId
-                               BranchDoesNotExist |]
+                        [| String.isEmptyOrValidSha256Hash parameters.Sha256Hash InvalidSha256Hash
+                           Guid.isValidAndNotEmpty parameters.ReferenceId InvalidReferenceId |]
 
                     let query (context: HttpContext) maxCount (actorProxy: IBranchActor) =
                         task {
@@ -2430,10 +1457,11 @@ module Branch =
                     let duration_ms = getPaddedDuration_ms startTime
 
                     log.LogInformation(
-                        "{CurrentInstant}: CorrelationId: {correlationId}; Duration: {duration_ms}ms; Finished {path}; BranchId: {branchId}.",
+                        "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {path}; BranchId: {branchId}.",
                         getCurrentInstantExtended (),
-                        (getCorrelationId context),
+                        Environment.MachineName,
                         duration_ms,
+                        (getCorrelationId context),
                         context.Request.Path,
                         graceIds.BranchId
                     )
@@ -2444,10 +1472,11 @@ module Branch =
 
                     log.LogError(
                         ex,
-                        "{CurrentInstant}: CorrelationId: {correlationId}; Duration: {duration_ms}ms; Error in {path}; BranchId: {branchId}.",
+                        "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Error in {path}; BranchId: {branchId}.",
                         getCurrentInstantExtended (),
-                        (getCorrelationId context),
+                        Environment.MachineName,
                         duration_ms,
+                        (getCorrelationId context),
                         context.Request.Path,
                         graceIds.BranchId
                     )
@@ -2465,39 +1494,8 @@ module Branch =
 
                 try
                     let validations (parameters: GetBranchVersionParameters) =
-                        [| Guid.isValidAndNotEmpty parameters.BranchId InvalidBranchId
-                           String.isValidGraceName parameters.BranchName InvalidBranchName
-                           Input.eitherIdOrNameMustBeProvided parameters.BranchId parameters.BranchName EitherBranchIdOrBranchNameRequired
-                           String.isEmptyOrValidSha256Hash parameters.Sha256Hash InvalidSha256Hash
-                           Guid.isValidAndNotEmpty parameters.ReferenceId InvalidReferenceId
-                           Owner.ownerExists parameters.OwnerId parameters.OwnerName context OwnerDoesNotExist
-                           Organization.organizationExists
-                               parameters.OwnerId
-                               parameters.OwnerName
-                               parameters.OrganizationId
-                               parameters.OrganizationName
-                               parameters.CorrelationId
-                               OrganizationDoesNotExist
-                           Repository.repositoryExists
-                               parameters.OwnerId
-                               parameters.OwnerName
-                               parameters.OrganizationId
-                               parameters.OrganizationName
-                               parameters.RepositoryId
-                               parameters.RepositoryName
-                               parameters.CorrelationId
-                               RepositoryDoesNotExist
-                           Branch.branchExists
-                               parameters.OwnerId
-                               parameters.OwnerName
-                               parameters.OrganizationId
-                               parameters.OrganizationName
-                               parameters.RepositoryId
-                               parameters.RepositoryName
-                               parameters.BranchId
-                               parameters.BranchName
-                               parameters.CorrelationId
-                               BranchDoesNotExist |]
+                        [| String.isEmptyOrValidSha256Hash parameters.Sha256Hash InvalidSha256Hash
+                           Guid.isValidAndNotEmpty parameters.ReferenceId InvalidReferenceId |]
 
                     let query (context: HttpContext) maxCount (actorProxy: IBranchActor) =
                         task {
@@ -2590,10 +1588,11 @@ module Branch =
 
                     log.LogError(
                         ex,
-                        "{CurrentInstant}: CorrelationId: {correlationId}; Duration: {duration_ms}ms; Error in {path}; BranchId: {branchId}.",
+                        "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Error in {path}; BranchId: {branchId}.",
                         getCurrentInstantExtended (),
-                        (getCorrelationId context),
+                        Environment.MachineName,
                         duration_ms,
+                        (getCorrelationId context),
                         context.Request.Path,
                         graceIds.BranchId
                     )

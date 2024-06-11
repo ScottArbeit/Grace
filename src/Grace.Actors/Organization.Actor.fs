@@ -38,8 +38,8 @@ module Organization =
         let mutable logScope: IDisposable = null
         let mutable currentCommand = String.Empty
 
-        let dtoStateName = "organizationDtoState"
-        let eventsStateName = "organizationEventsState"
+        let dtoStateName = StateName.OrganizationDto
+        let eventsStateName = StateName.Organization
 
         let mutable organizationDto = OrganizationDto.Default
         let mutable organizationEvents: List<OrganizationEvent> = null
@@ -83,8 +83,9 @@ module Organization =
                 let duration_ms = getPaddedDuration_ms activateStartTime
 
                 log.LogInformation(
-                    "{CurrentInstant}: Duration: {duration_ms}ms; Activated {ActorType} {ActorId}. {message}.",
+                    "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; Activated {ActorType} {ActorId}. {message}.",
                     getCurrentInstantExtended (),
+                    Environment.MachineName,
                     duration_ms,
                     actorName,
                     host.Id,
@@ -131,20 +132,22 @@ module Organization =
 
             if String.IsNullOrEmpty(currentCommand) then
                 log.LogInformation(
-                    "{CurrentInstant}: CorrelationId: {correlationId}; Duration: {duration_ms}ms; Finished {ActorName}.{MethodName}; OrganizationId: {Id}.",
+                    "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {ActorName}.{MethodName}; OrganizationId: {Id}.",
                     getCurrentInstantExtended (),
-                    this.correlationId,
+                    Environment.MachineName,
                     duration_ms,
+                    this.correlationId,
                     actorName,
                     context.MethodName,
                     this.Id
                 )
             else
                 log.LogInformation(
-                    "{CurrentInstant}: CorrelationId: {correlationId}; Duration: {duration_ms}ms; Finished {ActorName}.{MethodName}; Command: {Command}; OrganizationId: {Id}.",
+                    "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {ActorName}.{MethodName}; Command: {Command}; OrganizationId: {Id}.",
                     getCurrentInstantExtended (),
-                    this.correlationId,
+                    Environment.MachineName,
                     duration_ms,
+                    this.correlationId,
                     actorName,
                     context.MethodName,
                     currentCommand,
@@ -197,15 +200,28 @@ module Organization =
                     let returnValue = GraceReturnValue.Create "Organization command succeeded." organizationEvent.Metadata.CorrelationId
 
                     returnValue.Properties.Add(nameof (OwnerId), $"{organizationDto.OwnerId}")
-                    returnValue.Properties.Add(nameof (OrganizationId), $"{organizationDto.OrganizationId}")
-                    returnValue.Properties.Add(nameof (OrganizationName), $"{organizationDto.OrganizationName}")
-                    returnValue.Properties.Add("EventType", $"{getDiscriminatedUnionFullName organizationEvent.Event}")
+
+                    returnValue
+                        .enhance(nameof (OrganizationId), $"{organizationDto.OrganizationId}")
+                        .enhance(nameof (OrganizationName), $"{organizationDto.OrganizationName}")
+                        .enhance (nameof (OrganizationEventType), $"{getDiscriminatedUnionFullName organizationEvent.Event}")
+                    |> ignore
+
                     return Ok returnValue
                 with ex ->
+                    let exceptionResponse = createExceptionResponse ex
+
                     let graceError =
                         GraceError.Create
                             (OrganizationError.getErrorMessage OrganizationError.FailedWhileApplyingEvent)
                             organizationEvent.Metadata.CorrelationId
+
+                    graceError
+                        .enhance("Exception details", exceptionResponse.``exception`` + exceptionResponse.innerException)
+                        .enhance(nameof (OrganizationId), $"{organizationDto.OrganizationId}")
+                        .enhance(nameof (OrganizationName), $"{organizationDto.OrganizationName}")
+                        .enhance (nameof (OrganizationEventType), $"{getDiscriminatedUnionFullName organizationEvent.Event}")
+                    |> ignore
 
                     return Error graceError
             }
@@ -260,7 +276,7 @@ module Organization =
             this
                 .RegisterReminderAsync(
                     ReminderType.PhysicalDeletion,
-                    convertToByteArray deleteReason,
+                    convertToByteArray (deleteReason, correlationId),
                     Constants.DefaultPhysicalDeletionReminderTime,
                     TimeSpan.FromMilliseconds(-1)
                 )
@@ -382,6 +398,7 @@ module Organization =
                     task {
                         // Get values from state.
                         let (deleteReason, correlationId) = convertFromByteArray<string * string> state
+                        this.correlationId <- correlationId
 
                         log.LogInformation(
                             "Received PhysicalDeletion reminder for organization; OrganizationId: {organizationId}; OrganizationName: {organizationName}; OwnerId: {ownerId}.",
@@ -398,15 +415,13 @@ module Organization =
                         isDisposed <- true
 
                         log.LogInformation(
-                            "{currentInstant}: CorrelationId: {correlationId}; Deleted physical state for organization; OrganizationId: {organizationId}; OrganizationName: {organizationName}; OwnerId: {ownerId}; deleteReason: {deleteReason}; deletedDtoState: {deletedDtoState}; deletedEventsState: {deletedEventsState}.",
+                            "{currentInstant}: CorrelationId: {correlationId}; Deleted physical state for organization; OrganizationId: {organizationId}; OrganizationName: {organizationName}; OwnerId: {ownerId}; deleteReason: {deleteReason}.",
                             getCurrentInstantExtended (),
                             correlationId,
                             organizationDto.OrganizationId,
                             organizationDto.OrganizationName,
                             organizationDto.OwnerId,
-                            deleteReason,
-                            deletedDtoState,
-                            deletedEventsState
+                            deleteReason
                         )
 
                         // Set all values to default.

@@ -282,45 +282,49 @@ module Watch =
         task {
             // First, check if there's anything to process.
             if not (filesToProcess.IsEmpty && directoriesToProcess.IsEmpty) then
-                let correlationId = generateCorrelationId ()
-                let! graceStatusFromDisk = readGraceStatusFile ()
-                graceStatus <- graceStatusFromDisk
+                try
+                    let correlationId = generateCorrelationId ()
+                    let! graceStatusFromDisk = readGraceStatusFile ()
+                    graceStatus <- graceStatusFromDisk
 
-                let mutable lastFileUploadInstant = graceStatus.LastSuccessfulFileUpload
+                    let mutable lastFileUploadInstant = graceStatus.LastSuccessfulFileUpload
 
-                /// This is just a way to throw away the unit value from the ConcurrentDictionary.
-                let mutable unitValue = ()
+                    /// This is just a way to throw away the unit value from the ConcurrentDictionary.
+                    let mutable unitValue = ()
 
-                // Loop through no more than 50 files. Copy them to the objects directory, and upload them to storage.
-                //   In the incredibly rare event that more than 50 files have changed, we'll get 50-per-timer-tick,
-                //   and clear the queue quickly without overwhelming the system.
-                for fileName in filesToProcess.Keys.Take(50) do
-                    if filesToProcess.TryRemove(fileName, &unitValue) then
-                        logToAnsiConsole Colors.Verbose $"Processing {fileName}. filesToProcess.Count: {filesToProcess.Count}."
+                    // Loop through no more than 50 files. Copy them to the objects directory, and upload them to storage.
+                    //   In the incredibly rare event that more than 50 files have changed, we'll get 50-per-timer-tick,
+                    //   and clear the queue quickly without overwhelming the system.
+                    for fileName in filesToProcess.Keys.Take(50) do
+                        if filesToProcess.TryRemove(fileName, &unitValue) then
+                            logToAnsiConsole Colors.Verbose $"Processing {fileName}. filesToProcess.Count: {filesToProcess.Count}."
 
-                        do! copyFileToObjectDirectoryAndUploadToStorage (FilePath fileName) correlationId
-                        lastFileUploadInstant <- getCurrentInstant ()
+                            do! copyFileToObjectDirectoryAndUploadToStorage (FilePath fileName) correlationId
+                            lastFileUploadInstant <- getCurrentInstant ()
 
-                graceStatus <- { graceStatus with LastSuccessfulFileUpload = lastFileUploadInstant }
+                    graceStatus <- { graceStatus with LastSuccessfulFileUpload = lastFileUploadInstant }
 
-                // If we've drained all of the files that changed (and we'll almost always have done so), update all the things:
-                //   GraceStatus, directory versions, etc.
-                if filesToProcess.IsEmpty then
-                    match! (updateGraceStatus graceStatus correlationId) with
-                    | Some newGraceStatus -> graceStatus <- newGraceStatus
-                    | None ->
-                        logToAnsiConsole Colors.Important $"Grace Status file was not updated."
-                        () // Something went wrong, don't update the in-memory Grace Status.
+                    // If we've drained all of the files that changed (and we'll almost always have done so), update all the things:
+                    //   GraceStatus, directory versions, etc.
+                    if filesToProcess.IsEmpty then
+                        match! (updateGraceStatus graceStatus correlationId) with
+                        | Some newGraceStatus -> graceStatus <- newGraceStatus
+                        | None ->
+                            logToAnsiConsole Colors.Important $"Grace Status file was not updated."
+                            () // Something went wrong, don't update the in-memory Grace Status.
 
-                do! updateGraceWatchInterprocessFile graceStatus
-                graceStatus <- GraceStatus.Default
+                    do! updateGraceWatchInterprocessFile graceStatus
 
+                    // Reset the in-memory Grace Status to empty to minimize memory usage.
+                    graceStatus <- GraceStatus.Default
+                with ex ->
+                    logToAnsiConsole
+                        Colors.Error
+                        $"Error in processChangedFiles: Message: {ex.Message}{Environment.NewLine}{Environment.NewLine}{ex.StackTrace}"
             // Refresh the file every (just under) 5 minutes to indicate that `grace watch` is still alive.
             elif graceWatchStatusUpdateTime < getCurrentInstant().Minus(Duration.FromMinutes(4.8)) then
                 let! graceStatusFromDisk = readGraceStatusFile ()
-                graceStatus <- graceStatusFromDisk
-                do! updateGraceWatchInterprocessFile graceStatus
-                graceStatus <- GraceStatus.Default
+                do! updateGraceWatchInterprocessFile graceStatusFromDisk
         }
 
     /// This is the main loop for the `grace watch` command.

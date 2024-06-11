@@ -38,8 +38,8 @@ module Owner =
         let mutable logScope: IDisposable = null
         let mutable currentCommand = String.Empty
 
-        let dtoStateName = "ownerDtoState"
-        let eventsStateName = "ownerEventsState"
+        let dtoStateName = StateName.OwnerDto
+        let eventsStateName = StateName.Owner
 
         let mutable ownerDto = OwnerDto.Default
         let mutable ownerEvents: List<OwnerEvent> = null
@@ -93,8 +93,9 @@ module Owner =
                 let duration_ms = getPaddedDuration_ms activateStartTime
 
                 log.LogInformation(
-                    "{CurrentInstant}: Duration: {duration_ms}ms; Activated {ActorType} {ActorId}. {message}.",
+                    "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; Activated {ActorType} {ActorId}. {message}.",
                     getCurrentInstantExtended (),
+                    Environment.MachineName,
                     duration_ms,
                     actorName,
                     host.Id,
@@ -139,20 +140,22 @@ module Owner =
 
             if String.IsNullOrEmpty(currentCommand) then
                 log.LogInformation(
-                    "{CurrentInstant}: CorrelationId: {correlationId}; Duration: {duration_ms}ms; Finished {ActorName}.{MethodName}; OwnerId: {Id}.",
+                    "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {ActorName}.{MethodName}; OwnerId: {Id}.",
                     getCurrentInstantExtended (),
-                    this.correlationId,
+                    Environment.MachineName,
                     duration_ms,
+                    this.correlationId,
                     actorName,
                     context.MethodName,
                     this.Id
                 )
             else
                 log.LogInformation(
-                    "{CurrentInstant}: CorrelationId: {correlationId}; Duration: {duration_ms}ms; Finished {ActorName}.{MethodName}; Command: {Command}; OwnerId: {Id}.",
+                    "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {ActorName}.{MethodName}; Command: {Command}; OwnerId: {Id}.",
                     getCurrentInstantExtended (),
-                    this.correlationId,
+                    Environment.MachineName,
                     duration_ms,
+                    this.correlationId,
                     actorName,
                     context.MethodName,
                     currentCommand,
@@ -203,16 +206,24 @@ module Owner =
 
                     let returnValue = GraceReturnValue.Create "Owner command succeeded." ownerEvent.Metadata.CorrelationId
 
-                    returnValue.Properties.Add(nameof (OwnerId), $"{ownerDto.OwnerId}")
-                    returnValue.Properties.Add(nameof (OwnerName), $"{ownerDto.OwnerName}")
-                    returnValue.Properties.Add("EventType", $"{getDiscriminatedUnionFullName ownerEvent.Event}")
+                    returnValue
+                        .enhance(nameof (OwnerId), $"{ownerDto.OwnerId}")
+                        .enhance(nameof (OwnerName), $"{ownerDto.OwnerName}")
+                        .enhance (nameof (OwnerEventType), $"{getDiscriminatedUnionFullName ownerEvent.Event}")
+                    |> ignore
+
                     return Ok returnValue
                 with ex ->
+                    let exceptionResponse = createExceptionResponse ex
+                    log.LogError(ex, "Exception in Owner.Actor: event: {event}", (serialize ownerEvent))
                     let graceError = GraceError.Create (OwnerError.getErrorMessage OwnerError.FailedWhileApplyingEvent) ownerEvent.Metadata.CorrelationId
 
-                    let exceptionResponse = createExceptionResponse ex
-
-                    graceError.Properties.Add("Exception details", exceptionResponse.``exception`` + exceptionResponse.innerException)
+                    graceError
+                        .enhance("Exception details", exceptionResponse.``exception`` + exceptionResponse.innerException)
+                        .enhance(nameof (OwnerId), $"{ownerDto.OwnerId}")
+                        .enhance(nameof (OwnerName), $"{ownerDto.OwnerName}")
+                        .enhance (nameof (OwnerEventType), $"{getDiscriminatedUnionFullName ownerEvent.Event}")
+                    |> ignore
 
                     return Error graceError
             }
@@ -392,6 +403,7 @@ module Owner =
                     task {
                         // Get values from state.
                         let (deleteReason, correlationId) = convertFromByteArray<string * string> state
+                        this.correlationId <- correlationId
 
                         // Delete saved state for this actor.
                         let! deletedDtoState = stateManager.TryRemoveStateAsync(dtoStateName)
@@ -401,14 +413,12 @@ module Owner =
                         isDisposed <- true
 
                         log.LogInformation(
-                            "{currentInstant}: CorrelationId: {correlationId}; Deleted physical state for owner; OwnerId: {ownerId}; OwnerName: {ownerName}; deleteReason: {deleteReason}; deletedDtoState: {deletedDtoState}; deletedEventsState: {deletedEventsState}.",
+                            "{currentInstant}: CorrelationId: {correlationId}; Deleted physical state for owner; OwnerId: {ownerId}; OwnerName: {ownerName}; deleteReason: {deleteReason}.",
                             getCurrentInstantExtended (),
                             correlationId,
                             ownerDto.OwnerId,
                             ownerDto.OwnerName,
-                            deleteReason,
-                            deletedDtoState,
-                            deletedEventsState
+                            deleteReason
                         )
 
                         // Set all values to default.

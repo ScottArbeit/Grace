@@ -18,15 +18,17 @@ Grace is not like that. Grace is new, modern, lightweight, and very fast.
 
 ## Why did you create Grace?
 
-In the 2022 StackOverflow Developer Survey, Git is at 93.87% adoption. Git has won, no doubt.
+In the 2022 StackOverflow Developer Survey – the most recent one where they tracked version control usage – Git was at 93.87% adoption. Git has won, no doubt.
 
 And there's sort-of nowhere for it to go but down.
-
-The thing that's probably going to take Git down is monorepos. Although I think large monorepos are a terrible idea, 
 
 I've been around long enough to see different technologies rise and fall. Some have shorter market cycles (web UI frameworks, for instance), and some have longer market cycles, like hierarchical -> relational -> No-SQL databases, or popular social media apps. I've seen technologies that had almost 95% market share, with very long cycles, like Windows and Windows Server, eventually lose market share for one reason or another.
 
 Git is 19 years old now. It doesn't have the easiest UX, to say the least. Many projects are exploring version control right now to see where it might go next. Git won't stay near 95% forever. Nothing ever does.
+
+The thing that's probably going to take Git down is monorepos. Although I think large monorepos are a terrible idea – and I strongly recommend that you use multiple code repositories and proper versioning with a package or artifact repository – the trend right now is toward monorepos. Git doesn't do monorepos well, or, to be more precise, Git only does monorepos well by breaking the original contract of Git as a distributed VCS by using partial clones, or filtered partial clones, and therefore treating Git as a centralized VCS.
+
+Of course, if you're using GitHub or GitLab or Azure DevOps, you're already doing centralized version control, you're just doing it with a decentralized VCS with bad UX, which doesn't make a lot of sense when you think about it.
 
 Grace is my offering to that search for what's next. Grace's design is my attempt to bring ease-of-use into a corner of our world that hasn't had much of that lately, and to connect us together in a different way than ever before.
 
@@ -40,11 +42,11 @@ That's why I kept lightweight branching in Grace. Create and delete branches to 
 
 Well, you won't be able to run many Grace commands. And you probably won't be able to do lots of other things that you usually do.
 
-More and more of us rely on cloud services and connectivity to the Internet just to do our jobs. Think about this: if your Internet connection went down, could you continue to do your job as a developer, or would you have to stop? Some could keep working, but if you can't, not having a connection to your source control server is the least of your concerns compared to not having a connection to Azure or AWS or wherever your cloud stuff is... not to mention CoPilot and StackOverflow and your favorite search engine.
+More and more of us rely on cloud services and connectivity to the Internet just to do our jobs. Think about this: if your Internet connection went down, could you continue to do your job as a developer, or would you have to stop? Some of you could keep working, but if you can't, not having a connection to your source control server is the least of your concerns compared to not having a connection to Azure or AWS or wherever your cloud stuff is... not to mention Copilot and StackOverflow and your favorite search engine.
 
 With the growth of satellite Internet, we're connecting more and more of the world at high-enough bandwidth to use centralized version control without issue. And I'm not designing for the 0.000001% "but I'm on a flight without Internet" scenario.
 
-If being able to use local version control while you're not connected to the Internet is an important scenario for you, please use Git. It's great at that. I'm guessing that there's still a small - important, but small - percentage of programmers in the world that _really need_ that. For the vast majority of us, though, assuming a working Internet connection isn't a big deal anymore.
+If being able to use local version control while you're not connected to the Internet is an important scenario for you, please use Git. It's great at that. I'm guessing that there's still a small – important, but small – percentage of programmers in the world that _really_ need that. For the rest of us, the vast majority of us, assuming a working Internet connection isn't a concern in 2024, and will be even less of a concern in 2026, 2028, etc.
 
 Anyway, Grace won't stop you from continuing to edit the local copies of your files that you already have. When your Internet connection resumes, `grace watch` will catch you up immediately.
 
@@ -66,21 +68,21 @@ Also, I don't think that new version control systems need to sync with Git to ca
 
 ### Hopeful answer
 
-It depends on the PaaS services that Grace is deployed on. In general, Grace itself is really fast, and will take advantage of however fast the underlying services it depends on will run.
+It depends on the PaaS services that Grace is deployed on. In general, Grace itself is very fast, and will take advantage of the speed and scale of the underlying cloud services it depends on.
 
-I know Microsoft Azure well, so when I think about running Grace on services like Azure Kubernetes Service, Azure Cosmos DB, Azure Blob Storage, Azure Event Hubs and Service Bus, Azure Monitor, and others, where you can look at Grace Server as orchestrating the usage of insanely high-scale PaaS pieces, I expect Grace to be able to take advantage of the scale and speed of those PaaS services really well.
+I know Microsoft Azure well, so when I think about running Grace on services like Azure Kubernetes Service, Azure Cosmos DB, Azure Blob Storage, Azure Event Hubs, Azure Service Bus, Azure Monitor, and others, I look at Grace Server as orchestrating the usage of insanely high-scale PaaS products, and that's exactly what it's designed to do.
 
-The stateless nature of Grace Server, and the use of the Actor Pattern, should allow for a significant number of concurrent users without too much hassle. In particular, Grace is designed so that data that the server needs when you run common CLI commands will usually already be in-memory. This should make Grace Server very fast.
+The stateless nature of Grace Server, and the use of the Actor Pattern, should allow for a significant number of concurrent users without too much hassle. In particular, Grace is designed so that data that the server needs when you run common CLI commands will already be in-memory most of the time. If it's not, that data will usually be under 10ms away in a document database.
 
-The only load testing that I've done saturated my personal Azure Cosmos DB Request Units, but didn't stress Grace Server at all, which is what I expected. I haven't tested higher than 5,000 RU's, but I expect that when I do, I'll find some things to improve, and then Grace should be able to handle thousands of transactions/second.
+The only load testing that I've done saturated my personal [Azure Cosmos DB Request Units](https://learn.microsoft.com/en-us/azure/cosmos-db/request-units), but didn't stress Grace Server at all, which is what I expected. I haven't tested higher than 10,000 RU's, but I expect that when I do, I'll find some things to improve, and then Grace should be able to handle thousands of transactions/second.
 
 ### Actual current answer
 
-I haven't done any real load-testing yet. I'm not sure.
+I haven't done any truly high-scale load testing yet. I'm not sure.
 
 I _can_ tell you that I've tested repositories of up to 100,000 files and 15,000 directories, with Grace deployed using Azure CosmosDB and Azure Blob Storage. If `grace watch` is running, client performance for most commands on those large repositories is around 0.8-1.0s (which includes 1 or 2 80ms roundtrips to the Azure data center). Performance on small- and medium-sized repositories is around 0.6-0.8s. Grace Server performance is unaffected by repository size for most commands. These times are from debug builds.
 
-I've also tested individual file sizes up to 10GB. I'm not sure that 10GB files should fall under the purview of version control - they should probably be versioned blobs in an object storage service - but we'll see what happens. Grace doesn't have a technical limitation on file size (it's a uint64).
+I've also tested individual file sizes up to 10GB. I'm not sure that 10GB files should fall under the purview of version control–they should probably be versioned blobs in an object storage service – but we'll see what happens. Grace doesn't have a technical limitation on file size (it's a uint64).
 
 Each command, on its own, runs quickly enough to make me happy. I hope they all still do at scale.
 

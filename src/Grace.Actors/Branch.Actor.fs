@@ -8,6 +8,7 @@ open Grace.Actors.Events.Branch
 open Grace.Actors.Interfaces
 open Grace.Actors.Services
 open Grace.Shared
+open Grace.Shared.Constants
 open Grace.Shared.Dto.Branch
 open Grace.Shared.Types
 open Grace.Shared.Utilities
@@ -21,6 +22,7 @@ open NodaTime
 open System.Text.Json
 open System.Net.Http.Json
 open Grace.Shared.Dto.Reference
+open Grace.Shared.Services
 
 module Branch =
 
@@ -34,11 +36,10 @@ module Branch =
 
         let actorName = ActorName.Branch
         let log = loggerFactory.CreateLogger("Branch.Actor")
-        let dtoStateName = "branchDtoState"
-        let eventsStateName = "branchEventsState"
+        let eventsStateName = StateName.Branch
 
         let mutable branchDto: BranchDto = BranchDto.Default
-        let mutable branchEvents: List<BranchEvent> = null
+        let branchEvents = List<BranchEvent>()
 
         let mutable actorStartTime = Instant.MinValue
         let mutable logScope: IDisposable = null
@@ -98,42 +99,33 @@ module Branch =
 
         member val private correlationId: CorrelationId = String.Empty with get, set
 
-        member private this.BranchEvents() =
-            let stateManager = this.StateManager
-
-            task {
-                if branchEvents = null then
-                    let! retrievedEvents = (Storage.RetrieveState<List<BranchEvent>> stateManager eventsStateName)
-
-                    branchEvents <-
-                        match retrievedEvents with
-                        | Some retrievedEvents -> retrievedEvents
-                        | None -> List<BranchEvent>()
-
-                return branchEvents
-            }
-
         override this.OnActivateAsync() =
             let activateStartTime = getCurrentInstant ()
             let stateManager = this.StateManager
 
             task {
                 let mutable message = String.Empty
-                let! retrievedDto = Storage.RetrieveState<BranchDto> stateManager dtoStateName
+                let! retrievedEvents = Storage.RetrieveState<List<BranchEvent>> stateManager eventsStateName
 
-                match retrievedDto with
-                | Some retrievedDto ->
-                    branchDto <- retrievedDto
+                match retrievedEvents with
+                | Some retrievedEvents ->
+                    // Load the branchEvents from the retrieved events.
+                    branchEvents.AddRange(retrievedEvents)
+
+                    // Apply all events to the branchDto.
+                    branchDto <-
+                        retrievedEvents
+                        |> Seq.fold (fun branchDto branchEvent -> branchDto |> updateDto branchEvent.Event) BranchDto.Default
+
                     message <- "Retrieved from database"
-                | None ->
-                    branchDto <- BranchDto.Default
-                    message <- "Not found in database"
+                | None -> message <- "Not found in database"
 
                 let duration_ms = getPaddedDuration_ms activateStartTime
 
                 log.LogInformation(
-                    "{CurrentInstant}: Duration: {duration_ms}ms; Activated {ActorType} {ActorId}. BranchName: {BranchName}; {message}.",
+                    "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; Activated {ActorType} {ActorId}. BranchName: {BranchName}; {message}.",
                     getCurrentInstantExtended (),
+                    Environment.MachineName,
                     duration_ms,
                     actorName,
                     host.Id,
@@ -182,10 +174,11 @@ module Branch =
 
             if String.IsNullOrEmpty(currentCommand) then
                 log.LogInformation(
-                    "{CurrentInstant}: CorrelationId: {correlationId}; Duration: {duration_ms}ms; Finished {ActorName}.{MethodName}; BranchId: {Id}; BranchName: {BranchName}.",
+                    "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {ActorName}.{MethodName}; BranchId: {Id}; BranchName: {BranchName}.",
                     getCurrentInstantExtended (),
-                    this.correlationId,
+                    Environment.MachineName,
                     duration_ms,
+                    this.correlationId,
                     actorName,
                     context.MethodName,
                     this.Id,
@@ -193,10 +186,11 @@ module Branch =
                 )
             else
                 log.LogInformation(
-                    "{CurrentInstant}: CorrelationId: {correlationId}; Duration: {duration_ms}ms; Finished {ActorName}.{MethodName}; Command: {Command}; BranchId: {Id}; BranchName: {BranchName}.",
+                    "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {ActorName}.{MethodName}; Command: {Command}; BranchId: {Id}; BranchName: {BranchName}.",
                     getCurrentInstantExtended (),
-                    this.correlationId,
+                    Environment.MachineName,
                     duration_ms,
+                    this.correlationId,
                     actorName,
                     context.MethodName,
                     currentCommand,
@@ -212,37 +206,29 @@ module Branch =
 
             task {
                 try
-                    let! branchEvents = this.BranchEvents()
-
                     if branchEvents.Count = 0 then do! this.OnFirstWrite()
 
+                    // Add the event to the branchEvents list, and save it to actor state.
                     branchEvents.Add(branchEvent)
+                    do! Storage.SaveState stateManager eventsStateName branchEvents
 
-                    do! Constants.DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> stateManager.SetStateAsync(eventsStateName, branchEvents))
-
+                    // Update the branchDto with the event.
                     branchDto <- branchDto |> updateDto branchEvent.Event
-
-                    do! Constants.DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> stateManager.SetStateAsync(dtoStateName, branchDto))
 
                     // Publish the event to the rest of the world.
                     let graceEvent = Events.GraceEvent.BranchEvent branchEvent
                     let message = serialize graceEvent
-
-                    do! daprClient.PublishEventAsync(Constants.GracePubSubService, Constants.GraceEventStreamTopic, graceEvent)
-
-                    //let httpClient = getHttpClient branchEvent.Metadata.CorrelationId
-                    //httpClient.BaseAddress <- Uri $"http://127.0.0.1:5000"
-                    //let! response = httpClient.PostAsync("/notifications/post", jsonContent graceEvent)
-                    //if not <| response.IsSuccessStatusCode then
-                    //    log.LogError("Failed to send SignalR notification. Event: {event}", message)
+                    do! daprClient.PublishEventAsync(GracePubSubService, GraceEventStreamTopic, graceEvent)
 
                     let returnValue = GraceReturnValue.Create "Branch command succeeded." branchEvent.Metadata.CorrelationId
 
-                    returnValue.Properties.Add(nameof (RepositoryId), $"{branchDto.RepositoryId}")
-                    returnValue.Properties.Add(nameof (BranchId), $"{branchDto.BranchId}")
-                    returnValue.Properties.Add(nameof (BranchName), $"{branchDto.BranchName}")
-                    returnValue.Properties.Add("ParentBranchId", $"{branchDto.ParentBranchId}")
-                    returnValue.Properties.Add("EventType", $"{getDiscriminatedUnionFullName branchEvent.Event}")
+                    returnValue
+                        .enhance(nameof (RepositoryId), $"{branchDto.RepositoryId}")
+                        .enhance(nameof (BranchId), $"{branchDto.BranchId}")
+                        .enhance(nameof (BranchName), $"{branchDto.BranchName}")
+                        .enhance(nameof (ParentBranchId), $"{branchDto.ParentBranchId}")
+                        .enhance (nameof (BranchEventType), $"{getDiscriminatedUnionFullName branchEvent.Event}")
+                    |> ignore
 
                     // If the event has a referenceId, add it to the return properties.
                     if branchEvent.Metadata.Properties.ContainsKey(nameof (ReferenceId)) then
@@ -250,18 +236,29 @@ module Branch =
 
                     return Ok returnValue
                 with ex ->
-                    logToConsole (createExceptionResponse ex)
+                    let exceptionResponse = createExceptionResponse ex
 
                     let graceError = GraceError.Create (BranchError.getErrorMessage FailedWhileApplyingEvent) branchEvent.Metadata.CorrelationId
+
+                    graceError
+                        .enhance("Exception details", exceptionResponse.``exception`` + exceptionResponse.innerException)
+                        .enhance(nameof (RepositoryId), $"{branchDto.RepositoryId}")
+                        .enhance(nameof (BranchId), $"{branchDto.BranchId}")
+                        .enhance(nameof (BranchName), $"{branchDto.BranchName}")
+                        .enhance(nameof (ParentBranchId), $"{branchDto.ParentBranchId}")
+                        .enhance (nameof (BranchEventType), $"{getDiscriminatedUnionFullName branchEvent.Event}")
+                    |> ignore
 
                     return Error graceError
             }
 
         member private this.SchedulePhysicalDeletion(deleteReason, correlationId) =
+            let tuple = (branchDto.RepositoryId, branchDto.BranchId, branchDto.BranchName, branchDto.ParentBranchId, deleteReason, correlationId)
+
             this
                 .RegisterReminderAsync(
                     ReminderType.PhysicalDeletion,
-                    convertToByteArray deleteReason,
+                    convertToByteArray tuple,
                     Constants.DefaultPhysicalDeletionReminderTime,
                     TimeSpan.FromMilliseconds(-1)
                 )
@@ -273,8 +270,7 @@ module Branch =
             member this.GetEvents correlationId =
                 task {
                     this.correlationId <- correlationId
-                    let! branchEvents = this.BranchEvents()
-                    return branchEvents :> IList<BranchEvent>
+                    return branchEvents :> IReadOnlyList<BranchEvent>
                 }
 
             member this.Exists correlationId =
@@ -284,8 +280,6 @@ module Branch =
             member this.Handle command metadata =
                 let isValid (command: BranchCommand) (metadata: EventMetadata) =
                     task {
-                        let! branchEvents = this.BranchEvents()
-
                         if
                             branchEvents.Exists(fun ev -> ev.Metadata.CorrelationId = metadata.CorrelationId)
                             && (branchEvents.Count > 3)
@@ -314,7 +308,7 @@ module Branch =
                             referenceActor.Create
                                 (referenceId, branchDto.BranchId, directoryId, sha256Hash, referenceType, referenceText)
                                 metadata.CorrelationId
-                        //branchDto.References.Add(referenceDto.CreatedAt, referenceDto)
+
                         return referenceId
                     }
 
@@ -325,6 +319,13 @@ module Branch =
                                 task {
                                     match command with
                                     | Create(branchId, branchName, parentBranchId, basedOn, repositoryId, branchPermissions) ->
+                                        use newCacheEntry =
+                                            memoryCache.CreateEntry(
+                                                $"BrN:{branchName}",
+                                                Value = branchId,
+                                                AbsoluteExpirationRelativeToNow = DefaultExpirationTime
+                                            )
+
                                         return Created(branchId, branchName, parentBranchId, basedOn, repositoryId, branchPermissions)
                                     | Rebase referenceId ->
                                         metadata.Properties.Add(nameof (ReferenceId), $"{referenceId}")
@@ -412,7 +413,7 @@ module Branch =
                                     | EnableAutoRebase enabled -> return EnabledAutoRebase enabled
                                     | RemoveReference referenceId -> return ReferenceRemoved referenceId
                                     | DeleteLogical(force, deleteReason) ->
-                                        this.SchedulePhysicalDeletion(deleteReason, metadata.CorrelationId)
+                                        //this.SchedulePhysicalDeletion(deleteReason, metadata.CorrelationId)
                                         return LogicalDeleted(force, deleteReason)
                                     | DeletePhysical ->
                                         isDisposed <- true
@@ -470,30 +471,31 @@ module Branch =
                 | ReminderType.PhysicalDeletion ->
                     task {
                         // Get values from state.
-                        let (deleteReason, correlationId) = convertFromByteArray<string * string> state
+                        let (repositoryId, branchId, branchName, parentBranchId, deleteReason, correlationId) =
+                            convertFromByteArray<string * string * string * string * string * string> state
+
+                        this.correlationId <- correlationId
 
                         // Delete the references for this branch.
 
 
                         // Delete saved state for this actor.
-                        let! deletedDtoState = stateManager.TryRemoveStateAsync(dtoStateName)
                         let! deletedEventsState = stateManager.TryRemoveStateAsync(eventsStateName)
 
                         log.LogInformation(
-                            "{currentInstant}: CorrelationId: {correlationId}; Deleted physical state for branch; RepositoryId: {repositoryId}; BranchId: {branchId}; BranchName: {branchName}; ParentBranchId: {parentBranchId}; deleteReason: {deleteReason}; deletedDtoState: {deletedDtoState}; deletedEventsState: {deletedEventsState}.",
+                            "{currentInstant}: CorrelationId: {correlationId}; Deleted physical state for branch; RepositoryId: {repositoryId}; BranchId: {branchId}; BranchName: {branchName}; ParentBranchId: {parentBranchId}; deleteReason: {deleteReason}.",
                             getCurrentInstantExtended (),
                             correlationId,
-                            branchDto.RepositoryId,
-                            branchDto.BranchId,
-                            branchDto.BranchName,
-                            branchDto.ParentBranchId,
-                            deleteReason,
-                            deletedDtoState,
-                            deletedEventsState
+                            repositoryId,
+                            branchId,
+                            branchName,
+                            parentBranchId,
+                            deleteReason
                         )
 
                         // Set all values to default.
                         branchDto <- BranchDto.Default
+                        branchEvents.Clear()
 
                         // Mark the actor as disposed, in case someone tries to use it before Dapr GC's it.
                         isDisposed <- true

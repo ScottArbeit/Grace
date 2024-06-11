@@ -14,6 +14,7 @@ module Text =
         | AssignIsDisabled
         | BranchAlreadyExists
         | BranchDoesNotExist
+        | BranchIdDoesNotExist
         | BranchIdIsRequired
         | BranchIdsAreRequired
         | BranchIsNotBasedOnLatestPromotion

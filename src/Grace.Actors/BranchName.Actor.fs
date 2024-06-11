@@ -33,7 +33,13 @@ module BranchName =
         member val private correlationId: CorrelationId = String.Empty with get, set
 
         override this.OnActivateAsync() =
-            log.LogInformation("{CurrentInstant}: Activated {ActorType} {ActorId}.", getCurrentInstantExtended (), this.GetType().Name, host.Id)
+            log.LogInformation(
+                "{CurrentInstant}: Duration:   0.100ms; Activated {ActorType} {ActorId}.",
+                getCurrentInstantExtended (),
+                this.GetType().Name,
+                host.Id
+            )
+
             Task.CompletedTask
 
         override this.OnPreActorMethodAsync(context) =
@@ -49,10 +55,11 @@ module BranchName =
             let duration_ms = getPaddedDuration_ms actorStartTime
 
             log.LogInformation(
-                "{CurrentInstant}: CorrelationID: {correlationID}; Duration: {duration_ms}ms; Finished {ActorName}.{MethodName}; RepositoryId: {RepositoryId}; BranchName: {BranchName}; BranchId: {BranchId}.",
+                "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {ActorName}.{MethodName}; RepositoryId: {RepositoryId}; BranchName: {BranchName}; BranchId: {BranchId}.",
                 getCurrentInstantExtended (),
-                this.correlationId,
+                Environment.MachineName,
                 duration_ms,
+                this.correlationId,
                 actorName,
                 context.MethodName,
                 repositoryId,

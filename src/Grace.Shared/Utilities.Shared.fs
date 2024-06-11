@@ -290,6 +290,10 @@ module Utilities =
             generateCorrelationId ()
 
     /// Formats a byte array as a string. For example, [0xab, 0x15, 0x03] -> "ab1503"
+    ///
+    /// Each byte is formatted as a two-character hexadecimal number.
+    ///
+    /// NOTE: This is different from Encoding.UTF8.GetString, which interprets the bytes as UTF-8 characters.
     let byteArrayToString (array: Span<byte>) =
         let sb = StringBuilder(array.Length * 2)
 
@@ -298,21 +302,11 @@ module Utilities =
 
         sb.ToString()
 
-    /// Serializes any value to JSON using Grace's default JsonSerializerOptions, and then converts the JSON string to a byte array.
-    let convertToByteArray<'T> (value: 'T) =
-        let json = serialize value
-        Encoding.UTF8.GetBytes json
-
-    /// Deserializes a byte array to a value of type 'T' using Grace's default JsonSerializerOptions.
-    let convertFromByteArray<'T> (bytes: ReadOnlySpan<byte>) =
-        let json = Encoding.UTF8.GetString(bytes)
-        deserialize<'T> json
-
     /// Converts a string of hexadecimal numbers to a byte array. For example, "ab1503" -> [0xab, 0x15, 0x03]
     ///
     /// The hex string must have an even number of digits; for this function, "1a8" will throw an ArgumentException, but "01a8" is valid and will be converted to a byte array.
     ///
-    /// Note: This is different from Encoding.UTF8.GetBytes().
+    /// NOTE: This is different from Encoding.UTF8.GetBytes(), which interprets the string as UTF-8 characters.
     let stringAsByteArray (s: ReadOnlySpan<char>) =
         if s.Length % 2 <> 0 then
             raise (ArgumentException("The hexadecimal string must have an even number of digits.", nameof (s)))
@@ -325,6 +319,16 @@ module Utilities =
             bytes[index] <- Byte.Parse(byteValue, NumberStyles.HexNumber, CultureInfo.InvariantCulture)
 
         bytes
+
+    /// Serializes any value to JSON using Grace's default JsonSerializerOptions, and then converts the JSON string to a byte array.
+    let convertToByteArray<'T> (value: 'T) =
+        let json = serialize value
+        Encoding.UTF8.GetBytes json
+
+    /// Deserializes a byte array to a value of type 'T' using Grace's default JsonSerializerOptions.
+    let convertFromByteArray<'T> (bytes: ReadOnlySpan<byte>) =
+        let json = Encoding.UTF8.GetString(bytes)
+        deserialize<'T> json
 
     /// Universal Grace exception reponse type
     type ExceptionResponse =

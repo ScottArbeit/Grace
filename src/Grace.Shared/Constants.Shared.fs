@@ -180,19 +180,8 @@ module Constants =
     ///
     /// See https://regexper.com for a diagram.
     /// </summary>
-    let GraceNameRegexText = "^[A-Za-z][A-Za-z0-9\-]{1,63}$"
-
-    /// <summary>
-    /// Validates that a string is a valid Grace object name.
-    ///
-    /// Regex: ^[A-Za-z][A-Za-z0-9\-]{1,63}$
-    ///
-    /// A valid object name in Grace has between 2 and 64 characters, has a letter for the first character ([A-Za-z]), and letters, numbers, or a dash (-) for the rest ([A-Za-z0-9\-_]{1,63}).
-    ///
-    /// See https://regexper.com for a diagram.
-    /// </summary>
-    let GraceNameRegex = new Regex(GraceNameRegexText, RegexOptions.CultureInvariant ||| RegexOptions.Compiled, TimeSpan.FromSeconds(2.0))
-    // Note: The timeout value of 2s is a crazy big maximum time; matching against this should take less than 1ms.
+    let GraceNameRegex = new Regex("^[A-Za-z][A-Za-z0-9\-]{1,63}$", RegexOptions.CultureInvariant ||| RegexOptions.Compiled, TimeSpan.FromSeconds(1.0))
+    // Note: The timeout value of 1s is a crazy big maximum time; matching against this should take less than 1ms.
 
     /// Validates that a string is a full or partial valid SHA-256 hash value, between 2 and 64 hexadecimal characters.
     ///

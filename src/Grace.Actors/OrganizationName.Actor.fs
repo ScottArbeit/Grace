@@ -34,7 +34,13 @@ module OrganizationName =
         member val private correlationId: CorrelationId = String.Empty with get, set
 
         override this.OnActivateAsync() =
-            log.LogInformation("{CurrentInstant}: Activated {ActorType} {ActorId}.", getCurrentInstantExtended (), this.GetType().Name, host.Id)
+            log.LogInformation(
+                "{CurrentInstant}: Duration:   0.100ms; Activated {ActorType} {ActorId}.",
+                getCurrentInstantExtended (),
+                this.GetType().Name,
+                host.Id
+            )
+
             Task.CompletedTask
 
         override this.OnPreActorMethodAsync(context) =
@@ -50,10 +56,11 @@ module OrganizationName =
             let duration_ms = getPaddedDuration_ms actorStartTime
 
             log.LogInformation(
-                "{CurrentInstant}: CorrelationId: {correlationId}; Duration: {duration_ms}ms; Finished {ActorName}.{MethodName}; OwnerId: {OwnerId}; OrganizationName: {OrganizationName}; OrganizationId: {OrganizationId}.",
+                "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {ActorName}.{MethodName}; OwnerId: {OwnerId}; OrganizationName: {OrganizationName}; OrganizationId: {OrganizationId}.",
                 getCurrentInstantExtended (),
-                this.correlationId,
+                Environment.MachineName,
                 duration_ms,
+                this.correlationId,
                 actorName,
                 context.MethodName,
                 ownerId,

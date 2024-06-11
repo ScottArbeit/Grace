@@ -3,6 +3,10 @@
     "WSL": {
       "commandName": "WSL2",
       "distributionName": ""
+    },
+    "graceload": {
+      "commandName": "Project",
+      "workingDirectory": "D:\\Source\\Grace\\src"
     }
   }
 }

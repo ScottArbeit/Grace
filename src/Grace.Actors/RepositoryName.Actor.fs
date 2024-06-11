@@ -35,7 +35,13 @@ module RepositoryName =
         member val private correlationId: CorrelationId = String.Empty with get, set
 
         override this.OnActivateAsync() =
-            log.LogInformation("{CurrentInstant}: Activated {ActorType} {ActorId}.", getCurrentInstantExtended (), this.GetType().Name, host.Id)
+            log.LogInformation(
+                "{CurrentInstant}: Duration:   0.100ms; Activated {ActorType} {ActorId}.",
+                getCurrentInstantExtended (),
+                this.GetType().Name,
+                host.Id
+            )
+
             Task.CompletedTask
 
         override this.OnPreActorMethodAsync(context) =
@@ -48,13 +54,14 @@ module RepositoryName =
             Task.CompletedTask
 
         override this.OnPostActorMethodAsync(context) =
-            let duration_ms = actorStartTime
+            let duration_ms = getPaddedDuration_ms actorStartTime
 
             log.LogInformation(
-                "{CurrentInstant}: CorrelationId: {correlationId}; Duration: {duration_ms}ms; Finished {ActorName}.{MethodName}; OwnerId: {OwnerId}; OrganizationId: {OrganizationId}; RepositoryName: {RepositoryName}; RepositoryId: {RepositoryId}.",
+                "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {ActorName}.{MethodName}; OwnerId: {OwnerId}; OrganizationId: {OrganizationId}; RepositoryName: {RepositoryName}; RepositoryId: {RepositoryId}.",
                 getCurrentInstantExtended (),
-                this.correlationId,
+                Environment.MachineName,
                 duration_ms,
+                this.correlationId,
                 actorName,
                 context.MethodName,
                 ownerId,

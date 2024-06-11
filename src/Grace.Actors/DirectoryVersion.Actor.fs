@@ -42,10 +42,9 @@ module DirectoryVersion =
 
         let actorName = ActorName.DirectoryVersion
         let log = loggerFactory.CreateLogger("DirectoryVersion.Actor")
-        //let dtoStateName = "DirectoryVersionState"
-        let eventsStateName = "DirectoryVersionEventsState"
-        let directoryVersionCacheStateName = "DirectoryVersionCacheState"
-        let mutable directoryVersionEvents: List<DirectoryVersionEvent> = null
+        let eventsStateName = StateName.DirectoryVersion
+        let directoryVersionCacheStateName = StateName.DirectoryVersionCache
+        let directoryVersionEvents = List<DirectoryVersionEvent>()
 
         let mutable directoryVersionDto = DirectoryVersionDto.Default
         let mutable actorStartTime = Instant.MinValue
@@ -77,18 +76,18 @@ module DirectoryVersion =
 
                     match retrievedEvents with
                     | Some retrievedEvents ->
-                        directoryVersionEvents <- retrievedEvents
+                        // Load the existing events into memory.
+                        directoryVersionEvents.AddRange(retrievedEvents)
 
+                        // Apply the events to build the current Dto.
                         directoryVersionDto <-
                             retrievedEvents
                             |> Seq.fold
                                 (fun directoryVersionDto directoryVersionEvent -> directoryVersionDto |> updateDto directoryVersionEvent.Event)
                                 DirectoryVersionDto.Default
 
-                        message <- "Retrieved from database."
-                    | None ->
-                        directoryVersionEvents <- List<DirectoryVersionEvent>()
-                        message <- "Not found in database."
+                        message <- "Retrieved from database"
+                    | None -> message <- "Not found in database"
                 with ex ->
                     let exc = createExceptionResponse ex
 
@@ -99,8 +98,9 @@ module DirectoryVersion =
                 let duration_ms = getPaddedDuration_ms activateStartTime
 
                 log.LogInformation(
-                    "{CurrentInstant}: Duration: {duration_ms}ms; Activated {ActorType} {ActorId}. {message}.",
+                    "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; Activated {ActorType} {ActorId}. {message}.",
                     getCurrentInstantExtended (),
+                    Environment.MachineName,
                     duration_ms,
                     actorName,
                     host.Id,
@@ -140,20 +140,22 @@ module DirectoryVersion =
 
             if String.IsNullOrEmpty(currentCommand) then
                 log.LogInformation(
-                    "{CurrentInstant}: CorrelationId: {correlationId}; Duration: {duration_ms}ms; Finished {ActorName}.{MethodName}; Id: {Id}.",
+                    "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {ActorName}.{MethodName}; Id: {Id}.",
                     getCurrentInstantExtended (),
-                    this.correlationId,
+                    Environment.MachineName,
                     duration_ms,
+                    this.correlationId,
                     actorName,
                     context.MethodName,
                     this.Id
                 )
             else
                 log.LogInformation(
-                    "{CurrentInstant}: CorrelationId: {correlationId}; Duration: {duration_ms}ms; Finished {ActorName}.{MethodName}; Command: {Command}; Id: {Id}.",
+                    "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {ActorName}.{MethodName}; Command: {Command}; Id: {Id}.",
                     getCurrentInstantExtended (),
-                    this.correlationId,
+                    Environment.MachineName,
                     duration_ms,
+                    this.correlationId,
                     actorName,
                     context.MethodName,
                     currentCommand,
@@ -164,7 +166,8 @@ module DirectoryVersion =
             Task.CompletedTask
 
         member private this.SetReminderToDeleteCachedState() =
-            this.RegisterReminderAsync(ReminderType.DeleteCachedState, Array.empty<byte>, TimeSpan.FromDays(1.0), TimeSpan.Zero)
+            //this.RegisterReminderAsync(ReminderType.DeleteCachedState, Array.empty<byte>, TimeSpan.FromDays(1.0), TimeSpan.Zero)
+            Task.CompletedTask
 
         member private this.OnFirstWrite() = ()
 
@@ -192,10 +195,11 @@ module DirectoryVersion =
                 try
                     if directoryVersionEvents.Count = 0 then this.OnFirstWrite()
 
+                    // Add the event to the list of events, and save it to actor state.
                     directoryVersionEvents.Add(directoryVersionEvent)
-
                     do! DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> stateManager.SetStateAsync(eventsStateName, directoryVersionEvents))
 
+                    // Update the Dto with the event.
                     directoryVersionDto <- directoryVersionDto |> updateDto directoryVersionEvent.Event
 
                     // Publish the event to the rest of the world.
@@ -204,20 +208,27 @@ module DirectoryVersion =
 
                     let returnValue = GraceReturnValue.Create "Directory version command succeeded." directoryVersionEvent.Metadata.CorrelationId
 
-                    returnValue.Properties.Add(nameof (DirectoryId), $"{directoryVersionDto.DirectoryVersion.DirectoryId}")
-
-                    returnValue.Properties.Add(nameof (Sha256Hash), $"{directoryVersionDto.DirectoryVersion.Sha256Hash}")
-
-                    returnValue.Properties.Add("EventType", $"{getDiscriminatedUnionFullName directoryVersionEvent.Event}")
+                    returnValue
+                        .enhance(nameof (RepositoryId), $"{directoryVersionDto.DirectoryVersion.RepositoryId}")
+                        .enhance(nameof (DirectoryId), $"{directoryVersionDto.DirectoryVersion.DirectoryId}")
+                        .enhance(nameof (Sha256Hash), $"{directoryVersionDto.DirectoryVersion.Sha256Hash}")
+                        .enhance (nameof (DirectoryVersionEventType), $"{getDiscriminatedUnionFullName directoryVersionEvent.Event}")
+                    |> ignore
 
                     return Ok returnValue
                 with ex ->
+                    let exceptionResponse = createExceptionResponse ex
+
                     let graceError =
                         GraceError.Create (DirectoryVersionError.getErrorMessage FailedWhileApplyingEvent) directoryVersionEvent.Metadata.CorrelationId
 
-                    let exceptionResponse = createExceptionResponse ex
-
-                    graceError.Properties.Add("Exception details", exceptionResponse.``exception`` + exceptionResponse.innerException)
+                    graceError
+                        .enhance("Exception details", exceptionResponse.``exception`` + exceptionResponse.innerException)
+                        .enhance(nameof (RepositoryId), $"{directoryVersionDto.DirectoryVersion.RepositoryId}")
+                        .enhance(nameof (DirectoryId), $"{directoryVersionDto.DirectoryVersion.DirectoryId}")
+                        .enhance(nameof (Sha256Hash), $"{directoryVersionDto.DirectoryVersion.Sha256Hash}")
+                        .enhance (nameof (DirectoryVersionEventType), $"{getDiscriminatedUnionFullName directoryVersionEvent.Event}")
+                    |> ignore
 
                     return Error graceError
             }
@@ -245,9 +256,6 @@ module DirectoryVersion =
         interface IDirectoryVersionActor with
             member this.Exists correlationId =
                 this.correlationId <- correlationId
-
-                logToConsole
-                    $"In DirectoryVersion.Exists. directoryVersionDto.DirectoryVersion.DirectoryId: {directoryVersionDto.DirectoryVersion.DirectoryId}."
 
                 (directoryVersionDto.DirectoryVersion.DirectoryId
                  <> DirectoryVersion.Default.DirectoryId)
@@ -392,7 +400,7 @@ module DirectoryVersion =
                                     | Create directoryVersion -> return Ok(Created directoryVersion)
                                     | SetRecursiveSize recursiveSize -> return Ok(RecursiveSizeSet recursiveSize)
                                     | DeleteLogical deleteReason ->
-                                        this.SchedulePhysicalDeletion(deleteReason, metadata.CorrelationId)
+                                        //this.SchedulePhysicalDeletion(deleteReason, metadata.CorrelationId)
                                         return Ok(LogicalDeleted deleteReason)
                                     | DeletePhysical ->
                                         isDisposed <- true

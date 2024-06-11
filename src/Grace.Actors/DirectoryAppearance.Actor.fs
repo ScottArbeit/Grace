@@ -1,4 +1,4 @@
-﻿namespace Grace.Actors
+namespace Grace.Actors
 
 open Dapr.Actors
 open Dapr.Actors.Runtime
@@ -34,7 +34,7 @@ module DirectoryAppearance =
         let actorName = ActorName.DirectoryAppearance
         let log = host.LoggerFactory.CreateLogger(actorName)
 
-        let dtoStateName = "directoryAppearancesDtoState"
+        let dtoStateName = StateName.DirectoryAppearance
         let mutable dto = DirectoryAppearanceDto()
 
         override this.OnActivateAsync() =

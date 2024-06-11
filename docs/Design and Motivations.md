@@ -42,7 +42,7 @@ For shorter answers to some of these, please see [Frequently Asked Questions](Fr
 
 It's not possible to design a version control system (VCS) today without designing something that relates to, interfaces with, and/or somehow _just reacts to_ Git. In order to explain some of the choices I've made in Grace, I _have_ to mention Git. Mostly, of course, I'll do that if I think Grace is better in some way or other.
 
-With that said, and just to be clear... I respect Git enormously. It will take years for any new VCS to approximate the feature-set of Git. Until a new one starts to gain momentum and gets a sustained programming effort behind it - open-source and community-supported - every new VCS will sort-of be a sketch compared to everything that Git can do.
+With that said, and just to be clear... I respect Git enormously. It will take years for any new VCS to approximate the feature-set of Git. Until a new one starts to gain momentum and gets a sustained programming effort behind it – open-source and community-supported – every new VCS will sort-of be a sketch compared to everything that Git can do.
 
 The maintainers of Git are among the best programmers in the world. The way they continue to improve Git's scalability and performance, year-after-year, while maintaining compatibility with existing repositories, is an example of how to do world-impacting programming with skill and, dare I say, grace.
 
@@ -94,15 +94,15 @@ There's so much more to do in UX for version control. Grace is a platform for ex
 
 There was an informal Source Control Summit in November, 2020 that I had the opportunity to attend, and I had the chance to have some additional side conversations with a few of the other attendees.
 
-The vibe I got from those interactions - and I want to emphasize that this was _my_ takeaway, and that I do not speak for anyone else - was that 1) we're all still just mining for incremental improvements in Git; 2) we're getting tired of Git and whatever else we're using; and 3) we're not sure what could come next that would change that.
+The vibe I got from those interactions – and I want to emphasize that this was _my_ takeaway, and that I do not speak for anyone else – was that 1) we're all still just mining for incremental improvements in Git; 2) we're getting tired of Git and whatever else we're using; and 3) we're not sure what could come next that would change that.
 
-That led me to sitting outside on my front porch in December, 2020 - still in pandemic lockdown, in the darkest month of a dark year - and starting to think about what **I** would want in a version control system.
+That led me to sitting outside on my front porch in December, 2020 – still in pandemic lockdown, in the darkest month of a dark year – and starting to think about what **I** would want in a version control system.
 
 It all started that first night with a few themes:
 
 - It had to be easy-to-use. The pain of learning Git, and the continuing fear of it, has always been a sore spot for me, and, I know, for millions of others.
 - It had to be cloud-native, so it could take advantage of the fast, cloud-scale computing that we're all used to in almost every other kind of software, and get away from using file servers.
-- It had to have live synchronization between client and server - I was thinking of the OneDrive sync client as a good example - as the basis for being able to build important new features.
+- It had to have live synchronization between client and server – I was thinking of the OneDrive sync client as a good example – as the basis for being able to build important new features.
 - It had to fundamentally break away from Git. No "Git client but a different backend". No "New client, but Git for the storage layer." No "it should speak Git protocol".
 
 I just wanted to start with a blank sheet of paper, keep the things about Git that we all like, take advantage of modern cloud-native services, and get rid of the complexity.
@@ -161,7 +161,7 @@ Browsers are great for browsing and light functionality, and that's all Grace wi
 
 ### Web API
 
-Grace Server itself is simply a modern, 2022-style Web API. If there's something you'd rather automate by calling the server directly, party on. Grace ships with a .NET SDK (because that's what the CLI + Native GUI + Web UI use), and that SDK is simply a projection of the Web API into a specific platform. It should be trivial to create similar SDK's for other languages and platforms.
+Grace Server itself is simply a modern, 2024-style Web API. If there's something you'd rather automate by calling the server directly, party on. Grace ships with a .NET SDK (because that's what the CLI + Native GUI + Web UI use), and that SDK is simply a projection of the Web API into a specific platform. It should be trivial to create similar SDK's for other languages and platforms.
 
 It's about choices for the user. It's about understanding that sometimes the best way to share something is with a URL. And it's about providing a place that we can collaborate on what the default Grace's UI should look like.
 
@@ -211,19 +211,19 @@ So, it's very fast, it has great corporate and community support, it runs on eve
 
 ## Source control isn't systems-level
 
-I like things that go fast. My second programming language - at age 11 - was 6502 Assembler. I've written and read code in IBM 370 Assembler and 80x86 Assembler. I've written C and C++, and continue to pay attention to the wonderful work being led by [Herb Sutter](https://www.youtube.com/user/CppCon/search?query=herb%20sutter) and [Bjarne Stroustrup](https://www.youtube.com/user/CppCon/search?query=bjarne) to make C++ faster, safer, less verbose, and easier to use. I applaud the work by Mozilla and the Rust community to explore the space of safer, very fast systems programming. I consider any public talk by [Chandler Carruth](https://www.youtube.com/results?search_query=chandler+carruth) to be mandatory viewing.
+I like things that go fast. My second programming language – at age 11 – was 6502 Assembler. I've written and read code in IBM 370 Assembler and 80x86 Assembler. I've written C and C++, and continue to pay attention to the wonderful work being led by [Herb Sutter](https://www.youtube.com/user/CppCon/search?query=herb%20sutter) and [Bjarne Stroustrup](https://www.youtube.com/user/CppCon/search?query=bjarne) to make C++ faster, safer, less verbose, and easier to use. I applaud the work by Mozilla and the Rust community to explore the space of safer, very fast systems programming. I consider any public talk by [Chandler Carruth](https://www.youtube.com/results?search_query=chandler+carruth) to be mandatory viewing.
 
 I'm aware of what it means to be coding down-to-the-metal. I grew up on it, and still try to think in terms of hardware capabilities, even as I use higher-level frameworks like .NET.
 
 With that said, the idea that version control systems have to be written in a systems-level language, just because they all used to be, isn't true, especially for a centralized VCS that's just a modern Web API and its clients.
 
-Grace relies on external databases and object storage services, and so there's not much Git-style byte-level file manipulation. Given how fast .NET is (within 1% of native C++ when well-written), and the fact that network round-trips are involved in most things that Grace does, it's not likely that writing Grace in C++ or Rust would make a difference in perceived performance for users. Most of the clock time during commands is spent on those network round-trips, even on the server. Using F# and .NET for the computation – Grace itself – is more than fast enough compared to all of that.
+Grace relies on external databases and object storage services, and so there's not much Git-style byte-level file manipulation. Given how fast .NET is (within 1% of native C++ when well-written), and the fact that network round-trips are involved in most things that Grace does, it's not likely that writing Grace in C++ or Rust would make a difference in perceived performance for users. A lot of the clock time during commands is spent on those network round-trips, even on the server. Using F# and .NET for the computation – i.e. for Grace itself – is more than fast enough compared to all of that.
 
 ![](https://gracevcsdevelopment.blob.core.windows.net/static/Orange3.svg)
 
 ## Cloud-native version control
 
-I've personally installed and maintained hundreds of servers and virtual machines in my career. I racked some of them myself. It seemed fun at the time. I'm over it.
+I've personally installed and maintained hundreds of servers and virtual machines in my career. I racked dozens of them myself. It seemed fun at the time. I'm over it.
 
 That's why I'm a huge fan of Platform-as-a-Service (PaaS), and why Grace was imagined on its first day as a cloud-native system. I starting tracking the [Dapr project](https://dapr.io) as soon as it was announced, and saw it as a perfect solution for being able to write a cloud-native, PaaS-based system, while allowing everyone to choose their own deployment adventure.
 
@@ -243,7 +243,7 @@ Dapr is perfect for using object storage for storing smaller blobs, and although
 
 Thus far, Grace has been written only to run on Microsoft Azure. (It's the cloud provider I know best.)
 
-There was an issue with Dapr when I started writing Grace that caused me to "work around" Dapr's support for databases. It has since been fixed - the ability to query actor storage using a Dapr-specific syntax - and I intend to remove the Azure Cosmos DB code I wrote in favor of that Dapr code over the coming months, enabling Grace to run not just on Cosmos DB, but on any data service that Dapr supports for actor storage.
+There was an issue with Dapr when I started writing Grace that caused me to "work around" Dapr's support for databases. It has since been fixed – the ability to query actor storage using a Dapr-specific syntax – and I intend to remove the Azure Cosmos DB code I wrote in favor of that Dapr code over the coming months, enabling Grace to run not just on Cosmos DB, but on any data service that Dapr supports for actor storage.
 
 As mentioned above, the best thing for Grace is to directly use the specific API's of the object storage providers in the client. To do that securely, at a minimum, the object storage provider must support the concept of a time-limited and scope-limited token that can be generated at the server to be handed to the client for directly accessing the object storage service. (For example, Azure Blob Storage has [Secure Access Signatures](https://docs.microsoft.com/en-us/azure/storage/common/storage-sas-overview).)
 
@@ -251,7 +251,7 @@ Although I've only implemented support for Azure Blob Storage so far, I've creat
 
 ### How does Dapr affect performance?
 
-The simple version is: it adds ~1ms per request through Dapr, when we ask Dapr's Actor Placement Service (running in a separate container) which Grace application instance will have the specific Actor we're interested in. It's negligable compared to overall network round-trip between client and server, and well worth it for the ease-of-use of the Actor pattern in Dapr.
+The simple version is: it adds ~1ms per request through Dapr, when we ask Dapr's Actor Placement Service (running in a separate container) which Grace application instance will have the specific Actor we're interested in. It's negligable compared to overall network round-trip between client and server, and well worth it for the ease-of-use of the Actor pattern in Dapr. To make that even faster, I use a short-term in-memory cache on each application instance for specific data to save even on those calls.
 
 ![](https://gracevcsdevelopment.blob.core.windows.net/static/Orange3.svg)
 
@@ -265,17 +265,17 @@ I wanted to take a different approach with Grace, because:
 - as long as Grace is _fast enough_ (see [below](#performance-or-isnt-centralized-version-control-slower)), and easy to use, most users won't care if it's centralized
 - being centralized allows Grace to handle arbitrarily large files, and to give users controls for which files get retrieved locally
 - being centralized allows Grace to scale up well by relying on mature Platform-as-a-Service components
-- it's 2022, and writing software that requires a file server seems... dated
+- it's 2024, and writing software that requires a file server seems... dated
 - I'm not sure I'm smart enough to write a better DVCS protocol and storage layer than Git
 - the "I have to be able to work disconnected" scenario is less-and-less important
-  - a growing number of developers today use cloud systems as part of their development and production environments, and if they're not connected to the internet, having their source control unavailable is the least of their problems
-  - in the coming years, satellite Internet will provide always-on, high-speed connections in parts of the world that were previously cut-off or limited
+  – a growing number of developers today use cloud systems as part of their development and production environments, and if they're not connected to the internet, having their source control unavailable is the least of their problems
+  – in the coming years, satellite Internet will provide always-on, high-speed connections in parts of the world that were previously cut-off or limited
 
 And, by the way,
 
 ### We're all using Git as a centralized VCS anyway
 
-Almost _everyone_ uses Git in a pseudo-centralized, hub-and-spoke model, where the "real" version of the repo - the hub - is centralized at GitHub / GitLab / Atlassian / some other server, and the spokes are all of the users of the repo. In other words, we're already using Git as a centralized version control system, we're just kind-of pretending that we're not, and we're making things more complicated for ourselves because of it.
+Almost _everyone_ uses Git in a pseudo-centralized, hub-and-spoke model, where the "real" version of the repo – the hub – is centralized at GitHub / GitLab / Atlassian / some other server, and the spokes are all of the users of the repo. In other words, we're already using Git as a centralized version control system, we're just kind-of pretending that we're not, and we're making things more complicated for ourselves because of it.
 
 ### Centralized isn't necessarily less antifragile
 
@@ -292,7 +292,7 @@ Here's how I think about this for Grace:
 
 There are many good reasons, and some not-so-good reasons I could imagine, that a repo might be shut down by a provider. GitHub and GitLab and Atlassian and Azure DevOps and every hoster everywhere all have to deal with those decisions regularly.
 
-Without getting into a discussion of which reasons fall into the good vs. not-so-good categories, I'll just say, again, you'll have the latest version of the branches that you're working on downloaded locally - in other words, the ones that matter. That's enough to keep going or start over if it comes down to it.
+Without getting into a discussion of which reasons fall into the good vs. not-so-good categories, I'll just say, again, you'll have the latest version of the branches that you're working on downloaded locally – in other words, the ones that matter. That's enough to keep going or start over if it comes down to it.
 
 ### Every other service we use is centralized, this just seems weird because we're used to Git
 
@@ -317,11 +317,11 @@ Grace is designed to feel lightweight, and to be _consistently fast_, by which I
 
 ### Git is sometimes faster than Grace...
 
-Git is really fast locally, and because almost every command in Grace will require at least one round-trip to the server, there are some commands for which Grace will never be as fast as Git. In those situations, my aim is for Grace to be as-fast-as-possible, and always _fast enough_ to feel responsive to the user. I expect most Grace commands to execute in under 1.0s on the server (+ network round-trip, of course); so... slower than local Git, but _fast enough_ to be good UX.
+Git is really fast locally, and because almost every command in Grace will require at least one round-trip to the server, there are some commands for which Grace will never be as fast as Git. In those situations, my aim is for Grace to be as-fast-as-possible, and always _fast enough_ to feel responsive to the user. I expect most Grace commands to execute in under 1.0s on the server, so... slightly slower than local Git, but _fast enough_ to be good UX.
 
 ### ...except when Grace is faster than Git
 
-There are also scenarios where Grace will be faster than Git - usually scenarios where Git communicates over a network - because, in Grace, the "heavy lifting" of tracking changes and uploading new versions and downloading new versions will have been done already, in the background (with `grace watch`). In those use cases, like `grace checkpoint` and `grace commit`, the command is just creating a new database record, and that's faster than `git push`.
+There are also scenarios where Grace will be faster than Git – usually scenarios where Git communicates over a network – because, in Grace, the "heavy lifting" of tracking changes and uploading new versions and downloading new versions will have been done already, in the background (with `grace watch`). In those use cases, like `grace checkpoint` and `grace commit`, the command is just creating a new database record, and that's faster than `git push`.
 
 So, Grace is designed to be _fast_, i.e. fast enough to keep users in flow, and to be _consistent_, i.e. users quickly develop muscle-memory for how long things take, helping them stay in flow.
 
@@ -353,7 +353,7 @@ Grace's answer is: _not very much_. It definitely borrows things from Git, but, 
 
 Grace says: It's time to start with a blank sheet of paper.
 
-Only time will tell if this design decision is right - i.e. if it wins hearts and minds - but given that the hang-onto-Git-somewhat-but-do-it-differently path is already being explored by other projects, I want to see what can happen when we really let go of Git.
+Only time will tell if this design decision is right – i.e. if it wins hearts and minds – but given that the hang-onto-Git-somewhat-but-do-it-differently path is already being explored by other projects, I want to see what can happen when we really let go of Git.
 
 I mean, someone's gotta do it.
 
@@ -371,7 +371,7 @@ Grace has no binary data format of its own, and relies on object storage (i.e. A
 
 Because Grace uses the Actor pattern extensively, Grace benefits when more memory is available for each server container instance, as Grace will automatically use that memory as a cache, reducing pressure on the underlying database. And because Grace Server is stateless, and Dapr's Actor Placement service automatically rebalances whenever an application instance is added or removed, Grace can scale up and scale down automatically as traffic increases or decreases, using standard [KEDA](https://keda.sh/) counters to drive those actions.
 
-I haven't yet run load tests, but... if the database used for Grace can support thousands of transactions/second, and the object storage service can handle thousands of transactions/second (and the message bus and the observability system etc.), then between that and Grace's natural use of memory for caching, Grace Server *should* be able to scale up and scale out pretty well. (I hope to do some first-ever load tests in Sept/Oct 2022 and no doubt I'll find some performance fixes when I do.)
+I haven't yet run large-scale load tests, but... if the database used for Grace can support thousands of transactions/second, and the object storage service can handle thousands of transactions/second (and the message bus and the observability system etc.), then between that and Grace's natural use of memory for caching, Grace Server *should* be able to scale up and scale out pretty well. The smaller-scale load tests I've run so far have been promising.
 
 ![](https://gracevcsdevelopment.blob.core.windows.net/static/Orange3.svg)
 

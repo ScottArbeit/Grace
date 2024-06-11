@@ -1,4 +1,4 @@
-﻿namespace Grace.Actors
+namespace Grace.Actors
 
 open Grace.Shared.Types
 open System
@@ -62,6 +62,58 @@ module Constants =
         [<Literal>]
         let User = "UserActor"
 
+    module StateName =
+        [<Literal>]
+        let Branch = "Branch"
+
+        [<Literal>]
+        let ContainerName = "ContainerName"
+
+        [<Literal>]
+        let Diff = "Diff"
+
+        [<Literal>]
+        let DirectoryAppearance = "DirApp"
+
+        [<Literal>]
+        let DirectoryVersionCache = "DirCache"
+
+        [<Literal>]
+        let DirectoryVersion = "Dir"
+
+        [<Literal>]
+        let FileAppearance = "FileApp"
+
+        [<Literal>]
+        let NamedSection = "NamedSection"
+
+        [<Literal>]
+        let Organization = "Organization"
+
+        [<Literal>]
+        let OrganizationDto = "OrganizationDto"
+
+        [<Literal>]
+        let Owner = "Owner"
+
+        [<Literal>]
+        let OwnerDto = "OwnerDto"
+
+        [<Literal>]
+        let Reference = "Ref"
+
+        [<Literal>]
+        let Repository = "Repo"
+
+        [<Literal>]
+        let RepositoryDto = "RepoDto"
+
+        [<Literal>]
+        let RepositoryPermission = "RepoPermission"
+
+        [<Literal>]
+        let User = "User"
+
     /// Constants for the different types of reminders.
     module ReminderType =
         [<Literal>]
@@ -81,7 +133,7 @@ module Constants =
     ///
     /// In Release builds, this is TimeSpan.FromDays(7.0). In Debug builds, it's TimeSpan.FromSeconds(30.0).
 #if DEBUG
-    let DefaultPhysicalDeletionReminderTime = TimeSpan.FromSeconds(30.0)
+    let DefaultPhysicalDeletionReminderTime = TimeSpan.FromSeconds(300.0)
 #else
     let DefaultPhysicalDeletionReminderTime = TimeSpan.FromDays(7.0)
 #endif

@@ -256,6 +256,7 @@ module GraceCommand =
         let commandLineBuilder = CommandLineBuilder(rootCommand)
 
         commandLineBuilder
+            .UseDefaults()
             .UseHelp(fun helpContext ->
                 // This is where we configure how help is displayed by Grace.
 
@@ -326,7 +327,7 @@ module GraceCommand =
             .AddMiddleware(decideIfThisInstanceShouldBeCaseInsensitiveMiddleware, MiddlewareOrder.ExceptionHandler)
             .AddMiddleware(aliasHandlerMiddleware, MiddlewareOrder.ExceptionHandler)
             .AddMiddleware(caseInsensitiveMiddleware, MiddlewareOrder.ExceptionHandler)
-            .UseDefaults()
+            //.UseDefaults()
             .UseParseErrorReporting()
             .Build()
 

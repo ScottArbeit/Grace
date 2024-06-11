@@ -43,6 +43,7 @@ open System.Collections.Generic
 open System.Diagnostics
 open System.Text
 open System.IO
+open FSharpPlus
 
 module Application =
     type FunctionThat_AddsOrUpdatesFile = DirectoryVersion -> FileVersion -> DirectoryVersion
@@ -127,7 +128,7 @@ module Application =
                           |> addMetadata typeof<Branch.GetReferencesParameters>
                           route "/getSaves" Branch.GetSaves
                           |> addMetadata typeof<Branch.GetReferenceParameters>
-                          route "/getTags" (Branch.GetTags >=> mustBeLoggedIn)
+                          route "/getTags" Branch.GetTags
                           |> addMetadata typeof<Branch.GetReferenceParameters>
                           route "/getVersion" Branch.GetVersion
                           |> addMetadata typeof<Branch.GetBranchVersionParameters>
@@ -322,11 +323,22 @@ module Application =
             // Set up the ActorProxyFactory for the application.
             let actorProxyOptions = ActorProxyOptions() // DaprApiToken = Environment.GetEnvironmentVariable("DAPR_API_TOKEN")) (when we actually implement auth)
 
+            let environmentVariables = Environment.GetEnvironmentVariables()
+            let sortedKeys = SortedSet<string>()
+
+            for key in environmentVariables.Keys do
+                let k = key.ToString()
+                sortedKeys.Add(k) |> ignore
+
+            for key in sortedKeys do
+                let value = Environment.GetEnvironmentVariable(key, EnvironmentVariableTarget.Process)
+                logToConsole $"{key}: {value}"
+
             actorProxyOptions.HttpEndpoint <-
                 $"{Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.DaprServerUri)}:{Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.DaprHttpPort)}"
 
             actorProxyOptions.JsonSerializerOptions <- Constants.JsonSerializerOptions
-            actorProxyOptions.RequestTimeout <- TimeSpan.FromSeconds(20.0)
+            actorProxyOptions.RequestTimeout <- TimeSpan.FromSeconds(60.0)
             //logToConsole $"actorProxyOptions.HttpEndpoint: {actorProxyOptions.HttpEndpoint}"
             let actorProxyFactory = new ActorProxyFactory(actorProxyOptions)
             ApplicationContext.setActorProxyFactory actorProxyFactory
@@ -455,7 +467,7 @@ module Application =
                 options.ActorScanInterval <- TimeSpan.FromSeconds(60.0) // Default is 30s
                 options.DrainOngoingCallTimeout <- TimeSpan.FromSeconds(30.0) // Default is 60s
                 options.DrainRebalancedActors <- true // Default is false
-                options.RemindersStoragePartitions <- 0 // Default is 0 (which means 1 partition when needed)
+                options.RemindersStoragePartitions <- 99 // Default is 0 (which means all actors of a given type share the same reminder actor, which is the same as 1 and just as bad).
             (* I wonder what the right number for `RemindersStoragePartitions` is to handle significant scale.
 
                    When Dapr redesigns Reminders (which they are planning to do), we'll switch to the new design 

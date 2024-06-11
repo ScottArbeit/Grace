@@ -1,4 +1,4 @@
-﻿namespace Grace.Server
+namespace Grace.Server
 
 open Azure.Storage
 open Azure.Storage.Blobs
@@ -82,6 +82,7 @@ module ApplicationContext =
 
     let defaultObjectStorageProvider = ObjectStorageProvider.AzureBlobStorage
 
+    /// Sets multiple values for the application. In functional programming, a global construct like this is used instead of dependency injection.
     let Set =
         task {
             let mutable isReady = false
@@ -95,9 +96,9 @@ module ApplicationContext =
                                 Grace Server should not complete startup and accept requests until we know that we can
                                 talk to Dapr, so Grace Server will wait for {secondsToWaitForDaprToBeReady} seconds for Dapr to be ready.
                                 If no connection is made, that almost always means that something happened trying
-                                to start the Dapr sidecar, and Kubernetes is going to restart it.
-                                We'll also exit and allow Kubernetes to restart Grace Server; by the time it restarts,
-                                the Dapr sidecar will be up and running, and we'll connect right away.
+                                to start the Dapr sidecar, and Kubernetes is going to restart it. If that happens,
+                                Grace Server also will exit and allow Kubernetes to restart it; by the time Grace Server
+                                restarts, the Dapr sidecar will be up and running, and we should connect right away.
                                 -----------------------------------------------------------------------------------------------"""
 
             let mutable gRPCPort: int = 50001 // This is Dapr's default gRPC port.
@@ -176,7 +177,7 @@ module ApplicationContext =
             memoryCacheOptions.TrackLinkedCacheEntries <- true
             memoryCache <- new MemoryCache(memoryCacheOptions, loggerFactory)
 
-            // Inject the CosmosClient and CosmosContainer into Actor Services.
+            // Inject the CosmosClient, CosmosContainer, and MemoryCache into Actor Services.
             Grace.Actors.Services.setCosmosClient cosmosClient
             Grace.Actors.Services.setCosmosContainer cosmosContainer
             Grace.Actors.Services.setMemoryCache memoryCache
