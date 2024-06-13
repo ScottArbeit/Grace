@@ -168,6 +168,7 @@ module Repository =
                 | RecordSavesSet recordSaves -> { currentRepositoryDto with RecordSaves = recordSaves }
                 | DefaultServerApiVersionSet version -> { currentRepositoryDto with DefaultServerApiVersion = version }
                 | DefaultBranchNameSet defaultBranchName -> { currentRepositoryDto with DefaultBranchName = defaultBranchName }
+                | LogicalDeleteDaysSet days -> { currentRepositoryDto with LogicalDeleteDays = days }
                 | SaveDaysSet days -> { currentRepositoryDto with SaveDays = days }
                 | CheckpointDaysSet days -> { currentRepositoryDto with CheckpointDays = days }
                 | DirectoryVersionCacheDaysSet days -> { currentRepositoryDto with DirectoryVersionCacheDays = days }
@@ -394,7 +395,7 @@ module Repository =
             this
                 .RegisterReminderAsync(
                     ReminderType.PhysicalDeletion,
-                    convertToByteArray (deleteReason, correlationId),
+                    toByteArray (deleteReason, correlationId),
                     Constants.DefaultPhysicalDeletionReminderTime,
                     TimeSpan.FromMilliseconds(-1)
                 )
@@ -570,6 +571,7 @@ module Repository =
                                     | SetRecordSaves recordSaves -> return RecordSavesSet recordSaves
                                     | SetDefaultServerApiVersion version -> return DefaultServerApiVersionSet version
                                     | SetDefaultBranchName defaultBranchName -> return DefaultBranchNameSet defaultBranchName
+                                    | SetLogicalDeleteDays days -> return LogicalDeleteDaysSet days
                                     | SetSaveDays days -> return SaveDaysSet days
                                     | SetCheckpointDays days -> return CheckpointDaysSet days
                                     | SetDirectoryVersionCacheDays days -> return DirectoryVersionCacheDaysSet days
@@ -631,7 +633,7 @@ module Repository =
                 | ReminderType.PhysicalDeletion ->
                     task {
                         // Get values from state.
-                        let (deleteReason, correlationId) = convertFromByteArray<string * string> state
+                        let (deleteReason, correlationId) = fromByteArray<string * string> state
                         this.correlationId <- correlationId
 
                         // Physically delete the actor state.

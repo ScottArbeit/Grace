@@ -179,6 +179,7 @@ module Dto =
               Branches: SortedSet<BranchName>
               DefaultServerApiVersion: string
               DefaultBranchName: BranchName
+              LogicalDeleteDays: double
               SaveDays: double
               CheckpointDays: double
               DirectoryVersionCacheDays: double
@@ -205,6 +206,7 @@ module Dto =
                   Branches = SortedSet<BranchName>()
                   DefaultServerApiVersion = "latest"
                   DefaultBranchName = BranchName Constants.InitialBranchName
+                  LogicalDeleteDays = 30.0
                   SaveDays = 7.0
                   CheckpointDays = 365.0
                   DirectoryVersionCacheDays = 1.0

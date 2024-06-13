@@ -137,6 +137,7 @@ module Events =
             | RecordSavesSet of recordSaves: bool
             | DefaultServerApiVersionSet of defaultServerApiVersion: string
             | DefaultBranchNameSet of defaultBranchName: BranchName
+            | LogicalDeleteDaysSet of duration: double
             | SaveDaysSet of duration: double
             | CheckpointDaysSet of duration: double
             | DirectoryVersionCacheDaysSet of duration: double

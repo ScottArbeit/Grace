@@ -321,12 +321,12 @@ module Utilities =
         bytes
 
     /// Serializes any value to JSON using Grace's default JsonSerializerOptions, and then converts the JSON string to a byte array.
-    let convertToByteArray<'T> (value: 'T) =
+    let toByteArray<'T> (value: 'T) =
         let json = serialize value
         Encoding.UTF8.GetBytes json
 
     /// Deserializes a byte array to a value of type 'T' using Grace's default JsonSerializerOptions.
-    let convertFromByteArray<'T> (bytes: ReadOnlySpan<byte>) =
+    let fromByteArray<'T> (bytes: ReadOnlySpan<byte>) =
         let json = Encoding.UTF8.GetString(bytes)
         deserialize<'T> json
 

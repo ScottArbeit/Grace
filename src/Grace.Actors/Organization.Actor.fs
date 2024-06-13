@@ -276,7 +276,7 @@ module Organization =
             this
                 .RegisterReminderAsync(
                     ReminderType.PhysicalDeletion,
-                    convertToByteArray (deleteReason, correlationId),
+                    toByteArray (deleteReason, correlationId),
                     Constants.DefaultPhysicalDeletionReminderTime,
                     TimeSpan.FromMilliseconds(-1)
                 )
@@ -397,7 +397,7 @@ module Organization =
                 | ReminderType.PhysicalDeletion ->
                     task {
                         // Get values from state.
-                        let (deleteReason, correlationId) = convertFromByteArray<string * string> state
+                        let (deleteReason, correlationId) = fromByteArray<string * string> state
                         this.correlationId <- correlationId
 
                         log.LogInformation(

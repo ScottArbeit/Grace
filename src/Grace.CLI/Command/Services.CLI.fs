@@ -1,4 +1,4 @@
-﻿namespace Grace.CLI
+namespace Grace.CLI
 
 open Microsoft.Extensions
 open FSharp.Collections
@@ -1052,10 +1052,9 @@ module Services =
                 graceWatchStatusUpdateTime <- newGraceWatchStatus.UpdatedAt
                 logToAnsiConsole Colors.Important $"Wrote inter-process communication file."
             with ex ->
-                logToAnsiConsole Colors.Error $"Exception in updateGraceWatchStatus."
-                logToAnsiConsole Colors.Error $"ex.GetType: {ex.GetType().FullName}"
-                logToAnsiConsole Colors.Error $"ex.Message: {ex.Message}"
-                logToAnsiConsole Colors.Error $"{Environment.NewLine}{ex.StackTrace}"
+                logToAnsiConsole Colors.Error $"Exception in updateGraceWatchInterprocessFile."
+                logToAnsiConsole Colors.Error $"ex.GetType: {ex.GetType().FullName}{Environment.NewLine}{Environment.NewLine}"
+                logToAnsiConsole Colors.Error $"ex.Message: {ex.Message}{Environment.NewLine}{Environment.NewLine}{ex.StackTrace}"
         }
 
     /// Reads the `grace watch` status inter-process communication file.

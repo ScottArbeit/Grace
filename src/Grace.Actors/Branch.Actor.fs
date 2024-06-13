@@ -252,16 +252,12 @@ module Branch =
                     return Error graceError
             }
 
-        member private this.SchedulePhysicalDeletion(deleteReason, correlationId) =
+        member private this.SchedulePhysicalDeletion(deleteReason, delay, correlationId) =
             let tuple = (branchDto.RepositoryId, branchDto.BranchId, branchDto.BranchName, branchDto.ParentBranchId, deleteReason, correlationId)
 
+            // There's no good way to do this asynchronously, so we'll just block. Hopefully the Dapr SDK fixes this.
             this
-                .RegisterReminderAsync(
-                    ReminderType.PhysicalDeletion,
-                    convertToByteArray tuple,
-                    Constants.DefaultPhysicalDeletionReminderTime,
-                    TimeSpan.FromMilliseconds(-1)
-                )
+                .RegisterReminderAsync(ReminderType.PhysicalDeletion, toByteArray tuple, delay, TimeSpan.FromMilliseconds(-1))
                 .Result
             |> ignore
 
@@ -372,6 +368,18 @@ module Branch =
                                         metadata.Properties.Add(nameof (ReferenceText), $"{referenceText}")
                                         metadata.Properties.Add(nameof (BranchId), $"{this.Id}")
                                         metadata.Properties.Add(nameof (BranchName), $"{branchDto.BranchName}")
+
+                                        let repositoryActorProxy =
+                                            actorProxyFactory.CreateActorProxy<IRepositoryActor>(ActorId($"{branchDto.RepositoryId}"), ActorName.Repository)
+
+                                        let! repositoryDto = repositoryActorProxy.Get(metadata.CorrelationId)
+
+                                        this.SchedulePhysicalDeletion(
+                                            $"Deletion for checkpoints of {repositoryDto.CheckpointDays} days.",
+                                            TimeSpan.FromDays(repositoryDto.CheckpointDays),
+                                            metadata.CorrelationId
+                                        )
+
                                         return Checkpointed(referenceId, directoryVersionId, sha256Hash, referenceText)
                                     | BranchCommand.Save(directoryVersionId, sha256Hash, referenceText) ->
                                         let! referenceId = addReference directoryVersionId sha256Hash referenceText ReferenceType.Save
@@ -382,6 +390,18 @@ module Branch =
                                         metadata.Properties.Add(nameof (ReferenceText), $"{referenceText}")
                                         metadata.Properties.Add(nameof (BranchId), $"{this.Id}")
                                         metadata.Properties.Add(nameof (BranchName), $"{branchDto.BranchName}")
+
+                                        let repositoryActorProxy =
+                                            actorProxyFactory.CreateActorProxy<IRepositoryActor>(ActorId($"{branchDto.RepositoryId}"), ActorName.Repository)
+
+                                        let! repositoryDto = repositoryActorProxy.Get(metadata.CorrelationId)
+
+                                        this.SchedulePhysicalDeletion(
+                                            $"Deletion for saves of {repositoryDto.SaveDays} days.",
+                                            TimeSpan.FromDays(repositoryDto.SaveDays),
+                                            metadata.CorrelationId
+                                        )
+
                                         return Saved(referenceId, directoryVersionId, sha256Hash, referenceText)
                                     | BranchCommand.Tag(directoryVersionId, sha256Hash, referenceText) ->
                                         let! referenceId = addReference directoryVersionId sha256Hash referenceText ReferenceType.Tag
@@ -413,7 +433,12 @@ module Branch =
                                     | EnableAutoRebase enabled -> return EnabledAutoRebase enabled
                                     | RemoveReference referenceId -> return ReferenceRemoved referenceId
                                     | DeleteLogical(force, deleteReason) ->
-                                        //this.SchedulePhysicalDeletion(deleteReason, metadata.CorrelationId)
+                                        let repositoryActorProxy =
+                                            actorProxyFactory.CreateActorProxy<IRepositoryActor>(ActorId($"{branchDto.RepositoryId}"), ActorName.Repository)
+
+                                        let! repositoryDto = repositoryActorProxy.Get(metadata.CorrelationId)
+
+                                        this.SchedulePhysicalDeletion(deleteReason, TimeSpan.FromDays(repositoryDto.LogicalDeleteDays), metadata.CorrelationId)
                                         return LogicalDeleted(force, deleteReason)
                                     | DeletePhysical ->
                                         isDisposed <- true
@@ -472,7 +497,7 @@ module Branch =
                     task {
                         // Get values from state.
                         let (repositoryId, branchId, branchName, parentBranchId, deleteReason, correlationId) =
-                            convertFromByteArray<string * string * string * string * string * string> state
+                            fromByteArray<string * string * string * string * string * string> state
 
                         this.correlationId <- correlationId
 

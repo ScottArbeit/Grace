@@ -182,7 +182,7 @@ module DirectoryVersion =
             this
                 .RegisterReminderAsync(
                     ReminderType.PhysicalDeletion,
-                    convertToByteArray (deleteReason, correlationId),
+                    toByteArray (deleteReason, correlationId),
                     Constants.DefaultPhysicalDeletionReminderTime,
                     TimeSpan.FromMilliseconds(-1)
                 )
@@ -242,7 +242,7 @@ module DirectoryVersion =
                     task {
                         try // Temporary hack while some existing reminders with an older state are still in the system.
                             // Get values from state.ds
-                            let (deleteReason, correlationId) = convertFromByteArray<string * string> state
+                            let (deleteReason, correlationId) = fromByteArray<string * string> state
                             this.correlationId <- correlationId
                         with ex ->
                             ()
@@ -400,7 +400,7 @@ module DirectoryVersion =
                                     | Create directoryVersion -> return Ok(Created directoryVersion)
                                     | SetRecursiveSize recursiveSize -> return Ok(RecursiveSizeSet recursiveSize)
                                     | DeleteLogical deleteReason ->
-                                        //this.SchedulePhysicalDeletion(deleteReason, metadata.CorrelationId)
+                                        this.SchedulePhysicalDeletion(deleteReason, metadata.CorrelationId)
                                         return Ok(LogicalDeleted deleteReason)
                                     | DeletePhysical ->
                                         isDisposed <- true

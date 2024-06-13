@@ -92,6 +92,7 @@ module Commands =
             | SetRecordSaves of recordSaves: bool
             | SetDefaultServerApiVersion of defaultServerApiVersion: string
             | SetDefaultBranchName of defaultBranchName: BranchName
+            | SetLogicalDeleteDays of duration: double
             | SetSaveDays of duration: double
             | SetCheckpointDays of duration: double
             | SetDirectoryVersionCacheDays of duration: double
