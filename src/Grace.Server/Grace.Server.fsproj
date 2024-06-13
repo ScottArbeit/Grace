@@ -1,13 +1,13 @@
 <Project Sdk="Microsoft.NET.Sdk.Web">
 	<PropertyGroup>
-		<TargetFramework>net8.0</TargetFramework>
+		<TargetFramework>net9.0</TargetFramework>
         <!--<RuntimeIdentifiers>linux-x64;win-x64</RuntimeIdentifiers>-->
 		<Platforms>AnyCPU;x64</Platforms>
 		<LangVersion>preview</LangVersion>
 		<Version>0.1</Version>
 		<Description>The server module for Grace Version Control System.</Description>
 		<UserSecretsId>f1167a88-7f15-49c3-8ea1-30c2608081c9</UserSecretsId>
-		<ContainerBaseImage>mcr.microsoft.com/dotnet/aspnet:8.0</ContainerBaseImage>
+		<ContainerBaseImage>mcr.microsoft.com/dotnet/aspnet:9.0.0-preview.5</ContainerBaseImage>
 		<ContainerImageTags>0.1;latest</ContainerImageTags>
 		<!--<ContainerRegistry>registry.hub.docker.com</ContainerRegistry>-->
 		<ContainerRepository>scottarbeit/grace-server</ContainerRepository>

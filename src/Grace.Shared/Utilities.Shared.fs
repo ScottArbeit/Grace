@@ -150,7 +150,7 @@ module Utilities =
     let serialize<'T> item = JsonSerializer.Serialize<'T>(item, Constants.JsonSerializerOptions)
 
     /// Serializes an object to JSON and writes it to a stream, using Grace's custom JsonSerializerOptions.
-    let serializeAsync<'T> stream item = task { return! JsonSerializer.SerializeAsync<'T>(stream, item, Constants.JsonSerializerOptions) }
+    let serializeAsync<'T> (stream: Stream) item = task { return! JsonSerializer.SerializeAsync<'T>(stream, item, Constants.JsonSerializerOptions) }
 
     /// Deserializes a JSON string to a provided type, using Grace's custom JsonSerializerOptions.
     let deserialize<'T> (s: string) = JsonSerializer.Deserialize<'T>(s, Constants.JsonSerializerOptions)
