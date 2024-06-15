@@ -10,24 +10,17 @@
 
   <ItemGroup>
     <PackageReference Include="Aspire.Azure.Security.KeyVault" Version="8.0.1" />
-    <PackageReference Include="Aspire.Hosting" Version="9.0.0-preview.3.24210.17" />
+    <PackageReference Include="Aspire.Hosting.AppHost" Version="8.0.1" />
+    <PackageReference Include="Aspire.Hosting" Version="8.0.1" />
     <PackageReference Include="Aspire.Hosting.Azure" Version="8.0.1" />
     <PackageReference Include="Aspire.Hosting.Dapr" Version="8.0.1" />
+    <PackageReference Include="Aspire.Hosting.Redis" Version="8.0.1" />
     <PackageReference Include="Aspire.Microsoft.Azure.Cosmos" Version="8.0.1" />
-    <PackageReference Include="Aspire.StackExchange.Redis" Version="8.0.1" />
+    <PackageReference Include="Azure.Identity" Version="1.11.4" />
   </ItemGroup>
 
-  <ItemGroup>
-    <ProjectReference Include="..\Grace.Server\Grace.Server.fsproj" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <None Update="appsettings.Development.json">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
-    <None Update="appsettings.json">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
-  </ItemGroup>
+    <ItemGroup>
+        <ProjectReference Include="..\Grace.Server\Grace.Server.fsproj" />
+    </ItemGroup>
 
 </Project>

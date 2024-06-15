@@ -2,13 +2,13 @@ using System.Collections.Immutable;
 using System.Configuration;
 using System.Text.Json.Serialization;
 using Aspire.Hosting;
-using Aspire.Hosting.Azure;
+using Aspire.Hosting.Redis;
 using Aspire.Hosting.Dapr;
 using Aspire.Microsoft.Azure.Cosmos;
 using Azure.Identity;
 using Microsoft.Extensions.Azure;
 using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.Options;
+using Microsoft.Extensions.DependencyInjection;
 using Prometheus;
 
 internal class Program
@@ -76,7 +76,7 @@ internal class Program
 
                 // Add local containers as services for Dapr.
                 var zipkin = builder.AddContainer("zipkin", "openzipkin/zipkin", "latest");
-                zipkin.WithEndpoint(containerPort: 9411, hostPort: 9411, name: "zipkin-http", scheme: "http");
+                zipkin.WithEndpoint(port: 9411, targetPort: 9411, name: "zipkin-http", scheme: "http");
 
                 //var prometheus = builder.AddContainer("prometheus", "prom/prometheus", "latest")
                 //                        .WithBindMount("../prometheus", "/etc/prometheus", isReadOnly: true);
@@ -87,7 +87,7 @@ internal class Program
 
                 var otelCollector = builder.AddContainer("otelCollector", "otel/opentelemetry-collector", "latest");
 
-                IResourceBuilder<RedisResource> redis = builder.AddRedis("redis", 6379).WithImageTag("latest");
+                var redis = builder.AddRedis("redis");
 
                 // Add secret store.
                 var secretstore = builder.AddDaprComponent("secretstore", "secretstores.azure.keyvault",
