@@ -2,6 +2,7 @@ namespace Grace.Actors
 
 open Dapr.Actors
 open Dapr.Actors.Runtime
+open Grace.Actors.Commands
 open Grace.Actors.Commands.Branch
 open Grace.Actors.Constants
 open Grace.Actors.Events.Branch
@@ -174,19 +175,20 @@ module Branch =
 
             if String.IsNullOrEmpty(currentCommand) then
                 log.LogInformation(
-                    "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {ActorName}.{MethodName}; BranchId: {Id}; BranchName: {BranchName}.",
+                    "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {ActorName}.{MethodName}; RepositoryId: {RepositoryId}; BranchId: {Id}; BranchName: {BranchName}.",
                     getCurrentInstantExtended (),
                     Environment.MachineName,
                     duration_ms,
                     this.correlationId,
                     actorName,
                     context.MethodName,
+                    branchDto.RepositoryId,
                     this.Id,
                     branchDto.BranchName
                 )
             else
                 log.LogInformation(
-                    "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {ActorName}.{MethodName}; Command: {Command}; BranchId: {Id}; BranchName: {BranchName}.",
+                    "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {ActorName}.{MethodName}; Command: {Command}; RepositoryId: {RepositoryId}; BranchId: {Id}; BranchName: {BranchName}.",
                     getCurrentInstantExtended (),
                     Environment.MachineName,
                     duration_ms,
@@ -194,6 +196,7 @@ module Branch =
                     actorName,
                     context.MethodName,
                     currentCommand,
+                    branchDto.RepositoryId,
                     this.Id,
                     branchDto.BranchName
                 )
@@ -208,17 +211,28 @@ module Branch =
                 try
                     if branchEvents.Count = 0 then do! this.OnFirstWrite()
 
-                    // Add the event to the branchEvents list, and save it to actor state.
-                    branchEvents.Add(branchEvent)
-                    do! Storage.SaveState stateManager eventsStateName branchEvents
-
                     // Update the branchDto with the event.
                     branchDto <- branchDto |> updateDto branchEvent.Event
 
-                    // Publish the event to the rest of the world.
-                    let graceEvent = Events.GraceEvent.BranchEvent branchEvent
-                    let message = serialize graceEvent
-                    do! daprClient.PublishEventAsync(GracePubSubService, GraceEventStreamTopic, graceEvent)
+                    match branchEvent.Event with
+                    | Assigned (_, _, _, _)
+                    | Promoted (_, _, _, _)
+                    | Committed (_, _, _, _)
+                    | Checkpointed (_, _, _, _)
+                    | Saved (_, _, _, _)
+                    | Tagged (_, _, _, _)
+                    | ExternalCreated (_, _, _, _) ->
+                        // Don't save these reference creation events, and don't send them as events; that was done by the Reference actor when the reference was created.
+                        ()
+                    | _ ->
+                        // For all other events, add the event to the branchEvents list, and save it to actor state.
+                        branchEvents.Add(branchEvent)
+                        do! Storage.SaveState stateManager eventsStateName branchEvents
+
+                        // Publish the event to the rest of the world.
+                        let graceEvent = Events.GraceEvent.BranchEvent branchEvent
+                        let message = serialize graceEvent
+                        do! daprClient.PublishEventAsync(GracePubSubService, GraceEventStreamTopic, graceEvent)
 
                     let returnValue = GraceReturnValue.Create "Branch command succeeded." branchEvent.Metadata.CorrelationId
 
@@ -249,6 +263,10 @@ module Branch =
                         .enhance (nameof (BranchEventType), $"{getDiscriminatedUnionFullName branchEvent.Event}")
                     |> ignore
 
+                    // If the event has a referenceId, add it to the return properties.
+                    if branchEvent.Metadata.Properties.ContainsKey(nameof (ReferenceId)) then
+                        graceError.enhance(nameof (ReferenceId), branchEvent.Metadata.Properties[nameof (ReferenceId)]) |> ignore
+
                     return Error graceError
             }
 
@@ -271,7 +289,11 @@ module Branch =
 
             member this.Exists correlationId =
                 this.correlationId <- correlationId
-                not <| (branchDto.BranchId = BranchDto.Default.BranchId) |> returnTask
+                branchDto.UpdatedAt.IsSome |> returnTask
+
+            member this.IsDeleted correlationId =
+                this.correlationId <- correlationId
+                branchDto.DeletedAt.IsSome |> returnTask
 
             member this.Handle command metadata =
                 let isValid (command: BranchCommand) (metadata: EventMetadata) =
@@ -300,12 +322,11 @@ module Branch =
 
                         let referenceActor = actorProxyFactory.CreateActorProxy<IReferenceActor>(actorId, Constants.ActorName.Reference)
 
-                        let! referenceDto =
-                            referenceActor.Create
-                                (referenceId, branchDto.BranchId, directoryId, sha256Hash, referenceType, referenceText)
-                                metadata.CorrelationId
+                        let referenceCommand = Reference.ReferenceCommand.Create(referenceId, branchDto.RepositoryId, branchDto.BranchId, directoryId, sha256Hash, referenceType, referenceText)
 
-                        return referenceId
+                        match! referenceActor.Handle referenceCommand metadata with
+                        | Ok _ -> return Ok referenceId
+                        | Error error -> return Error error
                     }
 
                 let processCommand (command: BranchCommand) (metadata: EventMetadata) =
@@ -322,131 +343,65 @@ module Branch =
                                                 AbsoluteExpirationRelativeToNow = DefaultExpirationTime
                                             )
 
-                                        return Created(branchId, branchName, parentBranchId, basedOn, repositoryId, branchPermissions)
+                                        return Ok (Created(branchId, branchName, parentBranchId, basedOn, repositoryId, branchPermissions))
                                     | Rebase referenceId ->
                                         metadata.Properties.Add(nameof (ReferenceId), $"{referenceId}")
                                         metadata.Properties.Add(nameof (BranchId), $"{this.Id}")
                                         metadata.Properties.Add(nameof (BranchName), $"{branchDto.BranchName}")
-                                        return Rebased referenceId
-                                    | SetName branchName -> return NameSet branchName
+                                        return Ok (Rebased referenceId)
+                                    | SetName branchName -> return Ok (NameSet branchName)
+                                    | EnableAssign enabled -> return Ok (EnabledAssign enabled)
+                                    | EnablePromotion enabled -> return Ok (EnabledPromotion enabled)
+                                    | EnableCommit enabled -> return Ok (EnabledCommit enabled)
+                                    | EnableCheckpoint enabled -> return Ok (EnabledCheckpoint enabled)
+                                    | EnableSave enabled -> return Ok (EnabledSave enabled)
+                                    | EnableTag enabled -> return Ok (EnabledTag enabled)
+                                    | EnableExternal enabled -> return Ok (EnabledExternal enabled)
+                                    | EnableAutoRebase enabled -> return Ok (EnabledAutoRebase enabled)
                                     | BranchCommand.Assign(directoryVersionId, sha256Hash, referenceText) ->
-                                        let! referenceId = addReference directoryVersionId sha256Hash referenceText ReferenceType.Promotion
-
-                                        metadata.Properties.Add(nameof (ReferenceId), $"{referenceId}")
-                                        metadata.Properties.Add(nameof (DirectoryId), $"{directoryVersionId}")
-                                        metadata.Properties.Add(nameof (Sha256Hash), $"{sha256Hash}")
-                                        metadata.Properties.Add(nameof (ReferenceText), $"{referenceText}")
-                                        metadata.Properties.Add(nameof (BranchId), $"{this.Id}")
-                                        metadata.Properties.Add(nameof (BranchName), $"{branchDto.BranchName}")
-                                        return Assigned(referenceId, directoryVersionId, sha256Hash, referenceText)
+                                        match! addReference directoryVersionId sha256Hash referenceText ReferenceType.Promotion with
+                                        | Ok referenceId -> return Ok (Assigned(referenceId, directoryVersionId, sha256Hash, referenceText))
+                                        | Error error -> return Error error
                                     | BranchCommand.Promote(directoryVersionId, sha256Hash, referenceText) ->
-                                        let! referenceId = addReference directoryVersionId sha256Hash referenceText ReferenceType.Promotion
-
-                                        metadata.Properties.Add(nameof (ReferenceId), $"{referenceId}")
-                                        metadata.Properties.Add(nameof (DirectoryId), $"{directoryVersionId}")
-                                        metadata.Properties.Add(nameof (Sha256Hash), $"{sha256Hash}")
-                                        metadata.Properties.Add(nameof (ReferenceText), $"{referenceText}")
-                                        metadata.Properties.Add(nameof (BranchId), $"{this.Id}")
-                                        metadata.Properties.Add(nameof (BranchName), $"{branchDto.BranchName}")
-                                        return Promoted(referenceId, directoryVersionId, sha256Hash, referenceText)
+                                        match! addReference directoryVersionId sha256Hash referenceText ReferenceType.Promotion with
+                                        | Ok referenceId -> return Ok (Promoted(referenceId, directoryVersionId, sha256Hash, referenceText))
+                                        | Error error -> return Error error
                                     | BranchCommand.Commit(directoryVersionId, sha256Hash, referenceText) ->
-                                        let! referenceId = addReference directoryVersionId sha256Hash referenceText ReferenceType.Commit
-
-                                        metadata.Properties.Add(nameof (ReferenceId), $"{referenceId}")
-                                        metadata.Properties.Add(nameof (DirectoryId), $"{directoryVersionId}")
-                                        metadata.Properties.Add(nameof (Sha256Hash), $"{sha256Hash}")
-                                        metadata.Properties.Add(nameof (ReferenceText), $"{referenceText}")
-                                        metadata.Properties.Add(nameof (BranchId), $"{this.Id}")
-                                        metadata.Properties.Add(nameof (BranchName), $"{branchDto.BranchName}")
-                                        return Committed(referenceId, directoryVersionId, sha256Hash, referenceText)
+                                        match! addReference directoryVersionId sha256Hash referenceText ReferenceType.Commit with
+                                        | Ok referenceId -> return Ok (Committed(referenceId, directoryVersionId, sha256Hash, referenceText))
+                                        | Error error -> return Error error
                                     | BranchCommand.Checkpoint(directoryVersionId, sha256Hash, referenceText) ->
-                                        let! referenceId = addReference directoryVersionId sha256Hash referenceText ReferenceType.Checkpoint
-
-                                        metadata.Properties.Add(nameof (ReferenceId), $"{referenceId}")
-                                        metadata.Properties.Add(nameof (DirectoryId), $"{directoryVersionId}")
-                                        metadata.Properties.Add(nameof (Sha256Hash), $"{sha256Hash}")
-                                        metadata.Properties.Add(nameof (ReferenceText), $"{referenceText}")
-                                        metadata.Properties.Add(nameof (BranchId), $"{this.Id}")
-                                        metadata.Properties.Add(nameof (BranchName), $"{branchDto.BranchName}")
-
-                                        let repositoryActorProxy =
-                                            actorProxyFactory.CreateActorProxy<IRepositoryActor>(ActorId($"{branchDto.RepositoryId}"), ActorName.Repository)
-
-                                        let! repositoryDto = repositoryActorProxy.Get(metadata.CorrelationId)
-
-                                        this.SchedulePhysicalDeletion(
-                                            $"Deletion for checkpoints of {repositoryDto.CheckpointDays} days.",
-                                            TimeSpan.FromDays(repositoryDto.CheckpointDays),
-                                            metadata.CorrelationId
-                                        )
-
-                                        return Checkpointed(referenceId, directoryVersionId, sha256Hash, referenceText)
+                                        match! addReference directoryVersionId sha256Hash referenceText ReferenceType.Checkpoint with
+                                        | Ok referenceId -> return Ok (Checkpointed(referenceId, directoryVersionId, sha256Hash, referenceText))
+                                        | Error error -> return Error error
                                     | BranchCommand.Save(directoryVersionId, sha256Hash, referenceText) ->
-                                        let! referenceId = addReference directoryVersionId sha256Hash referenceText ReferenceType.Save
-
-                                        metadata.Properties.Add(nameof (ReferenceId), $"{referenceId}")
-                                        metadata.Properties.Add(nameof (DirectoryId), $"{directoryVersionId}")
-                                        metadata.Properties.Add(nameof (Sha256Hash), $"{sha256Hash}")
-                                        metadata.Properties.Add(nameof (ReferenceText), $"{referenceText}")
-                                        metadata.Properties.Add(nameof (BranchId), $"{this.Id}")
-                                        metadata.Properties.Add(nameof (BranchName), $"{branchDto.BranchName}")
-
-                                        let repositoryActorProxy =
-                                            actorProxyFactory.CreateActorProxy<IRepositoryActor>(ActorId($"{branchDto.RepositoryId}"), ActorName.Repository)
-
-                                        let! repositoryDto = repositoryActorProxy.Get(metadata.CorrelationId)
-
-                                        this.SchedulePhysicalDeletion(
-                                            $"Deletion for saves of {repositoryDto.SaveDays} days.",
-                                            TimeSpan.FromDays(repositoryDto.SaveDays),
-                                            metadata.CorrelationId
-                                        )
-
-                                        return Saved(referenceId, directoryVersionId, sha256Hash, referenceText)
+                                        match! addReference directoryVersionId sha256Hash referenceText ReferenceType.Save with
+                                        | Ok referenceId -> return Ok (Saved(referenceId, directoryVersionId, sha256Hash, referenceText))
+                                        | Error error -> return Error error
                                     | BranchCommand.Tag(directoryVersionId, sha256Hash, referenceText) ->
-                                        let! referenceId = addReference directoryVersionId sha256Hash referenceText ReferenceType.Tag
-
-                                        metadata.Properties.Add(nameof (ReferenceId), $"{referenceId}")
-                                        metadata.Properties.Add(nameof (DirectoryId), $"{directoryVersionId}")
-                                        metadata.Properties.Add(nameof (Sha256Hash), $"{sha256Hash}")
-                                        metadata.Properties.Add(nameof (ReferenceText), $"{referenceText}")
-                                        metadata.Properties.Add(nameof (BranchId), $"{this.Id}")
-                                        metadata.Properties.Add(nameof (BranchName), $"{branchDto.BranchName}")
-                                        return Tagged(referenceId, directoryVersionId, sha256Hash, referenceText)
+                                        match! addReference directoryVersionId sha256Hash referenceText ReferenceType.Tag with
+                                        | Ok referenceId -> return Ok (Tagged(referenceId, directoryVersionId, sha256Hash, referenceText))
+                                        | Error error -> return Error error
                                     | BranchCommand.CreateExternal(directoryVersionId, sha256Hash, referenceText) ->
-                                        let! referenceId = addReference directoryVersionId sha256Hash referenceText ReferenceType.External
-
-                                        metadata.Properties.Add(nameof (ReferenceId), $"{referenceId}")
-                                        metadata.Properties.Add(nameof (DirectoryId), $"{directoryVersionId}")
-                                        metadata.Properties.Add(nameof (Sha256Hash), $"{sha256Hash}")
-                                        metadata.Properties.Add(nameof (ReferenceText), $"{referenceText}")
-                                        metadata.Properties.Add(nameof (BranchId), $"{this.Id}")
-                                        metadata.Properties.Add(nameof (BranchName), $"{branchDto.BranchName}")
-                                        return ExternalCreated(referenceId, directoryVersionId, sha256Hash, referenceText)
-                                    | EnableAssign enabled -> return EnabledAssign enabled
-                                    | EnablePromotion enabled -> return EnabledPromotion enabled
-                                    | EnableCommit enabled -> return EnabledCommit enabled
-                                    | EnableCheckpoint enabled -> return EnabledCheckpoint enabled
-                                    | EnableSave enabled -> return EnabledSave enabled
-                                    | EnableTag enabled -> return EnabledTag enabled
-                                    | EnableExternal enabled -> return EnabledExternal enabled
-                                    | EnableAutoRebase enabled -> return EnabledAutoRebase enabled
-                                    | RemoveReference referenceId -> return ReferenceRemoved referenceId
+                                        match! addReference directoryVersionId sha256Hash referenceText ReferenceType.External with
+                                        | Ok referenceId -> return Ok (ExternalCreated(referenceId, directoryVersionId, sha256Hash, referenceText))
+                                        | Error error -> return Error error
+                                    | RemoveReference referenceId -> return Ok (ReferenceRemoved referenceId)
                                     | DeleteLogical(force, deleteReason) ->
                                         let repositoryActorProxy =
                                             actorProxyFactory.CreateActorProxy<IRepositoryActor>(ActorId($"{branchDto.RepositoryId}"), ActorName.Repository)
-
                                         let! repositoryDto = repositoryActorProxy.Get(metadata.CorrelationId)
-
                                         this.SchedulePhysicalDeletion(deleteReason, TimeSpan.FromDays(repositoryDto.LogicalDeleteDays), metadata.CorrelationId)
-                                        return LogicalDeleted(force, deleteReason)
+                                        return Ok (LogicalDeleted(force, deleteReason))
                                     | DeletePhysical ->
                                         isDisposed <- true
-                                        return PhysicalDeleted
-                                    | Undelete -> return Undeleted
+                                        return Ok PhysicalDeleted
+                                    | Undelete -> return Ok Undeleted
                                 }
 
-                            return! this.ApplyEvent { Event = event; Metadata = metadata }
+                            match event with
+                            | Ok event -> return! this.ApplyEvent { Event = event; Metadata = metadata }
+                            | Error error -> return Error error
                         with ex ->
                             return Error(GraceError.Create $"{createExceptionResponse ex}" metadata.CorrelationId)
                     }
@@ -505,7 +460,7 @@ module Branch =
 
 
                         // Delete saved state for this actor.
-                        let! deletedEventsState = stateManager.TryRemoveStateAsync(eventsStateName)
+                        let! deletedEventsState = Storage.DeleteState stateManager eventsStateName
 
                         log.LogInformation(
                             "{currentInstant}: CorrelationId: {correlationId}; Deleted physical state for branch; RepositoryId: {repositoryId}; BranchId: {branchId}; BranchName: {branchName}; ParentBranchId: {parentBranchId}; deleteReason: {deleteReason}.",

@@ -333,6 +333,108 @@ module Errors =
                 | Some error -> OrganizationError.getErrorMessage error
                 | None -> String.Empty
 
+    module Reference =
+        type ReferenceError =
+            | AssignIsDisabled
+            | BranchDoesNotExist
+            | BranchIdDoesNotExist
+            | BranchIsNotBasedOnLatestPromotion
+            | CheckpointIsDisabled
+            | CommitIsDisabled
+            | DuplicateCorrelationId
+            | EitherBranchIdOrBranchNameRequired
+            | EitherDirectoryVersionIdOrSha256HashRequired
+            | EitherOrganizationIdOrOrganizationNameRequired
+            | EitherOwnerIdOrOwnerNameRequired
+            | EitherRepositoryIdOrRepositoryNameIsRequired
+            | EitherToBranchIdOrToBranchNameIsRequired
+            | ExternalIsDisabled
+            | FailedToRetrieveBranch
+            | FailedWhileApplyingEvent
+            | IndexFileNotFound
+            | InvalidBranchId
+            | InvalidBranchName
+            | InvalidOrganizationId
+            | InvalidOrganizationName
+            | InvalidOwnerId
+            | InvalidOwnerName
+            | InvalidReferenceId
+            | InvalidReferenceType
+            | InvalidRepositoryId
+            | InvalidRepositoryName
+            | InvalidSha256Hash
+            | PromotionIsDisabled
+            | PromotionNotAvailableBecauseThereAreNoPromotableReferences
+            | MessageIsRequired
+            | ObjectCacheFileNotFound
+            | OrganizationDoesNotExist
+            | OwnerDoesNotExist
+            | ParentBranchDoesNotExist
+            | ReferenceAlreadyExists
+            | ReferenceIdDoesNotExist
+            | ReferenceTypeMustBeProvided
+            | RepositoryDoesNotExist
+            | SaveIsDisabled
+            | Sha256HashDoesNotExist
+            | Sha256HashIsRequired
+            | StringIsTooLong
+            | TagIsDisabled
+            | ValueMustBePositive
+
+            static member getErrorMessage(referenceError: ReferenceError) : string =
+                match referenceError with
+                | AssignIsDisabled -> getLocalizedString StringResourceName.AssignIsDisabled
+                | BranchDoesNotExist -> getLocalizedString StringResourceName.BranchDoesNotExist
+                | BranchIdDoesNotExist -> getLocalizedString StringResourceName.BranchIdDoesNotExist
+                | BranchIsNotBasedOnLatestPromotion -> getLocalizedString StringResourceName.BranchIsNotBasedOnLatestPromotion
+                | CheckpointIsDisabled -> getLocalizedString StringResourceName.CheckpointIsDisabled
+                | CommitIsDisabled -> getLocalizedString StringResourceName.CommitIsDisabled
+                | DuplicateCorrelationId -> getLocalizedString StringResourceName.DuplicateCorrelationId
+                | EitherBranchIdOrBranchNameRequired -> getLocalizedString StringResourceName.EitherBranchIdOrBranchNameIsRequired
+                | EitherDirectoryVersionIdOrSha256HashRequired -> getLocalizedString StringResourceName.EitherDirectoryVersionIdOrSha256HashRequired
+                | EitherOrganizationIdOrOrganizationNameRequired -> getLocalizedString StringResourceName.EitherOrganizationIdOrOrganizationNameIsRequired
+                | EitherOwnerIdOrOwnerNameRequired -> getLocalizedString StringResourceName.EitherOwnerIdOrOwnerNameIsRequired
+                | EitherRepositoryIdOrRepositoryNameIsRequired -> getLocalizedString StringResourceName.EitherRepositoryIdOrRepositoryNameIsRequired
+                | EitherToBranchIdOrToBranchNameIsRequired -> getLocalizedString StringResourceName.EitherToBranchIdOrToBranchNameIsRequired
+                | ExternalIsDisabled -> getLocalizedString StringResourceName.ExternalIsDisabled
+                | FailedToRetrieveBranch -> getLocalizedString StringResourceName.FailedToRetrieveBranch
+                | FailedWhileApplyingEvent -> getLocalizedString StringResourceName.FailedWhileApplyingEvent
+                | IndexFileNotFound -> getLocalizedString StringResourceName.IndexFileNotFound
+                | InvalidBranchId -> getLocalizedString StringResourceName.InvalidBranchId
+                | InvalidBranchName -> getLocalizedString StringResourceName.InvalidBranchName
+                | InvalidOrganizationId -> getLocalizedString StringResourceName.InvalidOrganizationId
+                | InvalidOrganizationName -> getLocalizedString StringResourceName.InvalidOrganizationName
+                | InvalidOwnerId -> getLocalizedString StringResourceName.InvalidOwnerId
+                | InvalidOwnerName -> getLocalizedString StringResourceName.InvalidOwnerName
+                | InvalidReferenceId -> getLocalizedString StringResourceName.InvalidReferenceId
+                | InvalidReferenceType -> getLocalizedString StringResourceName.InvalidReferenceType
+                | InvalidRepositoryId -> getLocalizedString StringResourceName.InvalidRepositoryId
+                | InvalidRepositoryName -> getLocalizedString StringResourceName.InvalidRepositoryName
+                | InvalidSha256Hash -> getLocalizedString StringResourceName.InvalidSha256Hash
+                | PromotionIsDisabled -> getLocalizedString StringResourceName.PromotionIsDisabled
+                | PromotionNotAvailableBecauseThereAreNoPromotableReferences ->
+                    getLocalizedString StringResourceName.PromotionNotAvailableBecauseThereAreNoPromotableReferences
+                | MessageIsRequired -> getLocalizedString StringResourceName.MessageIsRequired
+                | ObjectCacheFileNotFound -> getLocalizedString StringResourceName.ObjectCacheFileNotFound
+                | OrganizationDoesNotExist -> getLocalizedString StringResourceName.OrganizationDoesNotExist
+                | OwnerDoesNotExist -> getLocalizedString StringResourceName.OwnerDoesNotExist
+                | ParentBranchDoesNotExist -> getLocalizedString StringResourceName.ParentBranchDoesNotExist
+                | ReferenceAlreadyExists -> getLocalizedString StringResourceName.ReferenceAlreadyExists
+                | ReferenceIdDoesNotExist -> getLocalizedString StringResourceName.ReferenceIdDoesNotExist
+                | ReferenceTypeMustBeProvided -> getLocalizedString StringResourceName.ReferenceTypeMustBeProvided
+                | RepositoryDoesNotExist -> getLocalizedString StringResourceName.RepositoryDoesNotExist
+                | SaveIsDisabled -> getLocalizedString StringResourceName.SaveIsDisabled
+                | Sha256HashDoesNotExist -> getLocalizedString StringResourceName.Sha256HashDoesNotExist
+                | Sha256HashIsRequired -> getLocalizedString StringResourceName.Sha256HashIsRequired
+                | StringIsTooLong -> getLocalizedString StringResourceName.StringIsTooLong
+                | TagIsDisabled -> getLocalizedString StringResourceName.TagIsDisabled
+                | ValueMustBePositive -> getLocalizedString StringResourceName.ValueMustBePositive
+
+            static member getErrorMessage(branchError: ReferenceError option) : string =
+                match branchError with
+                | Some error -> ReferenceError.getErrorMessage error
+                | None -> String.Empty
+
     module Repository =
         type RepositoryError =
             | BranchIdsAreRequired

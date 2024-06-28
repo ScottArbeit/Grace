@@ -15,8 +15,8 @@ module Diff =
         member val public OrganizationName: OrganizationName = String.Empty with get, set
         member val public RepositoryId = String.Empty with get, set
         member val public RepositoryName: RepositoryName = String.Empty with get, set
-        member val public DirectoryId1: DirectoryId = DirectoryId.Empty with get, set
-        member val public DirectoryId2: DirectoryId = DirectoryId.Empty with get, set
+        member val public DirectoryId1: DirectoryVersionId = DirectoryVersionId.Empty with get, set
+        member val public DirectoryId2: DirectoryVersionId = DirectoryVersionId.Empty with get, set
 
     /// Parameters used by the /diff/populate endpoint.
     type PopulateParameters() =

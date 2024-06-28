@@ -26,13 +26,13 @@ open OrganizationName
 
 module DirectoryVersion =
 
-    let GetActorId (directoryId: DirectoryId) = ActorId($"{directoryId}")
+    let GetActorId (directoryId: DirectoryVersionId) = ActorId($"{directoryId}")
 
     type DirectoryVersionDto =
         { DirectoryVersion: DirectoryVersion
           RecursiveSize: int64
           DeletedAt: Instant option
-          DeleteReason: string }
+          DeleteReason: DeleteReason }
 
         static member Default =
             { DirectoryVersion = DirectoryVersion.Default; RecursiveSize = Constants.InitialDirectorySize; DeletedAt = None; DeleteReason = String.Empty }
@@ -210,7 +210,7 @@ module DirectoryVersion =
 
                     returnValue
                         .enhance(nameof (RepositoryId), $"{directoryVersionDto.DirectoryVersion.RepositoryId}")
-                        .enhance(nameof (DirectoryId), $"{directoryVersionDto.DirectoryVersion.DirectoryId}")
+                        .enhance(nameof (DirectoryVersionId), $"{directoryVersionDto.DirectoryVersion.DirectoryVersionId}")
                         .enhance(nameof (Sha256Hash), $"{directoryVersionDto.DirectoryVersion.Sha256Hash}")
                         .enhance (nameof (DirectoryVersionEventType), $"{getDiscriminatedUnionFullName directoryVersionEvent.Event}")
                     |> ignore
@@ -225,7 +225,7 @@ module DirectoryVersion =
                     graceError
                         .enhance("Exception details", exceptionResponse.``exception`` + exceptionResponse.innerException)
                         .enhance(nameof (RepositoryId), $"{directoryVersionDto.DirectoryVersion.RepositoryId}")
-                        .enhance(nameof (DirectoryId), $"{directoryVersionDto.DirectoryVersion.DirectoryId}")
+                        .enhance(nameof (DirectoryVersionId), $"{directoryVersionDto.DirectoryVersion.DirectoryVersionId}")
                         .enhance(nameof (Sha256Hash), $"{directoryVersionDto.DirectoryVersion.Sha256Hash}")
                         .enhance (nameof (DirectoryVersionEventType), $"{getDiscriminatedUnionFullName directoryVersionEvent.Event}")
                     |> ignore
@@ -257,8 +257,8 @@ module DirectoryVersion =
             member this.Exists correlationId =
                 this.correlationId <- correlationId
 
-                (directoryVersionDto.DirectoryVersion.DirectoryId
-                 <> DirectoryVersion.Default.DirectoryId)
+                (directoryVersionDto.DirectoryVersion.DirectoryVersionId
+                 <> DirectoryVersion.Default.DirectoryVersionId)
                 |> returnTask
 
             member this.Delete correlationId =
@@ -291,7 +291,7 @@ module DirectoryVersion =
                 this.correlationId <- correlationId
                 directoryVersionDto.DirectoryVersion.Size |> returnTask
 
-            member this.GetDirectoryVersionsRecursive (forceRegenerate: bool) correlationId =
+            member this.GetRecursiveDirectoryVersions (forceRegenerate: bool) correlationId =
                 this.correlationId <- correlationId
                 let stateManager = this.StateManager
 
@@ -301,17 +301,17 @@ module DirectoryVersion =
                         let cachedSubdirectoryVersions =
                             task {
                                 if not <| forceRegenerate then
-                                    return! Storage.RetrieveState<List<DirectoryVersion>> stateManager directoryVersionCacheStateName
+                                    return! Storage.RetrieveState<DirectoryVersion array> stateManager directoryVersionCacheStateName
                                 else
                                     return None
                             }
 
-                        // If they have, return them.
+                        // If they have already been generated, return them.
                         match! cachedSubdirectoryVersions with
                         | Some subdirectoryVersions ->
                             log.LogDebug("In DirectoryVersionActor.GetDirectoryVersionsRecursive({id}). Retrieved SubdirectoryVersions from cache.", this.Id)
 
-                            return subdirectoryVersions
+                            return subdirectoryVersions.ToArray()
                         // If they haven't, generate them by calling each subdirectory in parallel.
                         | None ->
                             log.LogDebug(
@@ -335,7 +335,7 @@ module DirectoryVersion =
                                                 let subdirectoryActor =
                                                     actorProxyFactory.CreateActorProxy<IDirectoryVersionActor>(actorId, ActorName.DirectoryVersion)
 
-                                                let! subdirectoryContents = subdirectoryActor.GetDirectoryVersionsRecursive forceRegenerate correlationId
+                                                let! subdirectoryContents = subdirectoryActor.GetRecursiveDirectoryVersions forceRegenerate correlationId
 
                                                 for directoryVersion in subdirectoryContents do
                                                     subdirectoryVersions.Enqueue(directoryVersion)
@@ -343,7 +343,7 @@ module DirectoryVersion =
                                         ))
                                 )
 
-                            let subdirectoryVersionsList = subdirectoryVersions.ToList()
+                            let subdirectoryVersionsList = subdirectoryVersions.ToArray()
                             do! Storage.SaveState stateManager directoryVersionCacheStateName subdirectoryVersionsList
 
                             log.LogDebug("In DirectoryVersionActor.GetDirectoryVersionsRecursive({id}); Storing subdirectoryVersion list.", this.Id)
@@ -361,7 +361,7 @@ module DirectoryVersion =
                             createExceptionResponse ex
                         )
 
-                        return List<DirectoryVersion>()
+                        return Array.Empty<DirectoryVersion>()
                 }
 
             member this.Handle command metadata =
@@ -429,7 +429,7 @@ module DirectoryVersion =
 
                 task {
                     if directoryVersionDto.RecursiveSize = Constants.InitialDirectorySize then
-                        let! directoryVersions = (this :> IDirectoryVersionActor).GetDirectoryVersionsRecursive false correlationId
+                        let! directoryVersions = (this :> IDirectoryVersionActor).GetRecursiveDirectoryVersions false correlationId
 
                         let recursiveSize = directoryVersions |> Seq.sumBy (fun directoryVersion -> directoryVersion.Size)
 

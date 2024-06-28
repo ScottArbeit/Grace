@@ -667,10 +667,10 @@ module Validations =
             |> ValueTask<Result<unit, 'T>>
 
         /// Validates that all of the given DirectoryIds exist in the database.
-        let directoryIdsExist<'T> (directoryIds: List<DirectoryId>) correlationId (error: 'T) =
+        let directoryIdsExist<'T> (directoryIds: List<DirectoryVersionId>) correlationId (error: 'T) =
             task {
                 let mutable allExist = true
-                let directoryIdStack = Queue<DirectoryId>(directoryIds)
+                let directoryIdStack = Queue<DirectoryVersionId>(directoryIds)
 
                 while directoryIdStack.Count > 0 && allExist do
                     let directoryId = directoryIdStack.Dequeue()

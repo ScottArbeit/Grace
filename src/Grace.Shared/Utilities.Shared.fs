@@ -359,10 +359,10 @@ module Utilities =
         else
             valueTask.GetAwaiter().GetResult()
 
-    /// Alias for calling Task.FromResult() with the provided value.
+    /// Calls Task.FromResult<'T>() with the provided value.
     let returnTask<'T> value = Task.FromResult<'T>(value)
 
-    /// Alias for calling ValueTask.FromResult() with the provided value.
+    /// Calls ValueTask.FromResult<'T>() with the provided value.
     let returnValueTask<'T> value = ValueTask.FromResult<'T>(value)
 
     /// Monadic bind for the nested monad Task<Result<'T, 'TError>>.

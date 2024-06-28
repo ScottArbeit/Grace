@@ -305,7 +305,7 @@ module Branch =
                         elif not <| String.IsNullOrEmpty(parameters.Sha256Hash) then
                             match! getDirectoryBySha256Hash (Guid.Parse(graceIds.RepositoryId)) parameters.Sha256Hash parameters.CorrelationId with
                             | Some directoryVersion ->
-                                return Some(Assign(directoryVersion.DirectoryId, directoryVersion.Sha256Hash, ReferenceText parameters.Message))
+                                return Some(Assign(directoryVersion.DirectoryVersionId, directoryVersion.Sha256Hash, ReferenceText parameters.Message))
                             | None -> return None
                         else
                             return None
@@ -1330,7 +1330,7 @@ module Branch =
                                         (getCorrelationId context)
                                 with
                                 | Some directoryVersion ->
-                                    let directoryActorId = DirectoryVersion.GetActorId directoryVersion.DirectoryId
+                                    let directoryActorId = DirectoryVersion.GetActorId directoryVersion.DirectoryVersionId
 
                                     let directoryActorProxy =
                                         actorProxyFactory.CreateActorProxy<IDirectoryVersionActor>(directoryActorId, ActorName.DirectoryVersion)
@@ -1409,10 +1409,10 @@ module Branch =
                                     let! directoryVersion = directoryActorProxy.Get(getCorrelationId context)
 
                                     let! contents =
-                                        directoryActorProxy.GetDirectoryVersionsRecursive listContentsParameters.ForceRecompute (getCorrelationId context)
+                                        directoryActorProxy.GetRecursiveDirectoryVersions listContentsParameters.ForceRecompute (getCorrelationId context)
 
                                     return contents
-                                | None -> return List<DirectoryVersion>()
+                                | None -> return Array.Empty<DirectoryVersion>()
                             elif not <| String.IsNullOrEmpty(listContentsParameters.ReferenceId) then
                                 // We have a ReferenceId, so we'll get the DirectoryVersion from that reference.
                                 let referenceActorId = ActorId(listContentsParameters.ReferenceId)
@@ -1426,7 +1426,7 @@ module Branch =
                                     actorProxyFactory.CreateActorProxy<IDirectoryVersionActor>(directoryActorId, ActorName.DirectoryVersion)
 
                                 let! contents =
-                                    directoryActorProxy.GetDirectoryVersionsRecursive listContentsParameters.ForceRecompute (getCorrelationId context)
+                                    directoryActorProxy.GetRecursiveDirectoryVersions listContentsParameters.ForceRecompute (getCorrelationId context)
 
                                 return contents
                             else
@@ -1438,16 +1438,16 @@ module Branch =
                                         (getCorrelationId context)
                                 with
                                 | Some directoryVersion ->
-                                    let directoryActorId = DirectoryVersion.GetActorId directoryVersion.DirectoryId
+                                    let directoryActorId = DirectoryVersion.GetActorId directoryVersion.DirectoryVersionId
 
                                     let directoryActorProxy =
                                         actorProxyFactory.CreateActorProxy<IDirectoryVersionActor>(directoryActorId, ActorName.DirectoryVersion)
 
                                     let! contents =
-                                        directoryActorProxy.GetDirectoryVersionsRecursive listContentsParameters.ForceRecompute (getCorrelationId context)
+                                        directoryActorProxy.GetRecursiveDirectoryVersions listContentsParameters.ForceRecompute (getCorrelationId context)
 
                                     return contents
-                                | None -> return List<DirectoryVersion>()
+                                | None -> return Array.Empty<DirectoryVersion>()
                         }
 
                     let! parameters = context |> parse<ListContentsParameters>
@@ -1521,7 +1521,7 @@ module Branch =
 
                             match rootDirectoryVersion with
                             | Some rootDirectoryVersion ->
-                                let directoryVersionActorId = ActorId($"{rootDirectoryVersion.DirectoryId}")
+                                let directoryVersionActorId = ActorId($"{rootDirectoryVersion.DirectoryVersionId}")
 
                                 let directoryVersionActorProxy =
                                     ApplicationContext.actorProxyFactory.CreateActorProxy<IDirectoryVersionActor>(
@@ -1529,11 +1529,11 @@ module Branch =
                                         ActorName.DirectoryVersion
                                     )
 
-                                let! directoryVersions = directoryVersionActorProxy.GetDirectoryVersionsRecursive false (getCorrelationId context)
+                                let! directoryVersions = directoryVersionActorProxy.GetRecursiveDirectoryVersions false (getCorrelationId context)
 
-                                let directoryIds = directoryVersions.Select(fun dv -> dv.DirectoryId).ToList()
+                                let directoryIds = directoryVersions.Select(fun dv -> dv.DirectoryVersionId).ToList()
                                 return directoryIds
-                            | None -> return List<DirectoryId>()
+                            | None -> return List<DirectoryVersionId>()
                         }
 
                     let! parameters = context |> parse<GetBranchVersionParameters>

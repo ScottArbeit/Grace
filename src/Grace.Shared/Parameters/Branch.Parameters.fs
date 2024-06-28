@@ -34,7 +34,7 @@ module Branch =
     /// Parameters for the /branch/assign endpoint.
     type AssignParameters() =
         inherit BranchParameters()
-        member val public DirectoryVersionId: DirectoryId = Guid.Empty with get, set
+        member val public DirectoryVersionId: DirectoryVersionId = Guid.Empty with get, set
         member val public Sha256Hash: Sha256Hash = String.Empty with get, set
         member val public Message = String.Empty with get, set
 
@@ -46,7 +46,7 @@ module Branch =
     /// Parameters for the various /branch/create[reference] endpoints.
     type CreateReferenceParameters() =
         inherit BranchParameters()
-        member val public DirectoryVersionId: DirectoryId = Guid.Empty with get, set
+        member val public DirectoryVersionId: DirectoryVersionId = Guid.Empty with get, set
         member val public Sha256Hash: Sha256Hash = String.Empty with get, set
         member val public Message = String.Empty with get, set
 
@@ -64,7 +64,7 @@ module Branch =
     type DeleteBranchParameters() =
         inherit BranchParameters()
         member val public Force: bool = false with get, set
-        member val public DeleteReason: string = String.Empty with get, set
+        member val public DeleteReason: DeleteReason = String.Empty with get, set
 
     /// Parameters for the /branch/getReference endpoint.
     type GetReferenceParameters() =

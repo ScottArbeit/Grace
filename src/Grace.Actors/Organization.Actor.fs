@@ -227,7 +227,7 @@ module Organization =
             }
 
         /// Deletes all of the repositories provided, by sending a DeleteLogical command to each one.
-        member private this.LogicalDeleteRepositories(repositories: List<RepositoryDto>, metadata: EventMetadata, deleteReason: string) =
+        member private this.LogicalDeleteRepositories(repositories: List<RepositoryDto>, metadata: EventMetadata, deleteReason: DeleteReason) =
             task {
                 let results = ConcurrentQueue<GraceResult<string>>()
 

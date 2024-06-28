@@ -54,7 +54,7 @@ module Owner =
         /// If true, force the deletion of the owner even if it has repositories.
         member val public Force: bool = false with get, set
         /// The reason for the deletion.
-        member val public DeleteReason: string = String.Empty with get, set
+        member val public DeleteReason: DeleteReason = String.Empty with get, set
 
     /// Parameters for the /owner/undelete endpoint.
     type UndeleteOwnerParameters() =

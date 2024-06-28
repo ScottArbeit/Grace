@@ -43,8 +43,8 @@ module Diff =
         member val public OrganizationName: string = String.Empty with get, set
         member val public RepositoryId: string = String.Empty with get, set
         member val public RepositoryName: string = String.Empty with get, set
-        member val public DirectoryId1: string = String.Empty with get, set
-        member val public DirectoryId2: string = String.Empty with get, set
+        member val public DirectoryVersionId1: string = String.Empty with get, set
+        member val public DirectoryVersionId2: string = String.Empty with get, set
 
     module private Options =
         let ownerId =
@@ -115,7 +115,7 @@ module Diff =
                 Arity = ArgumentArity.ExactlyOne
             )
 
-        let directoryId1 =
+        let directoryVersionId1 =
             new Option<string>(
                 [| "--directoryId1"; "--d1" |],
                 IsRequired = true,
@@ -199,10 +199,10 @@ module Diff =
 
     let private DirectoryIdValidations (parseResult, parameters) =
         let ``DirectoryId1 must be a Guid`` (parseResult: ParseResult, parameters: CommonParameters) =
-            mustBeAValidGuid parseResult parameters Options.directoryId1 parameters.DirectoryId1 InvalidDirectoryId
+            mustBeAValidGuid parseResult parameters Options.directoryVersionId1 parameters.DirectoryVersionId1 InvalidDirectoryId
 
         let ``DirectoryId2 must be a Guid`` (parseResult: ParseResult, parameters: CommonParameters) =
-            mustBeAValidGuid parseResult parameters Options.directoryId2 parameters.DirectoryId2 InvalidDirectoryId
+            mustBeAValidGuid parseResult parameters Options.directoryId2 parameters.DirectoryVersionId2 InvalidDirectoryId
 
         (parseResult, parameters)
         |> ``DirectoryId1 must be a Guid``
@@ -343,9 +343,9 @@ module Diff =
 
                                     let t7 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending diff request to server.[/]", autoStart = false)
 
-                                    let mutable rootDirectoryId = DirectoryId.Empty
+                                    let mutable rootDirectoryId = DirectoryVersionId.Empty
                                     let mutable rootDirectorySha256Hash = Sha256Hash String.Empty
-                                    let mutable previousDirectoryIds: HashSet<DirectoryId> = null
+                                    let mutable previousDirectoryIds: HashSet<DirectoryVersionId> = null
 
                                     // Check for latest commit and latest root directory version from grace watch. If it's running, we know GraceStatus is up-to-date.
                                     match! getGraceWatchStatus () with
@@ -595,8 +595,8 @@ module Diff =
 
     type DirectoryIdParameters() =
         inherit CommonParameters()
-        member val public DirectoryId1 = DirectoryId.Empty with get, set
-        member val public DirectoryId2 = DirectoryId.Empty with get, set
+        member val public DirectoryId1 = DirectoryVersionId.Empty with get, set
+        member val public DirectoryId2 = DirectoryVersionId.Empty with get, set
 
     let private DirectoryIdCommand =
         CommandHandler.Create(fun (parseResult: ParseResult) (parameters: DirectoryIdParameters) ->
@@ -647,9 +647,9 @@ module Diff =
 
                                         let t6 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending diff request to server.[/]", autoStart = false)
 
-                                        let mutable rootDirectoryId = DirectoryId.Empty
+                                        let mutable rootDirectoryId = DirectoryVersionId.Empty
                                         let mutable rootDirectorySha256Hash = Sha256Hash String.Empty
-                                        let mutable previousDirectoryIds: HashSet<DirectoryId> = null
+                                        let mutable previousDirectoryIds: HashSet<DirectoryVersionId> = null
 
                                         // Check for latest commit and latest root directory version from grace watch. If it's running, we know GraceStatus is up-to-date.
                                         match! getGraceWatchStatus () with
@@ -821,7 +821,7 @@ module Diff =
                     "Displays the difference between two versions, specified by DirectoryId. If a second DirectoryId is not supplied, the current branch's root DirectoryId will be used."
             )
             |> addCommonOptions
-            |> addOption Options.directoryId1
+            |> addOption Options.directoryVersionId1
             |> addOption Options.directoryId2
 
         directoryIdCommand.Handler <- DirectoryIdCommand

@@ -560,8 +560,8 @@ module Repository =
                                                             graceStatus.Index.Values,
                                                             Constants.ParallelOptions,
                                                             (fun ldv ->
-                                                                if not <| objectCache.Index.ContainsKey(ldv.DirectoryId) then
-                                                                    objectCache.Index.AddOrUpdate(ldv.DirectoryId, (fun _ -> ldv), (fun _ _ -> ldv))
+                                                                if not <| objectCache.Index.ContainsKey(ldv.DirectoryVersionId) then
+                                                                    objectCache.Index.AddOrUpdate(ldv.DirectoryVersionId, (fun _ -> ldv), (fun _ _ -> ldv))
                                                                     |> ignore
 
                                                                     t4.Increment(incrementAmount))
@@ -1553,7 +1553,7 @@ module Repository =
     type DeleteParameters() =
         inherit CommonParameters()
         member val public Force: Boolean = false with get, set
-        member val public DeleteReason: string = String.Empty with get, set
+        member val public DeleteReason: DeleteReason = String.Empty with get, set
 
     let private deleteHandler (parseResult: ParseResult) (parameters: DeleteParameters) =
         task {

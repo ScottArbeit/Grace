@@ -229,7 +229,7 @@ module Owner =
             }
 
         /// Sends a DeleteLogical command to each organization provided.
-        member private this.LogicalDeleteOrganizations(organizations: List<OrganizationDto>, metadata: EventMetadata, deleteReason: string) =
+        member private this.LogicalDeleteOrganizations(organizations: List<OrganizationDto>, metadata: EventMetadata, deleteReason: DeleteReason) =
             // Loop through the orgs, sending a DeleteLogical command to each. If any of them fail, return the first error.
             task {
                 let results = ConcurrentQueue<GraceResult<string>>()

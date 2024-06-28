@@ -250,7 +250,7 @@ module Repository =
                                 match! branchActor.Handle createCommand repositoryEvent.Metadata with
                                 | Ok branchGraceReturn ->
                                     // Create an empty directory version, and use that for the initial promotion
-                                    let emptyDirectoryId = DirectoryId.NewGuid()
+                                    let emptyDirectoryId = DirectoryVersionId.NewGuid()
 
                                     let emptySha256Hash =
                                         computeSha256ForDirectory Constants.RootDirectoryPath (List<LocalDirectoryVersion>()) (List<LocalFileVersion>())
@@ -267,7 +267,7 @@ module Repository =
                                             repositoryDto.RepositoryId
                                             Constants.RootDirectoryPath
                                             emptySha256Hash
-                                            (List<DirectoryId>())
+                                            (List<DirectoryVersionId>())
                                             (List<FileVersion>())
                                             0L
 
@@ -348,7 +348,7 @@ module Repository =
             }
 
         /// Deletes all of the branches provided, by sending a DeleteLogical command to each branch.
-        member private this.LogicalDeleteBranches(branches: List<BranchDto>, metadata: EventMetadata, deleteReason: string) =
+        member private this.LogicalDeleteBranches(branches: List<BranchDto>, metadata: EventMetadata, deleteReason: DeleteReason) =
             task {
                 let results = ConcurrentQueue<GraceResult<string>>()
 

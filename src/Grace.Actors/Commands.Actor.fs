@@ -18,13 +18,13 @@ module Commands =
                 initialPermissions: ReferenceType[]
             | Rebase of basedOn: ReferenceId
             | SetName of newName: BranchName
-            | Assign of directoryVersionId: DirectoryId * sha256Hash: Sha256Hash * referenceText: ReferenceText
-            | Promote of directoryVersionId: DirectoryId * sha256Hash: Sha256Hash * referenceText: ReferenceText
-            | Commit of directoryVersionId: DirectoryId * sha256Hash: Sha256Hash * referenceText: ReferenceText
-            | Checkpoint of directoryVersionId: DirectoryId * sha256Hash: Sha256Hash * referenceText: ReferenceText
-            | Save of directoryVersionId: DirectoryId * sha256Hash: Sha256Hash * referenceText: ReferenceText
-            | Tag of directoryVersionId: DirectoryId * sha256Hash: Sha256Hash * referenceText: ReferenceText
-            | CreateExternal of directoryVersionId: DirectoryId * sha256Hash: Sha256Hash * referenceText: ReferenceText
+            | Assign of directoryVersionId: DirectoryVersionId * sha256Hash: Sha256Hash * referenceText: ReferenceText
+            | Promote of directoryVersionId: DirectoryVersionId * sha256Hash: Sha256Hash * referenceText: ReferenceText
+            | Commit of directoryVersionId: DirectoryVersionId * sha256Hash: Sha256Hash * referenceText: ReferenceText
+            | Checkpoint of directoryVersionId: DirectoryVersionId * sha256Hash: Sha256Hash * referenceText: ReferenceText
+            | Save of directoryVersionId: DirectoryVersionId * sha256Hash: Sha256Hash * referenceText: ReferenceText
+            | Tag of directoryVersionId: DirectoryVersionId * sha256Hash: Sha256Hash * referenceText: ReferenceText
+            | CreateExternal of directoryVersionId: DirectoryVersionId * sha256Hash: Sha256Hash * referenceText: ReferenceText
             | EnableAssign of enabled: bool
             | EnablePromotion of enabled: bool
             | EnableCommit of enabled: bool
@@ -34,7 +34,7 @@ module Commands =
             | EnableExternal of enabled: bool
             | EnableAutoRebase of enabled: bool
             | RemoveReference of referenceId: ReferenceId
-            | DeleteLogical of force: bool * deleteReason: string
+            | DeleteLogical of force: bool * DeleteReason: DeleteReason
             | DeletePhysical
             | Undelete
 
@@ -45,7 +45,7 @@ module Commands =
         type DirectoryVersionCommand =
             | Create of directoryVersion: DirectoryVersion
             | SetRecursiveSize of recursizeSize: int64
-            | DeleteLogical of deleteReason: string
+            | DeleteLogical of DeleteReason: DeleteReason
             | DeletePhysical
             | Undelete
 
@@ -59,7 +59,7 @@ module Commands =
             | SetType of organizationType: OrganizationType
             | SetSearchVisibility of searchVisibility: SearchVisibility
             | SetDescription of description: string
-            | DeleteLogical of force: bool * deleteReason: string
+            | DeleteLogical of force: bool * DeleteReason: DeleteReason
             | DeletePhysical
             | Undelete
 
@@ -73,11 +73,28 @@ module Commands =
             | SetType of ownerType: OwnerType
             | SetSearchVisibility of searchVisibility: SearchVisibility
             | SetDescription of description: string
-            | DeleteLogical of force: bool * deleteReason: string
+            | DeleteLogical of force: bool * DeleteReason: DeleteReason
             | DeletePhysical
             | Undelete
 
             static member GetKnownTypes() = GetKnownTypes<OwnerCommand>()
+
+    module Reference =
+        [<KnownType("GetKnownTypes")>]
+        type ReferenceCommand =
+            | Create of
+                referenceId: ReferenceId *
+                repositoryId: RepositoryId *
+                branchId: BranchId *
+                directoryId: DirectoryVersionId *
+                sha256Hash: Sha256Hash *
+                referenceType: ReferenceType *
+                referenceText: ReferenceText
+            | DeleteLogical of force: bool * DeleteReason: DeleteReason
+            | DeletePhysical
+            | Undelete
+
+            static member GetKnownTypes() = GetKnownTypes<ReferenceCommand>()
 
     module Repository =
         [<KnownType("GetKnownTypes")>]
@@ -99,7 +116,7 @@ module Commands =
             | SetDiffCacheDays of duration: double
             | SetName of repositoryName: RepositoryName
             | SetDescription of description: string
-            | DeleteLogical of force: bool * deleteReason: string
+            | DeleteLogical of force: bool * DeleteReason: DeleteReason
             | DeletePhysical
             | Undelete
 

@@ -34,7 +34,7 @@ module Dto =
               CreatedAt: Instant
               UpdatedAt: Instant option
               DeletedAt: Instant option
-              DeleteReason: string }
+              DeleteReason: DeleteReason }
 
             static member Default =
                 { Class = nameof (BranchDto)
@@ -66,9 +66,9 @@ module Dto =
         type DiffDto =
             { Class: string
               HasDifferences: bool
-              DirectoryId1: DirectoryId
+              DirectoryId1: DirectoryVersionId
               Directory1CreatedAt: Instant
-              DirectoryId2: DirectoryId
+              DirectoryId2: DirectoryVersionId
               Directory2CreatedAt: Instant
               Differences: List<FileSystemDifference>
               FileDiffs: List<FileDiff> }
@@ -76,9 +76,9 @@ module Dto =
             static member Default =
                 { Class = nameof (DiffDto)
                   HasDifferences = false
-                  DirectoryId1 = DirectoryId.Empty
+                  DirectoryId1 = DirectoryVersionId.Empty
                   Directory1CreatedAt = Instant.FromUnixTimeTicks 0L
-                  DirectoryId2 = DirectoryId.Empty
+                  DirectoryId2 = DirectoryVersionId.Empty
                   Directory2CreatedAt = Instant.FromUnixTimeTicks 0L
                   Differences = List<FileSystemDifference>()
                   FileDiffs = List<FileDiff>() }
@@ -97,7 +97,7 @@ module Dto =
               CreatedAt: Instant
               UpdatedAt: Instant option
               DeletedAt: Instant option
-              DeleteReason: string }
+              DeleteReason: DeleteReason }
 
             static member Default =
                 { Class = nameof (OrganizationDto)
@@ -126,7 +126,7 @@ module Dto =
               CreatedAt: Instant
               UpdatedAt: Instant option
               DeletedAt: Instant option
-              DeleteReason: string }
+              DeleteReason: DeleteReason }
 
             static member Default =
                 { Class = nameof (OwnerDto)
@@ -146,22 +146,32 @@ module Dto =
         type ReferenceDto =
             { Class: string
               ReferenceId: ReferenceId
+              RepositoryId: RepositoryId
               BranchId: BranchId
-              DirectoryId: DirectoryId
+              DirectoryId: DirectoryVersionId
               Sha256Hash: Sha256Hash
               ReferenceType: ReferenceType
               ReferenceText: ReferenceText
-              CreatedAt: Instant }
+              CreatedAt: Instant
+              UpdatedAt: Instant option
+              DeletedAt: Instant option
+              DeleteReason: DeleteReason
+            }
 
             static member Default =
                 { Class = nameof (ReferenceDto)
                   ReferenceId = ReferenceId.Empty
+                  RepositoryId = RepositoryId.Empty
                   BranchId = BranchId.Empty
-                  DirectoryId = DirectoryId.Empty
+                  DirectoryId = DirectoryVersionId.Empty
                   Sha256Hash = Sha256Hash String.Empty
                   ReferenceType = Save
                   ReferenceText = ReferenceText String.Empty
-                  CreatedAt = getCurrentInstant () }
+                  CreatedAt = getCurrentInstant ()
+                  UpdatedAt = None
+                  DeletedAt = None
+                  DeleteReason = String.Empty
+                }
 
     module Repository =
         [<Serializable>]
@@ -190,7 +200,7 @@ module Dto =
               InitializedAt: Instant option
               UpdatedAt: Instant option
               DeletedAt: Instant option
-              DeleteReason: string }
+              DeleteReason: DeleteReason }
 
             static member Default =
                 { Class = nameof (RepositoryDto)

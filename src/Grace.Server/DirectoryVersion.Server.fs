@@ -118,8 +118,8 @@ module DirectoryVersion =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let validations (parameters: CreateParameters) =
-                    [| String.isNotEmpty $"{parameters.DirectoryVersion.DirectoryId}" DirectoryVersionError.InvalidDirectoryId
-                       Guid.isValidAndNotEmpty $"{parameters.DirectoryVersion.DirectoryId}" DirectoryVersionError.InvalidDirectoryId
+                    [| String.isNotEmpty $"{parameters.DirectoryVersion.DirectoryVersionId}" DirectoryVersionError.InvalidDirectoryId
+                       Guid.isValidAndNotEmpty $"{parameters.DirectoryVersion.DirectoryVersionId}" DirectoryVersionError.InvalidDirectoryId
                        String.isNotEmpty $"{parameters.DirectoryVersion.RepositoryId}" DirectoryVersionError.InvalidRepositoryId
                        Guid.isValidAndNotEmpty $"{parameters.DirectoryVersion.RepositoryId}" DirectoryVersionError.InvalidRepositoryId
                        String.isNotEmpty $"{parameters.DirectoryVersion.RelativePath}" DirectoryVersionError.RelativePathMustNotBeEmpty
@@ -132,7 +132,7 @@ module DirectoryVersion =
 
                 let command (parameters: CreateParameters) (context: HttpContext) =
                     task {
-                        let actorId = GetActorId parameters.DirectoryVersion.DirectoryId
+                        let actorId = GetActorId parameters.DirectoryVersion.DirectoryVersionId
 
                         let actorProxy = ApplicationContext.actorProxyFactory.CreateActorProxy<IDirectoryVersionActor>(actorId, ActorName.DirectoryVersion)
 
@@ -180,7 +180,7 @@ module DirectoryVersion =
 
                 let query (context: HttpContext) (maxCount: int) (actorProxy: IDirectoryVersionActor) =
                     task {
-                        let! directoryVersions = actorProxy.GetDirectoryVersionsRecursive false (getCorrelationId context)
+                        let! directoryVersions = actorProxy.GetRecursiveDirectoryVersions false (getCorrelationId context)
 
                         return directoryVersions
                     }
@@ -202,7 +202,7 @@ module DirectoryVersion =
                     task {
                         let directoryVersions = List<DirectoryVersion>()
 
-                        let directoryIds = context.Items[nameof (GetByDirectoryIdsParameters)] :?> List<DirectoryId>
+                        let directoryIds = context.Items[nameof (GetByDirectoryIdsParameters)] :?> List<DirectoryVersionId>
 
                         for directoryId in directoryIds do
                             let actorProxy =
@@ -255,8 +255,8 @@ module DirectoryVersion =
 
                     for directoryVersion in parameters.DirectoryVersions do
                         let validations =
-                            [| String.isNotEmpty $"{directoryVersion.DirectoryId}" DirectoryVersionError.InvalidDirectoryId
-                               Guid.isValidAndNotEmpty $"{directoryVersion.DirectoryId}" DirectoryVersionError.InvalidDirectoryId
+                            [| String.isNotEmpty $"{directoryVersion.DirectoryVersionId}" DirectoryVersionError.InvalidDirectoryId
+                               Guid.isValidAndNotEmpty $"{directoryVersion.DirectoryVersionId}" DirectoryVersionError.InvalidDirectoryId
                                String.isNotEmpty $"{directoryVersion.RepositoryId}" DirectoryVersionError.InvalidRepositoryId
                                Guid.isValidAndNotEmpty $"{directoryVersion.RepositoryId}" DirectoryVersionError.InvalidRepositoryId
                                String.isNotEmpty $"{directoryVersion.Sha256Hash}" DirectoryVersionError.Sha256HashIsRequired
@@ -284,7 +284,7 @@ module DirectoryVersion =
                                     ValueTask(
                                         task {
                                             // Check if the directory version exists. If it doesn't, create it.
-                                            let actorId = GetActorId dv.DirectoryId
+                                            let actorId = GetActorId dv.DirectoryVersionId
 
                                             let directoryVersionActor =
                                                 ApplicationContext.actorProxyFactory.CreateActorProxy<IDirectoryVersionActor>(

@@ -1,4 +1,4 @@
-﻿namespace Grace.CLI.Command
+namespace Grace.CLI.Command
 
 open Grace.CLI.Common
 open Grace.CLI.Services
@@ -163,8 +163,8 @@ module Maintenance =
                                             graceStatus.Index.Values,
                                             Constants.ParallelOptions,
                                             (fun ldv ->
-                                                if not <| objectCache.Index.ContainsKey(ldv.DirectoryId) then
-                                                    objectCache.Index.AddOrUpdate(ldv.DirectoryId, (fun _ -> ldv), (fun _ _ -> ldv))
+                                                if not <| objectCache.Index.ContainsKey(ldv.DirectoryVersionId) then
+                                                    objectCache.Index.AddOrUpdate(ldv.DirectoryVersionId, (fun _ -> ldv), (fun _ _ -> ldv))
                                                     |> ignore
 
                                                     t4.Increment(incrementAmount))
@@ -481,7 +481,7 @@ module Maintenance =
 
                     for ldv in newDirectoryVersions do
                         AnsiConsole.MarkupLine
-                            $"[{Colors.Important}]SHA-256: {ldv.Sha256Hash.Substring(0, 8)}; DirectoryId: {ldv.DirectoryId}; RelativePath: {ldv.RelativePath}[/]"
+                            $"[{Colors.Important}]SHA-256: {ldv.Sha256Hash.Substring(0, 8)}; DirectoryId: {ldv.DirectoryVersionId}; RelativePath: {ldv.RelativePath}[/]"
                 //AnsiConsole.MarkupLine $"[{Colors.Highlighted}]Root SHA-256 hash: {rootDirectoryVersion.Sha256Hash.Substring(8)}[/]"
                 else
                     let! previousGraceStatus = readGraceStatusFile ()
@@ -499,7 +499,7 @@ module Maintenance =
 
                     for ldv in newDirectoryVersions do
                         AnsiConsole.MarkupLine
-                            $"[{Colors.Important}]SHA-256: {ldv.Sha256Hash.Substring(0, 8)}; DirectoryId: {ldv.DirectoryId}; RelativePath: {ldv.RelativePath}[/]"
+                            $"[{Colors.Important}]SHA-256: {ldv.Sha256Hash.Substring(0, 8)}; DirectoryId: {ldv.DirectoryVersionId}; RelativePath: {ldv.RelativePath}[/]"
             }
             :> Task)
 
@@ -582,7 +582,7 @@ module Maintenance =
 
                         let rightAlignedDirectoryVersionId =
                             (String.replicate (longestRelativePath - directoryVersion.RelativePath.Length) " ")
-                            + $"({directoryVersion.DirectoryId})"
+                            + $"({directoryVersion.DirectoryVersionId})"
 
                         AnsiConsole.MarkupLine(
                             $"[{Colors.Highlighted}]{formatDateTimeAligned directoryVersion.LastWriteTimeUtc}   {getShortSha256Hash directoryVersion.Sha256Hash}  {directoryVersion.Size, 13:N0}  /{directoryVersion.RelativePath}[/] [{Colors.Deemphasized}] {rightAlignedDirectoryVersionId}[/]"

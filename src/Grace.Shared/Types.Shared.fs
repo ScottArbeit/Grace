@@ -20,7 +20,8 @@ module Types =
     type BranchName = string
     type ContainerName = string
     type CorrelationId = string
-    type DirectoryId = Guid
+    type DeleteReason = string
+    type DirectoryVersionId = Guid
     type FilePath = string
     type GraceIgnoreEntry = string
     type OrganizationId = Guid
@@ -114,7 +115,7 @@ module Types =
     /// EventMetadata is included in the recording of every event that occurs in Grace.
     type EventMetadata =
         { Timestamp: Instant
-          CorrelationId: string
+          CorrelationId: CorrelationId
           Principal: string
           Properties: Dictionary<string, string> }
 
@@ -214,11 +215,11 @@ module Types =
     [<KnownType("GetKnownTypes")>]
     type DirectoryVersion =
         { Class: string
-          DirectoryId: DirectoryId
+          DirectoryVersionId: DirectoryVersionId
           RepositoryId: RepositoryId
           RelativePath: RelativePath
           Sha256Hash: Sha256Hash
-          Directories: List<DirectoryId>
+          Directories: List<DirectoryVersionId>
           Files: List<FileVersion>
           Size: int64
           CreatedAt: Instant }
@@ -227,26 +228,26 @@ module Types =
 
         static member Default =
             { Class = nameof (DirectoryVersion)
-              DirectoryId = Guid.Empty
+              DirectoryVersionId = Guid.Empty
               RepositoryId = Guid.Empty
               RelativePath = RelativePath String.Empty
               Sha256Hash = Sha256Hash String.Empty
-              Directories = List<DirectoryId>()
+              Directories = List<DirectoryVersionId>()
               Files = List<FileVersion>()
               Size = Constants.InitialDirectorySize
               CreatedAt = Instant.MinValue }
 
         static member Create
-            (directoryId: DirectoryId)
+            (directoryId: DirectoryVersionId)
             (repositoryId: RepositoryId)
             (relativePath: RelativePath)
             (sha256Hash: Sha256Hash)
-            (directories: List<DirectoryId>)
+            (directories: List<DirectoryVersionId>)
             (files: List<FileVersion>)
             (size: int64)
             =
             { Class = nameof (DirectoryVersion)
-              DirectoryId = directoryId
+              DirectoryVersionId = directoryId
               RepositoryId = repositoryId
               RelativePath = relativePath
               Sha256Hash = sha256Hash
@@ -257,7 +258,7 @@ module Types =
 
         member this.ToLocalDirectoryVersion lastWriteTimeUtc =
             LocalDirectoryVersion.Create
-                this.DirectoryId
+                this.DirectoryVersionId
                 this.RepositoryId
                 this.RelativePath
                 this.Sha256Hash
@@ -271,11 +272,11 @@ module Types =
     /// It is the local representation of the DirectoryVersion type, used on the server.
     and [<KnownType("GetKnownTypes"); CLIMutable>] LocalDirectoryVersion =
         { Class: string
-          DirectoryId: DirectoryId
+          DirectoryVersionId: DirectoryVersionId
           RepositoryId: RepositoryId
           RelativePath: RelativePath
           Sha256Hash: Sha256Hash
-          Directories: List<DirectoryId>
+          Directories: List<DirectoryVersionId>
           Files: List<LocalFileVersion>
           Size: int64
           CreatedAt: Instant
@@ -286,27 +287,27 @@ module Types =
         static member Default =
             { Class = "LocalDirectoryVersion"
               RepositoryId = Guid.Empty
-              DirectoryId = Guid.Empty
+              DirectoryVersionId = Guid.Empty
               RelativePath = RelativePath String.Empty
               Sha256Hash = Sha256Hash String.Empty
-              Directories = List<DirectoryId>()
+              Directories = List<DirectoryVersionId>()
               Files = List<LocalFileVersion>()
               Size = Constants.InitialDirectorySize
               CreatedAt = Instant.MinValue
               LastWriteTimeUtc = DateTime.UtcNow }
 
         static member Create
-            (directoryId: DirectoryId)
+            (directoryId: DirectoryVersionId)
             (repositoryId: RepositoryId)
             (relativePath: RelativePath)
             (sha256Hash: Sha256Hash)
-            (directories: List<DirectoryId>)
+            (directories: List<DirectoryVersionId>)
             (files: List<LocalFileVersion>)
             (size: int64)
             (lastWriteTimeUtc: DateTime)
             =
             { Class = "LocalDirectoryVersion"
-              DirectoryId = directoryId
+              DirectoryVersionId = directoryId
               RepositoryId = repositoryId
               RelativePath = relativePath
               Sha256Hash = sha256Hash
@@ -319,7 +320,7 @@ module Types =
         /// Converts a LocalDirectoryVersion to a DirectoryVersion.
         member this.ToDirectoryVersion =
             DirectoryVersion.Create
-                this.DirectoryId
+                this.DirectoryVersionId
                 this.RepositoryId
                 this.RelativePath
                 this.Sha256Hash
@@ -502,14 +503,14 @@ module Types =
     /// If the interprocess cache file is missing or corrupt, Grace CLI assumes that `grace watch` is not running, and runs all commands from scratch.
     type GraceStatus =
         { Index: GraceIndex
-          RootDirectoryId: DirectoryId
+          RootDirectoryId: DirectoryVersionId
           RootDirectorySha256Hash: Sha256Hash
           LastSuccessfulFileUpload: Instant
           LastSuccessfulDirectoryVersionUpload: Instant }
 
         static member Default =
             { Index = GraceIndex()
-              RootDirectoryId = DirectoryId.Empty
+              RootDirectoryId = DirectoryVersionId.Empty
               RootDirectorySha256Hash = Sha256Hash String.Empty
               LastSuccessfulFileUpload = getCurrentInstant ()
               LastSuccessfulDirectoryVersionUpload = getCurrentInstant () }

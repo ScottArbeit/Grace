@@ -581,7 +581,7 @@ module Branch =
             //logToAnsiConsole Colors.Verbose $"In printContents: directoryVersion.RelativePath: {directoryVersion.RelativePath}"
             let rightAlignedDirectoryVersionId =
                 (String.replicate (longestRelativePath - directoryVersion.RelativePath.Length) " ")
-                + $"({directoryVersion.DirectoryId})"
+                + $"({directoryVersion.DirectoryVersionId})"
 
             AnsiConsole.MarkupLine(
                 $"[{Colors.Highlighted}]{formatInstantAligned directoryVersion.CreatedAt}   {getShortSha256Hash directoryVersion.Sha256Hash}  {directoryVersion.Size, 13:N0}  /{directoryVersion.RelativePath}[/] [{Colors.Deemphasized}] {rightAlignedDirectoryVersionId}[/]"
@@ -725,7 +725,7 @@ module Branch =
 
     type AssignParameters() =
         inherit CommonParameters()
-        member val public DirectoryVersionId: DirectoryId = Guid.Empty with get, set
+        member val public DirectoryVersionId: DirectoryVersionId = Guid.Empty with get, set
         member val public Sha256Hash: Sha256Hash = String.Empty with get, set
 
     let assignHandler (parseResult: ParseResult) (assignParameters: AssignParameters) =
@@ -825,7 +825,7 @@ module Branch =
 
                                         //let mutable rootDirectoryId = DirectoryId.Empty
                                         //let mutable rootDirectorySha256Hash = Sha256Hash String.Empty
-                                        let rootDirectoryVersion = ref (DirectoryId.Empty, Sha256Hash String.Empty)
+                                        let rootDirectoryVersion = ref (DirectoryVersionId.Empty, Sha256Hash String.Empty)
 
                                         match! getGraceWatchStatus () with
                                         | Some graceWatchStatus ->
@@ -988,7 +988,7 @@ module Branch =
                                 OrganizationName = parameters.OrganizationName,
                                 RepositoryId = parameters.RepositoryId,
                                 RepositoryName = parameters.RepositoryName,
-                                DirectoryVersionId = rootDirectoryVersion.DirectoryId,
+                                DirectoryVersionId = rootDirectoryVersion.DirectoryVersionId,
                                 Sha256Hash = rootDirectoryVersion.Sha256Hash,
                                 Message = parameters.Message,
                                 CorrelationId = parameters.CorrelationId
@@ -1810,11 +1810,11 @@ module Branch =
                 /// The GraceStatus after the current version is saved.
                 let mutable newGraceStatus = GraceStatus.Default
                 /// The DirectoryId of the root directory version.
-                let mutable rootDirectoryId = DirectoryId.Empty
+                let mutable rootDirectoryId = DirectoryVersionId.Empty
                 /// The SHA-256 hash of the root directory version.
                 let mutable rootDirectorySha256Hash = Sha256Hash String.Empty
                 /// The set of DirectoryIds in the working directory after the current version is saved.
-                let mutable newDirectoryIds: HashSet<DirectoryId> = null
+                let mutable newDirectoryIds: HashSet<DirectoryVersionId> = null
 
                 let showOutput = parseResult |> hasOutput
 
@@ -2180,7 +2180,7 @@ module Branch =
                         parameters: CommonParameters,
                         currentBranch: BranchDto,
                         newBranch: BranchDto,
-                        directoryIds: IEnumerable<DirectoryId>
+                        directoryIds: IEnumerable<DirectoryVersionId>
                     ) =
                     task {
                         t |> startProgressTask showOutput
@@ -2365,9 +2365,9 @@ module Branch =
 
                     match! Branch.Get(getParameters) with
                     | Ok currentBranch ->
-                        let mutable rootDirectoryId = DirectoryId.Empty
+                        let mutable rootDirectoryId = DirectoryVersionId.Empty
                         let mutable rootDirectorySha256Hash = Sha256Hash String.Empty
-                        let mutable previousDirectoryIds: HashSet<DirectoryId> = null
+                        let mutable previousDirectoryIds: HashSet<DirectoryVersionId> = null
 
                         if parseResult |> hasOutput then
                             return!
@@ -2950,7 +2950,7 @@ module Branch =
 
                                 let! (diffs, errors) =
                                     task {
-                                        if basedOn.DirectoryId <> DirectoryId.Empty then
+                                        if basedOn.DirectoryId <> DirectoryVersionId.Empty then
                                             // First diff: parent promotion that current branch is based on vs. parent's latest promotion.
                                             let diffParameters =
                                                 Parameters.Diff.GetDiffParameters(
@@ -3177,11 +3177,11 @@ module Branch =
                                                     if directoryVersionsWithSameRelativePath.Count() > 1 then
                                                         // Delete all but the most recent DirectoryVersion for this path.
                                                         directoryVersionsWithSameRelativePath
-                                                        |> Seq.where (fun dv -> dv.DirectoryId <> localDirectoryVersion.DirectoryId)
+                                                        |> Seq.where (fun dv -> dv.DirectoryVersionId <> localDirectoryVersion.DirectoryVersionId)
                                                         |> Seq.iter (fun dv ->
                                                             let mutable localDirectoryVersion = LocalDirectoryVersion.Default
 
-                                                            updatedGraceStatus.Index.Remove(dv.DirectoryId, &localDirectoryVersion)
+                                                            updatedGraceStatus.Index.Remove(dv.DirectoryVersionId, &localDirectoryVersion)
                                                             |> ignore))
 
                                                 let! result = uploadNewDirectoryVersions branchDto newDirectoryVersions
@@ -3203,7 +3203,7 @@ module Branch =
                                                     OrganizationId = parameters.OrganizationId,
                                                     OrganizationName = parameters.OrganizationName,
                                                     Sha256Hash = rootDirectoryVersion.Sha256Hash,
-                                                    DirectoryVersionId = rootDirectoryVersion.DirectoryId,
+                                                    DirectoryVersionId = rootDirectoryVersion.DirectoryVersionId,
                                                     Message =
                                                         $"Save after rebase from {parentBranchDto.BranchName}; {getShortSha256Hash parentLatestPromotion.Sha256Hash} - {parentLatestPromotion.ReferenceText}."
                                                 )

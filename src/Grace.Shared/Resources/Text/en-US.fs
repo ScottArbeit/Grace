@@ -125,6 +125,7 @@ module en_US =
         | OwnerTypeIsRequired -> "The OwnerType must be provided."
         | ParentBranchDoesNotExist -> "The parent branch provided does not exist."
         | ReadingGraceStatus -> "Reading the Grace status file."
+        | ReferenceAlreadyExists -> "A reference with this ReferenceId already exists."
         | ReferenceIdDoesNotExist -> "The given ReferenceId does not exist."
         | ReferenceIdsAreRequired -> "The list of ReferenceIds must not be empty."
         | ReferenceTypeMustBeProvided -> "The reference type cannot be an empty string."

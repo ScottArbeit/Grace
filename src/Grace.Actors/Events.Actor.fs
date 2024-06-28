@@ -21,13 +21,13 @@ module Events =
                 initialPermissions: ReferenceType[]
             | Rebased of basedOn: ReferenceId
             | NameSet of newName: BranchName
-            | Assigned of referenceId: ReferenceId * directoryVersionId: DirectoryId * sha256Hash: Sha256Hash * referenceText: ReferenceText
-            | Promoted of referenceId: ReferenceId * directoryVersionId: DirectoryId * sha256Hash: Sha256Hash * referenceText: ReferenceText
-            | Committed of referenceId: ReferenceId * directoryVersionId: DirectoryId * sha256Hash: Sha256Hash * referenceText: ReferenceText
-            | Checkpointed of referenceId: ReferenceId * directoryVersionId: DirectoryId * sha256Hash: Sha256Hash * referenceText: ReferenceText
-            | Saved of referenceId: ReferenceId * directoryVersionId: DirectoryId * sha256Hash: Sha256Hash * referenceText: ReferenceText
-            | Tagged of referenceId: ReferenceId * directoryVersionId: DirectoryId * sha256Hash: Sha256Hash * referenceText: ReferenceText
-            | ExternalCreated of referenceId: ReferenceId * directoryVersionId: DirectoryId * sha256Hash: Sha256Hash * referenceText: ReferenceText
+            | Assigned of referenceId: ReferenceId * directoryVersionId: DirectoryVersionId * sha256Hash: Sha256Hash * referenceText: ReferenceText
+            | Promoted of referenceId: ReferenceId * directoryVersionId: DirectoryVersionId * sha256Hash: Sha256Hash * referenceText: ReferenceText
+            | Committed of referenceId: ReferenceId * directoryVersionId: DirectoryVersionId * sha256Hash: Sha256Hash * referenceText: ReferenceText
+            | Checkpointed of referenceId: ReferenceId * directoryVersionId: DirectoryVersionId * sha256Hash: Sha256Hash * referenceText: ReferenceText
+            | Saved of referenceId: ReferenceId * directoryVersionId: DirectoryVersionId * sha256Hash: Sha256Hash * referenceText: ReferenceText
+            | Tagged of referenceId: ReferenceId * directoryVersionId: DirectoryVersionId * sha256Hash: Sha256Hash * referenceText: ReferenceText
+            | ExternalCreated of referenceId: ReferenceId * directoryVersionId: DirectoryVersionId * sha256Hash: Sha256Hash * referenceText: ReferenceText
             | EnabledAssign of enabled: bool
             | EnabledPromotion of enabled: bool
             | EnabledCommit of enabled: bool
@@ -37,7 +37,7 @@ module Events =
             | EnabledExternal of enabled: bool
             | EnabledAutoRebase of enabled: bool
             | ReferenceRemoved of referenceId: ReferenceId
-            | LogicalDeleted of force: bool * deleteReason: string
+            | LogicalDeleted of force: bool * DeleteReason: DeleteReason
             | PhysicalDeleted
             | Undeleted
 
@@ -59,7 +59,7 @@ module Events =
         type DirectoryVersionEventType =
             | Created of directoryVersion: DirectoryVersion
             | RecursiveSizeSet of recursiveSize: int64
-            | LogicalDeleted of deleteReason: string
+            | LogicalDeleted of DeleteReason: DeleteReason
             | PhysicalDeleted
             | Undeleted
 
@@ -82,7 +82,7 @@ module Events =
             | TypeSet of organizationType: OrganizationType
             | SearchVisibilitySet of searchVisibility: SearchVisibility
             | DescriptionSet of organizationDescription: string
-            | LogicalDeleted of force: bool * deleteReason: string
+            | LogicalDeleted of force: bool * DeleteReason: DeleteReason
             | PhysicalDeleted
             | Undeleted
 
@@ -107,7 +107,7 @@ module Events =
             | TypeSet of ownerType: OwnerType
             | SearchVisibilitySet of searchVisibility: SearchVisibility
             | DescriptionSet of description: string
-            | LogicalDeleted of force: bool * deleteReason: string
+            | LogicalDeleted of force: bool * DeleteReason: DeleteReason
             | PhysicalDeleted
             | Undeleted
 
@@ -118,6 +118,34 @@ module Events =
             {
                 /// The OwnerEventType case that describes the event.
                 Event: OwnerEventType
+                /// The EventMetadata for the event. EventMetadata includes the Timestamp, CorrelationId, Principal, and a Properties dictionary.
+                Metadata: EventMetadata
+            }
+
+    /// Defines the events for the Reference actor.
+    module Reference =
+        /// Defines the events for the Reference actor.
+        [<KnownType("GetKnownTypes")>]
+        type ReferenceEventType =
+            | Created of
+                referenceId: ReferenceId *
+                repositoryId: RepositoryId *
+                branchId: BranchId *
+                directoryId: DirectoryVersionId *
+                sha256Hash: Sha256Hash *
+                referenceType: ReferenceType *
+                referenceText: ReferenceText
+            | LogicalDeleted of force: bool * DeleteReason: DeleteReason
+            | PhysicalDeleted
+            | Undeleted
+
+            static member GetKnownTypes() = GetKnownTypes<ReferenceEventType>()
+
+        /// Record that holds the event type and metadata for a Reference event.
+        type ReferenceEvent =
+            {
+                /// The ReferenceEventType case that describes the event.
+                Event: ReferenceEventType
                 /// The EventMetadata for the event. EventMetadata includes the Timestamp, CorrelationId, Principal, and a Properties dictionary.
                 Metadata: EventMetadata
             }
@@ -144,7 +172,7 @@ module Events =
             | DiffCacheDaysSet of duration: double
             | NameSet of repositoryName: RepositoryName
             | DescriptionSet of description: string
-            | LogicalDeleted of force: bool * deleteReason: string
+            | LogicalDeleted of force: bool * DeleteReason: DeleteReason
             | PhysicalDeleted
             | Undeleted
 
@@ -166,6 +194,7 @@ module Events =
         | DirectoryVersionEvent of DirectoryVersion.DirectoryVersionEvent
         | OrganizationEvent of Organization.OrganizationEvent
         | OwnerEvent of Owner.OwnerEvent
+        | ReferenceEvent of Reference.ReferenceEvent
         | RepositoryEvent of Repository.RepositoryEvent
 
         static member GetKnownTypes() = GetKnownTypes<GraceEvent>()

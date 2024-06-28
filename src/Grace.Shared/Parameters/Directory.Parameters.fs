@@ -22,7 +22,7 @@ module Directory =
     type GetByDirectoryIdsParameters() =
         inherit DirectoryParameters()
         member val public RepositoryId = String.Empty with get, set
-        member val public DirectoryIds = List<DirectoryId>() with get, set
+        member val public DirectoryIds = List<DirectoryVersionId>() with get, set
 
     type GetBySha256HashParameters() =
         inherit DirectoryParameters()

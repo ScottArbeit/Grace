@@ -31,7 +31,7 @@ open System.Threading.Tasks
 module Diff =
 
     /// Gets an ActorId for a Diff actor.
-    let GetActorId (directoryId1: DirectoryId) (directoryId2: DirectoryId) =
+    let GetActorId (directoryId1: DirectoryVersionId) (directoryId2: DirectoryVersionId) =
         if directoryId1 < directoryId2 then
             ActorId($"{directoryId1}*{directoryId2}")
         else
@@ -40,7 +40,7 @@ module Diff =
     /// Deconstructs an ActorId of the form "{directoryId1}*{directoryId2}" into a tuple of the two DirectoryId values.
     let private deconstructActorId (id: ActorId) =
         let directoryIds = id.GetId().Split("*")
-        (DirectoryId directoryIds[0], DirectoryId directoryIds[1])
+        (DirectoryVersionId directoryIds[0], DirectoryVersionId directoryIds[1])
 
     type DiffActor(host: ActorHost) =
         inherit Actor(host)
@@ -104,7 +104,7 @@ module Diff =
         member val private correlationId: CorrelationId = String.Empty with get, set
 
         /// Builds a ServerGraceIndex from a root DirectoryId.
-        member private this.buildGraceIndex (directoryId: DirectoryId) correlationId =
+        member private this.buildGraceIndex (directoryId: DirectoryVersionId) correlationId =
             task {
                 this.correlationId <- correlationId
                 let graceIndex = ServerGraceIndex()
@@ -114,7 +114,7 @@ module Diff =
                         .CreateActorProxy<IDirectoryVersionActor>(DirectoryVersion.GetActorId(directoryId), ActorName.DirectoryVersion)
 
                 let! directoryCreatedAt = directory.GetCreatedAt correlationId
-                let! directoryContents = directory.GetDirectoryVersionsRecursive false correlationId
+                let! directoryContents = directory.GetRecursiveDirectoryVersions false correlationId
                 //logToConsole $"In DiffActor.buildGraceIndex(): directoryContents.Count: {directoryContents.Count}"
                 for directoryVersion in directoryContents do
                     graceIndex.TryAdd(directoryVersion.RelativePath, directoryVersion) |> ignore
@@ -148,8 +148,8 @@ module Diff =
 
         /// Sets a delete reminder for this actor's state.
         member private this.setDeleteReminder() =
-            //let task = this.RegisterReminderAsync("DeleteReminder", Array.empty<byte>, TimeSpan.FromDays(7.0), TimeSpan.FromMilliseconds(-1.0))
-            //task.Wait()
+            let task = this.RegisterReminderAsync(ReminderType.DeleteCachedState, Array.empty<byte>, TimeSpan.FromDays(3.0), TimeSpan.FromMilliseconds(-1.0))
+            task.Wait()
             ()
 
         override this.OnActivateAsync() =
@@ -213,7 +213,7 @@ module Diff =
                 Some diffDto |> returnValueTask
 
         interface IDiffActor with
-            member this.Populate correlationId =
+            member this.Compute correlationId =
                 this.correlationId <- correlationId
 
                 // If it's already populated, skip this.
@@ -355,7 +355,7 @@ module Diff =
                             this.setDeleteReminder ()
                             return true
                         with ex ->
-                            logToConsole $"Exception in DiffActor.Populate(): {createExceptionResponse ex}"
+                            logToConsole $"Exception in DiffActor.Compute(): {createExceptionResponse ex}"
                             logToConsole $"directoryId1: {directoryId1}; directoryId2: {directoryId2}"
 
                             Activity.Current
@@ -374,9 +374,9 @@ module Diff =
                 task {
                     this.correlationId <- correlationId
 
-                    if diffDto.DirectoryId1 = DiffDto.Default.DirectoryId1 then
+                    if diffDto.DirectoryId1.Equals(DiffDto.Default.DirectoryId1) then
                         //logToConsole $"In Actor.GetDiff(), not yet populated."
-                        let! populated = (this :> IDiffActor).Populate correlationId
+                        let! populated = (this :> IDiffActor).Compute correlationId
                         //logToConsole $"In Actor.GetDiff(), now populated."
                         return diffDto
                     else
@@ -387,12 +387,11 @@ module Diff =
         interface IRemindable with
             member this.ReceiveReminderAsync(reminderName, state, dueTime, period) =
                 match reminderName with
-                | "DeleteReminder" ->
+                | ReminderType.DeleteCachedState ->
                     let stateManager = this.StateManager
 
                     task {
-                        let! deleteSucceeded = Storage.DeleteState stateManager dtoStateName
-                        ()
+                        return! Storage.DeleteState stateManager dtoStateName
                     }
                     :> Task
                 | _ -> Task.CompletedTask

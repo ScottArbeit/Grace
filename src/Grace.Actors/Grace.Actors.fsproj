@@ -58,6 +58,12 @@
 		<ProjectReference Include="..\Grace.Shared\Grace.Shared.fsproj" />
 	</ItemGroup>
 
+	<!--<ItemGroup>
+	  <Reference Include="Dapr.Actors">
+	    <HintPath>..\..\..\dapr\dotnet-sdk\bin\Debug\prod\Dapr.Actors\net8\Dapr.Actors.dll</HintPath>
+	  </Reference>
+	</ItemGroup>-->
+
 	<ItemGroup>
 		<PackageReference Update="FSharp.Core" Version="8.0.300" />
 	</ItemGroup>

@@ -139,7 +139,7 @@ type Branch() =
 
     /// Gets a specific version of a branch from the server.
     static member public GetVersion(parameters: GetBranchVersionParameters) =
-        postServer<GetBranchVersionParameters, IEnumerable<DirectoryId>> (parameters |> ensureCorrelationIdIsSet, $"branch/{nameof (Branch.GetVersion)}")
+        postServer<GetBranchVersionParameters, IEnumerable<DirectoryVersionId>> (parameters |> ensureCorrelationIdIsSet, $"branch/{nameof (Branch.GetVersion)}")
 
     /// Gets the DirectoryVersions for a specific version of a branch from the server.
     static member public ListContents(parameters: ListContentsParameters) =

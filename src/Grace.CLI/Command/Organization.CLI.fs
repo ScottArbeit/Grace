@@ -518,7 +518,7 @@ module Organization =
     type DeleteParameters() =
         inherit CommonParameters()
         member val public Force: bool = false with get, set
-        member val public DeleteReason: string = String.Empty with get, set
+        member val public DeleteReason: DeleteReason = String.Empty with get, set
 
     let private deleteHandler (parseResult: ParseResult) (deleteParameters: DeleteParameters) =
         task {

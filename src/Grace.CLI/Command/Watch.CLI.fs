@@ -161,7 +161,7 @@ module Watch =
             let! objectCache = readGraceObjectCacheFile ()
 
             for directoryVersion in newDirectoryVersions.OrderByDescending(fun dv -> countSegments dv.RelativePath) do
-                objectCache.Index.AddOrUpdate(directoryVersion.DirectoryId, (fun _ -> directoryVersion), (fun _ _ -> directoryVersion))
+                objectCache.Index.AddOrUpdate(directoryVersion.DirectoryVersionId, (fun _ -> directoryVersion), (fun _ _ -> directoryVersion))
                 |> ignore
 
             do! writeGraceObjectCacheFile objectCache
@@ -181,7 +181,7 @@ module Watch =
             for dv in newDirectoryVersions do
                 logToAnsiConsole
                     Colors.Verbose
-                    $"new Sha256Hash: {dv.Sha256Hash.Substring(0, 8)}; DirectoryId: {dv.DirectoryId.ToString().Substring(0, 9)}...; RelativePath: {dv.RelativePath}"
+                    $"new Sha256Hash: {dv.Sha256Hash.Substring(0, 8)}; DirectoryId: {dv.DirectoryVersionId.ToString().Substring(0, 9)}...; RelativePath: {dv.RelativePath}"
 
             // Upload the new directory versions.
             let! result = uploadDirectoryVersions newDirectoryVersions correlationId

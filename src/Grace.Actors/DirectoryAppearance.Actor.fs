@@ -12,9 +12,9 @@ open Interfaces
 
 module DirectoryAppearance =
 
-    let GetActorId (directoryId: DirectoryId) = ActorId($"{directoryId}")
+    let GetActorId (directoryId: DirectoryVersionId) = ActorId($"{directoryId}")
 
-    type Appearance = { Root: DirectoryId; Parent: DirectoryId; Created: Instant }
+    type Appearance = { Root: DirectoryVersionId; Parent: DirectoryVersionId; Created: Instant }
 
     type AppearancesList = SortedSet<Appearance>
 

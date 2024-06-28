@@ -1,4 +1,4 @@
-﻿namespace Grace.Shared.Parameters
+namespace Grace.Shared.Parameters
 
 open Grace.Shared.Parameters.Common
 open System

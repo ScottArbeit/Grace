@@ -13,7 +13,7 @@ module FileAppearance =
 
     let GetActorId (fileVersion: FileVersion) = ActorId($"{fileVersion.RepositoryId}*{fileVersion.RelativePath}*{fileVersion.Sha256Hash}")
 
-    type Appearance = { Root: DirectoryId; Parent: DirectoryId; Created: Instant }
+    type Appearance = { Root: DirectoryVersionId; Parent: DirectoryVersionId; Created: Instant }
 
     type AppearancesList = SortedSet<Appearance>
 

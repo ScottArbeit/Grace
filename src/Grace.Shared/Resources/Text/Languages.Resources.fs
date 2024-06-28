@@ -111,6 +111,7 @@ module Text =
         | OwnerTypeIsRequired
         | ParentBranchDoesNotExist
         | ReadingGraceStatus
+        | ReferenceAlreadyExists
         | ReferenceIdDoesNotExist
         | ReferenceIdsAreRequired
         | ReferenceTypeMustBeProvided

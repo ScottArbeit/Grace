@@ -171,10 +171,8 @@ module ApplicationContext =
             let cosmosContainer = containerResponse.Container
 
             // Create a MemoryCache instance.
-            let memoryCacheOptions = MemoryCacheOptions()
+            let memoryCacheOptions = MemoryCacheOptions(TrackStatistics = true, TrackLinkedCacheEntries = true)
             //memoryCacheOptions.SizeLimit <- 100L * 1024L * 1024L
-            memoryCacheOptions.TrackStatistics <- true
-            memoryCacheOptions.TrackLinkedCacheEntries <- true
             memoryCache <- new MemoryCache(memoryCacheOptions, loggerFactory)
 
             // Inject the CosmosClient, CosmosContainer, and MemoryCache into Actor Services.

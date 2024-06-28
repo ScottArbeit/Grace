@@ -139,7 +139,7 @@ module Diff =
 
                     let query (context: HttpContext) _ (actorProxy: IDiffActor) =
                         task {
-                            let! populated = actorProxy.Populate(getCorrelationId context)
+                            let! populated = actorProxy.Compute(getCorrelationId context)
                             return populated
                         }
 
@@ -203,8 +203,8 @@ module Diff =
 
                     match directoryId1, directoryId2 with
                     | Some directoryId1, Some directoryId2 ->
-                        parameters.DirectoryId1 <- directoryId1.DirectoryId
-                        parameters.DirectoryId2 <- directoryId2.DirectoryId
+                        parameters.DirectoryId1 <- directoryId1.DirectoryVersionId
+                        parameters.DirectoryId2 <- directoryId2.DirectoryVersionId
                     | _ -> ()
 
                     return! processQuery context parameters validations query

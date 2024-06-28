@@ -148,7 +148,7 @@ module Notifications =
 
                         let diffActorProxy = actorProxyFactory.CreateActorProxy<IDiffActor>(diffActorId, ActorName.Diff)
 
-                        let! x = diffActorProxy.Populate(getCorrelationId context)
+                        let! x = diffActorProxy.Compute(getCorrelationId context)
                         ()
                     }
 
@@ -258,6 +258,9 @@ module Notifications =
                         $"Received OrganizationEvent: {getDiscriminatedUnionFullName organizationEvent.Event} {Environment.NewLine}{organizationEvent.Metadata}"
                 | OwnerEvent ownerEvent ->
                     logToConsole $"Received OwnerEvent: {getDiscriminatedUnionFullName ownerEvent.Event} {Environment.NewLine}{ownerEvent.Metadata}"
+                | ReferenceEvent referenceEvent ->
+                    logToConsole
+                        $"Received ReferenceEvent: {getDiscriminatedUnionFullName referenceEvent.Event} {Environment.NewLine}{referenceEvent.Metadata}"
                 | RepositoryEvent repositoryEvent ->
                     logToConsole
                         $"Received RepositoryEvent: {getDiscriminatedUnionFullName repositoryEvent.Event} {Environment.NewLine}{repositoryEvent.Metadata}"

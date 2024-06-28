@@ -1341,7 +1341,7 @@ module Services =
                     )
             | MongoDB -> ()
 
-            if directoryVersion.DirectoryId <> DirectoryVersion.Default.DirectoryId then
+            if directoryVersion.DirectoryVersionId <> DirectoryVersion.Default.DirectoryVersionId then
                 return Some directoryVersion
             else
                 return None
@@ -1403,7 +1403,7 @@ module Services =
                     )
             | MongoDB -> ()
 
-            if directoryVersion.DirectoryId <> DirectoryVersion.Default.DirectoryId then
+            if directoryVersion.DirectoryVersionId <> DirectoryVersion.Default.DirectoryVersionId then
                 return Some directoryVersion
             else
                 return None
@@ -1422,14 +1422,14 @@ module Services =
         }
 
     /// Checks if all of the supplied DirectoryIds exist.
-    let directoryIdsExist (repositoryId: RepositoryId) (directoryIds: IEnumerable<DirectoryId>) correlationId =
+    let directoryIdsExist (repositoryId: RepositoryId) (directoryIds: IEnumerable<DirectoryVersionId>) correlationId =
         task {
             match actorStateStorageProvider with
             | Unknown -> return false
             | AzureCosmosDb ->
                 let mutable requestCharge = 0.0
                 let mutable allExist = true
-                let directoryIdQueue = Queue<DirectoryId>(directoryIds)
+                let directoryIdQueue = Queue<DirectoryVersionId>(directoryIds)
 
                 while directoryIdQueue.Count > 0 && allExist do
                     let directoryId = directoryIdQueue.Dequeue()
