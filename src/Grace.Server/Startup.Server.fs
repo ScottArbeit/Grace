@@ -323,16 +323,16 @@ module Application =
             // Set up the ActorProxyFactory for the application.
             let actorProxyOptions = ActorProxyOptions() // DaprApiToken = Environment.GetEnvironmentVariable("DAPR_API_TOKEN")) (when we actually implement auth)
 
-            let environmentVariables = Environment.GetEnvironmentVariables()
-            let sortedKeys = SortedSet<string>()
+            //let environmentVariables = Environment.GetEnvironmentVariables()
+            //let sortedKeys = SortedSet<string>()
 
-            for key in environmentVariables.Keys do
-                let k = key.ToString()
-                sortedKeys.Add(k) |> ignore
+            //for key in environmentVariables.Keys do
+            //    let k = key.ToString()
+            //    sortedKeys.Add(k) |> ignore
 
-            for key in sortedKeys do
-                let value = Environment.GetEnvironmentVariable(key, EnvironmentVariableTarget.Process)
-                logToConsole $"{key}: {value}"
+            //for key in sortedKeys do
+            //    let value = Environment.GetEnvironmentVariable(key, EnvironmentVariableTarget.Process)
+            //    logToConsole $"{key}: {value}"
 
             actorProxyOptions.HttpEndpoint <-
                 $"{Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.DaprServerUri)}:{Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.DaprHttpPort)}"

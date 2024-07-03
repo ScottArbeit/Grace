@@ -1,5 +1,6 @@
 namespace Grace.Actors
 
+open Grace.Shared.Dto.Reference
 open Grace.Shared.Types
 open Grace.Shared.Utilities
 open NodaTime
@@ -127,14 +128,7 @@ module Events =
         /// Defines the events for the Reference actor.
         [<KnownType("GetKnownTypes")>]
         type ReferenceEventType =
-            | Created of
-                referenceId: ReferenceId *
-                repositoryId: RepositoryId *
-                branchId: BranchId *
-                directoryId: DirectoryVersionId *
-                sha256Hash: Sha256Hash *
-                referenceType: ReferenceType *
-                referenceText: ReferenceText
+            | Created of referenceDto: ReferenceDto
             | LogicalDeleted of force: bool * DeleteReason: DeleteReason
             | PhysicalDeleted
             | Undeleted

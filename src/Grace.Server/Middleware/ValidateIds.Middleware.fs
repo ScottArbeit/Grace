@@ -283,6 +283,7 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
                                     // If we're creating a new Repository, we don't need to resolve the Id.
                                     graceIds <- { graceIds with RepositoryId = repositoryId; HasRepository = true }
                                 else
+                                    logToConsole $"In ValidateIdsMiddleware: About to call resolveRepositoryId with {graceIds.OwnerId}; {graceIds.OrganizationId}; {repositoryId}; {repositoryName}; {correlationId}."
                                     // Resolve the RepositoryId based on the provided Id and Name.
                                     match!
                                         resolveRepositoryId
@@ -369,7 +370,7 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
                         log.LogInformation(
                             "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; ValidateIds.Middleware: Path: {path}; OwnerId: {OwnerId}; OrganizationId: {OrganizationId}; RepositoryId: {RepositoryId}; BranchId: {BranchId}.",
                             getCurrentInstantExtended (),
-                            Environment.MachineName,
+                            getMachineName,
                             duration_ms,
                             correlationId,
                             path,
@@ -382,7 +383,7 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
                         log.LogInformation(
                             "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; ValidateIds.Middleware: Path: {path}; OwnerId: {OwnerId}; OrganizationId: {OrganizationId}; RepositoryId: {RepositoryId}.",
                             getCurrentInstantExtended (),
-                            Environment.MachineName,
+                            getMachineName,
                             duration_ms,
                             correlationId,
                             path,
@@ -394,7 +395,7 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
                         log.LogInformation(
                             "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; ValidateIds.Middleware: Path: {path}; OwnerId: {OwnerId}; OrganizationId: {OrganizationId}.",
                             getCurrentInstantExtended (),
-                            Environment.MachineName,
+                            getMachineName,
                             duration_ms,
                             correlationId,
                             path,
@@ -405,7 +406,7 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
                         log.LogInformation(
                             "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; ValidateIds.Middleware: Path: {path}; OwnerId: {OwnerId}.",
                             getCurrentInstantExtended (),
-                            Environment.MachineName,
+                            getMachineName,
                             duration_ms,
                             correlationId,
                             path,

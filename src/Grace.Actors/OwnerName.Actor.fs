@@ -54,7 +54,7 @@ module OwnerName =
             log.LogInformation(
                 "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {ActorName}.{MethodName}; OwnerName: {OwnerName}; OwnerId: {ownerId}.",
                 getCurrentInstantExtended (),
-                Environment.MachineName,
+                getMachineName,
                 duration_ms,
                 this.correlationId,
                 actorName,

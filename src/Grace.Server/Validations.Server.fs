@@ -567,6 +567,7 @@ module Validations =
                                 | Save -> if branchDto.SaveEnabled then true else false
                                 | Tag -> if branchDto.TagEnabled then true else false
                                 | External -> if branchDto.ExternalEnabled then true else false
+                                | Rebase -> true // Rebase is always allowed.
 
                             use newCacheEntry =
                                 memoryCache.CreateEntry(

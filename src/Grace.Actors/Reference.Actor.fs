@@ -45,15 +45,15 @@ module Reference =
         let updateDto referenceEventType currentReferenceDto =
             let newReferenceDto =
                 match referenceEventType with
-                | Created(referenceId, repositoryId, branchId, directoryId, sha256Hash, referenceType, referenceText) ->
+                | Created createdDto ->
                     { currentReferenceDto with
-                        ReferenceId = referenceId
-                        RepositoryId = repositoryId
-                        BranchId = branchId
-                        DirectoryId = directoryId
-                        Sha256Hash = sha256Hash
-                        ReferenceType = referenceType
-                        ReferenceText = referenceText }
+                        ReferenceId = createdDto.ReferenceId
+                        RepositoryId = createdDto.RepositoryId
+                        BranchId = createdDto.BranchId
+                        DirectoryId = createdDto.DirectoryId
+                        Sha256Hash = createdDto.Sha256Hash
+                        ReferenceType = createdDto.ReferenceType
+                        ReferenceText = createdDto.ReferenceText }
                 | LogicalDeleted(force, deleteReason) -> {currentReferenceDto with DeletedAt = Some(getCurrentInstant()); DeleteReason = deleteReason}
                 | PhysicalDeleted -> currentReferenceDto // Do nothing because it's about to be deleted anyway.
                 | Undeleted -> {currentReferenceDto with DeletedAt = None; DeleteReason = String.Empty}
@@ -85,7 +85,7 @@ module Reference =
                 log.LogInformation(
                     "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; Activated {ActorType} {ActorId}. {message}.",
                     getCurrentInstantExtended (),
-                    Environment.MachineName,
+                    getMachineName,
                     duration_ms,
                     actorName,
                     host.Id,
@@ -123,7 +123,7 @@ module Reference =
                 log.LogInformation(
                     "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {ActorName}.{MethodName}; RepositoryId: {RepositoryId}; BranchId: {BranchId}; ReferenceId: {ReferenceId}.",
                     getCurrentInstantExtended (),
-                    Environment.MachineName,
+                    getMachineName,
                     duration_ms,
                     this.correlationId,
                     actorName,
@@ -136,7 +136,7 @@ module Reference =
                 log.LogInformation(
                     "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {ActorName}.{MethodName}; Command: {Command}; RepositoryId: {RepositoryId}; BranchId: {BranchId}; ReferenceId: {ReferenceId}.",
                     getCurrentInstantExtended (),
-                    Environment.MachineName,
+                    getMachineName,
                     duration_ms,
                     this.correlationId,
                     actorName,
@@ -273,9 +273,9 @@ module Reference =
 
                     // If this is a Save or Checkpoint reference, schedule a physical deletion based on the default delays from the repository.
                     match referenceEvent.Event with
-                    | Created(_, _, _, _, _, referenceType, _) ->
+                    | Created referenceDto ->
                         do!
-                            match referenceType with
+                            match referenceDto.ReferenceType with
                             | ReferenceType.Save ->
                                 task {
                                     let repositoryActorProxy =
@@ -369,7 +369,7 @@ module Reference =
                             return Error (GraceError.Create (ReferenceError.getErrorMessage DuplicateCorrelationId) metadata.CorrelationId)
                         else
                             match command with
-                            | Create(referenceId, repositoryId, branchId, directoryId, sha256Hash, referenceType, referenceText) ->
+                            | Create dto ->
                                 match referenceDto.UpdatedAt with
                                 | Some _ -> return Error (GraceError.Create (ReferenceError.getErrorMessage ReferenceAlreadyExists) metadata.CorrelationId)
                                 | None -> return Ok command
@@ -384,8 +384,7 @@ module Reference =
                         let! referenceEventType =
                             task {
                                 match command with
-                                | Create(referenceId, repositoryId, branchId, directoryId, sha256Hash, referenceType, referenceText) ->
-                                    return Created(referenceId, repositoryId, branchId, directoryId, sha256Hash, referenceType, referenceText)
+                                | Create dto -> return Created dto
                                 | DeleteLogical(force, deleteReason) ->
                                     let repositoryActorProxy = actorProxyFactory.CreateActorProxy<IRepositoryActor>(ActorId($"{referenceDto.RepositoryId}"), ActorName.Repository)
                                     let! repositoryDto = repositoryActorProxy.Get(metadata.CorrelationId)

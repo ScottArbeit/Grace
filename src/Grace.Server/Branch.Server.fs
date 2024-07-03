@@ -261,7 +261,7 @@ module Branch =
                            parameters.CorrelationId
                            CommitIsDisabled |]
 
-                let command (parameters: RebaseParameters) = Rebase(parameters.BasedOn) |> returnValueTask
+                let command (parameters: RebaseParameters) = BranchCommand.Rebase parameters.BasedOn |> returnValueTask
 
                 context.Items.Add("Command", nameof (Rebase))
                 return! processCommand context validations command
@@ -629,7 +629,7 @@ module Branch =
                     log.LogInformation(
                         "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {path}; BranchId: {branchId}.",
                         getCurrentInstantExtended (),
-                        Environment.MachineName,
+                        getMachineName,
                         duration_ms,
                         (getCorrelationId context),
                         context.Request.Path,
@@ -644,7 +644,7 @@ module Branch =
                         ex,
                         "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Error in {path}; BranchId: {branchId}.",
                         getCurrentInstantExtended (),
-                        Environment.MachineName,
+                        getMachineName,
                         duration_ms,
                         (getCorrelationId context),
                         context.Request.Path,
@@ -681,7 +681,7 @@ module Branch =
                     log.LogInformation(
                         "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {path}; BranchId: {branchId}.",
                         getCurrentInstantExtended (),
-                        Environment.MachineName,
+                        getMachineName,
                         duration_ms,
                         (getCorrelationId context),
                         context.Request.Path,
@@ -696,7 +696,7 @@ module Branch =
                         ex,
                         "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Error in {path}; BranchId: {branchId}.",
                         getCurrentInstantExtended (),
-                        Environment.MachineName,
+                        getMachineName,
                         duration_ms,
                         (getCorrelationId context),
                         context.Request.Path,
@@ -732,7 +732,7 @@ module Branch =
                     log.LogInformation(
                         "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {path}; BranchId: {branchId}.",
                         getCurrentInstantExtended (),
-                        Environment.MachineName,
+                        getMachineName,
                         duration_ms,
                         (getCorrelationId context),
                         context.Request.Path,
@@ -747,7 +747,7 @@ module Branch =
                         ex,
                         "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Error in {path}; BranchId: {branchId}.",
                         getCurrentInstantExtended (),
-                        Environment.MachineName,
+                        getMachineName,
                         duration_ms,
                         (getCorrelationId context),
                         context.Request.Path,
@@ -789,7 +789,7 @@ module Branch =
                     log.LogInformation(
                         "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {path}; BranchId: {branchId}.",
                         getCurrentInstantExtended (),
-                        Environment.MachineName,
+                        getMachineName,
                         duration_ms,
                         (getCorrelationId context),
                         context.Request.Path,
@@ -804,7 +804,7 @@ module Branch =
                         ex,
                         "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Error in {path}; BranchId: {branchId}.",
                         getCurrentInstantExtended (),
-                        Environment.MachineName,
+                        getMachineName,
                         duration_ms,
                         (getCorrelationId context),
                         context.Request.Path,
@@ -841,7 +841,7 @@ module Branch =
                     log.LogInformation(
                         "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {path}; BranchId: {branchId}.",
                         getCurrentInstantExtended (),
-                        Environment.MachineName,
+                        getMachineName,
                         duration_ms,
                         (getCorrelationId context),
                         context.Request.Path,
@@ -856,11 +856,67 @@ module Branch =
                         ex,
                         "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Error in {path}; BranchId: {branchId}.",
                         getCurrentInstantExtended (),
-                        Environment.MachineName,
+                        getMachineName,
                         duration_ms,
                         (getCorrelationId context),
                         context.Request.Path,
                         graceIds.BranchId
+                    )
+
+                    return!
+                        context
+                        |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
+            }
+
+    /// Gets a list of references, given a list of reference IDs.
+    let GetLatestReferencesByReferenceTypes: HttpHandler =
+        fun (next: HttpFunc) (context: HttpContext) ->
+            task {
+                let startTime = getCurrentInstant ()
+                let graceIds = context.Items[nameof (GraceIds)] :?> GraceIds
+
+                try
+                    let validations (parameters: GetLatestReferencesByReferenceTypeParameters) =
+                        [| Input.listIsNonEmpty parameters.ReferenceTypes BranchError.ReferenceTypeMustBeProvided |]
+
+                    let query (context: HttpContext) (maxCount: int) (actorProxy: IBranchActor) =
+                        task {
+                            let referenceTypes = context.Items["ReferenceTypes"] :?> ReferenceType array
+
+                            log.LogDebug("In Repository.Server.GetLatestReferencesByReferenceTypes: ReferenceTypes: {referenceTypes}.", serialize referenceTypes)
+
+                            return! getLatestReferenceByReferenceTypes referenceTypes (Guid.Parse(graceIds.BranchId))
+                        }
+
+                    let! parameters = context |> parse<GetLatestReferencesByReferenceTypeParameters>
+                    context.Items.Add("ReferenceTypes", serialize parameters.ReferenceTypes)
+                    let! result = processQuery context parameters validations 1 query
+
+                    let duration_ms = getPaddedDuration_ms startTime
+
+                    log.LogInformation(
+                        "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {path}; RepositoryId: {repositoryId}.",
+                        getCurrentInstantExtended (),
+                        getMachineName,
+                        duration_ms,
+                        (getCorrelationId context),
+                        context.Request.Path,
+                        graceIds.RepositoryId
+                    )
+
+                    return result
+                with ex ->
+                    let duration_ms = getPaddedDuration_ms startTime
+
+                    log.LogError(
+                        ex,
+                        "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Error in {path}; RepositoryId: {repositoryId}.",
+                        getCurrentInstantExtended (),
+                        getMachineName,
+                        duration_ms,
+                        (getCorrelationId context),
+                        context.Request.Path,
+                        graceIds.RepositoryId
                     )
 
                     return!
@@ -933,7 +989,7 @@ module Branch =
                     log.LogInformation(
                         "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {path}; BranchId: {branchId}.",
                         getCurrentInstantExtended (),
-                        Environment.MachineName,
+                        getMachineName,
                         duration_ms,
                         (getCorrelationId context),
                         context.Request.Path,
@@ -948,7 +1004,7 @@ module Branch =
                         ex,
                         "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Error in {path}; BranchId: {branchId}.",
                         getCurrentInstantExtended (),
-                        Environment.MachineName,
+                        getMachineName,
                         duration_ms,
                         (getCorrelationId context),
                         context.Request.Path,
@@ -985,7 +1041,7 @@ module Branch =
                     log.LogInformation(
                         "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {path}; BranchId: {branchId}.",
                         getCurrentInstantExtended (),
-                        Environment.MachineName,
+                        getMachineName,
                         duration_ms,
                         (getCorrelationId context),
                         context.Request.Path,
@@ -1000,7 +1056,7 @@ module Branch =
                         ex,
                         "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Error in {path}; BranchId: {branchId}.",
                         getCurrentInstantExtended (),
-                        Environment.MachineName,
+                        getMachineName,
                         duration_ms,
                         (getCorrelationId context),
                         context.Request.Path,
@@ -1037,7 +1093,7 @@ module Branch =
                     log.LogInformation(
                         "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {path}; BranchId: {branchId}.",
                         getCurrentInstantExtended (),
-                        Environment.MachineName,
+                        getMachineName,
                         duration_ms,
                         (getCorrelationId context),
                         context.Request.Path,
@@ -1052,7 +1108,7 @@ module Branch =
                         ex,
                         "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Error in {path}; BranchId: {branchId}.",
                         getCurrentInstantExtended (),
-                        Environment.MachineName,
+                        getMachineName,
                         duration_ms,
                         (getCorrelationId context),
                         context.Request.Path,
@@ -1089,7 +1145,7 @@ module Branch =
                     log.LogInformation(
                         "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {path}; BranchId: {branchId}.",
                         getCurrentInstantExtended (),
-                        Environment.MachineName,
+                        getMachineName,
                         duration_ms,
                         (getCorrelationId context),
                         context.Request.Path,
@@ -1104,7 +1160,7 @@ module Branch =
                         ex,
                         "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Error in {path}; BranchId: {branchId}.",
                         getCurrentInstantExtended (),
-                        Environment.MachineName,
+                        getMachineName,
                         duration_ms,
                         (getCorrelationId context),
                         context.Request.Path,
@@ -1142,7 +1198,7 @@ module Branch =
                     log.LogInformation(
                         "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {path}; BranchId: {branchId}.",
                         getCurrentInstantExtended (),
-                        Environment.MachineName,
+                        getMachineName,
                         duration_ms,
                         (getCorrelationId context),
                         context.Request.Path,
@@ -1157,7 +1213,7 @@ module Branch =
                         ex,
                         "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Error in {path}; BranchId: {branchId}.",
                         getCurrentInstantExtended (),
-                        Environment.MachineName,
+                        getMachineName,
                         duration_ms,
                         (getCorrelationId context),
                         context.Request.Path,
@@ -1194,7 +1250,7 @@ module Branch =
                     log.LogInformation(
                         "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {path}; BranchId: {branchId}.",
                         getCurrentInstantExtended (),
-                        Environment.MachineName,
+                        getMachineName,
                         duration_ms,
                         (getCorrelationId context),
                         context.Request.Path,
@@ -1209,7 +1265,7 @@ module Branch =
                         ex,
                         "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Error in {path}; BranchId: {branchId}.",
                         getCurrentInstantExtended (),
-                        Environment.MachineName,
+                        getMachineName,
                         duration_ms,
                         (getCorrelationId context),
                         context.Request.Path,
@@ -1246,7 +1302,7 @@ module Branch =
                     log.LogInformation(
                         "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {path}; BranchId: {branchId}.",
                         getCurrentInstantExtended (),
-                        Environment.MachineName,
+                        getMachineName,
                         duration_ms,
                         (getCorrelationId context),
                         context.Request.Path,
@@ -1261,7 +1317,7 @@ module Branch =
                         ex,
                         "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Error in {path}; BranchId: {branchId}.",
                         getCurrentInstantExtended (),
-                        Environment.MachineName,
+                        getMachineName,
                         duration_ms,
                         (getCorrelationId context),
                         context.Request.Path,
@@ -1349,7 +1405,7 @@ module Branch =
                     log.LogInformation(
                         "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {path}; BranchId: {branchId}.",
                         getCurrentInstantExtended (),
-                        Environment.MachineName,
+                        getMachineName,
                         duration_ms,
                         (getCorrelationId context),
                         context.Request.Path,
@@ -1364,7 +1420,7 @@ module Branch =
                         ex,
                         "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Error in {path}; BranchId: {branchId}.",
                         getCurrentInstantExtended (),
-                        Environment.MachineName,
+                        getMachineName,
                         duration_ms,
                         (getCorrelationId context),
                         context.Request.Path,
@@ -1459,7 +1515,7 @@ module Branch =
                     log.LogInformation(
                         "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {path}; BranchId: {branchId}.",
                         getCurrentInstantExtended (),
-                        Environment.MachineName,
+                        getMachineName,
                         duration_ms,
                         (getCorrelationId context),
                         context.Request.Path,
@@ -1474,7 +1530,7 @@ module Branch =
                         ex,
                         "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Error in {path}; BranchId: {branchId}.",
                         getCurrentInstantExtended (),
-                        Environment.MachineName,
+                        getMachineName,
                         duration_ms,
                         (getCorrelationId context),
                         context.Request.Path,
@@ -1573,9 +1629,14 @@ module Branch =
                             parameters.BranchId <- $"{referenceDto.BranchId}"
                         elif not <| String.IsNullOrEmpty(parameters.Sha256Hash) then
                             logToConsole $"In Branch.GetVersion: parameters.Sha256Hash: {parameters.Sha256Hash}"
-                            let! referenceDto = getReferenceBySha256Hash parameters.Sha256Hash
-                            logToConsole $"referenceDto.ReferenceId: {referenceDto.ReferenceId}"
-                            parameters.BranchId <- $"{referenceDto.BranchId}"
+                            match! getReferenceBySha256Hash (BranchId.Parse(graceIds.BranchId)) parameters.Sha256Hash with
+                            | Some referenceDto ->
+                                logToConsole $"referenceDto.ReferenceId: {referenceDto.ReferenceId}"
+                                parameters.BranchId <- $"{referenceDto.BranchId}"
+                            | None -> // Reference Id was not found in the database.
+                                ()
+                                // I really want to return a 404 here, have to figure that out.
+                                //return! returnResult HttpStatusCode.NotFound (GraceError.Create "Reference not found." (getCorrelationId context)) context
                         else
                             () // This should never happen because it would get caught in validations.
                     | None -> () // This should never happen because it would get caught in validations.
@@ -1590,7 +1651,7 @@ module Branch =
                         ex,
                         "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Error in {path}; BranchId: {branchId}.",
                         getCurrentInstantExtended (),
-                        Environment.MachineName,
+                        getMachineName,
                         duration_ms,
                         (getCorrelationId context),
                         context.Request.Path,

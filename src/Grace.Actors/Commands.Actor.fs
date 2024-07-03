@@ -1,5 +1,6 @@
 namespace Grace.Actors
 
+open Grace.Shared.Dto.Reference
 open Grace.Shared.Types
 open Grace.Shared.Utilities
 open System.Runtime.Serialization
@@ -82,14 +83,7 @@ module Commands =
     module Reference =
         [<KnownType("GetKnownTypes")>]
         type ReferenceCommand =
-            | Create of
-                referenceId: ReferenceId *
-                repositoryId: RepositoryId *
-                branchId: BranchId *
-                directoryId: DirectoryVersionId *
-                sha256Hash: Sha256Hash *
-                referenceType: ReferenceType *
-                referenceText: ReferenceText
+            | Create of referenceDto: ReferenceDto
             | DeleteLogical of force: bool * DeleteReason: DeleteReason
             | DeletePhysical
             | Undelete

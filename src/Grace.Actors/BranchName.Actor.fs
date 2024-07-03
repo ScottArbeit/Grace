@@ -57,7 +57,7 @@ module BranchName =
             log.LogInformation(
                 "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {ActorName}.{MethodName}; RepositoryId: {RepositoryId}; BranchName: {BranchName}; BranchId: {BranchId}.",
                 getCurrentInstantExtended (),
-                Environment.MachineName,
+                getMachineName,
                 duration_ms,
                 this.correlationId,
                 actorName,

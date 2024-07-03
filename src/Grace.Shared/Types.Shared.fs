@@ -103,6 +103,7 @@ module Types =
         | Save
         | Tag
         | External
+        | Rebase
 
         override this.ToString() = Utilities.getDiscriminatedUnionFullName this
 
@@ -211,7 +212,7 @@ module Types =
 
     /// A DirectoryVersion represents a version of a directory in a repository with unique contents, and therefore with a unique SHA-256 hash.
     ///
-    /// It is the server-side representation of the LocalDirectoryVersion type, used for the local object cache.
+    /// It is the server-side representation of the LocalDirectoryVersion type. LocalDirectoryVersion is used for the local object cache.
     [<KnownType("GetKnownTypes")>]
     type DirectoryVersion =
         { Class: string
@@ -269,7 +270,7 @@ module Types =
 
     /// A LocalDirectoryVersion represents a version of a directory in a repository with unique contents, and therefore with a unique SHA-256 hash.
     ///
-    /// It is the local representation of the DirectoryVersion type, used on the server.
+    /// It is the local representation of the DirectoryVersion type. DirectoryVersion is used on the server.
     and [<KnownType("GetKnownTypes"); CLIMutable>] LocalDirectoryVersion =
         { Class: string
           DirectoryVersionId: DirectoryVersionId

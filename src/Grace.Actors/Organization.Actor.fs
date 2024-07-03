@@ -85,7 +85,7 @@ module Organization =
                 log.LogInformation(
                     "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; Activated {ActorType} {ActorId}. {message}.",
                     getCurrentInstantExtended (),
-                    Environment.MachineName,
+                    getMachineName,
                     duration_ms,
                     actorName,
                     host.Id,
@@ -134,7 +134,7 @@ module Organization =
                 log.LogInformation(
                     "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {ActorName}.{MethodName}; OrganizationId: {Id}.",
                     getCurrentInstantExtended (),
-                    Environment.MachineName,
+                    getMachineName,
                     duration_ms,
                     this.correlationId,
                     actorName,
@@ -145,7 +145,7 @@ module Organization =
                 log.LogInformation(
                     "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {ActorName}.{MethodName}; Command: {Command}; OrganizationId: {Id}.",
                     getCurrentInstantExtended (),
-                    Environment.MachineName,
+                    getMachineName,
                     duration_ms,
                     this.correlationId,
                     actorName,

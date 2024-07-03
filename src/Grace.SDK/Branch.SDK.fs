@@ -121,6 +121,10 @@ type Branch() =
     static member public GetExternals(parameters: GetReferencesParameters) =
         postServer<GetReferencesParameters, IEnumerable<ReferenceDto>> (parameters |> ensureCorrelationIdIsSet, $"branch/{nameof (Branch.GetExternals)}")
 
+    /// Gets the rebases from a branch.
+    static member public GetRebases(parameters: GetReferencesParameters) =
+        postServer<GetReferencesParameters, IEnumerable<ReferenceDto>> (parameters |> ensureCorrelationIdIsSet, $"branch/{nameof (Branch.GetRebases)}")
+
     /// Sets the name of a branch.
     static member public SetName(parameters: SetBranchNameParameters) =
         postServer<SetBranchNameParameters, string> (parameters |> ensureCorrelationIdIsSet, $"branch/{nameof (Branch.SetName)}")

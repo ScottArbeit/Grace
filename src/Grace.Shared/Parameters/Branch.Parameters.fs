@@ -1,4 +1,4 @@
-﻿namespace Grace.Shared.Parameters
+namespace Grace.Shared.Parameters
 
 open Grace.Shared.Parameters.Common
 open Grace.Shared.Types
@@ -75,6 +75,10 @@ module Branch =
         inherit BranchParameters()
         member val public FullSha = false with get, set
         member val public MaxCount = 50 with get, set
+
+    type GetLatestReferencesByReferenceTypeParameters() =
+        inherit BranchParameters()
+        member val public ReferenceTypes: ReferenceType array = [| Promotion; Commit; Checkpoint; Save |] with get, set
 
     /// Parameters for the /branch/getDiffsForReferenceType endpoint.
     type GetDiffsForReferenceTypeParameters() =

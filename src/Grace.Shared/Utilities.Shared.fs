@@ -502,3 +502,12 @@ module Utilities =
     let getObjectFileName (relativePath: string) (sha256Hash: string) =
         let file = FileInfo(relativePath)
         $"{file.Name.Replace(file.Extension, String.Empty)}_{sha256Hash}{file.Extension}"
+
+    /// Gets the name of the machine or node, without the prefix of the container name.
+    let getMachineName =
+        let nameParts = Environment.MachineName.Split('-')
+        // return the last two parts of the machine name with a hyphen in between
+        if nameParts.Length > 1 then
+            $"{nameParts.[nameParts.Length - 2]}-{nameParts.[nameParts.Length - 1]}"
+        else
+            Environment.MachineName

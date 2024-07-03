@@ -59,7 +59,7 @@ module RepositoryName =
             log.LogInformation(
                 "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {ActorName}.{MethodName}; OwnerId: {OwnerId}; OrganizationId: {OrganizationId}; RepositoryName: {RepositoryName}; RepositoryId: {RepositoryId}.",
                 getCurrentInstantExtended (),
-                Environment.MachineName,
+                getMachineName,
                 duration_ms,
                 this.correlationId,
                 actorName,

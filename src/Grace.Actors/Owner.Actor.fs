@@ -95,7 +95,7 @@ module Owner =
                 log.LogInformation(
                     "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; Activated {ActorType} {ActorId}. {message}.",
                     getCurrentInstantExtended (),
-                    Environment.MachineName,
+                    getMachineName,
                     duration_ms,
                     actorName,
                     host.Id,
@@ -142,7 +142,7 @@ module Owner =
                 log.LogInformation(
                     "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {ActorName}.{MethodName}; OwnerId: {Id}.",
                     getCurrentInstantExtended (),
-                    Environment.MachineName,
+                    getMachineName,
                     duration_ms,
                     this.correlationId,
                     actorName,
@@ -153,7 +153,7 @@ module Owner =
                 log.LogInformation(
                     "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {ActorName}.{MethodName}; Command: {Command}; OwnerId: {Id}.",
                     getCurrentInstantExtended (),
-                    Environment.MachineName,
+                    getMachineName,
                     duration_ms,
                     this.correlationId,
                     actorName,

@@ -75,7 +75,7 @@ module Repository =
                 log.LogInformation(
                     "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; Activated {ActorType} {ActorId}. {message}.",
                     getCurrentInstantExtended (),
-                    Environment.MachineName,
+                    getMachineName,
                     duration_ms,
                     actorName,
                     host.Id,
@@ -113,7 +113,7 @@ module Repository =
                 log.LogInformation(
                     "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {ActorName}.{MethodName}; RepositoryId: {Id}.",
                     getCurrentInstantExtended (),
-                    Environment.MachineName,
+                    getMachineName,
                     duration_ms,
                     this.correlationId,
                     actorName,
@@ -124,7 +124,7 @@ module Repository =
                 log.LogInformation(
                     "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {ActorName}.{MethodName}; Command: {Command}; RepositoryId: {Id}.",
                     getCurrentInstantExtended (),
-                    Environment.MachineName,
+                    getMachineName,
                     duration_ms,
                     this.correlationId,
                     actorName,
@@ -249,6 +249,7 @@ module Repository =
 
                                 match! branchActor.Handle createCommand repositoryEvent.Metadata with
                                 | Ok branchGraceReturn ->
+                                    logToConsole $"In Repository.Actor.handleEvent: Successfully created the new branch."
                                     // Create an empty directory version, and use that for the initial promotion
                                     let emptyDirectoryId = DirectoryVersionId.NewGuid()
 
@@ -276,6 +277,8 @@ module Repository =
                                             (Commands.DirectoryVersion.DirectoryVersionCommand.Create(emptyDirectoryVersion))
                                             repositoryEvent.Metadata
 
+                                    logToConsole $"In Repository.Actor.handleEvent: Successfully created the empty directory version."
+
                                     let! promotionResult =
                                         branchActor.Handle
                                             (Commands.Branch.BranchCommand.Promote(
@@ -285,19 +288,29 @@ module Repository =
                                             ))
                                             repositoryEvent.Metadata
 
+                                    logToConsole $"In Repository.Actor.handleEvent: After trying to create the first promotion."
+
                                     match directoryResult, promotionResult with
                                     | (Ok directoryVersionGraceReturnValue, Ok promotionGraceReturnValue) ->
+                                        logToConsole $"In Repository.Actor.handleEvent: Successfully created the initial promotion."
+                                        logToConsole $"promotionGraceReturnValue.Properties:"
+                                        promotionGraceReturnValue.Properties |> Seq.iter (fun kv -> logToConsole $"  {kv.Key}: {kv.Value}")
                                         // Set current, empty directory as the based-on reference.
                                         let referenceId = Guid.Parse(promotionGraceReturnValue.Properties[nameof (ReferenceId)])
 
+                                        logToConsole $"In Repository.Actor.handleEvent: Before trying to rebase the initial branch."
                                         let! rebaseResult = branchActor.Handle (Commands.Branch.BranchCommand.Rebase(referenceId)) repositoryEvent.Metadata
+                                        logToConsole $"In Repository.Actor.handleEvent: After trying to rebase the initial branch."
+
 
                                         match rebaseResult with
                                         | Ok rebaseGraceReturn -> return Ok(branchId, referenceId)
                                         | Error graceError -> return processGraceError FailedRebasingInitialBranch repositoryEvent graceError
                                     | (_, Error graceError) -> return processGraceError FailedCreatingInitialPromotion repositoryEvent graceError
                                     | (Error graceError, _) -> return processGraceError FailedCreatingEmptyDirectoryVersion repositoryEvent graceError
-                                | Error graceError -> return processGraceError FailedCreatingInitialBranch repositoryEvent graceError
+                                | Error graceError ->
+                                    logToConsole $"In Repository.Actor.handleEvent: Failed to create the new branch."
+                                    return processGraceError FailedCreatingInitialBranch repositoryEvent graceError
                             | _ -> return Ok(BranchId.Empty, ReferenceId.Empty)
                         }
 
@@ -348,7 +361,7 @@ module Repository =
             }
 
         /// Deletes all of the branches provided, by sending a DeleteLogical command to each branch.
-        member private this.LogicalDeleteBranches(branches: List<BranchDto>, metadata: EventMetadata, deleteReason: DeleteReason) =
+        member private this.LogicalDeleteBranches(branches: BranchDto array, metadata: EventMetadata, deleteReason: DeleteReason) =
             task {
                 let results = ConcurrentQueue<GraceResult<string>>()
 
@@ -580,14 +593,14 @@ module Repository =
                                     | SetDescription description -> return DescriptionSet description
                                     | DeleteLogical(force, deleteReason) ->
                                         // Get the list of branches that aren't already deleted.
-                                        let! branches = getBranches repositoryDto.RepositoryId Int32.MaxValue false
+                                        let! branches = getBranches repositoryDto.RepositoryId Int32.MaxValue false metadata.CorrelationId
 
                                         this.SchedulePhysicalDeletion(deleteReason, metadata.CorrelationId)
 
                                         // If any branches are not already deleted, and we're not forcing the deletion, then throw an exception.
                                         if
                                             not <| force
-                                            && branches.Count > 0
+                                            && branches.Length > 0
                                             && branches.Any(fun branch -> branch.DeletedAt |> Option.isNone)
                                         then
                                             //raise (ApplicationException($"{error}"))

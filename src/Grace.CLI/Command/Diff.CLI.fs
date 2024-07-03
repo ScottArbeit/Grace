@@ -445,6 +445,7 @@ module Diff =
                                             | Save -> return! Branch.GetSaves getReferencesParameters
                                             | Tag -> return! Branch.GetTags getReferencesParameters
                                             | External -> return! Branch.GetExternals getReferencesParameters
+                                            | Rebase -> return! Branch.GetRebases getReferencesParameters
 
                                             // Promotions are different, because we actually want the promotion from the parent branch that this branch is based on.
                                             | Promotion ->

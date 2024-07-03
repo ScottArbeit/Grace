@@ -70,6 +70,7 @@ module Branch =
                             | Save -> { branchDto with SaveEnabled = true }
                             | Tag -> { branchDto with TagEnabled = true }
                             | External -> { branchDto with ExternalEnabled = true }
+                            | Rebase -> branchDto // Rebase is always allowed.
 
                     branchDto
                 | Rebased referenceId -> { currentBranchDto with BasedOn = referenceId }
@@ -105,34 +106,53 @@ module Branch =
             let stateManager = this.StateManager
 
             task {
-                let mutable message = String.Empty
-                let! retrievedEvents = Storage.RetrieveState<List<BranchEvent>> stateManager eventsStateName
+                try
+                    let mutable message = String.Empty
+                    let! retrievedEvents = Storage.RetrieveState<List<BranchEvent>> stateManager eventsStateName
 
-                match retrievedEvents with
-                | Some retrievedEvents ->
-                    // Load the branchEvents from the retrieved events.
-                    branchEvents.AddRange(retrievedEvents)
+                    match retrievedEvents with
+                    | Some retrievedEvents ->
+                        // Load the branchEvents from the retrieved events.
+                        branchEvents.AddRange(retrievedEvents)
 
-                    // Apply all events to the branchDto.
-                    branchDto <-
-                        retrievedEvents
-                        |> Seq.fold (fun branchDto branchEvent -> branchDto |> updateDto branchEvent.Event) BranchDto.Default
+                        // Apply all events to the branchDto.
+                        branchDto <-
+                            retrievedEvents
+                            |> Seq.fold (fun branchDto branchEvent -> branchDto |> updateDto branchEvent.Event) BranchDto.Default
 
-                    message <- "Retrieved from database"
-                | None -> message <- "Not found in database"
+                        // Get the latest references and update the dto.
+                        let referenceTypes = [| Save; Checkpoint; Commit; Promotion |]
+                        //logToConsole $"In Branch.Actor.OnActivateAsync: About to call getLatestReferenceByReferenceTypes()."
+                        let! latestReferences = getLatestReferenceByReferenceTypes referenceTypes branchDto.BranchId
+                        latestReferences |> Seq.iter (fun kvp ->
+                            let referenceId = kvp.Value.ReferenceId
+                            match kvp.Key with
+                            | Save -> branchDto <- { branchDto with LatestSave = referenceId }
+                            | Checkpoint -> branchDto <- { branchDto with LatestCheckpoint = referenceId }
+                            | Commit -> branchDto <- { branchDto with LatestCommit = referenceId }
+                            | Promotion -> branchDto <- { branchDto with LatestPromotion = referenceId }
+                            | Rebase
+                            | External
+                            | Tag -> ()
+                        )
 
-                let duration_ms = getPaddedDuration_ms activateStartTime
+                        message <- "Retrieved from database"
+                    | None -> message <- "Not found in database"
 
-                log.LogInformation(
-                    "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; Activated {ActorType} {ActorId}. BranchName: {BranchName}; {message}.",
-                    getCurrentInstantExtended (),
-                    Environment.MachineName,
-                    duration_ms,
-                    actorName,
-                    host.Id,
-                    branchDto.BranchName,
-                    message
-                )
+                    let duration_ms = getPaddedDuration_ms activateStartTime
+
+                    log.LogInformation(
+                        "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; Activated {ActorType} {ActorId}. BranchName: {BranchName}; {message}.",
+                        getCurrentInstantExtended (),
+                        getMachineName,
+                        duration_ms,
+                        actorName,
+                        host.Id,
+                        branchDto.BranchName,
+                        message
+                    )
+                with ex ->
+                    log.LogError(ex, "Error in Branch.Actor.OnActivateAsync. BranchId: {BranchId}.", host.Id)
             }
             :> Task
 
@@ -177,7 +197,7 @@ module Branch =
                 log.LogInformation(
                     "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {ActorName}.{MethodName}; RepositoryId: {RepositoryId}; BranchId: {Id}; BranchName: {BranchName}.",
                     getCurrentInstantExtended (),
-                    Environment.MachineName,
+                    getMachineName,
                     duration_ms,
                     this.correlationId,
                     actorName,
@@ -190,7 +210,7 @@ module Branch =
                 log.LogInformation(
                     "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {ActorName}.{MethodName}; Command: {Command}; RepositoryId: {RepositoryId}; BranchId: {Id}; BranchName: {BranchName}.",
                     getCurrentInstantExtended (),
-                    Environment.MachineName,
+                    getMachineName,
                     duration_ms,
                     this.correlationId,
                     actorName,
@@ -215,15 +235,17 @@ module Branch =
                     branchDto <- branchDto |> updateDto branchEvent.Event
 
                     match branchEvent.Event with
-                    | Assigned (_, _, _, _)
-                    | Promoted (_, _, _, _)
-                    | Committed (_, _, _, _)
-                    | Checkpointed (_, _, _, _)
-                    | Saved (_, _, _, _)
-                    | Tagged (_, _, _, _)
-                    | ExternalCreated (_, _, _, _) ->
+                    | Assigned (referenceId, _, _, _)
+                    | Promoted (referenceId, _, _, _)
+                    | Committed (referenceId, _, _, _)
+                    | Checkpointed (referenceId, _, _, _)
+                    | Saved (referenceId, _, _, _)
+                    | Tagged (referenceId, _, _, _)
+                    | ExternalCreated (referenceId, _, _, _) ->
                         // Don't save these reference creation events, and don't send them as events; that was done by the Reference actor when the reference was created.
-                        ()
+                        branchEvent.Metadata.Properties.Add(nameof (ReferenceId), $"{referenceId}")
+                    | Rebased (referenceId) ->
+                        branchEvent.Metadata.Properties.Add(nameof (ReferenceId), $"{referenceId}")
                     | _ ->
                         // For all other events, add the event to the branchEvents list, and save it to actor state.
                         branchEvents.Add(branchEvent)
@@ -251,7 +273,6 @@ module Branch =
                     return Ok returnValue
                 with ex ->
                     let exceptionResponse = createExceptionResponse ex
-
                     let graceError = GraceError.Create (BranchError.getErrorMessage FailedWhileApplyingEvent) branchEvent.Metadata.CorrelationId
 
                     graceError
@@ -322,8 +343,8 @@ module Branch =
 
                         let referenceActor = actorProxyFactory.CreateActorProxy<IReferenceActor>(actorId, Constants.ActorName.Reference)
 
-                        let referenceCommand = Reference.ReferenceCommand.Create(referenceId, branchDto.RepositoryId, branchDto.BranchId, directoryId, sha256Hash, referenceType, referenceText)
-
+                        let referenceDto = {ReferenceDto.Default with ReferenceId = referenceId; RepositoryId = branchDto.RepositoryId; BranchId = branchDto.BranchId; DirectoryId = directoryId; Sha256Hash = sha256Hash; ReferenceText = referenceText; ReferenceType = referenceType}
+                        let referenceCommand = Reference.ReferenceCommand.Create referenceDto
                         match! referenceActor.Handle referenceCommand metadata with
                         | Ok _ -> return Ok referenceId
                         | Error error -> return Error error
@@ -344,11 +365,16 @@ module Branch =
                                             )
 
                                         return Ok (Created(branchId, branchName, parentBranchId, basedOn, repositoryId, branchPermissions))
-                                    | Rebase referenceId ->
+                                    | BranchCommand.Rebase referenceId ->
+                                        metadata.Properties.Add("BasedOn", $"{referenceId}")
                                         metadata.Properties.Add(nameof (ReferenceId), $"{referenceId}")
                                         metadata.Properties.Add(nameof (BranchId), $"{this.Id}")
                                         metadata.Properties.Add(nameof (BranchName), $"{branchDto.BranchName}")
-                                        return Ok (Rebased referenceId)
+                                        let referenceActorProxy = actorProxyFactory.CreateActorProxy<IReferenceActor>(Reference.GetActorId referenceId, ActorName.Reference)
+                                        let! promotionDto = referenceActorProxy.Get metadata.CorrelationId
+                                        match! addReference promotionDto.DirectoryId promotionDto.Sha256Hash promotionDto.ReferenceText ReferenceType.Rebase with
+                                        | Ok referenceId -> return Ok (Rebased referenceId)
+                                        | Error error -> return Error error
                                     | SetName branchName -> return Ok (NameSet branchName)
                                     | EnableAssign enabled -> return Ok (EnabledAssign enabled)
                                     | EnablePromotion enabled -> return Ok (EnabledPromotion enabled)

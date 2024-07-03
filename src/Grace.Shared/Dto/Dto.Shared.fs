@@ -5,12 +5,13 @@ open Grace.Shared.Utilities
 open NodaTime
 open System
 open System.Collections.Generic
+open System.Runtime.Serialization
 
 module Dto =
 
     module Branch =
         [<Serializable>]
-        [<CLIMutable>]
+        [<KnownType("GetKnownTypes")>]
         type BranchDto =
             { Class: string
               BranchId: BranchId
@@ -59,10 +60,14 @@ module Dto =
                   CreatedAt = getCurrentInstant ()
                   UpdatedAt = None
                   DeletedAt = None
-                  DeleteReason = String.Empty }
+                  DeleteReason = String.Empty
+                }
+
+            static member GetKnownTypes() = GetKnownTypes<BranchDto>()
 
     module Diff =
         [<Serializable>]
+        [<KnownType("GetKnownTypes")>]
         type DiffDto =
             { Class: string
               HasDifferences: bool
@@ -81,10 +86,14 @@ module Dto =
                   DirectoryId2 = DirectoryVersionId.Empty
                   Directory2CreatedAt = Instant.FromUnixTimeTicks 0L
                   Differences = List<FileSystemDifference>()
-                  FileDiffs = List<FileDiff>() }
+                  FileDiffs = List<FileDiff>()
+                }
+
+            static member GetKnownTypes() = GetKnownTypes<DiffDto>()
 
     module Organization =
         [<Serializable>]
+        [<KnownType("GetKnownTypes")>]
         type OrganizationDto =
             { Class: string
               OrganizationId: OrganizationId
@@ -111,10 +120,14 @@ module Dto =
                   CreatedAt = getCurrentInstant ()
                   UpdatedAt = None
                   DeletedAt = None
-                  DeleteReason = String.Empty }
+                  DeleteReason = String.Empty
+                }
+
+            static member GetKnownTypes() = GetKnownTypes<OrganizationDto>()
 
     module Owner =
         [<Serializable>]
+        [<KnownType("GetKnownTypes")>]
         type OwnerDto =
             { Class: string
               OwnerId: OwnerId
@@ -139,10 +152,14 @@ module Dto =
                   CreatedAt = getCurrentInstant ()
                   UpdatedAt = None
                   DeletedAt = None
-                  DeleteReason = String.Empty }
+                  DeleteReason = String.Empty
+                }
+
+            static member GetKnownTypes() = GetKnownTypes<OwnerDto>()
 
     module Reference =
         [<Serializable>]
+        [<KnownType("GetKnownTypes")>]
         type ReferenceDto =
             { Class: string
               ReferenceId: ReferenceId
@@ -173,8 +190,11 @@ module Dto =
                   DeleteReason = String.Empty
                 }
 
+            static member GetKnownTypes() = GetKnownTypes<ReferenceDto>()
+
     module Repository =
         [<Serializable>]
+        [<KnownType("GetKnownTypes")>]
         type RepositoryDto =
             { Class: string
               RepositoryId: RepositoryId
@@ -227,4 +247,7 @@ module Dto =
                   InitializedAt = None
                   UpdatedAt = None
                   DeletedAt = None
-                  DeleteReason = String.Empty }
+                  DeleteReason = String.Empty
+                }
+
+            static member GetKnownTypes() = GetKnownTypes<RepositoryDto>()

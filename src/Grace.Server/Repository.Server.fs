@@ -564,7 +564,7 @@ module Repository =
                     log.LogInformation(
                         "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {path}; RepositoryId: {repositoryId}.",
                         getCurrentInstantExtended (),
-                        Environment.MachineName,
+                        getMachineName,
                         duration_ms,
                         (getCorrelationId context),
                         context.Request.Path,
@@ -579,7 +579,7 @@ module Repository =
                         ex,
                         "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Error in {path}; RepositoryId: {repositoryId}.",
                         getCurrentInstantExtended (),
-                        Environment.MachineName,
+                        getMachineName,
                         duration_ms,
                         (getCorrelationId context),
                         context.Request.Path,
@@ -612,7 +612,7 @@ module Repository =
                     log.LogInformation(
                         "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {path}; RepositoryId: {repositoryId}.",
                         getCurrentInstantExtended (),
-                        Environment.MachineName,
+                        getMachineName,
                         duration_ms,
                         (getCorrelationId context),
                         context.Request.Path,
@@ -627,7 +627,7 @@ module Repository =
                         ex,
                         "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Error in {path}; RepositoryId: {repositoryId}.",
                         getCurrentInstantExtended (),
-                        Environment.MachineName,
+                        getMachineName,
                         duration_ms,
                         (getCorrelationId context),
                         context.Request.Path,
@@ -659,7 +659,7 @@ module Repository =
                     log.LogInformation(
                         "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {path}; RepositoryId: {repositoryId}.",
                         getCurrentInstantExtended (),
-                        Environment.MachineName,
+                        getMachineName,
                         duration_ms,
                         (getCorrelationId context),
                         context.Request.Path,
@@ -674,7 +674,7 @@ module Repository =
                         ex,
                         "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Error in {path}; RepositoryId: {repositoryId}.",
                         getCurrentInstantExtended (),
-                        Environment.MachineName,
+                        getMachineName,
                         duration_ms,
                         (getCorrelationId context),
                         context.Request.Path,
@@ -701,7 +701,7 @@ module Repository =
                             let graceIds = context.Items[nameof (GraceIds)] :?> GraceIds
                             let repositoryId = Guid.Parse(graceIds.RepositoryId)
                             let includeDeleted = context.Items["IncludeDeleted"] :?> bool
-                            return! getBranches repositoryId maxCount includeDeleted
+                            return! getBranches repositoryId maxCount includeDeleted (getCorrelationId context)
                         }
 
                     let! parameters = context |> parse<GetBranchesParameters>
@@ -713,7 +713,7 @@ module Repository =
                     log.LogInformation(
                         "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {path}; RepositoryId: {repositoryId}.",
                         getCurrentInstantExtended (),
-                        Environment.MachineName,
+                        getMachineName,
                         duration_ms,
                         (getCorrelationId context),
                         context.Request.Path,
@@ -728,7 +728,7 @@ module Repository =
                         ex,
                         "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Error in {path}; RepositoryId: {repositoryId}.",
                         getCurrentInstantExtended (),
-                        Environment.MachineName,
+                        getMachineName,
                         duration_ms,
                         (getCorrelationId context),
                         context.Request.Path,
@@ -770,7 +770,7 @@ module Repository =
                     log.LogInformation(
                         "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {path}; RepositoryId: {repositoryId}.",
                         getCurrentInstantExtended (),
-                        Environment.MachineName,
+                        getMachineName,
                         duration_ms,
                         (getCorrelationId context),
                         context.Request.Path,
@@ -785,7 +785,7 @@ module Repository =
                         ex,
                         "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Error in {path}; RepositoryId: {repositoryId}.",
                         getCurrentInstantExtended (),
-                        Environment.MachineName,
+                        getMachineName,
                         duration_ms,
                         (getCorrelationId context),
                         context.Request.Path,
@@ -839,7 +839,7 @@ module Repository =
                     log.LogInformation(
                         "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {path}; RepositoryId: {repositoryId}.",
                         getCurrentInstantExtended (),
-                        Environment.MachineName,
+                        getMachineName,
                         duration_ms,
                         (getCorrelationId context),
                         context.Request.Path,
@@ -854,7 +854,7 @@ module Repository =
                         ex,
                         "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Error in {path}; RepositoryId: {repositoryId}.",
                         getCurrentInstantExtended (),
-                        Environment.MachineName,
+                        getMachineName,
                         duration_ms,
                         (getCorrelationId context),
                         context.Request.Path,
