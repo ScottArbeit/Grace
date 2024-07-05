@@ -209,7 +209,7 @@ module Organization =
                            parameters.OrganizationName
                            parameters.CorrelationId
                            OrganizationIdAlreadyExists
-                       Organization.organizationNameIsUnique
+                       Organization.organizationNameIsUniqueWithinOwner
                            parameters.OwnerId
                            parameters.OwnerName
                            parameters.OrganizationName

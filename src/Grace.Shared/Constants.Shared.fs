@@ -239,6 +239,14 @@ module Constants =
     /// The custom alphabet to use when generating a CorrelationId. This alphabet is URL-safe. Consists of "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz._-".
     let CorrelationIdAlphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz._-"
 
+    /// The default value to store in Grace's MemoryCache when an entity is known to exist. This is a one-character string because MemoryCache values are Objects; although a bool would make more sense, using a constant string avoids boxing.
+    [<Literal>]
+    let MemoryCacheExistsValue = "y"
+
+    /// The default value to store in Grace's MemoryCache when a value is known not to exist. This is a one-character string because MemoryCache values are Objects; although a bool would make more sense, using a constant string avoids boxing.
+    [<Literal>]
+    let MemoryCacheDoesNotExistValue = "n"
+
 module Results =
     let Ok = 0
     let Exception = -1

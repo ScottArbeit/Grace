@@ -315,18 +315,13 @@ module Services =
             let mutable ownerGuid = Guid.Empty
 
             if not <| String.IsNullOrEmpty(ownerId) && Guid.TryParse(ownerId, &ownerGuid) then
-                let mutable exists = false
-
                 // Check if we have this owner id in MemoryCache.
-                let cached = memoryCache.TryGetValue(ownerGuid, &exists)
+                let exists = memoryCache.Get<string>(ownerGuid)
 
-                if cached && not <| exists then
-                    // We have already checked and the owner does not exist.
-                    return None
-                elif cached then
-                    // We have already checked and the owner exists.
-                    return Some ownerId
-                else
+                match exists with
+                | MemoryCacheExistsValue -> return Some ownerId
+                | MemoryCacheDoesNotExistValue -> return None
+                | _ ->
                     // Call the Owner actor to check if the owner exists.
                     let ownerActorProxy = actorProxyFactory.CreateActorProxy<IOwnerActor>(ActorId(ownerId), ActorName.Owner)
 
@@ -334,7 +329,7 @@ module Services =
 
                     if exists then
                         // Add this OwnerId to the MemoryCache.
-                        use newCacheEntry = memoryCache.CreateEntry(ownerGuid, Value = exists, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
+                        use newCacheEntry = memoryCache.CreateEntry(ownerGuid, Value = MemoryCacheExistsValue, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
                         return Some ownerId
                     else
                         return None
@@ -361,6 +356,9 @@ module Services =
                         use newCacheEntry =
                             memoryCache.CreateEntry($"OwN:{ownerName}", Value = ownerGuid, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
 
+                        // Add the OwnerId to the MemoryCache.
+                        use newCacheEntry2 = memoryCache.CreateEntry(ownerGuid, Value = MemoryCacheExistsValue, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
+
                         return Some $"{ownerId}"
                     | None ->
                         let! nameExists = ownerNameExists ownerName true correlationId
@@ -379,20 +377,14 @@ module Services =
         task {
             let mutable organizationGuid = Guid.Empty
 
-            if
-                not <| String.IsNullOrEmpty(organizationId)
+            if not <| String.IsNullOrEmpty(organizationId)
                 && Guid.TryParse(organizationId, &organizationGuid)
             then
-                let mutable exists = false
-                let cached = memoryCache.TryGetValue(organizationGuid, &exists)
-
-                if cached && not <| exists then
-                    // We have already checked and the organization does not exist.
-                    return None
-                elif cached then
-                    // We have already checked and the organization exists.
-                    return Some organizationId
-                else
+                let exists = memoryCache.Get<string>(organizationGuid)
+                match exists with
+                | MemoryCacheExistsValue -> return Some organizationId
+                | MemoryCacheDoesNotExistValue -> return None
+                | _ ->
                     // Call the Organization actor to check if the organization exists.
                     let actorProxy = actorProxyFactory.CreateActorProxy<IOrganizationActor>(ActorId(organizationId), ActorName.Organization)
 
@@ -400,7 +392,7 @@ module Services =
 
                     if exists then
                         // Add this OrganizationId to the MemoryCache.
-                        use newCacheEntry = memoryCache.CreateEntry(organizationGuid, Value = exists, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
+                        use newCacheEntry = memoryCache.CreateEntry(organizationGuid, Value = MemoryCacheExistsValue, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
                         ()
 
                     if exists then return Some organizationId else return None
@@ -472,8 +464,8 @@ module Services =
                                         )
 
                                     use newCacheEntry2 =
-                                        memoryCache.CreateEntry(organizationGuid, Value = true, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
-                                    // Set the OrganizationId in the OrganizationName actor.
+                                        memoryCache.CreateEntry(organizationGuid, Value = MemoryCacheExistsValue, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
+
                                     do! organizationNameActorProxy.SetOrganizationId organizationId correlationId
                                     return Some organizationId
                             else
@@ -494,20 +486,16 @@ module Services =
         task {
             let mutable repositoryGuid = Guid.Empty
 
-            if
-                not <| String.IsNullOrEmpty(repositoryId)
+            if not <| String.IsNullOrEmpty(repositoryId)
                 && Guid.TryParse(repositoryId, &repositoryGuid)
             then
-                let mutable exists = false
-                let cached = memoryCache.TryGetValue(repositoryGuid, &exists)
+                let exists = memoryCache.Get<string>(repositoryGuid)
+                //logToConsole $"In resolveRepositoryId: correlationId: {correlationId}; repositoryId: {repositoryGuid}; exists: {exists}."
 
-                if cached && not <| exists then
-                    // We have already checked and the repository does not exist.
-                    return None
-                elif cached then
-                    // We have already checked and the repository exists.
-                    return Some repositoryId
-                else
+                match exists with
+                | MemoryCacheExistsValue -> return Some repositoryId
+                | MemoryCacheDoesNotExistValue -> return None
+                | _ ->
                     // Call the Repository actor to check if the repository exists.
                     let actorProxy = actorProxyFactory.CreateActorProxy<IRepositoryActor>(ActorId(repositoryId), ActorName.Repository)
 
@@ -515,7 +503,8 @@ module Services =
 
                     if exists then
                         // Add this RepositoryId to the MemoryCache.
-                        use newCacheEntry = memoryCache.CreateEntry(repositoryGuid, Value = exists, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
+                        //logToConsole $"In resolveRepositoryId: creating cache entry; correlationId: {correlationId}; repositoryId: {repositoryGuid}; exists: {MemoryCacheExistsValue}."
+                        use newCacheEntry = memoryCache.CreateEntry(repositoryGuid, Value = MemoryCacheExistsValue, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
                         return Some repositoryId
                     else
                         return None
@@ -584,7 +573,7 @@ module Services =
                                         )
 
                                     use newCacheEntry2 =
-                                        memoryCache.CreateEntry(repositoryGuid, Value = true, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
+                                        memoryCache.CreateEntry(repositoryGuid, Value = MemoryCacheExistsValue, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
                                     // Set the RepositoryId in the RepositoryName actor.
                                     do! repositoryNameActorProxy.SetRepositoryId repositoryId correlationId
                                     return Some repositoryId
@@ -598,24 +587,20 @@ module Services =
         task {
             let mutable branchGuid = Guid.Empty
 
-            if not <| String.IsNullOrEmpty(branchId) then
-                let mutable exists = false
-                let cached = memoryCache.TryGetValue(branchGuid, &exists)
+            if not <| String.IsNullOrEmpty(branchId) && Guid.TryParse(branchId, &branchGuid) then
+                let exists = memoryCache.Get<string>(branchGuid)
 
-                if cached && not <| exists then
-                    // We have already checked and the branch does not exist.
-                    return None
-                elif cached then
-                    // We have already checked and the branch exists.
-                    return Some branchId
-                else
+                match exists with
+                | MemoryCacheExistsValue -> return Some branchId
+                | MemoryCacheDoesNotExistValue -> return None
+                | _ ->
                     // Call the Branch actor to check if the branch exists.
                     let branchActorProxy = actorProxyFactory.CreateActorProxy<IBranchActor>(ActorId(branchId), ActorName.Branch)
                     let! exists = branchActorProxy.Exists correlationId
 
                     if exists then
                         // Add this BranchId to the MemoryCache.
-                        use newCacheEntry = memoryCache.CreateEntry(branchGuid, Value = exists, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
+                        use newCacheEntry = memoryCache.CreateEntry(branchGuid, Value = MemoryCacheExistsValue, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
                         return Some branchId
                     else
                         return None
@@ -688,7 +673,8 @@ module Services =
                                         )
 
                                     use newCacheEntry2 =
-                                        memoryCache.CreateEntry(branchGuid, Value = true, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
+                                        memoryCache.CreateEntry(branchGuid, Value = MemoryCacheExistsValue, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
+
                                     // Set the BranchId in the BranchName actor.
                                     do! branchNameActorProxy.SetBranchId branchGuid correlationId
                                     logToConsole $"BranchName actor was not active. BranchName: {branchName}; BranchId: {branchGuid}."

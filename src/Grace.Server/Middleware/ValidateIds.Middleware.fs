@@ -283,7 +283,6 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
                                     // If we're creating a new Repository, we don't need to resolve the Id.
                                     graceIds <- { graceIds with RepositoryId = repositoryId; HasRepository = true }
                                 else
-                                    logToConsole $"In ValidateIdsMiddleware: About to call resolveRepositoryId with {graceIds.OwnerId}; {graceIds.OrganizationId}; {repositoryId}; {repositoryName}; {correlationId}."
                                     // Resolve the RepositoryId based on the provided Id and Name.
                                     match!
                                         resolveRepositoryId

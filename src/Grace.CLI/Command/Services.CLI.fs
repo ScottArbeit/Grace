@@ -1017,7 +1017,7 @@ module Services =
     /// This will add new directory versions, and ignore existing directory versions, as they are immutable.
     let uploadDirectoryVersions (localDirectoryVersions: List<LocalDirectoryVersion>) correlationId =
         let directoryVersions = localDirectoryVersions.Select(fun ldv -> ldv.ToDirectoryVersion).ToList()
-
+        
         let parameters = SaveDirectoryVersionsParameters(CorrelationId = correlationId, DirectoryVersions = directoryVersions)
 
         Directory.SaveDirectoryVersions parameters
