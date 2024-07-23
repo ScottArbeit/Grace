@@ -424,11 +424,19 @@ module Types =
         static member Create<'T> (returnValue: 'T) (correlationId: string) =
             { ReturnValue = returnValue; EventTime = getCurrentInstant (); CorrelationId = correlationId; Properties = new Dictionary<String, String>() }
 
+        static member CreateWithMetadata<'T> (returnValue: 'T) (correlationId: string) (properties: Dictionary<String, String>) =
+            { ReturnValue = returnValue; EventTime = getCurrentInstant (); CorrelationId = correlationId; Properties = properties }
+
+        /// Adds a key-value pair to GraceReturnValue's Properties dictionary.
         member this.enhance(key, value) =
-            this.Properties.Add(key, value)
+            this.Properties[key] <- value
             this
 
-        override this.ToString() = serialize this
+        override this.ToString() =
+            // Breaking out the Properties because Dictionary<> doesn't have a good ToString() method.
+            let output = {| ReturnValue = this.ReturnValue; EventTime = this.EventTime; CorrelationId = this.CorrelationId; Properties = this.Properties.Select(fun kvp -> {| Key = kvp.Key; Value = kvp.Value|}) |}
+            //logToConsole $"GraceReturnValue: {serialize output}"
+            serialize output
 
     /// The primary type used in Grace to represent error results.
     type GraceError =
@@ -446,19 +454,20 @@ module Types =
         static member CreateWithMetadata (error: string) (correlationId: string) (properties: Dictionary<String, String>) =
             { Error = error; EventTime = getCurrentInstant (); CorrelationId = correlationId; Properties = properties }
 
+        /// Adds a key-value pair to GraceError's Properties dictionary.
         member this.enhance(key, value) =
-            this.Properties.Add(key, value)
+            this.Properties[key] <- value
             this
 
         override this.ToString() =
-            let properties =
+            let sb =
                 this.Properties
                 |> Seq.fold (fun (state: StringBuilder) kvp -> state.AppendLine($"  {kvp.Key}: {kvp.Value}; ")) (StringBuilder())
 
-            if properties.Length >= 2 then
-                properties.Remove(properties.Length - 2, 2) |> ignore
+            if sb.Length >= 2 then
+                sb.Remove(sb.Length - 2, 2) |> ignore
 
-            $"Error: {this.Error}{Environment.NewLine}EventTime: {formatInstantExtended this.EventTime}{Environment.NewLine}CorrelationId: {this.CorrelationId}{Environment.NewLine}Properties:{Environment.NewLine}{properties.ToString()}{Environment.NewLine}"
+            $"Error: {this.Error}{Environment.NewLine}EventTime: {formatInstantExtended this.EventTime}{Environment.NewLine}CorrelationId: {this.CorrelationId}{Environment.NewLine}Properties:{Environment.NewLine}{sb.ToString()}{Environment.NewLine}"
 
     /// The primary type used to represent Grace operations results.
     type GraceResult<'T> = Result<GraceReturnValue<'T>, GraceError>

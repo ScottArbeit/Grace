@@ -203,10 +203,13 @@ module Interfaces =
     [<Interface>]
     type IOwnerNameActor =
         inherit IActor
-        /// Sets the OwnerId for a given OwnerName.
-        abstract member SetOwnerId: ownerName: OwnerName -> correlationId: CorrelationId -> Task
+        /// Clears the OwnerId for the given OwnerName.
+        abstract member ClearOwnerId: correlationId: CorrelationId -> Task
         /// Returns the OwnerId for the given OwnerName.
         abstract member GetOwnerId: correlationId: CorrelationId -> Task<OwnerId option>
+        /// Sets the OwnerId for a given OwnerName.
+        abstract member SetOwnerId: ownerId: OwnerId -> correlationId: CorrelationId -> Task
+
 
     /// Defines the operations for the Reference actor.
     [<Interface>]

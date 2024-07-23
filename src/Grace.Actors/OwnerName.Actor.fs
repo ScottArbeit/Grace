@@ -67,15 +67,18 @@ module OwnerName =
             Task.CompletedTask
 
         interface IOwnerNameActor with
+            member this.ClearOwnerId correlationId =
+                this.correlationId <- correlationId
+                cachedOwnerId <- None
+
+                Task.CompletedTask
+
             member this.GetOwnerId(correlationId) =
                 this.correlationId <- correlationId
                 cachedOwnerId |> returnTask
 
-            member this.SetOwnerId (ownerId: string) correlationId =
+            member this.SetOwnerId (ownerId: OwnerId) correlationId =
                 this.correlationId <- correlationId
-                let mutable guid = Guid.Empty
-
-                if Guid.TryParse(ownerId, &guid) && guid <> Guid.Empty then
-                    cachedOwnerId <- Some guid
+                cachedOwnerId <- Some ownerId
 
                 Task.CompletedTask

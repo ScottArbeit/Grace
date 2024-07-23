@@ -1,4 +1,4 @@
-﻿namespace Grace.Shared
+namespace Grace.Shared
 
 open Grace.Shared.Dto
 open Grace.Shared.Types
@@ -21,10 +21,10 @@ module Services =
         if not <| String.IsNullOrEmpty(key) then
             match result with
             | Ok result ->
-                result.Properties.Add(key, value)
+                result.Properties[key] <- value
                 Ok result
             | Error error ->
-                error.Properties.Add(key, value)
+                error.Properties[key] <- value
                 Error error
         else
             result

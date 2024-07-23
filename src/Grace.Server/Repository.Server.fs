@@ -77,7 +77,7 @@ module Repository =
 
                             return!
                                 context
-                                |> result400BadRequest { graceError with Properties = getPropertiesAsDictionary parameters }
+                                |> result400BadRequest { graceError with Properties = getParametersAsDictionary parameters }
                     }
 
                 let validationResults = validations parameters
@@ -132,14 +132,14 @@ module Repository =
                                 GraceError.CreateWithMetadata
                                     (RepositoryError.getErrorMessage RepositoryDoesNotExist)
                                     (getCorrelationId context)
-                                    (getPropertiesAsDictionary parameters)
+                                    (getParametersAsDictionary parameters)
                             )
                 else
                     let! error = validationResults |> getFirstError
                     let errorMessage = RepositoryError.getErrorMessage error
                     log.LogDebug("{currentInstant}: error: {error}", getCurrentInstantExtended (), errorMessage)
 
-                    let graceError = GraceError.CreateWithMetadata errorMessage (getCorrelationId context) (getPropertiesAsDictionary parameters)
+                    let graceError = GraceError.CreateWithMetadata errorMessage (getCorrelationId context) (getParametersAsDictionary parameters)
 
                     graceError.Properties.Add("Path", context.Request.Path)
                     graceError.Properties.Add("Error", errorMessage)
@@ -168,42 +168,34 @@ module Repository =
         task {
             try
                 use activity = activitySource.StartActivity("processQuery", ActivityKind.Server)
-                //let! parameters = context |> parse<'T>
+                let graceIds = getGraceIds context
                 let validationResults = validations parameters
 
                 let! validationsPassed = validationResults |> allPass
 
                 if validationsPassed then
-                    match!
-                        resolveRepositoryId
-                            parameters.OwnerId
-                            parameters.OwnerName
-                            parameters.OrganizationId
-                            parameters.OrganizationName
-                            parameters.RepositoryId
-                            parameters.RepositoryName
-                            parameters.CorrelationId
-                    with
-                    | Some repositoryId ->
-                        let actorProxy = getActorProxy repositoryId
-                        let! queryResult = query context maxCount actorProxy
+                    // Get the actor proxy for the repository.
+                    let actorProxy = getActorProxy graceIds.RepositoryId
 
-                        let graceReturnValue = GraceReturnValue.Create queryResult (getCorrelationId context)
+                    // Execute the query.
+                    let! queryResult = query context maxCount actorProxy
 
-                        let graceIds = getGraceIds context
-                        graceReturnValue.Properties[nameof (OwnerId)] <- graceIds.OwnerId
-                        graceReturnValue.Properties[nameof (OrganizationId)] <- graceIds.OrganizationId
-                        graceReturnValue.Properties[nameof (RepositoryId)] <- graceIds.RepositoryId
+                    // Wrap the query result in a GraceReturnValue.
+                    let graceReturnValue =
+                        (GraceReturnValue.Create queryResult (getCorrelationId context))
+                            .enhance(nameof(OwnerId), graceIds.OwnerId)
+                            .enhance(nameof(OrganizationId), graceIds.OrganizationId)
+                            .enhance(nameof(RepositoryId), graceIds.RepositoryId)
 
-                        return! context |> result200Ok graceReturnValue
-                    | None ->
-                        return!
-                            context
-                            |> result400BadRequest (GraceError.Create (RepositoryError.getErrorMessage RepositoryIdDoesNotExist) (getCorrelationId context))
+                    return! context |> result200Ok graceReturnValue
                 else
                     let! error = validationResults |> getFirstError
 
-                    let graceError = GraceError.Create (RepositoryError.getErrorMessage error) (getCorrelationId context)
+                    let graceError =
+                        (GraceError.Create (RepositoryError.getErrorMessage error) (getCorrelationId context))
+                            .enhance(nameof(OwnerId), graceIds.OwnerId)
+                            .enhance(nameof(OrganizationId), graceIds.OrganizationId)
+                            .enhance(nameof(RepositoryId), graceIds.RepositoryId)
 
                     graceError.Properties.Add("Path", context.Request.Path)
                     return! context |> result400BadRequest graceError

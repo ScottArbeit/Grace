@@ -1,5 +1,6 @@
-﻿namespace Grace.CLI
+namespace Grace.CLI
 
+open Grace.CLI.Services
 open Grace.Shared
 open Grace.Shared.Client.Configuration
 open Grace.Shared.Resources.Text
@@ -144,19 +145,19 @@ module Common =
         | Error error ->
             let json =
                 if error.Error.Contains("Stack trace") then
-                    Regex.Unescape(error.Error)
+                    Uri.UnescapeDataString(error.Error)
                 else
-                    Regex.Unescape(serialize error)
+                    Uri.UnescapeDataString(serialize error)
 
             let errorText =
                 if error.Error.Contains("Stack trace") then
                     try
                         let exceptionResponse = deserialize<ExceptionResponse> error.Error
-                        Regex.Unescape($"{exceptionResponse}")
+                        Uri.UnescapeDataString($"{exceptionResponse}")
                     with ex ->
-                        Regex.Unescape(error.Error)
+                        Uri.UnescapeDataString(error.Error)
                 else
-                    Regex.Unescape(error.Error)
+                    Uri.UnescapeDataString(error.Error)
 
             match outputFormat with
             | Json -> AnsiConsole.WriteLine($"{Markup.Escape(json)}")

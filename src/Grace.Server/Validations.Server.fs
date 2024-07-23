@@ -94,7 +94,7 @@ module Validations =
             |> ValueTask<Result<unit, 'T>>
 
         /// Validates that the owner is deleted.
-        let ownerIsDeleted<'T> ownerId ownerName context correlationId (error: 'T) =
+        let ownerIsDeleted<'T> context correlationId (error: 'T) =
             task {
                 let graceIds = getGraceIds context
                 let isDeleted = memoryCache.Get<string>($"{graceIds.OwnerId}deleted")
@@ -120,9 +120,9 @@ module Validations =
             |> ValueTask<Result<unit, 'T>>
 
         /// Validates that the owner is not deleted.
-        let ownerIsNotDeleted<'T> ownerId ownerName context correlationId (error: 'T) =
+        let ownerIsNotDeleted<'T> context correlationId (error: 'T) =
             task {
-                match! ownerIsDeleted ownerId ownerName context correlationId error with
+                match! ownerIsDeleted context correlationId error with
                 | Ok _ -> return Error error
                 | Error _ -> return Ok()
             }

@@ -33,7 +33,7 @@ module Organization =
 
     let actorProxyFactory = ApplicationContext.actorProxyFactory
 
-    let getActorProxy (context: HttpContext) (organizationId: string) =
+    let getOrganizationActorProxy (organizationId: string) =
         let actorId = ActorId(organizationId)
         actorProxyFactory.CreateActorProxy<IOrganizationActor>(actorId, ActorName.Organization)
 
@@ -55,7 +55,7 @@ module Organization =
 
                 let handleCommand organizationId cmd =
                     task {
-                        let actorProxy = getActorProxy context organizationId
+                        let actorProxy = getOrganizationActorProxy organizationId
 
                         match! actorProxy.Handle cmd (createMetadata context) with
                         | Ok graceReturnValue ->
@@ -73,7 +73,7 @@ module Organization =
 
                             return!
                                 context
-                                |> result400BadRequest { graceError with Properties = getPropertiesAsDictionary parameters }
+                                |> result400BadRequest { graceError with Properties = getParametersAsDictionary parameters }
                     }
 
                 let validationResults = validations parameters
@@ -121,14 +121,14 @@ module Organization =
                                 GraceError.CreateWithMetadata
                                     (OrganizationError.getErrorMessage OrganizationDoesNotExist)
                                     (getCorrelationId context)
-                                    (getPropertiesAsDictionary parameters)
+                                    (getParametersAsDictionary parameters)
                             )
                 else
                     let! error = validationResults |> getFirstError
                     let errorMessage = OrganizationError.getErrorMessage error
                     log.LogDebug("{currentInstant}: error: {error}", getCurrentInstantExtended (), errorMessage)
 
-                    let graceError = GraceError.CreateWithMetadata errorMessage (getCorrelationId context) (getPropertiesAsDictionary parameters)
+                    let graceError = GraceError.CreateWithMetadata errorMessage (getCorrelationId context) (getParametersAsDictionary parameters)
 
                     graceError.Properties.Add("Path", context.Request.Path)
                     graceError.Properties.Add("Error", errorMessage)
@@ -164,7 +164,7 @@ module Organization =
 
                 if validationsPassed then
                     // Get the actor proxy for this organization.
-                    let actorProxy = getActorProxy context graceIds.OrganizationId
+                    let actorProxy = getOrganizationActorProxy graceIds.OrganizationId
 
                     // Execute the query.
                     let! queryResult = query context maxCount actorProxy

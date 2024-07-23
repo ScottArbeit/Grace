@@ -262,13 +262,13 @@ module Services =
                 | AzureCosmosDb ->
                     let queryDefinition =
                         QueryDefinition(
-                            """SELECT events.Event.created.ownerId
+                            """SELECT c["value"].OwnerId
                             FROM c
-                            JOIN events IN c["value"]
-                            WHERE ENDSWITH(c.id, @stateStorageName) AND STRINGEQUALS(events.Event.created.ownerName, @ownerName, true)"""
+                            WHERE ENDSWITH(c.id, @stateStorageName)
+                                AND STRINGEQUALS(c["value"].OwnerName, @ownerName, true)"""
                         )
                             .WithParameter("@ownerName", ownerName)
-                            .WithParameter("@stateStorageName", StateName.Owner)
+                            .WithParameter("@stateStorageName", StateName.OwnerDto)
 
                     let iterator = DefaultRetryPolicy.Execute(fun () -> cosmosContainer.GetItemQueryIterator<OwnerIdRecord>(queryDefinition))
                     let mutable ownerGuid = OwnerId.Empty
@@ -279,12 +279,12 @@ module Services =
 
                         if String.IsNullOrEmpty(ownerId) && cacheResultIfNotFound then
                             // We didn't find the OwnerId, so add this OwnerName to the MemoryCache and indicate that we have already checked.
-                            use newCacheEntry =
-                                memoryCache.CreateEntry(
-                                    $"OwN:{ownerName}",
-                                    Value = MemoryCache.EntityDoesNotExist,
-                                    AbsoluteExpirationRelativeToNow = MemoryCache.DefaultExpirationTime
-                                )
+                            //use newCacheEntry =
+                            //    memoryCache.CreateEntry(
+                            //        $"OwN:{ownerName}",
+                            //        Value = MemoryCache.EntityDoesNotExist,
+                            //        AbsoluteExpirationRelativeToNow = MemoryCache.DefaultExpirationTime
+                            //    )
 
                             return false
                         elif String.IsNullOrEmpty(ownerId) then
@@ -300,7 +300,7 @@ module Services =
                             use newCacheEntry2 = memoryCache.CreateEntry(ownerGuid, Value = MemoryCache.ExistsValue, AbsoluteExpirationRelativeToNow = MemoryCache.DefaultExpirationTime)
 
                             // Set the OwnerId in the OwnerName actor.
-                            do! ownerNameActorProxy.SetOwnerId ownerId correlationId
+                            do! ownerNameActorProxy.SetOwnerId ownerGuid correlationId
                             return true
                     else
                         return false

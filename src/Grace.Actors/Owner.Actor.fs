@@ -338,7 +338,19 @@ module Owner =
                                 task {
                                     match command with
                                     | OwnerCommand.Create(ownerId, ownerName) -> return Ok(OwnerEventType.Created(ownerId, ownerName))
-                                    | OwnerCommand.SetName ownerName -> return Ok(OwnerEventType.NameSet ownerName)
+                                    | OwnerCommand.SetName newName ->
+                                        // Clear the OwnerNameActor for the old name.
+                                        let ownerNameActor = actorProxyFactory.CreateActorProxy<IOwnerNameActor>(ActorId(ownerDto.OwnerName), ActorName.OwnerName)
+                                        do! ownerNameActor.ClearOwnerId metadata.CorrelationId
+                                        memoryCache.Remove($"OwN:{ownerDto.OwnerName}")
+
+                                        // Set the OwnerNameActor for the new name.
+                                        let ownerNameActor = actorProxyFactory.CreateActorProxy<IOwnerNameActor>(ActorId(newName), ActorName.OwnerName)
+                                        do! ownerNameActor.SetOwnerId ownerDto.OwnerId metadata.CorrelationId
+                                        use newCacheEntry =
+                                            memoryCache.CreateEntry($"OwN:{newName}", Value = ownerDto.OwnerId, AbsoluteExpirationRelativeToNow = MemoryCache.DefaultExpirationTime)
+
+                                        return Ok(OwnerEventType.NameSet newName)
                                     | OwnerCommand.SetType ownerType -> return Ok(OwnerEventType.TypeSet ownerType)
                                     | OwnerCommand.SetSearchVisibility searchVisibility -> return Ok(OwnerEventType.SearchVisibilitySet searchVisibility)
                                     | OwnerCommand.SetDescription description -> return Ok(OwnerEventType.DescriptionSet description)

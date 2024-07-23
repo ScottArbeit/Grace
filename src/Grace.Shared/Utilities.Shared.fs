@@ -444,9 +444,14 @@ module Utilities =
         let p = NativePtr.stackalloc<'a> length |> NativePtr.toVoidPtr
         Span<'a>(p, length)
 
+    let propertyLookupByType = Dictionary<Type, PropertyInfo array>()
+
     /// Creates a dictionary from the properties of an object.
-    let getPropertiesAsDictionary<'T> (obj: 'T) =
-        let properties = typeof<'T>.GetProperties(BindingFlags.Instance ||| BindingFlags.Public)
+    let getParametersAsDictionary<'T> (obj: 'T) =
+        let mutable properties = Array.Empty<PropertyInfo>()
+        if not <| propertyLookupByType.TryGetValue(typeof<'T>, &properties) then
+            properties <- typeof<'T>.GetProperties(BindingFlags.Instance ||| BindingFlags.Public)
+            propertyLookupByType.Add(typeof<'T>, properties)
 
         let dict = Dictionary<string, string>()
 
@@ -459,7 +464,7 @@ module Utilities =
                 | :? string as s -> s
                 | _ -> value.ToString()
 
-            dict.Add(prop.Name, valueString)
+            dict[$"parameter:{prop.Name}"] <- valueString
 
         dict
 

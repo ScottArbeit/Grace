@@ -1,4 +1,4 @@
-﻿namespace Grace.CLI.Command
+namespace Grace.CLI.Command
 
 open FSharpPlus
 open Grace.CLI.Common
@@ -283,11 +283,26 @@ module Owner =
                                         let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
 
                                         let! result = Owner.SetName(parameters)
+                                        match result with
+                                        | Ok returnValue ->
+                                            // Update the Grace configuration file with the new Owner name.
+                                            let newConfig = Current()
+                                            newConfig.OwnerName <- returnValue.Properties[setNameParameters.NewName]
+                                            updateConfiguration newConfig
+                                        | Error _ -> ()
                                         t0.Increment(100.0)
                                         return result
                                     })
                     else
-                        return! Owner.SetName(parameters)
+                        let! result = Owner.SetName(parameters)
+                        match result with
+                        | Ok graceReturnValue ->
+                            // Update the Grace configuration file with the new Owner name.
+                            let newConfig = Current()
+                            newConfig.OwnerName <-graceReturnValue.Properties[setNameParameters.NewName]
+                            updateConfiguration newConfig
+                        | Error _ -> ()
+                        return result
                 | Error error -> return Error error
             with ex ->
                 return Error(GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))

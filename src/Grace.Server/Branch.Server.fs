@@ -39,8 +39,8 @@ module Branch =
 
     let actorProxyFactory = ApplicationContext.actorProxyFactory
 
-    let getActorProxy (context: HttpContext) (branchId: string) =
-        let actorId = ActorId($"{branchId}")
+    let getBranchActorProxy (branchId: string) =
+        let actorId = ActorId(branchId)
         actorProxyFactory.CreateActorProxy<IBranchActor>(actorId, ActorName.Branch)
 
     let processCommand<'T when 'T :> BranchParameters> (context: HttpContext) (validations: Validations<'T>) (command: 'T -> ValueTask<BranchCommand>) =
@@ -53,7 +53,7 @@ module Branch =
 
                 let handleCommand branchId cmd =
                     task {
-                        let actorProxy = getActorProxy context branchId
+                        let actorProxy = getBranchActorProxy branchId
 
                         match! actorProxy.Handle cmd (createMetadata context) with
                         | Ok graceReturnValue ->
@@ -73,7 +73,7 @@ module Branch =
 
                             return!
                                 context
-                                |> result400BadRequest { graceError with Properties = getPropertiesAsDictionary parameters }
+                                |> result400BadRequest { graceError with Properties = getParametersAsDictionary parameters }
                     }
 
                 let validationResults = validations parameters
@@ -118,7 +118,7 @@ module Branch =
                     let errorMessage = BranchError.getErrorMessage error
                     log.LogDebug("{currentInstant}: error: {error}", getCurrentInstantExtended (), errorMessage)
 
-                    let graceError = GraceError.CreateWithMetadata errorMessage (getCorrelationId context) (getPropertiesAsDictionary parameters)
+                    let graceError = GraceError.CreateWithMetadata errorMessage (getCorrelationId context) (getParametersAsDictionary parameters)
 
                     graceError.Properties.Add("Path", context.Request.Path)
                     graceError.Properties.Add("Error", errorMessage)
@@ -141,33 +141,36 @@ module Branch =
             use activity = activitySource.StartActivity("processQuery", ActivityKind.Server)
 
             try
+                let graceIds = getGraceIds context
                 let validationResults = validations parameters
 
                 let! validationsPassed = validationResults |> allPass
 
                 if validationsPassed then
-                    match! resolveBranchId parameters.RepositoryId parameters.BranchId parameters.BranchName parameters.CorrelationId with
-                    | Some branchId ->
-                        let actorProxy = getActorProxy context branchId
-                        let! queryResult = query context maxCount actorProxy
+                    // Get the actor proxy for the branch.
+                    let actorProxy = getBranchActorProxy graceIds.BranchId
 
-                        let graceReturnValue = GraceReturnValue.Create queryResult (getCorrelationId context)
+                    // Execute the query.
+                    let! queryResult = query context maxCount actorProxy
 
-                        let graceIds = getGraceIds context
-                        graceReturnValue.Properties[nameof (OwnerId)] <- graceIds.OwnerId
-                        graceReturnValue.Properties[nameof (OrganizationId)] <- graceIds.OrganizationId
-                        graceReturnValue.Properties[nameof (RepositoryId)] <- graceIds.RepositoryId
-                        graceReturnValue.Properties[nameof (BranchId)] <- graceIds.BranchId
+                    // Wrap the query result in a GraceReturnValue.
+                    let graceReturnValue =
+                        (GraceReturnValue.Create queryResult (getCorrelationId context))
+                            .enhance(nameof (OwnerId), graceIds.OwnerId)
+                            .enhance(nameof (OrganizationId), graceIds.OrganizationId)
+                            .enhance(nameof (RepositoryId), graceIds.RepositoryId)
+                            .enhance(nameof (BranchId), graceIds.BranchId)
 
-                        return! context |> result200Ok graceReturnValue
-                    | None ->
-                        return!
-                            context
-                            |> result400BadRequest (GraceError.Create (BranchError.getErrorMessage BranchDoesNotExist) (getCorrelationId context))
+                    return! context |> result200Ok graceReturnValue
                 else
                     let! error = validationResults |> getFirstError
 
-                    let graceError = GraceError.Create (BranchError.getErrorMessage error) (getCorrelationId context)
+                    let graceError =
+                        (GraceError.Create (BranchError.getErrorMessage error) (getCorrelationId context))
+                            .enhance(nameof (OwnerId), graceIds.OwnerId)
+                            .enhance(nameof (OrganizationId), graceIds.OrganizationId)
+                            .enhance(nameof (RepositoryId), graceIds.RepositoryId)
+                            .enhance(nameof (BranchId), graceIds.BranchId)
 
                     graceError.Properties.Add("Path", context.Request.Path)
                     return! context |> result400BadRequest graceError
