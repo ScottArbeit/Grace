@@ -467,7 +467,7 @@ module Application =
                 options.ActorScanInterval <- TimeSpan.FromSeconds(60.0) // Default is 30s
                 options.DrainOngoingCallTimeout <- TimeSpan.FromSeconds(30.0) // Default is 60s
                 options.DrainRebalancedActors <- true // Default is false
-                options.RemindersStoragePartitions <- 99 // Default is 0 (which means all actors of a given type share the same reminder actor, which is the same as 1 and just as bad).
+                options.RemindersStoragePartitions <- 0 // Default is 0 (which means all actors of a given type share the same reminder actor).
             (* I wonder what the right number for `RemindersStoragePartitions` is to handle significant scale.
 
                    When Dapr redesigns Reminders (which they are planning to do), we'll switch to the new design 

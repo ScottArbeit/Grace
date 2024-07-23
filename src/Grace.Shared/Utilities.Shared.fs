@@ -276,10 +276,20 @@ module Utilities =
             //logToConsole $"In getRelativeDirectory: relativeDirectoryPath.ToString(): {relativeDirectoryPath.ToString()}"
             (relativeDirectoryPath.ToString())
 
-    /// Returns a 12-character randomly-generated NanoId value, using a custom alphabet.
+    /// Returns a randomly-generated, 12-character NanoId as a new CorrelationId.
     let generateCorrelationId () =
         // According to https://alex7kom.github.io/nano-nanoid-cc/?alphabet=~._-0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz&size=12&speed=1000&speedUnit=second
-        //   if we generate 1000 Id's per second, we'll need 4 months before we have a 1% chance of a collision, and even if we do, it will be in different owners/orgs/repos etc.
+        //   if we generate 1000 NanoId's per second with our CorrelationIdAlphabet, it'll take 4 months before there's even a 1% chance of a collision.
+        //
+        //   (It'll be a while before Grace requires 1000 CorrelationId's per second, but let's assume it might.)
+        //
+        //   Even if there is a collision, who cares? it's just a CorrelationId, and it will be in requests for different owners/orgs/repos/branches/etc.
+        //
+        //   One of the really nice features of NanoId's vs. Guid's is that you get to choose the strength of the uniqueness guarantee by choosing the size of the NanoId.
+        //   I'm selecting 12 characters because it's just long enough to be reliably unique enough for _this_ purpose. CorrelationId's show up everywhere
+        //   in Grace, and get stored in multiple ways, so it's nice to keep them as small as possible while being unique _enough_.
+        //
+        //   The caller can always specify their own CorrelationId if they want to.
         NanoidDotNet.Nanoid.Generate(CorrelationIdAlphabet, size = 12)
 
     /// Returns either the supplied correlationId, if not null, or a new Guid.

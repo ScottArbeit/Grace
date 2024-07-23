@@ -129,6 +129,8 @@ module Events =
         [<KnownType("GetKnownTypes")>]
         type ReferenceEventType =
             | Created of referenceDto: ReferenceDto
+            | LinkAdded of link: ReferenceLinkType
+            | LinkRemoved of link: ReferenceLinkType
             | LogicalDeleted of force: bool * DeleteReason: DeleteReason
             | PhysicalDeleted
             | Undeleted

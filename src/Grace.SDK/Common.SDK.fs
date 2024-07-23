@@ -1,4 +1,4 @@
-﻿namespace Grace.SDK
+namespace Grace.SDK
 
 open Grace.Shared
 open Grace.Shared.Client.Configuration
@@ -71,8 +71,8 @@ module Common =
         httpClient.DefaultRequestHeaders.Add(Constants.ServerApiVersionHeaderKey, $"{Constants.ServerApiVersions.Edge}")
         //httpClient.DefaultVersionPolicy <- HttpVersionPolicy.RequestVersionOrHigher
 #if DEBUG
-        httpClient.Timeout <- TimeSpan.FromSeconds(1800.0) // Keeps client commands open while debugging.
-        //httpClient.Timeout <- TimeSpan.FromSeconds(15.0)  // Fast fail for testing network connectivity.
+        //httpClient.Timeout <- TimeSpan.FromSeconds(1800.0) // Keeps client commands open while debugging.
+        httpClient.Timeout <- TimeSpan.FromSeconds(10.0)  // Fast fail for testing network connectivity.
 #endif
         httpClient
 

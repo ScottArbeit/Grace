@@ -169,6 +169,7 @@ module Dto =
               Sha256Hash: Sha256Hash
               ReferenceType: ReferenceType
               ReferenceText: ReferenceText
+              Links: ReferenceLinkType array
               CreatedAt: Instant
               UpdatedAt: Instant option
               DeletedAt: Instant option
@@ -184,6 +185,7 @@ module Dto =
                   Sha256Hash = Sha256Hash String.Empty
                   ReferenceType = Save
                   ReferenceText = ReferenceText String.Empty
+                  Links = Array.empty
                   CreatedAt = getCurrentInstant ()
                   UpdatedAt = None
                   DeletedAt = None

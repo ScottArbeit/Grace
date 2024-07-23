@@ -239,7 +239,7 @@ module Types =
               CreatedAt = Instant.MinValue }
 
         static member Create
-            (directoryId: DirectoryVersionId)
+            (directoryVersionId: DirectoryVersionId)
             (repositoryId: RepositoryId)
             (relativePath: RelativePath)
             (sha256Hash: Sha256Hash)
@@ -248,7 +248,7 @@ module Types =
             (size: int64)
             =
             { Class = nameof (DirectoryVersion)
-              DirectoryVersionId = directoryId
+              DirectoryVersionId = directoryVersionId
               RepositoryId = repositoryId
               RelativePath = relativePath
               Sha256Hash = sha256Hash
@@ -298,7 +298,7 @@ module Types =
               LastWriteTimeUtc = DateTime.UtcNow }
 
         static member Create
-            (directoryId: DirectoryVersionId)
+            (directoryVersionId: DirectoryVersionId)
             (repositoryId: RepositoryId)
             (relativePath: RelativePath)
             (sha256Hash: Sha256Hash)
@@ -308,7 +308,7 @@ module Types =
             (lastWriteTimeUtc: DateTime)
             =
             { Class = "LocalDirectoryVersion"
-              DirectoryVersionId = directoryId
+              DirectoryVersionId = directoryVersionId
               RepositoryId = repositoryId
               RelativePath = relativePath
               Sha256Hash = sha256Hash
@@ -387,6 +387,13 @@ module Types =
         | NotSet
 
         static member GetKnownTypes() = GetKnownTypes<DirectoryPermission>()
+
+    /// Defines the kinds of links that can exist between references.
+    [<KnownType("GetKnownTypes")>]
+    type ReferenceLinkType =
+        | BasedOn of ReferenceId
+
+        static member GetKnownTypes() = GetKnownTypes<ReferenceLinkType>()
 
     /// Defines the permissions granted to a group defined by a claim.
     ///

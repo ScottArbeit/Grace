@@ -65,7 +65,7 @@ module Branch =
 
                             return! context |> result200Ok graceReturnValue
                         | Error graceError ->
-                            log.LogDebug(
+                            log.LogError(
                                 "{currentInstant}: In Branch.Server.handleCommand: error from actorProxy.Handle: {error}",
                                 getCurrentInstantExtended (),
                                 (graceError.ToString())

@@ -1,19 +1,16 @@
-﻿namespace Grace.Shared.Client
+namespace Grace.Shared.Client
 
 open Grace.Shared.Client.Theme
 open Grace.Shared
 open Grace.Shared.Types
 open Grace.Shared.Utilities
-open Microsoft.FSharp.Reflection
-open NodaTime.Serialization.SystemTextJson
 open System
 open System.Collections.Generic
 open System.Diagnostics
 open System.IO
-open System.Reflection
-open System.Runtime.Serialization
 open System.Text.Json
 open System.Text.Json.Serialization
+open System.Runtime.InteropServices
 
 module Configuration =
 
@@ -72,7 +69,7 @@ module Configuration =
         /// The current format of configuration.
         member val public ConfigurationVersion = String.Empty with get, set
         /// An OpenTelemetry ActivitySource for logging.
-        member val public ActivitySource: ActivitySource = Unchecked.defaultof<ActivitySource> with get, set
+        //member val public ActivitySource: ActivitySource = new ActivitySource("Grace", "0.1") with get, set
 
         /// The current list of graceignore.json entries.
         [<JsonIgnore(Condition = JsonIgnoreCondition.Always)>]
@@ -143,9 +140,13 @@ module Configuration =
 
     let private parseConfigurationFile graceConfigurationFilePath =
         try
-            let configurationContents = File.ReadAllText(graceConfigurationFilePath)
-
-            let graceConfiguration = JsonSerializer.Deserialize<GraceConfiguration>(configurationContents, Constants.JsonSerializerOptions)
+            // Read configuration into a stream from file path specified by graceConfigurationFilePath
+            use stream = new FileStream(graceConfigurationFilePath, FileMode.Open, FileAccess.Read, FileShare.Read)
+            // Read the stream into a buffer
+            let buffer = Array.zeroCreate<byte> (int stream.Length)
+            stream.Read(buffer, 0, buffer.Length) |> ignore
+            // Deserialize the JSON configuration file into a GraceConfiguration object
+            let graceConfiguration = JsonSerializer.Deserialize<GraceConfiguration>(buffer, Constants.JsonSerializerOptions)
 
             Ok graceConfiguration
         with ex ->
@@ -201,7 +202,7 @@ module Configuration =
                         Path.GetFullPath(Path.Combine(graceConfigurationDirectory, Constants.GraceDirectoryVersionCacheName))
 
                     graceConfiguration.ConfigurationDirectory <- FileInfo(graceConfigurationFilePath).DirectoryName
-                    graceConfiguration.ActivitySource <- new ActivitySource("Grace", "0.1")
+                    //graceConfiguration.ActivitySource <- new ActivitySource("Grace", "0.1")
                     graceConfiguration.GraceIgnoreEntries <- graceIgnoreEntries
 
                     graceConfiguration.GraceFileIgnoreEntries <-
@@ -222,12 +223,13 @@ module Configuration =
                 printfn $"{errorMessage}"
                 logToConsole $"{Environment.StackTrace}"
                 exit Results.ConfigurationFileNotFound
+
     // graceConfiguration <- GraceConfiguration()
     // graceConfiguration.IsPopulated <- true
     // graceConfiguration
 
     /// The current configuration of Grace in this repository.
-    let Current () = getGraceConfiguration ()
+    let Current () = getGraceConfiguration()
 
     let resetConfiguration = graceConfiguration.IsPopulated <- false
 

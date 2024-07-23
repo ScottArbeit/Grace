@@ -230,35 +230,33 @@ module Repository =
                             | Created(name, repositoryId, ownerId, organizationId) ->
                                 // Create the default branch.
                                 let branchId = (Guid.NewGuid())
-                                let branchActorId = Branch.GetActorId(branchId)
-
-                                let branchActor = Services.actorProxyFactory.CreateActorProxy<IBranchActor>(branchActorId, ActorName.Branch)
+                                let branchActor = Services.actorProxyFactory.CreateActorProxy<IBranchActor>(ActorId($"{branchId}"), ActorName.Branch)
 
                                 // Only allow promotions and tags on the initial branch.
-                                let initialBranchPermissions = [| ReferenceType.Promotion; ReferenceType.Tag |]
+                                let initialBranchPermissions = [| ReferenceType.Promotion; ReferenceType.Tag; ReferenceType.External |]
 
-                                let createCommand =
+                                let createInitialBranchCommand =
                                     Commands.Branch.BranchCommand.Create(
                                         branchId,
-                                        (BranchName Constants.InitialBranchName),
-                                        Constants.DefaultParentBranchId,
+                                        InitialBranchName,
+                                        DefaultParentBranchId,
                                         ReferenceId.Empty,
                                         repositoryId,
                                         initialBranchPermissions
                                     )
 
-                                match! branchActor.Handle createCommand repositoryEvent.Metadata with
+                                match! branchActor.Handle createInitialBranchCommand repositoryEvent.Metadata with
                                 | Ok branchGraceReturn ->
                                     logToConsole $"In Repository.Actor.handleEvent: Successfully created the new branch."
                                     // Create an empty directory version, and use that for the initial promotion
                                     let emptyDirectoryId = DirectoryVersionId.NewGuid()
 
                                     let emptySha256Hash =
-                                        computeSha256ForDirectory Constants.RootDirectoryPath (List<LocalDirectoryVersion>()) (List<LocalFileVersion>())
+                                        computeSha256ForDirectory RootDirectoryPath (List<LocalDirectoryVersion>()) (List<LocalFileVersion>())
 
                                     let directoryVersionActorProxy =
                                         Services.actorProxyFactory.CreateActorProxy<IDirectoryVersionActor>(
-                                            DirectoryVersion.GetActorId(emptyDirectoryId),
+                                            ActorId($"{emptyDirectoryId}"),
                                             ActorName.DirectoryVersion
                                         )
 
@@ -266,7 +264,7 @@ module Repository =
                                         DirectoryVersion.Create
                                             emptyDirectoryId
                                             repositoryDto.RepositoryId
-                                            Constants.RootDirectoryPath
+                                            RootDirectoryPath
                                             emptySha256Hash
                                             (List<DirectoryVersionId>())
                                             (List<FileVersion>())
@@ -298,14 +296,15 @@ module Repository =
                                         // Set current, empty directory as the based-on reference.
                                         let referenceId = Guid.Parse(promotionGraceReturnValue.Properties[nameof (ReferenceId)])
 
-                                        logToConsole $"In Repository.Actor.handleEvent: Before trying to rebase the initial branch."
-                                        let! rebaseResult = branchActor.Handle (Commands.Branch.BranchCommand.Rebase(referenceId)) repositoryEvent.Metadata
-                                        logToConsole $"In Repository.Actor.handleEvent: After trying to rebase the initial branch."
+                                        //logToConsole $"In Repository.Actor.handleEvent: Before trying to rebase the initial branch."
+                                        //let! rebaseResult = branchActor.Handle (Commands.Branch.BranchCommand.Rebase(referenceId)) repositoryEvent.Metadata
+                                        //logToConsole $"In Repository.Actor.handleEvent: After trying to rebase the initial branch."
 
 
-                                        match rebaseResult with
-                                        | Ok rebaseGraceReturn -> return Ok(branchId, referenceId)
-                                        | Error graceError -> return processGraceError FailedRebasingInitialBranch repositoryEvent graceError
+                                        //match rebaseResult with
+                                        //| Ok rebaseGraceReturn -> return Ok(branchId, referenceId)
+                                        //| Error graceError -> return processGraceError FailedRebasingInitialBranch repositoryEvent graceError
+                                        return Ok(branchId, referenceId)
                                     | (_, Error graceError) -> return processGraceError FailedCreatingInitialPromotion repositoryEvent graceError
                                     | (Error graceError, _) -> return processGraceError FailedCreatingEmptyDirectoryVersion repositoryEvent graceError
                                 | Error graceError ->

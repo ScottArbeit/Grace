@@ -9,7 +9,6 @@ using Azure.Identity;
 using Microsoft.Extensions.Azure;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
-using Prometheus;
 
 internal class Program
 {
@@ -76,7 +75,7 @@ internal class Program
 
                 // Add local containers as services for Dapr.
                 var zipkin = builder.AddContainer("zipkin", "openzipkin/zipkin", "latest");
-                zipkin.WithEndpoint(port: 9411, targetPort: 9411, name: "zipkin-http", scheme: "http");
+                zipkin.WithEndpoint(hostPort: 9411, name: "zipkin-http", scheme: "http");
 
                 //var prometheus = builder.AddContainer("prometheus", "prom/prometheus", "latest")
                 //                        .WithBindMount("../prometheus", "/etc/prometheus", isReadOnly: true);

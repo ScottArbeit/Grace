@@ -163,8 +163,7 @@ module Storage =
                         let blockBlobClient = BlockBlobClient(blobUriWithSasToken, blobClientOptions)
                         let! blobAlreadyExists = blockBlobClient.ExistsAsync()
 
-                        logToConsole
-                            $"In SaveFileToObjectStorageWithMetadata: blobAlreadyExists: {blobAlreadyExists.Value}; fileVersion.RelativePath: {fileVersion.RelativePath}."
+                        //logToConsole $"In SaveFileToObjectStorageWithMetadata: blobAlreadyExists: {blobAlreadyExists.Value}; fileVersion.RelativePath: {fileVersion.RelativePath}."
 
                         // If it doesn't exist, upload it.
                         if not <| (blobAlreadyExists.Value) then

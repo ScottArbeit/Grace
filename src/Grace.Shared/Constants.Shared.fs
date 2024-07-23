@@ -49,6 +49,7 @@ module Constants =
     //JsonSerializerOptions.PropertyNamingPolicy <- JsonNamingPolicy.CamelCase
     JsonSerializerOptions.ReadCommentHandling <- JsonCommentHandling.Skip
     JsonSerializerOptions.ReferenceHandler <- ReferenceHandler.IgnoreCycles
+    JsonSerializerOptions.RespectNullableAnnotations <- true
     JsonSerializerOptions.UnknownTypeHandling <- JsonUnknownTypeHandling.JsonElement
     JsonSerializerOptions.WriteIndented <- true
     JsonSerializerOptions.MaxDepth <- 16 // Default is 64, but if we exceed a depth of 16, we're probably doing something wrong.
@@ -224,28 +225,36 @@ module Constants =
     /// The default root branch Id for a repository.
     let DefaultParentBranchId = Guid("38EC9A98-00B0-4FA3-8CC5-ACFB04E445A7") // There's nothing special about this Guid. I just generated it one day.
 
-    /// A special Guid value that means "false" or "we know there's no value here". Used in MemoryCache stuff.
-    let MemoryCacheValueGuid = Guid("27F21D8A-DA1D-4C73-8773-4AA5A5712612") // There's nothing special about this Guid. I just generated it one day.
-
     /// The name of the inter-process communication file used by grace watch to share status with other invocations of Grace.
     let IpcFileName = "graceWatchStatus.json"
 
     /// The name of the file to let `grace watch` know that `grace rebase` or `grace switch` is underway.
     let UpdateInProgressFileName = "graceUpdateInProgress.txt"
-
-    /// The default expiration time for a cache entry.
-    let DefaultExpirationTime = TimeSpan.FromMinutes(2.0)
-
+    
     /// The custom alphabet to use when generating a CorrelationId. This alphabet is URL-safe. Consists of "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz._-".
+    [<Literal>]
     let CorrelationIdAlphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz._-"
 
-    /// The default value to store in Grace's MemoryCache when an entity is known to exist. This is a one-character string because MemoryCache values are Objects; although a bool would make more sense, using a constant string avoids boxing.
-    [<Literal>]
-    let MemoryCacheExistsValue = "y"
+    /// Values used with Grace's MemoryCache.
+    module MemoryCache =
+        /// A special Guid value that means "false" or "we know there's no value here". Used in places where the cache entry value is a Guid.
+        let EntityDoesNotExist = box (Guid("27F21D8A-DA1D-4C73-8773-4AA5A5712612")) // There's nothing special about this Guid. I just generated it one day.
 
-    /// The default value to store in Grace's MemoryCache when a value is known not to exist. This is a one-character string because MemoryCache values are Objects; although a bool would make more sense, using a constant string avoids boxing.
-    [<Literal>]
-    let MemoryCacheDoesNotExistValue = "n"
+        /// The default value to store in Grace's MemoryCache when an entity is known to exist. This is a one-character string because MemoryCache values are Objects; although a bool would make more sense, using a constant string avoids boxing.
+        [<Literal>]
+        let ExistsValue = "y"
+
+        /// The default value to store in Grace's MemoryCache when a value is known not to exist. This is a one-character string because MemoryCache values are Objects; although a bool would make more sense, using a constant string avoids boxing.
+        [<Literal>]
+        let DoesNotExistValue = "n"
+
+        /// The default expiration time for a cache entry.
+#if DEBUG
+        let DefaultExpirationTime = TimeSpan.FromMinutes(2.0)
+#else
+        let DefaultExpirationTime = TimeSpan.FromMinutes(2.0)
+#endif
+
 
 module Results =
     let Ok = 0

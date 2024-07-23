@@ -40,8 +40,8 @@ module Reference =
         let referenceEvents = List<ReferenceEvent>()
 
         /// Indicates that the actor is in an undefined state, and should be reset.
-        let mutable isDisposed = false
 
+        let mutable isDisposed = false
         let updateDto referenceEventType currentReferenceDto =
             let newReferenceDto =
                 match referenceEventType with
@@ -53,7 +53,11 @@ module Reference =
                         DirectoryId = createdDto.DirectoryId
                         Sha256Hash = createdDto.Sha256Hash
                         ReferenceType = createdDto.ReferenceType
-                        ReferenceText = createdDto.ReferenceText }
+                        ReferenceText = createdDto.ReferenceText
+                        Links = createdDto.Links
+                    }
+                | LinkAdded link -> {currentReferenceDto with Links = currentReferenceDto.Links |> Array.append (Array.singleton link) |> Array.distinct }
+                | LinkRemoved link -> {currentReferenceDto with Links = currentReferenceDto.Links |> Array.except (Array.singleton link) }
                 | LogicalDeleted(force, deleteReason) -> {currentReferenceDto with DeletedAt = Some(getCurrentInstant()); DeleteReason = deleteReason}
                 | PhysicalDeleted -> currentReferenceDto // Do nothing because it's about to be deleted anyway.
                 | Undeleted -> {currentReferenceDto with DeletedAt = None; DeleteReason = String.Empty}
@@ -385,6 +389,8 @@ module Reference =
                             task {
                                 match command with
                                 | Create dto -> return Created dto
+                                | AddLink link -> return LinkAdded link
+                                | RemoveLink link -> return LinkRemoved link
                                 | DeleteLogical(force, deleteReason) ->
                                     let repositoryActorProxy = actorProxyFactory.CreateActorProxy<IRepositoryActor>(ActorId($"{referenceDto.RepositoryId}"), ActorName.Repository)
                                     let! repositoryDto = repositoryActorProxy.Get(metadata.CorrelationId)

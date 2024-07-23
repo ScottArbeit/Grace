@@ -42,8 +42,8 @@ module Validations =
                     let exists = memoryCache.Get<string>(ownerGuid)
 
                     match exists with
-                    | MemoryCacheExistsValue -> return Ok()
-                    | MemoryCacheDoesNotExistValue -> return Error error
+                    | MemoryCache.ExistsValue -> return Ok()
+                    | MemoryCache.DoesNotExistValue -> return Error error
                     | _ ->
                         let actorId = Owner.GetActorId(ownerGuid)
 
@@ -52,7 +52,7 @@ module Validations =
                         let! exists = ownerActorProxy.Exists correlationId
 
                         if exists then
-                            use newCacheEntry = memoryCache.CreateEntry(ownerGuid, Value = MemoryCacheExistsValue, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
+                            use newCacheEntry = memoryCache.CreateEntry(ownerGuid, Value = MemoryCache.ExistsValue, AbsoluteExpirationRelativeToNow = MemoryCache.DefaultExpirationTime)
 
                             return Ok()
                         else
@@ -94,43 +94,35 @@ module Validations =
             |> ValueTask<Result<unit, 'T>>
 
         /// Validates that the owner is deleted.
-        let ownerIsDeleted<'T> ownerId ownerName correlationId (error: 'T) =
+        let ownerIsDeleted<'T> ownerId ownerName context correlationId (error: 'T) =
             task {
-                let mutable ownerGuid = Guid.Empty
+                let graceIds = getGraceIds context
+                let isDeleted = memoryCache.Get<string>($"{graceIds.OwnerId}deleted")
+                match isDeleted with
+                | MemoryCache.DoesNotExistValue -> return Ok()
+                | MemoryCache.ExistsValue -> return Error error
+                | _ ->
+                    let ownerActorProxy = actorProxyFactory.CreateActorProxy<IOwnerActor>(ActorId(graceIds.OwnerId), ActorName.Owner)
 
-                match! resolveOwnerId ownerId ownerName correlationId with
-                | Some ownerId ->
-                    let ownerGuid = Guid.Parse(ownerId)
-                    let mutable isDeleted = new obj ()
+                    let! isDeleted = ownerActorProxy.IsDeleted correlationId
 
-                    if memoryCache.TryGetValue($"{ownerGuid}deleted", &isDeleted) then
-                        let isDeleted = isDeleted :?> bool
-                        if isDeleted then return Ok() else return Error error
+                    if isDeleted then
+                        use newCacheEntry =
+                            memoryCache.CreateEntry($"{graceIds.OwnerId}deleted", Value = MemoryCache.DoesNotExistValue, AbsoluteExpirationRelativeToNow = MemoryCache.DefaultExpirationTime)
+
+                        return Ok()
                     else
-                        let actorId = Owner.GetActorId(ownerGuid)
+                        use newCacheEntry =
+                            memoryCache.CreateEntry($"{graceIds.OwnerId}deleted", Value = MemoryCache.ExistsValue, AbsoluteExpirationRelativeToNow = MemoryCache.DefaultExpirationTime)
 
-                        let ownerActorProxy = actorProxyFactory.CreateActorProxy<IOwnerActor>(actorId, ActorName.Owner)
-
-                        let! isDeleted = ownerActorProxy.IsDeleted correlationId
-
-                        if isDeleted then
-                            use newCacheEntry =
-                                memoryCache.CreateEntry($"{ownerGuid}deleted", Value = boxedTrue, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
-
-                            return Ok()
-                        else
-                            use newCacheEntry =
-                                memoryCache.CreateEntry($"{ownerGuid}deleted", Value = boxedFalse, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
-
-                            return Error error
-                | None -> return Error error
+                        return Error error
             }
             |> ValueTask<Result<unit, 'T>>
 
         /// Validates that the owner is not deleted.
-        let ownerIsNotDeleted<'T> ownerId ownerName correlationId (error: 'T) =
+        let ownerIsNotDeleted<'T> ownerId ownerName context correlationId (error: 'T) =
             task {
-                match! ownerIsDeleted ownerId ownerName correlationId error with
+                match! ownerIsDeleted ownerId ownerName context correlationId error with
                 | Ok _ -> return Error error
                 | Error _ -> return Ok()
             }
@@ -161,15 +153,15 @@ module Validations =
                     let exists = memoryCache.Get<string>(organizationGuid)
 
                     match exists with
-                    | MemoryCacheExistsValue -> return Ok()
-                    | MemoryCacheDoesNotExistValue -> return Error error
+                    | MemoryCache.ExistsValue -> return Ok()
+                    | MemoryCache.DoesNotExistValue -> return Error error
                     | _ ->
                         let organizationActorProxy = actorProxyFactory.CreateActorProxy<IOrganizationActor>(ActorId(organizationId), ActorName.Organization)
 
                         let! exists = organizationActorProxy.Exists correlationId
 
                         if exists then
-                            use newCacheEntry = memoryCache.CreateEntry(organizationGuid, Value = MemoryCacheExistsValue, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
+                            use newCacheEntry = memoryCache.CreateEntry(organizationGuid, Value = MemoryCache.ExistsValue, AbsoluteExpirationRelativeToNow = MemoryCache.DefaultExpirationTime)
 
                             return Ok()
                         else
@@ -223,8 +215,8 @@ module Validations =
                             let exists = memoryCache.Get<string>(organizationGuid)
 
                             match exists with
-                            | MemoryCacheExistsValue -> return Ok()
-                            | MemoryCacheDoesNotExistValue -> return Error error
+                            | MemoryCache.ExistsValue -> return Ok()
+                            | MemoryCache.DoesNotExistValue -> return Error error
                             | _ ->
                                 let organizationActorProxy = actorProxyFactory.CreateActorProxy<IOrganizationActor>(ActorId(organizationId), ActorName.Organization)
 
@@ -232,7 +224,7 @@ module Validations =
 
                                 if exists then
                                     use newCacheEntry =
-                                        memoryCache.CreateEntry(organizationGuid, Value = MemoryCacheExistsValue, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
+                                        memoryCache.CreateEntry(organizationGuid, Value = MemoryCache.ExistsValue, AbsoluteExpirationRelativeToNow = MemoryCache.DefaultExpirationTime)
 
                                     return Ok()
                                 else
@@ -257,49 +249,43 @@ module Validations =
             |> ValueTask<Result<unit, 'T>>
 
         /// Validates that the organization is deleted.
-        let organizationIsDeleted<'T> ownerId ownerName organizationId organizationName correlationId (error: 'T) =
+        let organizationIsDeleted<'T> context correlationId (error: 'T) =
             task {
-                match! resolveOrganizationId ownerId ownerName organizationId organizationName correlationId with
-                | Some organizationId ->
-                    let organizationGuid = Guid.Parse(organizationId)
-                    let mutable isDeleted = new obj ()
+                let graceIds = getGraceIds context
+                let isDeleted = memoryCache.Get<string>($"{graceIds.OrganizationId}deleted")
+                match isDeleted with
+                | MemoryCache.DoesNotExistValue -> return Ok()
+                | MemoryCache.ExistsValue -> return Error error
+                | _ ->
+                    let organizationActorProxy = actorProxyFactory.CreateActorProxy<IOrganizationActor>(ActorId(graceIds.OrganizationId), ActorName.Organization)
 
-                    if memoryCache.TryGetValue($"{organizationGuid}deleted", &isDeleted) then
-                        let isDeleted = isDeleted :?> bool
-                        if isDeleted then return Ok() else return Error error
+                    let! isDeleted = organizationActorProxy.IsDeleted correlationId
+
+                    if isDeleted then
+                        use newCacheEntry =
+                            memoryCache.CreateEntry(
+                                $"{graceIds.OrganizationId}deleted",
+                                Value = MemoryCache.DoesNotExistValue,
+                                AbsoluteExpirationRelativeToNow = MemoryCache.DefaultExpirationTime
+                            )
+
+                        return Ok()
                     else
-                        let actorId = Organization.GetActorId(organizationGuid)
+                        use newCacheEntry =
+                            memoryCache.CreateEntry(
+                                $"{graceIds.OrganizationId}deleted",
+                                Value = MemoryCache.ExistsValue,
+                                AbsoluteExpirationRelativeToNow = MemoryCache.DefaultExpirationTime
+                            )
 
-                        let organizationActorProxy = actorProxyFactory.CreateActorProxy<IOrganizationActor>(actorId, ActorName.Organization)
-
-                        let! isDeleted = organizationActorProxy.IsDeleted correlationId
-
-                        if isDeleted then
-                            use newCacheEntry =
-                                memoryCache.CreateEntry(
-                                    $"{organizationGuid}deleted",
-                                    Value = boxedTrue,
-                                    AbsoluteExpirationRelativeToNow = DefaultExpirationTime
-                                )
-
-                            return Ok()
-                        else
-                            use newCacheEntry =
-                                memoryCache.CreateEntry(
-                                    $"{organizationGuid}deleted",
-                                    Value = boxedFalse,
-                                    AbsoluteExpirationRelativeToNow = DefaultExpirationTime
-                                )
-
-                            return Error error
-                | None -> return Error error
+                        return Error error
             }
             |> ValueTask<Result<unit, 'T>>
 
         /// Validates that the organization is not deleted.
-        let organizationIsNotDeleted<'T> ownerId ownerName organizationId organizationName correlationId (error: 'T) =
+        let organizationIsNotDeleted<'T> context correlationId (error: 'T) =
             task {
-                match! organizationIsDeleted ownerId ownerName organizationId organizationName correlationId error with
+                match! organizationIsDeleted context correlationId error with
                 | Ok _ -> return Error error
                 | Error _ -> return Ok()
             }
@@ -319,16 +305,16 @@ module Validations =
                     //logToConsole $"In repositoryIdExists: repositoryGuid: {repositoryGuid}; exists: {exists}."
 
                     match exists with
-                    | MemoryCacheExistsValue -> return Ok()
-                    | MemoryCacheDoesNotExistValue -> return Error error
+                    | MemoryCache.ExistsValue -> return Ok()
+                    | MemoryCache.DoesNotExistValue -> return Error error
                     | _ ->
                         let repositoryActorProxy = actorProxyFactory.CreateActorProxy<IRepositoryActor>(ActorId(repositoryId), ActorName.Repository)
 
                         let! exists = repositoryActorProxy.Exists correlationId
 
                         if exists then
-                            //logToConsole $"In repositoryIdExists: creating cache entry; repositoryGuid: {repositoryGuid}; exists: {MemoryCacheExistsValue}."
-                            use newCacheEntry = memoryCache.CreateEntry(repositoryGuid, Value = MemoryCacheExistsValue, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
+                            //logToConsole $"In repositoryIdExists: creating cache entry; repositoryGuid: {repositoryGuid}; exists: {MemoryCache.ExistsValue}."
+                            use newCacheEntry = memoryCache.CreateEntry(repositoryGuid, Value = MemoryCache.ExistsValue, AbsoluteExpirationRelativeToNow = MemoryCache.DefaultExpirationTime)
                             return Ok()
                         else
                             return Error error
@@ -359,8 +345,8 @@ module Validations =
                     if Guid.TryParse(repositoryId, &repositoryGuid) then
                         let exists = memoryCache.Get<string>(repositoryGuid)
                         match exists with
-                        | MemoryCacheExistsValue -> return Ok()
-                        | MemoryCacheDoesNotExistValue -> return Error error
+                        | MemoryCache.ExistsValue -> return Ok()
+                        | MemoryCache.DoesNotExistValue -> return Error error
                         | _ ->
                             let repositoryActorProxy = actorProxyFactory.CreateActorProxy<IRepositoryActor>(ActorId(repositoryId), ActorName.Repository)
 
@@ -368,7 +354,7 @@ module Validations =
 
                             if exists then
                                 use newCacheEntry =
-                                    memoryCache.CreateEntry(repositoryGuid, Value = MemoryCacheExistsValue, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
+                                    memoryCache.CreateEntry(repositoryGuid, Value = MemoryCache.ExistsValue, AbsoluteExpirationRelativeToNow = MemoryCache.DefaultExpirationTime)
 
                                 return Ok()
                             else
@@ -387,12 +373,11 @@ module Validations =
                 match! resolveRepositoryId ownerId ownerName organizationId organizationName repositoryId repositoryName correlationId with
                 | Some repositoryId ->
                     let repositoryGuid = Guid.Parse(repositoryId)
-                    let mutable isDeleted = new obj ()
-
-                    if memoryCache.TryGetValue($"{repositoryGuid}deleted", &isDeleted) then
-                        let isDeleted = isDeleted :?> bool
-                        if isDeleted then return Ok() else return Error error
-                    else
+                    let isDeleted = memoryCache.Get<string>($"{repositoryGuid}deleted")
+                    match isDeleted with
+                    | MemoryCache.DoesNotExistValue -> return Ok()
+                    | MemoryCache.ExistsValue -> return Error error
+                    | _ ->
                         let actorId = Repository.GetActorId(repositoryGuid)
 
                         let repositoryActorProxy = actorProxyFactory.CreateActorProxy<IRepositoryActor>(actorId, ActorName.Repository)
@@ -401,12 +386,12 @@ module Validations =
 
                         if isDeleted then
                             use newCacheEntry =
-                                memoryCache.CreateEntry($"{repositoryGuid}deleted", Value = boxedTrue, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
+                                memoryCache.CreateEntry($"{repositoryGuid}deleted", Value = MemoryCache.DoesNotExistValue, AbsoluteExpirationRelativeToNow = MemoryCache.DefaultExpirationTime)
 
                             return Ok()
                         else
                             use newCacheEntry =
-                                memoryCache.CreateEntry($"{repositoryGuid}deleted", Value = boxedFalse, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
+                                memoryCache.CreateEntry($"{repositoryGuid}deleted", Value = MemoryCache.ExistsValue, AbsoluteExpirationRelativeToNow = MemoryCache.DefaultExpirationTime)
 
                             return Error error
                 | None -> return Error error
@@ -446,8 +431,8 @@ module Validations =
                     let exists = memoryCache.Get<string>(branchGuid)
 
                     match exists with
-                    | MemoryCacheExistsValue -> return Ok()
-                    | MemoryCacheDoesNotExistValue -> return Error error
+                    | MemoryCache.ExistsValue -> return Ok()
+                    | MemoryCache.DoesNotExistValue -> return Error error
                     | _ ->
                         let actorId = ActorId(branchId)
 
@@ -456,7 +441,7 @@ module Validations =
                         let! exists = branchActorProxy.Exists correlationId
 
                         if exists then
-                            use newCacheEntry = memoryCache.CreateEntry(branchGuid, Value = MemoryCacheExistsValue, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
+                            use newCacheEntry = memoryCache.CreateEntry(branchGuid, Value = MemoryCache.ExistsValue, AbsoluteExpirationRelativeToNow = MemoryCache.DefaultExpirationTime)
 
                             return Ok()
                         else
@@ -494,8 +479,8 @@ module Validations =
                             let exists = memoryCache.Get<string>(branchGuid)
 
                             match exists with
-                            | MemoryCacheExistsValue -> return Ok()
-                            | MemoryCacheDoesNotExistValue -> return Error error
+                            | MemoryCache.ExistsValue -> return Ok()
+                            | MemoryCache.DoesNotExistValue -> return Error error
                             | _ ->
                                 let branchActorProxy = actorProxyFactory.CreateActorProxy<IBranchActor>(ActorId(branchId), ActorName.Branch)
 
@@ -503,7 +488,7 @@ module Validations =
 
                                 if exists then
                                     use newCacheEntry =
-                                        memoryCache.CreateEntry(branchGuid, Value = MemoryCacheExistsValue, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
+                                        memoryCache.CreateEntry(branchGuid, Value = MemoryCache.ExistsValue, AbsoluteExpirationRelativeToNow = MemoryCache.DefaultExpirationTime)
 
                                     return Ok()
                                 else
@@ -562,7 +547,7 @@ module Validations =
                                 memoryCache.CreateEntry(
                                     $"{branchId}{referenceType}Allowed",
                                     Value = allowed,
-                                    AbsoluteExpirationRelativeToNow = DefaultExpirationTime
+                                    AbsoluteExpirationRelativeToNow = MemoryCache.DefaultExpirationTime
                                 )
 
                             if allowed then return Ok() else return Error error
@@ -595,7 +580,7 @@ module Validations =
                             let allowed = branchDto.AssignEnabled
 
                             use newCacheEntry =
-                                memoryCache.CreateEntry($"{branchId}AssignAllowed", Value = allowed, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
+                                memoryCache.CreateEntry($"{branchId}AssignAllowed", Value = allowed, AbsoluteExpirationRelativeToNow = MemoryCache.DefaultExpirationTime)
 
                             if allowed then return Ok() else return Error error
                     | None -> return Error error
@@ -637,8 +622,8 @@ module Validations =
                 let exists = memoryCache.Get<string>(directoryId)
 
                 match exists with
-                | MemoryCacheExistsValue -> return Ok()
-                | MemoryCacheDoesNotExistValue -> return Error error
+                | MemoryCache.ExistsValue -> return Ok()
+                | MemoryCache.DoesNotExistValue -> return Error error
                 | _ ->
                     let directoryVersionActorProxy =
                         ApplicationContext.actorProxyFactory.CreateActorProxy<IDirectoryVersionActor>(DirectoryVersion.GetActorId(directoryId), ActorName.DirectoryVersion)
@@ -646,7 +631,7 @@ module Validations =
                     let! exists = directoryVersionActorProxy.Exists correlationId
 
                     if exists then
-                        use newCacheEntry = memoryCache.CreateEntry(directoryId, Value = MemoryCacheExistsValue, AbsoluteExpirationRelativeToNow = DefaultExpirationTime)
+                        use newCacheEntry = memoryCache.CreateEntry(directoryId, Value = MemoryCache.ExistsValue, AbsoluteExpirationRelativeToNow = MemoryCache.DefaultExpirationTime)
 
                         return Ok()
                     else

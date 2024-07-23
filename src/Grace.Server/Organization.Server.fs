@@ -146,6 +146,7 @@ module Organization =
                     |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
         }
 
+    /// Generic processor for all Organization queries.
     let processQuery<'T, 'U when 'T :> OrganizationParameters>
         (context: HttpContext)
         (parameters: 'T)
@@ -157,39 +158,33 @@ module Organization =
             use activity = activitySource.StartActivity("processQuery", ActivityKind.Server)
 
             try
+                let graceIds = getGraceIds context
                 let validationResults = validations parameters
                 let! validationsPassed = validationResults |> allPass
 
                 if validationsPassed then
-                    match!
-                        resolveOrganizationId
-                            parameters.OwnerId
-                            parameters.OwnerName
-                            parameters.OrganizationId
-                            parameters.OrganizationName
-                            parameters.CorrelationId
-                    with
-                    | Some organizationId ->
-                        let actorProxy = getActorProxy context organizationId
-                        let! queryResult = query context maxCount actorProxy
+                    // Get the actor proxy for this organization.
+                    let actorProxy = getActorProxy context graceIds.OrganizationId
 
-                        let graceReturnValue = GraceReturnValue.Create queryResult (getCorrelationId context)
+                    // Execute the query.
+                    let! queryResult = query context maxCount actorProxy
 
-                        let graceIds = getGraceIds context
-                        graceReturnValue.Properties[nameof (OwnerId)] <- graceIds.OwnerId
-                        graceReturnValue.Properties[nameof (OrganizationId)] <- graceIds.OrganizationId
+                    // Wrap the result in a GraceReturnValue.
+                    let graceReturnValue = GraceReturnValue.Create queryResult (getCorrelationId context)
+                    graceReturnValue.enhance(nameof (OwnerId), graceIds.OwnerId)
+                                    .enhance(nameof (OrganizationId), graceIds.OrganizationId)
+                                    .enhance("Path", context.Request.Path)
+                        |> ignore
 
-                        return! context |> result200Ok graceReturnValue
-                    | None ->
-                        return!
-                            context
-                            |> result400BadRequest (GraceError.Create (OrganizationError.getErrorMessage OrganizationDoesNotExist) (getCorrelationId context))
+                    return! context |> result200Ok graceReturnValue
                 else
                     let! error = validationResults |> getFirstError
 
                     let graceError = GraceError.Create (OrganizationError.getErrorMessage error) (getCorrelationId context)
-
-                    graceError.Properties.Add("Path", context.Request.Path)
+                    graceError.enhance(nameof (OwnerId), graceIds.OwnerId)
+                              .enhance(nameof (OrganizationId), graceIds.OrganizationId)
+                              .enhance("Path", context.Request.Path)
+                        |> ignore
                     return! context |> result400BadRequest graceError
             with ex ->
                 return!
@@ -238,10 +233,7 @@ module Organization =
                     [| String.isNotEmpty parameters.NewName OrganizationNameIsRequired
                        String.isValidGraceName parameters.NewName InvalidOrganizationName
                        Organization.organizationIsNotDeleted
-                           parameters.OwnerId
-                           parameters.OwnerName
-                           parameters.OrganizationId
-                           parameters.OrganizationName
+                           context
                            parameters.CorrelationId
                            OrganizationIsDeleted |]
 
@@ -258,10 +250,7 @@ module Organization =
                 let validations (parameters: SetOrganizationTypeParameters) =
                     [| DiscriminatedUnion.isMemberOf<OrganizationType, OrganizationError> parameters.OrganizationType InvalidOrganizationType
                        Organization.organizationIsNotDeleted
-                           parameters.OwnerId
-                           parameters.OwnerName
-                           parameters.OrganizationId
-                           parameters.OrganizationName
+                           context
                            parameters.CorrelationId
                            OrganizationIsDeleted |]
 
@@ -284,10 +273,7 @@ module Organization =
                     [| String.isNotEmpty parameters.SearchVisibility SearchVisibilityIsRequired
                        DiscriminatedUnion.isMemberOf<SearchVisibility, OrganizationError> parameters.SearchVisibility InvalidSearchVisibility
                        Organization.organizationIsNotDeleted
-                           parameters.OwnerId
-                           parameters.OwnerName
-                           parameters.OrganizationId
-                           parameters.OrganizationName
+                           context
                            parameters.CorrelationId
                            OrganizationIsDeleted |]
 
@@ -309,10 +295,7 @@ module Organization =
                 let validations (parameters: SetOrganizationDescriptionParameters) =
                     [| String.isNotEmpty parameters.Description OrganizationDescriptionIsRequired
                        Organization.organizationIsNotDeleted
-                           parameters.OwnerId
-                           parameters.OwnerName
-                           parameters.OrganizationId
-                           parameters.OrganizationName
+                           context
                            parameters.CorrelationId
                            OrganizationIsDeleted |]
 
@@ -329,10 +312,7 @@ module Organization =
                 try
                     let validations (parameters: ListRepositoriesParameters) =
                         [| Organization.organizationIsNotDeleted
-                               parameters.OwnerId
-                               parameters.OwnerName
-                               parameters.OrganizationId
-                               parameters.OrganizationName
+                               context
                                parameters.CorrelationId
                                OrganizationIsDeleted |]
 
@@ -357,10 +337,7 @@ module Organization =
                 let validations (parameters: DeleteOrganizationParameters) =
                     [| String.isNotEmpty parameters.DeleteReason DeleteReasonIsRequired
                        Organization.organizationIsNotDeleted
-                           parameters.OwnerId
-                           parameters.OwnerName
-                           parameters.OrganizationId
-                           parameters.OrganizationName
+                           context
                            parameters.CorrelationId
                            OrganizationIsDeleted |]
 
@@ -376,10 +353,7 @@ module Organization =
             task {
                 let validations (parameters: OrganizationParameters) =
                     [| Organization.organizationIsDeleted
-                           parameters.OwnerId
-                           parameters.OwnerName
-                           parameters.OrganizationId
-                           parameters.OrganizationName
+                           context
                            parameters.CorrelationId
                            OrganizationIsNotDeleted |]
 
@@ -396,10 +370,7 @@ module Organization =
                 try
                     let validations (parameters: GetOrganizationParameters) =
                         [| Organization.organizationIsNotDeleted
-                               parameters.OwnerId
-                               parameters.OwnerName
-                               parameters.OrganizationId
-                               parameters.OrganizationName
+                               context
                                parameters.CorrelationId
                                OrganizationIsDeleted |]
 

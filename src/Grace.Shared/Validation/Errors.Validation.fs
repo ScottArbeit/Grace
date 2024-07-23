@@ -338,7 +338,6 @@ module Errors =
             | AssignIsDisabled
             | BranchDoesNotExist
             | BranchIdDoesNotExist
-            | BranchIsNotBasedOnLatestPromotion
             | CheckpointIsDisabled
             | CommitIsDisabled
             | DuplicateCorrelationId
@@ -386,7 +385,6 @@ module Errors =
                 | AssignIsDisabled -> getLocalizedString StringResourceName.AssignIsDisabled
                 | BranchDoesNotExist -> getLocalizedString StringResourceName.BranchDoesNotExist
                 | BranchIdDoesNotExist -> getLocalizedString StringResourceName.BranchIdDoesNotExist
-                | BranchIsNotBasedOnLatestPromotion -> getLocalizedString StringResourceName.BranchIsNotBasedOnLatestPromotion
                 | CheckpointIsDisabled -> getLocalizedString StringResourceName.CheckpointIsDisabled
                 | CommitIsDisabled -> getLocalizedString StringResourceName.CommitIsDisabled
                 | DuplicateCorrelationId -> getLocalizedString StringResourceName.DuplicateCorrelationId

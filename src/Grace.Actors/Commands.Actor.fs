@@ -84,6 +84,8 @@ module Commands =
         [<KnownType("GetKnownTypes")>]
         type ReferenceCommand =
             | Create of referenceDto: ReferenceDto
+            | AddLink of link: ReferenceLinkType
+            | RemoveLink of link: ReferenceLinkType
             | DeleteLogical of force: bool * DeleteReason: DeleteReason
             | DeletePhysical
             | Undelete
