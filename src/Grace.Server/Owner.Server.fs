@@ -52,24 +52,24 @@ module Owner =
                 use activity = activitySource.StartActivity("processCommand", ActivityKind.Server)
                 let! parameters = context |> parse<'T>
 
+                // We know these Id's from ValidateIds.Middleware, so let's set them so we never have to resolve them again.
+                parameters.OwnerId <- graceIds.OwnerId
+
                 let handleCommand ownerId cmd =
                     task {
                         let actorProxy = getActorProxy ownerId
 
                         match! actorProxy.Handle cmd (createMetadata context) with
                         | Ok graceReturnValue ->
-                            (getParametersAsDictionary parameters) |> Seq.iter (fun kvp -> graceReturnValue.enhance(kvp.Key, kvp.Value) |> ignore)
-
-                            graceReturnValue
+                            (graceReturnValue |> addParametersToGraceReturnValue parameters)
                                 .enhance(nameof(OwnerId), graceIds.OwnerId)
                                 .enhance("Command", commandName)
                                 .enhance("Path", context.Request.Path) |> ignore
 
                             return! context |> result200Ok graceReturnValue
                         | Error graceError ->
-                            graceError
+                            (graceError |> addParametersToGraceError parameters)
                                 .enhance(nameof(OwnerId), graceIds.OwnerId)
-                                .enhance(nameof(Parameters), serialize parameters)
                                 .enhance("Command", commandName)
                                 .enhance("Path", context.Request.Path) |> ignore
 
@@ -116,9 +116,12 @@ module Owner =
                     (getCorrelationId context)
                 )
 
-                return!
-                    context
-                    |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
+                let graceError =
+                    (GraceError.Create $"{Utilities.createExceptionResponse ex}" (getCorrelationId context))
+                        .enhance(nameof (OwnerId), graceIds.OwnerId)
+                        .enhance("Path", context.Request.Path)
+
+                return! context |> result500ServerError graceError
         }
 
     /// Generic processor for all Owner queries.
@@ -158,18 +161,15 @@ module Owner =
                     let graceError =
                         (GraceError.Create (OwnerError.getErrorMessage error) (getCorrelationId context))
                             .enhance(nameof (OwnerId), graceIds.OwnerId)
-                            .enhance(nameof(Parameters), serialize parameters)
                             .enhance("Path", context.Request.Path)
                     return! context |> result400BadRequest graceError
             with ex ->
                 let graceError =
                     (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
                         .enhance(nameof (OwnerId), graceIds.OwnerId)
-                        .enhance(nameof(Parameters), serialize parameters)
                         .enhance("Path", context.Request.Path)
-                return!
-                    context
-                    |> result500ServerError graceError
+
+                return! context |> result500ServerError graceError
         }
 
     /// Create an owner.

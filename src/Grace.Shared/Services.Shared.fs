@@ -12,19 +12,19 @@ open System.IO
 open System.Linq
 open System.Security.Cryptography
 open System.Text
-open Microsoft.FSharp.NativeInterop
 
 module Services =
 
     /// Adds a property to a GraceResult instance.
-    let enhance<'T> (key: string, value: string) (result: GraceResult<'T>) =
+    let enhance<'T> key value (result: GraceResult<'T>) =
         if not <| String.IsNullOrEmpty(key) then
+            let safeValue = if String.IsNullOrEmpty(value) then String.Empty else value
             match result with
             | Ok result ->
-                result.Properties[key] <- value
+                result.Properties[key] <- safeValue
                 Ok result
             | Error error ->
-                error.Properties[key] <- value
+                error.Properties[key] <- safeValue
                 Error error
         else
             result

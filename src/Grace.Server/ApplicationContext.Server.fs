@@ -6,6 +6,7 @@ open CosmosJsonSerializer
 open Dapr.Client
 open Dapr.Actors.Client
 open Grace.Actors.Constants
+open Grace.Actors.Services
 open Grace.Shared
 open Grace.Shared.Types
 open Grace.Shared.Utilities
@@ -31,11 +32,16 @@ module ApplicationContext =
     let mutable private configuration: IConfiguration = null
     let Configuration () : IConfiguration = configuration
 
+    /// Dapr actor proxy factory instance
     let mutable actorProxyFactory: IActorProxyFactory = null
 
+    /// Dapr actor state storage provider instance
     let mutable actorStateStorageProvider: ActorStateStorageProvider = ActorStateStorageProvider.Unknown
 
+    /// Logger factory instance
     let mutable loggerFactory: ILoggerFactory = null
+
+    /// Grace Server's universal .NET memory cache
     let mutable memoryCache: IMemoryCache = null
 
     /// Sets the Application global configuration.
@@ -47,17 +53,17 @@ module ApplicationContext =
     /// Sets the ActorProxyFactory for the application.
     let setActorProxyFactory proxyFactory =
         actorProxyFactory <- proxyFactory
-        Grace.Actors.Services.setActorProxyFactory proxyFactory
+        setActorProxyFactory proxyFactory
 
     /// Sets the ActorStateStorageProvider for the application.
     let setActorStateStorageProvider actorStateStorage =
         actorStateStorageProvider <- actorStateStorage
-        Grace.Actors.Services.setActorStateStorageProvider actorStateStorageProvider
+        setActorStateStorageProvider actorStateStorageProvider
 
     /// Sets the ILoggerFactory for the application.
     let setLoggerFactory logFactory =
         loggerFactory <- logFactory
-        Grace.Actors.Services.setLoggerFactory loggerFactory
+        setLoggerFactory loggerFactory
 
     /// Holds information about each Azure Storage Account used by the application.
     type StorageAccount = { StorageAccountName: string; StorageAccountConnectionString: string }
@@ -175,9 +181,9 @@ module ApplicationContext =
             //memoryCacheOptions.SizeLimit <- 100L * 1024L * 1024L
             memoryCache <- new MemoryCache(memoryCacheOptions, loggerFactory)
 
-            // Inject the CosmosClient, CosmosContainer, and MemoryCache into Actor Services.
-            Grace.Actors.Services.setCosmosClient cosmosClient
-            Grace.Actors.Services.setCosmosContainer cosmosContainer
-            Grace.Actors.Services.setMemoryCache memoryCache
+            // Inject things into Actor Services.
+            setCosmosClient cosmosClient
+            setCosmosContainer cosmosContainer
+            setMemoryCache memoryCache
         }
         :> Task

@@ -4,8 +4,9 @@ open Dapr.Actors
 open Dapr.Actors.Runtime
 open FSharp.Control
 open Grace.Actors.Commands.Owner
-open Grace.Actors.Services
 open Grace.Actors.Events.Owner
+open Grace.Actors.Extensions.MemoryCache
+open Grace.Actors.Services
 open Grace.Actors.Interfaces
 open Grace.Shared
 open Grace.Shared.Constants
@@ -342,13 +343,12 @@ module Owner =
                                         // Clear the OwnerNameActor for the old name.
                                         let ownerNameActor = actorProxyFactory.CreateActorProxy<IOwnerNameActor>(ActorId(ownerDto.OwnerName), ActorName.OwnerName)
                                         do! ownerNameActor.ClearOwnerId metadata.CorrelationId
-                                        memoryCache.Remove($"OwN:{ownerDto.OwnerName}")
+                                        memoryCache.RemoveOwnerNameEntry ownerDto.OwnerName
 
                                         // Set the OwnerNameActor for the new name.
                                         let ownerNameActor = actorProxyFactory.CreateActorProxy<IOwnerNameActor>(ActorId(newName), ActorName.OwnerName)
                                         do! ownerNameActor.SetOwnerId ownerDto.OwnerId metadata.CorrelationId
-                                        use newCacheEntry =
-                                            memoryCache.CreateEntry($"OwN:{newName}", Value = ownerDto.OwnerId, AbsoluteExpirationRelativeToNow = MemoryCache.DefaultExpirationTime)
+                                        memoryCache.CreateOwnerNameEntry newName ownerDto.OwnerId
 
                                         return Ok(OwnerEventType.NameSet newName)
                                     | OwnerCommand.SetType ownerType -> return Ok(OwnerEventType.TypeSet ownerType)

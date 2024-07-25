@@ -15,6 +15,7 @@
 	</PropertyGroup>
 
 	<ItemGroup>
+		<Compile Include="Extensions\MemoryCache.Extensions.Actor.fs" />
 		<Compile Include="Constants.Actor.fs" />
 		<Compile Include="Storage.Actor.fs" />
 		<Compile Include="Commands.Actor.fs" />

@@ -238,7 +238,10 @@ module Constants =
     /// Values used with Grace's MemoryCache.
     module MemoryCache =
         /// A special Guid value that means "false" or "we know there's no value here". Used in places where the cache entry value is a Guid.
-        let EntityDoesNotExist = box (Guid("27F21D8A-DA1D-4C73-8773-4AA5A5712612")) // There's nothing special about this Guid. I just generated it one day.
+        let EntityDoesNotExistGuid = Guid("27F21D8A-DA1D-4C73-8773-4AA5A5712612")
+
+        /// A special Guid value that means "false" or "we know there's no value here". Used in places where the cache entry value is a Guid.
+        let EntityDoesNotExist = box EntityDoesNotExistGuid // There's nothing special about this Guid. I just generated it one day.
 
         /// The default value to store in Grace's MemoryCache when an entity is known to exist. This is a one-character string because MemoryCache values are Objects; although a bool would make more sense, using a constant string avoids boxing.
         [<Literal>]

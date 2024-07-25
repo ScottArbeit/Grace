@@ -20,6 +20,7 @@ open System.Net.Security
 open System.Net
 open System
 open System.Reflection
+open System.Collections.Concurrent
 
 #nowarn "9"
 
@@ -444,14 +445,14 @@ module Utilities =
         let p = NativePtr.stackalloc<'a> length |> NativePtr.toVoidPtr
         Span<'a>(p, length)
 
-    let propertyLookupByType = Dictionary<Type, PropertyInfo array>()
+    let propertyLookupByType = ConcurrentDictionary<Type, PropertyInfo array>()
 
     /// Creates a dictionary from the properties of an object.
     let getParametersAsDictionary<'T> (obj: 'T) =
         let mutable properties = Array.Empty<PropertyInfo>()
         if not <| propertyLookupByType.TryGetValue(typeof<'T>, &properties) then
             properties <- typeof<'T>.GetProperties(BindingFlags.Instance ||| BindingFlags.Public)
-            propertyLookupByType.Add(typeof<'T>, properties)
+            propertyLookupByType.TryAdd(typeof<'T>, properties) |> ignore
 
         let dict = Dictionary<string, string>()
 

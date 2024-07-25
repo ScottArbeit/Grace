@@ -421,6 +421,13 @@ module Types =
           CorrelationId: string
           Properties: Dictionary<String, String> }
 
+        /// Adds a property to a GraceResult instance.
+        //static member enhance<'T> (key, value) (result: GraceReturnValue<'T>) =
+        //    if not <| String.IsNullOrEmpty(key) then
+        //        result.Properties[key] <- value
+
+        //    result
+
         static member Create<'T> (returnValue: 'T) (correlationId: string) =
             { ReturnValue = returnValue; EventTime = getCurrentInstant (); CorrelationId = correlationId; Properties = new Dictionary<String, String>() }
 
@@ -429,7 +436,13 @@ module Types =
 
         /// Adds a key-value pair to GraceReturnValue's Properties dictionary.
         member this.enhance(key, value) =
-            this.Properties[key] <- value
+            match String.IsNullOrEmpty(key), String.IsNullOrEmpty(value) with
+            | false, false ->
+                this.Properties[key] <- value
+            | false, true ->
+                this.Properties[key] <- String.Empty
+            | true, _ -> ()
+
             this
 
         override this.ToString() =
@@ -456,7 +469,13 @@ module Types =
 
         /// Adds a key-value pair to GraceError's Properties dictionary.
         member this.enhance(key, value) =
-            this.Properties[key] <- value
+            match String.IsNullOrEmpty(key), String.IsNullOrEmpty(value) with
+            | false, false ->
+                this.Properties[key] <- value
+            | false, true ->
+                this.Properties[key] <- String.Empty
+            | true, _ -> ()
+
             this
 
         override this.ToString() =

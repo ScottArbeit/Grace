@@ -123,7 +123,7 @@ module Storage =
                             for fileVersion in fileVersions do
                                 fileVersionList.Append($"{fileVersion.RelativePath}; ") |> ignore
 
-                            return Error graceError |> enhance ("fileVersions", fileVersionList.ToString())
+                            return Error graceError |> enhance "fileVersions" $"{fileVersionList}"
                     | AWSS3 -> return Error(GraceError.Create (StorageError.getErrorMessage NotImplemented) correlationId)
                     | GoogleCloudStorage -> return Error(GraceError.Create (StorageError.getErrorMessage NotImplemented) correlationId)
                     | ObjectStorageProvider.Unknown -> return Error(GraceError.Create (StorageError.getErrorMessage NotImplemented) correlationId)

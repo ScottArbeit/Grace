@@ -1986,13 +1986,14 @@ module Branch =
 
                             let! uploadDirectoryVersions = Directory.SaveDirectoryVersions saveParameters
 
-                            if true then
+                            match! Directory.SaveDirectoryVersions saveParameters with
+                            | Ok returnValue ->
                                 t |> setProgressTaskValue showOutput 100.0
 
                                 return Ok(showOutput, parseResult, parameters, currentBranch, $"Save created prior to branch switch.")
-                            else
+                            | Error error ->
                                 t |> setProgressTaskValue showOutput 50.0
-                                return Error GraceError.Default
+                                return Error error
                         else
                             t |> setProgressTaskValue showOutput 100.0
 

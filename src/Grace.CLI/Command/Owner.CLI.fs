@@ -287,7 +287,7 @@ module Owner =
                                         | Ok returnValue ->
                                             // Update the Grace configuration file with the new Owner name.
                                             let newConfig = Current()
-                                            newConfig.OwnerName <- returnValue.Properties[setNameParameters.NewName]
+                                            newConfig.OwnerName <- setNameParameters.NewName
                                             updateConfiguration newConfig
                                         | Error _ -> ()
                                         t0.Increment(100.0)

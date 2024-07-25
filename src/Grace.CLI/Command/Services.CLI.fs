@@ -670,7 +670,7 @@ module Services =
 
                             let graceError = GraceError.Create (StorageError.getErrorMessage StorageError.FailedUploadingFilesToObjectStorage) correlationId
 
-                            return Error graceError |> enhance ("Errors", errorMessage)
+                            return Error graceError |> enhance "Errors" errorMessage
                     | Error error -> return Error error
                 else
                     return Ok(GraceReturnValue.Create true correlationId)

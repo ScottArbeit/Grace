@@ -50,11 +50,17 @@ module Repository =
 
     let processCommand<'T when 'T :> RepositoryParameters> (context: HttpContext) (validations: Validations<'T>) (command: 'T -> ValueTask<RepositoryCommand>) =
         task {
+            use activity = activitySource.StartActivity("processCommand", ActivityKind.Server)
+            let graceIds = getGraceIds context
+
             try
-                use activity = activitySource.StartActivity("processCommand", ActivityKind.Server)
                 let commandName = context.Items["Command"] :?> string
-                let graceIds = context.Items["GraceIds"] :?> GraceIds
                 let! parameters = context |> parse<'T>
+
+                // We know these Id's from ValidateIds.Middleware, so let's set them so we never have to resolve them again.
+                parameters.OwnerId <- graceIds.OwnerId
+                parameters.OrganizationId <- graceIds.OrganizationId
+                parameters.RepositoryId <- graceIds.RepositoryId
 
                 let handleCommand repositoryId cmd =
                     task {
@@ -62,22 +68,29 @@ module Repository =
 
                         match! actorProxy.Handle cmd (createMetadata context) with
                         | Ok graceReturnValue ->
-                            let graceIds = getGraceIds context
-                            graceReturnValue.Properties[nameof (OwnerId)] <- graceIds.OwnerId
-                            graceReturnValue.Properties[nameof (OrganizationId)] <- graceIds.OrganizationId
-                            graceReturnValue.Properties[nameof (RepositoryId)] <- graceIds.RepositoryId
+                            (graceReturnValue |> addParametersToGraceReturnValue parameters)
+                                .enhance(nameof(OwnerId), graceIds.OwnerId)
+                                .enhance(nameof(OrganizationId), graceIds.OrganizationId)
+                                .enhance(nameof(RepositoryId), graceIds.RepositoryId)
+                                .enhance("Command", commandName)
+                                .enhance("Path", context.Request.Path) |> ignore
 
                             return! context |> result200Ok graceReturnValue
                         | Error graceError ->
+                            (graceError |> addParametersToGraceError parameters)
+                                .enhance(nameof(OwnerId), graceIds.OwnerId)
+                                .enhance(nameof(OrganizationId), graceIds.OrganizationId)
+                                .enhance(nameof(RepositoryId), graceIds.RepositoryId)
+                                .enhance("Command", commandName)
+                                .enhance("Path", context.Request.Path) |> ignore
+
                             log.LogDebug(
                                 "{currentInstant}: In Branch.Server.handleCommand: error from actorProxy.Handle: {error}",
                                 getCurrentInstantExtended (),
                                 (graceError.ToString())
                             )
 
-                            return!
-                                context
-                                |> result400BadRequest { graceError with Properties = getParametersAsDictionary parameters }
+                            return! context |> result400BadRequest graceError
                     }
 
                 let validationResults = validations parameters
@@ -94,55 +107,21 @@ module Repository =
 
                 if validationsPassed then
                     let! cmd = command parameters
-
-                    let! repositoryId =
-                        resolveRepositoryId
-                            parameters.OwnerId
-                            parameters.OwnerName
-                            parameters.OrganizationId
-                            parameters.OrganizationName
-                            parameters.RepositoryId
-                            parameters.RepositoryName
-                            parameters.CorrelationId
-
-                    match repositoryId, commandName = nameof (Create) with
-                    | Some repositoryId, _ ->
-                        // If Id is Some, then we know we have a valid Id.
-                        if String.IsNullOrEmpty(parameters.RepositoryId) then
-                            parameters.RepositoryId <- repositoryId
-
-                        return! handleCommand repositoryId cmd
-                    | None, true ->
-                        // If it's None, but this is a Create command, still valid, just use the Id from the parameters.
-                        return! handleCommand parameters.RepositoryId cmd
-                    | None, false ->
-                        // If it's None, and this is not a Create command, then we have a bad request.
-                        log.LogDebug(
-                            "{currentInstant}: In Repository.Server.processCommand: resolveRepositoryId failed. Repository does not exist. repositoryId: {repositoryId}; repositoryName: {repositoryName}; Path: {path}; CorrelationId: {correlationId}.",
-                            getCurrentInstantExtended (),
-                            parameters.RepositoryId,
-                            parameters.RepositoryName,
-                            context.Request.Path,
-                            (getCorrelationId context)
-                        )
-
-                        return!
-                            context
-                            |> result400BadRequest (
-                                GraceError.CreateWithMetadata
-                                    (RepositoryError.getErrorMessage RepositoryDoesNotExist)
-                                    (getCorrelationId context)
-                                    (getParametersAsDictionary parameters)
-                            )
+                    return! handleCommand graceIds.RepositoryId cmd
                 else
                     let! error = validationResults |> getFirstError
                     let errorMessage = RepositoryError.getErrorMessage error
                     log.LogDebug("{currentInstant}: error: {error}", getCurrentInstantExtended (), errorMessage)
 
-                    let graceError = GraceError.CreateWithMetadata errorMessage (getCorrelationId context) (getParametersAsDictionary parameters)
+                    let graceError =
+                        (GraceError.CreateWithMetadata errorMessage (getCorrelationId context) (getParametersAsDictionary parameters))
+                            .enhance(nameof(OwnerId), graceIds.OwnerId)
+                            .enhance(nameof(OrganizationId), graceIds.OrganizationId)
+                            .enhance(nameof(RepositoryId), graceIds.RepositoryId)
+                            .enhance("Command", commandName)
+                            .enhance("Path", context.Request.Path)
+                            .enhance("Error", errorMessage)
 
-                    graceError.Properties.Add("Path", context.Request.Path)
-                    graceError.Properties.Add("Error", errorMessage)
                     return! context |> result400BadRequest graceError
             with ex ->
                 log.LogError(
@@ -153,9 +132,14 @@ module Repository =
                     (getCorrelationId context)
                 )
 
-                return!
-                    context
-                    |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
+                let graceError =
+                    (GraceError.Create $"{Utilities.createExceptionResponse ex}" (getCorrelationId context))
+                        .enhance(nameof (OwnerId), graceIds.OwnerId)
+                        .enhance(nameof (OrganizationId), graceIds.OrganizationId)
+                        .enhance(nameof (RepositoryId), graceIds.RepositoryId)
+                        .enhance("Path", context.Request.Path)
+
+                return! context |> result500ServerError graceError
         }
 
     let processQuery<'T, 'U when 'T :> RepositoryParameters>
@@ -166,11 +150,11 @@ module Repository =
         (query: QueryResult<IRepositoryActor, 'U>)
         =
         task {
-            try
-                use activity = activitySource.StartActivity("processQuery", ActivityKind.Server)
-                let graceIds = getGraceIds context
-                let validationResults = validations parameters
+            use activity = activitySource.StartActivity("processQuery", ActivityKind.Server)
+            let graceIds = getGraceIds context
 
+            try
+                let validationResults = validations parameters
                 let! validationsPassed = validationResults |> allPass
 
                 if validationsPassed then
@@ -186,6 +170,7 @@ module Repository =
                             .enhance(nameof(OwnerId), graceIds.OwnerId)
                             .enhance(nameof(OrganizationId), graceIds.OrganizationId)
                             .enhance(nameof(RepositoryId), graceIds.RepositoryId)
+                            .enhance("Path", context.Request.Path)
 
                     return! context |> result200Ok graceReturnValue
                 else
@@ -196,8 +181,8 @@ module Repository =
                             .enhance(nameof(OwnerId), graceIds.OwnerId)
                             .enhance(nameof(OrganizationId), graceIds.OrganizationId)
                             .enhance(nameof(RepositoryId), graceIds.RepositoryId)
+                            .enhance("Path", context.Request.Path)
 
-                    graceError.Properties.Add("Path", context.Request.Path)
                     return! context |> result400BadRequest graceError
             with ex ->
                 log.LogError(
@@ -208,9 +193,14 @@ module Repository =
                     (getCorrelationId context)
                 )
 
-                return!
-                    context
-                    |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
+                let graceError =
+                    (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
+                        .enhance(nameof (OwnerId), graceIds.OwnerId)
+                        .enhance(nameof (OrganizationId), graceIds.OrganizationId)
+                        .enhance(nameof (RepositoryId), graceIds.RepositoryId)
+                        .enhance("Path", context.Request.Path)
+
+                return! context |> result500ServerError graceError
         }
 
     /// Create a new repository.

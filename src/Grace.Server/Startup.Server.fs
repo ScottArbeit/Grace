@@ -320,9 +320,6 @@ module Application =
 
             globalOpenTelemetryAttributes.Add("process.runtime.version", System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription)
 
-            // Set up the ActorProxyFactory for the application.
-            let actorProxyOptions = ActorProxyOptions() // DaprApiToken = Environment.GetEnvironmentVariable("DAPR_API_TOKEN")) (when we actually implement auth)
-
             //let environmentVariables = Environment.GetEnvironmentVariables()
             //let sortedKeys = SortedSet<string>()
 
@@ -334,12 +331,13 @@ module Application =
             //    let value = Environment.GetEnvironmentVariable(key, EnvironmentVariableTarget.Process)
             //    logToConsole $"{key}: {value}"
 
+            // Set up the ActorProxyFactory for the application.
+            let actorProxyOptions = ActorProxyOptions() // DaprApiToken = Environment.GetEnvironmentVariable("DAPR_API_TOKEN")) (when we actually implement auth)
             actorProxyOptions.HttpEndpoint <-
                 $"{Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.DaprServerUri)}:{Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.DaprHttpPort)}"
-
             actorProxyOptions.JsonSerializerOptions <- Constants.JsonSerializerOptions
             actorProxyOptions.RequestTimeout <- TimeSpan.FromSeconds(60.0)
-            //logToConsole $"actorProxyOptions.HttpEndpoint: {actorProxyOptions.HttpEndpoint}"
+            
             let actorProxyFactory = new ActorProxyFactory(actorProxyOptions)
             ApplicationContext.setActorProxyFactory actorProxyFactory
             ApplicationContext.setActorStateStorageProvider ActorStateStorageProvider.AzureCosmosDb
@@ -352,7 +350,7 @@ module Application =
             openApiInfo.Version <- "v0.1"
             openApiInfo.Contact <- new OpenApiContact()
             openApiInfo.Contact.Name <- "Scott Arbeit"
-            openApiInfo.Contact.Email <- "scott@scottarbeit.com"
+            openApiInfo.Contact.Email <- "scott.arbeit@outlook.com"
             openApiInfo.Contact.Url <- Uri("https://gracevcs.com")
 
             // Telemetry configuration

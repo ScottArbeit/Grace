@@ -43,13 +43,14 @@ module Organization =
         (command: 'T -> ValueTask<OrganizationCommand>)
         =
         task {
+            let graceIds = getGraceIds context
+
             try
                 use activity = activitySource.StartActivity("processCommand", ActivityKind.Server)
                 let commandName = context.Items["Command"] :?> string
-                let graceIds = getGraceIds context
                 let! parameters = context |> parse<'T>
 
-                // We know these Id's from ValidateIdsMiddleware, so let's be sure they're set, so we never have to resolve them again.
+                // We know these Id's from ValidateIds.Middleware, so let's set them so we never have to resolve them again.
                 parameters.OwnerId <- graceIds.OwnerId
                 parameters.OrganizationId <- graceIds.OrganizationId
 
@@ -59,21 +60,27 @@ module Organization =
 
                         match! actorProxy.Handle cmd (createMetadata context) with
                         | Ok graceReturnValue ->
-                            let graceIds = getGraceIds context
-                            graceReturnValue.Properties[nameof (OwnerId)] <- graceIds.OwnerId
-                            graceReturnValue.Properties[nameof (OrganizationId)] <- graceIds.OrganizationId
+                            (graceReturnValue |> addParametersToGraceReturnValue parameters)
+                                .enhance(nameof(OwnerId), graceIds.OwnerId)
+                                .enhance(nameof(OrganizationId), graceIds.OrganizationId)
+                                .enhance("Command", commandName)
+                                .enhance("Path", context.Request.Path) |> ignore
 
                             return! context |> result200Ok graceReturnValue
                         | Error graceError ->
+                            (graceError |> addParametersToGraceError parameters)
+                                .enhance(nameof(OwnerId), graceIds.OwnerId)
+                                .enhance(nameof(OrganizationId), graceIds.OrganizationId)
+                                .enhance("Command", commandName)
+                                .enhance("Path", context.Request.Path) |> ignore
+
                             log.LogDebug(
                                 "{currentInstant}: In Branch.Server.handleCommand: error from actorProxy.Handle: {error}",
                                 getCurrentInstantExtended (),
                                 (graceError.ToString())
                             )
 
-                            return!
-                                context
-                                |> result400BadRequest { graceError with Properties = getParametersAsDictionary parameters }
+                            return! context |> result400BadRequest graceError
                     }
 
                 let validationResults = validations parameters
@@ -87,51 +94,20 @@ module Organization =
 
                 if validationsPassed then
                     let! cmd = command parameters
-
-                    let! organizationId =
-                        resolveOrganizationId
-                            parameters.OwnerId
-                            parameters.OwnerName
-                            parameters.OrganizationId
-                            parameters.OrganizationName
-                            parameters.CorrelationId
-
-                    match organizationId, commandName = nameof (Create) with
-                    | Some organizationId, _ ->
-                        // If Id is Some, then we know we have a valid Id.
-                        if String.IsNullOrEmpty(parameters.OrganizationId) then
-                            parameters.OrganizationId <- organizationId
-
-                        return! handleCommand organizationId cmd
-                    | None, true ->
-                        // If it's None, but this is a Create command, still valid, just use the Id from the parameters.
-                        return! handleCommand parameters.OrganizationId cmd
-                    | None, false ->
-                        // If it's None, and this is not a Create command, then we have a bad request.
-                        log.LogDebug(
-                            "{currentInstant}: In Organization.Server.processCommand: resolveOrganizationId failed. Organization does not exist. organizationId: {organizationId}; organizationName: {organizationName}.",
-                            getCurrentInstantExtended (),
-                            parameters.OrganizationId,
-                            parameters.OrganizationName
-                        )
-
-                        return!
-                            context
-                            |> result400BadRequest (
-                                GraceError.CreateWithMetadata
-                                    (OrganizationError.getErrorMessage OrganizationDoesNotExist)
-                                    (getCorrelationId context)
-                                    (getParametersAsDictionary parameters)
-                            )
+                    return! handleCommand graceIds.OrganizationId cmd
                 else
                     let! error = validationResults |> getFirstError
                     let errorMessage = OrganizationError.getErrorMessage error
                     log.LogDebug("{currentInstant}: error: {error}", getCurrentInstantExtended (), errorMessage)
 
-                    let graceError = GraceError.CreateWithMetadata errorMessage (getCorrelationId context) (getParametersAsDictionary parameters)
+                    let graceError =
+                        (GraceError.CreateWithMetadata errorMessage (getCorrelationId context) (getParametersAsDictionary parameters))
+                            .enhance(nameof(OwnerId), graceIds.OwnerId)
+                            .enhance(nameof(OrganizationId), graceIds.OrganizationId)
+                            .enhance("Command", commandName)
+                            .enhance("Path", context.Request.Path)
+                            .enhance("Error", errorMessage)
 
-                    graceError.Properties.Add("Path", context.Request.Path)
-                    graceError.Properties.Add("Error", errorMessage)
                     return! context |> result400BadRequest graceError
             with ex ->
                 log.LogError(
@@ -141,9 +117,13 @@ module Organization =
                     (getCorrelationId context)
                 )
 
-                return!
-                    context
-                    |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
+                let graceError =
+                    (GraceError.Create $"{Utilities.createExceptionResponse ex}" (getCorrelationId context))
+                        .enhance(nameof (OwnerId), graceIds.OwnerId)
+                        .enhance(nameof (OrganizationId), graceIds.OrganizationId)
+                        .enhance("Path", context.Request.Path)
+
+                return! context |> result500ServerError graceError
         }
 
     /// Generic processor for all Organization queries.
@@ -156,9 +136,9 @@ module Organization =
         =
         task {
             use activity = activitySource.StartActivity("processQuery", ActivityKind.Server)
+            let graceIds = getGraceIds context
 
             try
-                let graceIds = getGraceIds context
                 let validationResults = validations parameters
                 let! validationsPassed = validationResults |> allPass
 
@@ -170,26 +150,31 @@ module Organization =
                     let! queryResult = query context maxCount actorProxy
 
                     // Wrap the result in a GraceReturnValue.
-                    let graceReturnValue = GraceReturnValue.Create queryResult (getCorrelationId context)
-                    graceReturnValue.enhance(nameof (OwnerId), graceIds.OwnerId)
-                                    .enhance(nameof (OrganizationId), graceIds.OrganizationId)
-                                    .enhance("Path", context.Request.Path)
-                        |> ignore
+                    let graceReturnValue =
+                        (GraceReturnValue.CreateWithMetadata queryResult (getCorrelationId context) (getParametersAsDictionary parameters))
+                            .enhance(nameof (OwnerId), graceIds.OwnerId)
+                            .enhance(nameof (OrganizationId), graceIds.OrganizationId)
+                            .enhance("Path", context.Request.Path)
 
                     return! context |> result200Ok graceReturnValue
                 else
                     let! error = validationResults |> getFirstError
 
-                    let graceError = GraceError.Create (OrganizationError.getErrorMessage error) (getCorrelationId context)
-                    graceError.enhance(nameof (OwnerId), graceIds.OwnerId)
-                              .enhance(nameof (OrganizationId), graceIds.OrganizationId)
-                              .enhance("Path", context.Request.Path)
-                        |> ignore
+                    let graceError =
+                        (GraceError.CreateWithMetadata (OrganizationError.getErrorMessage error) (getCorrelationId context) (getParametersAsDictionary parameters))
+                            .enhance(nameof (OwnerId), graceIds.OwnerId)
+                            .enhance(nameof (OrganizationId), graceIds.OrganizationId)
+                            .enhance("Path", context.Request.Path)
+
                     return! context |> result400BadRequest graceError
             with ex ->
-                return!
-                    context
-                    |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
+                let graceError =
+                    (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
+                        .enhance(nameof (OwnerId), graceIds.OwnerId)
+                        .enhance(nameof (OrganizationId), graceIds.OrganizationId)
+                        .enhance("Path", context.Request.Path)
+
+                return! context |> result500ServerError graceError
         }
 
     /// Create an organization.
