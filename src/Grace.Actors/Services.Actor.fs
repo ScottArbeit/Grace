@@ -323,25 +323,27 @@ module Services =
 
         }
 
+
+    /// Checks whether an owner exists by querying the actor, and updates the MemoryCache with the result.
+    let ownerExists ownerId correlationId =
+        task {
+            // Call the Owner actor to check if the owner exists.
+            let ownerActorProxy = actorProxyFactory.CreateActorProxy<IOwnerActor>(ActorId(ownerId), ActorName.Owner)
+
+            let! exists = ownerActorProxy.Exists correlationId
+
+            if exists then
+                // Add this OwnerId to the MemoryCache.
+                memoryCache.CreateOwnerIdEntry (OwnerId.Parse(ownerId)) MemoryCache.ExistsValue
+                return Some ownerId
+            else
+                return None
+        }
+
     /// Gets the OwnerId by checking for the existence of OwnerId if provided, or searching by OwnerName.
     let resolveOwnerId (ownerId: string) (ownerName: string) (correlationId: CorrelationId) =
         task {
             let mutable ownerGuid = Guid.Empty
-
-            let ownerExists ownerId =
-                task {
-                    // Call the Owner actor to check if the owner exists.
-                    let ownerActorProxy = actorProxyFactory.CreateActorProxy<IOwnerActor>(ActorId(ownerId), ActorName.Owner)
-
-                    let! exists = ownerActorProxy.Exists correlationId
-
-                    if exists then
-                        // Add this OwnerId to the MemoryCache.
-                        memoryCache.CreateOwnerIdEntry ownerGuid MemoryCache.ExistsValue
-                        return Some ownerId
-                    else
-                        return None
-                }
 
             if not <| String.IsNullOrEmpty(ownerId) && Guid.TryParse(ownerId, &ownerGuid) then
                 // Check if we have this owner id in MemoryCache.
@@ -350,9 +352,8 @@ module Services =
                     match value with
                     | MemoryCache.ExistsValue -> return Some ownerId
                     | MemoryCache.DoesNotExistValue -> return None
-                    | _ -> return! ownerExists ownerId
-                | None ->
-                    return! ownerExists ownerId
+                    | _ -> return! ownerExists ownerId correlationId
+                | None -> return! ownerExists ownerId correlationId
             elif String.IsNullOrEmpty(ownerName) then
                 // We have no OwnerId or OwnerName to resolve.
                 return None
@@ -390,25 +391,26 @@ module Services =
                             return None
         }
 
+    /// Checks whether an organization exists by querying the actor, and updates the MemoryCache with the result.
+    let organizationExists organizationId correlationId =
+        task {
+            // Call the Organization actor to check if the organization exists.
+            let actorProxy = actorProxyFactory.CreateActorProxy<IOrganizationActor>(ActorId(organizationId), ActorName.Organization)
+
+            let! exists = actorProxy.Exists correlationId
+
+            if exists then
+                // Add this OrganizationId to the MemoryCache.
+                memoryCache.CreateOrganizationIdEntry (OrganizationId.Parse(organizationId)) MemoryCache.ExistsValue
+                return Some organizationId
+            else
+                return None
+        }
+
     /// Gets the OrganizationId by either returning OrganizationId if provided, or searching by OrganizationName.
     let resolveOrganizationId (ownerId: string) (ownerName: string) (organizationId: string) (organizationName: string) (correlationId: CorrelationId) =
         task {
             let mutable organizationGuid = Guid.Empty
-
-            let organizationExists organizationId =
-                task {
-                    // Call the Organization actor to check if the organization exists.
-                    let actorProxy = actorProxyFactory.CreateActorProxy<IOrganizationActor>(ActorId(organizationId), ActorName.Organization)
-
-                    let! exists = actorProxy.Exists correlationId
-
-                    if exists then
-                        // Add this OrganizationId to the MemoryCache.
-                        memoryCache.CreateOrganizationIdEntry organizationGuid MemoryCache.ExistsValue
-                        return Some organizationId
-                    else
-                        return None
-                }
 
             if not <| String.IsNullOrEmpty(organizationId)
                 && Guid.TryParse(organizationId, &organizationGuid)
@@ -418,8 +420,8 @@ module Services =
                     match value with
                     | MemoryCache.ExistsValue -> return Some organizationId
                     | MemoryCache.DoesNotExistValue -> return None
-                    | _ -> return! organizationExists organizationId
-                | None -> return! organizationExists organizationId
+                    | _ -> return! organizationExists organizationId correlationId
+                | None -> return! organizationExists organizationId correlationId
             elif String.IsNullOrEmpty(organizationName) then
                 // We have no OrganizationId or OrganizationName to resolve.
                 return None
@@ -487,6 +489,22 @@ module Services =
                         | MongoDB -> return None
         }
 
+    /// Checks whether a repository exists by querying the actor, and updates the MemoryCache with the result.
+    let repositoryExists repositoryId correlationId =
+        task {
+            // Call the Repository actor to check if the repository exists.
+            let actorProxy = actorProxyFactory.CreateActorProxy<IRepositoryActor>(ActorId(repositoryId), ActorName.Repository)
+
+            let! exists = actorProxy.Exists correlationId
+
+            if exists then
+                // Add this RepositoryId to the MemoryCache.
+                memoryCache.CreateRepositoryIdEntry (RepositoryId.Parse(repositoryId)) MemoryCache.ExistsValue
+                return Some repositoryId
+            else
+                return None
+        }
+
     /// Gets the RepositoryId by returning RepositoryId if provided, or searching by RepositoryName within the provided owner and organization.
     let resolveRepositoryId
         (ownerId: string)
@@ -500,21 +518,6 @@ module Services =
         task {
             let mutable repositoryGuid = Guid.Empty
 
-            let repositoryExists repositoryId =
-                task {
-                    // Call the Repository actor to check if the repository exists.
-                    let actorProxy = actorProxyFactory.CreateActorProxy<IRepositoryActor>(ActorId(repositoryId), ActorName.Repository)
-
-                    let! exists = actorProxy.Exists correlationId
-
-                    if exists then
-                        // Add this RepositoryId to the MemoryCache.
-                        memoryCache.CreateRepositoryIdEntry repositoryGuid MemoryCache.ExistsValue
-                        return Some repositoryId
-                    else
-                        return None
-                }
-
             if not <| String.IsNullOrEmpty(repositoryId)
                 && Guid.TryParse(repositoryId, &repositoryGuid)
             then
@@ -523,8 +526,8 @@ module Services =
                     match value with
                     | MemoryCache.ExistsValue -> return Some repositoryId
                     | MemoryCache.DoesNotExistValue -> return None
-                    | _ -> return! repositoryExists repositoryId
-                | None -> return! repositoryExists repositoryId
+                    | _ -> return! repositoryExists repositoryId correlationId
+                | None -> return! repositoryExists repositoryId correlationId
             elif String.IsNullOrEmpty(repositoryName) then
                 // We don't have a RepositoryId or RepositoryName, so we can't resolve the RepositoryId.
                 return None
@@ -591,24 +594,25 @@ module Services =
                         | MongoDB -> return None
         }
 
+    /// Checks whether a branch exists by querying the actor, and updates the MemoryCache with the result.
+    let branchExists branchId correlationId =
+        task {
+            // Call the Branch actor to check if the branch exists.
+            let branchActorProxy = actorProxyFactory.CreateActorProxy<IBranchActor>(ActorId(branchId), ActorName.Branch)
+            let! exists = branchActorProxy.Exists correlationId
+
+            if exists then
+                // Add this BranchId to the MemoryCache.
+                memoryCache.CreateBranchIdEntry (BranchId.Parse(branchId)) MemoryCache.ExistsValue
+                return Some branchId
+            else
+                return None
+        }
+
     /// Gets the BranchId by returning BranchId if provided, or searching by BranchName within the provided repository.
     let resolveBranchId repositoryId branchId branchName (correlationId: CorrelationId) =
         task {
             let mutable branchGuid = Guid.Empty
-
-            let branchExists branchId =
-                task {
-                    // Call the Branch actor to check if the branch exists.
-                    let branchActorProxy = actorProxyFactory.CreateActorProxy<IBranchActor>(ActorId(branchId), ActorName.Branch)
-                    let! exists = branchActorProxy.Exists correlationId
-
-                    if exists then
-                        // Add this BranchId to the MemoryCache.
-                        memoryCache.CreateBranchIdEntry branchGuid MemoryCache.ExistsValue
-                        return Some branchId
-                    else
-                        return None
-                }
 
             if not <| String.IsNullOrEmpty(branchId) && Guid.TryParse(branchId, &branchGuid) then
                 match memoryCache.GetBranchIdEntry branchGuid with
@@ -616,8 +620,8 @@ module Services =
                     match value with
                     | MemoryCache.ExistsValue -> return Some branchId
                     | MemoryCache.DoesNotExistValue -> return None
-                    | _ -> return! branchExists branchId
-                | None -> return! branchExists branchId
+                    | _ -> return! branchExists branchId correlationId
+                | None -> return! branchExists branchId correlationId
             elif String.IsNullOrEmpty(branchName) then
                 // We don't have a BranchId or BranchName, so we can't resolve the BranchId.
                 return None

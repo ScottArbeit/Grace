@@ -1,7 +1,6 @@
 namespace Grace.Server
 
 open Dapr.Actors
-open Dapr.Actors.Client
 open Giraffe
 open Grace.Actors
 open Grace.Actors.Commands.Branch

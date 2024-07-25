@@ -70,19 +70,19 @@ module MemoryCache =
             else
                 None
 
-        /// Check if we have an entry in MemoryCache for an OwnerId, and return the OwnerId if we have it.
+        /// Check if we have an entry in MemoryCache for an OwnerId.
         member this.GetOwnerIdEntry(ownerId: OwnerId) =
             this.GetFromCache<string> $"{ownerIdPrefix}:{ownerId}"
 
-        /// Check if we have an entry in MemoryCache for an OrganizationId, and return the OrganizationId if we have it.
+        /// Check if we have an entry in MemoryCache for an OrganizationId.
         member this.GetOrganizationIdEntry(organizationId: OrganizationId) =
             this.GetFromCache<string> $"{organizationIdPrefix}:{organizationId}"
             
-        /// Check if we have an entry in MemoryCache for a RepositoryId, and return the RepositoryId if we have it.
+        /// Check if we have an entry in MemoryCache for a RepositoryId.
         member this.GetRepositoryIdEntry(repositoryId: RepositoryId) =
             this.GetFromCache<string> $"{repositoryIdPrefix}:{repositoryId}"
 
-        /// Check if we have an entry in MemoryCache for a BranchId, and return the BranchId if we have it.
+        /// Check if we have an entry in MemoryCache for a BranchId.
         member this.GetBranchIdEntry(branchId: BranchId) =
             this.GetFromCache<string> $"{branchIdPrefix}:{branchId}"
 
