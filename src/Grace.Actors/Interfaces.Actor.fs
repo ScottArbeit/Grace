@@ -62,10 +62,10 @@ module Interfaces =
         abstract member GetEvents: correlationId: CorrelationId -> Task<IReadOnlyList<Events.Branch.BranchEvent>>
 
         /// Retrieves the most recent commit from this branch.
-        abstract member GetLatestCommit: correlationId: CorrelationId -> Task<ReferenceId>
+        abstract member GetLatestCommit: correlationId: CorrelationId -> Task<ReferenceDto>
 
         /// Retrieves the most recent promotion from this branch.
-        abstract member GetLatestPromotion: correlationId: CorrelationId -> Task<ReferenceId>
+        abstract member GetLatestPromotion: correlationId: CorrelationId -> Task<ReferenceDto>
 
         /// Retrieves the parent branch for a given branch.
         abstract member GetParentBranch: correlationId: CorrelationId -> Task<BranchDto>

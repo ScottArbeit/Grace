@@ -159,14 +159,13 @@ module Notifications =
                     logToConsole $"Received BranchEvent: {getDiscriminatedUnionFullName branchEvent.Event} {Environment.NewLine}{branchEvent.Metadata}"
 
                     match branchEvent.Event with
-                    | Branch.Promoted(referenceId, directoryId, sha256Hash, referenceText) ->
-                        let! referenceDto = getReferenceDto referenceId correlationId
+                    | Branch.Promoted(referenceDto, directoryId, sha256Hash, referenceText) ->
                         let! branchDto = getBranchDto referenceDto.BranchId correlationId
 
                         do!
                             hubContext.Clients
                                 .Group($"{branchDto.BranchId}")
-                                .NotifyOnPromotion(branchDto.BranchId, branchDto.BranchName, referenceId)
+                                .NotifyOnPromotion(branchDto.BranchId, branchDto.BranchName, referenceDto.ReferenceId)
 
                         // Create the diff between the new promotion and previous promotion.
                         let! latestTwoPromotions = getPromotions referenceDto.BranchId 2
@@ -174,15 +173,14 @@ module Notifications =
                         if latestTwoPromotions.Count = 2 then
                             do! diffTwoDirectoryVersions latestTwoPromotions[0].DirectoryId latestTwoPromotions[1].DirectoryId
 
-                    | Branch.Committed(referenceId, directoryId, sha256Hash, referenceText) ->
-                        let! referenceDto = getReferenceDto referenceId correlationId
+                    | Branch.Committed(referenceDto, directoryId, sha256Hash, referenceText) ->
                         let! branchDto = getBranchDto referenceDto.BranchId correlationId
                         let! parentBranchDto = getBranchDto branchDto.ParentBranchId correlationId
 
                         do!
                             hubContext.Clients
                                 .Group($"{branchDto.ParentBranchId}")
-                                .NotifyOnCommit(branchDto.BranchName, parentBranchDto.BranchName, parentBranchDto.ParentBranchId, referenceId)
+                                .NotifyOnCommit(branchDto.BranchName, parentBranchDto.BranchName, parentBranchDto.ParentBranchId, referenceDto.ReferenceId)
 
                         // Create the diff between the new commit and the previous commit.
                         let! latestTwoCommits = getCommits referenceDto.BranchId 2
@@ -195,15 +193,14 @@ module Notifications =
                         | Some latestPromotion -> do! diffTwoDirectoryVersions referenceDto.DirectoryId latestPromotion.DirectoryId
                         | None -> ()
 
-                    | Branch.Checkpointed(referenceId, directoryId, sha256Hash, referenceText) ->
-                        let! referenceDto = getReferenceDto referenceId correlationId
+                    | Branch.Checkpointed(referenceDto, directoryId, sha256Hash, referenceText) ->
                         let! branchDto = getBranchDto referenceDto.BranchId correlationId
                         let! parentBranchDto = getBranchDto branchDto.ParentBranchId correlationId
 
                         do!
                             hubContext.Clients
                                 .Group($"{branchDto.ParentBranchId}")
-                                .NotifyOnCheckpoint(branchDto.BranchName, parentBranchDto.BranchName, parentBranchDto.ParentBranchId, referenceId)
+                                .NotifyOnCheckpoint(branchDto.BranchName, parentBranchDto.BranchName, parentBranchDto.ParentBranchId, referenceDto.ReferenceId)
 
                         // Create the diff between the two most recent checkpoints.
                         let! checkpoints = getCheckpoints branchDto.BranchId 2
@@ -216,15 +213,14 @@ module Notifications =
                         | Some latestCommit -> do! diffTwoDirectoryVersions referenceDto.DirectoryId latestCommit.DirectoryId
                         | None -> ()
 
-                    | Branch.Saved(referenceId, directoryId, sha256Hash, referenceText) ->
-                        let! referenceDto = getReferenceDto referenceId correlationId
+                    | Branch.Saved(referenceDto, directoryId, sha256Hash, referenceText) ->
                         let! branchDto = getBranchDto referenceDto.BranchId correlationId
                         let! parentBranchDto = getBranchDto branchDto.ParentBranchId correlationId
 
                         do!
                             hubContext.Clients
                                 .Group($"{branchDto.ParentBranchId}")
-                                .NotifyOnSave(branchDto.BranchName, parentBranchDto.BranchName, parentBranchDto.ParentBranchId, referenceId)
+                                .NotifyOnSave(branchDto.BranchName, parentBranchDto.BranchName, parentBranchDto.ParentBranchId, referenceDto.ReferenceId)
 
                         // Create the diff between the new save and the previous save.
                         let! latestTwoSaves = getSaves referenceDto.BranchId 2

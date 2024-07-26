@@ -904,11 +904,11 @@ module Reference =
 
                                                 let referenceIds = List<ReferenceId>()
 
-                                                if branchDto.LatestCommit <> ReferenceId.Empty then
-                                                    referenceIds.Add(branchDto.LatestCommit)
+                                                if branchDto.LatestCommit <> ReferenceDto.Default then
+                                                    referenceIds.Add(branchDto.LatestCommit.ReferenceId)
 
-                                                if branchDto.LatestPromotion <> ReferenceId.Empty then
-                                                    referenceIds.Add(branchDto.LatestPromotion)
+                                                if branchDto.LatestPromotion <> ReferenceDto.Default then
+                                                    referenceIds.Add(branchDto.LatestPromotion.ReferenceId)
 
                                                 if referenceIds.Count > 0 then
                                                     let getReferencesByReferenceIdParameters =
@@ -940,7 +940,7 @@ module Reference =
                                                         t1.Value <- 100.0
 
                                                         // If the current branch is based on the parent's latest promotion, then we can proceed with the promotion.
-                                                        if branchDto.BasedOn = parentBranchDto.LatestPromotion then
+                                                        if branchDto.BasedOn = parentBranchDto.LatestPromotion.ReferenceId then
                                                             t2.StartTask()
 
                                                             let promotionParameters =

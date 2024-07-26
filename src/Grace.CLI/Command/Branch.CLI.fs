@@ -1071,11 +1071,11 @@ module Branch =
 
                                                 let referenceIds = List<ReferenceId>()
 
-                                                if branchDto.LatestCommit <> ReferenceId.Empty then
-                                                    referenceIds.Add(branchDto.LatestCommit)
+                                                if branchDto.LatestCommit <> ReferenceDto.Default then
+                                                    referenceIds.Add(branchDto.LatestCommit.ReferenceId)
 
-                                                if branchDto.LatestPromotion <> ReferenceId.Empty then
-                                                    referenceIds.Add(branchDto.LatestPromotion)
+                                                if branchDto.LatestPromotion <> ReferenceDto.Default then
+                                                    referenceIds.Add(branchDto.LatestPromotion.ReferenceId)
 
                                                 if referenceIds.Count > 0 then
                                                     let getReferencesByReferenceIdParameters =
@@ -1107,7 +1107,7 @@ module Branch =
                                                         t1.Value <- 100.0
 
                                                         // If the current branch is based on the parent's latest promotion, then we can proceed with the promotion.
-                                                        if branchDto.BasedOn = parentBranchDto.LatestPromotion then
+                                                        if branchDto.BasedOn = parentBranchDto.LatestPromotion.ReferenceId then
                                                             t2.StartTask()
 
                                                             let promotionParameters =
@@ -2897,7 +2897,7 @@ module Branch =
                 | Ok returnValue ->
                     let parentBranchDto = returnValue.ReturnValue
 
-                    if branchDto.BasedOn = parentBranchDto.LatestPromotion then
+                    if branchDto.BasedOn = parentBranchDto.LatestPromotion.ReferenceId then
                         AnsiConsole.MarkupLine("The current branch is already based on the latest promotion in the parent branch.")
 
                         AnsiConsole.MarkupLine("Run `grace status` to see more.")
@@ -2912,17 +2912,17 @@ module Branch =
                                 OrganizationName = parameters.OrganizationName,
                                 RepositoryId = $"{branchDto.RepositoryId}",
                                 CorrelationId = parameters.CorrelationId,
-                                ReferenceIds = [| branchDto.BasedOn; branchDto.LatestCommit; parentBranchDto.LatestPromotion |]
+                                ReferenceIds = [| branchDto.BasedOn; branchDto.LatestCommit.ReferenceId; parentBranchDto.LatestPromotion.ReferenceId |]
                             )
 
                         match! Repository.GetReferencesByReferenceId(getReferencesByReferenceIdParameters) with
                         | Ok returnValue ->
                             let referenceDtos = returnValue.ReturnValue
 
-                            let latestCommit = referenceDtos.FirstOrDefault((fun ref -> ref.ReferenceId = branchDto.LatestCommit), ReferenceDto.Default)
+                            let latestCommit = referenceDtos.FirstOrDefault((fun ref -> ref.ReferenceId = branchDto.LatestCommit.ReferenceId), ReferenceDto.Default)
 
                             let parentLatestPromotion =
-                                referenceDtos.FirstOrDefault((fun ref -> ref.ReferenceId = parentBranchDto.LatestPromotion), ReferenceDto.Default)
+                                referenceDtos.FirstOrDefault((fun ref -> ref.ReferenceId = parentBranchDto.LatestPromotion.ReferenceId), ReferenceDto.Default)
 
                             let basedOn = referenceDtos.FirstOrDefault((fun ref -> ref.ReferenceId = branchDto.BasedOn), ReferenceDto.Default)
 
@@ -3318,10 +3318,10 @@ module Branch =
 
                         // Now that I have the current and parent branch, I can get the details for the latest promotion, latest commit, latest checkpoint, and latest save.
                         let referenceIds =
-                            [| parentBranchDto.LatestPromotion
-                               branchDto.LatestCommit
-                               branchDto.LatestCheckpoint
-                               branchDto.LatestSave
+                            [| parentBranchDto.LatestPromotion.ReferenceId
+                               branchDto.LatestCommit.ReferenceId
+                               branchDto.LatestCheckpoint.ReferenceId
+                               branchDto.LatestSave.ReferenceId
                                branchDto.BasedOn |]
 
                         let getReferencesByIdParameters =
@@ -3340,14 +3340,14 @@ module Branch =
                         | Ok returnValue ->
                             let referenceDtos = returnValue.ReturnValue
 
-                            let latestSave = referenceDtos.FirstOrDefault((fun ref -> ref.ReferenceId = branchDto.LatestSave), ReferenceDto.Default)
+                            let latestSave = referenceDtos.FirstOrDefault((fun ref -> ref.ReferenceId = branchDto.LatestSave.ReferenceId ), ReferenceDto.Default)
 
-                            let latestCheckpoint = referenceDtos.FirstOrDefault((fun ref -> ref.ReferenceId = branchDto.LatestCheckpoint), ReferenceDto.Default)
+                            let latestCheckpoint = referenceDtos.FirstOrDefault((fun ref -> ref.ReferenceId = branchDto.LatestCheckpoint.ReferenceId), ReferenceDto.Default)
 
-                            let latestCommit = referenceDtos.FirstOrDefault((fun ref -> ref.ReferenceId = branchDto.LatestCommit), ReferenceDto.Default)
+                            let latestCommit = referenceDtos.FirstOrDefault((fun ref -> ref.ReferenceId = branchDto.LatestCommit.ReferenceId), ReferenceDto.Default)
 
                             let latestParentBranchPromotion =
-                                referenceDtos.FirstOrDefault((fun ref -> ref.ReferenceId = parentBranchDto.LatestPromotion), ReferenceDto.Default)
+                                referenceDtos.FirstOrDefault((fun ref -> ref.ReferenceId = parentBranchDto.LatestPromotion.ReferenceId), ReferenceDto.Default)
 
                             let basedOn = referenceDtos.FirstOrDefault((fun ref -> ref.ReferenceId = branchDto.BasedOn), ReferenceDto.Default)
 
@@ -3427,7 +3427,7 @@ module Branch =
                                 |> ignore
 
                                 if
-                                    branchDto.BasedOn = parentBranchDto.LatestPromotion
+                                    branchDto.BasedOn = parentBranchDto.LatestPromotion.ReferenceId
                                     || branchDto.ParentBranchId = Constants.DefaultParentBranchId
                                 then
                                     table.AddRow($"", $"[{Colors.Added}]  Based on latest promotion.[/]") |> ignore

@@ -272,7 +272,6 @@ module Reference =
 
                     // Publish the event to the rest of the world.
                     let graceEvent = Events.GraceEvent.ReferenceEvent referenceEvent
-                    let message = serialize graceEvent
                     do! daprClient.PublishEventAsync(GracePubSubService, GraceEventStreamTopic, graceEvent)
 
                     // If this is a Save or Checkpoint reference, schedule a physical deletion based on the default delays from the repository.
@@ -310,32 +309,28 @@ module Reference =
                             :> Task
                     | _ -> ()
 
-                    let returnValue = GraceReturnValue.Create "Reference command succeeded." referenceEvent.Metadata.CorrelationId
+                    let graceReturnValue =
+                        (GraceReturnValue.Create "Reference command succeeded." referenceEvent.Metadata.CorrelationId)
+                            .enhance(nameof(RepositoryId), $"{referenceDto.RepositoryId}")
+                            .enhance(nameof(BranchId), $"{referenceDto.BranchId}")
+                            .enhance(nameof(ReferenceId), $"{referenceDto.ReferenceId}")
+                            .enhance(nameof(DirectoryVersionId), $"{referenceDto.DirectoryId}")
+                            .enhance(nameof(ReferenceType), $"{discriminatedUnionCaseName referenceDto.ReferenceType}")
+                            .enhance (nameof(ReferenceEventType), $"{getDiscriminatedUnionFullName referenceEvent.Event}")
 
-                    returnValue
-                        .enhance(nameof(RepositoryId), $"{referenceDto.RepositoryId}")
-                        .enhance(nameof(BranchId), $"{referenceDto.BranchId}")
-                        .enhance(nameof(ReferenceId), $"{referenceDto.ReferenceId}")
-                        .enhance(nameof(DirectoryVersionId), $"{referenceDto.DirectoryId}")
-                        .enhance(nameof(ReferenceType), $"{discriminatedUnionCaseName referenceDto.ReferenceType}")
-                        .enhance (nameof(ReferenceEventType), $"{getDiscriminatedUnionFullName referenceEvent.Event}")
-                    |> ignore
-
-                    return Ok returnValue
+                    return Ok graceReturnValue
                 with ex ->
                     let exceptionResponse = createExceptionResponse ex
 
-                    let graceError = GraceError.Create (ReferenceError.getErrorMessage FailedWhileApplyingEvent) referenceEvent.Metadata.CorrelationId
-
-                    graceError
-                        .enhance("Exception details", exceptionResponse.``exception`` + exceptionResponse.innerException)
-                        .enhance(nameof(RepositoryId), $"{referenceDto.RepositoryId}")
-                        .enhance(nameof(BranchId), $"{referenceDto.BranchId}")
-                        .enhance(nameof(ReferenceId), $"{referenceDto.ReferenceId}")
-                        .enhance(nameof(DirectoryVersionId), $"{referenceDto.DirectoryId}")
-                        .enhance(nameof(ReferenceType), $"{discriminatedUnionCaseName referenceDto.ReferenceType}")
-                        .enhance (nameof(ReferenceEventType), $"{getDiscriminatedUnionFullName referenceEvent.Event}")
-                    |> ignore
+                    let graceError =
+                        (GraceError.Create (ReferenceError.getErrorMessage FailedWhileApplyingEvent) referenceEvent.Metadata.CorrelationId)
+                            .enhance("Exception details", exceptionResponse.``exception`` + exceptionResponse.innerException)
+                            .enhance(nameof(RepositoryId), $"{referenceDto.RepositoryId}")
+                            .enhance(nameof(BranchId), $"{referenceDto.BranchId}")
+                            .enhance(nameof(ReferenceId), $"{referenceDto.ReferenceId}")
+                            .enhance(nameof(DirectoryVersionId), $"{referenceDto.DirectoryId}")
+                            .enhance(nameof(ReferenceType), $"{discriminatedUnionCaseName referenceDto.ReferenceType}")
+                            .enhance (nameof(ReferenceEventType), $"{getDiscriminatedUnionFullName referenceEvent.Event}")
 
                     return Error graceError
             }

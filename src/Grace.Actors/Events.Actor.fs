@@ -22,13 +22,13 @@ module Events =
                 initialPermissions: ReferenceType[]
             | Rebased of basedOn: ReferenceId
             | NameSet of newName: BranchName
-            | Assigned of referenceId: ReferenceId * directoryVersionId: DirectoryVersionId * sha256Hash: Sha256Hash * referenceText: ReferenceText
-            | Promoted of referenceId: ReferenceId * directoryVersionId: DirectoryVersionId * sha256Hash: Sha256Hash * referenceText: ReferenceText
-            | Committed of referenceId: ReferenceId * directoryVersionId: DirectoryVersionId * sha256Hash: Sha256Hash * referenceText: ReferenceText
-            | Checkpointed of referenceId: ReferenceId * directoryVersionId: DirectoryVersionId * sha256Hash: Sha256Hash * referenceText: ReferenceText
-            | Saved of referenceId: ReferenceId * directoryVersionId: DirectoryVersionId * sha256Hash: Sha256Hash * referenceText: ReferenceText
-            | Tagged of referenceId: ReferenceId * directoryVersionId: DirectoryVersionId * sha256Hash: Sha256Hash * referenceText: ReferenceText
-            | ExternalCreated of referenceId: ReferenceId * directoryVersionId: DirectoryVersionId * sha256Hash: Sha256Hash * referenceText: ReferenceText
+            | Assigned of referenceDto: ReferenceDto * directoryVersionId: DirectoryVersionId * sha256Hash: Sha256Hash * referenceText: ReferenceText
+            | Promoted of referenceDto: ReferenceDto * directoryVersionId: DirectoryVersionId * sha256Hash: Sha256Hash * referenceText: ReferenceText
+            | Committed of referenceDto: ReferenceDto * directoryVersionId: DirectoryVersionId * sha256Hash: Sha256Hash * referenceText: ReferenceText
+            | Checkpointed of referenceDto: ReferenceDto * directoryVersionId: DirectoryVersionId * sha256Hash: Sha256Hash * referenceText: ReferenceText
+            | Saved of referenceDto: ReferenceDto * directoryVersionId: DirectoryVersionId * sha256Hash: Sha256Hash * referenceText: ReferenceText
+            | Tagged of referenceDto: ReferenceDto * directoryVersionId: DirectoryVersionId * sha256Hash: Sha256Hash * referenceText: ReferenceText
+            | ExternalCreated of referenceDto: ReferenceDto * directoryVersionId: DirectoryVersionId * sha256Hash: Sha256Hash * referenceText: ReferenceText
             | EnabledAssign of enabled: bool
             | EnabledPromotion of enabled: bool
             | EnabledCommit of enabled: bool

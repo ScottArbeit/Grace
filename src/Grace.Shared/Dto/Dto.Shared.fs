@@ -9,62 +9,6 @@ open System.Runtime.Serialization
 
 module Dto =
 
-    module Branch =
-        [<Serializable>]
-        [<KnownType("GetKnownTypes")>]
-        type BranchDto =
-            { Class: string
-              BranchId: BranchId
-              BranchName: BranchName
-              ParentBranchId: BranchId
-              BasedOn: ReferenceId
-              RepositoryId: RepositoryId
-              UserId: UserId
-              AssignEnabled: bool
-              PromotionEnabled: bool
-              CommitEnabled: bool
-              CheckpointEnabled: bool
-              SaveEnabled: bool
-              TagEnabled: bool
-              ExternalEnabled: bool
-              AutoRebaseEnabled: bool
-              LatestPromotion: ReferenceId
-              LatestCommit: ReferenceId
-              LatestCheckpoint: ReferenceId
-              LatestSave: ReferenceId
-              CreatedAt: Instant
-              UpdatedAt: Instant option
-              DeletedAt: Instant option
-              DeleteReason: DeleteReason }
-
-            static member Default =
-                { Class = nameof (BranchDto)
-                  BranchId = BranchId.Empty
-                  BranchName = BranchName String.Empty
-                  ParentBranchId = Constants.DefaultParentBranchId
-                  BasedOn = ReferenceId.Empty
-                  RepositoryId = RepositoryId.Empty
-                  UserId = UserId String.Empty
-                  AssignEnabled = false
-                  PromotionEnabled = false
-                  CommitEnabled = false
-                  CheckpointEnabled = false
-                  SaveEnabled = false
-                  TagEnabled = false
-                  ExternalEnabled = false
-                  AutoRebaseEnabled = true
-                  LatestPromotion = ReferenceId.Empty
-                  LatestCommit = ReferenceId.Empty
-                  LatestCheckpoint = ReferenceId.Empty
-                  LatestSave = ReferenceId.Empty
-                  CreatedAt = getCurrentInstant ()
-                  UpdatedAt = None
-                  DeletedAt = None
-                  DeleteReason = String.Empty
-                }
-
-            static member GetKnownTypes() = GetKnownTypes<BranchDto>()
-
     module Diff =
         [<Serializable>]
         [<KnownType("GetKnownTypes")>]
@@ -253,3 +197,61 @@ module Dto =
                 }
 
             static member GetKnownTypes() = GetKnownTypes<RepositoryDto>()
+
+    module Branch =
+        open Reference
+        [<Serializable>]
+        [<KnownType("GetKnownTypes")>]
+        type BranchDto =
+            { Class: string
+              BranchId: BranchId
+              BranchName: BranchName
+              ParentBranchId: BranchId
+              BasedOn: ReferenceId
+              RepositoryId: RepositoryId
+              UserId: UserId
+              AssignEnabled: bool
+              PromotionEnabled: bool
+              CommitEnabled: bool
+              CheckpointEnabled: bool
+              SaveEnabled: bool
+              TagEnabled: bool
+              ExternalEnabled: bool
+              AutoRebaseEnabled: bool
+              LatestPromotion: ReferenceDto
+              LatestCommit: ReferenceDto
+              LatestCheckpoint: ReferenceDto
+              LatestSave: ReferenceDto
+              CreatedAt: Instant
+              UpdatedAt: Instant option
+              DeletedAt: Instant option
+              DeleteReason: DeleteReason }
+
+            static member Default =
+                { Class = nameof (BranchDto)
+                  BranchId = BranchId.Empty
+                  BranchName = BranchName String.Empty
+                  ParentBranchId = Constants.DefaultParentBranchId
+                  BasedOn = ReferenceId.Empty
+                  RepositoryId = RepositoryId.Empty
+                  UserId = UserId String.Empty
+                  AssignEnabled = false
+                  PromotionEnabled = false
+                  CommitEnabled = false
+                  CheckpointEnabled = false
+                  SaveEnabled = false
+                  TagEnabled = false
+                  ExternalEnabled = false
+                  AutoRebaseEnabled = true
+                  LatestPromotion = ReferenceDto.Default
+                  LatestCommit = ReferenceDto.Default
+                  LatestCheckpoint = ReferenceDto.Default
+                  LatestSave = ReferenceDto.Default
+                  CreatedAt = getCurrentInstant ()
+                  UpdatedAt = None
+                  DeletedAt = None
+                  DeleteReason = String.Empty
+                }
+
+            static member GetKnownTypes() = GetKnownTypes<BranchDto>()
+

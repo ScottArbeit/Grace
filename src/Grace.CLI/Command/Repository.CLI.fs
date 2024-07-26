@@ -1,4 +1,4 @@
-﻿namespace Grace.CLI.Command
+namespace Grace.CLI.Command
 
 open FSharpPlus
 open Grace.CLI.Common
@@ -927,7 +927,7 @@ module Repository =
                                            branchName = branch.BranchName
                                            updatedAt = branch.UpdatedAt
                                            parentBranchName = parent.branchName
-                                           basedOnLatestPromotion = (branch.BasedOn = parent.latestPromotion) |})
+                                           basedOnLatestPromotion = (branch.BasedOn = parent.latestPromotion.ReferenceId) |})
                                 )
                                 .OrderBy(fun branch -> branch.parentBranchName, branch.branchName)
 

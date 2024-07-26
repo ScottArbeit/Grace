@@ -76,15 +76,15 @@ module Branch =
                     branchDto
                 | Rebased referenceId ->{ currentBranchDto with BasedOn = referenceId }
                 | NameSet branchName -> { currentBranchDto with BranchName = branchName }
-                | Assigned(referenceId, directoryVersion, sha256Hash, referenceText) ->
-                    { currentBranchDto with LatestPromotion = referenceId; BasedOn = referenceId }
-                | Promoted(referenceId, directoryVersion, sha256Hash, referenceText) ->
-                    { currentBranchDto with LatestPromotion = referenceId; BasedOn = referenceId }
-                | Committed(referenceId, directoryVersion, sha256Hash, referenceText) -> { currentBranchDto with LatestCommit = referenceId }
-                | Checkpointed(referenceId, directoryVersion, sha256Hash, referenceText) -> { currentBranchDto with LatestCheckpoint = referenceId }
-                | Saved(referenceId, directoryVersion, sha256Hash, referenceText) -> { currentBranchDto with LatestSave = referenceId }
-                | Tagged(referenceId, directoryVersion, sha256Hash, referenceText) -> currentBranchDto // No changes to currentBranchDto.
-                | ExternalCreated(referenceId, directoryVersion, sha256Hash, referenceText) -> currentBranchDto // No changes to currentBranchDto.
+                | Assigned(referenceDto, directoryVersion, sha256Hash, referenceText) ->
+                    { currentBranchDto with LatestPromotion = referenceDto; BasedOn = referenceDto.ReferenceId }
+                | Promoted(referenceDto, directoryVersion, sha256Hash, referenceText) ->
+                    { currentBranchDto with LatestPromotion = referenceDto; BasedOn = referenceDto.ReferenceId }
+                | Committed(referenceDto, directoryVersion, sha256Hash, referenceText) -> { currentBranchDto with LatestCommit = referenceDto }
+                | Checkpointed(referenceDto, directoryVersion, sha256Hash, referenceText) -> { currentBranchDto with LatestCheckpoint = referenceDto }
+                | Saved(referenceDto, directoryVersion, sha256Hash, referenceText) -> { currentBranchDto with LatestSave = referenceDto }
+                | Tagged(referenceDto, directoryVersion, sha256Hash, referenceText) -> currentBranchDto // No changes to currentBranchDto.
+                | ExternalCreated(referenceDto, directoryVersion, sha256Hash, referenceText) -> currentBranchDto // No changes to currentBranchDto.
                 | EnabledAssign enabled -> { currentBranchDto with AssignEnabled = enabled }
                 | EnabledPromotion enabled -> { currentBranchDto with PromotionEnabled = enabled }
                 | EnabledCommit enabled -> { currentBranchDto with CommitEnabled = enabled }
@@ -126,12 +126,12 @@ module Branch =
                         //logToConsole $"In Branch.Actor.OnActivateAsync: About to call getLatestReferenceByReferenceTypes()."
                         let! latestReferences = getLatestReferenceByReferenceTypes referenceTypes branchDto.BranchId
                         latestReferences |> Seq.iter (fun kvp ->
-                            let referenceId = kvp.Value.ReferenceId
+                            let referenceDto = kvp.Value
                             match kvp.Key with
-                            | Save -> branchDto <- { branchDto with LatestSave = referenceId }
-                            | Checkpoint -> branchDto <- { branchDto with LatestCheckpoint = referenceId }
-                            | Commit -> branchDto <- { branchDto with LatestCommit = referenceId }
-                            | Promotion -> branchDto <- { branchDto with LatestPromotion = referenceId; BasedOn = referenceId }
+                            | Save -> branchDto <- { branchDto with LatestSave = referenceDto }
+                            | Checkpoint -> branchDto <- { branchDto with LatestCheckpoint = referenceDto }
+                            | Commit -> branchDto <- { branchDto with LatestCommit = referenceDto }
+                            | Promotion -> branchDto <- { branchDto with LatestPromotion = referenceDto; BasedOn = referenceDto.ReferenceId }
                             | Rebase ->
                                 let basedOnLink = kvp.Value.Links |> Array.find (fun link -> match link with | ReferenceLinkType.BasedOn _ -> true )
                                 let basedOnReferenceId =
@@ -242,16 +242,18 @@ module Branch =
                     branchDto <- branchDto |> updateDto branchEvent.Event
 
                     match branchEvent.Event with
-                    | Assigned (referenceId, _, _, _)
-                    | Promoted (referenceId, _, _, _)
-                    | Committed (referenceId, _, _, _)
-                    | Checkpointed (referenceId, _, _, _)
-                    | Saved (referenceId, _, _, _)
-                    | Tagged (referenceId, _, _, _)
-                    | ExternalCreated (referenceId, _, _, _)
+                    // Don't save these reference creation events, and don't send them as events; that was done by the Reference actor when the reference was created.
+                    | Assigned (referenceDto, _, _, _)
+                    | Promoted (referenceDto, _, _, _)
+                    | Committed (referenceDto, _, _, _)
+                    | Checkpointed (referenceDto, _, _, _)
+                    | Saved (referenceDto, _, _, _)
+                    | Tagged (referenceDto, _, _, _)
+                    | ExternalCreated (referenceDto, _, _, _) ->
+                        branchEvent.Metadata.Properties[nameof (ReferenceId)] <- $"{referenceDto.ReferenceId}"
                     | Rebased referenceId ->
-                        // Don't save these reference creation events, and don't send them as events; that was done by the Reference actor when the reference was created.
                         branchEvent.Metadata.Properties[nameof (ReferenceId)] <- $"{referenceId}"
+                    // Save the rest of the events.
                     | _ ->
                         // For all other events, add the event to the branchEvents list, and save it to actor state.
                         branchEvents.Add(branchEvent)
@@ -352,7 +354,9 @@ module Branch =
                         let referenceDto = {ReferenceDto.Default with ReferenceId = referenceId; RepositoryId = repositoryId; BranchId = branchId; DirectoryId = directoryId; Sha256Hash = sha256Hash; ReferenceText = referenceText; ReferenceType = referenceType; Links = links}
                         let referenceCommand = Reference.ReferenceCommand.Create referenceDto
                         match! referenceActor.Handle referenceCommand metadata with
-                        | Ok _ -> return Ok referenceId
+                        | Ok _ ->
+                            let! referenceDto = referenceActor.Get metadata.CorrelationId
+                            return Ok referenceDto
                         | Error error -> return Error error
                     }
 
@@ -415,31 +419,31 @@ module Branch =
                                     | EnableAutoRebase enabled -> return Ok (EnabledAutoRebase enabled)
                                     | BranchCommand.Assign(directoryVersionId, sha256Hash, referenceText) ->
                                         match! addReferenceToCurrentBranch directoryVersionId sha256Hash referenceText ReferenceType.Promotion Array.empty with
-                                        | Ok referenceId -> return Ok (Assigned(referenceId, directoryVersionId, sha256Hash, referenceText))
+                                        | Ok referenceDto -> return Ok (Assigned(referenceDto, directoryVersionId, sha256Hash, referenceText))
                                         | Error error -> return Error error
                                     | BranchCommand.Promote(directoryVersionId, sha256Hash, referenceText) ->
                                         match! addReferenceToCurrentBranch directoryVersionId sha256Hash referenceText ReferenceType.Promotion Array.empty with
-                                        | Ok referenceId -> return Ok (Promoted(referenceId, directoryVersionId, sha256Hash, referenceText))
+                                        | Ok referenceDto -> return Ok (Promoted(referenceDto, directoryVersionId, sha256Hash, referenceText))
                                         | Error error -> return Error error
                                     | BranchCommand.Commit(directoryVersionId, sha256Hash, referenceText) ->
                                         match! addReferenceToCurrentBranch directoryVersionId sha256Hash referenceText ReferenceType.Commit Array.empty with
-                                        | Ok referenceId -> return Ok (Committed(referenceId, directoryVersionId, sha256Hash, referenceText))
+                                        | Ok referenceDto -> return Ok (Committed(referenceDto, directoryVersionId, sha256Hash, referenceText))
                                         | Error error -> return Error error
                                     | BranchCommand.Checkpoint(directoryVersionId, sha256Hash, referenceText) ->
                                         match! addReferenceToCurrentBranch directoryVersionId sha256Hash referenceText ReferenceType.Checkpoint Array.empty with
-                                        | Ok referenceId -> return Ok (Checkpointed(referenceId, directoryVersionId, sha256Hash, referenceText))
+                                        | Ok referenceDto -> return Ok (Checkpointed(referenceDto, directoryVersionId, sha256Hash, referenceText))
                                         | Error error -> return Error error
                                     | BranchCommand.Save(directoryVersionId, sha256Hash, referenceText) ->
                                         match! addReferenceToCurrentBranch directoryVersionId sha256Hash referenceText ReferenceType.Save Array.empty with
-                                        | Ok referenceId -> return Ok (Saved(referenceId, directoryVersionId, sha256Hash, referenceText))
+                                        | Ok referenceDto -> return Ok (Saved(referenceDto, directoryVersionId, sha256Hash, referenceText))
                                         | Error error -> return Error error
                                     | BranchCommand.Tag(directoryVersionId, sha256Hash, referenceText) ->
                                         match! addReferenceToCurrentBranch directoryVersionId sha256Hash referenceText ReferenceType.Tag Array.empty with
-                                        | Ok referenceId -> return Ok (Tagged(referenceId, directoryVersionId, sha256Hash, referenceText))
+                                        | Ok referenceDto -> return Ok (Tagged(referenceDto, directoryVersionId, sha256Hash, referenceText))
                                         | Error error -> return Error error
                                     | BranchCommand.CreateExternal(directoryVersionId, sha256Hash, referenceText) ->
                                         match! addReferenceToCurrentBranch directoryVersionId sha256Hash referenceText ReferenceType.External Array.empty with
-                                        | Ok referenceId -> return Ok (ExternalCreated(referenceId, directoryVersionId, sha256Hash, referenceText))
+                                        | Ok referenceDto -> return Ok (ExternalCreated(referenceDto, directoryVersionId, sha256Hash, referenceText))
                                         | Error error -> return Error error
                                     | RemoveReference referenceId -> return Ok (ReferenceRemoved referenceId)
                                     | DeleteLogical(force, deleteReason) ->
