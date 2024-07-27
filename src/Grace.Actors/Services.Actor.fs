@@ -1501,7 +1501,7 @@ module Services =
 
             let referenceActorProxy = actorProxyFactory.CreateActorProxy<IReferenceActor>(referenceActorId, ActorName.Reference)
 
-            let! referenceDto = referenceActorProxy.Get correlationId
+            let! referenceDto = referenceActorProxy.Get (correlationId + " (getRootDirectoryByReferenceId)")
 
             return! getRootDirectoryBySha256Hash repositoryId referenceDto.Sha256Hash correlationId
         }

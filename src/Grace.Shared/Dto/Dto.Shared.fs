@@ -26,9 +26,9 @@ module Dto =
                 { Class = nameof (DiffDto)
                   HasDifferences = false
                   DirectoryId1 = DirectoryVersionId.Empty
-                  Directory1CreatedAt = Instant.FromUnixTimeTicks 0L
+                  Directory1CreatedAt = Constants.DefaultTimestamp
                   DirectoryId2 = DirectoryVersionId.Empty
-                  Directory2CreatedAt = Instant.FromUnixTimeTicks 0L
+                  Directory2CreatedAt = Constants.DefaultTimestamp
                   Differences = List<FileSystemDifference>()
                   FileDiffs = List<FileDiff>()
                 }
@@ -61,7 +61,7 @@ module Dto =
                   Description = String.Empty
                   SearchVisibility = Visible
                   Repositories = new Dictionary<RepositoryId, RepositoryName>()
-                  CreatedAt = getCurrentInstant ()
+                  CreatedAt = Constants.DefaultTimestamp
                   UpdatedAt = None
                   DeletedAt = None
                   DeleteReason = String.Empty
@@ -93,7 +93,7 @@ module Dto =
                   Description = String.Empty
                   SearchVisibility = Visible
                   Organizations = new Dictionary<OrganizationId, OrganizationName>()
-                  CreatedAt = getCurrentInstant ()
+                  CreatedAt = Constants.DefaultTimestamp
                   UpdatedAt = None
                   DeletedAt = None
                   DeleteReason = String.Empty
@@ -130,7 +130,7 @@ module Dto =
                   ReferenceType = Save
                   ReferenceText = ReferenceText String.Empty
                   Links = Array.empty
-                  CreatedAt = getCurrentInstant ()
+                  CreatedAt = Constants.DefaultTimestamp
                   UpdatedAt = None
                   DeletedAt = None
                   DeleteReason = String.Empty
@@ -189,7 +189,7 @@ module Dto =
                   DiffCacheDays = 1.0
                   Description = String.Empty
                   RecordSaves = true
-                  CreatedAt = getCurrentInstant ()
+                  CreatedAt = Constants.DefaultTimestamp
                   InitializedAt = None
                   UpdatedAt = None
                   DeletedAt = None
@@ -207,7 +207,7 @@ module Dto =
               BranchId: BranchId
               BranchName: BranchName
               ParentBranchId: BranchId
-              BasedOn: ReferenceId
+              BasedOn: ReferenceDto
               RepositoryId: RepositoryId
               UserId: UserId
               AssignEnabled: bool
@@ -232,7 +232,7 @@ module Dto =
                   BranchId = BranchId.Empty
                   BranchName = BranchName String.Empty
                   ParentBranchId = Constants.DefaultParentBranchId
-                  BasedOn = ReferenceId.Empty
+                  BasedOn = ReferenceDto.Default
                   RepositoryId = RepositoryId.Empty
                   UserId = UserId String.Empty
                   AssignEnabled = false
@@ -247,7 +247,7 @@ module Dto =
                   LatestCommit = ReferenceDto.Default
                   LatestCheckpoint = ReferenceDto.Default
                   LatestSave = ReferenceDto.Default
-                  CreatedAt = getCurrentInstant ()
+                  CreatedAt = Constants.DefaultTimestamp
                   UpdatedAt = None
                   DeletedAt = None
                   DeleteReason = String.Empty

@@ -50,55 +50,76 @@ module Branch =
         /// Indicates that the actor is in an undefined state, and should be reset.
         let mutable isDisposed = false
 
-        let updateDto branchEventType currentBranchDto =
-            let newBranchDto =
-                match branchEventType with
-                | Created(branchId, branchName, parentBranchId, basedOn, repositoryId, initialPermissions) ->
-                    let mutable branchDto =
-                        { BranchDto.Default with
-                            BranchId = branchId
-                            BranchName = branchName
-                            ParentBranchId = parentBranchId
-                            BasedOn = basedOn
-                            RepositoryId = repositoryId }
+        let updateDto branchEvent currentBranchDto =
+            task {
+                let branchEventType = branchEvent.Event
+                let! newBranchDto =
+                    match branchEventType with
+                    | Created(branchId, branchName, parentBranchId, basedOn, repositoryId, initialPermissions) ->
+                        task {
+                            let! referenceDto =
+                                if basedOn <> ReferenceId.Empty then
+                                    task {
+                                        let referenceActorProxy = actorProxyFactory.CreateActorProxy<IReferenceActor>(Reference.GetActorId basedOn, ActorName.Reference)
+                                        return! referenceActorProxy.Get (branchEvent.Metadata.CorrelationId + $" Creating branch {branchName}")
+                                    }
+                                else
+                                    ReferenceDto.Default |> returnTask
 
-                    for referenceType in initialPermissions do
-                        branchDto <-
-                            match referenceType with
-                            | Promotion -> { branchDto with PromotionEnabled = true }
-                            | Commit -> { branchDto with CommitEnabled = true }
-                            | Checkpoint -> { branchDto with CheckpointEnabled = true }
-                            | Save -> { branchDto with SaveEnabled = true }
-                            | Tag -> { branchDto with TagEnabled = true }
-                            | External -> { branchDto with ExternalEnabled = true }
-                            | Rebase -> branchDto // Rebase is always allowed. (Auto-rebase is optional, but rebase itself is always allowed.)
+                            let mutable branchDto =
+                                { BranchDto.Default with
+                                    BranchId = branchId
+                                    BranchName = branchName
+                                    ParentBranchId = parentBranchId
+                                    BasedOn = referenceDto
+                                    RepositoryId = repositoryId
+                                    CreatedAt = branchEvent.Metadata.Timestamp
+                                }
 
-                    branchDto
-                | Rebased referenceId ->{ currentBranchDto with BasedOn = referenceId }
-                | NameSet branchName -> { currentBranchDto with BranchName = branchName }
-                | Assigned(referenceDto, directoryVersion, sha256Hash, referenceText) ->
-                    { currentBranchDto with LatestPromotion = referenceDto; BasedOn = referenceDto.ReferenceId }
-                | Promoted(referenceDto, directoryVersion, sha256Hash, referenceText) ->
-                    { currentBranchDto with LatestPromotion = referenceDto; BasedOn = referenceDto.ReferenceId }
-                | Committed(referenceDto, directoryVersion, sha256Hash, referenceText) -> { currentBranchDto with LatestCommit = referenceDto }
-                | Checkpointed(referenceDto, directoryVersion, sha256Hash, referenceText) -> { currentBranchDto with LatestCheckpoint = referenceDto }
-                | Saved(referenceDto, directoryVersion, sha256Hash, referenceText) -> { currentBranchDto with LatestSave = referenceDto }
-                | Tagged(referenceDto, directoryVersion, sha256Hash, referenceText) -> currentBranchDto // No changes to currentBranchDto.
-                | ExternalCreated(referenceDto, directoryVersion, sha256Hash, referenceText) -> currentBranchDto // No changes to currentBranchDto.
-                | EnabledAssign enabled -> { currentBranchDto with AssignEnabled = enabled }
-                | EnabledPromotion enabled -> { currentBranchDto with PromotionEnabled = enabled }
-                | EnabledCommit enabled -> { currentBranchDto with CommitEnabled = enabled }
-                | EnabledCheckpoint enabled -> { currentBranchDto with CheckpointEnabled = enabled }
-                | EnabledSave enabled -> { currentBranchDto with SaveEnabled = enabled }
-                | EnabledTag enabled -> { currentBranchDto with TagEnabled = enabled }
-                | EnabledExternal enabled -> { currentBranchDto with ExternalEnabled = enabled }
-                | EnabledAutoRebase enabled -> { currentBranchDto with AutoRebaseEnabled = enabled }
-                | ReferenceRemoved _ -> currentBranchDto
-                | LogicalDeleted(force, deleteReason) -> { currentBranchDto with DeletedAt = Some(getCurrentInstant ()); DeleteReason = deleteReason }
-                | PhysicalDeleted -> currentBranchDto // Do nothing because it's about to be deleted anyway.
-                | Undeleted -> { currentBranchDto with DeletedAt = None; DeleteReason = String.Empty }
+                            for referenceType in initialPermissions do
+                                branchDto <-
+                                    match referenceType with
+                                    | Promotion -> { branchDto with PromotionEnabled = true }
+                                    | Commit -> { branchDto with CommitEnabled = true }
+                                    | Checkpoint -> { branchDto with CheckpointEnabled = true }
+                                    | Save -> { branchDto with SaveEnabled = true }
+                                    | Tag -> { branchDto with TagEnabled = true }
+                                    | External -> { branchDto with ExternalEnabled = true }
+                                    | Rebase -> branchDto // Rebase is always allowed. (Auto-rebase is optional, but rebase itself is always allowed.)
 
-            { newBranchDto with UpdatedAt = Some(getCurrentInstant ()) }
+                            return branchDto
+                        }
+                    | Rebased referenceId ->
+                        task {
+                            let referenceActorProxy = actorProxyFactory.CreateActorProxy<IReferenceActor>(Reference.GetActorId referenceId, ActorName.Reference)
+                            let! referenceDto = referenceActorProxy.Get (branchEvent.Metadata.CorrelationId + "Rebasing branch")
+                            return { currentBranchDto with BasedOn = referenceDto }
+                        }
+                    | NameSet branchName -> { currentBranchDto with BranchName = branchName } |> returnTask
+                    | Assigned(referenceDto, directoryVersion, sha256Hash, referenceText) ->
+                        { currentBranchDto with LatestPromotion = referenceDto; BasedOn = referenceDto } |> returnTask
+                    | Promoted(referenceDto, directoryVersion, sha256Hash, referenceText) ->
+                        { currentBranchDto with LatestPromotion = referenceDto; BasedOn = referenceDto } |> returnTask
+                    | Committed(referenceDto, directoryVersion, sha256Hash, referenceText) -> { currentBranchDto with LatestCommit = referenceDto } |> returnTask
+                    | Checkpointed(referenceDto, directoryVersion, sha256Hash, referenceText) -> { currentBranchDto with LatestCheckpoint = referenceDto } |> returnTask
+                    | Saved(referenceDto, directoryVersion, sha256Hash, referenceText) -> { currentBranchDto with LatestSave = referenceDto } |> returnTask
+                    | Tagged(referenceDto, directoryVersion, sha256Hash, referenceText) -> currentBranchDto  |> returnTask // No changes to currentBranchDto.
+                    | ExternalCreated(referenceDto, directoryVersion, sha256Hash, referenceText) -> currentBranchDto  |> returnTask // No changes to currentBranchDto.
+                    | EnabledAssign enabled -> { currentBranchDto with AssignEnabled = enabled } |> returnTask
+                    | EnabledPromotion enabled -> { currentBranchDto with PromotionEnabled = enabled } |> returnTask
+                    | EnabledCommit enabled -> { currentBranchDto with CommitEnabled = enabled } |> returnTask
+                    | EnabledCheckpoint enabled -> { currentBranchDto with CheckpointEnabled = enabled } |> returnTask
+                    | EnabledSave enabled -> { currentBranchDto with SaveEnabled = enabled } |> returnTask
+                    | EnabledTag enabled -> { currentBranchDto with TagEnabled = enabled } |> returnTask
+                    | EnabledExternal enabled -> { currentBranchDto with ExternalEnabled = enabled } |> returnTask
+                    | EnabledAutoRebase enabled -> { currentBranchDto with AutoRebaseEnabled = enabled } |> returnTask
+                    | ReferenceRemoved _ -> currentBranchDto |> returnTask
+                    | LogicalDeleted(force, deleteReason) -> { currentBranchDto with DeletedAt = Some(getCurrentInstant ()); DeleteReason = deleteReason } |> returnTask
+                    | PhysicalDeleted -> currentBranchDto  |> returnTask // Do nothing because it's about to be deleted anyway.
+                    | Undeleted -> { currentBranchDto with DeletedAt = None; DeleteReason = String.Empty } |> returnTask
+
+                return { newBranchDto with UpdatedAt = Some branchEvent.Metadata.Timestamp }
+            }
 
         member val private correlationId: CorrelationId = String.Empty with get, set
 
@@ -117,31 +138,34 @@ module Branch =
                         branchEvents.AddRange(retrievedEvents)
 
                         // Apply all events to the branchDto.
-                        branchDto <-
-                            retrievedEvents
-                            |> Seq.fold (fun branchDto branchEvent -> branchDto |> updateDto branchEvent.Event) BranchDto.Default
+                        for branchEvent in retrievedEvents do
+                            let! updatedBranchDto = branchDto |> updateDto branchEvent
+                            branchDto <- updatedBranchDto
 
                         // Get the latest references and update the dto.
                         let referenceTypes = [| Save; Checkpoint; Commit; Promotion; Rebase |]
                         //logToConsole $"In Branch.Actor.OnActivateAsync: About to call getLatestReferenceByReferenceTypes()."
                         let! latestReferences = getLatestReferenceByReferenceTypes referenceTypes branchDto.BranchId
-                        latestReferences |> Seq.iter (fun kvp ->
+                        for kvp in latestReferences do
                             let referenceDto = kvp.Value
                             match kvp.Key with
                             | Save -> branchDto <- { branchDto with LatestSave = referenceDto }
                             | Checkpoint -> branchDto <- { branchDto with LatestCheckpoint = referenceDto }
                             | Commit -> branchDto <- { branchDto with LatestCommit = referenceDto }
-                            | Promotion -> branchDto <- { branchDto with LatestPromotion = referenceDto; BasedOn = referenceDto.ReferenceId }
+                            | Promotion -> branchDto <- { branchDto with LatestPromotion = referenceDto; BasedOn = referenceDto }
                             | Rebase ->
                                 let basedOnLink = kvp.Value.Links |> Array.find (fun link -> match link with | ReferenceLinkType.BasedOn _ -> true )
                                 let basedOnReferenceId =
                                     match basedOnLink with
                                     | ReferenceLinkType.BasedOn referenceId -> referenceId
 
-                                branchDto <- { branchDto with BasedOn = basedOnReferenceId }
+                                logToConsole $"In Branch.Actor.OnActivateAsync: basedOnReferenceId: {basedOnReferenceId}."
+                                let basedOnReferenceActorProxy = actorProxyFactory.CreateActorProxy<IReferenceActor>(Reference.GetActorId basedOnReferenceId, ActorName.Reference)
+                                let! basedOnReferenceDto = basedOnReferenceActorProxy.Get "Activating branch"
+
+                                branchDto <- { branchDto with BasedOn = basedOnReferenceDto }
                             | External -> ()
                             | Tag -> ()
-                        )
 
                         message <- "Retrieved from database"
                     | None -> message <- "Not found in database"
@@ -239,7 +263,8 @@ module Branch =
                     if branchEvents.Count = 0 then do! this.OnFirstWrite()
 
                     // Update the branchDto with the event.
-                    branchDto <- branchDto |> updateDto branchEvent.Event
+                    let! updatedBranchDto = branchDto |> updateDto branchEvent
+                    branchDto <- updatedBranchDto
 
                     match branchEvent.Event with
                     // Don't save these reference creation events, and don't send them as events; that was done by the Reference actor when the reference was created.
@@ -351,11 +376,22 @@ module Branch =
 
                         let referenceActor = actorProxyFactory.CreateActorProxy<IReferenceActor>(actorId, Constants.ActorName.Reference)
 
-                        let referenceDto = {ReferenceDto.Default with ReferenceId = referenceId; RepositoryId = repositoryId; BranchId = branchId; DirectoryId = directoryId; Sha256Hash = sha256Hash; ReferenceText = referenceText; ReferenceType = referenceType; Links = links}
+                        let referenceDto =
+                            {ReferenceDto.Default with
+                                ReferenceId = referenceId
+                                RepositoryId = repositoryId
+                                BranchId = branchId
+                                DirectoryId = directoryId
+                                Sha256Hash = sha256Hash
+                                ReferenceText = referenceText
+                                ReferenceType = referenceType
+                                Links = links
+                                CreatedAt = getCurrentInstant ()
+                            }
                         let referenceCommand = Reference.ReferenceCommand.Create referenceDto
                         match! referenceActor.Handle referenceCommand metadata with
                         | Ok _ ->
-                            let! referenceDto = referenceActor.Get metadata.CorrelationId
+                            let! referenceDto = referenceActor.Get (metadata.CorrelationId + "Adding reference")
                             return Ok referenceDto
                         | Error error -> return Error error
                     }
@@ -373,7 +409,7 @@ module Branch =
                                         if branchName <> InitialBranchName then
                                             // We need to get the reference that we're rebasing on, so we can get the directoryId and sha256Hash.
                                             let referenceActorProxy = actorProxyFactory.CreateActorProxy<IReferenceActor>(Reference.GetActorId basedOn, ActorName.Reference)
-                                            let! promotionDto = referenceActorProxy.Get metadata.CorrelationId
+                                            let! promotionDto = referenceActorProxy.Get (metadata.CorrelationId + "processCommand1")
 
                                             match! addReference repositoryId branchId promotionDto.DirectoryId promotionDto.Sha256Hash promotionDto.ReferenceText ReferenceType.Rebase [| ReferenceLinkType.BasedOn promotionDto.ReferenceId |] with
                                             | Ok rebaseReferenceId ->
@@ -398,7 +434,7 @@ module Branch =
 
                                         // We need to get the reference that we're rebasing on, so we can get the directoryId and sha256Hash.
                                         let referenceActorProxy = actorProxyFactory.CreateActorProxy<IReferenceActor>(ActorId($"{referenceId}"), ActorName.Reference)
-                                        let! promotionDto = referenceActorProxy.Get metadata.CorrelationId
+                                        let! promotionDto = referenceActorProxy.Get (metadata.CorrelationId + "processCommand2")
 
                                         // Add the Rebase reference to this branch.
                                         match! addReferenceToCurrentBranch promotionDto.DirectoryId promotionDto.Sha256Hash promotionDto.ReferenceText ReferenceType.Rebase [| ReferenceLinkType.BasedOn promotionDto.ReferenceId |] with

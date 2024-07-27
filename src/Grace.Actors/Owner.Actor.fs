@@ -50,8 +50,8 @@ module Owner =
 
         let updateDto ownerEvent currentOwnerDto =
             let newOwnerDto =
-                match ownerEvent with
-                | Created(ownerId, ownerName) -> { OwnerDto.Default with OwnerId = ownerId; OwnerName = ownerName }
+                match ownerEvent.Event with
+                | Created(ownerId, ownerName) -> { OwnerDto.Default with OwnerId = ownerId; OwnerName = ownerName; CreatedAt = ownerEvent.Metadata.Timestamp }
                 | NameSet(ownerName) -> { currentOwnerDto with OwnerName = ownerName }
                 | TypeSet(ownerType) -> { currentOwnerDto with OwnerType = ownerType }
                 | SearchVisibilitySet(searchVisibility) -> { currentOwnerDto with SearchVisibility = searchVisibility }
@@ -60,7 +60,7 @@ module Owner =
                 | PhysicalDeleted -> currentOwnerDto // Do nothing because it's about to be deleted anyway.
                 | Undeleted -> { currentOwnerDto with DeletedAt = None; DeleteReason = String.Empty }
 
-            { newOwnerDto with UpdatedAt = Some(getCurrentInstant ()) }
+            { newOwnerDto with UpdatedAt = Some ownerEvent.Metadata.Timestamp }
 
         member val private correlationId: CorrelationId = String.Empty with get, set
 
@@ -196,7 +196,7 @@ module Owner =
 
                     do! DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> stateManager.SetStateAsync(eventsStateName, ownerEvents))
 
-                    ownerDto <- ownerDto |> updateDto ownerEvent.Event
+                    ownerDto <- ownerDto |> updateDto ownerEvent
 
                     do! DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> stateManager.SetStateAsync(dtoStateName, ownerDto))
 

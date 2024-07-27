@@ -158,7 +158,9 @@ module Repository =
                         OrganizationId = organizationId
                         ObjectStorageProvider = Constants.DefaultObjectStorageProvider
                         StorageAccountName = Constants.DefaultObjectStorageAccount
-                        StorageContainerName = StorageContainerName Constants.DefaultObjectStorageContainerName }
+                        StorageContainerName = StorageContainerName Constants.DefaultObjectStorageContainerName
+                        CreatedAt = repositoryEvent.Metadata.Timestamp
+                    }
                 | Initialized -> { currentRepositoryDto with InitializedAt = Some(getCurrentInstant ()) }
                 | ObjectStorageProviderSet objectStorageProvider -> { currentRepositoryDto with ObjectStorageProvider = objectStorageProvider }
                 | StorageAccountNameSet storageAccountName -> { currentRepositoryDto with StorageAccountName = storageAccountName }
@@ -179,7 +181,7 @@ module Repository =
                 | PhysicalDeleted -> currentRepositoryDto // Do nothing because it's about to be deleted anyway.
                 | Undeleted -> { currentRepositoryDto with DeletedAt = None; DeleteReason = String.Empty }
 
-            { newRepositoryDto with UpdatedAt = Some(getCurrentInstant ()) }
+            { newRepositoryDto with UpdatedAt = Some repositoryEvent.Metadata.Timestamp }
 
         // This is essentially an object-oriented implementation of the Lazy<T> pattern. I was having issues with Lazy<T>,
         //   and after a solid day wrestling with it, I dropped it and did this. Works a treat.

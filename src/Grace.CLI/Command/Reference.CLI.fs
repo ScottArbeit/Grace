@@ -940,7 +940,7 @@ module Reference =
                                                         t1.Value <- 100.0
 
                                                         // If the current branch is based on the parent's latest promotion, then we can proceed with the promotion.
-                                                        if branchDto.BasedOn = parentBranchDto.LatestPromotion.ReferenceId then
+                                                        if branchDto.BasedOn.ReferenceId = parentBranchDto.LatestPromotion.ReferenceId then
                                                             t2.StartTask()
 
                                                             let promotionParameters =

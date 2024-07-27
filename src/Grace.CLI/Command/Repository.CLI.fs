@@ -927,7 +927,7 @@ module Repository =
                                            branchName = branch.BranchName
                                            updatedAt = branch.UpdatedAt
                                            parentBranchName = parent.branchName
-                                           basedOnLatestPromotion = (branch.BasedOn = parent.latestPromotion.ReferenceId) |})
+                                           basedOnLatestPromotion = (branch.BasedOn.ReferenceId = parent.latestPromotion.ReferenceId) |})
                                 )
                                 .OrderBy(fun branch -> branch.parentBranchName, branch.branchName)
 

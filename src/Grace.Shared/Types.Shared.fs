@@ -236,7 +236,7 @@ module Types =
               Directories = List<DirectoryVersionId>()
               Files = List<FileVersion>()
               Size = Constants.InitialDirectorySize
-              CreatedAt = Instant.MinValue }
+              CreatedAt = Constants.DefaultTimestamp }
 
         static member Create
             (directoryVersionId: DirectoryVersionId)
@@ -294,7 +294,7 @@ module Types =
               Directories = List<DirectoryVersionId>()
               Files = List<LocalFileVersion>()
               Size = Constants.InitialDirectorySize
-              CreatedAt = Instant.MinValue
+              CreatedAt = Constants.DefaultTimestamp
               LastWriteTimeUtc = DateTime.UtcNow }
 
         static member Create

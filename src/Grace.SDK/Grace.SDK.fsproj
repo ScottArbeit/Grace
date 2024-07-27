@@ -27,7 +27,7 @@
 	</ItemGroup>
 
 	<ItemGroup>
-		<PackageReference Include="Azure.Storage.Blobs" Version="12.21.0" />
+		<PackageReference Include="Azure.Storage.Blobs" Version="12.21.1" />
 		<PackageReference Include="Dapr.Client" Version="1.13.1" />
 		<PackageReference Include="Polly" Version="8.4.1" />
 	</ItemGroup>

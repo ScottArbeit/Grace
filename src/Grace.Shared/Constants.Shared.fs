@@ -12,6 +12,7 @@ open System.Text.Json.Serialization
 open System.Text.RegularExpressions
 open System.Collections.Generic
 open System.Threading.Tasks
+open NodaTime
 
 module Constants =
 
@@ -234,6 +235,9 @@ module Constants =
     /// The custom alphabet to use when generating a CorrelationId. This alphabet is URL-safe. Consists of "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz._-".
     [<Literal>]
     let CorrelationIdAlphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz._-"
+
+    /// The default value for a timestamp during record construction. Equal to 2000-01-01T00:00:00Z.
+    let DefaultTimestamp = Instant.FromDateTimeUtc(DateTime(2000, 1, 1, 0, 0, 0, DateTimeKind.Utc))
 
     /// Values used with Grace's MemoryCache.
     module MemoryCache =

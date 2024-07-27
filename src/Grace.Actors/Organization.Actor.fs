@@ -47,11 +47,11 @@ module Organization =
         /// Indicates that the actor is in an undefined state, and should be reset.
         let mutable isDisposed = false
 
-        let updateDto (organizationEventType: OrganizationEventType) currentOrganizationDto =
+        let updateDto organizationEvent currentOrganizationDto =
             let newOrganizationDto =
-                match organizationEventType with
+                match organizationEvent.Event with
                 | Created(organizationId, organizationName, ownerId) ->
-                    { OrganizationDto.Default with OrganizationId = organizationId; OrganizationName = organizationName; OwnerId = ownerId }
+                    { OrganizationDto.Default with OrganizationId = organizationId; OrganizationName = organizationName; OwnerId = ownerId; CreatedAt = organizationEvent.Metadata.Timestamp }
                 | NameSet(organizationName) -> { currentOrganizationDto with OrganizationName = organizationName }
                 | TypeSet(organizationType) -> { currentOrganizationDto with OrganizationType = organizationType }
                 | SearchVisibilitySet(searchVisibility) -> { currentOrganizationDto with SearchVisibility = searchVisibility }
@@ -60,7 +60,7 @@ module Organization =
                 | PhysicalDeleted -> currentOrganizationDto // Do nothing because it's about to be deleted anyway.
                 | Undeleted -> { currentOrganizationDto with DeletedAt = None; DeleteReason = String.Empty }
 
-            { newOrganizationDto with UpdatedAt = Some(getCurrentInstant ()) }
+            { newOrganizationDto with UpdatedAt = Some organizationEvent.Metadata.Timestamp }
 
         member val private correlationId: CorrelationId = String.Empty with get, set
 
@@ -193,7 +193,7 @@ module Organization =
                     do! daprClient.PublishEventAsync(GracePubSubService, GraceEventStreamTopic, graceEvent)
 
                     // Update the Dto based on the current event.
-                    organizationDto <- organizationDto |> updateDto organizationEvent.Event
+                    organizationDto <- organizationDto |> updateDto organizationEvent
 
                     do! DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> stateManager.SetStateAsync(dtoStateName, organizationDto))
 

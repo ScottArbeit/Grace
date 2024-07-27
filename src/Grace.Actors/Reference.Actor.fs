@@ -42,9 +42,9 @@ module Reference =
         /// Indicates that the actor is in an undefined state, and should be reset.
 
         let mutable isDisposed = false
-        let updateDto referenceEventType currentReferenceDto =
+        let updateDto referenceEvent currentReferenceDto =
             let newReferenceDto =
-                match referenceEventType with
+                match referenceEvent.Event with
                 | Created createdDto ->
                     { currentReferenceDto with
                         ReferenceId = createdDto.ReferenceId
@@ -55,6 +55,7 @@ module Reference =
                         ReferenceType = createdDto.ReferenceType
                         ReferenceText = createdDto.ReferenceText
                         Links = createdDto.Links
+                        CreatedAt = referenceEvent.Metadata.Timestamp
                     }
                 | LinkAdded link -> {currentReferenceDto with Links = currentReferenceDto.Links |> Array.append (Array.singleton link) |> Array.distinct }
                 | LinkRemoved link -> {currentReferenceDto with Links = currentReferenceDto.Links |> Array.except (Array.singleton link) }
@@ -62,7 +63,7 @@ module Reference =
                 | PhysicalDeleted -> currentReferenceDto // Do nothing because it's about to be deleted anyway.
                 | Undeleted -> {currentReferenceDto with DeletedAt = None; DeleteReason = String.Empty}
 
-            {newReferenceDto with UpdatedAt = Some(getCurrentInstant())}
+            {newReferenceDto with UpdatedAt = Some referenceEvent.Metadata.Timestamp}
 
         member val private correlationId: CorrelationId = String.Empty with get, set
 
@@ -79,7 +80,7 @@ module Reference =
                     referenceEvents.AddRange(retrievedEvents)
 
                     // Apply all events to the state.
-                    referenceDto <- retrievedEvents |> Seq.fold (fun referenceDto referenceEvent -> referenceDto |> updateDto referenceEvent.Event) ReferenceDto.Default
+                    referenceDto <- retrievedEvents |> Seq.fold (fun referenceDto referenceEvent -> referenceDto |> updateDto referenceEvent) ReferenceDto.Default
 
                     message <- "Retrieved from database"
                 | None -> message <- "Not found in database"
@@ -166,7 +167,7 @@ module Reference =
                     do! Storage.SaveState stateManager eventsStateName referenceEvents
 
                     // Update the referenceDto with the event.
-                    referenceDto <- referenceDto |> updateDto referenceEvent.Event
+                    referenceDto <- referenceDto |> updateDto referenceEvent
 
                     // Publish the event to the rest of the world.
                     let graceEvent = Events.GraceEvent.ReferenceEvent referenceEvent
@@ -268,7 +269,7 @@ module Reference =
                     do! Storage.SaveState stateManager eventsStateName referenceEvents
 
                     // Update the referenceDto with the event.
-                    referenceDto <- referenceDto |> updateDto referenceEvent.Event
+                    referenceDto <- referenceDto |> updateDto referenceEvent
 
                     // Publish the event to the rest of the world.
                     let graceEvent = Events.GraceEvent.ReferenceEvent referenceEvent

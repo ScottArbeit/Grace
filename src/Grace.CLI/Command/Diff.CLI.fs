@@ -467,40 +467,7 @@ module Diff =
                                                 match! Branch.Get(branchParameters) with
                                                 | Ok returnValue ->
                                                     let branchDto = returnValue.ReturnValue
-
-                                                    let getReferencesByIdParameters =
-                                                        Parameters.Repository.GetReferencesByReferenceIdParameters(
-                                                            OwnerId = parameters.OwnerId,
-                                                            OwnerName = parameters.OwnerName,
-                                                            OrganizationId = parameters.OrganizationId,
-                                                            OrganizationName = parameters.OrganizationName,
-                                                            RepositoryId = parameters.RepositoryId,
-                                                            RepositoryName = parameters.RepositoryName,
-                                                            ReferenceIds = [| branchDto.BasedOn |],
-                                                            MaxCount = 1,
-                                                            CorrelationId = parameters.CorrelationId
-                                                        )
-
-                                                    match! Repository.GetReferencesByReferenceId(getReferencesByIdParameters) with
-                                                    | Ok returnValue ->
-                                                        if returnValue.ReturnValue.Count() > 0 then
-                                                            // We're only taking the first one because we've only asked for one in the parameters.
-                                                            let referenceDto = returnValue.ReturnValue.First()
-                                                            promotions.Add(referenceDto)
-                                                        //logToAnsiConsole Colors.Verbose $"In diffToReference / Promotion: Got promotion reference from branchDto.BasedOn. ReferenceId: {referenceDto.ReferenceId}; Sha256Hash: {referenceDto.Sha256Hash}."
-                                                        else
-                                                            logToAnsiConsole
-                                                                Colors.Verbose
-                                                                $"In diffToReference / Promotion: Did not find the basedOn reference."
-
-                                                            ()
-                                                    | Error error ->
-                                                        logToAnsiConsole Colors.Error "Error in GetReferencesByReferenceId."
-
-                                                        logToAnsiConsole Colors.Error (Markup.Escape($"{error}"))
-
-                                                        if parseResult |> json || parseResult |> verbose then
-                                                            logToAnsiConsole Colors.Verbose (serialize error)
+                                                    promotions.Add(branchDto.BasedOn)
                                                 | Error error ->
                                                     logToAnsiConsole Colors.Error (Markup.Escape($"Error in Branch.Get: {error}"))
 

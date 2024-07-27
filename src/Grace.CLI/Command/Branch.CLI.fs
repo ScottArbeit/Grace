@@ -1107,7 +1107,7 @@ module Branch =
                                                         t1.Value <- 100.0
 
                                                         // If the current branch is based on the parent's latest promotion, then we can proceed with the promotion.
-                                                        if branchDto.BasedOn = parentBranchDto.LatestPromotion.ReferenceId then
+                                                        if branchDto.BasedOn.ReferenceId = parentBranchDto.LatestPromotion.ReferenceId then
                                                             t2.StartTask()
 
                                                             let promotionParameters =
@@ -2897,359 +2897,338 @@ module Branch =
                 | Ok returnValue ->
                     let parentBranchDto = returnValue.ReturnValue
 
-                    if branchDto.BasedOn = parentBranchDto.LatestPromotion.ReferenceId then
+                    if branchDto.BasedOn.ReferenceId = parentBranchDto.LatestPromotion.ReferenceId then
                         AnsiConsole.MarkupLine("The current branch is already based on the latest promotion in the parent branch.")
 
                         AnsiConsole.MarkupLine("Run `grace status` to see more.")
                         return 0
                     else
                         // Now, get ReferenceDtos for current.BasedOn and parent.LatestPromotion so we have their DirectoryId's.
-                        let getReferencesByReferenceIdParameters =
-                            Parameters.Repository.GetReferencesByReferenceIdParameters(
+                        let latestCommit = branchDto.LatestCommit
+                        let parentLatestPromotion = parentBranchDto.LatestPromotion
+                        let basedOn = branchDto.BasedOn
+
+                        // Get the latest reference from the current branch.
+                        let getReferencesParameters =
+                            Parameters.Branch.GetReferencesParameters(
                                 OwnerId = parameters.OwnerId,
                                 OwnerName = parameters.OwnerName,
                                 OrganizationId = parameters.OrganizationId,
                                 OrganizationName = parameters.OrganizationName,
                                 RepositoryId = $"{branchDto.RepositoryId}",
-                                CorrelationId = parameters.CorrelationId,
-                                ReferenceIds = [| branchDto.BasedOn; branchDto.LatestCommit.ReferenceId; parentBranchDto.LatestPromotion.ReferenceId |]
+                                BranchId = $"{branchDto.BranchId}",
+                                MaxCount = 1,
+                                CorrelationId = parameters.CorrelationId
                             )
-
-                        match! Repository.GetReferencesByReferenceId(getReferencesByReferenceIdParameters) with
+                        //logToAnsiConsole Colors.Verbose $"getReferencesParameters: {getReferencesParameters |> serialize)}"
+                        match! Branch.GetReferences(getReferencesParameters) with
                         | Ok returnValue ->
-                            let referenceDtos = returnValue.ReturnValue
+                            let latestReference =
+                                if returnValue.ReturnValue.Count() > 0 then
+                                    returnValue.ReturnValue.First()
+                                else
+                                    ReferenceDto.Default
+                            //logToAnsiConsole Colors.Verbose $"latestReference: {serialize latestReference}"
+                            // Now we have all of the references we need, so we have DirectoryId's to do diffs with.
 
-                            let latestCommit = referenceDtos.FirstOrDefault((fun ref -> ref.ReferenceId = branchDto.LatestCommit.ReferenceId), ReferenceDto.Default)
+                            let! (diffs, errors) =
+                                task {
+                                    if basedOn.DirectoryId <> DirectoryVersionId.Empty then
+                                        // First diff: parent promotion that current branch is based on vs. parent's latest promotion.
+                                        let diffParameters =
+                                            Parameters.Diff.GetDiffParameters(
+                                                OwnerId = parameters.OwnerId,
+                                                OwnerName = parameters.OwnerName,
+                                                OrganizationId = parameters.OrganizationId,
+                                                OrganizationName = parameters.OrganizationName,
+                                                RepositoryId = $"{branchDto.RepositoryId}",
+                                                DirectoryId1 = basedOn.DirectoryId,
+                                                DirectoryId2 = parentLatestPromotion.DirectoryId,
+                                                CorrelationId = parameters.CorrelationId
+                                            )
+                                        //logToAnsiConsole Colors.Verbose $"First diff: {Markup.Escape(serialize diffParameters)}"
+                                        let! firstDiff = Diff.GetDiff(diffParameters)
 
-                            let parentLatestPromotion =
-                                referenceDtos.FirstOrDefault((fun ref -> ref.ReferenceId = parentBranchDto.LatestPromotion.ReferenceId), ReferenceDto.Default)
+                                        // Second diff: latest reference on current branch vs. parent promotion that current branch is based on.
+                                        let diffParameters =
+                                            Parameters.Diff.GetDiffParameters(
+                                                OwnerId = parameters.OwnerId,
+                                                OwnerName = parameters.OwnerName,
+                                                OrganizationId = parameters.OrganizationId,
+                                                OrganizationName = parameters.OrganizationName,
+                                                RepositoryId = $"{branchDto.RepositoryId}",
+                                                DirectoryId1 = latestReference.DirectoryId,
+                                                DirectoryId2 = basedOn.DirectoryId,
+                                                CorrelationId = parameters.CorrelationId
+                                            )
+                                        //logToAnsiConsole Colors.Verbose $"Second diff: {Markup.Escape(serialize diffParameters)}"
+                                        let! secondDiff = Diff.GetDiff(diffParameters)
 
-                            let basedOn = referenceDtos.FirstOrDefault((fun ref -> ref.ReferenceId = branchDto.BasedOn), ReferenceDto.Default)
-
-                            // Get the latest reference from the current branch.
-                            let getReferencesParameters =
-                                Parameters.Branch.GetReferencesParameters(
-                                    OwnerId = parameters.OwnerId,
-                                    OwnerName = parameters.OwnerName,
-                                    OrganizationId = parameters.OrganizationId,
-                                    OrganizationName = parameters.OrganizationName,
-                                    RepositoryId = $"{branchDto.RepositoryId}",
-                                    BranchId = $"{branchDto.BranchId}",
-                                    MaxCount = 1,
-                                    CorrelationId = parameters.CorrelationId
-                                )
-                            //logToAnsiConsole Colors.Verbose $"getReferencesParameters: {getReferencesParameters |> serialize)}"
-                            match! Branch.GetReferences(getReferencesParameters) with
-                            | Ok returnValue ->
-                                let latestReference =
-                                    if returnValue.ReturnValue.Count() > 0 then
-                                        returnValue.ReturnValue.First()
+                                        let returnValue = Result.partition [ firstDiff; secondDiff ]
+                                        return returnValue
                                     else
-                                        ReferenceDto.Default
-                                //logToAnsiConsole Colors.Verbose $"latestReference: {serialize latestReference}"
-                                // Now we have all of the references we need, so we have DirectoryId's to do diffs with.
+                                        // This should only happen when first creating a repository, when main has no promotions.
+                                        // Only one diff possible: latest reference on current branch vs. parent's latest promotion.
+                                        let diffParameters =
+                                            Parameters.Diff.GetDiffParameters(
+                                                OwnerId = parameters.OwnerId,
+                                                OwnerName = parameters.OwnerName,
+                                                OrganizationId = parameters.OrganizationId,
+                                                OrganizationName = parameters.OrganizationName,
+                                                RepositoryId = $"{branchDto.RepositoryId}",
+                                                DirectoryId1 = latestReference.DirectoryId,
+                                                DirectoryId2 = parentLatestPromotion.DirectoryId,
+                                                CorrelationId = parameters.CorrelationId
+                                            )
+                                        //logToAnsiConsole Colors.Verbose $"Initial diff: {Markup.Escape(serialize diffParameters)}"
+                                        let! diff = Diff.GetDiff(diffParameters)
+                                        let returnValue = Result.partition [ diff ]
+                                        return returnValue
+                                }
 
-                                let! (diffs, errors) =
-                                    task {
-                                        if basedOn.DirectoryId <> DirectoryVersionId.Empty then
-                                            // First diff: parent promotion that current branch is based on vs. parent's latest promotion.
-                                            let diffParameters =
-                                                Parameters.Diff.GetDiffParameters(
-                                                    OwnerId = parameters.OwnerId,
-                                                    OwnerName = parameters.OwnerName,
-                                                    OrganizationId = parameters.OrganizationId,
-                                                    OrganizationName = parameters.OrganizationName,
-                                                    RepositoryId = $"{branchDto.RepositoryId}",
-                                                    DirectoryId1 = basedOn.DirectoryId,
-                                                    DirectoryId2 = parentLatestPromotion.DirectoryId,
-                                                    CorrelationId = parameters.CorrelationId
-                                                )
-                                            //logToAnsiConsole Colors.Verbose $"First diff: {Markup.Escape(serialize diffParameters)}"
-                                            let! firstDiff = Diff.GetDiff(diffParameters)
+                            // So, right now, if repo just created, and BasedOn is empty, we'll have a single diff.
+                            // That fails a few lines below here.
+                            // Have to decide what to do in this case.
 
-                                            // Second diff: latest reference on current branch vs. parent promotion that current branch is based on.
-                                            let diffParameters =
-                                                Parameters.Diff.GetDiffParameters(
-                                                    OwnerId = parameters.OwnerId,
-                                                    OwnerName = parameters.OwnerName,
-                                                    OrganizationId = parameters.OrganizationId,
-                                                    OrganizationName = parameters.OrganizationName,
-                                                    RepositoryId = $"{branchDto.RepositoryId}",
-                                                    DirectoryId1 = latestReference.DirectoryId,
-                                                    DirectoryId2 = basedOn.DirectoryId,
-                                                    CorrelationId = parameters.CorrelationId
-                                                )
-                                            //logToAnsiConsole Colors.Verbose $"Second diff: {Markup.Escape(serialize diffParameters)}"
-                                            let! secondDiff = Diff.GetDiff(diffParameters)
+                            if errors.Count() = 0 then
+                                // Yay! We have our two diffs.
+                                let diff1 = diffs[0].ReturnValue
+                                let diff2 = diffs[1].ReturnValue
 
-                                            let returnValue = Result.partition [ firstDiff; secondDiff ]
-                                            return returnValue
-                                        else
-                                            // This should only happen when first creating a repository, when main has no promotions.
-                                            // Only one diff possible: latest reference on current branch vs. parent's latest promotion.
-                                            let diffParameters =
-                                                Parameters.Diff.GetDiffParameters(
-                                                    OwnerId = parameters.OwnerId,
-                                                    OwnerName = parameters.OwnerName,
-                                                    OrganizationId = parameters.OrganizationId,
-                                                    OrganizationName = parameters.OrganizationName,
-                                                    RepositoryId = $"{branchDto.RepositoryId}",
-                                                    DirectoryId1 = latestReference.DirectoryId,
-                                                    DirectoryId2 = parentLatestPromotion.DirectoryId,
-                                                    CorrelationId = parameters.CorrelationId
-                                                )
-                                            //logToAnsiConsole Colors.Verbose $"Initial diff: {Markup.Escape(serialize diffParameters)}"
-                                            let! diff = Diff.GetDiff(diffParameters)
-                                            let returnValue = Result.partition [ diff ]
-                                            return returnValue
-                                    }
+                                let filesToDownload = List<FileSystemDifference>()
 
-                                // So, right now, if repo just created, and BasedOn is empty, we'll have a single diff.
-                                // That fails a few lines below here.
-                                // Have to decide what to do in this case.
+                                // Identify which files have been changed in the first diff, but not in the second diff.
+                                //   We can just download and copy these files into place in the working directory.
+                                for fileDifference in diff1.Differences do
+                                    if
+                                        not
+                                        <| diff2.Differences.Any(fun d -> d.RelativePath = fileDifference.RelativePath)
+                                    then
+                                        // Copy different file version into place - similar to how we do it for switch
+                                        filesToDownload.Add(fileDifference)
+
+                                let getParentLatestPromotionDirectoryParameters =
+                                    Parameters.Directory.GetParameters(
+                                        RepositoryId = $"{branchDto.RepositoryId}",
+                                        DirectoryId = $"{parentLatestPromotion.DirectoryId}",
+                                        CorrelationId = parameters.CorrelationId
+                                    )
+
+                                let getLatestReferenceDirectoryParameters =
+                                    Parameters.Directory.GetParameters(
+                                        RepositoryId = $"{branchDto.RepositoryId}",
+                                        DirectoryId = $"{latestReference.DirectoryId}",
+                                        CorrelationId = parameters.CorrelationId
+                                    )
+
+                                // Get the directory versions for the parent promotion that we're rebasing on, and the latest reference.
+                                let! d1 = Directory.GetDirectoryVersionsRecursive(getParentLatestPromotionDirectoryParameters)
+
+                                let! d2 = Directory.GetDirectoryVersionsRecursive(getLatestReferenceDirectoryParameters)
+
+                                let createFileVersionLookupDictionary (directoryVersions: IEnumerable<DirectoryVersion>) =
+                                    let lookup = Dictionary<RelativePath, LocalFileVersion>()
+
+                                    directoryVersions
+                                    |> Seq.map (fun dv -> dv.ToLocalDirectoryVersion(dv.CreatedAt.ToDateTimeUtc()))
+                                    |> Seq.map (fun dv -> dv.Files)
+                                    |> Seq.concat
+                                    |> Seq.iter (fun file -> lookup.Add(file.RelativePath, file))
+
+                                    lookup
+
+                                let (directories, errors) = Result.partition [ d1; d2 ]
 
                                 if errors.Count() = 0 then
-                                    // Yay! We have our two diffs.
-                                    let diff1 = diffs[0].ReturnValue
-                                    let diff2 = diffs[1].ReturnValue
+                                    let parentLatestPromotionDirectoryVersions = directories[0].ReturnValue
+                                    let latestReferenceDirectoryVersions = directories[1].ReturnValue
 
-                                    let filesToDownload = List<FileSystemDifference>()
+                                    let parentLatestPromotionLookup = createFileVersionLookupDictionary parentLatestPromotionDirectoryVersions
 
-                                    // Identify which files have been changed in the first diff, but not in the second diff.
-                                    //   We can just download and copy these files into place in the working directory.
-                                    for fileDifference in diff1.Differences do
-                                        if
-                                            not
-                                            <| diff2.Differences.Any(fun d -> d.RelativePath = fileDifference.RelativePath)
-                                        then
-                                            // Copy different file version into place - similar to how we do it for switch
-                                            filesToDownload.Add(fileDifference)
+                                    let latestReferenceLookup = createFileVersionLookupDictionary latestReferenceDirectoryVersions
 
-                                    let getParentLatestPromotionDirectoryParameters =
-                                        Parameters.Directory.GetParameters(
-                                            RepositoryId = $"{branchDto.RepositoryId}",
-                                            DirectoryId = $"{parentLatestPromotion.DirectoryId}",
-                                            CorrelationId = parameters.CorrelationId
-                                        )
+                                    // Get the specific FileVersions for those files from the contents of the parent's latest promotion.
+                                    let fileVersionsToDownload =
+                                        filesToDownload
+                                        |> Seq.where (fun fileToDownload -> parentLatestPromotionLookup.ContainsKey($"{fileToDownload.RelativePath}"))
+                                        |> Seq.map (fun fileToDownload -> parentLatestPromotionLookup[$"{fileToDownload.RelativePath}"])
+                                    //logToAnsiConsole Colors.Verbose $"fileVersionsToDownload: {fileVersionsToDownload.Count()}"
+                                    //for f in fileVersionsToDownload do
+                                    //    logToAnsiConsole Colors.Verbose  $"relativePath: {f.RelativePath}"
 
-                                    let getLatestReferenceDirectoryParameters =
-                                        Parameters.Directory.GetParameters(
-                                            RepositoryId = $"{branchDto.RepositoryId}",
-                                            DirectoryId = $"{latestReference.DirectoryId}",
-                                            CorrelationId = parameters.CorrelationId
-                                        )
+                                    // Download those FileVersions from object storage, and copy them into the working directory.
+                                    match! downloadFilesFromObjectStorage fileVersionsToDownload parameters.CorrelationId with
+                                    | Ok _ ->
+                                        //logToAnsiConsole Colors.Verbose $"Succeeded in downloadFilesFromObjectStorage."
+                                        fileVersionsToDownload
+                                        |> Seq.iter (fun file ->
+                                            logToAnsiConsole Colors.Verbose $"Copying {file.RelativePath} from {file.FullObjectPath} to {file.FullName}."
+                                            // Delete the existing file in the working directory.
+                                            File.Delete(file.FullName)
+                                            // Copy the version from the object cache to the working directory.
+                                            File.Copy(file.FullObjectPath, file.FullName))
 
-                                    // Get the directory versions for the parent promotion that we're rebasing on, and the latest reference.
-                                    let! d1 = Directory.GetDirectoryVersionsRecursive(getParentLatestPromotionDirectoryParameters)
+                                        logToAnsiConsole Colors.Verbose $"Copied files into place."
+                                    | Error error -> AnsiConsole.WriteLine($"[{Colors.Error}]{Markup.Escape(error)}[/]")
 
-                                    let! d2 = Directory.GetDirectoryVersionsRecursive(getLatestReferenceDirectoryParameters)
+                                    // If a file has changed in the second diff, but not in the first diff, cool, we can keep those changes, nothing to be done.
 
-                                    let createFileVersionLookupDictionary (directoryVersions: IEnumerable<DirectoryVersion>) =
-                                        let lookup = Dictionary<RelativePath, LocalFileVersion>()
+                                    // If a file has changed in both, we have to check the two diffs at the line-level to see if there are any conflicts.
+                                    let mutable potentialPromotionConflicts = false
 
-                                        directoryVersions
-                                        |> Seq.map (fun dv -> dv.ToLocalDirectoryVersion(dv.CreatedAt.ToDateTimeUtc()))
-                                        |> Seq.map (fun dv -> dv.Files)
-                                        |> Seq.concat
-                                        |> Seq.iter (fun file -> lookup.Add(file.RelativePath, file))
+                                    for diff1Difference in diff1.Differences do
+                                        let diff2DifferenceQuery =
+                                            diff2.Differences.Where(fun d ->
+                                                d.RelativePath = diff1Difference.RelativePath
+                                                && d.FileSystemEntryType = FileSystemEntryType.File
+                                                && d.DifferenceType = DifferenceType.Change)
 
-                                        lookup
+                                        if diff2DifferenceQuery.Count() = 1 then
+                                            // We have a file that's changed in both diffs.
+                                            let diff2Difference = diff2DifferenceQuery.First()
 
-                                    let (directories, errors) = Result.partition [ d1; d2 ]
+                                            // Check the Sha256Hash values; if they're identical, ignore the file.
+                                            //let fileVersion1 = parentLatestPromotionLookup[$"{diff1Difference.RelativePath}"]
+                                            let fileVersion1 =
+                                                parentLatestPromotionLookup.FirstOrDefault(fun kvp -> kvp.Key = $"{diff1Difference.RelativePath}")
+                                            //let fileVersion2 = latestReferenceLookup[$"{diff2Difference.RelativePath}"]
+                                            let fileVersion2 = latestReferenceLookup.FirstOrDefault(fun kvp -> kvp.Key = $"{diff2Difference.RelativePath}")
+                                            //if (not <| isNull(fileVersion1) && not <| isNull(fileVersion2)) && (fileVersion1.Value.Sha256Hash <> fileVersion2.Value.Sha256Hash) then
+                                            if (fileVersion1.Value.Sha256Hash <> fileVersion2.Value.Sha256Hash) then
+                                                // Compare them at a line level; if there are no overlapping lines, we can just modify the working-directory version.
+                                                // ...
+                                                // For now, we're just going to show a message.
+                                                AnsiConsole.MarkupLine(
+                                                    $"[{Colors.Important}]Potential promotion conflict: file {diff1Difference.RelativePath} has been changed in both the latest promotion, and in the current branch.[/]"
+                                                )
 
-                                    if errors.Count() = 0 then
-                                        let parentLatestPromotionDirectoryVersions = directories[0].ReturnValue
-                                        let latestReferenceDirectoryVersions = directories[1].ReturnValue
+                                                AnsiConsole.MarkupLine(
+                                                    $"[{Colors.Important}]fileVersion1.Sha256Hash: {fileVersion1.Value.Sha256Hash}; fileVersion1.LastWriteTimeUTC: {fileVersion1.Value.LastWriteTimeUtc}.[/]"
+                                                )
 
-                                        let parentLatestPromotionLookup = createFileVersionLookupDictionary parentLatestPromotionDirectoryVersions
+                                                AnsiConsole.MarkupLine(
+                                                    $"[{Colors.Important}]fileVersion2.Sha256Hash: {fileVersion2.Value.Sha256Hash}; fileVersion2.LastWriteTimeUTC: {fileVersion2.Value.LastWriteTimeUtc}.[/]"
+                                                )
 
-                                        let latestReferenceLookup = createFileVersionLookupDictionary latestReferenceDirectoryVersions
+                                                potentialPromotionConflicts <- true
 
-                                        // Get the specific FileVersions for those files from the contents of the parent's latest promotion.
-                                        let fileVersionsToDownload =
-                                            filesToDownload
-                                            |> Seq.where (fun fileToDownload -> parentLatestPromotionLookup.ContainsKey($"{fileToDownload.RelativePath}"))
-                                            |> Seq.map (fun fileToDownload -> parentLatestPromotionLookup[$"{fileToDownload.RelativePath}"])
-                                        //logToAnsiConsole Colors.Verbose $"fileVersionsToDownload: {fileVersionsToDownload.Count()}"
-                                        //for f in fileVersionsToDownload do
-                                        //    logToAnsiConsole Colors.Verbose  $"relativePath: {f.RelativePath}"
+                                    /// Create new directory versions and updates Grace Status with them.
+                                    let getNewGraceStatusAndDirectoryVersions
+                                        (showOutput, graceStatus, currentBranch: BranchDto, differences: IEnumerable<FileSystemDifference>)
+                                        =
+                                        task {
+                                            if differences.Count() > 0 then
+                                                let! (updatedGraceStatus, newDirectoryVersions) =
+                                                    getNewGraceStatusAndDirectoryVersions graceStatus differences
 
-                                        // Download those FileVersions from object storage, and copy them into the working directory.
-                                        match! downloadFilesFromObjectStorage fileVersionsToDownload parameters.CorrelationId with
-                                        | Ok _ ->
-                                            //logToAnsiConsole Colors.Verbose $"Succeeded in downloadFilesFromObjectStorage."
-                                            fileVersionsToDownload
-                                            |> Seq.iter (fun file ->
-                                                logToAnsiConsole Colors.Verbose $"Copying {file.RelativePath} from {file.FullObjectPath} to {file.FullName}."
-                                                // Delete the existing file in the working directory.
-                                                File.Delete(file.FullName)
-                                                // Copy the version from the object cache to the working directory.
-                                                File.Copy(file.FullObjectPath, file.FullName))
+                                                return Ok(updatedGraceStatus, newDirectoryVersions)
+                                            else
+                                                return Ok(graceStatus, List<LocalDirectoryVersion>())
+                                        }
 
-                                            logToAnsiConsole Colors.Verbose $"Copied files into place."
-                                        | Error error -> AnsiConsole.WriteLine($"[{Colors.Error}]{Markup.Escape(error)}[/]")
+                                    /// Upload new DirectoryVersion records to the server.
+                                    let uploadNewDirectoryVersions (currentBranch: BranchDto) (newDirectoryVersions: List<LocalDirectoryVersion>) =
+                                        task {
+                                            if currentBranch.SaveEnabled && newDirectoryVersions.Any() then
+                                                let saveParameters = SaveDirectoryVersionsParameters()
 
-                                        // If a file has changed in the second diff, but not in the first diff, cool, we can keep those changes, nothing to be done.
+                                                saveParameters.DirectoryVersions <- newDirectoryVersions.Select(fun dv -> dv.ToDirectoryVersion).ToList()
 
-                                        // If a file has changed in both, we have to check the two diffs at the line-level to see if there are any conflicts.
-                                        let mutable potentialPromotionConflicts = false
+                                                match! Directory.SaveDirectoryVersions saveParameters with
+                                                | Ok returnValue -> return Ok()
+                                                | Error error -> return Error error
+                                            else
+                                                return Ok()
+                                        }
 
-                                        for diff1Difference in diff1.Differences do
-                                            let diff2DifferenceQuery =
-                                                diff2.Differences.Where(fun d ->
-                                                    d.RelativePath = diff1Difference.RelativePath
-                                                    && d.FileSystemEntryType = FileSystemEntryType.File
-                                                    && d.DifferenceType = DifferenceType.Change)
+                                    if not <| potentialPromotionConflicts then
+                                        // Yay! No promotion conflicts.
+                                        let mutable newGraceStatus = graceStatus
 
-                                            if diff2DifferenceQuery.Count() = 1 then
-                                                // We have a file that's changed in both diffs.
-                                                let diff2Difference = diff2DifferenceQuery.First()
+                                        // Update the GraceStatus file with the new file versions (and therefore new LocalDirectoryVersion's) we just put in place.
+                                        // filesToDownload is, conveniently, the list of files we're changing in the rebase.
+                                        match!
+                                            getNewGraceStatusAndDirectoryVersions (parseResult |> hasOutput, graceStatus, branchDto, filesToDownload)
+                                        with
+                                        | Ok(updatedGraceStatus, newDirectoryVersions) ->
+                                            // Ensure that previous DirectoryVersions for a given path are deleted from GraceStatus.
+                                            newDirectoryVersions
+                                            |> Seq.iter (fun localDirectoryVersion ->
+                                                let directoryVersionsWithSameRelativePath =
+                                                    updatedGraceStatus.Index.Values.Where(fun dv -> dv.RelativePath = localDirectoryVersion.RelativePath)
 
-                                                // Check the Sha256Hash values; if they're identical, ignore the file.
-                                                //let fileVersion1 = parentLatestPromotionLookup[$"{diff1Difference.RelativePath}"]
-                                                let fileVersion1 =
-                                                    parentLatestPromotionLookup.FirstOrDefault(fun kvp -> kvp.Key = $"{diff1Difference.RelativePath}")
-                                                //let fileVersion2 = latestReferenceLookup[$"{diff2Difference.RelativePath}"]
-                                                let fileVersion2 = latestReferenceLookup.FirstOrDefault(fun kvp -> kvp.Key = $"{diff2Difference.RelativePath}")
-                                                //if (not <| isNull(fileVersion1) && not <| isNull(fileVersion2)) && (fileVersion1.Value.Sha256Hash <> fileVersion2.Value.Sha256Hash) then
-                                                if (fileVersion1.Value.Sha256Hash <> fileVersion2.Value.Sha256Hash) then
-                                                    // Compare them at a line level; if there are no overlapping lines, we can just modify the working-directory version.
-                                                    // ...
-                                                    // For now, we're just going to show a message.
-                                                    AnsiConsole.MarkupLine(
-                                                        $"[{Colors.Important}]Potential promotion conflict: file {diff1Difference.RelativePath} has been changed in both the latest promotion, and in the current branch.[/]"
-                                                    )
+                                                if directoryVersionsWithSameRelativePath.Count() > 1 then
+                                                    // Delete all but the most recent DirectoryVersion for this path.
+                                                    directoryVersionsWithSameRelativePath
+                                                    |> Seq.where (fun dv -> dv.DirectoryVersionId <> localDirectoryVersion.DirectoryVersionId)
+                                                    |> Seq.iter (fun dv ->
+                                                        let mutable localDirectoryVersion = LocalDirectoryVersion.Default
 
-                                                    AnsiConsole.MarkupLine(
-                                                        $"[{Colors.Important}]fileVersion1.Sha256Hash: {fileVersion1.Value.Sha256Hash}; fileVersion1.LastWriteTimeUTC: {fileVersion1.Value.LastWriteTimeUtc}.[/]"
-                                                    )
+                                                        updatedGraceStatus.Index.Remove(dv.DirectoryVersionId, &localDirectoryVersion)
+                                                        |> ignore))
 
-                                                    AnsiConsole.MarkupLine(
-                                                        $"[{Colors.Important}]fileVersion2.Sha256Hash: {fileVersion2.Value.Sha256Hash}; fileVersion2.LastWriteTimeUTC: {fileVersion2.Value.LastWriteTimeUtc}.[/]"
-                                                    )
+                                            let! result = uploadNewDirectoryVersions branchDto newDirectoryVersions
+                                            do! writeGraceStatusFile updatedGraceStatus
+                                            do! updateGraceWatchInterprocessFile updatedGraceStatus
+                                            newGraceStatus <- updatedGraceStatus
 
-                                                    potentialPromotionConflicts <- true
+                                        | Error error -> logToAnsiConsole Colors.Error (Markup.Escape($"{error}"))
 
-                                        /// Create new directory versions and updates Grace Status with them.
-                                        let getNewGraceStatusAndDirectoryVersions
-                                            (showOutput, graceStatus, currentBranch: BranchDto, differences: IEnumerable<FileSystemDifference>)
-                                            =
-                                            task {
-                                                if differences.Count() > 0 then
-                                                    let! (updatedGraceStatus, newDirectoryVersions) =
-                                                        getNewGraceStatusAndDirectoryVersions graceStatus differences
+                                        // Create a save reference to mark the state of the branch after rebase.
+                                        let rootDirectoryVersion = getRootDirectoryVersion newGraceStatus
 
-                                                    return Ok(updatedGraceStatus, newDirectoryVersions)
-                                                else
-                                                    return Ok(graceStatus, List<LocalDirectoryVersion>())
-                                            }
+                                        let saveReferenceParameters =
+                                            Parameters.Branch.CreateReferenceParameters(
+                                                BranchId = $"{branchDto.BranchId}",
+                                                RepositoryId = $"{branchDto.RepositoryId}",
+                                                OwnerId = parameters.OwnerId,
+                                                OwnerName = parameters.OwnerName,
+                                                OrganizationId = parameters.OrganizationId,
+                                                OrganizationName = parameters.OrganizationName,
+                                                Sha256Hash = rootDirectoryVersion.Sha256Hash,
+                                                DirectoryVersionId = rootDirectoryVersion.DirectoryVersionId,
+                                                Message =
+                                                    $"Save after rebase from {parentBranchDto.BranchName}; {getShortSha256Hash parentLatestPromotion.Sha256Hash} - {parentLatestPromotion.ReferenceText}."
+                                            )
 
-                                        /// Upload new DirectoryVersion records to the server.
-                                        let uploadNewDirectoryVersions (currentBranch: BranchDto) (newDirectoryVersions: List<LocalDirectoryVersion>) =
-                                            task {
-                                                if currentBranch.SaveEnabled && newDirectoryVersions.Any() then
-                                                    let saveParameters = SaveDirectoryVersionsParameters()
-
-                                                    saveParameters.DirectoryVersions <- newDirectoryVersions.Select(fun dv -> dv.ToDirectoryVersion).ToList()
-
-                                                    match! Directory.SaveDirectoryVersions saveParameters with
-                                                    | Ok returnValue -> return Ok()
-                                                    | Error error -> return Error error
-                                                else
-                                                    return Ok()
-                                            }
-
-                                        if not <| potentialPromotionConflicts then
-                                            // Yay! No promotion conflicts.
-                                            let mutable newGraceStatus = graceStatus
-
-                                            // Update the GraceStatus file with the new file versions (and therefore new LocalDirectoryVersion's) we just put in place.
-                                            // filesToDownload is, conveniently, the list of files we're changing in the rebase.
-                                            match!
-                                                getNewGraceStatusAndDirectoryVersions (parseResult |> hasOutput, graceStatus, branchDto, filesToDownload)
-                                            with
-                                            | Ok(updatedGraceStatus, newDirectoryVersions) ->
-                                                // Ensure that previous DirectoryVersions for a given path are deleted from GraceStatus.
-                                                newDirectoryVersions
-                                                |> Seq.iter (fun localDirectoryVersion ->
-                                                    let directoryVersionsWithSameRelativePath =
-                                                        updatedGraceStatus.Index.Values.Where(fun dv -> dv.RelativePath = localDirectoryVersion.RelativePath)
-
-                                                    if directoryVersionsWithSameRelativePath.Count() > 1 then
-                                                        // Delete all but the most recent DirectoryVersion for this path.
-                                                        directoryVersionsWithSameRelativePath
-                                                        |> Seq.where (fun dv -> dv.DirectoryVersionId <> localDirectoryVersion.DirectoryVersionId)
-                                                        |> Seq.iter (fun dv ->
-                                                            let mutable localDirectoryVersion = LocalDirectoryVersion.Default
-
-                                                            updatedGraceStatus.Index.Remove(dv.DirectoryVersionId, &localDirectoryVersion)
-                                                            |> ignore))
-
-                                                let! result = uploadNewDirectoryVersions branchDto newDirectoryVersions
-                                                do! writeGraceStatusFile updatedGraceStatus
-                                                do! updateGraceWatchInterprocessFile updatedGraceStatus
-                                                newGraceStatus <- updatedGraceStatus
-
-                                            | Error error -> logToAnsiConsole Colors.Error (Markup.Escape($"{error}"))
-
-                                            // Create a save reference to mark the state of the branch after rebase.
-                                            let rootDirectoryVersion = getRootDirectoryVersion newGraceStatus
-
-                                            let saveReferenceParameters =
-                                                Parameters.Branch.CreateReferenceParameters(
+                                        match! Branch.Save(saveReferenceParameters) with
+                                        | Ok returnValue ->
+                                            // Add a rebase event to the branch.
+                                            let rebaseParameters =
+                                                Parameters.Branch.RebaseParameters(
                                                     BranchId = $"{branchDto.BranchId}",
                                                     RepositoryId = $"{branchDto.RepositoryId}",
                                                     OwnerId = parameters.OwnerId,
                                                     OwnerName = parameters.OwnerName,
                                                     OrganizationId = parameters.OrganizationId,
                                                     OrganizationName = parameters.OrganizationName,
-                                                    Sha256Hash = rootDirectoryVersion.Sha256Hash,
-                                                    DirectoryVersionId = rootDirectoryVersion.DirectoryVersionId,
-                                                    Message =
-                                                        $"Save after rebase from {parentBranchDto.BranchName}; {getShortSha256Hash parentLatestPromotion.Sha256Hash} - {parentLatestPromotion.ReferenceText}."
+                                                    BasedOn = parentLatestPromotion.ReferenceId
                                                 )
 
-                                            match! Branch.Save(saveReferenceParameters) with
+                                            match! Branch.Rebase(rebaseParameters) with
                                             | Ok returnValue ->
-                                                // Add a rebase event to the branch.
-                                                let rebaseParameters =
-                                                    Parameters.Branch.RebaseParameters(
-                                                        BranchId = $"{branchDto.BranchId}",
-                                                        RepositoryId = $"{branchDto.RepositoryId}",
-                                                        OwnerId = parameters.OwnerId,
-                                                        OwnerName = parameters.OwnerName,
-                                                        OrganizationId = parameters.OrganizationId,
-                                                        OrganizationName = parameters.OrganizationName,
-                                                        BasedOn = parentLatestPromotion.ReferenceId
-                                                    )
+                                                AnsiConsole.MarkupLine($"[{Colors.Important}]Rebase succeeded.[/]")
 
-                                                match! Branch.Rebase(rebaseParameters) with
-                                                | Ok returnValue ->
-                                                    AnsiConsole.MarkupLine($"[{Colors.Important}]Rebase succeeded.[/]")
+                                                AnsiConsole.MarkupLine($"[{Colors.Verbose}]({serialize returnValue})[/]")
 
-                                                    AnsiConsole.MarkupLine($"[{Colors.Verbose}]({serialize returnValue})[/]")
-
-                                                    return 0
-                                                | Error error ->
-                                                    logToAnsiConsole Colors.Error (Markup.Escape($"{error}"))
-                                                    return -1
+                                                return 0
                                             | Error error ->
                                                 logToAnsiConsole Colors.Error (Markup.Escape($"{error}"))
                                                 return -1
-                                        else
-                                            AnsiConsole.MarkupLine(
-                                                $"[{Colors.Highlighted}]A potential promotion conflict was detected. Rebase not successful.[/]"
-                                            )
-
+                                        | Error error ->
+                                            logToAnsiConsole Colors.Error (Markup.Escape($"{error}"))
                                             return -1
                                     else
-                                        logToAnsiConsole Colors.Error (Markup.Escape($"{errors.First()}"))
+                                        AnsiConsole.MarkupLine(
+                                            $"[{Colors.Highlighted}]A potential promotion conflict was detected. Rebase not successful.[/]"
+                                        )
+
                                         return -1
                                 else
                                     logToAnsiConsole Colors.Error (Markup.Escape($"{errors.First()}"))
                                     return -1
-                            | Error error ->
-                                logToAnsiConsole Colors.Error (Markup.Escape($"{error}"))
+                            else
+                                logToAnsiConsole Colors.Error (Markup.Escape($"{errors.First()}"))
                                 return -1
                         | Error error ->
                             logToAnsiConsole Colors.Error (Markup.Escape($"{error}"))
@@ -3317,147 +3296,116 @@ module Branch =
                         let parentBranchDto = returnValue.ReturnValue
 
                         // Now that I have the current and parent branch, I can get the details for the latest promotion, latest commit, latest checkpoint, and latest save.
-                        let referenceIds =
-                            [| parentBranchDto.LatestPromotion.ReferenceId
-                               branchDto.LatestCommit.ReferenceId
-                               branchDto.LatestCheckpoint.ReferenceId
-                               branchDto.LatestSave.ReferenceId
-                               branchDto.BasedOn |]
+                        let latestSave = branchDto.LatestSave
+                        let latestCheckpoint = branchDto.LatestCheckpoint
+                        let latestCommit = branchDto.LatestCommit
+                        let latestParentBranchPromotion = parentBranchDto.LatestPromotion
+                        let basedOn = branchDto.BasedOn
 
-                        let getReferencesByIdParameters =
-                            Parameters.Repository.GetReferencesByReferenceIdParameters(
+                        let getReferencesParameters =
+                            Parameters.Branch.GetReferencesParameters(
                                 OwnerId = parameters.OwnerId,
                                 OwnerName = parameters.OwnerName,
                                 OrganizationId = parameters.OrganizationId,
                                 OrganizationName = parameters.OrganizationName,
                                 RepositoryId = parameters.RepositoryId,
                                 RepositoryName = parameters.RepositoryName,
-                                ReferenceIds = referenceIds,
+                                BranchId = $"{branchDto.BranchId}",
+                                MaxCount = 1,
                                 CorrelationId = parameters.CorrelationId
                             )
 
-                        match! Repository.GetReferencesByReferenceId(getReferencesByIdParameters) with
+                        match! Branch.GetReferences(getReferencesParameters) with
                         | Ok returnValue ->
-                            let referenceDtos = returnValue.ReturnValue
+                            let latestReference =
+                                if returnValue.ReturnValue.Count() > 0 then
+                                    returnValue.ReturnValue.First()
+                                else
+                                    ReferenceDto.Default
 
-                            let latestSave = referenceDtos.FirstOrDefault((fun ref -> ref.ReferenceId = branchDto.LatestSave.ReferenceId ), ReferenceDto.Default)
+                            let getReferenceRowValue referenceDto =
+                                if referenceDto.ReferenceId = ReferenceId.Empty then
+                                    $"  None"
+                                else if parseResult |> verbose then
+                                    $"  {getShortSha256Hash referenceDto.Sha256Hash} - {ago referenceDto.CreatedAt} - {instantToLocalTime referenceDto.CreatedAt} [{Colors.Deemphasized}]- {referenceDto.ReferenceId} - {referenceDto.DirectoryId}[/]"
+                                else
+                                    $"  {getShortSha256Hash referenceDto.Sha256Hash} - {ago referenceDto.CreatedAt} - {instantToLocalTime referenceDto.CreatedAt} [{Colors.Deemphasized}]- {referenceDto.ReferenceId}[/]"
 
-                            let latestCheckpoint = referenceDtos.FirstOrDefault((fun ref -> ref.ReferenceId = branchDto.LatestCheckpoint.ReferenceId), ReferenceDto.Default)
+                            let permissions (branchDto: Dto.Branch.BranchDto) =
+                                let sb = StringBuilder()
 
-                            let latestCommit = referenceDtos.FirstOrDefault((fun ref -> ref.ReferenceId = branchDto.LatestCommit.ReferenceId), ReferenceDto.Default)
+                                if branchDto.PromotionEnabled then sb.Append("Promotion/") |> ignore
 
-                            let latestParentBranchPromotion =
-                                referenceDtos.FirstOrDefault((fun ref -> ref.ReferenceId = parentBranchDto.LatestPromotion.ReferenceId), ReferenceDto.Default)
+                                if branchDto.CommitEnabled then sb.Append("Commit/") |> ignore
 
-                            let basedOn = referenceDtos.FirstOrDefault((fun ref -> ref.ReferenceId = branchDto.BasedOn), ReferenceDto.Default)
+                                if branchDto.CheckpointEnabled then sb.Append("Checkpoint/") |> ignore
 
-                            let getReferencesParameters =
-                                Parameters.Branch.GetReferencesParameters(
-                                    OwnerId = parameters.OwnerId,
-                                    OwnerName = parameters.OwnerName,
-                                    OrganizationId = parameters.OrganizationId,
-                                    OrganizationName = parameters.OrganizationName,
-                                    RepositoryId = parameters.RepositoryId,
-                                    RepositoryName = parameters.RepositoryName,
-                                    BranchId = $"{branchDto.BranchId}",
-                                    MaxCount = 1,
-                                    CorrelationId = parameters.CorrelationId
+                                if branchDto.SaveEnabled then sb.Append("Save/") |> ignore
+
+                                if branchDto.TagEnabled then sb.Append("Tag") |> ignore
+
+                                if sb[sb.Length - 1] = '/' then sb.Remove(sb.Length - 1, 1) |> ignore
+
+                                sb.ToString()
+
+                            let table = Table(Border = TableBorder.DoubleEdge)
+                            table.ShowHeaders <- false
+
+                            table
+                                .AddColumns(String.replicate (Current().OwnerName.Length) "_", String.replicate (Current().OwnerName.Length) "_") // Using Current().OwnerName.Length is aesthetically pleasing, there's no deeper reason for it.
+                                .AddRow(
+                                    $"[{Colors.Important}]Owner[/]",
+                                    $"[{Colors.Important}]{Current().OwnerName}[/] [{Colors.Deemphasized}]- {Current().OwnerId}[/]"
                                 )
+                                .AddRow(
+                                    $"[{Colors.Important}]Organization[/]",
+                                    $"[{Colors.Important}]{Current().OrganizationName}[/] [{Colors.Deemphasized}]- {Current().OrganizationId}[/]"
+                                )
+                                .AddRow(
+                                    $"[{Colors.Important}]Repository[/]",
+                                    $"[{Colors.Important}]{Current().RepositoryName}[/] [{Colors.Deemphasized}]- {Current().RepositoryId}[/]"
+                                )
+                                .AddRow(String.Empty, String.Empty)
+                                .AddRow(
+                                    $"[{Colors.Important}]Branch[/]",
+                                    $"[{Colors.Important}]{branchDto.BranchName}[/] - Allows {permissions branchDto} [{Colors.Deemphasized}]- {branchDto.BranchId}[/]"
+                                )
+                                //.AddRow(String.Empty, $"Permissions: {permissions}.")
+                                .AddRow($"  - latest save ", getReferenceRowValue latestSave)
+                                .AddRow($"  - latest checkpoint ", getReferenceRowValue latestCheckpoint)
+                                .AddRow($"  - latest commit", getReferenceRowValue latestCommit)
+                                .AddRow($"  - based on", getReferenceRowValue basedOn)
+                            |> ignore
 
-                            match! Branch.GetReferences(getReferencesParameters) with
-                            | Ok returnValue ->
-                                let latestReference =
-                                    if returnValue.ReturnValue.Count() > 0 then
-                                        returnValue.ReturnValue.First()
-                                    else
-                                        ReferenceDto.Default
-
-                                let getReferenceRowValue referenceDto =
-                                    if referenceDto.ReferenceId = ReferenceId.Empty then
-                                        $"  None"
-                                    else if parseResult |> verbose then
-                                        $"  {getShortSha256Hash referenceDto.Sha256Hash} - {ago referenceDto.CreatedAt} - {instantToLocalTime referenceDto.CreatedAt} [{Colors.Deemphasized}]- {referenceDto.ReferenceId} - {referenceDto.DirectoryId}[/]"
-                                    else
-                                        $"  {getShortSha256Hash referenceDto.Sha256Hash} - {ago referenceDto.CreatedAt} - {instantToLocalTime referenceDto.CreatedAt} [{Colors.Deemphasized}]- {referenceDto.ReferenceId}[/]"
-
-                                let permissions (branchDto: Dto.Branch.BranchDto) =
-                                    let sb = StringBuilder()
-
-                                    if branchDto.PromotionEnabled then sb.Append("Promotion/") |> ignore
-
-                                    if branchDto.CommitEnabled then sb.Append("Commit/") |> ignore
-
-                                    if branchDto.CheckpointEnabled then sb.Append("Checkpoint/") |> ignore
-
-                                    if branchDto.SaveEnabled then sb.Append("Save/") |> ignore
-
-                                    if branchDto.TagEnabled then sb.Append("Tag") |> ignore
-
-                                    if sb[sb.Length - 1] = '/' then sb.Remove(sb.Length - 1, 1) |> ignore
-
-                                    sb.ToString()
-
-                                let table = Table(Border = TableBorder.DoubleEdge)
-                                table.ShowHeaders <- false
-
-                                table
-                                    .AddColumns(String.replicate (Current().OwnerName.Length) "_", String.replicate (Current().OwnerName.Length) "_") // Using Current().OwnerName.Length is aesthetically pleasing, there's no deeper reason for it.
-                                    .AddRow(
-                                        $"[{Colors.Important}]Owner[/]",
-                                        $"[{Colors.Important}]{Current().OwnerName}[/] [{Colors.Deemphasized}]- {Current().OwnerId}[/]"
-                                    )
-                                    .AddRow(
-                                        $"[{Colors.Important}]Organization[/]",
-                                        $"[{Colors.Important}]{Current().OrganizationName}[/] [{Colors.Deemphasized}]- {Current().OrganizationId}[/]"
-                                    )
-                                    .AddRow(
-                                        $"[{Colors.Important}]Repository[/]",
-                                        $"[{Colors.Important}]{Current().RepositoryName}[/] [{Colors.Deemphasized}]- {Current().RepositoryId}[/]"
-                                    )
-                                    .AddRow(String.Empty, String.Empty)
-                                    .AddRow(
-                                        $"[{Colors.Important}]Branch[/]",
-                                        $"[{Colors.Important}]{branchDto.BranchName}[/] - Allows {permissions branchDto} [{Colors.Deemphasized}]- {branchDto.BranchId}[/]"
-                                    )
-                                    //.AddRow(String.Empty, $"Permissions: {permissions}.")
-                                    .AddRow($"  - latest save ", getReferenceRowValue latestSave)
-                                    .AddRow($"  - latest checkpoint ", getReferenceRowValue latestCheckpoint)
-                                    .AddRow($"  - latest commit", getReferenceRowValue latestCommit)
-                                    .AddRow($"  - based on", getReferenceRowValue basedOn)
+                            if
+                                branchDto.BasedOn.ReferenceId = parentBranchDto.LatestPromotion.ReferenceId
+                                || branchDto.ParentBranchId = Constants.DefaultParentBranchId
+                            then
+                                table.AddRow($"", $"[{Colors.Added}]  Based on latest promotion.[/]") |> ignore
+                            else
+                                table.AddRow($"", $"[{Colors.Important}]  Not based on latest promotion.[/]")
                                 |> ignore
 
-                                if
-                                    branchDto.BasedOn = parentBranchDto.LatestPromotion.ReferenceId
-                                    || branchDto.ParentBranchId = Constants.DefaultParentBranchId
-                                then
-                                    table.AddRow($"", $"[{Colors.Added}]  Based on latest promotion.[/]") |> ignore
-                                else
-                                    table.AddRow($"", $"[{Colors.Important}]  Not based on latest promotion.[/]")
-                                    |> ignore
+                            table.AddRow(String.Empty, String.Empty) |> ignore
 
-                                table.AddRow(String.Empty, String.Empty) |> ignore
+                            if branchDto.ParentBranchId <> Constants.DefaultParentBranchId then
+                                table
+                                    .AddRow(
+                                        $"[{Colors.Important}]Parent branch[/]",
+                                        $"[{Colors.Important}]{parentBranchDto.BranchName}[/] - Allows {permissions parentBranchDto} [{Colors.Deemphasized}]- {parentBranchDto.BranchId}[/]"
+                                    )
+                                    .AddRow($"  - latest promotion", getReferenceRowValue latestParentBranchPromotion)
+                                    .AddRow($"", $"  {latestParentBranchPromotion.ReferenceText}")
+                                |> ignore
+                            else
+                                table.AddRow($"[{Colors.Important}]Parent branch[/]", $"[{Colors.Important}]  None[/]")
+                                |> ignore
 
-                                if branchDto.ParentBranchId <> Constants.DefaultParentBranchId then
-                                    table
-                                        .AddRow(
-                                            $"[{Colors.Important}]Parent branch[/]",
-                                            $"[{Colors.Important}]{parentBranchDto.BranchName}[/] - Allows {permissions parentBranchDto} [{Colors.Deemphasized}]- {parentBranchDto.BranchId}[/]"
-                                        )
-                                        .AddRow($"  - latest promotion", getReferenceRowValue latestParentBranchPromotion)
-                                        .AddRow($"", $"  {latestParentBranchPromotion.ReferenceText}")
-                                    |> ignore
-                                else
-                                    table.AddRow($"[{Colors.Important}]Parent branch[/]", $"[{Colors.Important}]  None[/]")
-                                    |> ignore
-
-                                // Need to add this portion of the header after everything else is rendered so we know the width.
-                                //let headerWidth = if table.Columns[0].Width.HasValue then table.Columns[0].Width.Value else 27  // 27 = longest current text
-                                //table.Columns[0].Header <- Markup(String.replicate headerWidth "_")
-                                AnsiConsole.Write(table)
-                                return 0
-                            | Error error ->
-                                logToAnsiConsole Colors.Error (Markup.Escape($"{error}"))
-                                return -1
+                            // Need to add this portion of the header after everything else is rendered so we know the width.
+                            //let headerWidth = if table.Columns[0].Width.HasValue then table.Columns[0].Width.Value else 27  // 27 = longest current text
+                            //table.Columns[0].Header <- Markup(String.replicate headerWidth "_")
+                            AnsiConsole.Write(table)
+                            return 0
                         | Error error ->
                             logToAnsiConsole Colors.Error (Markup.Escape($"{error}"))
                             return -1

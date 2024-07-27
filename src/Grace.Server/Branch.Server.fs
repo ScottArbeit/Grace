@@ -237,7 +237,7 @@ module Branch =
                                     (Guid.Parse(parameters.BranchId)),
                                     (BranchName parameters.BranchName),
                                     (Guid.Parse(parentBranchId)),
-                                    parentBranch.BasedOn,
+                                    parentBranch.BasedOn.ReferenceId,
                                     Guid.Parse(parameters.RepositoryId),
                                     parameters.InitialPermissions
                                 )
