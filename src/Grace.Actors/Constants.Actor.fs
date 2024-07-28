@@ -18,9 +18,6 @@ module Constants =
         let Checkpoint = "CheckpointActor"
 
         [<Literal>]
-        let ContainerName = "ContainerNameActor"
-
-        [<Literal>]
         let Diff = "DiffActor"
 
         [<Literal>]

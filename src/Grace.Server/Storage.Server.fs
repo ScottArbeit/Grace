@@ -129,10 +129,10 @@ module Storage =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 try
-                    let! fileVersions = context.BindJsonAsync<List<FileVersion>>()
+                    let! fileVersions = context.BindJsonAsync<FileVersion array>()
                     Activity.Current.SetTag("fileVersions.Count", $"{fileVersions.Count}") |> ignore
 
-                    if fileVersions.Count > 0 then
+                    if fileVersions.Length > 0 then
                         let repositoryActor = Repository.getActorProxy $"{fileVersions[0].RepositoryId}"
                         let! repositoryDto = repositoryActor.Get(getCorrelationId context)
 
@@ -166,7 +166,7 @@ module Storage =
 
                         return!
                             context
-                            |> result200Ok (GraceReturnValue.Create (uploadMetadata.ToList()) (getCorrelationId context))
+                            |> result200Ok (GraceReturnValue.Create (uploadMetadata.ToArray()) (getCorrelationId context))
                     else
                         return!
                             context

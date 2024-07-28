@@ -50,25 +50,25 @@ module Services =
 
     /// Dapr HTTP endpoint retrieved from environment variables
     let daprHttpEndpoint =
-        $"{Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.DaprServerUri)}:{Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.DaprHttpPort)}"
+        $"{Environment.GetEnvironmentVariable(EnvironmentVariables.DaprServerUri)}:{Environment.GetEnvironmentVariable(EnvironmentVariables.DaprHttpPort)}"
 
     /// Dapr gRPC endpoint retrieved from environment variables
     let daprGrpcEndpoint =
-        $"{Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.DaprServerUri)}:{Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.DaprGrpcPort)}"
+        $"{Environment.GetEnvironmentVariable(EnvironmentVariables.DaprServerUri)}:{Environment.GetEnvironmentVariable(EnvironmentVariables.DaprGrpcPort)}"
 
     /// Dapr client instance
     let daprClient =
         DaprClientBuilder()
-            .UseJsonSerializationOptions(Constants.JsonSerializerOptions)
+            .UseJsonSerializationOptions(JsonSerializerOptions)
             .UseHttpEndpoint(daprHttpEndpoint)
             .UseGrpcEndpoint(daprGrpcEndpoint)
             .Build()
 
     /// Azure Storage connection string retrieved from environment variables
-    let private azureStorageConnectionString = Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.AzureStorageConnectionString)
+    let private azureStorageConnectionString = Environment.GetEnvironmentVariable(EnvironmentVariables.AzureStorageConnectionString)
 
     /// Azure Storage key retrieved from environment variables
-    let private azureStorageKey = Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.AzureStorageKey)
+    let private azureStorageKey = Environment.GetEnvironmentVariable(EnvironmentVariables.AzureStorageKey)
 
     /// Shared key credential for Azure Storage
     let private sharedKeyCredential = StorageSharedKeyCredential(DefaultObjectStorageAccount, azureStorageKey)
@@ -153,39 +153,43 @@ module Services =
         graceError
 
     /// Gets a CosmosDB container client for the given container.
-    let getContainerClient (storageAccountName: StorageAccountName) (containerName: StorageContainerName) =
+    let getContainerClient (repositoryDto: RepositoryDto) =
         task {
-            let key = $"{storageAccountName}-{containerName}"
+            let containerName = $"{repositoryDto.RepositoryId}"
+            let key = $"Con:{repositoryDto.StorageAccountName}-{containerName}"
 
-            let mutable blobContainerClient: BlobContainerClient = null
+            let! blobContainerClient = memoryCache.GetOrCreateAsync(key, fun cacheEntry ->
+                task {
+                    // This can and should last in cache for longer than Grace's default expiration time.
+                    // StorageAccountNames and container names are stable.
+                    // However, we don't want to clog up memoryCache for too long with each client.
+                    // Not sure what the right balance is, but 10 minutes seems reasonable.
+                    cacheEntry.AbsoluteExpirationRelativeToNow <- TimeSpan.FromMinutes(10.0)
 
-            if memoryCache.TryGetValue(key, &blobContainerClient) then
-                return blobContainerClient
-            else
-                let blobContainerClient = BlobContainerClient(azureStorageConnectionString, $"{containerName}")
-                let! azureResponse = blobContainerClient.CreateIfNotExistsAsync(publicAccessType = Models.PublicAccessType.None)
-                let memoryCacheEntryOptions = MemoryCacheEntryOptions(AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(15.0))
-                return memoryCache.Set(key, blobContainerClient, memoryCacheEntryOptions)
+                    let blobContainerClient = BlobContainerClient(azureStorageConnectionString, containerName)
+
+                    // Make sure the container exists before returning the client.
+                    let metadata = Dictionary<string, string>() :> IDictionary<string, string>
+                    metadata[nameof(OwnerId)] <- $"{repositoryDto.OwnerId}"
+                    metadata[nameof(OrganizationId)] <- $"{repositoryDto.OrganizationId}"
+                    metadata[nameof(RepositoryId)] <- $"{repositoryDto.RepositoryId}"
+                    let! azureResponse = blobContainerClient.CreateIfNotExistsAsync(publicAccessType = Models.PublicAccessType.None, metadata = metadata)
+                    return blobContainerClient
+                }
+            )
+
+            return blobContainerClient
         }
 
     /// Gets an Azure Blob Storage client instance for the given repository and file version.
     let getAzureBlobClient (repositoryDto: RepositoryDto) (fileVersion: FileVersion) (correlationId: CorrelationId) =
         task {
             //logToConsole $"* In getAzureBlobClient; repositoryId: {repositoryDto.RepositoryId}; fileVersion: {fileVersion.RelativePath}."
-            let containerNameActorId = ActorId($"{repositoryDto.RepositoryId}")
+            let! containerClient = getContainerClient repositoryDto
 
-            let containerNameActorProxy = actorProxyFactory.CreateActorProxy<IContainerNameActor>(containerNameActorId, ActorName.ContainerName)
+            let blobClient = containerClient.GetBlobClient($"{fileVersion.RelativePath}/{fileVersion.GetObjectFileName}")
 
-            let! containerName = containerNameActorProxy.GetContainerName correlationId
-
-            match containerName with
-            | Ok containerName ->
-                let! containerClient = getContainerClient repositoryDto.StorageAccountName containerName
-
-                let blobClient = containerClient.GetBlobClient($"{fileVersion.RelativePath}/{fileVersion.GetObjectFileName}")
-
-                return Ok blobClient
-            | Error error -> return Error error
+            return Ok blobClient
         }
 
     /// Creates a full URI for a specific file version.
@@ -197,25 +201,19 @@ module Services =
         =
         task {
             //logToConsole $"In createAzureBlobSasUri; fileVersion.RelativePath: {fileVersion.RelativePath}."
-            let containerNameActorId = ActorId($"{repositoryDto.RepositoryId}")
+            let! blobContainerClient = getContainerClient repositoryDto
 
-            let containerNameActorProxy = actorProxyFactory.CreateActorProxy<IContainerNameActor>(containerNameActorId, ActorName.ContainerName)
+            let blobSasBuilder =
+                BlobSasBuilder(permissions = permission,
+                    expiresOn = DateTimeOffset.UtcNow.Add(TimeSpan.FromMinutes(Constants.SharedAccessSignatureExpiration)),
+                    StartsOn = DateTimeOffset.UtcNow.Subtract(TimeSpan.FromSeconds(15.0)),
+                    BlobContainerName = blobContainerClient.Name,
+                    BlobName = Path.Combine($"{fileVersion.RelativePath}", fileVersion.GetObjectFileName),
+                    CorrelationId = correlationId
+                )
+            let sasUriParameters = blobSasBuilder.ToSasQueryParameters(sharedKeyCredential)
 
-            let! containerName = containerNameActorProxy.GetContainerName correlationId
-            //logToConsole $"containerName: {containerName}."
-            match containerName with
-            | Ok containerName ->
-                let! blobContainerClient = getContainerClient repositoryDto.StorageAccountName containerName
-
-                let blobSasBuilder = BlobSasBuilder(permission, DateTimeOffset.UtcNow.Add(TimeSpan.FromMinutes(Constants.SharedAccessSignatureExpiration)))
-
-                blobSasBuilder.BlobName <- Path.Combine($"{fileVersion.RelativePath}", fileVersion.GetObjectFileName)
-                blobSasBuilder.BlobContainerName <- containerName
-                blobSasBuilder.StartsOn <- DateTimeOffset.UtcNow.Subtract(TimeSpan.FromSeconds(15.0))
-                let sasUriParameters = blobSasBuilder.ToSasQueryParameters(sharedKeyCredential)
-
-                return Ok $"{blobContainerClient.Uri}/{fileVersion.RelativePath}/{fileVersion.GetObjectFileName}?{sasUriParameters}"
-            | Error error -> return Error error
+            return Ok $"{blobContainerClient.Uri}/{fileVersion.RelativePath}/{fileVersion.GetObjectFileName}?{sasUriParameters}"
         }
 
     /// Gets a shared access signature for reading from the object storage provider.
@@ -223,7 +221,8 @@ module Services =
         task {
             match repositoryDto.ObjectStorageProvider with
             | AzureBlobStorage ->
-                let! sas = createAzureBlobSasUri repositoryDto fileVersion (BlobSasPermissions.Read ||| BlobSasPermissions.List) correlationId
+                let permissions = (BlobSasPermissions.Read ||| BlobSasPermissions.List) // These are the minimum permissions needed to read a file.
+                let! sas = createAzureBlobSasUri repositoryDto fileVersion permissions correlationId
 
                 match sas with
                 | Ok sas -> return Ok(sas.ToString())
@@ -1501,7 +1500,7 @@ module Services =
 
             let referenceActorProxy = actorProxyFactory.CreateActorProxy<IReferenceActor>(referenceActorId, ActorName.Reference)
 
-            let! referenceDto = referenceActorProxy.Get (correlationId + " (getRootDirectoryByReferenceId)")
+            let! referenceDto = referenceActorProxy.Get correlationId
 
             return! getRootDirectoryBySha256Hash repositoryId referenceDto.Sha256Hash correlationId
         }

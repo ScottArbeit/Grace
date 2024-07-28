@@ -158,7 +158,7 @@ module Repository =
                         OrganizationId = organizationId
                         ObjectStorageProvider = Constants.DefaultObjectStorageProvider
                         StorageAccountName = Constants.DefaultObjectStorageAccount
-                        StorageContainerName = StorageContainerName Constants.DefaultObjectStorageContainerName
+                        StorageContainerName = $"{repositoryId}"
                         CreatedAt = repositoryEvent.Metadata.Timestamp
                     }
                 | Initialized -> { currentRepositoryDto with InitializedAt = Some(getCurrentInstant ()) }

@@ -61,7 +61,7 @@ module Branch =
                                 if basedOn <> ReferenceId.Empty then
                                     task {
                                         let referenceActorProxy = actorProxyFactory.CreateActorProxy<IReferenceActor>(Reference.GetActorId basedOn, ActorName.Reference)
-                                        return! referenceActorProxy.Get (branchEvent.Metadata.CorrelationId + $" Creating branch {branchName}")
+                                        return! referenceActorProxy.Get branchEvent.Metadata.CorrelationId
                                     }
                                 else
                                     ReferenceDto.Default |> returnTask
@@ -92,7 +92,7 @@ module Branch =
                     | Rebased referenceId ->
                         task {
                             let referenceActorProxy = actorProxyFactory.CreateActorProxy<IReferenceActor>(Reference.GetActorId referenceId, ActorName.Reference)
-                            let! referenceDto = referenceActorProxy.Get (branchEvent.Metadata.CorrelationId + "Rebasing branch")
+                            let! referenceDto = referenceActorProxy.Get branchEvent.Metadata.CorrelationId
                             return { currentBranchDto with BasedOn = referenceDto }
                         }
                     | NameSet branchName -> { currentBranchDto with BranchName = branchName } |> returnTask
@@ -159,9 +159,8 @@ module Branch =
                                     match basedOnLink with
                                     | ReferenceLinkType.BasedOn referenceId -> referenceId
 
-                                logToConsole $"In Branch.Actor.OnActivateAsync: basedOnReferenceId: {basedOnReferenceId}."
                                 let basedOnReferenceActorProxy = actorProxyFactory.CreateActorProxy<IReferenceActor>(Reference.GetActorId basedOnReferenceId, ActorName.Reference)
-                                let! basedOnReferenceDto = basedOnReferenceActorProxy.Get "Activating branch"
+                                let! basedOnReferenceDto = basedOnReferenceActorProxy.Get $"OnActivateAsync-{generateCorrelationId()}"
 
                                 branchDto <- { branchDto with BasedOn = basedOnReferenceDto }
                             | External -> ()
@@ -391,7 +390,7 @@ module Branch =
                         let referenceCommand = Reference.ReferenceCommand.Create referenceDto
                         match! referenceActor.Handle referenceCommand metadata with
                         | Ok _ ->
-                            let! referenceDto = referenceActor.Get (metadata.CorrelationId + "Adding reference")
+                            let! referenceDto = referenceActor.Get metadata.CorrelationId
                             return Ok referenceDto
                         | Error error -> return Error error
                     }
@@ -409,7 +408,7 @@ module Branch =
                                         if branchName <> InitialBranchName then
                                             // We need to get the reference that we're rebasing on, so we can get the directoryId and sha256Hash.
                                             let referenceActorProxy = actorProxyFactory.CreateActorProxy<IReferenceActor>(Reference.GetActorId basedOn, ActorName.Reference)
-                                            let! promotionDto = referenceActorProxy.Get (metadata.CorrelationId + "processCommand1")
+                                            let! promotionDto = referenceActorProxy.Get metadata.CorrelationId
 
                                             match! addReference repositoryId branchId promotionDto.DirectoryId promotionDto.Sha256Hash promotionDto.ReferenceText ReferenceType.Rebase [| ReferenceLinkType.BasedOn promotionDto.ReferenceId |] with
                                             | Ok rebaseReferenceId ->
@@ -434,7 +433,7 @@ module Branch =
 
                                         // We need to get the reference that we're rebasing on, so we can get the directoryId and sha256Hash.
                                         let referenceActorProxy = actorProxyFactory.CreateActorProxy<IReferenceActor>(ActorId($"{referenceId}"), ActorName.Reference)
-                                        let! promotionDto = referenceActorProxy.Get (metadata.CorrelationId + "processCommand2")
+                                        let! promotionDto = referenceActorProxy.Get metadata.CorrelationId
 
                                         // Add the Rebase reference to this branch.
                                         match! addReferenceToCurrentBranch promotionDto.DirectoryId promotionDto.Sha256Hash promotionDto.ReferenceText ReferenceType.Rebase [| ReferenceLinkType.BasedOn promotionDto.ReferenceId |] with

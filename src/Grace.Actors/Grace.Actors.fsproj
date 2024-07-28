@@ -35,7 +35,6 @@
 		<Compile Include="Repository.Actor.fs" />
 		<Compile Include="RepositoryName.Actor.fs" />
 		<Compile Include="RepositoryPermission.Actor.fs" />
-		<Compile Include="ContainerName.Actor.fs" />
 		<Compile Include="Diff.Actor.fs" />
 		<Compile Include="FileAppearance.Actor.fs" />
 		<Compile Include="DirectoryAppearance.Actor.fs" />

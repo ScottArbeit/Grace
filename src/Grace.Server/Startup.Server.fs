@@ -447,7 +447,6 @@ module Application =
                 let actors = options.Actors
                 actors.RegisterActor<Branch.BranchActor>()
                 actors.RegisterActor<BranchName.BranchNameActor>()
-                actors.RegisterActor<ContainerName.ContainerNameActor>()
                 actors.RegisterActor<Diff.DiffActor>()
                 actors.RegisterActor<DirectoryVersion.DirectoryVersionActor>()
                 actors.RegisterActor<DirectoryAppearance.DirectoryAppearanceActor>()

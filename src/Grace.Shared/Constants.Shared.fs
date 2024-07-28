@@ -1,6 +1,8 @@
 namespace Grace.Shared
 
+open Microsoft.Extensions.Caching.Memory
 open Microsoft.FSharp.Reflection
+open NodaTime
 open NodaTime.Serialization.SystemTextJson
 open Polly
 open Polly.Contrib.WaitAndRetry
@@ -12,7 +14,6 @@ open System.Text.Json.Serialization
 open System.Text.RegularExpressions
 open System.Collections.Generic
 open System.Threading.Tasks
-open NodaTime
 
 module Constants =
 
@@ -261,6 +262,9 @@ module Constants =
 #else
         let DefaultExpirationTime = TimeSpan.FromMinutes(2.0)
 #endif
+
+        /// A MemoryCacheEntryOptions object that uses Grace's default expiration time.
+        let DefaultMemoryCacheEntryOptions = MemoryCacheEntryOptions().SetAbsoluteExpiration(DefaultExpirationTime)
 
 
 module Results =

@@ -87,16 +87,6 @@ module Interfaces =
         /// Sets the BranchId that matches the BranchName.
         abstract member SetBranchId: branchId: BranchId -> correlationId: CorrelationId -> Task
 
-    /// Defines the operations for the Commit actor.
-    [<Interface>]
-    type IContainerNameActor =
-        inherit IActor
-
-        /// Retrieves the container name for the RepositoryId specified for the actor.
-        ///
-        /// The container name is $"{ownerName}-{organizationName}-{repositoryName}".
-        abstract member GetContainerName: correlationId: CorrelationId -> Task<Result<ContainerName, string>>
-
     /// Defines the operations for the Diff actor.
     [<Interface>]
     type IDiffActor =
