@@ -171,7 +171,7 @@ module Diff =
                 let duration_ms = getCurrentInstant().Minus(activateStartTime).TotalMilliseconds.ToString("F3")
 
                 log.LogInformation(
-                    "{CurrentInstant}: Activated {ActorType} {ActorId}. {message} Duration: {duration_ms}ms.",
+                    "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId:             ; Activated {ActorType} {ActorId}. BranchName: {BranchName}; {message}.",
                     getCurrentInstantExtended (),
                     actorName,
                     host.Id,

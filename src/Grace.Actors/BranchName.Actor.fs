@@ -34,8 +34,9 @@ module BranchName =
 
         override this.OnActivateAsync() =
             log.LogInformation(
-                "{CurrentInstant}: Duration:   0.100ms; Activated {ActorType} {ActorId}.",
+                "{CurrentInstant}: Node: {hostName}; Duration:   0.100ms; CorrelationId:             ; Activated {ActorType} {ActorId}.",
                 getCurrentInstantExtended (),
+                getMachineName,
                 this.GetType().Name,
                 host.Id
             )
