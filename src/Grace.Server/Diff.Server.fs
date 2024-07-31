@@ -5,6 +5,7 @@ open Dapr.Actors.Client
 open Giraffe
 open Grace.Actors
 open Grace.Actors.Constants
+open Grace.Actors.Extensions.ActorProxy
 open Grace.Actors.Interfaces
 open Grace.Server.Services
 open Grace.Server.Validations
@@ -32,13 +33,6 @@ module Diff =
     type Validations<'T when 'T :> DiffParameters> = 'T -> ValueTask<Result<unit, DiffError>> array
 
     let activitySource = new ActivitySource("Repository")
-
-    let actorProxyFactory = ApplicationContext.actorProxyFactory
-
-    /// Gets the actor proxy for the diff between two DirectoryId's.
-    let getActorProxy directoryId1 directoryId2 (context: HttpContext) =
-        let actorId = Diff.GetActorId directoryId1 directoryId2
-        actorProxyFactory.CreateActorProxy<IDiffActor>(actorId, ActorName.Diff)
 
     ///let processCommand<'T when 'T :> DiffParameters> (context: HttpContext) (validations: Validations<'T>) (command: 'T -> Task<DiffCommand>) =
     //    task {
@@ -89,6 +83,7 @@ module Diff =
         (query: QueryResult<IDiffActor, 'U>)
         =
         task {
+            let correlationId = getCorrelationId context
             try
                 use activity = activitySource.StartActivity("processQuery", ActivityKind.Server)
                 //let! parameters = context |> parse<'T>
@@ -96,7 +91,7 @@ module Diff =
                 let! validationsPassed = validationResults |> allPass
 
                 if validationsPassed then
-                    let actorProxy = getActorProxy parameters.DirectoryId1 parameters.DirectoryId2 context
+                    let actorProxy = Diff.CreateActorProxy parameters.DirectoryId1 parameters.DirectoryId2 correlationId
 
                     //// Need to figure this whole part out next.
                     //// Then add SDK implementation of GetDiff.

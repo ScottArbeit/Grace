@@ -9,6 +9,8 @@ open DiffPlex.DiffBuilder.Model
 open FSharpPlus
 open Grace.Actors
 open Grace.Actors.Constants
+open Grace.Actors.Context
+open Grace.Actors.Extensions.ActorProxy
 open Grace.Actors.Interfaces
 open Grace.Actors.Services
 open Grace.Shared
@@ -29,13 +31,6 @@ open System.IO.Compression
 open System.Threading.Tasks
 
 module Diff =
-
-    /// Gets an ActorId for a Diff actor.
-    let GetActorId (directoryId1: DirectoryVersionId) (directoryId2: DirectoryVersionId) =
-        if directoryId1 < directoryId2 then
-            ActorId($"{directoryId1}*{directoryId2}")
-        else
-            ActorId($"{directoryId2}*{directoryId1}")
 
     /// Deconstructs an ActorId of the form "{directoryId1}*{directoryId2}" into a tuple of the two DirectoryId values.
     let private deconstructActorId (id: ActorId) =
@@ -109,9 +104,7 @@ module Diff =
                 this.correlationId <- correlationId
                 let graceIndex = ServerGraceIndex()
 
-                let directory =
-                    ActorProxyFactory()
-                        .CreateActorProxy<IDirectoryVersionActor>(DirectoryVersion.GetActorId(directoryId), ActorName.DirectoryVersion)
+                let directory = actorProxyFactory.CreateActorProxyWithCorrelationId<IDirectoryVersionActor>(DirectoryVersion.GetActorId(directoryId), ActorName.DirectoryVersion, correlationId)
 
                 let! directoryCreatedAt = directory.GetCreatedAt correlationId
                 let! directoryContents = directory.GetRecursiveDirectoryVersions false correlationId
@@ -128,7 +121,7 @@ module Diff =
                 this.correlationId <- correlationId
                 let repositoryActorId = Repository.GetActorId(fileVersion.RepositoryId)
 
-                let repositoryActorProxy = actorProxyFactory.CreateActorProxy<IRepositoryActor>(repositoryActorId, ActorName.Repository)
+                let repositoryActorProxy = actorProxyFactory.CreateActorProxyWithCorrelationId<IRepositoryActor>(repositoryActorId, ActorName.Repository, correlationId)
 
                 let! objectStorageProvider = repositoryActorProxy.GetObjectStorageProvider correlationId
 
@@ -249,9 +242,7 @@ module Diff =
                             let! repositoryDto =
                                 task {
                                     if differences.Count > 0 then
-                                        let repositoryActorId = ActorId($"{repositoryId1}")
-
-                                        let repositoryActorProxy = actorProxyFactory.CreateActorProxy<IRepositoryActor>(repositoryActorId, ActorName.Repository)
+                                        let repositoryActorProxy = Repository.CreateActorProxy repositoryId1 correlationId
 
                                         let! repositoryDtoFromActor = repositoryActorProxy.Get correlationId
                                         return repositoryDtoFromActor

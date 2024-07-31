@@ -1,5 +1,6 @@
 namespace Grace.Actors.Extensions
 
+open Dapr.Actors
 open Grace.Shared.Constants
 open Grace.Shared.Types
 open Microsoft.Extensions.Caching.Memory
@@ -22,45 +23,10 @@ module MemoryCache =
     let repositoryNamePrefix = "ReN"
     [<Literal>]
     let branchNamePrefix = "BrN"
+    [<Literal>]
+    let correlationIdPrefix = "CoI"
 
     type Microsoft.Extensions.Caching.Memory.IMemoryCache with
-
-        /// Create a new entry in MemoryCache with a default expiration time.
-        member this.CreateWithDefaultExpirationTime (key: string) value =
-            use newCacheEntry = this.CreateEntry(key, Value = value, AbsoluteExpirationRelativeToNow = MemoryCache.DefaultExpirationTime)
-            ()
-
-        /// Create a new entry in MemoryCache to confirm that an OwnerId exists.
-        member this.CreateOwnerIdEntry (ownerId: OwnerId) (value: string) =
-            this.CreateWithDefaultExpirationTime $"{ownerIdPrefix}:{ownerId}" value
-
-        /// Create a new entry in MemoryCache to confirm that an OrganizationId exists.
-        member this.CreateOrganizationIdEntry (organizationId: OrganizationId) (value: string) =
-            this.CreateWithDefaultExpirationTime $"{organizationIdPrefix}:{organizationId}" value
-
-        /// Create a new entry in MemoryCache to confirm that a RepositoryId exists.
-        member this.CreateRepositoryIdEntry (repositoryId: RepositoryId) (value: string) =
-            this.CreateWithDefaultExpirationTime $"{repositoryIdPrefix}:{repositoryId}" value
-
-        /// Create a new entry in MemoryCache to confirm that a BranchId exists.
-        member this.CreateBranchIdEntry (branchId: BranchId) (value: string) =
-            this.CreateWithDefaultExpirationTime $"{branchIdPrefix}:{branchId}" value
-
-        /// Create a new entry in MemoryCache to link an OwnerName with an OwnerId.
-        member this.CreateOwnerNameEntry (ownerName: OwnerName) (ownerId: OwnerId) =
-            this.CreateWithDefaultExpirationTime $"{ownerNamePrefix}:{ownerName}" ownerId
-
-        /// Create a new entry in MemoryCache to link an OrganizationName with an OrganizationId.
-        member this.CreateOrganizationNameEntry (organizationName: OrganizationName) (organizationId: OrganizationId) =
-            this.CreateWithDefaultExpirationTime $"{organizationNamePrefix}:{organizationName}" organizationId
-
-        /// Create a new entry in MemoryCache to link a RepositoryName with a RepositoryId.
-        member this.CreateRepositoryNameEntry(repositoryName: RepositoryName) (repositoryId: RepositoryId) =
-            this.CreateWithDefaultExpirationTime $"{repositoryNamePrefix}:{repositoryName}" repositoryId
-
-        /// Create a new entry in MemoryCache to link a BranchName with a BranchId.
-        member this.CreateBranchNameEntry(branchName: string) (branchId: BranchId) =
-            this.CreateWithDefaultExpirationTime $"{branchNamePrefix}:{branchName}" branchId
 
         /// Get a value from MemoryCache, if it exists.
         member this.GetFromCache<'T> (key: string) =
@@ -70,66 +36,171 @@ module MemoryCache =
             else
                 None
 
+        /// Create a new entry in MemoryCache with a default expiration time.
+        member this.CreateWithDefaultExpirationTime (key: string) value =
+            use newCacheEntry = this.CreateEntry(key, Value = value, AbsoluteExpiration = DateTimeOffset.UtcNow.Add(MemoryCache.DefaultExpirationTime))
+            ()
+
+        /// Create a new entry in MemoryCache to link an ActorId with a CorrelationId.
+        member this.CreateCorrelationIdEntry (actorId: ActorId) (correlationId: CorrelationId) =
+            use newCacheEntry = this.CreateEntry($"{correlationIdPrefix}:{actorId}", Value = correlationId, AbsoluteExpiration = DateTimeOffset.UtcNow.AddSeconds(5))
+            ()
+
+        /// Check if we have an entry in MemoryCache for an ActorId, and return the CorrelationId if we have it.
+        member this.GetCorrelationIdEntry(actorId: ActorId) =
+            this.GetFromCache<string> $"{correlationIdPrefix}:{actorId}"
+
+
+        /// Create a new entry in MemoryCache to confirm that an OwnerId exists.
+        member this.CreateOwnerIdEntry (ownerId: OwnerId) (value: string) =
+            this.CreateWithDefaultExpirationTime $"{ownerIdPrefix}:{ownerId}" value
+
         /// Check if we have an entry in MemoryCache for an OwnerId.
         member this.GetOwnerIdEntry(ownerId: OwnerId) =
             this.GetFromCache<string> $"{ownerIdPrefix}:{ownerId}"
-
-        /// Check if we have an entry in MemoryCache for an OrganizationId.
-        member this.GetOrganizationIdEntry(organizationId: OrganizationId) =
-            this.GetFromCache<string> $"{organizationIdPrefix}:{organizationId}"
-            
-        /// Check if we have an entry in MemoryCache for a RepositoryId.
-        member this.GetRepositoryIdEntry(repositoryId: RepositoryId) =
-            this.GetFromCache<string> $"{repositoryIdPrefix}:{repositoryId}"
-
-        /// Check if we have an entry in MemoryCache for a BranchId.
-        member this.GetBranchIdEntry(branchId: BranchId) =
-            this.GetFromCache<string> $"{branchIdPrefix}:{branchId}"
-
-        /// Check if we have an entry in MemoryCache for an OwnerName, and return the OwnerId if we have it.
-        member this.GetOwnerNameEntry(ownerName: string) =
-            this.GetFromCache<Guid> $"{ownerNamePrefix}:{ownerName}"
-
-        /// Check if we have an entry in MemoryCache for an OrganizationName, and return the OrganizationId if we have it.
-        member this.GetOrganizationNameEntry(organizationName: string) =
-            this.GetFromCache<Guid> $"{organizationNamePrefix}:{organizationName}"
-
-        /// Check if we have an entry in MemoryCache for a RepositoryName, and return the RepositoryId if we have it.
-        member this.GetRepositoryNameEntry(repositoryName: string) =
-            this.GetFromCache<Guid> $"{repositoryNamePrefix}:{repositoryName}"
-
-        /// Check if we have an entry in MemoryCache for a BranchName, and return the BranchId if we have it.
-        member this.GetBranchNameEntry(branchName: string) =
-            this.GetFromCache<Guid> $"{branchNamePrefix}:{branchName}"
-
 
         /// Remove an entry in MemoryCache for an OwnerId.
         member this.RemoveOwnerIdEntry(ownerId: OwnerId) =
             this.Remove($"{ownerIdPrefix}:{ownerId}")
 
+
+        /// Create a new entry in MemoryCache to confirm that an OwnerId has been deleted.
+        member this.CreateDeletedOwnerIdEntry (ownerId: OwnerId) (value: string) =
+            this.CreateWithDefaultExpirationTime $"{ownerIdPrefix}:{ownerId}:Deleted" value
+
+        /// Check if we have an entry in MemoryCache for a deleted OwnerId.
+        member this.GetDeletedOwnerIdEntry(ownerId: OwnerId) =
+            this.GetFromCache<string> $"{ownerIdPrefix}:{ownerId}:Deleted"
+
+        /// Remove an entry in MemoryCache for a deleted OwnerId.
+        member this.RemoveDeletedOwnerIdEntry(ownerId: OwnerId) =
+            this.Remove($"{ownerIdPrefix}:{ownerId}:Deleted")
+
+
+        /// Create a new entry in MemoryCache to confirm that an OrganizationId exists.
+        member this.CreateOrganizationIdEntry (organizationId: OrganizationId) (value: string) =
+            this.CreateWithDefaultExpirationTime $"{organizationIdPrefix}:{organizationId}" value
+
+        /// Check if we have an entry in MemoryCache for an OrganizationId.
+        member this.GetOrganizationIdEntry(organizationId: OrganizationId) =
+            this.GetFromCache<string> $"{organizationIdPrefix}:{organizationId}"
+
         /// Remove an entry in MemoryCache for an OrganizationId.
         member this.RemoveOrganizationIdEntry(organizationId: OrganizationId) =
             this.Remove($"{organizationIdPrefix}:{organizationId}")
+
+
+        /// Create a new entry in MemoryCache to confirm that an OrganizationId has been deleted.
+        member this.CreateDeletedOrganizationIdEntry (organizationId: OrganizationId) (value: string) =
+            this.CreateWithDefaultExpirationTime $"{organizationIdPrefix}:{organizationId}:Deleted" value
+
+        /// Check if we have an entry in MemoryCache for a deleted OrganizationId.
+        member this.GetDeletedOrganizationIdEntry(organizationId: OrganizationId) =
+            this.GetFromCache<string> $"{organizationIdPrefix}:{organizationId}:Deleted"
+
+        /// Remove an entry in MemoryCache for a deleted OrganizationId.
+        member this.RemoveDeletedOrganizationIdEntry(organizationId: OrganizationId) =
+            this.Remove($"{organizationIdPrefix}:{organizationId}:Deleted")
+
+
+        /// Create a new entry in MemoryCache to confirm that a RepositoryId exists.
+        member this.CreateRepositoryIdEntry (repositoryId: RepositoryId) (value: string) =
+            this.CreateWithDefaultExpirationTime $"{repositoryIdPrefix}:{repositoryId}" value
+
+        /// Check if we have an entry in MemoryCache for a RepositoryId.
+        member this.GetRepositoryIdEntry(repositoryId: RepositoryId) =
+            this.GetFromCache<string> $"{repositoryIdPrefix}:{repositoryId}"
 
         /// Remove an entry in MemoryCache for a RepositoryId.
         member this.RemoveRepositoryIdEntry(repositoryId: RepositoryId) =
             this.Remove($"{repositoryIdPrefix}:{repositoryId}")
 
+
+        /// Create a new entry in MemoryCache to confirm that a RepositoryId has been deleted.
+        member this.CreateDeletedRepositoryIdEntry (repositoryId: RepositoryId) (value: string) =
+            this.CreateWithDefaultExpirationTime $"{repositoryIdPrefix}:{repositoryId}:Deleted" value
+
+        /// Check if we have an entry in MemoryCache for a deleted RepositoryId.
+        member this.GetDeletedRepositoryIdEntry(repositoryId: RepositoryId) =
+            this.GetFromCache<string> $"{repositoryIdPrefix}:{repositoryId}:Deleted"
+
+        /// Remove an entry in MemoryCache for a deleted RepositoryId.
+        member this.RemoveDeletedRepositoryIdEntry(repositoryId: RepositoryId) =
+            this.Remove($"{repositoryIdPrefix}:{repositoryId}:Deleted")
+
+
+        /// Create a new entry in MemoryCache to confirm that a BranchId exists.
+        member this.CreateBranchIdEntry (branchId: BranchId) (value: string) =
+            this.CreateWithDefaultExpirationTime $"{branchIdPrefix}:{branchId}" value
+
+        /// Check if we have an entry in MemoryCache for a BranchId.
+        member this.GetBranchIdEntry(branchId: BranchId) =
+            this.GetFromCache<string> $"{branchIdPrefix}:{branchId}"
+
         /// Remove an entry in MemoryCache for a BranchId.
         member this.RemoveBranchIdEntry(branchId: BranchId) =
             this.Remove($"{branchIdPrefix}:{branchId}")
+
+
+        /// Create a new entry in MemoryCache to confirm that a BranchId has been deleted.
+        member this.CreateDeletedBranchIdEntry (branchId: BranchId) (value: string) =
+            this.CreateWithDefaultExpirationTime $"{branchIdPrefix}:{branchId}:Deleted" value
+
+        /// Check if we have an entry in MemoryCache for a deleted BranchId.
+        member this.GetDeletedBranchIdEntry(branchId: BranchId) =
+            this.GetFromCache<string> $"{branchIdPrefix}:{branchId}:Deleted"
+
+        /// Remove an entry in MemoryCache for a deleted BranchId.
+        member this.RemoveDeletedBranchIdEntry(branchId: BranchId) =
+            this.Remove($"{branchIdPrefix}:{branchId}:Deleted")
+
+
+        /// Create a new entry in MemoryCache to link an OwnerName with an OwnerId.
+        member this.CreateOwnerNameEntry (ownerName: OwnerName) (ownerId: OwnerId) =
+            this.CreateWithDefaultExpirationTime $"{ownerNamePrefix}:{ownerName}" ownerId
+
+        /// Check if we have an entry in MemoryCache for an OwnerName, and return the OwnerId if we have it.
+        member this.GetOwnerNameEntry(ownerName: string) =
+            this.GetFromCache<Guid> $"{ownerNamePrefix}:{ownerName}"
 
         /// Remove an entry in MemoryCache for an OwnerName.
         member this.RemoveOwnerNameEntry(ownerName: string) =
             this.Remove($"{ownerNamePrefix}:{ownerName}")
 
+
+        /// Create a new entry in MemoryCache to link an OrganizationName with an OrganizationId.
+        member this.CreateOrganizationNameEntry (organizationName: OrganizationName) (organizationId: OrganizationId) =
+            this.CreateWithDefaultExpirationTime $"{organizationNamePrefix}:{organizationName}" organizationId
+
+        /// Check if we have an entry in MemoryCache for an OrganizationName, and return the OrganizationId if we have it.
+        member this.GetOrganizationNameEntry(organizationName: string) =
+            this.GetFromCache<Guid> $"{organizationNamePrefix}:{organizationName}"
+
         /// Remove an entry in MemoryCache for an OrganizationName.
         member this.RemoveOrganizationNameEntry(organizationName: string) =
             this.Remove($"{organizationNamePrefix}:{organizationName}")
 
+
+        /// Create a new entry in MemoryCache to link a RepositoryName with a RepositoryId.
+        member this.CreateRepositoryNameEntry(repositoryName: RepositoryName) (repositoryId: RepositoryId) =
+            this.CreateWithDefaultExpirationTime $"{repositoryNamePrefix}:{repositoryName}" repositoryId
+
+        /// Check if we have an entry in MemoryCache for a RepositoryName, and return the RepositoryId if we have it.
+        member this.GetRepositoryNameEntry(repositoryName: string) =
+            this.GetFromCache<Guid> $"{repositoryNamePrefix}:{repositoryName}"
+
         /// Remove an entry in MemoryCache for a RepositoryName.
         member this.RemoveRepositoryNameEntry(repositoryName: string) =
             this.Remove($"{repositoryNamePrefix}:{repositoryName}")
+
+
+        /// Create a new entry in MemoryCache to link a BranchName with a BranchId.
+        member this.CreateBranchNameEntry(branchName: string) (branchId: BranchId) =
+            this.CreateWithDefaultExpirationTime $"{branchNamePrefix}:{branchName}" branchId
+
+        /// Check if we have an entry in MemoryCache for a BranchName, and return the BranchId if we have it.
+        member this.GetBranchNameEntry(branchName: string) =
+            this.GetFromCache<Guid> $"{branchNamePrefix}:{branchName}"
 
         /// Remove an entry in MemoryCache for a BranchName.
         member this.RemoveBranchNameEntry(branchName: string) =

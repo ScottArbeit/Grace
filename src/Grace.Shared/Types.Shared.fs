@@ -10,6 +10,7 @@ open System.IO
 open System.Linq
 open System.Runtime.Serialization
 open System.Text
+open System.Threading.Tasks
 open System.Text.Json
 open System.IO.Enumeration
 
@@ -41,6 +42,7 @@ module Types =
     type StorageContainerName = string
     type UriWithSharedAccessSignature = string
     type UserId = string
+    type ValidationResult<'T> = ValueTask<Result<unit, 'T>>
 
     [<KnownType("GetKnownTypes")>]
     type LineEndings =

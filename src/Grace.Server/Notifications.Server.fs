@@ -6,6 +6,7 @@ open Giraffe
 open Grace.Actors
 open Grace.Actors.Constants
 open Grace.Actors.Events
+open Grace.Actors.Extensions.ActorProxy
 open Grace.Actors.Interfaces
 open Grace.Actors.Services
 open Grace.Shared
@@ -113,9 +114,7 @@ module Notifications =
     /// Gets the ReferenceDto for the given ReferenceId.
     let getReferenceDto referenceId correlationId =
         task {
-            let referenceActorId = Reference.GetActorId referenceId
-
-            let referenceActorProxy = actorProxyFactory.CreateActorProxy<IReferenceActor>(referenceActorId, ActorName.Reference)
+            let referenceActorProxy = Reference.CreateActorProxy referenceId correlationId
 
             return! referenceActorProxy.Get correlationId
         }
@@ -123,9 +122,7 @@ module Notifications =
     /// Gets the BranchDto for the given BranchId.
     let getBranchDto branchId correlationId =
         task {
-            let branchActorId = Branch.GetActorId branchId
-
-            let branchActorProxy = actorProxyFactory.CreateActorProxy<IBranchActor>(branchActorId, ActorName.Branch)
+            let branchActorProxy = Branch.CreateActorProxy branchId correlationId
 
             return! branchActorProxy.Get correlationId
         }
@@ -134,8 +131,7 @@ module Notifications =
     let Post: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
-                logToConsole $"In Notifications.Post."
-
+                let correlationId = getCorrelationId context
                 let hubContext = context.GetService<IHubContext<NotificationHub, IGraceClientConnection>>()
 
                 let! graceEvent = context.BindJsonAsync<GraceEvent>()
@@ -144,11 +140,9 @@ module Notifications =
 
                 let diffTwoDirectoryVersions directoryId1 directoryId2 =
                     task {
-                        let diffActorId = Diff.GetActorId directoryId1 directoryId2
+                        let diffActorProxy = Diff.CreateActorProxy directoryId1 directoryId2 correlationId
 
-                        let diffActorProxy = actorProxyFactory.CreateActorProxy<IDiffActor>(diffActorId, ActorName.Diff)
-
-                        let! x = diffActorProxy.Compute(getCorrelationId context)
+                        let! x = diffActorProxy.Compute correlationId
                         ()
                     }
 

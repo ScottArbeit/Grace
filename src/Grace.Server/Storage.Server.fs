@@ -8,6 +8,7 @@ open Dapr.Actors.Client
 open Giraffe
 open Grace.Actors
 open Grace.Actors.Constants
+open Grace.Actors.Extensions.ActorProxy
 open Grace.Actors.Services
 open Grace.Server.ApplicationContext
 open Grace.Server.Services
@@ -81,12 +82,13 @@ module Storage =
     let GetDownloadUri: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
+                let correlationId = (getCorrelationId context)
                 try
                     let! fileVersion = context.BindJsonAsync<FileVersion>()
-                    let repositoryActor = Repository.getActorProxy $"{fileVersion.RepositoryId}"
-                    let! repositoryDto = repositoryActor.Get(getCorrelationId context)
+                    let repositoryActor = Repository.CreateActorProxy fileVersion.RepositoryId correlationId
+                    let! repositoryDto = repositoryActor.Get correlationId
 
-                    match! getReadSharedAccessSignature repositoryDto fileVersion (getCorrelationId context) with
+                    match! getReadSharedAccessSignature repositoryDto fileVersion correlationId with
                     | Ok downloadUri ->
                         context.SetStatusCode StatusCodes.Status200OK
                         //context.GetLogger().LogTrace("fileVersion: {fileVersion.RelativePath}; downloadUri: {downloadUri}", [| fileVersion.RelativePath, downloadUri |])
@@ -107,11 +109,12 @@ module Storage =
     let GetUploadUri: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
+                let correlationId = getCorrelationId context
                 try
                     let! fileVersion = context.BindJsonAsync<FileVersion>()
-                    let repositoryActor = Repository.getActorProxy $"{fileVersion.RepositoryId}"
-                    let! repositoryDto = repositoryActor.Get(getCorrelationId context)
-                    let! uploadUri = getWriteSharedAccessSignature repositoryDto fileVersion (getCorrelationId context)
+                    let repositoryActor = Repository.CreateActorProxy fileVersion.RepositoryId correlationId
+                    let! repositoryDto = repositoryActor.Get correlationId
+                    let! uploadUri = getWriteSharedAccessSignature repositoryDto fileVersion correlationId
                     context.SetStatusCode StatusCodes.Status200OK
 
                     log.LogDebug("In GetUploadUri(): fileVersion.RelativePath: {relativePath}; uploadUri: {uploadUri}", fileVersion.RelativePath, uploadUri)
@@ -128,13 +131,14 @@ module Storage =
     let FilesExistInObjectStorage: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
+                let correlationId = getCorrelationId context
                 try
                     let! fileVersions = context.BindJsonAsync<FileVersion array>()
                     Activity.Current.SetTag("fileVersions.Count", $"{fileVersions.Count}") |> ignore
 
                     if fileVersions.Length > 0 then
-                        let repositoryActor = Repository.getActorProxy $"{fileVersions[0].RepositoryId}"
-                        let! repositoryDto = repositoryActor.Get(getCorrelationId context)
+                        let repositoryActor = Repository.CreateActorProxy fileVersions[0].RepositoryId correlationId
+                        let! repositoryDto = repositoryActor.Get correlationId
 
                         let uploadMetadata = ConcurrentQueue<UploadMetadata>()
 
@@ -148,7 +152,7 @@ module Storage =
                                             let! fileExists = fileExists repositoryDto fileVersion context
 
                                             if not <| fileExists then
-                                                let! blobUriWithSasToken = getWriteSharedAccessSignature repositoryDto fileVersion (getCorrelationId context)
+                                                let! blobUriWithSasToken = getWriteSharedAccessSignature repositoryDto fileVersion correlationId
 
                                                 uploadMetadata.Enqueue({ BlobUriWithSasToken = blobUriWithSasToken; Sha256Hash = fileVersion.Sha256Hash })
                                         }
@@ -166,15 +170,15 @@ module Storage =
 
                         return!
                             context
-                            |> result200Ok (GraceReturnValue.Create (uploadMetadata.ToArray()) (getCorrelationId context))
+                            |> result200Ok (GraceReturnValue.Create (uploadMetadata.ToArray()) correlationId)
                     else
                         return!
                             context
-                            |> result400BadRequest (GraceError.Create (StorageError.getErrorMessage FilesMustNotBeEmpty) (getCorrelationId context))
+                            |> result400BadRequest (GraceError.Create (StorageError.getErrorMessage FilesMustNotBeEmpty) correlationId)
                 with ex ->
                     return!
                         context
-                        |> result500ServerError (GraceError.Create (StorageError.getErrorMessage ObjectStorageException) (getCorrelationId context))
+                        |> result500ServerError (GraceError.Create (StorageError.getErrorMessage ObjectStorageException) correlationId)
             }
 
     /// Deletes all documents from Cosmos DB. After calling, the web connection will time-out, but the method will continue to run until Cosmos DB is empty.

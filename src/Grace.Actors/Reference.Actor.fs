@@ -4,6 +4,9 @@ open Dapr.Actors
 open Dapr.Actors.Runtime
 open Grace.Actors.Commands
 open Grace.Actors.Constants
+open Grace.Actors.Context
+open Grace.Actors.Extensions.ActorProxy
+open Grace.Actors.Extensions.MemoryCache
 open Grace.Actors.Interfaces
 open Grace.Actors.Services
 open Grace.Shared
@@ -24,8 +27,6 @@ open Commands.Reference
 
 module Reference =
 
-    let GetActorId (referenceId: ReferenceId) = ActorId($"{referenceId}")
-
     type ReferenceActor(host: ActorHost) =
         inherit Actor(host)
 
@@ -40,8 +41,8 @@ module Reference =
         let referenceEvents = List<ReferenceEvent>()
 
         /// Indicates that the actor is in an undefined state, and should be reset.
-
         let mutable isDisposed = false
+
         let updateDto referenceEvent currentReferenceDto =
             let newReferenceDto =
                 match referenceEvent.Event with
@@ -75,6 +76,11 @@ module Reference =
                 let mutable message = String.Empty
                 let! retrievedEvents = Storage.RetrieveState<List<ReferenceEvent>> stateManager eventsStateName
 
+                let correlationId =
+                    match memoryCache.GetCorrelationIdEntry this.Id with
+                    | Some correlationId -> correlationId
+                    | None -> String.Empty
+
                 match retrievedEvents with
                 | Some retrievedEvents ->
                     referenceEvents.AddRange(retrievedEvents)
@@ -88,10 +94,11 @@ module Reference =
                 let duration_ms = getPaddedDuration_ms activateStartTime
 
                 log.LogInformation(
-                    "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId:             ; Activated {ActorType} {ActorId}. {message}.",
+                    "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Activated {ActorType} {ActorId}. {message}.",
                     getCurrentInstantExtended (),
                     getMachineName,
                     duration_ms,
+                    correlationId,
                     actorName,
                     host.Id,
                     message
@@ -261,6 +268,7 @@ module Reference =
             let stateManager = this.StateManager
 
             task {
+                let correlationId = referenceEvent.Metadata.CorrelationId
                 try
                     //if referenceEvents.Count = 0 then do! this.OnFirstWrite()
 
@@ -282,28 +290,26 @@ module Reference =
                             match referenceDto.ReferenceType with
                             | ReferenceType.Save ->
                                 task {
-                                    let repositoryActorProxy =
-                                        actorProxyFactory.CreateActorProxy<IRepositoryActor>(ActorId($"{referenceDto.RepositoryId}"), ActorName.Repository)
+                                    let repositoryActorProxy = Repository.CreateActorProxy referenceDto.RepositoryId correlationId
 
-                                    let! repositoryDto = repositoryActorProxy.Get(referenceEvent.Metadata.CorrelationId)
+                                    let! repositoryDto = repositoryActorProxy.Get correlationId
 
                                     this.SchedulePhysicalDeletion(
                                         $"Deletion for saves of {repositoryDto.SaveDays} days.",
                                         TimeSpan.FromDays(repositoryDto.SaveDays),
-                                        referenceEvent.Metadata.CorrelationId
+                                        correlationId
                                     )
                                 }
                             | ReferenceType.Checkpoint ->
                                 task {
-                                    let repositoryActorProxy =
-                                        actorProxyFactory.CreateActorProxy<IRepositoryActor>(ActorId($"{referenceDto.RepositoryId}"), ActorName.Repository)
+                                    let repositoryActorProxy = Repository.CreateActorProxy referenceDto.RepositoryId correlationId
 
-                                    let! repositoryDto = repositoryActorProxy.Get(referenceEvent.Metadata.CorrelationId)
+                                    let! repositoryDto = repositoryActorProxy.Get correlationId
 
                                     this.SchedulePhysicalDeletion(
                                         $"Deletion for checkpoints of {repositoryDto.CheckpointDays} days.",
                                         TimeSpan.FromDays(repositoryDto.CheckpointDays),
-                                        referenceEvent.Metadata.CorrelationId
+                                        correlationId
                                     )
                                 }
                             | _ -> () |> returnTask
@@ -311,7 +317,7 @@ module Reference =
                     | _ -> ()
 
                     let graceReturnValue =
-                        (GraceReturnValue.Create "Reference command succeeded." referenceEvent.Metadata.CorrelationId)
+                        (GraceReturnValue.Create "Reference command succeeded." correlationId)
                             .enhance(nameof(RepositoryId), $"{referenceDto.RepositoryId}")
                             .enhance(nameof(BranchId), $"{referenceDto.BranchId}")
                             .enhance(nameof(ReferenceId), $"{referenceDto.ReferenceId}")
@@ -324,7 +330,7 @@ module Reference =
                     let exceptionResponse = createExceptionResponse ex
 
                     let graceError =
-                        (GraceError.Create (ReferenceError.getErrorMessage FailedWhileApplyingEvent) referenceEvent.Metadata.CorrelationId)
+                        (GraceError.Create (ReferenceError.getErrorMessage FailedWhileApplyingEvent) correlationId)
                             .enhance("Exception details", exceptionResponse.``exception`` + exceptionResponse.innerException)
                             .enhance(nameof(RepositoryId), $"{referenceDto.RepositoryId}")
                             .enhance(nameof(BranchId), $"{referenceDto.BranchId}")
@@ -388,9 +394,9 @@ module Reference =
                                 | AddLink link -> return LinkAdded link
                                 | RemoveLink link -> return LinkRemoved link
                                 | DeleteLogical(force, deleteReason) ->
-                                    let repositoryActorProxy = actorProxyFactory.CreateActorProxy<IRepositoryActor>(ActorId($"{referenceDto.RepositoryId}"), ActorName.Repository)
-                                    let! repositoryDto = repositoryActorProxy.Get(metadata.CorrelationId)
-                                    this.SchedulePhysicalDeletion(deleteReason, TimeSpan.FromDays(repositoryDto.LogicalDeleteDays), metadata.CorrelationId)
+                                    let repositoryActorProxy = Repository.CreateActorProxy referenceDto.RepositoryId this.correlationId
+                                    let! repositoryDto = repositoryActorProxy.Get this.correlationId
+                                    this.SchedulePhysicalDeletion(deleteReason, TimeSpan.FromDays(repositoryDto.LogicalDeleteDays), this.correlationId)
                                     return LogicalDeleted(force, deleteReason)
                                 | DeletePhysical ->
                                     isDisposed <- true

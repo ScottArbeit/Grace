@@ -3,6 +3,8 @@ namespace Grace.Actors
 open Dapr.Actors
 open Dapr.Actors.Runtime
 open Grace.Actors.Constants
+open Grace.Actors.Context
+open Grace.Actors.Extensions.MemoryCache
 open Grace.Actors.Interfaces
 open Grace.Actors.Services
 open Grace.Shared.Types
@@ -35,10 +37,16 @@ module RepositoryName =
         member val private correlationId: CorrelationId = String.Empty with get, set
 
         override this.OnActivateAsync() =
+            let correlationId =
+                match memoryCache.GetCorrelationIdEntry this.Id with
+                | Some correlationId -> correlationId
+                | None -> String.Empty
+
             log.LogInformation(
-                "{CurrentInstant}: Node: {hostName}; Duration:   0.100ms; CorrelationId:             ; Activated {ActorType} {ActorId}.",
+                "{CurrentInstant}: Node: {hostName}; Duration:   0.100ms; CorrelationId: {correlationId}; Activated {ActorType} {ActorId}.",
                 getCurrentInstantExtended (),
                 getMachineName,
+                correlationId,
                 this.GetType().Name,
                 host.Id
             )

@@ -6,7 +6,10 @@ open FSharpPlus
 open Grace.Actors.Constants
 open Grace.Actors.Interfaces
 open Grace.Actors.Commands.Repository
+open Grace.Actors.Context
 open Grace.Actors.Events.Repository
+open Grace.Actors.Extensions.ActorProxy
+open Grace.Actors.Extensions.MemoryCache
 open Grace.Actors.Services
 open Grace.Shared
 open Grace.Shared.Combinators
@@ -31,8 +34,6 @@ open FSharp.Control
 open System.Collections.Concurrent
 
 module Repository =
-
-    let GetActorId (repositoryId: RepositoryId) = ActorId($"{repositoryId}")
 
     type RepositoryActor(host: ActorHost) =
         inherit Actor(host)
@@ -62,6 +63,11 @@ module Repository =
                 let mutable message = String.Empty
                 let! retrievedDto = Storage.RetrieveState<RepositoryDto> stateManager dtoStateName
 
+                let correlationId =
+                    match memoryCache.GetCorrelationIdEntry this.Id with
+                    | Some correlationId -> correlationId
+                    | None -> String.Empty
+
                 match retrievedDto with
                 | Some retrievedDto ->
                     repositoryDto <- retrievedDto
@@ -73,10 +79,11 @@ module Repository =
                 let duration_ms = getPaddedDuration_ms activateStartTime
 
                 log.LogInformation(
-                    "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId:             ; Activated {ActorType} {ActorId}. {message}.",
+                    "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Activated {ActorType} {ActorId}. {message}.",
                     getCurrentInstantExtended (),
                     getMachineName,
                     duration_ms,
+                    correlationId,
                     actorName,
                     host.Id,
                     message
@@ -232,7 +239,7 @@ module Repository =
                             | Created(name, repositoryId, ownerId, organizationId) ->
                                 // Create the default branch.
                                 let branchId = (Guid.NewGuid())
-                                let branchActor = Services.actorProxyFactory.CreateActorProxy<IBranchActor>(ActorId($"{branchId}"), ActorName.Branch)
+                                let branchActor = Branch.CreateActorProxy branchId this.correlationId
 
                                 // Only allow promotions and tags on the initial branch.
                                 let initialBranchPermissions = [| ReferenceType.Promotion; ReferenceType.Tag; ReferenceType.External |]
@@ -256,11 +263,7 @@ module Repository =
                                     let emptySha256Hash =
                                         computeSha256ForDirectory RootDirectoryPath (List<LocalDirectoryVersion>()) (List<LocalFileVersion>())
 
-                                    let directoryVersionActorProxy =
-                                        Services.actorProxyFactory.CreateActorProxy<IDirectoryVersionActor>(
-                                            ActorId($"{emptyDirectoryId}"),
-                                            ActorName.DirectoryVersion
-                                        )
+                                    let directoryVersionActorProxy = DirectoryVersion.CreateActorProxy emptyDirectoryId this.correlationId
 
                                     let emptyDirectoryVersion =
                                         DirectoryVersion.Create
@@ -375,8 +378,7 @@ module Repository =
                             ValueTask(
                                 task {
                                     if branch.DeletedAt |> Option.isNone then
-                                        let branchActor =
-                                            actorProxyFactory.CreateActorProxy<IBranchActor>(ActorId($"{branch.BranchId}"), Constants.ActorName.Branch)
+                                        let branchActor = Branch.CreateActorProxy branch.BranchId this.correlationId
 
                                         let! result =
                                             branchActor.Handle

@@ -256,7 +256,7 @@ module Constants =
         [<Literal>]
         let DoesNotExistValue = "n"
 
-        /// The default expiration time for a cache entry.
+        /// The default expiration time for a memory cache entry, in minutes.
 #if DEBUG
         let DefaultExpirationTime = TimeSpan.FromMinutes(2.0)
 #else
@@ -264,8 +264,7 @@ module Constants =
 #endif
 
         /// A MemoryCacheEntryOptions object that uses Grace's default expiration time.
-        let DefaultMemoryCacheEntryOptions = MemoryCacheEntryOptions().SetAbsoluteExpiration(DefaultExpirationTime)
-
+        //let DefaultMemoryCacheEntryOptions = MemoryCacheEntryOptions().SetAbsoluteExpiration(DefaultExpirationTime)
 
 module Results =
     let Ok = 0

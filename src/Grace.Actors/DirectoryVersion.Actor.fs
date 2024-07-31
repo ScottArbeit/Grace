@@ -5,7 +5,9 @@ open Dapr.Actors.Client
 open Dapr.Actors.Runtime
 open Grace.Actors.Commands.DirectoryVersion
 open Grace.Actors.Constants
+open Grace.Actors.Context
 open Grace.Actors.Events.DirectoryVersion
+open Grace.Actors.Extensions.ActorProxy
 open Grace.Actors.Interfaces
 open Grace.Actors.Services
 open Grace.Shared
@@ -330,10 +332,7 @@ module DirectoryVersion =
                                     (fun directoryId ct ->
                                         ValueTask(
                                             task {
-                                                let actorId = GetActorId directoryId
-
-                                                let subdirectoryActor =
-                                                    actorProxyFactory.CreateActorProxy<IDirectoryVersionActor>(actorId, ActorName.DirectoryVersion)
+                                                let subdirectoryActor = DirectoryVersion.CreateActorProxy directoryId correlationId
 
                                                 let! subdirectoryContents = subdirectoryActor.GetRecursiveDirectoryVersions forceRegenerate correlationId
 

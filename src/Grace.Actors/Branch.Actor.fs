@@ -5,7 +5,10 @@ open Dapr.Actors.Runtime
 open Grace.Actors.Commands
 open Grace.Actors.Commands.Branch
 open Grace.Actors.Constants
+open Grace.Actors.Context
 open Grace.Actors.Events.Branch
+open Grace.Actors.Extensions.ActorProxy
+open Grace.Actors.Extensions.MemoryCache
 open Grace.Actors.Interfaces
 open Grace.Actors.Services
 open Grace.Shared
@@ -28,8 +31,6 @@ open FSharpPlus.Data.MultiMap
 
 module Branch =
 
-    let GetActorId (branchId: BranchId) = ActorId($"{branchId}")
-
     // Branch should support logical deletes with physical deletes set using a Dapr Timer based on a repository-level setting.
     // Branch Deletion should enumerate and delete each reference in the branch.
 
@@ -50,7 +51,7 @@ module Branch =
         /// Indicates that the actor is in an undefined state, and should be reset.
         let mutable isDisposed = false
 
-        let updateDto branchEvent currentBranchDto =
+        let updateDto branchEvent correlationId currentBranchDto =
             task {
                 let branchEventType = branchEvent.Event
                 let! newBranchDto =
@@ -60,8 +61,8 @@ module Branch =
                             let! referenceDto =
                                 if basedOn <> ReferenceId.Empty then
                                     task {
-                                        let referenceActorProxy = actorProxyFactory.CreateActorProxy<IReferenceActor>(Reference.GetActorId basedOn, ActorName.Reference)
-                                        return! referenceActorProxy.Get branchEvent.Metadata.CorrelationId
+                                        let referenceActorProxy = Reference.CreateActorProxy basedOn correlationId
+                                        return! referenceActorProxy.Get correlationId
                                     }
                                 else
                                     ReferenceDto.Default |> returnTask
@@ -91,7 +92,7 @@ module Branch =
                         }
                     | Rebased referenceId ->
                         task {
-                            let referenceActorProxy = actorProxyFactory.CreateActorProxy<IReferenceActor>(Reference.GetActorId referenceId, ActorName.Reference)
+                            let referenceActorProxy = Reference.CreateActorProxy referenceId correlationId
                             let! referenceDto = referenceActorProxy.Get branchEvent.Metadata.CorrelationId
                             return { currentBranchDto with BasedOn = referenceDto }
                         }
@@ -132,6 +133,11 @@ module Branch =
                     let mutable message = String.Empty
                     let! retrievedEvents = Storage.RetrieveState<List<BranchEvent>> stateManager eventsStateName
 
+                    let correlationId =
+                        match memoryCache.GetCorrelationIdEntry this.Id with
+                        | Some correlationId -> correlationId
+                        | None -> String.Empty
+
                     match retrievedEvents with
                     | Some retrievedEvents ->
                         // Load the branchEvents from the retrieved events.
@@ -139,7 +145,7 @@ module Branch =
 
                         // Apply all events to the branchDto.
                         for branchEvent in retrievedEvents do
-                            let! updatedBranchDto = branchDto |> updateDto branchEvent
+                            let! updatedBranchDto = branchDto |> updateDto branchEvent correlationId
                             branchDto <- updatedBranchDto
 
                         // Get the latest references and update the dto.
@@ -159,8 +165,8 @@ module Branch =
                                     match basedOnLink with
                                     | ReferenceLinkType.BasedOn referenceId -> referenceId
 
-                                let basedOnReferenceActorProxy = actorProxyFactory.CreateActorProxy<IReferenceActor>(Reference.GetActorId basedOnReferenceId, ActorName.Reference)
-                                let! basedOnReferenceDto = basedOnReferenceActorProxy.Get $"OnActivateAsync-{generateCorrelationId()}"
+                                let basedOnReferenceActorProxy = Reference.CreateActorProxy basedOnReferenceId correlationId
+                                let! basedOnReferenceDto = basedOnReferenceActorProxy.Get correlationId
 
                                 branchDto <- { branchDto with BasedOn = basedOnReferenceDto }
                             | External -> ()
@@ -172,10 +178,11 @@ module Branch =
                     let duration_ms = getPaddedDuration_ms activateStartTime
 
                     log.LogInformation(
-                        "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId:             ; Activated {ActorType} {ActorId}. BranchName: {BranchName}; {message}.",
+                        "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Activated {ActorType} {ActorId}. BranchName: {BranchName}; {message}.",
                         getCurrentInstantExtended (),
                         getMachineName,
                         duration_ms,
+                        correlationId,
                         actorName,
                         host.Id,
                         branchDto.BranchName,
@@ -262,7 +269,7 @@ module Branch =
                     if branchEvents.Count = 0 then do! this.OnFirstWrite()
 
                     // Update the branchDto with the event.
-                    let! updatedBranchDto = branchDto |> updateDto branchEvent
+                    let! updatedBranchDto = branchDto |> updateDto branchEvent this.correlationId
                     branchDto <- updatedBranchDto
 
                     match branchEvent.Event with
@@ -371,9 +378,7 @@ module Branch =
                 let addReference repositoryId branchId directoryId sha256Hash referenceText referenceType links =
                     task {
                         let referenceId: ReferenceId = ReferenceId.NewGuid()
-                        let actorId = Reference.GetActorId referenceId
-
-                        let referenceActor = actorProxyFactory.CreateActorProxy<IReferenceActor>(actorId, Constants.ActorName.Reference)
+                        let referenceActor = Reference.CreateActorProxy referenceId this.correlationId
 
                         let referenceDto =
                             {ReferenceDto.Default with
@@ -407,8 +412,8 @@ module Branch =
                                         // Add an initial Rebase reference to this branch that points to the BasedOn reference, unless we're creating `main`.
                                         if branchName <> InitialBranchName then
                                             // We need to get the reference that we're rebasing on, so we can get the directoryId and sha256Hash.
-                                            let referenceActorProxy = actorProxyFactory.CreateActorProxy<IReferenceActor>(Reference.GetActorId basedOn, ActorName.Reference)
-                                            let! promotionDto = referenceActorProxy.Get metadata.CorrelationId
+                                            let referenceActorProxy = Reference.CreateActorProxy basedOn this.correlationId
+                                            let! promotionDto = referenceActorProxy.Get this.correlationId
 
                                             match! addReference repositoryId branchId promotionDto.DirectoryId promotionDto.Sha256Hash promotionDto.ReferenceText ReferenceType.Rebase [| ReferenceLinkType.BasedOn promotionDto.ReferenceId |] with
                                             | Ok rebaseReferenceId ->
@@ -432,7 +437,7 @@ module Branch =
                                         metadata.Properties[nameof (BranchName)] <- $"{branchDto.BranchName}"
 
                                         // We need to get the reference that we're rebasing on, so we can get the directoryId and sha256Hash.
-                                        let referenceActorProxy = actorProxyFactory.CreateActorProxy<IReferenceActor>(ActorId($"{referenceId}"), ActorName.Reference)
+                                        let referenceActorProxy = Reference.CreateActorProxy referenceId this.correlationId
                                         let! promotionDto = referenceActorProxy.Get metadata.CorrelationId
 
                                         // Add the Rebase reference to this branch.
@@ -482,9 +487,8 @@ module Branch =
                                         | Error error -> return Error error
                                     | RemoveReference referenceId -> return Ok (ReferenceRemoved referenceId)
                                     | DeleteLogical(force, deleteReason) ->
-                                        let repositoryActorProxy =
-                                            actorProxyFactory.CreateActorProxy<IRepositoryActor>(ActorId($"{branchDto.RepositoryId}"), ActorName.Repository)
-                                        let! repositoryDto = repositoryActorProxy.Get(metadata.CorrelationId)
+                                        let repositoryActorProxy = Repository.CreateActorProxy branchDto.RepositoryId metadata.CorrelationId
+                                        let! repositoryDto = repositoryActorProxy.Get (metadata.CorrelationId)
                                         this.SchedulePhysicalDeletion(deleteReason, TimeSpan.FromDays(repositoryDto.LogicalDeleteDays), metadata.CorrelationId)
                                         return Ok (LogicalDeleted(force, deleteReason))
                                     | DeletePhysical ->
@@ -516,9 +520,7 @@ module Branch =
             member this.GetParentBranch correlationId =
                 task {
                     this.correlationId <- correlationId
-                    let actorId = ActorId($"{branchDto.ParentBranchId}")
-
-                    let branchActorProxy = this.Host.ProxyFactory.CreateActorProxy<IBranchActor>(actorId, ActorName.Branch)
+                    let branchActorProxy = Branch.CreateActorProxy branchDto.ParentBranchId correlationId
 
                     return! branchActorProxy.Get correlationId
                 }

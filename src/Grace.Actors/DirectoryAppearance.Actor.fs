@@ -3,9 +3,12 @@ namespace Grace.Actors
 open Dapr.Actors
 open Dapr.Actors.Runtime
 open Grace.Actors.Constants
+open Grace.Actors.Context
+open Grace.Actors.Extensions.ActorProxy
 open Grace.Shared.Types
 open Grace.Shared
 open NodaTime
+open System
 open System.Collections.Generic
 open System.Threading.Tasks
 open Interfaces
@@ -75,8 +78,8 @@ module DirectoryAppearance =
                             let! deleteSucceeded = Storage.DeleteState stateManager dtoStateName
 
                             if deleteSucceeded then
-                                let directoryVersionActorProxy =
-                                    Services.actorProxyFactory.CreateActorProxy<IDirectoryVersionActor>(this.Id, Constants.ActorName.DirectoryVersion)
+                                let directoryVersionGuid = Guid.Parse($"{this.Id}")
+                                let directoryVersionActorProxy = DirectoryVersion.CreateActorProxy directoryVersionGuid correlationId
 
                                 let! result = directoryVersionActorProxy.Delete(correlationId)
 

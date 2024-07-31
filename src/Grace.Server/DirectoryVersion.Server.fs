@@ -6,6 +6,7 @@ open Giraffe
 open Grace.Actors.Commands
 open Grace.Actors.Constants
 open Grace.Actors.DirectoryVersion
+open Grace.Actors.Extensions.ActorProxy
 open Grace.Actors.Interfaces
 open Grace.Actors.Services
 open Grace.Server.Services
@@ -34,12 +35,6 @@ module DirectoryVersion =
     //type QueryResult<'T, 'U when 'T :> DirectoryParameters> = 'T -> int -> IDirectoryVersionActor ->Task<'U>
 
     let activitySource = new ActivitySource("Branch")
-
-    let actorProxyFactory = ApplicationContext.actorProxyFactory
-
-    let getActorProxy (context: HttpContext) (directoryId: string) =
-        let actorId = ActorId(directoryId)
-        actorProxyFactory.CreateActorProxy<IDirectoryVersionActor>(actorId, ActorName.DirectoryVersion)
 
     let processCommand<'T when 'T :> DirectoryParameters>
         (context: HttpContext)
@@ -82,16 +77,19 @@ module DirectoryVersion =
         =
         task {
             use activity = activitySource.StartActivity("processQuery", ActivityKind.Server)
+            let correlationId = getCorrelationId context
 
             try
                 let validationResults = validations parameters
                 let! validationsPassed = validationResults |> allPass
 
                 if validationsPassed then
-                    let actorProxy = getActorProxy context parameters.DirectoryId
+                    let directoryVersionGuid = Guid.Parse(parameters.DirectoryId)
+                    let actorProxy = DirectoryVersion.CreateActorProxy directoryVersionGuid correlationId
+
                     let! queryResult = query context maxCount actorProxy
 
-                    let graceReturnValue = GraceReturnValue.Create queryResult (getCorrelationId context)
+                    let graceReturnValue = GraceReturnValue.Create queryResult correlationId
 
                     let graceIds = getGraceIds context
                     graceReturnValue.Properties[nameof (OwnerId)] <- graceIds.OwnerId
@@ -103,14 +101,14 @@ module DirectoryVersion =
                 else
                     let! error = validationResults |> getFirstError
 
-                    let graceError = GraceError.Create (DirectoryVersionError.getErrorMessage error) (getCorrelationId context)
+                    let graceError = GraceError.Create (DirectoryVersionError.getErrorMessage error) correlationId
 
                     graceError.Properties.Add("Path", context.Request.Path)
                     return! context |> result400BadRequest graceError
             with ex ->
                 return!
                     context
-                    |> result500ServerError (GraceError.Create $"{Utilities.createExceptionResponse ex}" (getCorrelationId context))
+                    |> result500ServerError (GraceError.Create $"{Utilities.createExceptionResponse ex}" correlationId)
         }
 
     /// Create a new directory version.
@@ -132,9 +130,7 @@ module DirectoryVersion =
 
                 let command (parameters: CreateParameters) (context: HttpContext) =
                     task {
-                        let actorId = GetActorId parameters.DirectoryVersion.DirectoryVersionId
-
-                        let actorProxy = ApplicationContext.actorProxyFactory.CreateActorProxy<IDirectoryVersionActor>(actorId, ActorName.DirectoryVersion)
+                        let actorProxy = DirectoryVersion.CreateActorProxy parameters.DirectoryVersion.DirectoryVersionId (getCorrelationId context)
 
                         return! actorProxy.Handle (DirectoryVersion.Create parameters.DirectoryVersion) (Services.createMetadata context)
                     }
@@ -205,11 +201,7 @@ module DirectoryVersion =
                         let directoryIds = context.Items[nameof (GetByDirectoryIdsParameters)] :?> List<DirectoryVersionId>
 
                         for directoryId in directoryIds do
-                            let actorProxy =
-                                ApplicationContext.actorProxyFactory.CreateActorProxy<IDirectoryVersionActor>(
-                                    ActorId($"{directoryId}"),
-                                    ActorName.DirectoryVersion
-                                )
+                            let actorProxy = DirectoryVersion.CreateActorProxy directoryId (getCorrelationId context)
 
                             let! directoryVersion = actorProxy.Get(getCorrelationId context)
                             directoryVersions.Add(directoryVersion)
@@ -273,7 +265,7 @@ module DirectoryVersion =
 
                 let command (parameters: SaveDirectoryVersionsParameters) (context: HttpContext) =
                     task {
-                        let correlationId = context.Items[Constants.CorrelationIdHeaderKey] :?> string
+                        let correlationId = getCorrelationId context
                         let results = ConcurrentQueue<GraceResult<string>>()
 
                         do!
@@ -284,13 +276,7 @@ module DirectoryVersion =
                                     ValueTask(
                                         task {
                                             // Check if the directory version exists. If it doesn't, create it.
-                                            let actorId = GetActorId dv.DirectoryVersionId
-
-                                            let directoryVersionActor =
-                                                ApplicationContext.actorProxyFactory.CreateActorProxy<IDirectoryVersionActor>(
-                                                    actorId,
-                                                    ActorName.DirectoryVersion
-                                                )
+                                            let directoryVersionActor = DirectoryVersion.CreateActorProxy dv.DirectoryVersionId correlationId
 
                                             let! exists = directoryVersionActor.Exists parameters.CorrelationId
                                             //logToConsole $"In SaveDirectoryVersions: {dv.DirectoryId} exists: {exists}"

@@ -7,6 +7,7 @@ open Giraffe
 open Grace.Actors
 open Grace.Actors.Commands
 open Grace.Actors.Constants
+open Grace.Actors.Extensions.ActorProxy
 open Grace.Actors.Extensions.MemoryCache
 open Grace.Actors.Interfaces
 open Grace.Actors.Services
@@ -55,7 +56,7 @@ module Validations =
                 else
                     return Error error
             }
-            |> ValueTask<Result<unit, 'T>>
+            |> ValidationResult
 
         /// Validates that the given ownerId does not already exist in the database.
         let ownerIdDoesNotExist<'T> (ownerId: string) correlationId (error: 'T) =
@@ -63,14 +64,13 @@ module Validations =
                 let mutable ownerGuid = Guid.Empty
 
                 if (not <| String.IsNullOrEmpty(ownerId)) && Guid.TryParse(ownerId, &ownerGuid) then
-                    let actorId = Owner.GetActorId(ownerGuid)
-                    let ownerActorProxy = actorProxyFactory.CreateActorProxy<IOwnerActor>(actorId, ActorName.Owner)
+                    let ownerActorProxy = Owner.CreateActorProxy ownerGuid correlationId
                     let! exists = ownerActorProxy.Exists correlationId
                     if exists then return Error error else return Ok()
                 else
                     return Error error
             }
-            |> ValueTask<Result<unit, 'T>>
+            |> ValidationResult
 
         /// Validates that the owner exists in the database.
         let ownerExists<'T> ownerId ownerName (context: HttpContext) (error: 'T) =
@@ -86,33 +86,22 @@ module Validations =
                 let! ownerNameExists = ownerNameExists ownerName false correlationId
                 if ownerNameExists then return Error error else return Ok()
             }
-            |> ValueTask<Result<unit, 'T>>
+            |> ValidationResult
 
         /// Validates that the owner is deleted.
         let ownerIsDeleted<'T> context correlationId (error: 'T) =
             task {
                 let graceIds = getGraceIds context
-                let isDeleted = memoryCache.Get<string>($"{graceIds.OwnerId}deleted")
-                match isDeleted with
-                | MemoryCache.DoesNotExistValue -> return Ok()
-                | MemoryCache.ExistsValue -> return Error error
-                | _ ->
-                    let ownerActorProxy = actorProxyFactory.CreateActorProxy<IOwnerActor>(ActorId(graceIds.OwnerId), ActorName.Owner)
-
-                    let! isDeleted = ownerActorProxy.IsDeleted correlationId
-
-                    if isDeleted then
-                        use newCacheEntry =
-                            memoryCache.CreateEntry($"{graceIds.OwnerId}deleted", Value = MemoryCache.DoesNotExistValue, AbsoluteExpirationRelativeToNow = MemoryCache.DefaultExpirationTime)
-
-                        return Ok()
-                    else
-                        use newCacheEntry =
-                            memoryCache.CreateEntry($"{graceIds.OwnerId}deleted", Value = MemoryCache.ExistsValue, AbsoluteExpirationRelativeToNow = MemoryCache.DefaultExpirationTime)
-
-                        return Error error
+                let ownerGuid = Guid.Parse(graceIds.OwnerId)
+                match memoryCache.GetDeletedOwnerIdEntry ownerGuid with
+                | Some value ->
+                    match value with
+                    | MemoryCache.DoesNotExistValue -> return Ok()
+                    | MemoryCache.ExistsValue -> return Error error
+                    | _ -> return! ownerIsDeleted graceIds.OwnerId correlationId |> optionToResult error
+                | None -> return! ownerIsDeleted graceIds.OwnerId correlationId |> optionToResult error
             }
-            |> ValueTask<Result<unit, 'T>>
+            |> ValidationResult
 
         /// Validates that the owner is not deleted.
         let ownerIsNotDeleted<'T> context correlationId (error: 'T) =
@@ -121,7 +110,7 @@ module Validations =
                 | Ok _ -> return Error error
                 | Error _ -> return Ok()
             }
-            |> ValueTask<Result<unit, 'T>>
+            |> ValidationResult
 
         /// Validates that the given ownerId does not already exist in the database.
         let ownerDoesNotExist<'T> ownerId ownerName correlationId (error: 'T) =
@@ -133,7 +122,7 @@ module Validations =
                 else
                     return Ok()
             }
-            |> ValueTask<Result<unit, 'T>>
+            |> ValidationResult
 
     module Organization =
 
@@ -155,7 +144,7 @@ module Validations =
                 else
                     return Ok()
             }
-            |> ValueTask<Result<unit, 'T>>
+            |> ValidationResult
 
         /// Validates that the given organizationId does not already exist in the database.
         let organizationIdDoesNotExist<'T> (organizationId: string) correlationId (error: 'T) =
@@ -167,7 +156,7 @@ module Validations =
                 else
                     return Ok()
             }
-            |> ValueTask<Result<unit, 'T>>
+            |> ValidationResult
 
         /// Validates that the given organizationName does not already exist for this owner.
         let organizationNameIsUniqueWithinOwner<'T> (ownerId: string) (ownerName: string) (organizationName: string) (context: HttpContext) correlationId (error: 'T) =
@@ -187,7 +176,7 @@ module Validations =
                 else
                     return Ok()
             }
-            |> ValueTask<Result<unit, 'T>>
+            |> ValidationResult
 
         /// Validates that the organization exists.
         let organizationExists<'T> ownerId ownerName organizationId organizationName correlationId (error: 'T) =
@@ -195,35 +184,22 @@ module Validations =
                 try
                     let mutable organizationGuid = Guid.Empty
 
-                    match! resolveOrganizationId ownerId ownerName organizationId organizationName correlationId with
-                    | Some organizationId ->
-                        if Guid.TryParse(organizationId, &organizationGuid) then
-                            let exists = memoryCache.Get<string>(organizationGuid)
-
-                            match exists with
+                    if not <| String.IsNullOrEmpty(organizationId) && Guid.TryParse(organizationId, &organizationGuid) then
+                        match memoryCache.GetOrganizationIdEntry organizationGuid with
+                        | Some value ->
+                            match value with
                             | MemoryCache.ExistsValue -> return Ok()
                             | MemoryCache.DoesNotExistValue -> return Error error
-                            | _ ->
-                                let organizationActorProxy = actorProxyFactory.CreateActorProxy<IOrganizationActor>(ActorId(organizationId), ActorName.Organization)
-
-                                let! exists = organizationActorProxy.Exists correlationId
-
-                                if exists then
-                                    use newCacheEntry =
-                                        memoryCache.CreateEntry(organizationGuid, Value = MemoryCache.ExistsValue, AbsoluteExpirationRelativeToNow = MemoryCache.DefaultExpirationTime)
-
-                                    return Ok()
-                                else
-                                    return Error error
-                        else
-                            return Ok()
-                    | None -> return Error error
+                            | _ -> return! organizationExists organizationId correlationId |> optionToResult error
+                        | None -> return! organizationExists organizationId correlationId |> optionToResult error
+                    else
+                        return Error error
                 with ex ->
                     log.LogError(ex, "{currentInstant}: Exception in Grace.Server.Validations.organizationExists.", getCurrentInstantExtended ())
 
                     return Error error
             }
-            |> ValueTask<Result<unit, 'T>>
+            |> ValidationResult
 
         /// Validates that the organization does not exist.
         let organizationDoesNotExist<'T> ownerId ownerName organizationId organizationName correlationId (error: 'T) =
@@ -232,41 +208,22 @@ module Validations =
                 | Ok _ -> return Error error
                 | Error error -> return Ok()
             }
-            |> ValueTask<Result<unit, 'T>>
+            |> ValidationResult
 
         /// Validates that the organization is deleted.
         let organizationIsDeleted<'T> context correlationId (error: 'T) =
             task {
                 let graceIds = getGraceIds context
-                let isDeleted = memoryCache.Get<string>($"{graceIds.OrganizationId}deleted")
-                match isDeleted with
-                | MemoryCache.DoesNotExistValue -> return Ok()
-                | MemoryCache.ExistsValue -> return Error error
-                | _ ->
-                    let organizationActorProxy = actorProxyFactory.CreateActorProxy<IOrganizationActor>(ActorId(graceIds.OrganizationId), ActorName.Organization)
-
-                    let! isDeleted = organizationActorProxy.IsDeleted correlationId
-
-                    if isDeleted then
-                        use newCacheEntry =
-                            memoryCache.CreateEntry(
-                                $"{graceIds.OrganizationId}deleted",
-                                Value = MemoryCache.DoesNotExistValue,
-                                AbsoluteExpirationRelativeToNow = MemoryCache.DefaultExpirationTime
-                            )
-
-                        return Ok()
-                    else
-                        use newCacheEntry =
-                            memoryCache.CreateEntry(
-                                $"{graceIds.OrganizationId}deleted",
-                                Value = MemoryCache.ExistsValue,
-                                AbsoluteExpirationRelativeToNow = MemoryCache.DefaultExpirationTime
-                            )
-
-                        return Error error
+                let organizationGuid = Guid.Parse(graceIds.OrganizationId)
+                match memoryCache.GetDeletedOrganizationIdEntry organizationGuid with
+                | Some value ->
+                    match value with
+                    | MemoryCache.DoesNotExistValue -> return Ok()
+                    | MemoryCache.ExistsValue -> return Error error
+                    | _ -> return! organizationIsDeleted graceIds.OrganizationId correlationId |> optionToResult error
+                | None -> return! organizationIsDeleted graceIds.OrganizationId correlationId |> optionToResult error
             }
-            |> ValueTask<Result<unit, 'T>>
+            |> ValidationResult
 
         /// Validates that the organization is not deleted.
         let organizationIsNotDeleted<'T> context correlationId (error: 'T) =
@@ -275,7 +232,7 @@ module Validations =
                 | Ok _ -> return Error error
                 | Error _ -> return Ok()
             }
-            |> ValueTask<Result<unit, 'T>>
+            |> ValidationResult
 
     module Repository =
 
@@ -297,7 +254,7 @@ module Validations =
                 else
                     return Ok()
             }
-            |> ValueTask<Result<unit, 'T>>
+            |> ValidationResult
 
         /// Validates that the given repositoryId does not already exist in the database.
         let repositoryIdDoesNotExist<'T> (repositoryId: string) correlationId (error: 'T) =
@@ -309,7 +266,7 @@ module Validations =
                 else
                     return Ok()
             }
-            |> ValueTask<Result<unit, 'T>>
+            |> ValidationResult
 
         /// Validates that the repository exists.
         let repositoryExists<'T> ownerId ownerName organizationId organizationName repositoryId repositoryName correlationId (error: 'T) =
@@ -324,7 +281,7 @@ module Validations =
                         | MemoryCache.ExistsValue -> return Ok()
                         | MemoryCache.DoesNotExistValue -> return Error error
                         | _ ->
-                            let repositoryActorProxy = actorProxyFactory.CreateActorProxy<IRepositoryActor>(ActorId(repositoryId), ActorName.Repository)
+                            let repositoryActorProxy = Repository.CreateActorProxy repositoryGuid correlationId
 
                             let! exists = repositoryActorProxy.Exists correlationId
 
@@ -339,49 +296,31 @@ module Validations =
                         return Ok()
                 | None -> return Error error
             }
-            |> ValueTask<Result<unit, 'T>>
+            |> ValidationResult
 
         /// Validates that the repository is deleted.
-        let repositoryIsDeleted<'T> ownerId ownerName organizationId organizationName repositoryId repositoryName correlationId (error: 'T) =
+        let repositoryIsDeleted<'T> context correlationId (error: 'T) =
             task {
-                let mutable guid = Guid.Empty
-
-                match! resolveRepositoryId ownerId ownerName organizationId organizationName repositoryId repositoryName correlationId with
-                | Some repositoryId ->
-                    let repositoryGuid = Guid.Parse(repositoryId)
-                    let isDeleted = memoryCache.Get<string>($"{repositoryGuid}deleted")
-                    match isDeleted with
+                let graceIds = getGraceIds context
+                let repositoryGuid = Guid.Parse(graceIds.RepositoryId)
+                match memoryCache.GetDeletedRepositoryIdEntry repositoryGuid with
+                | Some value ->
+                    match value with
                     | MemoryCache.DoesNotExistValue -> return Ok()
                     | MemoryCache.ExistsValue -> return Error error
-                    | _ ->
-                        let actorId = Repository.GetActorId(repositoryGuid)
-
-                        let repositoryActorProxy = actorProxyFactory.CreateActorProxy<IRepositoryActor>(actorId, ActorName.Repository)
-
-                        let! isDeleted = repositoryActorProxy.IsDeleted correlationId
-
-                        if isDeleted then
-                            use newCacheEntry =
-                                memoryCache.CreateEntry($"{repositoryGuid}deleted", Value = MemoryCache.DoesNotExistValue, AbsoluteExpirationRelativeToNow = MemoryCache.DefaultExpirationTime)
-
-                            return Ok()
-                        else
-                            use newCacheEntry =
-                                memoryCache.CreateEntry($"{repositoryGuid}deleted", Value = MemoryCache.ExistsValue, AbsoluteExpirationRelativeToNow = MemoryCache.DefaultExpirationTime)
-
-                            return Error error
-                | None -> return Error error
+                    | _ -> return! repositoryIsDeleted graceIds.OwnerId correlationId |> optionToResult error
+                | None -> return! repositoryIsDeleted graceIds.OwnerId correlationId |> optionToResult error
             }
-            |> ValueTask<Result<unit, 'T>>
+            |> ValidationResult
 
         /// Validates that the repository is not deleted.
-        let repositoryIsNotDeleted<'T> ownerId ownerName organizationId organizationName repositoryId repositoryName correlationId (error: 'T) =
+        let repositoryIsNotDeleted<'T> context correlationId (error: 'T) =
             task {
-                match! repositoryIsDeleted ownerId ownerName organizationId organizationName repositoryId repositoryName correlationId error with
+                match! repositoryIsDeleted context correlationId error with
                 | Ok _ -> return Error error
                 | Error _ -> return Ok()
             }
-            |> ValueTask<Result<unit, 'T>>
+            |> ValidationResult
 
         let repositoryNameIsUnique<'T> ownerId ownerName organizationId organizationName repositoryName correlationId (error: 'T) =
             task {
@@ -394,7 +333,7 @@ module Validations =
                 else
                     return Ok()
             }
-            |> ValueTask<Result<unit, 'T>>
+            |> ValidationResult
 
     module Branch =
 
@@ -414,22 +353,22 @@ module Validations =
                 else
                     return Ok()
             }
-            |> ValueTask<Result<unit, 'T>>
+            |> ValidationResult
 
         /// Validates that the given branchId does not exist in the database.
         let branchIdDoesNotExist<'T> (branchId: string) correlationId (error: 'T) =
             task {
-                let mutable guid = Guid.Empty
+                let mutable branchGuid = Guid.Empty
 
-                if (not <| String.IsNullOrEmpty(branchId)) && Guid.TryParse(branchId, &guid) then
-                    let branchActorProxy = actorProxyFactory.CreateActorProxy<IBranchActor>(ActorId(branchId), ActorName.Branch)
+                if (not <| String.IsNullOrEmpty(branchId)) && Guid.TryParse(branchId, &branchGuid) then
+                    let branchActorProxy = Branch.CreateActorProxy branchGuid correlationId
 
                     let! exists = branchActorProxy.Exists correlationId
                     if exists then return Error error else return Ok()
                 else
                     return Ok()
             }
-            |> ValueTask<Result<unit, 'T>>
+            |> ValidationResult
 
         /// Validates that the branch exists in the database.
         let branchExists<'T> ownerId ownerName organizationId organizationName repositoryId repositoryName branchId branchName correlationId (error: 'T) =
@@ -447,7 +386,7 @@ module Validations =
                             | MemoryCache.ExistsValue -> return Ok()
                             | MemoryCache.DoesNotExistValue -> return Error error
                             | _ ->
-                                let branchActorProxy = actorProxyFactory.CreateActorProxy<IBranchActor>(ActorId(branchId), ActorName.Branch)
+                                let branchActorProxy = Branch.CreateActorProxy branchGuid correlationId
 
                                 let! exists = branchActorProxy.Exists correlationId
 
@@ -463,7 +402,7 @@ module Validations =
                     | None -> return Error error
                 | None -> return Error error
             }
-            |> ValueTask<Result<unit, 'T>>
+            |> ValidationResult
 
         /// Validates that a branch allows a specific reference type.
         let branchAllowsReferenceType<'T>
@@ -492,9 +431,7 @@ module Validations =
                             let allowed = allowed :?> bool
                             if allowed then return Ok() else return Error error
                         else
-                            let actorId = ActorId(branchId)
-
-                            let branchActorProxy = actorProxyFactory.CreateActorProxy<IBranchActor>(actorId, ActorName.Branch)
+                            let branchActorProxy = Branch.CreateActorProxy (Guid.Parse(branchId)) correlationId
 
                             let! branchDto = branchActorProxy.Get correlationId
 
@@ -519,7 +456,7 @@ module Validations =
                     | None -> return Error error
                 | None -> return Error error
             }
-            |> ValueTask<Result<unit, 'T>>
+            |> ValidationResult
 
 
         /// Validates that a branch allows assign to create promotion references.
@@ -537,9 +474,7 @@ module Validations =
                             let allowed = allowed :?> bool
                             if allowed then return Ok() else return Error error
                         else
-                            let actorId = ActorId(branchId)
-
-                            let branchActorProxy = actorProxyFactory.CreateActorProxy<IBranchActor>(actorId, ActorName.Branch)
+                            let branchActorProxy = Branch.CreateActorProxy (Guid.Parse(branchId)) correlationId
 
                             let! branchDto = branchActorProxy.Get correlationId
                             let allowed = branchDto.AssignEnabled
@@ -551,7 +486,7 @@ module Validations =
                     | None -> return Error error
                 | None -> return Error error
             }
-            |> ValueTask<Result<unit, 'T>>
+            |> ValidationResult
 
         /// Validates that the given branchName does not exist in the database.
         let branchNameDoesNotExist<'T> ownerId ownerName organizationId organizationName repositoryId repositoryName branchName correlationId (error: 'T) =
@@ -563,22 +498,20 @@ module Validations =
                     | None -> return Ok()
                 | None -> return Ok()
             }
-            |> ValueTask<Result<unit, 'T>>
+            |> ValidationResult
 
         /// Validates that the given ReferenceId exists in the database.
         let referenceIdExists<'T> (referenceId: ReferenceId) correlationId (error: 'T) =
             task {
                 if not <| (referenceId = Guid.Empty) then
-                    let actorId = ActorId($"{referenceId}")
-
-                    let referenceActorProxy = actorProxyFactory.CreateActorProxy<IReferenceActor>(actorId, ActorName.Reference)
+                    let referenceActorProxy = Reference.CreateActorProxy referenceId correlationId
 
                     let! exists = referenceActorProxy.Exists correlationId
                     if exists then return Ok() else return Error error
                 else
                     return Ok()
             }
-            |> ValueTask<Result<unit, 'T>>
+            |> ValidationResult
 
     module DirectoryVersion =
         /// Validates that the given DirectoryId exists in the database.
@@ -590,8 +523,7 @@ module Validations =
                 | MemoryCache.ExistsValue -> return Ok()
                 | MemoryCache.DoesNotExistValue -> return Error error
                 | _ ->
-                    let directoryVersionActorProxy =
-                        ApplicationContext.actorProxyFactory.CreateActorProxy<IDirectoryVersionActor>(DirectoryVersion.GetActorId(directoryId), ActorName.DirectoryVersion)
+                    let directoryVersionActorProxy = DirectoryVersion.CreateActorProxy directoryId correlationId
 
                     let! exists = directoryVersionActorProxy.Exists correlationId
 
@@ -602,7 +534,7 @@ module Validations =
                     else
                         return Error error
             }
-            |> ValueTask<Result<unit, 'T>>
+            |> ValidationResult
 
         /// Validates that all of the given DirectoryIds exist in the database.
         let directoryIdsExist<'T> (directoryIds: List<DirectoryVersionId>) correlationId (error: 'T) =
@@ -612,22 +544,22 @@ module Validations =
 
                 while directoryIdStack.Count > 0 && allExist do
                     let directoryId = directoryIdStack.Dequeue()
-                    let directoryVersionActorProxy = actorProxyFactory.CreateActorProxy<IDirectoryVersionActor>(DirectoryVersion.GetActorId(directoryId), ActorName.DirectoryVersion)
+                    let directoryVersionActorProxy = DirectoryVersion.CreateActorProxy directoryId correlationId
 
                     let! exists = directoryVersionActorProxy.Exists correlationId
                     allExist <- exists
 
                 if allExist then return Ok() else return Error error
             }
-            |> ValueTask<Result<unit, 'T>>
+            |> ValidationResult
 
         /// Validates that a directory version with the provided Sha256Hash exists in a repository.
         let sha256HashExists<'T> repositoryId sha256Hash correlationId (error: 'T) =
             task {
-                let repositoryActorProxy = actorProxyFactory.CreateActorProxy<IRepositoryActor>(Repository.GetActorId(repositoryId), ActorName.Repository)
+                let repositoryActorProxy = Repository.CreateActorProxy repositoryId correlationId
 
                 match! getDirectoryBySha256Hash repositoryId sha256Hash correlationId with
                 | Some directoryVersion -> return Ok()
                 | None -> return Error error
             }
-            |> ValueTask<Result<unit, 'T>>
+            |> ValidationResult

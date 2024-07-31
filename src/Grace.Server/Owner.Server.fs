@@ -5,6 +5,7 @@ open Dapr.Actors.Client
 open Giraffe
 open Grace.Actors.Commands.Owner
 open Grace.Actors.Constants
+open Grace.Actors.Extensions.ActorProxy
 open Grace.Actors.Interfaces
 open Grace.Actors.Services
 open Grace.Server.ApplicationContext
@@ -38,11 +39,6 @@ module Owner =
 
     let actorProxyFactory = ApplicationContext.actorProxyFactory
 
-    /// Gets an OwnerActorProxy for the given ownerId.
-    let getActorProxy (ownerId: string) =
-        let actorId = ActorId(ownerId)
-        actorProxyFactory.CreateActorProxy<IOwnerActor>(actorId, ActorName.Owner)
-
     /// Generic processor for all Owner commands.
     let processCommand<'T when 'T :> OwnerParameters> (context: HttpContext) (validations: Validations<'T>) (command: 'T -> ValueTask<OwnerCommand>) =
         task {
@@ -55,9 +51,10 @@ module Owner =
                 // We know these Id's from ValidateIds.Middleware, so let's set them so we never have to resolve them again.
                 parameters.OwnerId <- graceIds.OwnerId
 
-                let handleCommand ownerId cmd =
+                let handleCommand (ownerId: string) cmd =
                     task {
-                        let actorProxy = getActorProxy ownerId
+                        let ownerGuid = Guid.Parse(ownerId)
+                        let actorProxy = Owner.CreateActorProxy ownerGuid (getCorrelationId context)
 
                         match! actorProxy.Handle cmd (createMetadata context) with
                         | Ok graceReturnValue ->
@@ -135,6 +132,7 @@ module Owner =
         task {
             use activity = activitySource.StartActivity("processQuery", ActivityKind.Server)
             let graceIds = getGraceIds context
+            let correlationId = getCorrelationId context
 
             try
                 let validationResults = validations parameters
@@ -142,14 +140,15 @@ module Owner =
 
                 if validationsPassed then
                     // Get the actor proxy for this owner.
-                    let actorProxy = getActorProxy graceIds.OwnerId
+                    let ownerGuid = Guid.Parse(graceIds.OwnerId)
+                    let actorProxy = Owner.CreateActorProxy ownerGuid correlationId
 
                     // Execute the query.
                     let! queryResult = query context maxCount actorProxy
 
                     // Wrap the result in a GraceReturnValue.
                     let graceReturnValue =
-                        (GraceReturnValue.CreateWithMetadata queryResult (getCorrelationId context) (getParametersAsDictionary parameters))
+                        (GraceReturnValue.CreateWithMetadata queryResult correlationId (getParametersAsDictionary parameters))
                             .enhance(nameof (OwnerId), graceIds.OwnerId)
                             .enhance("Path", context.Request.Path)
 
@@ -159,13 +158,13 @@ module Owner =
                     let! error = validationResults |> getFirstError
 
                     let graceError =
-                        (GraceError.Create (OwnerError.getErrorMessage error) (getCorrelationId context))
+                        (GraceError.Create (OwnerError.getErrorMessage error) correlationId)
                             .enhance(nameof (OwnerId), graceIds.OwnerId)
                             .enhance("Path", context.Request.Path)
                     return! context |> result400BadRequest graceError
             with ex ->
                 let graceError =
-                    (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
+                    (GraceError.Create $"{createExceptionResponse ex}" correlationId)
                         .enhance(nameof (OwnerId), graceIds.OwnerId)
                         .enhance("Path", context.Request.Path)
 
@@ -309,6 +308,9 @@ module Owner =
     let Get: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
+                let startTime = getCurrentInstant ()
+                let graceIds = getGraceIds context
+
                 try
                     let validations (parameters: GetOwnerParameters) =
                         [| Owner.ownerIsNotDeleted context parameters.CorrelationId OwnerIsDeleted |]
@@ -317,9 +319,39 @@ module Owner =
 
                     let! parameters = context |> parse<GetOwnerParameters>
 
-                    return! processQuery context parameters validations 1 query
+                    let! result = processQuery context parameters validations 1 query
+
+                    let duration_ms = getPaddedDuration_ms startTime
+
+                    log.LogInformation(
+                        "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {path}; OwnerId: {ownerId}.",
+                        getCurrentInstantExtended (),
+                        getMachineName,
+                        duration_ms,
+                        (getCorrelationId context),
+                        context.Request.Path,
+                        graceIds.OwnerId
+                    )
+
+                    return result
                 with ex ->
-                    return!
-                        context
-                        |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
+                    let duration_ms = getPaddedDuration_ms startTime
+
+                    log.LogError(
+                        ex,
+                        "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Error in {path}; OwnerId: {ownerId}.",
+                        getCurrentInstantExtended (),
+                        getMachineName,
+                        duration_ms,
+                        (getCorrelationId context),
+                        context.Request.Path,
+                        graceIds.OwnerId
+                    )
+
+                    let graceError =
+                        (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
+                            .enhance(nameof (OwnerId), graceIds.OwnerId)
+                            .enhance("Path", context.Request.Path)
+
+                    return! context |> result500ServerError graceError
             }

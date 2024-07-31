@@ -5,6 +5,7 @@ open Dapr.Actors.Client
 open Giraffe
 open Grace.Actors.Commands.Organization
 open Grace.Actors.Constants
+open Grace.Actors.Extensions.ActorProxy
 open Grace.Actors.Interfaces
 open Grace.Actors.Services
 open Grace.Server.Services
@@ -31,12 +32,6 @@ module Organization =
 
     let log = ApplicationContext.loggerFactory.CreateLogger("Organization.Server")
 
-    let actorProxyFactory = ApplicationContext.actorProxyFactory
-
-    let getOrganizationActorProxy (organizationId: string) =
-        let actorId = ActorId(organizationId)
-        actorProxyFactory.CreateActorProxy<IOrganizationActor>(actorId, ActorName.Organization)
-
     let processCommand<'T when 'T :> OrganizationParameters>
         (context: HttpContext)
         (validations: Validations<'T>)
@@ -44,6 +39,7 @@ module Organization =
         =
         task {
             let graceIds = getGraceIds context
+            let correlationId = getCorrelationId context
 
             try
                 use activity = activitySource.StartActivity("processCommand", ActivityKind.Server)
@@ -54,9 +50,10 @@ module Organization =
                 parameters.OwnerId <- graceIds.OwnerId
                 parameters.OrganizationId <- graceIds.OrganizationId
 
-                let handleCommand organizationId cmd =
+                let handleCommand (organizationId: string) cmd =
                     task {
-                        let actorProxy = getOrganizationActorProxy organizationId
+                        let organizationGuid = Guid.Parse(organizationId)
+                        let actorProxy = Organization.CreateActorProxy organizationGuid correlationId
 
                         match! actorProxy.Handle cmd (createMetadata context) with
                         | Ok graceReturnValue ->
@@ -137,6 +134,7 @@ module Organization =
         task {
             use activity = activitySource.StartActivity("processQuery", ActivityKind.Server)
             let graceIds = getGraceIds context
+            let correlationId = getCorrelationId context
 
             try
                 let validationResults = validations parameters
@@ -144,14 +142,15 @@ module Organization =
 
                 if validationsPassed then
                     // Get the actor proxy for this organization.
-                    let actorProxy = getOrganizationActorProxy graceIds.OrganizationId
+                    let organizationGuid = Guid.Parse(graceIds.OrganizationId)
+                    let actorProxy = Organization.CreateActorProxy organizationGuid correlationId
 
                     // Execute the query.
                     let! queryResult = query context maxCount actorProxy
 
                     // Wrap the result in a GraceReturnValue.
                     let graceReturnValue =
-                        (GraceReturnValue.CreateWithMetadata queryResult (getCorrelationId context) (getParametersAsDictionary parameters))
+                        (GraceReturnValue.CreateWithMetadata queryResult correlationId (getParametersAsDictionary parameters))
                             .enhance(nameof (OwnerId), graceIds.OwnerId)
                             .enhance(nameof (OrganizationId), graceIds.OrganizationId)
                             .enhance("Path", context.Request.Path)
@@ -161,7 +160,7 @@ module Organization =
                     let! error = validationResults |> getFirstError
 
                     let graceError =
-                        (GraceError.CreateWithMetadata (OrganizationError.getErrorMessage error) (getCorrelationId context) (getParametersAsDictionary parameters))
+                        (GraceError.CreateWithMetadata (OrganizationError.getErrorMessage error) correlationId (getParametersAsDictionary parameters))
                             .enhance(nameof (OwnerId), graceIds.OwnerId)
                             .enhance(nameof (OrganizationId), graceIds.OrganizationId)
                             .enhance("Path", context.Request.Path)
@@ -169,7 +168,7 @@ module Organization =
                     return! context |> result400BadRequest graceError
             with ex ->
                 let graceError =
-                    (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
+                    (GraceError.Create $"{createExceptionResponse ex}" correlationId)
                         .enhance(nameof (OwnerId), graceIds.OwnerId)
                         .enhance(nameof (OrganizationId), graceIds.OrganizationId)
                         .enhance("Path", context.Request.Path)
@@ -352,6 +351,9 @@ module Organization =
     let Get: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
+                let startTime = getCurrentInstant ()
+                let graceIds = getGraceIds context
+
                 try
                     let validations (parameters: GetOrganizationParameters) =
                         [| Organization.organizationIsNotDeleted
@@ -363,9 +365,28 @@ module Organization =
                         task { return! actorProxy.Get(getCorrelationId context) }
 
                     let! parameters = context |> parse<GetOrganizationParameters>
-                    return! processQuery context parameters validations 1 query
+                    let! result = processQuery context parameters validations 1 query
+
+                    let duration_ms = getPaddedDuration_ms startTime
+
+                    log.LogInformation(
+                        "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {path}; OwnerId: {ownerId}; OrganizationId: {organizationId}.",
+                        getCurrentInstantExtended (),
+                        getMachineName,
+                        duration_ms,
+                        (getCorrelationId context),
+                        context.Request.Path,
+                        graceIds.OwnerId,
+                        graceIds.OrganizationId
+                    )
+
+                    return result
                 with ex ->
-                    return!
-                        context
-                        |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
+                    let duration_ms = getPaddedDuration_ms startTime
+                    let graceError =
+                        (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
+                            .enhance(nameof (OwnerId), graceIds.OwnerId)
+                            .enhance(nameof (OrganizationId), graceIds.OrganizationId)
+                            .enhance("Path", context.Request.Path)
+                    return! context |> result500ServerError graceError
             }

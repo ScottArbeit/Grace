@@ -70,7 +70,7 @@ module Program =
         //     Console.WriteLine($"{kvp.Key}: {kvp.Value}");
 
         // Just placing some much-used services into ApplicationContext where they're easy to find.
-        Grace.Actors.Services.setHostServiceProvider host.Services
+        Grace.Actors.Context.setHostServiceProvider host.Services
 
         let loggerFactory = host.Services.GetService(typeof<ILoggerFactory>) :?> ILoggerFactory
         ApplicationContext.setLoggerFactory (loggerFactory)

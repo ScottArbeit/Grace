@@ -6,7 +6,7 @@ open CosmosJsonSerializer
 open Dapr.Client
 open Dapr.Actors.Client
 open Grace.Actors.Constants
-open Grace.Actors.Services
+open Grace.Actors.Context
 open Grace.Shared
 open Grace.Shared.Types
 open Grace.Shared.Utilities

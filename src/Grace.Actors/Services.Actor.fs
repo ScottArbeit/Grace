@@ -7,6 +7,8 @@ open Dapr.Actors
 open Dapr.Actors.Client
 open Dapr.Client
 open Grace.Actors.Constants
+open Grace.Actors.Context
+open Grace.Actors.Extensions.ActorProxy
 open Grace.Actors.Extensions.MemoryCache
 open Grace.Actors.Events
 open Grace.Actors.Interfaces
@@ -73,68 +75,11 @@ module Services =
     /// Shared key credential for Azure Storage
     let private sharedKeyCredential = StorageSharedKeyCredential(DefaultObjectStorageAccount, azureStorageKey)
 
-    /// Actor proxy factory instance
-    let mutable actorProxyFactory: IActorProxyFactory = null
-
-    /// Setter for actor proxy factory
-    let setActorProxyFactory proxyFactory = actorProxyFactory <- proxyFactory
-
-    /// Getter for actor proxy factory
-    let ActorProxyFactory() = actorProxyFactory
-
-    /// Actor state storage provider instance
-    let mutable actorStateStorageProvider: ActorStateStorageProvider = ActorStateStorageProvider.Unknown
-
-    /// Setter for actor state storage provider
-    let setActorStateStorageProvider storageProvider = actorStateStorageProvider <- storageProvider
-
-    /// Cosmos client instance
-    let mutable private cosmosClient: CosmosClient = null
-
-    /// Setter for Cosmos client
-    let setCosmosClient (client: CosmosClient) = cosmosClient <- client
-
-    /// Cosmos container instance
-    let mutable private cosmosContainer: Container = null
-
-    /// Setter for Cosmos container
-    let setCosmosContainer (container: Container) = cosmosContainer <- container
-
-    /// Host services collection
-    let mutable internal hostServiceProvider: IServiceProvider = null
-
-    /// Setter for services collection
-    let setHostServiceProvider (hostServices: IServiceProvider) = hostServiceProvider <- hostServices
-
-    /// Logger factory instance
-    let mutable loggerFactory : ILoggerFactory = null //hostServiceProvider.GetService(typeof<ILoggerFactory>) :?> ILoggerFactory
-
-    /// Setter for logger factory
-    let setLoggerFactory (factory: ILoggerFactory) = loggerFactory <- factory
-
-    /// Grace Server's universal .NET memory cache
-    let mutable internal memoryCache: IMemoryCache = null
-
-    /// Setter for memory cache
-    let setMemoryCache (cache: IMemoryCache) = memoryCache <- cache
-
     /// Logger instance for the Services.Actor module.
     let log = Lazy<ILogger>(fun () -> loggerFactory.CreateLogger("Services.Actor"))
 
     /// Cosmos LINQ serializer options
     let linqSerializerOptions = CosmosLinqSerializerOptions(PropertyNamingPolicy = CosmosPropertyNamingPolicy.CamelCase)
-
-    /// Gets the ActorId for an OwnerName actor.
-    let getOwnerNameActorId ownerName = ActorId(ownerName)
-
-    /// Gets the ActorId for an OrganizationName actor.
-    let getOrganizationNameActorId ownerId organizationName = ActorId($"{organizationName}|{ownerId}")
-
-    /// Gets the ActorId for a RepositoryName actor.
-    let getRepositoryNameActorId ownerId organizationId repositoryName = ActorId($"{repositoryName}|{ownerId}|{organizationId}")
-
-    /// Gets the ActorId for a BranchName actor.
-    let getBranchNameActorId repositoryId branchName = ActorId($"{branchName}|{repositoryId}")
 
     /// Custom QueryRequestOptions that requests Index Metrics only in DEBUG build.
     let queryRequestOptions = QueryRequestOptions()
@@ -164,10 +109,10 @@ module Services =
                     // StorageAccountNames and container names are stable.
                     // However, we don't want to clog up memoryCache for too long with each client.
                     // Not sure what the right balance is, but 10 minutes seems reasonable.
-                    cacheEntry.AbsoluteExpirationRelativeToNow <- TimeSpan.FromMinutes(10.0)
+                    cacheEntry.AbsoluteExpiration <- DateTimeOffset.UtcNow.Add(TimeSpan.FromMinutes(10.0))
 
                     let blobContainerClient = BlobContainerClient(azureStorageConnectionString, containerName)
-
+                    
                     // Make sure the container exists before returning the client.
                     let metadata = Dictionary<string, string>() :> IDictionary<string, string>
                     metadata[nameof(OwnerId)] <- $"{repositoryDto.OwnerId}"
@@ -264,8 +209,7 @@ module Services =
     /// Checks whether an owner name exists in the system.
     let ownerNameExists (ownerName: string) cacheResultIfNotFound (correlationId: CorrelationId) =
         task {
-            let ownerNameActorId = getOwnerNameActorId ownerName
-            let ownerNameActorProxy = actorProxyFactory.CreateActorProxy<IOwnerNameActor>(ownerNameActorId, ActorName.OwnerName)
+            let ownerNameActorProxy = OwnerName.CreateActorProxy ownerName correlationId
 
             match! ownerNameActorProxy.GetOwnerId correlationId with
             | Some ownerId -> return true
@@ -322,18 +266,34 @@ module Services =
 
         }
 
+    /// Checks whether an organization has been deleted by querying the actor, and updates the MemoryCache with the result.
+    let ownerIsDeleted (ownerId: string) correlationId =
+        task {
+            let ownerGuid = OwnerId.Parse(ownerId)
+            let ownerActorProxy = Owner.CreateActorProxy ownerGuid correlationId
+
+            let! isDeleted = ownerActorProxy.IsDeleted correlationId
+
+            if isDeleted then
+                memoryCache.CreateDeletedOwnerIdEntry ownerGuid MemoryCache.DoesNotExistValue
+                return Some ownerId
+            else
+                memoryCache.CreateDeletedOwnerIdEntry ownerGuid MemoryCache.ExistsValue
+                return None
+        }
 
     /// Checks whether an owner exists by querying the actor, and updates the MemoryCache with the result.
-    let ownerExists ownerId correlationId =
+    let ownerExists (ownerId: string) correlationId =
         task {
             // Call the Owner actor to check if the owner exists.
-            let ownerActorProxy = actorProxyFactory.CreateActorProxy<IOwnerActor>(ActorId(ownerId), ActorName.Owner)
+            let ownerGuid = Guid.Parse(ownerId)
+            let ownerActorProxy = Owner.CreateActorProxy ownerGuid correlationId
 
             let! exists = ownerActorProxy.Exists correlationId
 
             if exists then
                 // Add this OwnerId to the MemoryCache.
-                memoryCache.CreateOwnerIdEntry (OwnerId.Parse(ownerId)) MemoryCache.ExistsValue
+                memoryCache.CreateOwnerIdEntry ownerGuid MemoryCache.ExistsValue
                 return Some ownerId
             else
                 return None
@@ -365,8 +325,7 @@ module Services =
                     return Some $"{ownerGuid}"
                 | None ->
                     // Check if we have an active OwnerName actor with a cached result.
-                    let ownerNameActorId = getOwnerNameActorId ownerName
-                    let ownerNameActorProxy = actorProxyFactory.CreateActorProxy<IOwnerNameActor>(ownerNameActorId, ActorName.OwnerName)
+                    let ownerNameActorProxy = OwnerName.CreateActorProxy ownerName correlationId
 
                     match! ownerNameActorProxy.GetOwnerId correlationId with
                     | Some ownerId ->
@@ -390,13 +349,31 @@ module Services =
                             return None
         }
 
+    /// Checks whether an organization is deleted by querying the actor, and updates the MemoryCache with the result.
+    let organizationIsDeleted (organizationId: string) correlationId =
+        task {
+            let organizationGuid = Guid.Parse(organizationId)
+            let organizationActorProxy = Organization.CreateActorProxy organizationGuid correlationId
+
+            let! isDeleted = organizationActorProxy.IsDeleted correlationId
+
+            let organizationGuid = OrganizationId.Parse(organizationId)
+            if isDeleted then
+                memoryCache.CreateDeletedOrganizationIdEntry organizationGuid MemoryCache.DoesNotExistValue
+                return Some organizationId
+            else
+                memoryCache.CreateDeletedOrganizationIdEntry organizationGuid MemoryCache.ExistsValue
+                return None
+        }
+
     /// Checks whether an organization exists by querying the actor, and updates the MemoryCache with the result.
-    let organizationExists organizationId correlationId =
+    let organizationExists (organizationId: string) correlationId =
         task {
             // Call the Organization actor to check if the organization exists.
-            let actorProxy = actorProxyFactory.CreateActorProxy<IOrganizationActor>(ActorId(organizationId), ActorName.Organization)
+            let organizationGuid = Guid.Parse(organizationId)
+            let organizationActorProxy = Organization.CreateActorProxy organizationGuid correlationId
 
-            let! exists = actorProxy.Exists correlationId
+            let! exists = organizationActorProxy.Exists correlationId
 
             if exists then
                 // Add this OrganizationId to the MemoryCache.
@@ -436,11 +413,8 @@ module Services =
                         return Some $"{organizationGuid}"
                 | None ->
                     // Check if we have an active OrganizationName actor with a cached result.
-                    let organizationNameActorProxy =
-                        actorProxyFactory.CreateActorProxy<IOrganizationNameActor>(
-                            (getOrganizationNameActorId ownerId organizationName),
-                            ActorName.OrganizationName
-                        )
+                    let ownerGuid = Guid.Parse(ownerId)
+                    let organizationNameActorProxy = OrganizationName.CreateActorProxy ownerGuid organizationName correlationId
 
                     match! organizationNameActorProxy.GetOrganizationId correlationId with
                     | Some organizationId ->
@@ -488,17 +462,35 @@ module Services =
                         | MongoDB -> return None
         }
 
+    /// Checks whether a repository has been deleted by querying the actor, and updates the MemoryCache with the result.
+    let repositoryIsDeleted (repositoryId: string) correlationId =
+        task {
+            // Call the Repository actor to check if the repository is deleted.
+            let repositoryGuid = Guid.Parse(repositoryId)
+            let repositoryActorProxy = Repository.CreateActorProxy repositoryGuid correlationId
+
+            let! isDeleted = repositoryActorProxy.IsDeleted correlationId
+
+            if isDeleted then
+                memoryCache.CreateDeletedRepositoryIdEntry repositoryGuid MemoryCache.DoesNotExistValue
+                return Some repositoryId
+            else
+                memoryCache.CreateDeletedRepositoryIdEntry repositoryGuid MemoryCache.ExistsValue
+                return None
+        }
+
     /// Checks whether a repository exists by querying the actor, and updates the MemoryCache with the result.
-    let repositoryExists repositoryId correlationId =
+    let repositoryExists (repositoryId: string) correlationId =
         task {
             // Call the Repository actor to check if the repository exists.
-            let actorProxy = actorProxyFactory.CreateActorProxy<IRepositoryActor>(ActorId(repositoryId), ActorName.Repository)
+            let repositoryGuid = Guid.Parse(repositoryId)
+            let repositoryActorProxy = Repository.CreateActorProxy repositoryGuid correlationId
 
-            let! exists = actorProxy.Exists correlationId
+            let! exists = repositoryActorProxy.Exists correlationId
 
             if exists then
                 // Add this RepositoryId to the MemoryCache.
-                memoryCache.CreateRepositoryIdEntry (RepositoryId.Parse(repositoryId)) MemoryCache.ExistsValue
+                memoryCache.CreateRepositoryIdEntry repositoryGuid MemoryCache.ExistsValue
                 return Some repositoryId
             else
                 return None
@@ -542,11 +534,9 @@ module Services =
                         return Some $"{repositoryGuid}"
                 | None ->
                     // Check if we have an active RepositoryName actor with a cached result.
-                    let repositoryNameActorProxy =
-                        actorProxyFactory.CreateActorProxy<IRepositoryNameActor>(
-                            (getRepositoryNameActorId ownerId organizationId repositoryName),
-                            ActorName.RepositoryName
-                        )
+                    let ownerGuid = Guid.Parse(ownerId)
+                    let organizationGuid = Guid.Parse(organizationId)
+                    let repositoryNameActorProxy = RepositoryName.CreateActorProxy ownerGuid organizationGuid repositoryName correlationId
 
                     match! repositoryNameActorProxy.GetRepositoryId correlationId with
                     | Some repositoryId ->
@@ -593,11 +583,28 @@ module Services =
                         | MongoDB -> return None
         }
 
+    /// Checks whether a branch has been deleted by querying the actor, and updates the MemoryCache with the result.
+    let branchIsDeleted (branchId: string) correlationId =
+        task {
+            let branchGuid = Guid.Parse(branchId)
+            let branchActorProxy = Branch.CreateActorProxy branchGuid correlationId
+
+            let! isDeleted = branchActorProxy.IsDeleted correlationId
+
+            if isDeleted then
+                memoryCache.CreateDeletedBranchIdEntry branchGuid MemoryCache.DoesNotExistValue
+                return Some branchId
+            else
+                memoryCache.CreateDeletedBranchIdEntry branchGuid MemoryCache.ExistsValue
+                return None
+        }   
+
     /// Checks whether a branch exists by querying the actor, and updates the MemoryCache with the result.
-    let branchExists branchId correlationId =
+    let branchExists (branchId: string) correlationId =
         task {
             // Call the Branch actor to check if the branch exists.
-            let branchActorProxy = actorProxyFactory.CreateActorProxy<IBranchActor>(ActorId(branchId), ActorName.Branch)
+            let branchGuid = Guid.Parse(branchId)
+            let branchActorProxy = Branch.CreateActorProxy branchGuid correlationId
             let! exists = branchActorProxy.Exists correlationId
 
             if exists then
@@ -609,7 +616,7 @@ module Services =
         }
 
     /// Gets the BranchId by returning BranchId if provided, or searching by BranchName within the provided repository.
-    let resolveBranchId repositoryId branchId branchName (correlationId: CorrelationId) =
+    let resolveBranchId (repositoryId: string) branchId branchName (correlationId: CorrelationId) =
         task {
             let mutable branchGuid = Guid.Empty
 
@@ -636,8 +643,8 @@ module Services =
                         return Some $"{branchGuid}"
                 | None ->
                     // Check if we have an active BranchName actor with a cached result.
-                    let branchNameActorProxy =
-                        actorProxyFactory.CreateActorProxy<IBranchNameActor>(getBranchNameActorId repositoryId branchName, ActorName.BranchName)
+                    let repositoryGuid = Guid.Parse(repositoryId)
+                    let branchNameActorProxy = BranchName.CreateActorProxy repositoryGuid branchName correlationId
 
                     match! branchNameActorProxy.GetBranchId correlationId with
                     | Some branchId ->
@@ -951,7 +958,7 @@ module Services =
                             (fun branchId ct ->
                                 ValueTask(
                                     task {
-                                        let branchActorProxy = actorProxyFactory.CreateActorProxy<IBranchActor>(ActorId($"{branchId}"), ActorName.Branch)
+                                        let branchActorProxy = Branch.CreateActorProxy branchId correlationId
                                         let! branchDto = branchActorProxy.Get correlationId
                                         branches.Add(branchDto)
                                     }
@@ -1496,9 +1503,7 @@ module Services =
     /// Gets a Root DirectoryVersion by searching using a Sha256Hash value.
     let getRootDirectoryByReferenceId (repositoryId: RepositoryId) (referenceId: ReferenceId) correlationId =
         task {
-            let referenceActorId = ActorId($"{referenceId}")
-
-            let referenceActorProxy = actorProxyFactory.CreateActorProxy<IReferenceActor>(referenceActorId, ActorName.Reference)
+            let referenceActorProxy = Reference.CreateActorProxy referenceId correlationId
 
             let! referenceDto = referenceActorProxy.Get correlationId
 

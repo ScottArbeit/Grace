@@ -337,6 +337,7 @@ module Application =
                 $"{Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.DaprServerUri)}:{Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.DaprHttpPort)}"
             actorProxyOptions.JsonSerializerOptions <- Constants.JsonSerializerOptions
             actorProxyOptions.RequestTimeout <- TimeSpan.FromSeconds(60.0)
+            services.AddSingleton(actorProxyOptions) |> ignore
             
             let actorProxyFactory = new ActorProxyFactory(actorProxyOptions)
             ApplicationContext.setActorProxyFactory actorProxyFactory

@@ -4,7 +4,10 @@ open Dapr.Actors
 open Dapr.Actors.Runtime
 open Grace.Actors.Commands.Organization
 open Grace.Actors.Constants
+open Grace.Actors.Context
 open Grace.Actors.Events.Organization
+open Grace.Actors.Extensions.ActorProxy
+open Grace.Actors.Extensions.MemoryCache
 open Grace.Actors.Interfaces
 open Grace.Actors.Services
 open Grace.Shared
@@ -23,7 +26,6 @@ open System.Linq
 open System.Runtime.Serialization
 open System.Text.Json
 open System.Threading.Tasks
-open Constants.ActorName
 
 module Organization =
 
@@ -72,6 +74,11 @@ module Organization =
                 let mutable message = String.Empty
                 let! retrievedDto = Storage.RetrieveState<OrganizationDto> stateManager dtoStateName
 
+                let correlationId =
+                    match memoryCache.GetCorrelationIdEntry this.Id with
+                    | Some correlationId -> correlationId
+                    | None -> String.Empty
+
                 match retrievedDto with
                 | Some retrievedDto ->
                     organizationDto <- retrievedDto
@@ -83,10 +90,11 @@ module Organization =
                 let duration_ms = getPaddedDuration_ms activateStartTime
 
                 log.LogInformation(
-                    "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId:             ; Activated {ActorType} {ActorId}. {message}.",
+                    "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Activated {ActorType} {ActorId}. {message}.",
                     getCurrentInstantExtended (),
                     getMachineName,
                     duration_ms,
+                    correlationId,
                     actorName,
                     host.Id,
                     message
@@ -197,15 +205,12 @@ module Organization =
 
                     do! DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> stateManager.SetStateAsync(dtoStateName, organizationDto))
 
-                    let returnValue = GraceReturnValue.Create "Organization command succeeded." organizationEvent.Metadata.CorrelationId
-
-                    returnValue.Properties.Add(nameof (OwnerId), $"{organizationDto.OwnerId}")
-
-                    returnValue
-                        .enhance(nameof (OrganizationId), $"{organizationDto.OrganizationId}")
-                        .enhance(nameof (OrganizationName), $"{organizationDto.OrganizationName}")
-                        .enhance (nameof (OrganizationEventType), $"{getDiscriminatedUnionFullName organizationEvent.Event}")
-                    |> ignore
+                    let returnValue =
+                        (GraceReturnValue.Create "Organization command succeeded." organizationEvent.Metadata.CorrelationId)
+                            .enhance(nameof (OwnerId), $"{organizationDto.OwnerId}")
+                            .enhance(nameof (OrganizationId), $"{organizationDto.OrganizationId}")
+                            .enhance(nameof (OrganizationName), $"{organizationDto.OrganizationName}")
+                            .enhance (nameof (OrganizationEventType), $"{getDiscriminatedUnionFullName organizationEvent.Event}")
 
                     return Ok returnValue
                 with ex ->
@@ -240,11 +245,7 @@ module Organization =
                             ValueTask(
                                 task {
                                     if repository.DeletedAt |> Option.isNone then
-                                        let repositoryActor =
-                                            actorProxyFactory.CreateActorProxy<IRepositoryActor>(
-                                                ActorId($"{repository.RepositoryId}"),
-                                                Constants.ActorName.Repository
-                                            )
+                                        let repositoryActor = Repository.CreateActorProxy repository.RepositoryId metadata.CorrelationId
 
                                         let! result =
                                             repositoryActor.Handle

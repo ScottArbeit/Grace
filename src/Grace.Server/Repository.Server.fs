@@ -8,6 +8,7 @@ open Grace.Actors
 open Grace.Actors.Commands.Branch
 open Grace.Actors.Commands.Repository
 open Grace.Actors.Constants
+open Grace.Actors.Extensions.ActorProxy
 open Grace.Actors.Interfaces
 open Grace.Actors.Services
 open Grace.Server.Services
@@ -42,12 +43,6 @@ module Repository =
 
     let log = ApplicationContext.loggerFactory.CreateLogger("Repository.Server")
 
-    let actorProxyFactory = ApplicationContext.actorProxyFactory
-
-    let getActorProxy (repositoryId: string) =
-        let actorId = ActorId(repositoryId)
-        actorProxyFactory.CreateActorProxy<IRepositoryActor>(actorId, ActorName.Repository)
-
     let processCommand<'T when 'T :> RepositoryParameters> (context: HttpContext) (validations: Validations<'T>) (command: 'T -> ValueTask<RepositoryCommand>) =
         task {
             use activity = activitySource.StartActivity("processCommand", ActivityKind.Server)
@@ -55,6 +50,7 @@ module Repository =
 
             try
                 let commandName = context.Items["Command"] :?> string
+                let correlationId = getCorrelationId context
                 let! parameters = context |> parse<'T>
 
                 // We know these Id's from ValidateIds.Middleware, so let's set them so we never have to resolve them again.
@@ -64,7 +60,7 @@ module Repository =
 
                 let handleCommand repositoryId cmd =
                     task {
-                        let actorProxy = getActorProxy repositoryId
+                        let actorProxy = Repository.CreateActorProxy repositoryId correlationId
 
                         match! actorProxy.Handle cmd (createMetadata context) with
                         | Ok graceReturnValue ->
@@ -102,19 +98,20 @@ module Repository =
                     getCurrentInstantExtended (),
                     graceIds.RepositoryId,
                     validationsPassed,
-                    (getCorrelationId context)
+                    correlationId
                 )
 
                 if validationsPassed then
+                    let repositoryGuid = Guid.Parse(graceIds.RepositoryId)
                     let! cmd = command parameters
-                    return! handleCommand graceIds.RepositoryId cmd
+                    return! handleCommand repositoryGuid cmd
                 else
                     let! error = validationResults |> getFirstError
                     let errorMessage = RepositoryError.getErrorMessage error
                     log.LogDebug("{currentInstant}: error: {error}", getCurrentInstantExtended (), errorMessage)
 
                     let graceError =
-                        (GraceError.CreateWithMetadata errorMessage (getCorrelationId context) (getParametersAsDictionary parameters))
+                        (GraceError.CreateWithMetadata errorMessage correlationId (getParametersAsDictionary parameters))
                             .enhance(nameof(OwnerId), graceIds.OwnerId)
                             .enhance(nameof(OrganizationId), graceIds.OrganizationId)
                             .enhance(nameof(RepositoryId), graceIds.RepositoryId)
@@ -152,6 +149,7 @@ module Repository =
         task {
             use activity = activitySource.StartActivity("processQuery", ActivityKind.Server)
             let graceIds = getGraceIds context
+            let correlationId = getCorrelationId context
 
             try
                 let validationResults = validations parameters
@@ -159,14 +157,15 @@ module Repository =
 
                 if validationsPassed then
                     // Get the actor proxy for the repository.
-                    let actorProxy = getActorProxy graceIds.RepositoryId
+                    let repositoryGuid = Guid.Parse(graceIds.RepositoryId)
+                    let actorProxy = Repository.CreateActorProxy repositoryGuid correlationId
 
                     // Execute the query.
                     let! queryResult = query context maxCount actorProxy
 
                     // Wrap the query result in a GraceReturnValue.
                     let graceReturnValue =
-                        (GraceReturnValue.Create queryResult (getCorrelationId context))
+                        (GraceReturnValue.Create queryResult correlationId)
                             .enhance(nameof(OwnerId), graceIds.OwnerId)
                             .enhance(nameof(OrganizationId), graceIds.OrganizationId)
                             .enhance(nameof(RepositoryId), graceIds.RepositoryId)
@@ -177,7 +176,7 @@ module Repository =
                     let! error = validationResults |> getFirstError
 
                     let graceError =
-                        (GraceError.Create (RepositoryError.getErrorMessage error) (getCorrelationId context))
+                        (GraceError.Create (RepositoryError.getErrorMessage error) correlationId)
                             .enhance(nameof(OwnerId), graceIds.OwnerId)
                             .enhance(nameof(OrganizationId), graceIds.OrganizationId)
                             .enhance(nameof(RepositoryId), graceIds.RepositoryId)
@@ -190,11 +189,11 @@ module Repository =
                     "{currentInstant}: Exception in Repository.Server.processQuery; Path: {path}; CorrelationId: {correlationId}.",
                     getCurrentInstantExtended (),
                     context.Request.Path,
-                    (getCorrelationId context)
+                    correlationId
                 )
 
                 let graceError =
-                    (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
+                    (GraceError.Create $"{createExceptionResponse ex}" correlationId)
                         .enhance(nameof (OwnerId), graceIds.OwnerId)
                         .enhance(nameof (OrganizationId), graceIds.OrganizationId)
                         .enhance(nameof (RepositoryId), graceIds.RepositoryId)
@@ -252,15 +251,7 @@ module Repository =
             task {
                 let validations (parameters: SetRepositoryVisibilityParameters) =
                     [| Repository.visibilityIsValid parameters.Visibility InvalidVisibilityValue
-                       Repository.repositoryIsNotDeleted
-                           parameters.OwnerId
-                           parameters.OwnerName
-                           parameters.OrganizationId
-                           parameters.OrganizationName
-                           parameters.RepositoryId
-                           parameters.RepositoryName
-                           parameters.CorrelationId
-                           RepositoryIsDeleted |]
+                       Repository.repositoryIsNotDeleted context parameters.CorrelationId RepositoryIsDeleted |]
 
                 let command (parameters: SetRepositoryVisibilityParameters) =
                     SetVisibility(discriminatedUnionFromString<RepositoryVisibility>(parameters.Visibility).Value)
@@ -276,15 +267,7 @@ module Repository =
             task {
                 let validations (parameters: SetSaveDaysParameters) =
                     [| Repository.daysIsValid parameters.SaveDays InvalidSaveDaysValue
-                       Repository.repositoryIsNotDeleted
-                           parameters.OwnerId
-                           parameters.OwnerName
-                           parameters.OrganizationId
-                           parameters.OrganizationName
-                           parameters.RepositoryId
-                           parameters.RepositoryName
-                           parameters.CorrelationId
-                           RepositoryIsDeleted |]
+                       Repository.repositoryIsNotDeleted context parameters.CorrelationId RepositoryIsDeleted |]
 
                 let command (parameters: SetSaveDaysParameters) = SetSaveDays(parameters.SaveDays) |> returnValueTask
 
@@ -298,15 +281,7 @@ module Repository =
             task {
                 let validations (parameters: SetCheckpointDaysParameters) =
                     [| Repository.daysIsValid parameters.CheckpointDays InvalidCheckpointDaysValue
-                       Repository.repositoryIsNotDeleted
-                           parameters.OwnerId
-                           parameters.OwnerName
-                           parameters.OrganizationId
-                           parameters.OrganizationName
-                           parameters.RepositoryId
-                           parameters.RepositoryName
-                           parameters.CorrelationId
-                           RepositoryIsDeleted |]
+                       Repository.repositoryIsNotDeleted context parameters.CorrelationId RepositoryIsDeleted |]
 
                 let command (parameters: SetCheckpointDaysParameters) = SetCheckpointDays(parameters.CheckpointDays) |> returnValueTask
 
@@ -320,15 +295,7 @@ module Repository =
             task {
                 let validations (parameters: SetDiffCacheDaysParameters) =
                     [| Repository.daysIsValid parameters.DiffCacheDays InvalidDiffCacheDaysValue
-                       Repository.repositoryIsNotDeleted
-                           parameters.OwnerId
-                           parameters.OwnerName
-                           parameters.OrganizationId
-                           parameters.OrganizationName
-                           parameters.RepositoryId
-                           parameters.RepositoryName
-                           parameters.CorrelationId
-                           RepositoryIsDeleted |]
+                       Repository.repositoryIsNotDeleted context parameters.CorrelationId RepositoryIsDeleted |]
 
                 let command (parameters: SetDiffCacheDaysParameters) = SetDiffCacheDays(parameters.DiffCacheDays) |> returnValueTask
 
@@ -342,15 +309,7 @@ module Repository =
             task {
                 let validations (parameters: SetDirectoryVersionCacheDaysParameters) =
                     [| Repository.daysIsValid parameters.DirectoryVersionCacheDays InvalidDirectoryVersionCacheDaysValue
-                       Repository.repositoryIsNotDeleted
-                           parameters.OwnerId
-                           parameters.OwnerName
-                           parameters.OrganizationId
-                           parameters.OrganizationName
-                           parameters.RepositoryId
-                           parameters.RepositoryName
-                           parameters.CorrelationId
-                           RepositoryIsDeleted |]
+                       Repository.repositoryIsNotDeleted context parameters.CorrelationId RepositoryIsDeleted |]
 
                 let command (parameters: SetDirectoryVersionCacheDaysParameters) =
                     SetDirectoryVersionCacheDays(parameters.DirectoryVersionCacheDays)
@@ -366,15 +325,7 @@ module Repository =
             task {
                 let validations (parameters: SetRepositoryStatusParameters) =
                     [| DiscriminatedUnion.isMemberOf<RepositoryStatus, RepositoryError> parameters.Status InvalidRepositoryStatus
-                       Repository.repositoryIsNotDeleted
-                           parameters.OwnerId
-                           parameters.OwnerName
-                           parameters.OrganizationId
-                           parameters.OrganizationName
-                           parameters.RepositoryId
-                           parameters.RepositoryName
-                           parameters.CorrelationId
-                           RepositoryIsDeleted |]
+                       Repository.repositoryIsNotDeleted context parameters.CorrelationId RepositoryIsDeleted |]
 
                 let command (parameters: SetRepositoryStatusParameters) =
                     SetRepositoryStatus(discriminatedUnionFromString<RepositoryStatus>(parameters.Status).Value)
@@ -390,15 +341,7 @@ module Repository =
             task {
                 let validations (parameters: SetDefaultServerApiVersionParameters) =
                     [| String.isNotEmpty parameters.DefaultServerApiVersion InvalidServerApiVersion
-                       Repository.repositoryIsNotDeleted
-                           parameters.OwnerId
-                           parameters.OwnerName
-                           parameters.OrganizationId
-                           parameters.OrganizationName
-                           parameters.RepositoryId
-                           parameters.RepositoryName
-                           parameters.CorrelationId
-                           RepositoryIsDeleted |]
+                       Repository.repositoryIsNotDeleted context parameters.CorrelationId RepositoryIsDeleted |]
 
                 let command (parameters: SetDefaultServerApiVersionParameters) =
                     SetDefaultServerApiVersion(parameters.DefaultServerApiVersion)
@@ -413,15 +356,7 @@ module Repository =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let validations (parameters: RecordSavesParameters) =
-                    [| Repository.repositoryIsNotDeleted
-                           parameters.OwnerId
-                           parameters.OwnerName
-                           parameters.OrganizationId
-                           parameters.OrganizationName
-                           parameters.RepositoryId
-                           parameters.RepositoryName
-                           parameters.CorrelationId
-                           RepositoryIsDeleted |]
+                    [| Repository.repositoryIsNotDeleted context parameters.CorrelationId RepositoryIsDeleted |]
 
                 let command (parameters: RecordSavesParameters) = SetRecordSaves(parameters.RecordSaves) |> returnValueTask
 
@@ -435,15 +370,7 @@ module Repository =
             task {
                 let validations (parameters: SetRepositoryDescriptionParameters) =
                     [| String.isNotEmpty parameters.Description DescriptionIsRequired
-                       Repository.repositoryIsNotDeleted
-                           parameters.OwnerId
-                           parameters.OwnerName
-                           parameters.OrganizationId
-                           parameters.OrganizationName
-                           parameters.RepositoryId
-                           parameters.RepositoryName
-                           parameters.CorrelationId
-                           RepositoryIsDeleted |]
+                       Repository.repositoryIsNotDeleted context parameters.CorrelationId RepositoryIsDeleted |]
 
                 let command (parameters: SetRepositoryDescriptionParameters) = SetDescription(parameters.Description) |> returnValueTask
 
@@ -458,15 +385,7 @@ module Repository =
                 let validations (parameters: SetRepositoryNameParameters) =
                     [| String.isNotEmpty parameters.NewName RepositoryNameIsRequired
                        String.isValidGraceName parameters.NewName InvalidRepositoryName
-                       Repository.repositoryIsNotDeleted
-                           parameters.OwnerId
-                           parameters.OwnerName
-                           parameters.OrganizationId
-                           parameters.OrganizationName
-                           parameters.RepositoryId
-                           parameters.RepositoryName
-                           parameters.CorrelationId
-                           RepositoryIsDeleted
+                       Repository.repositoryIsNotDeleted context parameters.CorrelationId RepositoryIsDeleted
                        Repository.repositoryNameIsUnique
                            parameters.OwnerId
                            parameters.OwnerName
@@ -488,15 +407,7 @@ module Repository =
             task {
                 let validations (parameters: DeleteRepositoryParameters) =
                     [| String.isNotEmpty parameters.DeleteReason DeleteReasonIsRequired
-                       Repository.repositoryIsNotDeleted
-                           parameters.OwnerId
-                           parameters.OwnerName
-                           parameters.OrganizationId
-                           parameters.OrganizationName
-                           parameters.RepositoryId
-                           parameters.RepositoryName
-                           parameters.CorrelationId
-                           RepositoryIsDeleted |]
+                       Repository.repositoryIsNotDeleted context parameters.CorrelationId RepositoryIsDeleted |]
 
                 let command (parameters: DeleteRepositoryParameters) = DeleteLogical(parameters.Force, parameters.DeleteReason) |> returnValueTask
 
@@ -509,15 +420,7 @@ module Repository =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let validations (parameters: RepositoryParameters) =
-                    [| Repository.repositoryIsDeleted
-                           parameters.OwnerId
-                           parameters.OwnerName
-                           parameters.OrganizationId
-                           parameters.OrganizationName
-                           parameters.RepositoryId
-                           parameters.RepositoryName
-                           parameters.CorrelationId
-                           RepositoryIsNotDeleted |]
+                    [| Repository.repositoryIsDeleted context parameters.CorrelationId RepositoryIsNotDeleted |]
 
                 let command (parameters: RepositoryParameters) = Undelete |> returnValueTask
 
@@ -626,7 +529,7 @@ module Repository =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let startTime = getCurrentInstant ()
-                let graceIds = context.Items[nameof (GraceIds)] :?> GraceIds
+                let graceIds = getGraceIds context
 
                 try
                     let validations (parameters: RepositoryParameters) = [||]

@@ -4,7 +4,9 @@ open Dapr.Actors
 open Dapr.Actors.Runtime
 open FSharp.Control
 open Grace.Actors.Commands.Owner
+open Grace.Actors.Context
 open Grace.Actors.Events.Owner
+open Grace.Actors.Extensions.ActorProxy
 open Grace.Actors.Extensions.MemoryCache
 open Grace.Actors.Services
 open Grace.Actors.Interfaces
@@ -83,6 +85,11 @@ module Owner =
                 let mutable message = String.Empty
                 let! retrievedDto = Storage.RetrieveState<OwnerDto> stateManager (dtoStateName)
 
+                let correlationId =
+                    match memoryCache.GetCorrelationIdEntry this.Id with
+                    | Some correlationId -> correlationId
+                    | None -> String.Empty
+
                 match retrievedDto with
                 | Some retrievedDto ->
                     ownerDto <- retrievedDto
@@ -94,10 +101,11 @@ module Owner =
                 let duration_ms = getPaddedDuration_ms activateStartTime
 
                 log.LogInformation(
-                    "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId:             ; Activated {ActorType} {ActorId}. {message}.",
+                    "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Activated {ActorType} {ActorId}. {message}.",
                     getCurrentInstantExtended (),
                     getMachineName,
                     duration_ms,
+                    correlationId,
                     actorName,
                     host.Id,
                     message
@@ -244,11 +252,7 @@ module Owner =
                             ValueTask(
                                 task {
                                     if organization.DeletedAt |> Option.isNone then
-                                        let organizationActor =
-                                            actorProxyFactory.CreateActorProxy<IOrganizationActor>(
-                                                ActorId($"{organization.OrganizationId}"),
-                                                Constants.ActorName.Organization
-                                            )
+                                        let organizationActor = Organization.CreateActorProxy organization.OrganizationId metadata.CorrelationId
 
                                         let! result =
                                             organizationActor.Handle
@@ -341,12 +345,12 @@ module Owner =
                                     | OwnerCommand.Create(ownerId, ownerName) -> return Ok(OwnerEventType.Created(ownerId, ownerName))
                                     | OwnerCommand.SetName newName ->
                                         // Clear the OwnerNameActor for the old name.
-                                        let ownerNameActor = actorProxyFactory.CreateActorProxy<IOwnerNameActor>(ActorId(ownerDto.OwnerName), ActorName.OwnerName)
+                                        let ownerNameActor = OwnerName.CreateActorProxy ownerDto.OwnerName metadata.CorrelationId
                                         do! ownerNameActor.ClearOwnerId metadata.CorrelationId
                                         memoryCache.RemoveOwnerNameEntry ownerDto.OwnerName
 
                                         // Set the OwnerNameActor for the new name.
-                                        let ownerNameActor = actorProxyFactory.CreateActorProxy<IOwnerNameActor>(ActorId(newName), ActorName.OwnerName)
+                                        let ownerNameActor = OwnerName.CreateActorProxy ownerDto.OwnerName metadata.CorrelationId
                                         do! ownerNameActor.SetOwnerId ownerDto.OwnerId metadata.CorrelationId
                                         memoryCache.CreateOwnerNameEntry newName ownerDto.OwnerId
 
