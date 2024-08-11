@@ -20,6 +20,7 @@
 	</ItemGroup>
 
 	<ItemGroup>
+		<PackageReference Include="FSharp.Control.TaskSeq" Version="0.4.0" />
 		<PackageReference Include="FsUnit" Version="6.0.0" />
 		<PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" Version="9.0.0-preview.6.24328.4" />
 		<PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.0-release-24373-02" />
@@ -33,6 +34,7 @@
 			<PrivateAssets>all</PrivateAssets>
 			<IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
 		</PackageReference>
+		<PackageReference Include="Wrapr" Version="1.0.35" />
 	</ItemGroup>
 
 	<ItemGroup>

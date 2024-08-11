@@ -1,31 +1,394 @@
 namespace Grace.Server.Tests
 
-open Microsoft.AspNetCore.Hosting
+open CliWrap
+open CliWrap.Buffered
+open CliWrap.EventStream
 open Grace.Shared
 open Grace.Shared.Utilities
 open Microsoft.AspNetCore.Mvc.Testing
 open NUnit.Framework
 open System
 open System.Net.Http.Json
+open System.Reflection.Metadata
+open System.Threading.Tasks
+open Microsoft.AspNetCore.Builder
+open Azure.Core
+open System.Net.Http
+open System.IO
+open System.Text
+open System.Diagnostics
 
 module Common =
     let okResult: Result<unit, string> = Result.Ok()
     let errorResult: Result<unit, string> = Result.Error "error"
 
 module Services =
-    let public Factory =
-        (new WebApplicationFactory<Grace.Server.Application.Startup>())
-            .WithWebHostBuilder(fun builder ->
-                builder
-                    .UseEnvironment("Development")
-                    .ConfigureKestrel(fun options -> options.ListenLocalhost(5000))
-                |> ignore
+    let daprDirectory = @"C:\dapr"
+    let daprExecutablePath = Path.Combine(daprDirectory, "dapr.exe")
+    let dockerExecutablePath = @"C:\Program Files\Docker\Docker\resources\bin\docker.exe"
+    let graceServerPath = Path.Combine(Environment.CurrentDirectory, "..", "..", "..", "..", "Grace.Server")
 
-                ())
+    let graceServerAppId = "grace-server-integration-test"
+    let daprPlacementContainerName = "dapr-placement-integration-test"
+    let zipkinContainerName = "zipkin-integration-test"
+    let daprAppPort = "5002"
+    let daprHttpPort = "3551"
+    let daprGrpcPort = "50051"
+    let daprPlacementPort = "6055"
+    let zipkinPort = "9412"
 
-    let clientOptions = WebApplicationFactoryClientOptions()
-    clientOptions.BaseAddress <- new Uri("http://localhost:5000")
-    let public Client = Factory.CreateClient(clientOptions)
+    let numberOfRepositories = 3
+    let ownerId = $"{Guid.NewGuid()}"
+    let organizationId = $"{Guid.NewGuid()}"
+    let repositoryIds = Array.init numberOfRepositories (fun _ -> $"{Guid.NewGuid()}")
+
+    let rnd = Random.Shared
+    let Client = new HttpClient(handler = socketsHttpHandler, disposeHandler = false, BaseAddress = new Uri($"http://127.0.0.1:{daprAppPort}"))
+
+    //let clientOptions = WebApplicationFactoryClientOptions(
+    //    BaseAddress = new Uri($"{serverUri}:{daprAppPort}"),
+    //    MaxAutomaticRedirections = 3)
+
+    //let public Factory =
+    //    try
+    //        TestContext.Progress.WriteLine($"Creating WebApplicationFactory with serverUri: {serverUri} and daprAppPort: {daprAppPort}.")
+    //        let factory =
+    //            (new WebApplicationFactory<Grace.Server.Application.Startup>())
+    //                .WithWebHostBuilder(fun builder ->
+    //                    builder
+    //                        //.CaptureStartupErrors(true)
+    //                        .UseEnvironment("Development")
+    //                        .UseKestrel()
+    //                    |> ignore)
+
+    //        TestContext.Progress.WriteLine($"WebApplicationFactory created successfully. {factory.Server.BaseAddress}")
+    //        factory
+    //    with ex ->
+    //        TestContext.Progress.WriteLine($"Error creating WebApplicationFactory: {ex.Message}{Environment.NewLine}Stack trace:{Environment.NewLine}{ex.StackTrace}")
+    //        new WebApplicationFactory<Grace.Server.Application.Startup>()
+
+    //let public Client = Factory.CreateClient(clientOptions)
+
+open Services
+open FSharpPlus
+open FSharp.Control
+open Grace.Shared.Types
+
+[<SetUpFixture>]
+type Setup() =
+    member private this.DeleteContainers() =
+        task {
+            try
+                let sbOutput = StringBuilder()
+                let sbError = StringBuilder()
+
+                Process.GetProcesses() |> Seq.iter (fun p ->
+                    match p.ProcessName with
+                    | "dapr"
+                    | "daprd"
+                    | "dotnet" ->
+                        if p.Id <> Process.GetCurrentProcess().Id then
+                            p.Kill()
+                    | _ -> ()
+                )
+
+                let daprPlacementDockerArguments =
+                    [|
+                        "rm"
+                        daprPlacementContainerName
+                        "--force"
+                    |]
+
+                let! daprPlacementResult =
+                    Cli.Wrap(dockerExecutablePath)
+                        .WithArguments(daprPlacementDockerArguments)
+                        .WithValidation(CommandResultValidation.None)
+                        .WithStandardOutputPipe(PipeTarget.ToStringBuilder(sbOutput))
+                        .WithStandardErrorPipe(PipeTarget.ToStringBuilder(sbError))
+                        .ExecuteBufferedAsync()
+
+                if daprPlacementResult.ExitCode = 0 then
+                    TestContext.Progress.WriteLine($"Dapr placement container stopped successfully. Output: {sbOutput}")
+                else
+                    let msg = $"Dapr placement container failed to stop. Exit code: {daprPlacementResult.ExitCode}. Output: {sbOutput}. Error: {sbError}."
+                    TestContext.Progress.WriteLine(msg)
+
+                sbOutput.Clear() |> ignore
+                sbError.Clear() |> ignore
+
+                let zipKinDockerArguments =
+                    [|
+                        "rm"
+                        zipkinContainerName
+                        "--force"
+                    |]
+
+                let! zipkinResult =
+                    Cli.Wrap(dockerExecutablePath)
+                        .WithArguments(zipKinDockerArguments)
+                        .WithValidation(CommandResultValidation.None)
+                        .WithStandardOutputPipe(PipeTarget.ToStringBuilder(sbOutput))
+                        .WithStandardErrorPipe(PipeTarget.ToStringBuilder(sbError))
+                        .ExecuteBufferedAsync()
+
+                if zipkinResult.ExitCode = 0 then
+                    TestContext.Progress.WriteLine($"Zipkin container stopped successfully. Output: {sbOutput}")
+                else
+                    let msg = $"Zipkin container failed to stop. Exit code: {zipkinResult.ExitCode}. Output: {sbOutput}. Error: {sbError}."
+                    TestContext.Progress.WriteLine(msg)
+            with ex ->
+                let msg = $"Exception in DeleteContainers().{Environment.NewLine}Message: {ex.Message}{Environment.NewLine}Stack trace:{Environment.NewLine}{ex.StackTrace}"
+                TestContext.Progress.WriteLine(msg)
+        }
+
+
+    [<OneTimeSetUp>]
+    member public this.Setup() =
+        task {
+            let sbOutput = StringBuilder()
+            let sbError = StringBuilder()
+
+            let homeDirectory = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile)
+            let daprComponentsPath = Path.Combine(homeDirectory, ".dapr", "components-integration")
+            let daprConfigFilePath = Path.Combine(daprComponentsPath ,"dapr-config.yaml")
+
+            TestContext.Progress.WriteLine($"Current directory: {Environment.CurrentDirectory}")
+            let correlationId = generateCorrelationId()
+
+            do! this.DeleteContainers()
+
+            let daprPlacementDockerRunArguments =
+                [|
+                    "run"
+                    "-d"
+                    "--name"; daprPlacementContainerName
+                    "--restart"; "always"
+                    "-p"; $"{daprPlacementPort}:50005"
+                    "daprio/dapr:1.13.5"
+                    "./placement"
+                    "--log-level"; "debug"
+                    "--enable-metrics"
+                    "--replicationFactor"; "100"
+                    "--max-api-level"; "10"
+                    "--min-api-level"; "0"
+                    "--metrics-port"; "9090"
+                |]
+
+            // Start the Dapr placement container.
+            let! daprPlacementResult =
+                Cli.Wrap(dockerExecutablePath)
+                    .WithArguments(daprPlacementDockerRunArguments)
+                    .WithStandardOutputPipe(PipeTarget.ToStringBuilder(sbOutput))
+                    .WithStandardErrorPipe(PipeTarget.ToStringBuilder(sbError))
+                    .WithValidation(CliWrap.CommandResultValidation.None)
+                    .ExecuteAsync()
+
+            if daprPlacementResult.ExitCode = 0 then
+                TestContext.Progress.WriteLine($"Dapr placement container started successfully. Output: {sbOutput}")
+            else
+                let msg = $"Dapr placement container failed to start. Exit code: {daprPlacementResult.ExitCode}; Output: {sbOutput}; Error: {sbError}"
+                TestContext.Progress.WriteLine(msg)
+
+            sbOutput.Clear() |> ignore
+            sbError.Clear() |> ignore
+
+            let zipkinArguments =
+                [|
+                    "run"
+                    "-d"
+                    "-p"; $"{zipkinPort}:9411"
+                    "--name"; zipkinContainerName
+                    "openzipkin/zipkin:latest"
+                |]
+
+            let! zipkinResult =
+                Cli.Wrap(dockerExecutablePath)
+                    .WithArguments(zipkinArguments)
+                    .WithStandardOutputPipe(PipeTarget.ToStringBuilder(sbOutput))
+                    .WithStandardErrorPipe(PipeTarget.ToStringBuilder(sbError))
+                    .WithValidation(CliWrap.CommandResultValidation.None)
+                    .ExecuteAsync()
+
+            if zipkinResult.ExitCode = 0 then
+                TestContext.Progress.WriteLine($"Zipkin container started successfully. Output: {sbOutput}")
+            else
+                let msg = $"Zipkin container failed to start. Exit code: {zipkinResult.ExitCode}; Output: {sbOutput}; Error: {sbError}"
+                TestContext.Progress.WriteLine(msg)
+
+            sbOutput.Clear() |> ignore
+            sbError.Clear() |> ignore
+
+            do! Task.Delay(2000) // Give time for the containers to start.
+
+            let applicationInsightsConnectionString = Environment.GetEnvironmentVariable("APPLICATIONINSIGHTS_CONNECTION_STRING")
+            let azureStorageKey = Environment.GetEnvironmentVariable("azurestoragekey")
+            let azureStorageConnectionString = Environment.GetEnvironmentVariable("azurestorageconnectionstring")
+            let azureCosmosDbConnectionString = Environment.GetEnvironmentVariable("azurecosmosdbconnectionstring")
+            let cosmosDatabaseName = Environment.GetEnvironmentVariable("cosmosdatabasename")
+            let cosmosContainerName = Environment.GetEnvironmentVariable("cosmoscontainername")
+
+            let daprEnvironmentVariables = 
+                dict [
+                    "ASPNETCORE_ENVIRONMENT", "Development"
+                    "ASPNETCORE_HTTP_PORT", daprAppPort
+                    "ASPNETCORE_URLS", $"http://*:{daprAppPort}"
+                    "DAPR_APP_PORT", daprAppPort
+                    "DAPR_HTTP_PORT", daprHttpPort
+                    "DAPR_GRPC_PORT", daprGrpcPort
+                    "DAPR_SERVER_URI", "http://127.0.0.1"
+                    "DAPR_APP_ID", graceServerAppId
+                    "DAPR_PLACEMENT_HOST_ADDRESS", $"127.0.0.1:{daprPlacementPort}"
+                    "DAPR_RESOURCES_PATH", daprComponentsPath
+                    "DAPR_CONFIG", daprConfigFilePath
+                    "APPLICATIONINSIGHTS_CONNECTION_STRING", applicationInsightsConnectionString
+                    "azurestoragekey", azureStorageKey
+                    "azurestorageconnectionstring", azureStorageConnectionString
+                    "azurecosmosdbconnectionstring", azureCosmosDbConnectionString
+                    "cosmosdatabasename", cosmosDatabaseName
+                    "cosmoscontainername", cosmosContainerName
+                ] |> Dict.toIReadOnlyDictionary
+
+            let daprRuntimeArguments =
+                [|  "run"
+                    "--app-id"; graceServerAppId
+                    "--app-port"; daprAppPort
+                    "--dapr-http-port"; daprHttpPort
+                    "--dapr-grpc-port"; daprGrpcPort
+                    "--log-level"; "debug"
+                    "--enable-api-logging"
+                    "--placement-host-address"; $"127.0.0.1:{daprPlacementPort}"
+                    "--resources-path"; $"{daprComponentsPath}"
+                    "--config"; $"{daprConfigFilePath}"
+                    "--"
+                    "dotnet"; "run"; "-c"; "Debug"; "--no-build"; "--project"; "Grace.Server.fsproj"
+                |]
+
+            // Start the Dapr sidecar process.
+            let startDaprCommand =
+                Cli.Wrap(daprExecutablePath)
+                    .WithArguments(daprRuntimeArguments)
+                    .WithWorkingDirectory(graceServerPath)
+                    .WithEnvironmentVariables(daprEnvironmentVariables)
+                    .WithValidation(CliWrap.CommandResultValidation.None)
+                    .WithStandardOutputPipe(PipeTarget.ToStringBuilder(sbOutput))
+                    .WithStandardErrorPipe(PipeTarget.ToStringBuilder(sbError))
+
+            startDaprCommand.ListenAsync() |> TaskSeq.iter (fun ev ->
+                match ev with
+                | :? StartedCommandEvent -> TestContext.Progress.WriteLine(ev)
+                | :? StandardOutputCommandEvent -> TestContext.Progress.WriteLine(ev)
+                | :? StandardErrorCommandEvent -> TestContext.Progress.WriteLine(ev)
+                | :? ExitedCommandEvent -> TestContext.Progress.WriteLine($"Dapr process exited with code {(ev :?> ExitedCommandEvent).ExitCode}.")
+                | _ -> ()
+            ) :> Task |> ignore
+
+            // Give time for Dapr to warm up.
+            TestContext.Progress.WriteLine("Waiting for Dapr to warm up...")
+            do! Task.Delay(8000)
+            TestContext.Progress.WriteLine("Warm up complete.")
+
+            // Create the owner we'll use for this test run.
+            try
+                let ownerParameters = Parameters.Owner.CreateOwnerParameters()
+                ownerParameters.OwnerId <- ownerId
+                ownerParameters.OwnerName <- $"TestOwner{rnd.Next(1000)}"
+                ownerParameters.CorrelationId <- correlationId
+
+                TestContext.Progress.WriteLine($"Creating owner {ownerParameters.OwnerName} with ID {ownerParameters.OwnerId}. About to call server.")
+                
+                let! response = Client.PostAsync("/owner/create", createJsonContent ownerParameters)
+                if not <| response.IsSuccessStatusCode then
+                    let! content = response.Content.ReadAsStringAsync()
+                    let error = deserialize<GraceError> content
+                    TestContext.Progress.WriteLine $"StatusCode: {response.StatusCode}; Content: {error}"
+                response.EnsureSuccessStatusCode() |> ignore
+            with ex ->
+                let msg = $"Exception in Setup().{Environment.NewLine}Message: {ex.Message}{Environment.NewLine}Stack trace:{Environment.NewLine}{ex.StackTrace}"
+                TestContext.Progress.WriteLine(msg)
+
+            // Create the organization we'll use for this test run.
+            let organizationParameters = Parameters.Organization.CreateOrganizationParameters()
+            organizationParameters.OwnerId <- ownerId
+            organizationParameters.OrganizationId <- organizationId
+            organizationParameters.OrganizationName <- $"TestOrganization{rnd.Next(1000)}"
+            organizationParameters.CorrelationId <- correlationId
+            let! response = Client.PostAsync("/organization/create", createJsonContent organizationParameters)
+            let! content = response.Content.ReadAsStringAsync()
+            TestContext.Progress.WriteLine $"StatusCode: {response.StatusCode}; Content: {content}"
+            response.EnsureSuccessStatusCode() |> ignore
+
+            // Create the repositories we'll use for this test run.
+            do!
+                Parallel.ForEachAsync(
+                    repositoryIds,
+                    Constants.ParallelOptions,
+                    (fun repositoryId ct ->
+                        ValueTask(
+                            task {
+                                let repositoryParameters = Parameters.Repository.CreateRepositoryParameters()
+                                repositoryParameters.OwnerId <- ownerId
+                                repositoryParameters.OrganizationId <- organizationId
+                                repositoryParameters.RepositoryId <- repositoryId
+                                repositoryParameters.RepositoryName <- $"TestRepository{rnd.Next(100000):X4}"
+                                repositoryParameters.CorrelationId <- correlationId
+                                //Console.WriteLine(serialize repositoryParameters)
+                                let! response = Client.PostAsync("/repository/create", createJsonContent repositoryParameters)
+
+                                let! content = response.Content.ReadAsStringAsync()
+                                //Console.WriteLine($"{content}");
+                                response.EnsureSuccessStatusCode() |> ignore
+                                Assert.That(content.Length, Is.GreaterThan(0))
+                            }
+                        ))
+                )
+        }
+
+    [<OneTimeTearDown>]
+    member public this.Teardown() =
+        task {
+                //do!
+                //    Parallel.ForEachAsync(
+                //        repositoryIds,
+                //        Constants.ParallelOptions,
+                //        (fun repositoryId ct ->
+                //            ValueTask(
+                //                task {
+                //                    let repositoryDeleteParameters = Parameters.Repository.DeleteRepositoryParameters()
+                //                    repositoryDeleteParameters.OwnerId <- ownerId
+                //                    repositoryDeleteParameters.OrganizationId <- organizationId
+                //                    repositoryDeleteParameters.RepositoryId <- repositoryId
+                //                    repositoryDeleteParameters.DeleteReason <- "Deleting test repository"
+
+                //                    let! response = Client.PostAsync("/repository/delete", createJsonContent repositoryDeleteParameters)
+
+                //                    let! content = response.Content.ReadAsStringAsync()
+                //                    //Console.WriteLine($"{content}");
+                //                    response.EnsureSuccessStatusCode() |> ignore
+                //                    Assert.That(content.Length, Is.GreaterThan(0))
+                //                }
+                //            ))
+                //    )
+
+                //let organizationDeleteParameters = Parameters.Organization.DeleteOrganizationParameters()
+
+                //organizationDeleteParameters.OwnerId <- ownerId
+                //organizationDeleteParameters.OrganizationId <- organizationId
+                //organizationDeleteParameters.DeleteReason <- "Deleting test organization"
+
+                //let! response = Client.PostAsync("/organization/delete", createJsonContent organizationDeleteParameters)
+
+                //let ownerDeleteParameters = Parameters.Owner.DeleteOwnerParameters()
+                //ownerDeleteParameters.OwnerId <- ownerId
+                //ownerDeleteParameters.DeleteReason <- "Deleting test owner"
+                //let! response = Client.PostAsync("/owner/delete", createJsonContent ownerDeleteParameters)
+
+                //let! content = response.Content.ReadAsStringAsync()
+                ////Console.WriteLine($"{content}");
+                //response.EnsureSuccessStatusCode() |> ignore
+                //Assert.That(content.Length, Is.GreaterThan(0))
+
+                do! this.DeleteContainers()
+        }
 
 [<Parallelizable(ParallelScope.All)>]
 type General() =

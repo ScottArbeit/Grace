@@ -41,6 +41,7 @@ open System.Reflection
 open System.Text.Json
 open System.Collections.Generic
 open System.Diagnostics
+open System.Linq
 open System.Text
 open System.IO
 open FSharpPlus
@@ -355,23 +356,30 @@ module Application =
             openApiInfo.Contact.Url <- Uri("https://gracevcs.com")
 
             // Telemetry configuration
+            let graceServerAppId = "grace-server-integration-test"
+
+            let keys = Environment.GetEnvironmentVariables().Keys.Cast<string>() |> Seq.sort
+            for key in keys do
+                let v = Environment.GetEnvironmentVariable(key)
+                logToConsole $"{key}: {v}"
+
             services
                 .AddOpenTelemetry()
-                .ConfigureResource(fun resourceBuilder -> resourceBuilder.AddService(Constants.GraceServerAppId) |> ignore)
-                .WithTracing(fun tracerProviderBuilder ->
-                    tracerProviderBuilder
-                        .AddSource(Constants.GraceServerAppId)
-                        .SetResourceBuilder(
-                            ResourceBuilder
-                                .CreateDefault()
-                                .AddService(Constants.GraceServerAppId)
-                                .AddTelemetrySdk()
-                                .AddAttributes(globalOpenTelemetryAttributes)
-                        )
-                        .AddAspNetCoreInstrumentation(fun options -> options.EnrichWithHttpRequest <- enrichTelemetry)
-                        .AddHttpClientInstrumentation()
-                        .AddAzureMonitorTraceExporter(fun options -> options.ConnectionString <- azureMonitorConnectionString)
-                    |> ignore)
+                .ConfigureResource(fun resourceBuilder -> resourceBuilder.AddService(graceServerAppId) |> ignore)
+                //.WithTracing(fun tracerProviderBuilder ->
+                //    tracerProviderBuilder
+                //        .AddSource(graceServerAppId)
+                //        .SetResourceBuilder(
+                //            ResourceBuilder
+                //                .CreateDefault()
+                //                .AddService(graceServerAppId)
+                //                .AddTelemetrySdk()
+                //                .AddAttributes(globalOpenTelemetryAttributes)
+                //        )
+                //        .AddAspNetCoreInstrumentation(fun options -> options.EnrichWithHttpRequest <- enrichTelemetry)
+                //        .AddHttpClientInstrumentation()
+                //        .AddAzureMonitorTraceExporter(fun options -> options.ConnectionString <- azureMonitorConnectionString)
+                //    |> ignore)
                 .WithMetrics(fun meterProviderBuilder ->
                     meterProviderBuilder
                         .AddAspNetCoreInstrumentation()
@@ -405,13 +413,13 @@ module Application =
 
                     options.LogDirectory <- Path.Combine(Environment.GetEnvironmentVariable("TEMP"), "Grace.Server.Logs"))
                 .AddSingleton<ActorProxyOptions>(actorProxyOptions)
-                .AddSingleton<IActorProxyFactory>(actorProxyFactory)
-                .AddDaprClient(fun daprClientBuilder ->
-                    daprClientBuilder
-                        .UseJsonSerializationOptions(Constants.JsonSerializerOptions)
-                        //.UseDaprApiToken(Environment.GetEnvironmentVariable("DAPR_API_TOKEN"))
-                        .Build() // This builds the DaprClient.
-                    |> ignore)
+                .AddSingleton<IActorProxyFactory>(actorProxyFactory) |> ignore
+                //.AddDaprClient(fun daprClientBuilder ->
+                //    daprClientBuilder.
+                //        .UseJsonSerializationOptions(Constants.JsonSerializerOptions)
+                //        //.UseDaprApiToken(Environment.GetEnvironmentVariable("DAPR_API_TOKEN"))
+                //        .Build() // This builds the DaprClient.
+                //    |> ignore)
 
             let apiVersioningBuilder =
                 services.AddApiVersioning(fun options ->

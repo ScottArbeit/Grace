@@ -55,7 +55,7 @@ module Owner =
                     task {
                         let ownerGuid = Guid.Parse(ownerId)
                         let actorProxy = Owner.CreateActorProxy ownerGuid (getCorrelationId context)
-
+                        
                         match! actorProxy.Handle cmd (createMetadata context) with
                         | Ok graceReturnValue ->
                             (graceReturnValue |> addParametersToGraceReturnValue parameters)
@@ -80,6 +80,7 @@ module Owner =
                                 context
                                 |> result400BadRequest graceError
                     }
+
 
                 let validationResults = validations parameters
                 let! validationsPassed = validationResults |> allPass
@@ -184,6 +185,7 @@ module Owner =
                     Create(ownerIdGuid, OwnerName parameters.OwnerName) |> returnValueTask
 
                 context.Items.Add("Command", nameof (Create))
+                logToConsole $"**************In Owner.Server.Create. Command: {nameof(Create)}"
                 return! processCommand context validations command
             }
 

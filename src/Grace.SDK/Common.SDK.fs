@@ -92,7 +92,7 @@ module Common =
 
                 let daprServerUri = Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.DaprServerUri)
 
-                let graceServerPort = Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.GraceAppPort)
+                let graceServerPort = Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.DaprAppPort)
 
                 let serverUri = Uri($"{daprServerUri}:{graceServerPort}/{route}")
 

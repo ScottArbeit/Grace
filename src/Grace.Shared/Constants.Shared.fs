@@ -68,9 +68,6 @@ module Constants =
         let (case, _) = FSharpValue.GetUnionFields(value, discriminatedUnionType)
         $"{case.Name}"
 
-    /// The name of the Dapr service running Grace Server.
-    let GraceServerAppId = "grace-server"
-
     /// The name of the Dapr service for Grace object storage.
     let GraceObjectStorage = "graceobjectstorage"
 
@@ -126,34 +123,48 @@ module Constants =
 
     /// Environment variables used by Grace.
     module EnvironmentVariables =
+        /// The environment variable that contains the Dapr application ID.
+        [<Literal>]
+        let DaprAppId = "DAPR_APP_ID"
+
         /// The environment variable that contains the Dapr server Uri. The Uri should not include a port number.
+        [<Literal>]
         let DaprServerUri = "DAPR_SERVER_URI"
 
         /// The environment variable that contains the application's port.
-        let GraceAppPort = "GRACE_APP_PORT"
+        [<Literal>]
+        let DaprAppPort = "DAPR_APP_PORT"
 
         /// The environment variable that contains the Dapr HTTP port.
+        [<Literal>]
         let DaprHttpPort = "DAPR_HTTP_PORT"
 
         /// The environment variable that contains the Dapr gRPC port.
+        [<Literal>]
         let DaprGrpcPort = "DAPR_GRPC_PORT"
 
         /// The environment variable that contains the Azure Cosmos DB Connection String.
+        [<Literal>]
         let AzureCosmosDBConnectionString = "azurecosmosdbconnectionstring"
 
         /// The environment variable that contains the Azure Storage Connection String.
+        [<Literal>]
         let AzureStorageConnectionString = "azurestorageconnectionstring"
 
         /// The environment variable that contains the Azure Storage Key.
+        [<Literal>]
         let AzureStorageKey = "azurestoragekey"
 
         /// The environment variable that contains the name of the CosmosDB database to use for Grace.
+        [<Literal>]
         let CosmosDatabaseName = "cosmosdatabasename"
 
         /// The environment variable that contains the name of the CosmosDB container to use for Grace.
+        [<Literal>]
         let CosmosContainerName = "cosmoscontainername"
 
     /// The default CacheControl header for object storage.
+    [<Literal>]
     let BlobCacheControl = "public,max-age=86400,no-transform"
 
     /// The expiration time for a Shared Access Signature token, in minutes.

@@ -68,6 +68,8 @@ module ApplicationContext =
     /// Holds information about each Azure Storage Account used by the application.
     type StorageAccount = { StorageAccountName: string; StorageAccountConnectionString: string }
 
+    let graceServerAppId = Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.DaprAppId)
+
     let daprHttpEndpoint =
         $"{Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.DaprServerUri)}:{Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.DaprHttpPort)}"
 
@@ -148,7 +150,7 @@ module ApplicationContext =
             // Get a reference to the CosmosDB database.
             let cosmosClientOptions =
                 CosmosClientOptions(
-                    ApplicationName = Constants.GraceServerAppId,
+                    ApplicationName = graceServerAppId,
                     EnableContentResponseOnWrite = false,
                     LimitToEndpoint = true,
                     Serializer = new CosmosJsonSerializer(Constants.JsonSerializerOptions)
@@ -176,6 +178,8 @@ module ApplicationContext =
             let! containerResponse = database.CreateContainerIfNotExistsAsync(containerProperties)
             let cosmosContainer = containerResponse.Container
 
+            logToConsole $"CosmosDB database '{cosmosDatabaseName}' and container '{cosmosContainer.Id}' are ready."
+
             // Create a MemoryCache instance.
             let memoryCacheOptions = MemoryCacheOptions(TrackStatistics = true, TrackLinkedCacheEntries = true)
             //memoryCacheOptions.SizeLimit <- 100L * 1024L * 1024L
@@ -185,5 +189,7 @@ module ApplicationContext =
             setCosmosClient cosmosClient
             setCosmosContainer cosmosContainer
             setMemoryCache memoryCache
+
+            logToConsole "Grace Server is ready."
         }
         :> Task

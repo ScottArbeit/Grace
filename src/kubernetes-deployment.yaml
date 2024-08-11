@@ -54,6 +54,12 @@ spec:
   - name: grafana
     port: 3000
     targetPort: 3000
+  - name: http-dapr
+    port: 3500
+    targetPort: 3500
+  - name: grpc-dapr
+    port: 50001
+    targetPort: 50001
   selector:
     app: grace-server
 

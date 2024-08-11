@@ -20,6 +20,7 @@ open Microsoft.Extensions.Caching.Memory
 open System.Collections.Immutable
 
 module Program =
+    let graceAppPort = Environment.GetEnvironmentVariable("DAPR_APP_PORT") |> int
     let createHostBuilder (args: string[]) : IHostBuilder =
         Host
             .CreateDefaultBuilder(args)
@@ -30,10 +31,8 @@ module Program =
             .ConfigureWebHostDefaults(fun webBuilder ->
                 webBuilder
                     .UseStartup<Application.Startup>()
-                    //.UseUrls("http://*:5000", "https://*:5001")
-                    //.UseUrls("http://*:5000")
                     .UseKestrel(fun kestrelServerOptions ->
-                        kestrelServerOptions.Listen(IPAddress.Any, 5000)
+                        kestrelServerOptions.Listen(IPAddress.Any, graceAppPort)
                         //kestrelServerOptions.Listen(IPAddress.Any, 5001, (fun listenOptions -> listenOptions.UseHttps("/etc/certificates/gracedevcert.pfx", "GraceDevCert") |> ignore))
                         kestrelServerOptions.ConfigureEndpointDefaults(fun listenOptions -> listenOptions.Protocols <- HttpProtocols.Http1AndHttp2)
 

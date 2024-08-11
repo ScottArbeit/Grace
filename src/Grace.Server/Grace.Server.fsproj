@@ -82,7 +82,7 @@
 		<PackageReference Include="Microsoft.Extensions.Configuration" Version="9.0.0-preview.6.24327.7" />
 		<PackageReference Include="Microsoft.Extensions.Logging" Version="9.0.0-preview.6.24327.7" />
 		<PackageReference Include="Microsoft.Extensions.Logging.Configuration" Version="9.0.0-preview.6.24327.7" />
-		<PackageReference Include="Microsoft.OpenApi" Version="1.6.15" />
+		<PackageReference Include="Microsoft.OpenApi" Version="1.6.16" />
 		<PackageReference Include="Microsoft.VisualStudio.Azure.Containers.Tools.Targets" Version="1.21.0" />
 		<PackageReference Include="OpenTelemetry" Version="1.9.0" />
 		<PackageReference Include="OpenTelemetry.Exporter.Console" Version="1.9.0" />
@@ -92,14 +92,19 @@
 		<PackageReference Include="OpenTelemetry.Extensions.Hosting" Version="1.9.0" />
 		<PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.9.0" />
 		<PackageReference Include="OpenTelemetry.Instrumentation.Http" Version="1.9.0" />
-		<PackageReference Include="Swashbuckle.AspNetCore.Swagger" Version="6.6.2" />
-		<PackageReference Include="Swashbuckle.AspNetCore.SwaggerGen" Version="6.6.2" />
-		<PackageReference Include="Swashbuckle.AspNetCore.SwaggerUI" Version="6.6.2" />
+		<PackageReference Include="Swashbuckle.AspNetCore.Swagger" Version="6.7.0" />
+		<PackageReference Include="Swashbuckle.AspNetCore.SwaggerGen" Version="6.7.0" />
+		<PackageReference Include="Swashbuckle.AspNetCore.SwaggerUI" Version="6.7.0" />
 	</ItemGroup>
 	<ItemGroup>
 		<PackageReference Update="FSharp.Core" Version="8.0.301" />
 	</ItemGroup>
 	<ItemGroup>
 		<InternalsVisibleTo Include="Grace.Server.Tests" />
+	</ItemGroup>
+	<ItemGroup>
+	  <Content Update="Properties\launchSettings.json">
+	    <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+	  </Content>
 	</ItemGroup>
 </Project>
