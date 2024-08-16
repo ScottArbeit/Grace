@@ -159,6 +159,13 @@ module Utilities =
     /// Deserializes a stream of JSON to a provided type, using Grace's custom JsonSerializerOptions.
     let deserializeAsync<'T> stream = task { return! JsonSerializer.DeserializeAsync<'T>(stream, Constants.JsonSerializerOptions) }
 
+    /// Deserializes the Content from an HttpResponseMessage to the provided type, using Grace's custom JsonSerializerOptions.
+    let deserializeContent<'T> (response: HttpResponseMessage) =
+        task {
+            let! stream = response.Content.ReadAsStreamAsync()
+            return! deserializeAsync<'T> stream
+        }
+
     /// Create JsonContent from the provided object, using Grace's custom JsonSerializerOptions.
     let createJsonContent<'T> item = JsonContent.Create(item, options = Constants.JsonSerializerOptions)
 

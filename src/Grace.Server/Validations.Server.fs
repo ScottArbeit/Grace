@@ -63,10 +63,10 @@ module Validations =
         let ownerIdDoesNotExist<'T> (ownerId: string) correlationId (error: 'T) =
             task {
                 let mutable ownerGuid = Guid.Empty
-                logToConsole $"In ownerIdDoesNotExist: ownerId: {ownerId}; correlationId: {correlationId}"
+                //logToConsole $"In ownerIdDoesNotExist: ownerId: {ownerId}; correlationId: {correlationId}"
                 if (not <| String.IsNullOrEmpty(ownerId)) && Guid.TryParse(ownerId, &ownerGuid) then
                     let ownerActorProxy = Owner.CreateActorProxy ownerGuid correlationId
-                    logToConsole $"In ownerIdDoesNotExist: ownerActorProxy: {serialize ownerActorProxy}"
+                    //logToConsole $"In ownerIdDoesNotExist: ownerActorProxy: {serialize ownerActorProxy}"
                     let! exists = ownerActorProxy.Exists correlationId
                     if exists then return Error error else return Ok()
                 else

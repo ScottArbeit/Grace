@@ -15,13 +15,18 @@ open Grace.Shared.Validation.Errors.Organization
 open Grace.Shared.Validation.Errors.Owner
 open Grace.Shared.Validation.Utilities
 open Microsoft.AspNetCore.Http
+open Microsoft.Extensions.Caching.Memory
 open Microsoft.Extensions.Logging
 open System
 open System.Collections.Concurrent
+open System.Collections.Generic
+open System.Diagnostics
 open System.Linq
+open System.Net
 open System.Reflection
-open System.Text
 open System.Threading.Tasks
+open System.Text
+open System.Text.Json
 open Grace.Actors.Constants.ActorName
 
 /// Holds the PropertyInfo for each Entity Id and Name property.
@@ -119,7 +124,7 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
                 let correlationId = getCorrelationId context
                 let mutable requestBodyType: Type = null
                 let mutable graceIds = GraceIds.Default
-                let mutable badRequest = String.Empty
+                let mutable (badRequest: GraceError option) = None
 
                 // Get the parameter type for the endpoint from the cache.
                 // If we don't already have it, get it, and add it to the cache.
@@ -177,9 +182,7 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
                         )
 
                         // Get Owner information.
-                        if
-                            Option.isSome entityProperties.OwnerId
-                            && Option.isSome entityProperties.OwnerName
+                        if entityProperties.OwnerId.IsSome && entityProperties.OwnerName.IsSome
                         then
                             // Get the values from the request body.
                             let ownerId = entityProperties.OwnerId.Value.GetValue(requestBody) :?> string
@@ -198,7 +201,8 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
                                        Common.Input.eitherIdOrNameMustBeProvided ownerId ownerName EitherOwnerIdOrOwnerNameRequired |]
 
                             match! getFirstError validations with
-                            | Some error -> badRequest <- OwnerError.getErrorMessage error
+                            | Some error ->
+                                badRequest <- Some (GraceError.Create (OwnerError.getErrorMessage error) correlationId)
                             | None ->
                                 if path.Equals("/owner/create", StringComparison.InvariantCultureIgnoreCase) then
                                     // If we're creating a new Owner, we don't need to resolve the Id.
@@ -210,15 +214,12 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
                                     | None ->
                                         badRequest <-
                                             if not <| String.IsNullOrEmpty(ownerId) then
-                                                OwnerError.getErrorMessage OwnerIdDoesNotExist
+                                                Some (GraceError.Create (OwnerError.getErrorMessage OwnerIdDoesNotExist) correlationId)
                                             else
-                                                OwnerError.getErrorMessage OwnerDoesNotExist
+                                                Some (GraceError.Create (OwnerError.getErrorMessage OwnerDoesNotExist) correlationId)
 
                         // Get Organization information.
-                        if
-                            String.IsNullOrEmpty(badRequest)
-                            && Option.isSome entityProperties.OrganizationId
-                            && Option.isSome entityProperties.OrganizationName
+                        if badRequest.IsNone && entityProperties.OrganizationId.IsSome && entityProperties.OrganizationName.IsSome
                         then
                             // Get the values from the request body.
                             let organizationId = entityProperties.OrganizationId.Value.GetValue(requestBody) :?> string
@@ -237,7 +238,8 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
                                        Common.Input.eitherIdOrNameMustBeProvided organizationId organizationName EitherOrganizationIdOrOrganizationNameRequired |]
 
                             match! getFirstError validations with
-                            | Some error -> badRequest <- OrganizationError.getErrorMessage error
+                            | Some error ->
+                                badRequest <- Some (GraceError.Create (OrganizationError.getErrorMessage error) correlationId)
                             | None ->
                                 if path.Equals("/organization/create", StringComparison.InvariantCultureIgnoreCase) then
                                     // If we're creating a new Organization, we don't need to resolve the Id.
@@ -250,15 +252,12 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
                                     | None ->
                                         badRequest <-
                                             if not <| String.IsNullOrEmpty(organizationId) then
-                                                OrganizationError.getErrorMessage OrganizationIdDoesNotExist
+                                                Some (GraceError.Create (OrganizationError.getErrorMessage OrganizationIdDoesNotExist) correlationId)
                                             else
-                                                OrganizationError.getErrorMessage OrganizationDoesNotExist
+                                                Some (GraceError.Create (OrganizationError.getErrorMessage OrganizationDoesNotExist) correlationId)
 
                         // Get repository information.
-                        if
-                            String.IsNullOrEmpty(badRequest)
-                            && Option.isSome entityProperties.RepositoryId
-                            && Option.isSome entityProperties.RepositoryName
+                        if badRequest.IsNone && entityProperties.RepositoryId.IsSome && entityProperties.RepositoryName.IsSome
                         then
                             // Get the values from the request body.
                             let repositoryId = entityProperties.RepositoryId.Value.GetValue(requestBody) :?> string
@@ -277,7 +276,8 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
                                        Common.Input.eitherIdOrNameMustBeProvided repositoryId repositoryName EitherRepositoryIdOrRepositoryNameRequired |]
 
                             match! getFirstError validations with
-                            | Some error -> badRequest <- RepositoryError.getErrorMessage error
+                            | Some error ->
+                                badRequest <- Some (GraceError.Create (RepositoryError.getErrorMessage error) correlationId)
                             | None ->
                                 if path.Equals("/repository/create", StringComparison.InvariantCultureIgnoreCase) then
                                     // If we're creating a new Repository, we don't need to resolve the Id.
@@ -298,15 +298,12 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
                                     | None ->
                                         badRequest <-
                                             if not <| String.IsNullOrEmpty(repositoryId) then
-                                                RepositoryError.getErrorMessage RepositoryIdDoesNotExist
+                                                Some (GraceError.Create (RepositoryError.getErrorMessage RepositoryIdDoesNotExist) correlationId)
                                             else
-                                                RepositoryError.getErrorMessage RepositoryDoesNotExist
+                                                Some (GraceError.Create (RepositoryError.getErrorMessage RepositoryDoesNotExist) correlationId)
 
                         // Get branch information.
-                        if
-                            String.IsNullOrEmpty(badRequest)
-                            && Option.isSome entityProperties.BranchId
-                            && Option.isSome entityProperties.BranchName
+                        if badRequest.IsNone && entityProperties.BranchId.IsSome && entityProperties.BranchName.IsSome
                         then
                             // Get the values from the request body.
                             let branchId = entityProperties.BranchId.Value.GetValue(requestBody) :?> string
@@ -325,7 +322,8 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
                                        Common.Input.eitherIdOrNameMustBeProvided branchId branchName EitherBranchIdOrBranchNameRequired |]
 
                             match! getFirstError validations with
-                            | Some error -> badRequest <- BranchError.getErrorMessage error
+                            | Some error ->
+                                badRequest <- Some (GraceError.Create (BranchError.getErrorMessage error) correlationId)
                             | None ->
                                 if path.Equals("/branch/create", StringComparison.InvariantCultureIgnoreCase) then
                                     // If we're creating a new Branch, we don't need to resolve the Id.
@@ -337,9 +335,9 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
                                     | None ->
                                         badRequest <-
                                             if not <| String.IsNullOrEmpty(branchId) then
-                                                BranchError.getErrorMessage BranchIdDoesNotExist
+                                                Some (GraceError.Create (BranchError.getErrorMessage BranchIdDoesNotExist) correlationId)
                                             else
-                                                BranchError.getErrorMessage BranchDoesNotExist
+                                                Some (GraceError.Create (BranchError.getErrorMessage BranchDoesNotExist) correlationId)
 
                     // Add the parsed Id's and Names to the HttpContext.
                     context.Items.Add(nameof (GraceIds), graceIds)
@@ -349,8 +347,9 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
 
                 let duration_ms = getPaddedDuration_ms startTime
 
-                if not <| String.IsNullOrEmpty(badRequest) then
-                    context.Items.Add("BadRequest", badRequest)
+                if Option.isSome badRequest then
+                    let error = badRequest.Value
+                    context.Items.Add("BadRequest", error.Error)
 
                     log.LogWarning(
                         "{currentInstant}: CorrelationId: {correlationId}; {currentFunction}: Path: {path}; {message}; Duration: {duration_ms}ms.",
@@ -358,12 +357,13 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
                         correlationId,
                         nameof (ValidateIdsMiddleware),
                         path,
-                        badRequest,
+                        error.Error,
                         duration_ms
                     )
 
-                    context.Response.StatusCode <- 400
-                    do! context.Response.WriteAsync($"{badRequest}")
+                    if path.Contains("SetDescription") then logToConsole $"********In ValidateIds.Middleware.fs: {serialize error}"
+                    let! _ = (context |> result400BadRequest error)
+                    ()
                 else
                     if graceIds.HasBranch then
                         log.LogInformation(

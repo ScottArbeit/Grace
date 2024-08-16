@@ -358,11 +358,6 @@ module Application =
             // Telemetry configuration
             let graceServerAppId = "grace-server-integration-test"
 
-            let keys = Environment.GetEnvironmentVariables().Keys.Cast<string>() |> Seq.sort
-            for key in keys do
-                let v = Environment.GetEnvironmentVariable(key)
-                logToConsole $"{key}: {v}"
-
             services
                 .AddOpenTelemetry()
                 .ConfigureResource(fun resourceBuilder -> resourceBuilder.AddService(graceServerAppId) |> ignore)
@@ -403,8 +398,10 @@ module Application =
                 //.AddSwaggerGen(fun config -> config.SwaggerDoc("v0.1", openApiInfo))
                 .AddGiraffe()
                 //.AddSingleton(Constants.JsonSerializerOptions)
-                // Next line adds the Json serializer that Giraffe uses internally
+
+                // Next line adds the Json serializer that Giraffe uses internally.
                 .AddSingleton<Json.ISerializer>(SystemTextJson.Serializer(Constants.JsonSerializerOptions))
+
                 .AddHttpLogging(fun loggingOptions ->
                     loggingOptions.CombineLogs <- true
                     loggingOptions.LoggingFields <- HttpLoggingFields.All)

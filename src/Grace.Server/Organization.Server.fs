@@ -277,7 +277,8 @@ module Organization =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let validations (parameters: SetOrganizationDescriptionParameters) =
-                    [| String.isNotEmpty parameters.Description OrganizationDescriptionIsRequired
+                    [| String.isNotEmpty parameters.Description DescriptionIsRequired
+                       String.maxLength parameters.Description 2048 DescriptionIsTooLong
                        Organization.organizationIsNotDeleted
                            context
                            parameters.CorrelationId

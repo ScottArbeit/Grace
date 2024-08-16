@@ -28,6 +28,7 @@ module en_US =
         | CreatingSaveReference -> "Creating a save reference to mark your current state before switching."
         | DeleteReasonIsRequired -> "The DeleteReason must be provided."
         | DescriptionIsRequired -> "The description must be provided."
+        | DescriptionIsTooLong -> "The description is too long."
         | DirectoryAlreadyExists -> "A directory with the provided DirectoryId already exists."
         | DirectoryDoesNotExist -> "The directory was not found."
         | DirectorySha256HashAlreadyExists -> "A directory with the provided SHA-256 hash already exists."

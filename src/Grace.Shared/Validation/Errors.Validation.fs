@@ -211,6 +211,7 @@ module Errors =
         type OwnerError =
             | DeleteReasonIsRequired
             | DescriptionIsRequired
+            | DescriptionIsTooLong
             | DuplicateCorrelationId
             | EitherOwnerIdOrOwnerNameRequired
             | FailedWhileApplyingEvent
@@ -235,6 +236,7 @@ module Errors =
                 match ownerError with
                 | DeleteReasonIsRequired -> getLocalizedString StringResourceName.DeleteReasonIsRequired
                 | DescriptionIsRequired -> getLocalizedString StringResourceName.DescriptionIsRequired
+                | DescriptionIsTooLong -> getLocalizedString StringResourceName.DescriptionIsTooLong
                 | DuplicateCorrelationId -> getLocalizedString StringResourceName.DuplicateCorrelationId
                 | EitherOwnerIdOrOwnerNameRequired -> getLocalizedString StringResourceName.EitherOwnerIdOrOwnerNameIsRequired
                 | FailedWhileApplyingEvent -> getLocalizedString StringResourceName.FailedWhileApplyingEvent
@@ -264,6 +266,7 @@ module Errors =
         type OrganizationError =
             | DeleteReasonIsRequired
             | DescriptionIsRequired
+            | DescriptionIsTooLong
             | DuplicateCorrelationId
             | EitherOrganizationIdOrOrganizationNameRequired
             | EitherOwnerIdOrOwnerNameRequired
@@ -281,7 +284,6 @@ module Errors =
             | OrganizationIdAlreadyExists
             | OrganizationNameAlreadyExists
             | OrganizationContainsRepositories
-            | OrganizationDescriptionIsRequired
             | OrganizationDoesNotExist
             | OrganizationIdDoesNotExist
             | OrganizationIdIsRequired
@@ -298,6 +300,7 @@ module Errors =
                 match organizationError with
                 | DeleteReasonIsRequired -> getLocalizedString StringResourceName.DeleteReasonIsRequired
                 | DescriptionIsRequired -> getLocalizedString StringResourceName.DescriptionIsRequired
+                | DescriptionIsTooLong -> getLocalizedString StringResourceName.DescriptionIsTooLong
                 | DuplicateCorrelationId -> getLocalizedString StringResourceName.DuplicateCorrelationId
                 | EitherOrganizationIdOrOrganizationNameRequired -> getLocalizedString StringResourceName.EitherOrganizationIdOrOrganizationNameIsRequired
                 | EitherOwnerIdOrOwnerNameRequired -> getLocalizedString StringResourceName.EitherOwnerIdOrOwnerNameIsRequired
@@ -315,7 +318,6 @@ module Errors =
                 | OrganizationIdAlreadyExists -> getLocalizedString StringResourceName.OrganizationIdAlreadyExists
                 | OrganizationNameAlreadyExists -> getLocalizedString StringResourceName.OrganizationNameAlreadyExists
                 | OrganizationContainsRepositories -> getLocalizedString StringResourceName.OrganizationContainsRepositories
-                | OrganizationDescriptionIsRequired -> getLocalizedString StringResourceName.DescriptionIsRequired
                 | OrganizationDoesNotExist -> getLocalizedString StringResourceName.OrganizationDoesNotExist
                 | OrganizationIdIsRequired -> getLocalizedString StringResourceName.OrganizationIdIsRequired
                 | OrganizationIdDoesNotExist -> getLocalizedString StringResourceName.OrganizationIdDoesNotExist
@@ -438,6 +440,7 @@ module Errors =
             | BranchIdsAreRequired
             | DeleteReasonIsRequired
             | DescriptionIsRequired
+            | DescriptionIsTooLong
             | DuplicateCorrelationId
             | EitherOrganizationIdOrOrganizationNameRequired
             | EitherOwnerIdOrOwnerNameRequired
@@ -484,6 +487,7 @@ module Errors =
                 match repositoryError with
                 | BranchIdsAreRequired -> getLocalizedString StringResourceName.BranchIdsAreRequired
                 | DescriptionIsRequired -> getLocalizedString StringResourceName.DescriptionIsRequired
+                | DescriptionIsTooLong -> getLocalizedString StringResourceName.DescriptionIsTooLong
                 | DeleteReasonIsRequired -> getLocalizedString StringResourceName.DeleteReasonIsRequired
                 | DuplicateCorrelationId -> getLocalizedString StringResourceName.DuplicateCorrelationId
                 | EitherOrganizationIdOrOrganizationNameRequired -> getLocalizedString StringResourceName.EitherOrganizationIdOrOrganizationNameIsRequired

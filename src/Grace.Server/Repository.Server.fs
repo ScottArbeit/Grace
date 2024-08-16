@@ -324,7 +324,8 @@ module Repository =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let validations (parameters: SetRepositoryStatusParameters) =
-                    [| DiscriminatedUnion.isMemberOf<RepositoryStatus, RepositoryError> parameters.Status InvalidRepositoryStatus
+                    [| String.isNotEmpty parameters.Status InvalidRepositoryStatus
+                       DiscriminatedUnion.isMemberOf<RepositoryStatus, RepositoryError> parameters.Status InvalidRepositoryStatus
                        Repository.repositoryIsNotDeleted context parameters.CorrelationId RepositoryIsDeleted |]
 
                 let command (parameters: SetRepositoryStatusParameters) =
@@ -370,6 +371,7 @@ module Repository =
             task {
                 let validations (parameters: SetRepositoryDescriptionParameters) =
                     [| String.isNotEmpty parameters.Description DescriptionIsRequired
+                       String.maxLength parameters.Description 2048 DescriptionIsTooLong
                        Repository.repositoryIsNotDeleted context parameters.CorrelationId RepositoryIsDeleted |]
 
                 let command (parameters: SetRepositoryDescriptionParameters) = SetDescription(parameters.Description) |> returnValueTask

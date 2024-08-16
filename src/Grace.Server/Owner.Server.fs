@@ -185,7 +185,6 @@ module Owner =
                     Create(ownerIdGuid, OwnerName parameters.OwnerName) |> returnValueTask
 
                 context.Items.Add("Command", nameof (Create))
-                logToConsole $"**************In Owner.Server.Create. Command: {nameof(Create)}"
                 return! processCommand context validations command
             }
 
@@ -248,6 +247,7 @@ module Owner =
             task {
                 let validations (parameters: SetOwnerDescriptionParameters) =
                     [| String.isNotEmpty parameters.Description DescriptionIsRequired
+                       String.maxLength parameters.Description 2048 DescriptionIsTooLong
                        Owner.ownerIsNotDeleted context parameters.CorrelationId OwnerIsDeleted |]
 
                 let command (parameters: SetOwnerDescriptionParameters) = OwnerCommand.SetDescription(parameters.Description) |> returnValueTask

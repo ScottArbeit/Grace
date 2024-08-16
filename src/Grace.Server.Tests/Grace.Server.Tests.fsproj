@@ -15,6 +15,7 @@
 	<ItemGroup>
 		<Compile Include="General.Server.Tests.fs" />
 		<Compile Include="Validations.Server.Tests.fs" />
+		<Compile Include="Owner.Server.Tests.fs" />
 		<Compile Include="Repository.Server.Tests.fs" />
 		<Compile Include="Program.fs" />
 	</ItemGroup>

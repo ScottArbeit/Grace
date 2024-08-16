@@ -26,6 +26,7 @@ module Text =
         | CreatingSaveReference
         | DeleteReasonIsRequired
         | DescriptionIsRequired
+        | DescriptionIsTooLong
         | DirectoryAlreadyExists
         | DirectoryDoesNotExist
         | DirectorySha256HashAlreadyExists
