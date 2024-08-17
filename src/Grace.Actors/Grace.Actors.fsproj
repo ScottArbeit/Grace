@@ -43,14 +43,14 @@
 	</ItemGroup>
 
 	<ItemGroup>
-		<PackageReference Include="Azure.Storage.Blobs" Version="12.21.1" />
+		<PackageReference Include="Azure.Storage.Blobs" Version="12.21.2" />
 		<PackageReference Include="Azure.Storage.Blobs.Batch" Version="12.18.1" />
 		<PackageReference Include="Azure.Storage.Common" Version="12.20.1" />
-		<PackageReference Include="Dapr.Actors" Version="1.13.1" />
-		<PackageReference Include="Dapr.Client" Version="1.13.1" />
+		<PackageReference Include="Dapr.Actors" Version="1.14.0" />
+		<PackageReference Include="Dapr.Client" Version="1.14.0" />
 		<PackageReference Include="FSharpPlus" Version="1.6.1" />
 		<PackageReference Include="Microsoft.Azure.Cosmos" Version="3.42.0" />
-		<PackageReference Include="Microsoft.Extensions.Caching.Memory" Version="9.0.0-preview.6.24327.7" />
+		<PackageReference Include="Microsoft.Extensions.Caching.Memory" Version="9.0.0-preview.7.24405.7" />
 		<PackageReference Include="Nito.AsyncEx" Version="5.1.2" />
 		<PackageReference Include="NodaTime" Version="3.1.11" />
 		<PackageReference Include="NodaTime.Serialization.SystemTextJson" Version="1.2.0" />
@@ -67,7 +67,7 @@
 	</ItemGroup>-->
 
 	<ItemGroup>
-		<PackageReference Update="FSharp.Core" Version="8.0.301" />
+		<PackageReference Update="FSharp.Core" Version="8.0.400" />
 	</ItemGroup>
 
 </Project>

@@ -29,12 +29,14 @@ module Services =
     let graceServerPath = Path.Combine(Environment.CurrentDirectory, "..", "..", "..", "..", "Grace.Server")
 
     let graceServerAppId = "grace-server-integration-test"
+    let daprSchedulerContainerName = "dapr-scheduler-integration-test"
     let daprPlacementContainerName = "dapr-placement-integration-test"
     let zipkinContainerName = "zipkin-integration-test"
     let daprAppPort = "5002"
     let daprHttpPort = "3551"
     let daprGrpcPort = "50051"
     let daprPlacementPort = "6055"
+    let daprSchedulerPort = "6065"
     let zipkinPort = "9412"
 
     let numberOfRepositories = 3
@@ -98,6 +100,31 @@ type Setup() =
                             p.Kill()
                     | _ -> ()
                 )
+
+                // Stop the Dapr scheduler container.
+                let daprSchedulerDockerArguments =
+                    [|
+                        "rm"
+                        daprSchedulerContainerName
+                        "--force"
+                    |]
+
+                let! daprSchedulerResult =
+                    Cli.Wrap(dockerExecutablePath)
+                        .WithArguments(daprSchedulerDockerArguments)
+                        .WithValidation(CommandResultValidation.None)
+                        .WithStandardOutputPipe(PipeTarget.ToStringBuilder(sbOutput))
+                        .WithStandardErrorPipe(PipeTarget.ToStringBuilder(sbError))
+                        .ExecuteBufferedAsync()
+
+                if daprSchedulerResult.ExitCode = 0 then
+                    logToTestConsole $"Dapr scheduler container stopped successfully. Output: {sbOutput}"
+                else
+                    let msg = $"Dapr scheduler container failed to stop. Exit code: {daprSchedulerResult.ExitCode}. Output: {sbOutput}. Error: {sbError}."
+                    logToTestConsole msg
+
+                sbOutput.Clear() |> ignore
+                sbError.Clear() |> ignore
 
                 // Stop the Dapr placement container.
                 let daprPlacementDockerArguments =
@@ -166,6 +193,36 @@ type Setup() =
 
             do! this.DeleteContainers()
 
+            let daprSchedulerDockerRunArguments =
+                [|
+                    "run"
+                    "-d"
+                    "--name"; daprSchedulerContainerName
+                    "--restart"; "always"
+                    "-p"; $"{daprSchedulerPort}:50006"
+                    "daprio/dapr:1.14.1"
+                    "./scheduler"
+                    "--etcd-data-dir"; "/var/lock/dapr/scheduler"
+                |]
+
+            // Start the Dapr scheduler container.
+            let! daprSchedulerResult =
+                Cli.Wrap(dockerExecutablePath)
+                    .WithArguments(daprSchedulerDockerRunArguments)
+                    .WithStandardOutputPipe(PipeTarget.ToStringBuilder(sbOutput))
+                    .WithStandardErrorPipe(PipeTarget.ToStringBuilder(sbError))
+                    .WithValidation(CliWrap.CommandResultValidation.None)
+                    .ExecuteAsync()
+
+            if daprSchedulerResult.ExitCode = 0 then
+                logToTestConsole $"Dapr scheduler container started successfully. Output: {sbOutput}"
+            else
+                let msg = $"Dapr scheduler container failed to start. Exit code: {daprSchedulerResult.ExitCode}; Output: {sbOutput}; Error: {sbError}"
+                logToTestConsole msg
+
+            sbOutput.Clear() |> ignore
+            sbError.Clear() |> ignore
+
             let daprPlacementDockerRunArguments =
                 [|
                     "run"
@@ -173,7 +230,7 @@ type Setup() =
                     "--name"; daprPlacementContainerName
                     "--restart"; "always"
                     "-p"; $"{daprPlacementPort}:50005"
-                    "daprio/dapr:1.13.5"
+                    "daprio/dapr:1.14.1"
                     "./placement"
                     "--log-level"; "debug"
                     "--enable-metrics"
@@ -266,6 +323,7 @@ type Setup() =
                     "--log-level"; "debug"
                     "--enable-api-logging"
                     "--placement-host-address"; $"127.0.0.1:{daprPlacementPort}"
+                    "--scheduler-host-address"; $"127.0.0.1:{daprSchedulerPort}"
                     "--resources-path"; $"{daprComponentsPath}"
                     "--config"; $"{daprConfigFilePath}"
                     "--"

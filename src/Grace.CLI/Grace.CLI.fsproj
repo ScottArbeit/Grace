@@ -38,10 +38,10 @@
 	</ItemGroup>
 	<ItemGroup>
 		<PackageReference Include="Ben.Demystifier" Version="0.4.1" />
-		<PackageReference Include="Microsoft.AspNetCore.SignalR.Client" Version="9.0.0-preview.6.24328.4" />
-		<PackageReference Include="Microsoft.AspNetCore.SignalR.Protocols.Json" Version="9.0.0-preview.6.24328.4" />
-		<PackageReference Include="Microsoft.Extensions.Logging.Configuration" Version="9.0.0-preview.6.24327.7" />
-		<PackageReference Include="Microsoft.Extensions.Logging.Console" Version="9.0.0-preview.6.24327.7" />
+		<PackageReference Include="Microsoft.AspNetCore.SignalR.Client" Version="9.0.0-preview.7.24406.2" />
+		<PackageReference Include="Microsoft.AspNetCore.SignalR.Protocols.Json" Version="9.0.0-preview.7.24406.2" />
+		<PackageReference Include="Microsoft.Extensions.Logging.Configuration" Version="9.0.0-preview.7.24405.7" />
+		<PackageReference Include="Microsoft.Extensions.Logging.Console" Version="9.0.0-preview.7.24405.7" />
 		<PackageReference Include="NodaTime" Version="3.1.11" />
 		<PackageReference Include="NodaTime.Serialization.SystemTextJson" Version="1.2.0" />
 		<PackageReference Include="OpenTelemetry" Version="1.9.0" />
@@ -55,7 +55,7 @@
 		<PackageReference Include="Spectre.Console.Json" Version="0.49.1" />
 		<PackageReference Include="System.CommandLine" Version="2.0.0-beta4.22272.1" />
 		<PackageReference Include="System.CommandLine.Hosting" Version="0.4.0-alpha.22272.1" />
-		<PackageReference Include="System.Diagnostics.DiagnosticSource" Version="9.0.0-preview.6.24327.7" />
+		<PackageReference Include="System.Diagnostics.DiagnosticSource" Version="9.0.0-preview.7.24405.7" />
 		<PackageReference Include="System.Reactive" Version="6.0.1" />
 	</ItemGroup>
 	<ItemGroup>
@@ -63,6 +63,6 @@
 		<ProjectReference Include="..\Grace.Shared\Grace.Shared.fsproj" />
 	</ItemGroup>
 	<ItemGroup>
-		<PackageReference Update="FSharp.Core" Version="8.0.301" />
+		<PackageReference Update="FSharp.Core" Version="8.0.400" />
 	</ItemGroup>
 </Project>

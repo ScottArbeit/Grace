@@ -400,7 +400,7 @@ module Application =
                 //.AddSingleton(Constants.JsonSerializerOptions)
 
                 // Next line adds the Json serializer that Giraffe uses internally.
-                .AddSingleton<Json.ISerializer>(SystemTextJson.Serializer(Constants.JsonSerializerOptions))
+                .AddSingleton<Json.ISerializer>(Json.Serializer(Constants.JsonSerializerOptions))
 
                 .AddHttpLogging(fun loggingOptions ->
                     loggingOptions.CombineLogs <- true
