@@ -19,6 +19,7 @@ module Services =
     let enhance<'T> key value (result: GraceResult<'T>) =
         if not <| String.IsNullOrEmpty(key) then
             let safeValue = if String.IsNullOrEmpty(value) then String.Empty else value
+
             match result with
             | Ok result ->
                 result.Properties[key] <- safeValue

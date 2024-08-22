@@ -21,6 +21,7 @@ open System.Collections.Immutable
 
 module Program =
     let graceAppPort = Environment.GetEnvironmentVariable("DAPR_APP_PORT") |> int
+
     let createHostBuilder (args: string[]) : IHostBuilder =
         Host
             .CreateDefaultBuilder(args)

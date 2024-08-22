@@ -53,7 +53,11 @@ module Organization =
             let newOrganizationDto =
                 match organizationEvent.Event with
                 | Created(organizationId, organizationName, ownerId) ->
-                    { OrganizationDto.Default with OrganizationId = organizationId; OrganizationName = organizationName; OwnerId = ownerId; CreatedAt = organizationEvent.Metadata.Timestamp }
+                    { OrganizationDto.Default with
+                        OrganizationId = organizationId
+                        OrganizationName = organizationName
+                        OwnerId = ownerId
+                        CreatedAt = organizationEvent.Metadata.Timestamp }
                 | NameSet(organizationName) -> { currentOrganizationDto with OrganizationName = organizationName }
                 | TypeSet(organizationType) -> { currentOrganizationDto with OrganizationType = organizationType }
                 | SearchVisibilitySet(searchVisibility) -> { currentOrganizationDto with SearchVisibility = searchVisibility }

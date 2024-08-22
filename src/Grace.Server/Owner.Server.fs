@@ -44,6 +44,7 @@ module Owner =
         task {
             let commandName = context.Items["Command"] :?> string
             let graceIds = getGraceIds context
+
             try
                 use activity = activitySource.StartActivity("processCommand", ActivityKind.Server)
                 let! parameters = context |> parse<'T>
@@ -55,20 +56,22 @@ module Owner =
                     task {
                         let ownerGuid = Guid.Parse(ownerId)
                         let actorProxy = Owner.CreateActorProxy ownerGuid (getCorrelationId context)
-                        
+
                         match! actorProxy.Handle cmd (createMetadata context) with
                         | Ok graceReturnValue ->
                             (graceReturnValue |> addParametersToGraceReturnValue parameters)
-                                .enhance(nameof(OwnerId), graceIds.OwnerId)
+                                .enhance(nameof (OwnerId), graceIds.OwnerId)
                                 .enhance("Command", commandName)
-                                .enhance("Path", context.Request.Path) |> ignore
+                                .enhance ("Path", context.Request.Path)
+                            |> ignore
 
                             return! context |> result200Ok graceReturnValue
                         | Error graceError ->
                             (graceError |> addParametersToGraceError parameters)
-                                .enhance(nameof(OwnerId), graceIds.OwnerId)
+                                .enhance(nameof (OwnerId), graceIds.OwnerId)
                                 .enhance("Command", commandName)
-                                .enhance("Path", context.Request.Path) |> ignore
+                                .enhance ("Path", context.Request.Path)
+                            |> ignore
 
                             log.LogDebug(
                                 "{currentInstant}: In Branch.Server.handleCommand: error from actorProxy.Handle: {error}",
@@ -76,9 +79,7 @@ module Owner =
                                 (graceError.ToString())
                             )
 
-                            return!
-                                context
-                                |> result400BadRequest graceError
+                            return! context |> result400BadRequest graceError
                     }
 
 
@@ -101,10 +102,11 @@ module Owner =
 
                     let graceError =
                         (GraceError.CreateWithMetadata errorMessage (getCorrelationId context) (getParametersAsDictionary parameters))
-                            .enhance(nameof(OwnerId), graceIds.OwnerId)
+                            .enhance(nameof (OwnerId), graceIds.OwnerId)
                             .enhance("Command", commandName)
                             .enhance("Path", context.Request.Path)
-                            .enhance("Error", errorMessage)
+                            .enhance ("Error", errorMessage)
+
                     return! context |> result400BadRequest graceError
             with ex ->
                 log.LogError(
@@ -117,7 +119,7 @@ module Owner =
                 let graceError =
                     (GraceError.Create $"{Utilities.createExceptionResponse ex}" (getCorrelationId context))
                         .enhance(nameof (OwnerId), graceIds.OwnerId)
-                        .enhance("Path", context.Request.Path)
+                        .enhance ("Path", context.Request.Path)
 
                 return! context |> result500ServerError graceError
         }
@@ -151,7 +153,7 @@ module Owner =
                     let graceReturnValue =
                         (GraceReturnValue.CreateWithMetadata queryResult correlationId (getParametersAsDictionary parameters))
                             .enhance(nameof (OwnerId), graceIds.OwnerId)
-                            .enhance("Path", context.Request.Path)
+                            .enhance ("Path", context.Request.Path)
 
                     //logToConsole $"In Owner.Server.processQuery: graceReturnValue: {graceReturnValue}"
                     return! context |> result200Ok graceReturnValue
@@ -161,13 +163,14 @@ module Owner =
                     let graceError =
                         (GraceError.Create (OwnerError.getErrorMessage error) correlationId)
                             .enhance(nameof (OwnerId), graceIds.OwnerId)
-                            .enhance("Path", context.Request.Path)
+                            .enhance ("Path", context.Request.Path)
+
                     return! context |> result400BadRequest graceError
             with ex ->
                 let graceError =
                     (GraceError.Create $"{createExceptionResponse ex}" correlationId)
                         .enhance(nameof (OwnerId), graceIds.OwnerId)
-                        .enhance("Path", context.Request.Path)
+                        .enhance ("Path", context.Request.Path)
 
                 return! context |> result500ServerError graceError
         }
@@ -298,8 +301,7 @@ module Owner =
     let Undelete: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
-                let validations (parameters: OwnerParameters) =
-                    [| Owner.ownerIsDeleted context parameters.CorrelationId OwnerIsNotDeleted |]
+                let validations (parameters: OwnerParameters) = [| Owner.ownerIsDeleted context parameters.CorrelationId OwnerIsNotDeleted |]
 
                 let command (parameters: OwnerParameters) = OwnerCommand.Undelete |> returnValueTask
 
@@ -315,8 +317,7 @@ module Owner =
                 let graceIds = getGraceIds context
 
                 try
-                    let validations (parameters: GetOwnerParameters) =
-                        [| Owner.ownerIsNotDeleted context parameters.CorrelationId OwnerIsDeleted |]
+                    let validations (parameters: GetOwnerParameters) = [| Owner.ownerIsNotDeleted context parameters.CorrelationId OwnerIsDeleted |]
 
                     let query (context: HttpContext) (maxCount: int) (actorProxy: IOwnerActor) = task { return! actorProxy.Get(getCorrelationId context) }
 
@@ -354,7 +355,7 @@ module Owner =
                     let graceError =
                         (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
                             .enhance(nameof (OwnerId), graceIds.OwnerId)
-                            .enhance("Path", context.Request.Path)
+                            .enhance ("Path", context.Request.Path)
 
                     return! context |> result500ServerError graceError
             }

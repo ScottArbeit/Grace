@@ -148,7 +148,7 @@ module Common =
                     let! errorMessage = response.Content.ReadAsStringAsync()
 
                     return
-                        Error (GraceError.Create $"{errorMessage}" parameters.CorrelationId)
+                        Error(GraceError.Create $"{errorMessage}" parameters.CorrelationId)
                         |> enhance "ServerResponseTime" $"{(endTime - startTime).TotalMilliseconds:F3} ms"
                         |> enhance "StatusCode" $"{response.StatusCode}"
                 else
@@ -168,7 +168,7 @@ module Common =
                             |> enhance "StatusCode" $"{response.StatusCode}"
             with ex ->
                 let exceptionResponse = Utilities.createExceptionResponse ex
-                return Error (GraceError.Create ($"{exceptionResponse}") parameters.CorrelationId)
+                return Error(GraceError.Create ($"{exceptionResponse}") parameters.CorrelationId)
         }
 
     /// Ensures that the CorrelationId is set in the parameters for calling Grace Server. If it hasn't already been set, one will be created.

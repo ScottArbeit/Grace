@@ -33,7 +33,7 @@ module Common =
     module Number =
 
         /// Validates that the given number is positive.
-        let isPositiveOrZero<'T> (n: double) (error: 'T) = if n >= 0.0 then Ok () |> returnValueTask else Error error |> returnValueTask
+        let isPositiveOrZero<'T> (n: double) (error: 'T) = if n >= 0.0 then Ok() |> returnValueTask else Error error |> returnValueTask
 
         /// Validates that a number is found between the supplied lower and upper bounds.
         let isWithinRange<'T, 'U when 'T: comparison> (n: 'T) (lower: 'T) (upper: 'T) (error: 'U) =

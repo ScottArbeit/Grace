@@ -104,7 +104,12 @@ module Diff =
                 this.correlationId <- correlationId
                 let graceIndex = ServerGraceIndex()
 
-                let directory = actorProxyFactory.CreateActorProxyWithCorrelationId<IDirectoryVersionActor>(DirectoryVersion.GetActorId(directoryId), ActorName.DirectoryVersion, correlationId)
+                let directory =
+                    actorProxyFactory.CreateActorProxyWithCorrelationId<IDirectoryVersionActor>(
+                        DirectoryVersion.GetActorId(directoryId),
+                        ActorName.DirectoryVersion,
+                        correlationId
+                    )
 
                 let! directoryCreatedAt = directory.GetCreatedAt correlationId
                 let! directoryContents = directory.GetRecursiveDirectoryVersions false correlationId
@@ -121,7 +126,8 @@ module Diff =
                 this.correlationId <- correlationId
                 let repositoryActorId = Repository.GetActorId(fileVersion.RepositoryId)
 
-                let repositoryActorProxy = actorProxyFactory.CreateActorProxyWithCorrelationId<IRepositoryActor>(repositoryActorId, ActorName.Repository, correlationId)
+                let repositoryActorProxy =
+                    actorProxyFactory.CreateActorProxyWithCorrelationId<IRepositoryActor>(repositoryActorId, ActorName.Repository, correlationId)
 
                 let! objectStorageProvider = repositoryActorProxy.GetObjectStorageProvider correlationId
 
@@ -381,8 +387,5 @@ module Diff =
                 | ReminderType.DeleteCachedState ->
                     let stateManager = this.StateManager
 
-                    task {
-                        return! Storage.DeleteState stateManager dtoStateName
-                    }
-                    :> Task
+                    task { return! Storage.DeleteState stateManager dtoStateName } :> Task
                 | _ -> Task.CompletedTask

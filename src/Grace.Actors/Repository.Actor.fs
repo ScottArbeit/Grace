@@ -166,8 +166,7 @@ module Repository =
                         ObjectStorageProvider = Constants.DefaultObjectStorageProvider
                         StorageAccountName = Constants.DefaultObjectStorageAccount
                         StorageContainerName = $"{repositoryId}"
-                        CreatedAt = repositoryEvent.Metadata.Timestamp
-                    }
+                        CreatedAt = repositoryEvent.Metadata.Timestamp }
                 | Initialized -> { currentRepositoryDto with InitializedAt = Some(getCurrentInstant ()) }
                 | ObjectStorageProviderSet objectStorageProvider -> { currentRepositoryDto with ObjectStorageProvider = objectStorageProvider }
                 | StorageAccountNameSet storageAccountName -> { currentRepositoryDto with StorageAccountName = storageAccountName }
@@ -260,8 +259,7 @@ module Repository =
                                     // Create an empty directory version, and use that for the initial promotion
                                     let emptyDirectoryId = DirectoryVersionId.NewGuid()
 
-                                    let emptySha256Hash =
-                                        computeSha256ForDirectory RootDirectoryPath (List<LocalDirectoryVersion>()) (List<LocalFileVersion>())
+                                    let emptySha256Hash = computeSha256ForDirectory RootDirectoryPath (List<LocalDirectoryVersion>()) (List<LocalFileVersion>())
 
                                     let directoryVersionActorProxy = DirectoryVersion.CreateActorProxy emptyDirectoryId this.correlationId
 
@@ -297,7 +295,9 @@ module Repository =
                                     | (Ok directoryVersionGraceReturnValue, Ok promotionGraceReturnValue) ->
                                         logToConsole $"In Repository.Actor.handleEvent: Successfully created the initial promotion."
                                         logToConsole $"promotionGraceReturnValue.Properties:"
-                                        promotionGraceReturnValue.Properties |> Seq.iter (fun kv -> logToConsole $"  {kv.Key}: {kv.Value}")
+
+                                        promotionGraceReturnValue.Properties
+                                        |> Seq.iter (fun kv -> logToConsole $"  {kv.Key}: {kv.Value}")
                                         // Set current, empty directory as the based-on reference.
                                         let referenceId = Guid.Parse(promotionGraceReturnValue.Properties[nameof (ReferenceId)])
 

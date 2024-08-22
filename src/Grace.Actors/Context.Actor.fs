@@ -9,7 +9,7 @@ open System
 
 module Context =
 
-        /// Actor proxy factory instance
+    /// Actor proxy factory instance
     let mutable internal actorProxyFactory: IActorProxyFactory = null
 
     /// Setter for actor proxy factory
@@ -40,7 +40,7 @@ module Context =
     let setHostServiceProvider (hostServices: IServiceProvider) = hostServiceProvider <- hostServices
 
     /// Logger factory instance
-    let mutable internal loggerFactory : ILoggerFactory = null //hostServiceProvider.GetService(typeof<ILoggerFactory>) :?> ILoggerFactory
+    let mutable internal loggerFactory: ILoggerFactory = null //hostServiceProvider.GetService(typeof<ILoggerFactory>) :?> ILoggerFactory
 
     /// Setter for logger factory
     let setLoggerFactory (factory: ILoggerFactory) = loggerFactory <- factory

@@ -89,12 +89,16 @@ module Services =
 
     /// Adds the parameters from the API call to a GraceReturnValue instance.
     let addParametersToGraceReturnValue<'T> parameters (graceReturnValue: GraceReturnValue<'T>) =
-        (getParametersAsDictionary parameters) |> Seq.iter (fun kvp -> graceReturnValue.enhance(kvp.Key, kvp.Value) |> ignore)
+        (getParametersAsDictionary parameters)
+        |> Seq.iter (fun kvp -> graceReturnValue.enhance (kvp.Key, kvp.Value) |> ignore)
+
         graceReturnValue
 
     /// Adds the parameters from the API call to a GraceError instance.
     let addParametersToGraceError parameters (graceError: GraceError) =
-        (getParametersAsDictionary parameters) |> Seq.iter (fun kvp -> graceError.enhance(kvp.Key, kvp.Value) |> ignore)
+        (getParametersAsDictionary parameters)
+        |> Seq.iter (fun kvp -> graceError.enhance (kvp.Key, kvp.Value) |> ignore)
+
         graceError
 
     /// Gets a CosmosDB container client for the given container.
@@ -103,25 +107,31 @@ module Services =
             let containerName = $"{repositoryDto.RepositoryId}"
             let key = $"Con:{repositoryDto.StorageAccountName}-{containerName}"
 
-            let! blobContainerClient = memoryCache.GetOrCreateAsync(key, fun cacheEntry ->
-                task {
-                    // This can and should last in cache for longer than Grace's default expiration time.
-                    // StorageAccountNames and container names are stable.
-                    // However, we don't want to clog up memoryCache for too long with each client.
-                    // Not sure what the right balance is, but 10 minutes seems reasonable.
-                    cacheEntry.AbsoluteExpiration <- DateTimeOffset.UtcNow.Add(TimeSpan.FromMinutes(10.0))
+            let! blobContainerClient =
+                memoryCache.GetOrCreateAsync(
+                    key,
+                    fun cacheEntry ->
+                        task {
+                            // This can and should last in cache for longer than Grace's default expiration time.
+                            // StorageAccountNames and container names are stable.
+                            // However, we don't want to clog up memoryCache for too long with each client.
+                            // Not sure what the right balance is, but 10 minutes seems reasonable.
+                            cacheEntry.AbsoluteExpiration <- DateTimeOffset.UtcNow.Add(TimeSpan.FromMinutes(10.0))
 
-                    let blobContainerClient = BlobContainerClient(azureStorageConnectionString, containerName)
-                    
-                    // Make sure the container exists before returning the client.
-                    let metadata = Dictionary<string, string>() :> IDictionary<string, string>
-                    metadata[nameof(OwnerId)] <- $"{repositoryDto.OwnerId}"
-                    metadata[nameof(OrganizationId)] <- $"{repositoryDto.OrganizationId}"
-                    metadata[nameof(RepositoryId)] <- $"{repositoryDto.RepositoryId}"
-                    let! azureResponse = blobContainerClient.CreateIfNotExistsAsync(publicAccessType = Models.PublicAccessType.None, metadata = metadata)
-                    return blobContainerClient
-                }
-            )
+                            let blobContainerClient = BlobContainerClient(azureStorageConnectionString, containerName)
+
+                            // Make sure the container exists before returning the client.
+                            let metadata = Dictionary<string, string>() :> IDictionary<string, string>
+                            metadata[nameof (OwnerId)] <- $"{repositoryDto.OwnerId}"
+                            metadata[nameof (OrganizationId)] <- $"{repositoryDto.OrganizationId}"
+                            metadata[nameof (RepositoryId)] <- $"{repositoryDto.RepositoryId}"
+
+                            let! azureResponse =
+                                blobContainerClient.CreateIfNotExistsAsync(publicAccessType = Models.PublicAccessType.None, metadata = metadata)
+
+                            return blobContainerClient
+                        }
+                )
 
             return blobContainerClient
         }
@@ -149,13 +159,15 @@ module Services =
             let! blobContainerClient = getContainerClient repositoryDto
 
             let blobSasBuilder =
-                BlobSasBuilder(permissions = permission,
+                BlobSasBuilder(
+                    permissions = permission,
                     expiresOn = DateTimeOffset.UtcNow.Add(TimeSpan.FromMinutes(Constants.SharedAccessSignatureExpiration)),
                     StartsOn = DateTimeOffset.UtcNow.Subtract(TimeSpan.FromSeconds(15.0)),
                     BlobContainerName = blobContainerClient.Name,
                     BlobName = Path.Combine($"{fileVersion.RelativePath}", fileVersion.GetObjectFileName),
                     CorrelationId = correlationId
                 )
+
             let sasUriParameters = blobSasBuilder.ToSasQueryParameters(sharedKeyCredential)
 
             return Ok $"{blobContainerClient.Uri}/{fileVersion.RelativePath}/{fileVersion.GetObjectFileName}?{sasUriParameters}"
@@ -340,9 +352,8 @@ module Services =
                         if nameExists then
                             // We have already checked and the owner exists.
                             match memoryCache.GetOwnerNameEntry ownerName with
-                            | Some ownerGuid ->
-                                return Some $"{ownerGuid}"
-                            | None ->   // This should never happen, because we just populated the cache in nameExists.
+                            | Some ownerGuid -> return Some $"{ownerGuid}"
+                            | None -> // This should never happen, because we just populated the cache in nameExists.
                                 return None
                         else
                             // The owner name does not exist.
@@ -358,6 +369,7 @@ module Services =
             let! isDeleted = organizationActorProxy.IsDeleted correlationId
 
             let organizationGuid = OrganizationId.Parse(organizationId)
+
             if isDeleted then
                 memoryCache.CreateDeletedOrganizationIdEntry organizationGuid MemoryCache.DoesNotExistValue
                 return Some organizationId
@@ -388,7 +400,8 @@ module Services =
         task {
             let mutable organizationGuid = Guid.Empty
 
-            if not <| String.IsNullOrEmpty(organizationId)
+            if
+                not <| String.IsNullOrEmpty(organizationId)
                 && Guid.TryParse(organizationId, &organizationGuid)
             then
                 match memoryCache.GetOrganizationIdEntry organizationGuid with
@@ -509,7 +522,8 @@ module Services =
         task {
             let mutable repositoryGuid = Guid.Empty
 
-            if not <| String.IsNullOrEmpty(repositoryId)
+            if
+                not <| String.IsNullOrEmpty(repositoryId)
                 && Guid.TryParse(repositoryId, &repositoryGuid)
             then
                 match memoryCache.GetRepositoryIdEntry repositoryGuid with
@@ -597,7 +611,7 @@ module Services =
             else
                 memoryCache.CreateDeletedBranchIdEntry branchGuid MemoryCache.ExistsValue
                 return None
-        }   
+        }
 
     /// Checks whether a branch exists by querying the actor, and updates the MemoryCache with the result.
     let branchExists (branchId: string) correlationId =
@@ -1095,7 +1109,10 @@ module Services =
                 let mutable totalRecordsDeleted = 0
                 let overallStartTime = getCurrentInstant ()
                 queryRequestOptions.MaxItemCount <- 1000
-                logToConsole $"cosmosContainer.Id: {cosmosContainer.Id}; cosmosContainer.Database.Id: {cosmosContainer.Database.Id}; cosmosContainer.Database.Client.Endpoint: {cosmosContainer.Database.Client.Endpoint}."
+
+                logToConsole
+                    $"cosmosContainer.Id: {cosmosContainer.Id}; cosmosContainer.Database.Id: {cosmosContainer.Database.Id}; cosmosContainer.Database.Client.Endpoint: {cosmosContainer.Database.Client.Endpoint}."
+
                 let iterator = cosmosContainer.GetItemQueryIterator<DocumentIdentifier>(queryDefinition, requestOptions = queryRequestOptions)
 
                 while iterator.HasMoreResults do
@@ -1258,45 +1275,49 @@ module Services =
                 // CosmosDb SQL doesn't have a UNION clause. That means that the only way to get the latest reference for each ReferenceType is to do separate queries for each ReferenceType that gets passed in.
                 // It's annoying, but at least let's do it in parallel.
 
-                do! Parallel.ForEachAsync(referenceTypes, Constants.ParallelOptions,
-                    (fun referenceType ct ->
-                        ValueTask(
-                            task {
-                                let queryDefinition =
-                                    QueryDefinition(
-                                        //"""SELECT TOP 1 c["value"] FROM c WHERE c["value"].BranchId = @branchId AND c["value"].Class = @class AND STRINGEQUALS(c["value"].ReferenceType, @referenceType, true) ORDER BY c["value"].CreatedAt DESC"""
-                                        """SELECT TOP 1 event FROM c JOIN event IN c["value"] 
+                do!
+                    Parallel.ForEachAsync(
+                        referenceTypes,
+                        Constants.ParallelOptions,
+                        (fun referenceType ct ->
+                            ValueTask(
+                                task {
+                                    let queryDefinition =
+                                        QueryDefinition(
+                                            //"""SELECT TOP 1 c["value"] FROM c WHERE c["value"].BranchId = @branchId AND c["value"].Class = @class AND STRINGEQUALS(c["value"].ReferenceType, @referenceType, true) ORDER BY c["value"].CreatedAt DESC"""
+                                            """SELECT TOP 1 event FROM c JOIN event IN c["value"] 
                                                     WHERE event.Event.created.BranchId = @branchId
                                                         AND event.Event.created.Class = @class
                                                         AND STRINGEQUALS(event.Event.created.ReferenceType, @referenceType, true)
                                                         ORDER BY c["value"].CreatedAt DESC"""
-                                    )
-                                        .WithParameter("@branchId", branchId)
-                                        .WithParameter("@referenceType", getDiscriminatedUnionCaseName referenceType)
-                                        .WithParameter("@class", nameof (ReferenceDto))
+                                        )
+                                            .WithParameter("@branchId", branchId)
+                                            .WithParameter("@referenceType", getDiscriminatedUnionCaseName referenceType)
+                                            .WithParameter("@class", nameof (ReferenceDto))
 
-                                let iterator = cosmosContainer.GetItemQueryIterator<ReferenceEventValue>(queryDefinition, requestOptions = queryRequestOptions)
+                                    let iterator =
+                                        cosmosContainer.GetItemQueryIterator<ReferenceEventValue>(queryDefinition, requestOptions = queryRequestOptions)
 
-                                let mutable referenceDto = ReferenceDto.Default
+                                    let mutable referenceDto = ReferenceDto.Default
 
-                                while iterator.HasMoreResults do
-                                    let! results = DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> iterator.ReadNextAsync())
-                                    indexMetrics.Append($"{results.IndexMetrics}, ") |> ignore
-                                    requestCharge.Append($"{results.RequestCharge}, ") |> ignore
+                                    while iterator.HasMoreResults do
+                                        let! results = DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> iterator.ReadNextAsync())
+                                        indexMetrics.Append($"{results.IndexMetrics}, ") |> ignore
+                                        requestCharge.Append($"{results.RequestCharge}, ") |> ignore
 
-                                    if results.Count > 0 then
-                                        referenceDto <-
-                                            match results.Resource.FirstOrDefault().event.Event with
-                                            | Reference.ReferenceEventType.Created refDto -> refDto
-                                            | _ -> ReferenceDto.Default
+                                        if results.Count > 0 then
+                                            referenceDto <-
+                                                match results.Resource.FirstOrDefault().event.Event with
+                                                | Reference.ReferenceEventType.Created refDto -> refDto
+                                                | _ -> ReferenceDto.Default
 
-                                if referenceDto.ReferenceId <> ReferenceDto.Default.ReferenceId then
-                                    referenceDtos.TryAdd(referenceType, referenceDto) |> ignore
+                                    if referenceDto.ReferenceId <> ReferenceDto.Default.ReferenceId then
+                                        referenceDtos.TryAdd(referenceType, referenceDto) |> ignore
 
                                 //logToConsole $"In getLatestReferenceByReferenceTypes:{Environment.NewLine}{referenceDto}."
-                            }
-                        ))
-                )
+                                }
+                            ))
+                    )
 
                 Activity.Current
                     .SetTag("indexMetrics", $"{indexMetrics.Remove(indexMetrics.Length - 2, 2)}")

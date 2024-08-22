@@ -83,6 +83,7 @@ module Storage =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let correlationId = (getCorrelationId context)
+
                 try
                     let! fileVersion = context.BindJsonAsync<FileVersion>()
                     let repositoryActor = Repository.CreateActorProxy fileVersion.RepositoryId correlationId
@@ -110,6 +111,7 @@ module Storage =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let correlationId = getCorrelationId context
+
                 try
                     let! fileVersion = context.BindJsonAsync<FileVersion>()
                     let repositoryActor = Repository.CreateActorProxy fileVersion.RepositoryId correlationId
@@ -132,6 +134,7 @@ module Storage =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let correlationId = getCorrelationId context
+
                 try
                     let! fileVersions = context.BindJsonAsync<FileVersion array>()
                     Activity.Current.SetTag("fileVersions.Count", $"{fileVersions.Count}") |> ignore

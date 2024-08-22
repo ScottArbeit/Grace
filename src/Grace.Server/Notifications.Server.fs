@@ -249,8 +249,7 @@ module Notifications =
                 | OwnerEvent ownerEvent ->
                     logToConsole $"Received OwnerEvent: {getDiscriminatedUnionFullName ownerEvent.Event} {Environment.NewLine}{ownerEvent.Metadata}"
                 | ReferenceEvent referenceEvent ->
-                    logToConsole
-                        $"Received ReferenceEvent: {getDiscriminatedUnionFullName referenceEvent.Event} {Environment.NewLine}{referenceEvent.Metadata}"
+                    logToConsole $"Received ReferenceEvent: {getDiscriminatedUnionFullName referenceEvent.Event} {Environment.NewLine}{referenceEvent.Metadata}"
                 | RepositoryEvent repositoryEvent ->
                     logToConsole
                         $"Received RepositoryEvent: {getDiscriminatedUnionFullName repositoryEvent.Event} {Environment.NewLine}{repositoryEvent.Metadata}"

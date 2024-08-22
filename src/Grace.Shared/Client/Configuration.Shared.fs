@@ -229,7 +229,7 @@ module Configuration =
     // graceConfiguration
 
     /// The current configuration of Grace in this repository.
-    let Current () = getGraceConfiguration()
+    let Current () = getGraceConfiguration ()
 
     let resetConfiguration = graceConfiguration.IsPopulated <- false
 

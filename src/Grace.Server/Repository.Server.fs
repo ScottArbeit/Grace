@@ -65,20 +65,22 @@ module Repository =
                         match! actorProxy.Handle cmd (createMetadata context) with
                         | Ok graceReturnValue ->
                             (graceReturnValue |> addParametersToGraceReturnValue parameters)
-                                .enhance(nameof(OwnerId), graceIds.OwnerId)
-                                .enhance(nameof(OrganizationId), graceIds.OrganizationId)
-                                .enhance(nameof(RepositoryId), graceIds.RepositoryId)
+                                .enhance(nameof (OwnerId), graceIds.OwnerId)
+                                .enhance(nameof (OrganizationId), graceIds.OrganizationId)
+                                .enhance(nameof (RepositoryId), graceIds.RepositoryId)
                                 .enhance("Command", commandName)
-                                .enhance("Path", context.Request.Path) |> ignore
+                                .enhance ("Path", context.Request.Path)
+                            |> ignore
 
                             return! context |> result200Ok graceReturnValue
                         | Error graceError ->
                             (graceError |> addParametersToGraceError parameters)
-                                .enhance(nameof(OwnerId), graceIds.OwnerId)
-                                .enhance(nameof(OrganizationId), graceIds.OrganizationId)
-                                .enhance(nameof(RepositoryId), graceIds.RepositoryId)
+                                .enhance(nameof (OwnerId), graceIds.OwnerId)
+                                .enhance(nameof (OrganizationId), graceIds.OrganizationId)
+                                .enhance(nameof (RepositoryId), graceIds.RepositoryId)
                                 .enhance("Command", commandName)
-                                .enhance("Path", context.Request.Path) |> ignore
+                                .enhance ("Path", context.Request.Path)
+                            |> ignore
 
                             log.LogDebug(
                                 "{currentInstant}: In Branch.Server.handleCommand: error from actorProxy.Handle: {error}",
@@ -112,12 +114,12 @@ module Repository =
 
                     let graceError =
                         (GraceError.CreateWithMetadata errorMessage correlationId (getParametersAsDictionary parameters))
-                            .enhance(nameof(OwnerId), graceIds.OwnerId)
-                            .enhance(nameof(OrganizationId), graceIds.OrganizationId)
-                            .enhance(nameof(RepositoryId), graceIds.RepositoryId)
+                            .enhance(nameof (OwnerId), graceIds.OwnerId)
+                            .enhance(nameof (OrganizationId), graceIds.OrganizationId)
+                            .enhance(nameof (RepositoryId), graceIds.RepositoryId)
                             .enhance("Command", commandName)
                             .enhance("Path", context.Request.Path)
-                            .enhance("Error", errorMessage)
+                            .enhance ("Error", errorMessage)
 
                     return! context |> result400BadRequest graceError
             with ex ->
@@ -134,7 +136,7 @@ module Repository =
                         .enhance(nameof (OwnerId), graceIds.OwnerId)
                         .enhance(nameof (OrganizationId), graceIds.OrganizationId)
                         .enhance(nameof (RepositoryId), graceIds.RepositoryId)
-                        .enhance("Path", context.Request.Path)
+                        .enhance ("Path", context.Request.Path)
 
                 return! context |> result500ServerError graceError
         }
@@ -166,10 +168,10 @@ module Repository =
                     // Wrap the query result in a GraceReturnValue.
                     let graceReturnValue =
                         (GraceReturnValue.Create queryResult correlationId)
-                            .enhance(nameof(OwnerId), graceIds.OwnerId)
-                            .enhance(nameof(OrganizationId), graceIds.OrganizationId)
-                            .enhance(nameof(RepositoryId), graceIds.RepositoryId)
-                            .enhance("Path", context.Request.Path)
+                            .enhance(nameof (OwnerId), graceIds.OwnerId)
+                            .enhance(nameof (OrganizationId), graceIds.OrganizationId)
+                            .enhance(nameof (RepositoryId), graceIds.RepositoryId)
+                            .enhance ("Path", context.Request.Path)
 
                     return! context |> result200Ok graceReturnValue
                 else
@@ -177,10 +179,10 @@ module Repository =
 
                     let graceError =
                         (GraceError.Create (RepositoryError.getErrorMessage error) correlationId)
-                            .enhance(nameof(OwnerId), graceIds.OwnerId)
-                            .enhance(nameof(OrganizationId), graceIds.OrganizationId)
-                            .enhance(nameof(RepositoryId), graceIds.RepositoryId)
-                            .enhance("Path", context.Request.Path)
+                            .enhance(nameof (OwnerId), graceIds.OwnerId)
+                            .enhance(nameof (OrganizationId), graceIds.OrganizationId)
+                            .enhance(nameof (RepositoryId), graceIds.RepositoryId)
+                            .enhance ("Path", context.Request.Path)
 
                     return! context |> result400BadRequest graceError
             with ex ->
@@ -197,7 +199,7 @@ module Repository =
                         .enhance(nameof (OwnerId), graceIds.OwnerId)
                         .enhance(nameof (OrganizationId), graceIds.OrganizationId)
                         .enhance(nameof (RepositoryId), graceIds.RepositoryId)
-                        .enhance("Path", context.Request.Path)
+                        .enhance ("Path", context.Request.Path)
 
                 return! context |> result500ServerError graceError
         }

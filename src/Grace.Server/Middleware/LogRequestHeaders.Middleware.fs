@@ -24,6 +24,7 @@ type LogRequestHeadersMiddleware(next: RequestDelegate) =
         context.Request.Headers["X-MiddlewareTraceIn"] <- $"{middlewareTraceHeader}{nameof (LogRequestHeadersMiddleware)} --> "
 #endif
         let path = context.Request.Path.ToString()
+
         if path <> "/healthz" then
             logToConsole $"In LogRequestHeadersMiddleware.Middleware.fs: Path: {path}."
 

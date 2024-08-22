@@ -56,15 +56,19 @@ module Reference =
                         ReferenceType = createdDto.ReferenceType
                         ReferenceText = createdDto.ReferenceText
                         Links = createdDto.Links
-                        CreatedAt = referenceEvent.Metadata.Timestamp
-                    }
-                | LinkAdded link -> {currentReferenceDto with Links = currentReferenceDto.Links |> Array.append (Array.singleton link) |> Array.distinct }
-                | LinkRemoved link -> {currentReferenceDto with Links = currentReferenceDto.Links |> Array.except (Array.singleton link) }
-                | LogicalDeleted(force, deleteReason) -> {currentReferenceDto with DeletedAt = Some(getCurrentInstant()); DeleteReason = deleteReason}
+                        CreatedAt = referenceEvent.Metadata.Timestamp }
+                | LinkAdded link ->
+                    { currentReferenceDto with
+                        Links =
+                            currentReferenceDto.Links
+                            |> Array.append (Array.singleton link)
+                            |> Array.distinct }
+                | LinkRemoved link -> { currentReferenceDto with Links = currentReferenceDto.Links |> Array.except (Array.singleton link) }
+                | LogicalDeleted(force, deleteReason) -> { currentReferenceDto with DeletedAt = Some(getCurrentInstant ()); DeleteReason = deleteReason }
                 | PhysicalDeleted -> currentReferenceDto // Do nothing because it's about to be deleted anyway.
-                | Undeleted -> {currentReferenceDto with DeletedAt = None; DeleteReason = String.Empty}
+                | Undeleted -> { currentReferenceDto with DeletedAt = None; DeleteReason = String.Empty }
 
-            {newReferenceDto with UpdatedAt = Some referenceEvent.Metadata.Timestamp}
+            { newReferenceDto with UpdatedAt = Some referenceEvent.Metadata.Timestamp }
 
         member val private correlationId: CorrelationId = String.Empty with get, set
 
@@ -86,7 +90,9 @@ module Reference =
                     referenceEvents.AddRange(retrievedEvents)
 
                     // Apply all events to the state.
-                    referenceDto <- retrievedEvents |> Seq.fold (fun referenceDto referenceEvent -> referenceDto |> updateDto referenceEvent) ReferenceDto.Default
+                    referenceDto <-
+                        retrievedEvents
+                        |> Seq.fold (fun referenceDto referenceEvent -> referenceDto |> updateDto referenceEvent) ReferenceDto.Default
 
                     message <- "Retrieved from database"
                 | None -> message <- "Not found in database"
@@ -209,14 +215,14 @@ module Reference =
                     return Error graceError
             }
 
-            member private this.SchedulePhysicalDeletion(deleteReason, delay, correlationId) =
-                let tuple = (referenceDto.RepositoryId, referenceDto.BranchId, referenceDto.ReferenceId, deleteReason, correlationId)
+        member private this.SchedulePhysicalDeletion(deleteReason, delay, correlationId) =
+            let tuple = (referenceDto.RepositoryId, referenceDto.BranchId, referenceDto.ReferenceId, deleteReason, correlationId)
 
-                // There's no good way to do this asynchronously, so we'll just block. Hopefully the Dapr SDK fixes this.
-                this
-                    .RegisterReminderAsync(ReminderType.PhysicalDeletion, toByteArray tuple, delay, TimeSpan.FromMilliseconds(-1))
-                    .Result
-                |> ignore
+            // There's no good way to do this asynchronously, so we'll just block. Hopefully the Dapr SDK fixes this.
+            this
+                .RegisterReminderAsync(ReminderType.PhysicalDeletion, toByteArray tuple, delay, TimeSpan.FromMilliseconds(-1))
+                .Result
+            |> ignore
 
         interface IRemindable with
             override this.ReceiveReminderAsync(reminderName, state, dueTime, period) =
@@ -264,11 +270,12 @@ module Reference =
                     :> Task
                 | _ -> failwith "Unknown reminder type."
 
-        member private this.ApplyEvent (referenceEvent: ReferenceEvent) =
+        member private this.ApplyEvent(referenceEvent: ReferenceEvent) =
             let stateManager = this.StateManager
 
             task {
                 let correlationId = referenceEvent.Metadata.CorrelationId
+
                 try
                     //if referenceEvents.Count = 0 then do! this.OnFirstWrite()
 
@@ -318,12 +325,12 @@ module Reference =
 
                     let graceReturnValue =
                         (GraceReturnValue.Create "Reference command succeeded." correlationId)
-                            .enhance(nameof(RepositoryId), $"{referenceDto.RepositoryId}")
-                            .enhance(nameof(BranchId), $"{referenceDto.BranchId}")
-                            .enhance(nameof(ReferenceId), $"{referenceDto.ReferenceId}")
-                            .enhance(nameof(DirectoryVersionId), $"{referenceDto.DirectoryId}")
-                            .enhance(nameof(ReferenceType), $"{discriminatedUnionCaseName referenceDto.ReferenceType}")
-                            .enhance (nameof(ReferenceEventType), $"{getDiscriminatedUnionFullName referenceEvent.Event}")
+                            .enhance(nameof (RepositoryId), $"{referenceDto.RepositoryId}")
+                            .enhance(nameof (BranchId), $"{referenceDto.BranchId}")
+                            .enhance(nameof (ReferenceId), $"{referenceDto.ReferenceId}")
+                            .enhance(nameof (DirectoryVersionId), $"{referenceDto.DirectoryId}")
+                            .enhance(nameof (ReferenceType), $"{discriminatedUnionCaseName referenceDto.ReferenceType}")
+                            .enhance (nameof (ReferenceEventType), $"{getDiscriminatedUnionFullName referenceEvent.Event}")
 
                     return Ok graceReturnValue
                 with ex ->
@@ -332,12 +339,12 @@ module Reference =
                     let graceError =
                         (GraceError.Create (ReferenceError.getErrorMessage FailedWhileApplyingEvent) correlationId)
                             .enhance("Exception details", exceptionResponse.``exception`` + exceptionResponse.innerException)
-                            .enhance(nameof(RepositoryId), $"{referenceDto.RepositoryId}")
-                            .enhance(nameof(BranchId), $"{referenceDto.BranchId}")
-                            .enhance(nameof(ReferenceId), $"{referenceDto.ReferenceId}")
-                            .enhance(nameof(DirectoryVersionId), $"{referenceDto.DirectoryId}")
-                            .enhance(nameof(ReferenceType), $"{discriminatedUnionCaseName referenceDto.ReferenceType}")
-                            .enhance (nameof(ReferenceEventType), $"{getDiscriminatedUnionFullName referenceEvent.Event}")
+                            .enhance(nameof (RepositoryId), $"{referenceDto.RepositoryId}")
+                            .enhance(nameof (BranchId), $"{referenceDto.BranchId}")
+                            .enhance(nameof (ReferenceId), $"{referenceDto.ReferenceId}")
+                            .enhance(nameof (DirectoryVersionId), $"{referenceDto.DirectoryId}")
+                            .enhance(nameof (ReferenceType), $"{discriminatedUnionCaseName referenceDto.ReferenceType}")
+                            .enhance (nameof (ReferenceEventType), $"{getDiscriminatedUnionFullName referenceEvent.Event}")
 
                     return Error graceError
             }
@@ -354,7 +361,9 @@ module Reference =
         interface IReferenceActor with
             member this.Exists correlationId =
                 this.correlationId <- correlationId
-                not <| referenceDto.ReferenceId.Equals(ReferenceDto.Default.ReferenceId) |> returnTask
+
+                not <| referenceDto.ReferenceId.Equals(ReferenceDto.Default.ReferenceId)
+                |> returnTask
 
             member this.Get correlationId =
                 this.correlationId <- correlationId
@@ -372,17 +381,17 @@ module Reference =
                 let isValid (command: ReferenceCommand) (metadata: EventMetadata) =
                     task {
                         if referenceEvents.Exists(fun ev -> ev.Metadata.CorrelationId = metadata.CorrelationId) then
-                            return Error (GraceError.Create (ReferenceError.getErrorMessage DuplicateCorrelationId) metadata.CorrelationId)
+                            return Error(GraceError.Create (ReferenceError.getErrorMessage DuplicateCorrelationId) metadata.CorrelationId)
                         else
                             match command with
                             | Create dto ->
                                 match referenceDto.UpdatedAt with
-                                | Some _ -> return Error (GraceError.Create (ReferenceError.getErrorMessage ReferenceAlreadyExists) metadata.CorrelationId)
+                                | Some _ -> return Error(GraceError.Create (ReferenceError.getErrorMessage ReferenceAlreadyExists) metadata.CorrelationId)
                                 | None -> return Ok command
                             | _ ->
                                 match referenceDto.UpdatedAt with
                                 | Some _ -> return Ok command
-                                | None -> return Error (GraceError.Create (ReferenceError.getErrorMessage ReferenceIdDoesNotExist) metadata.CorrelationId)
+                                | None -> return Error(GraceError.Create (ReferenceError.getErrorMessage ReferenceIdDoesNotExist) metadata.CorrelationId)
                     }
 
                 let processCommand (command: ReferenceCommand) (metadata: EventMetadata) =
@@ -413,6 +422,7 @@ module Reference =
                 task {
                     currentCommand <- getDiscriminatedUnionCaseName command
                     this.correlationId <- metadata.CorrelationId
+
                     match! isValid command metadata with
                     | Ok command -> return! processCommand command metadata
                     | Error error -> return Error error

@@ -243,7 +243,7 @@ module Constants =
 
     /// The name of the file to let `grace watch` know that `grace rebase` or `grace switch` is underway.
     let UpdateInProgressFileName = "graceUpdateInProgress.txt"
-    
+
     /// The custom alphabet to use when generating a CorrelationId. This alphabet is URL-safe. Consists of "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz._-".
     [<Literal>]
     let CorrelationIdAlphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz._-"
@@ -274,8 +274,8 @@ module Constants =
         let DefaultExpirationTime = TimeSpan.FromMinutes(2.0)
 #endif
 
-        /// A MemoryCacheEntryOptions object that uses Grace's default expiration time.
-        //let DefaultMemoryCacheEntryOptions = MemoryCacheEntryOptions().SetAbsoluteExpiration(DefaultExpirationTime)
+/// A MemoryCacheEntryOptions object that uses Grace's default expiration time.
+//let DefaultMemoryCacheEntryOptions = MemoryCacheEntryOptions().SetAbsoluteExpiration(DefaultExpirationTime)
 
 module Results =
     let Ok = 0

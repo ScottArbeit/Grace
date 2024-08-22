@@ -978,7 +978,8 @@ module Services =
 
                         // If we found a previous version of a subdirectory and removed it from newGraceIndex,
                         //   remove it from the parent's subdirectory list as well.
-                        if foundPrevious then dv.Directories.Remove(previous.DirectoryVersionId) |> ignore
+                        if foundPrevious then
+                            dv.Directories.Remove(previous.DirectoryVersionId) |> ignore
 
                         // Add the new directory version to the parent's subdirectory list.
                         dv.Directories.Add(newDirectoryVersion.DirectoryVersionId) |> ignore
@@ -1017,7 +1018,7 @@ module Services =
     /// This will add new directory versions, and ignore existing directory versions, as they are immutable.
     let uploadDirectoryVersions (localDirectoryVersions: List<LocalDirectoryVersion>) correlationId =
         let directoryVersions = localDirectoryVersions.Select(fun ldv -> ldv.ToDirectoryVersion).ToList()
-        
+
         let parameters = SaveDirectoryVersionsParameters(CorrelationId = correlationId, DirectoryVersions = directoryVersions)
 
         Directory.SaveDirectoryVersions parameters
@@ -1165,7 +1166,8 @@ module Services =
                 not <| (directoryVersion.RelativePath = Constants.RootDirectoryPath)
                 && not <| allSubdirectoriesDistinct.Contains(directoryVersion.DirectoryVersionId)
             then
-                newGraceIndex.TryRemove(directoryVersion.DirectoryVersionId, &dvForDeletions) |> ignore
+                newGraceIndex.TryRemove(directoryVersion.DirectoryVersionId, &dvForDeletions)
+                |> ignore
 
         let rootDirectoryVersion = newGraceIndex.Values.First(fun dv -> dv.RelativePath = Constants.RootDirectoryPath)
 

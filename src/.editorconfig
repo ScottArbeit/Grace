@@ -16,7 +16,6 @@ insert_final_newline = true
 max_line_length = 160
 trim_trailing_whitespace = true
 
-
 [*.hbs]
 insert_final_newline = false
 

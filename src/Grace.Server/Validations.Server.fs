@@ -35,7 +35,7 @@ module Validations =
     let optionToResult<'TError, 'T> (error: 'TError) (option: Task<'T option>) =
         task {
             match! option with
-            | Some value -> return Ok ()
+            | Some value -> return Ok()
             | None -> return Error error
         }
 
@@ -95,6 +95,7 @@ module Validations =
             task {
                 let graceIds = getGraceIds context
                 let ownerGuid = Guid.Parse(graceIds.OwnerId)
+
                 match memoryCache.GetDeletedOwnerIdEntry ownerGuid with
                 | Some value ->
                     match value with
@@ -133,7 +134,8 @@ module Validations =
             task {
                 let mutable organizationGuid = Guid.Empty
 
-                if (not <| String.IsNullOrEmpty(organizationId))
+                if
+                    (not <| String.IsNullOrEmpty(organizationId))
                     && Guid.TryParse(organizationId, &organizationGuid)
                 then
                     match memoryCache.GetOrganizationIdEntry organizationGuid with
@@ -161,7 +163,14 @@ module Validations =
             |> ValidationResult
 
         /// Validates that the given organizationName does not already exist for this owner.
-        let organizationNameIsUniqueWithinOwner<'T> (ownerId: string) (ownerName: string) (organizationName: string) (context: HttpContext) correlationId (error: 'T) =
+        let organizationNameIsUniqueWithinOwner<'T>
+            (ownerId: string)
+            (ownerName: string)
+            (organizationName: string)
+            (context: HttpContext)
+            correlationId
+            (error: 'T)
+            =
             task {
                 if not <| String.IsNullOrEmpty(organizationName) then
                     let graceIds = getGraceIds context
@@ -186,7 +195,10 @@ module Validations =
                 try
                     let mutable organizationGuid = Guid.Empty
 
-                    if not <| String.IsNullOrEmpty(organizationId) && Guid.TryParse(organizationId, &organizationGuid) then
+                    if
+                        not <| String.IsNullOrEmpty(organizationId)
+                        && Guid.TryParse(organizationId, &organizationGuid)
+                    then
                         match memoryCache.GetOrganizationIdEntry organizationGuid with
                         | Some value ->
                             match value with
@@ -217,13 +229,20 @@ module Validations =
             task {
                 let graceIds = getGraceIds context
                 let organizationGuid = Guid.Parse(graceIds.OrganizationId)
+
                 match memoryCache.GetDeletedOrganizationIdEntry organizationGuid with
                 | Some value ->
                     match value with
                     | MemoryCache.DoesNotExistValue -> return Ok()
                     | MemoryCache.ExistsValue -> return Error error
-                    | _ -> return! organizationIsDeleted graceIds.OrganizationId correlationId |> optionToResult error
-                | None -> return! organizationIsDeleted graceIds.OrganizationId correlationId |> optionToResult error
+                    | _ ->
+                        return!
+                            organizationIsDeleted graceIds.OrganizationId correlationId
+                            |> optionToResult error
+                | None ->
+                    return!
+                        organizationIsDeleted graceIds.OrganizationId correlationId
+                        |> optionToResult error
             }
             |> ValidationResult
 
@@ -243,12 +262,13 @@ module Validations =
             task {
                 let mutable repositoryGuid = Guid.Empty
 
-                if (not <| String.IsNullOrEmpty(repositoryId))
+                if
+                    (not <| String.IsNullOrEmpty(repositoryId))
                     && Guid.TryParse(repositoryId, &repositoryGuid)
                 then
                     match memoryCache.GetRepositoryIdEntry repositoryGuid with
                     | Some value ->
-                        match value with 
+                        match value with
                         | MemoryCache.ExistsValue -> return Ok()
                         | MemoryCache.DoesNotExistValue -> return Error error
                         | _ -> return! repositoryExists repositoryId correlationId |> optionToResult error
@@ -279,6 +299,7 @@ module Validations =
                 | Some repositoryId ->
                     if Guid.TryParse(repositoryId, &repositoryGuid) then
                         let exists = memoryCache.Get<string>(repositoryGuid)
+
                         match exists with
                         | MemoryCache.ExistsValue -> return Ok()
                         | MemoryCache.DoesNotExistValue -> return Error error
@@ -289,7 +310,11 @@ module Validations =
 
                             if exists then
                                 use newCacheEntry =
-                                    memoryCache.CreateEntry(repositoryGuid, Value = MemoryCache.ExistsValue, AbsoluteExpirationRelativeToNow = MemoryCache.DefaultExpirationTime)
+                                    memoryCache.CreateEntry(
+                                        repositoryGuid,
+                                        Value = MemoryCache.ExistsValue,
+                                        AbsoluteExpirationRelativeToNow = MemoryCache.DefaultExpirationTime
+                                    )
 
                                 return Ok()
                             else
@@ -305,6 +330,7 @@ module Validations =
             task {
                 let graceIds = getGraceIds context
                 let repositoryGuid = Guid.Parse(graceIds.RepositoryId)
+
                 match memoryCache.GetDeletedRepositoryIdEntry repositoryGuid with
                 | Some value ->
                     match value with
@@ -394,7 +420,11 @@ module Validations =
 
                                 if exists then
                                     use newCacheEntry =
-                                        memoryCache.CreateEntry(branchGuid, Value = MemoryCache.ExistsValue, AbsoluteExpirationRelativeToNow = MemoryCache.DefaultExpirationTime)
+                                        memoryCache.CreateEntry(
+                                            branchGuid,
+                                            Value = MemoryCache.ExistsValue,
+                                            AbsoluteExpirationRelativeToNow = MemoryCache.DefaultExpirationTime
+                                        )
 
                                     return Ok()
                                 else
@@ -482,7 +512,11 @@ module Validations =
                             let allowed = branchDto.AssignEnabled
 
                             use newCacheEntry =
-                                memoryCache.CreateEntry($"{branchId}AssignAllowed", Value = allowed, AbsoluteExpirationRelativeToNow = MemoryCache.DefaultExpirationTime)
+                                memoryCache.CreateEntry(
+                                    $"{branchId}AssignAllowed",
+                                    Value = allowed,
+                                    AbsoluteExpirationRelativeToNow = MemoryCache.DefaultExpirationTime
+                                )
 
                             if allowed then return Ok() else return Error error
                     | None -> return Error error
@@ -530,7 +564,12 @@ module Validations =
                     let! exists = directoryVersionActorProxy.Exists correlationId
 
                     if exists then
-                        use newCacheEntry = memoryCache.CreateEntry(directoryId, Value = MemoryCache.ExistsValue, AbsoluteExpirationRelativeToNow = MemoryCache.DefaultExpirationTime)
+                        use newCacheEntry =
+                            memoryCache.CreateEntry(
+                                directoryId,
+                                Value = MemoryCache.ExistsValue,
+                                AbsoluteExpirationRelativeToNow = MemoryCache.DefaultExpirationTime
+                            )
 
                         return Ok()
                     else

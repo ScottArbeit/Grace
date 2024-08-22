@@ -30,8 +30,7 @@ module Dto =
                   DirectoryId2 = DirectoryVersionId.Empty
                   Directory2CreatedAt = Constants.DefaultTimestamp
                   Differences = List<FileSystemDifference>()
-                  FileDiffs = List<FileDiff>()
-                }
+                  FileDiffs = List<FileDiff>() }
 
             static member GetKnownTypes() = GetKnownTypes<DiffDto>()
 
@@ -64,8 +63,7 @@ module Dto =
                   CreatedAt = Constants.DefaultTimestamp
                   UpdatedAt = None
                   DeletedAt = None
-                  DeleteReason = String.Empty
-                }
+                  DeleteReason = String.Empty }
 
             static member GetKnownTypes() = GetKnownTypes<OrganizationDto>()
 
@@ -96,8 +94,7 @@ module Dto =
                   CreatedAt = Constants.DefaultTimestamp
                   UpdatedAt = None
                   DeletedAt = None
-                  DeleteReason = String.Empty
-                }
+                  DeleteReason = String.Empty }
 
             static member GetKnownTypes() = GetKnownTypes<OwnerDto>()
 
@@ -117,8 +114,7 @@ module Dto =
               CreatedAt: Instant
               UpdatedAt: Instant option
               DeletedAt: Instant option
-              DeleteReason: DeleteReason
-            }
+              DeleteReason: DeleteReason }
 
             static member Default =
                 { Class = nameof (ReferenceDto)
@@ -133,8 +129,7 @@ module Dto =
                   CreatedAt = Constants.DefaultTimestamp
                   UpdatedAt = None
                   DeletedAt = None
-                  DeleteReason = String.Empty
-                }
+                  DeleteReason = String.Empty }
 
             static member GetKnownTypes() = GetKnownTypes<ReferenceDto>()
 
@@ -193,13 +188,13 @@ module Dto =
                   InitializedAt = None
                   UpdatedAt = None
                   DeletedAt = None
-                  DeleteReason = String.Empty
-                }
+                  DeleteReason = String.Empty }
 
             static member GetKnownTypes() = GetKnownTypes<RepositoryDto>()
 
     module Branch =
         open Reference
+
         [<Serializable>]
         [<KnownType("GetKnownTypes")>]
         type BranchDto =
@@ -250,8 +245,6 @@ module Dto =
                   CreatedAt = Constants.DefaultTimestamp
                   UpdatedAt = None
                   DeletedAt = None
-                  DeleteReason = String.Empty
-                }
+                  DeleteReason = String.Empty }
 
             static member GetKnownTypes() = GetKnownTypes<BranchDto>()
-

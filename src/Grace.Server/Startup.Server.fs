@@ -334,12 +334,14 @@ module Application =
 
             // Set up the ActorProxyFactory for the application.
             let actorProxyOptions = ActorProxyOptions() // DaprApiToken = Environment.GetEnvironmentVariable("DAPR_API_TOKEN")) (when we actually implement auth)
+
             actorProxyOptions.HttpEndpoint <-
                 $"{Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.DaprServerUri)}:{Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.DaprHttpPort)}"
+
             actorProxyOptions.JsonSerializerOptions <- Constants.JsonSerializerOptions
             actorProxyOptions.RequestTimeout <- TimeSpan.FromSeconds(60.0)
             services.AddSingleton(actorProxyOptions) |> ignore
-            
+
             let actorProxyFactory = new ActorProxyFactory(actorProxyOptions)
             ApplicationContext.setActorProxyFactory actorProxyFactory
             ApplicationContext.setActorStateStorageProvider ActorStateStorageProvider.AzureCosmosDb
@@ -410,13 +412,14 @@ module Application =
 
                     options.LogDirectory <- Path.Combine(Environment.GetEnvironmentVariable("TEMP"), "Grace.Server.Logs"))
                 .AddSingleton<ActorProxyOptions>(actorProxyOptions)
-                .AddSingleton<IActorProxyFactory>(actorProxyFactory) |> ignore
-                //.AddDaprClient(fun daprClientBuilder ->
-                //    daprClientBuilder.
-                //        .UseJsonSerializationOptions(Constants.JsonSerializerOptions)
-                //        //.UseDaprApiToken(Environment.GetEnvironmentVariable("DAPR_API_TOKEN"))
-                //        .Build() // This builds the DaprClient.
-                //    |> ignore)
+                .AddSingleton<IActorProxyFactory>(actorProxyFactory)
+            |> ignore
+            //.AddDaprClient(fun daprClientBuilder ->
+            //    daprClientBuilder.
+            //        .UseJsonSerializationOptions(Constants.JsonSerializerOptions)
+            //        //.UseDaprApiToken(Environment.GetEnvironmentVariable("DAPR_API_TOKEN"))
+            //        .Build() // This builds the DaprClient.
+            //    |> ignore)
 
             let apiVersioningBuilder =
                 services.AddApiVersioning(fun options ->

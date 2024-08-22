@@ -457,6 +457,7 @@ module Utilities =
     /// Creates a dictionary from the properties of an object.
     let getParametersAsDictionary<'T> (obj: 'T) =
         let mutable properties = Array.Empty<PropertyInfo>()
+
         if not <| propertyLookupByType.TryGetValue(typeof<'T>, &properties) then
             properties <- typeof<'T>.GetProperties(BindingFlags.Instance ||| BindingFlags.Public)
             propertyLookupByType.TryAdd(typeof<'T>, properties) |> ignore
@@ -524,6 +525,7 @@ module Utilities =
     /// Example: foo.txt with a SHA-256 hash of "8e798...980c" -> "foo_8e798...980c.txt".
     let getObjectFileName (relativePath: string) (sha256Hash: string) =
         let file = FileInfo(relativePath)
+
         if file.Extension = String.Empty then
             $"{file.Name}_{sha256Hash}"
         else

@@ -3118,8 +3118,7 @@ module Branch =
                                         =
                                         task {
                                             if differences.Count() > 0 then
-                                                let! (updatedGraceStatus, newDirectoryVersions) =
-                                                    getNewGraceStatusAndDirectoryVersions graceStatus differences
+                                                let! (updatedGraceStatus, newDirectoryVersions) = getNewGraceStatusAndDirectoryVersions graceStatus differences
 
                                                 return Ok(updatedGraceStatus, newDirectoryVersions)
                                             else
@@ -3147,9 +3146,7 @@ module Branch =
 
                                         // Update the GraceStatus file with the new file versions (and therefore new LocalDirectoryVersion's) we just put in place.
                                         // filesToDownload is, conveniently, the list of files we're changing in the rebase.
-                                        match!
-                                            getNewGraceStatusAndDirectoryVersions (parseResult |> hasOutput, graceStatus, branchDto, filesToDownload)
-                                        with
+                                        match! getNewGraceStatusAndDirectoryVersions (parseResult |> hasOutput, graceStatus, branchDto, filesToDownload) with
                                         | Ok(updatedGraceStatus, newDirectoryVersions) ->
                                             // Ensure that previous DirectoryVersions for a given path are deleted from GraceStatus.
                                             newDirectoryVersions
@@ -3219,9 +3216,7 @@ module Branch =
                                             logToAnsiConsole Colors.Error (Markup.Escape($"{error}"))
                                             return -1
                                     else
-                                        AnsiConsole.MarkupLine(
-                                            $"[{Colors.Highlighted}]A potential promotion conflict was detected. Rebase not successful.[/]"
-                                        )
+                                        AnsiConsole.MarkupLine($"[{Colors.Highlighted}]A potential promotion conflict was detected. Rebase not successful.[/]")
 
                                         return -1
                                 else

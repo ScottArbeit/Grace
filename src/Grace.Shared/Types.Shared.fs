@@ -439,17 +439,19 @@ module Types =
         /// Adds a key-value pair to GraceReturnValue's Properties dictionary.
         member this.enhance(key, value) =
             match String.IsNullOrEmpty(key), String.IsNullOrEmpty(value) with
-            | false, false ->
-                this.Properties[key] <- value
-            | false, true ->
-                this.Properties[key] <- String.Empty
+            | false, false -> this.Properties[key] <- value
+            | false, true -> this.Properties[key] <- String.Empty
             | true, _ -> ()
 
             this
 
         override this.ToString() =
             // Breaking out the Properties because Dictionary<> doesn't have a good ToString() method.
-            let output = {| ReturnValue = this.ReturnValue; EventTime = this.EventTime; CorrelationId = this.CorrelationId; Properties = this.Properties.Select(fun kvp -> {| Key = kvp.Key; Value = kvp.Value|}) |}
+            let output =
+                {| ReturnValue = this.ReturnValue
+                   EventTime = this.EventTime
+                   CorrelationId = this.CorrelationId
+                   Properties = this.Properties.Select(fun kvp -> {| Key = kvp.Key; Value = kvp.Value |}) |}
             //logToConsole $"GraceReturnValue: {serialize output}"
             serialize output
 
@@ -472,10 +474,8 @@ module Types =
         /// Adds a key-value pair to GraceError's Properties dictionary.
         member this.enhance(key, value) =
             match String.IsNullOrEmpty(key), String.IsNullOrEmpty(value) with
-            | false, false ->
-                this.Properties[key] <- value
-            | false, true ->
-                this.Properties[key] <- String.Empty
+            | false, false -> this.Properties[key] <- value
+            | false, true -> this.Properties[key] <- String.Empty
             | true, _ -> ()
 
             this
@@ -485,8 +485,7 @@ module Types =
                 this.Properties
                 |> Seq.fold (fun (state: StringBuilder) kvp -> state.AppendLine($"  {kvp.Key}: {kvp.Value}; ")) (StringBuilder())
 
-            if sb.Length >= 2 then
-                sb.Remove(sb.Length - 2, 2) |> ignore
+            if sb.Length >= 2 then sb.Remove(sb.Length - 2, 2) |> ignore
 
             $"Error: {this.Error}{Environment.NewLine}EventTime: {formatInstantExtended this.EventTime}{Environment.NewLine}CorrelationId: {this.CorrelationId}{Environment.NewLine}Properties:{Environment.NewLine}{sb.ToString()}{Environment.NewLine}"
 

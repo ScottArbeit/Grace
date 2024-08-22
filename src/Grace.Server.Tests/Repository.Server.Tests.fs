@@ -22,7 +22,10 @@ open Grace.Shared.Validation
 [<Parallelizable(ParallelScope.All)>]
 type Repository() =
 
-    let log = LoggerFactory.Create(fun builder -> builder.AddConsole().AddDebug() |> ignore).CreateLogger("RepositoryTests")
+    let log =
+        LoggerFactory
+            .Create(fun builder -> builder.AddConsole().AddDebug() |> ignore)
+            .CreateLogger("RepositoryTests")
 
     member val public TestContext = TestContext.CurrentContext with get, set
 
@@ -185,7 +188,7 @@ type Repository() =
             let! response = Client.PostAsync("/repository/setStatus", createJsonContent parameters)
             response.EnsureSuccessStatusCode() |> ignore
             let! returnValue = deserializeContent<GraceReturnValue<string>> response
-            Assert.That(returnValue.Properties[nameof(OwnerId)], Is.EqualTo(ownerId))
+            Assert.That(returnValue.Properties[nameof (OwnerId)], Is.EqualTo(ownerId))
         }
 
     [<Test>]

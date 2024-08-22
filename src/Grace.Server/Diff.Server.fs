@@ -84,6 +84,7 @@ module Diff =
         =
         task {
             let correlationId = getCorrelationId context
+
             try
                 use activity = activitySource.StartActivity("processQuery", ActivityKind.Server)
                 //let! parameters = context |> parse<'T>

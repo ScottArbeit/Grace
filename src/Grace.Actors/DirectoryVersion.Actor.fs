@@ -344,7 +344,8 @@ module DirectoryVersion =
 
                             let subdirectoryVersionsList =
                                 subdirectoryVersions.ToArray()
-                                    |> Array.sortBy(fun directoryVersion -> directoryVersion.RelativePath)
+                                |> Array.sortBy (fun directoryVersion -> directoryVersion.RelativePath)
+
                             logToConsole $"In DirectoryVersionActor.GetDirectoryVersionsRecursive({this.Id}); Storing subdirectoryVersion list."
                             do! Storage.SaveState stateManager directoryVersionCacheStateName subdirectoryVersionsList
 
