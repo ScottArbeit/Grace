@@ -524,7 +524,10 @@ module Utilities =
     /// Example: foo.txt with a SHA-256 hash of "8e798...980c" -> "foo_8e798...980c.txt".
     let getObjectFileName (relativePath: string) (sha256Hash: string) =
         let file = FileInfo(relativePath)
-        $"{file.Name.Replace(file.Extension, String.Empty)}_{sha256Hash}{file.Extension}"
+        if file.Extension = String.Empty then
+            $"{file.Name}_{sha256Hash}"
+        else
+            $"{file.Name.Replace(file.Extension, String.Empty)}_{sha256Hash}{file.Extension}"
 
     /// Gets the name of the machine or node, without the prefix of the container name.
     let getMachineName =

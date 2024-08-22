@@ -168,7 +168,7 @@ module Constants =
     let BlobCacheControl = "public,max-age=86400,no-transform"
 
     /// The expiration time for a Shared Access Signature token, in minutes.
-    let SharedAccessSignatureExpiration = 2.0
+    let SharedAccessSignatureExpiration = 15.0
 
     /// The path that indicates the root directory of the repository.
     let RootDirectoryPath = "."
@@ -230,7 +230,7 @@ module Constants =
     /// Grace's global settings for Parallel.ForEach/ForEachAsync expressions; sets MaxDegreeofParallelism to maximize performance.
     // I'm choosing a higher-than-usual number here because these parallel loops are used in code where most of the time is spent on network
     //   and disk traffic - and therefore Task<'T> - and we can run lots of them simultaneously.
-    let ParallelOptions = ParallelOptions(MaxDegreeOfParallelism = Environment.ProcessorCount * 4)
+    let ParallelOptions = ParallelOptions(MaxDegreeOfParallelism = Environment.ProcessorCount * 2)
 
     /// Default directory size magic value.
     let InitialDirectorySize = int64 -1

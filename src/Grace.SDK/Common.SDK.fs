@@ -41,7 +41,7 @@ module Common =
 #endif
 
     // This construct is equivalent to using IHttpClientFactory in the ASP.NET Dependency Injection container, for code (like this) that isn't using GenericHost.
-    // See https://docs.microsoft.com/en-us/aspnet/core/fundamentals/http-requests?view=aspnetcore-7.0#alternatives-to-ihttpclientfactory for more information.
+    // See https://docs.microsoft.com/en-us/aspnet/core/fundamentals/http-requests?view=aspnetcore-9.0#alternatives-to-ihttpclientfactory for more information.
     let private socketsHttpHandler =
         new SocketsHttpHandler(
             AllowAutoRedirect = true, // We expect to use Traffic Manager or equivalents, so there will be redirects.
@@ -53,7 +53,7 @@ module Common =
             PooledConnectionIdleTimeout = TimeSpan.FromMinutes(2.0) // Default is 2m
         )
 
-    /// Gets an HttpClient instance from a custom HttpClientFactory.
+    /// Gets an HttpClient instance using our custom SocketsHttpHandler, with OpenTelemetry headers.
     let getHttpClient (correlationId: string) =
         let traceIdBytes = stackalloc<byte> 16
         let parentIdBytes = stackalloc<byte> 8
@@ -72,7 +72,7 @@ module Common =
         //httpClient.DefaultVersionPolicy <- HttpVersionPolicy.RequestVersionOrHigher
 #if DEBUG
         //httpClient.Timeout <- TimeSpan.FromSeconds(1800.0) // Keeps client commands open while debugging.
-        httpClient.Timeout <- TimeSpan.FromSeconds(10.0)  // Fast fail for testing network connectivity.
+        httpClient.Timeout <- TimeSpan.FromSeconds(60.0)
 #endif
         httpClient
 
@@ -130,7 +130,6 @@ module Common =
             try
                 use httpClient = getHttpClient parameters.CorrelationId
                 let serverUriWithRoute = Uri($"{Current().ServerUri}/{route}")
-                //logToConsole $"serverUriWithRoute: {serverUriWithRoute}"
                 let startTime = getCurrentInstant ()
                 let! response = httpClient.PostAsync(serverUriWithRoute, createJsonContent parameters)
 

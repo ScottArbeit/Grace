@@ -1095,6 +1095,7 @@ module Services =
                 let mutable totalRecordsDeleted = 0
                 let overallStartTime = getCurrentInstant ()
                 queryRequestOptions.MaxItemCount <- 1000
+                logToConsole $"cosmosContainer.Id: {cosmosContainer.Id}; cosmosContainer.Database.Id: {cosmosContainer.Database.Id}; cosmosContainer.Database.Client.Endpoint: {cosmosContainer.Database.Client.Endpoint}."
                 let iterator = cosmosContainer.GetItemQueryIterator<DocumentIdentifier>(queryDefinition, requestOptions = queryRequestOptions)
 
                 while iterator.HasMoreResults do

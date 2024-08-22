@@ -1,4 +1,4 @@
-﻿namespace Grace.Server.Middleware
+namespace Grace.Server.Middleware
 
 open Grace.Server
 open Grace.Shared
@@ -23,13 +23,17 @@ type LogRequestHeadersMiddleware(next: RequestDelegate) =
 
         context.Request.Headers["X-MiddlewareTraceIn"] <- $"{middlewareTraceHeader}{nameof (LogRequestHeadersMiddleware)} --> "
 #endif
+        let path = context.Request.Path.ToString()
+        if path <> "/healthz" then
+            logToConsole $"In LogRequestHeadersMiddleware.Middleware.fs: Path: {path}."
 
-        let sb = StringBuilder()
+        if log.IsEnabled(LogLevel.Debug) then
+            let sb = StringBuilder()
 
-        context.Request.Headers
-        |> Seq.iter (fun kv -> sb.AppendLine($"{kv.Key} = {kv.Value}") |> ignore)
+            context.Request.Headers
+            |> Seq.iter (fun kv -> sb.AppendLine($"{kv.Key} = {kv.Value}") |> ignore)
 
-        log.LogDebug("Request headers: {headers}", sb.ToString())
+            log.LogDebug("Request headers: {headers}", sb.ToString())
 
         // -----------------------------------------------------------------------------------------------------
         // Pass control to next middleware instance...

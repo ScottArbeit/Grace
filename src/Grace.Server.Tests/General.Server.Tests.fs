@@ -284,8 +284,6 @@ type Setup() =
             sbOutput.Clear() |> ignore
             sbError.Clear() |> ignore
 
-            do! Task.Delay(2000) // Give time for the containers to start.
-
             let applicationInsightsConnectionString = Environment.GetEnvironmentVariable("APPLICATIONINSIGHTS_CONNECTION_STRING")
             let azureStorageKey = Environment.GetEnvironmentVariable("azurestoragekey")
             let azureStorageConnectionString = Environment.GetEnvironmentVariable("azurestorageconnectionstring")
@@ -351,7 +349,9 @@ type Setup() =
 
             // Give time for Dapr to warm up.
             logToTestConsole "Waiting for Dapr to warm up..."
-            do! Task.Delay(8000)
+            //do! Task.Delay(8000)
+            while not <| (sbOutput.ToString().Contains("dapr initialized") && (sbOutput.ToString().Contains("Placement order received: unlock"))) do
+                do! Task.Delay(250)
             logToTestConsole "Warm up complete."
 
             // Create the owner we'll use for this test run.
