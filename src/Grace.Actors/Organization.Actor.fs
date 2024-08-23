@@ -29,6 +29,8 @@ open System.Threading.Tasks
 
 module Organization =
 
+    type PhysicalDeletionReminderState = (DeleteReason * CorrelationId)
+
     let GetActorId (organizationId: OrganizationId) = ActorId($"{organizationId}")
 
     type OrganizationActor(host: ActorHost) =
@@ -278,15 +280,14 @@ module Organization =
             }
 
         member private this.SchedulePhysicalDeletion(deleteReason, correlationId) =
-            this
-                .RegisterReminderAsync(
-                    ReminderType.PhysicalDeletion,
-                    toByteArray (deleteReason, correlationId),
-                    Constants.DefaultPhysicalDeletionReminderTime,
-                    TimeSpan.FromMilliseconds(-1)
-                )
-                .Result
-            |> ignore
+            let (tuple: PhysicalDeletionReminderState) = (deleteReason, correlationId)
+
+            this.RegisterReminderAsync(
+                ReminderType.PhysicalDeletion,
+                toByteArray tuple,
+                Constants.DefaultPhysicalDeletionReminderTime,
+                TimeSpan.FromMilliseconds(-1)
+            )
 
         interface IOrganizationActor with
             member this.Exists correlationId =
@@ -402,7 +403,7 @@ module Organization =
                 | ReminderType.PhysicalDeletion ->
                     task {
                         // Get values from state.
-                        let (deleteReason, correlationId) = fromByteArray<string * string> state
+                        let (deleteReason, correlationId) = fromByteArray<PhysicalDeletionReminderState> state
                         this.correlationId <- correlationId
 
                         log.LogInformation(

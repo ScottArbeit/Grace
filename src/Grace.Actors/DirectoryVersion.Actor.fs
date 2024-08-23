@@ -8,6 +8,7 @@ open Grace.Actors.Constants
 open Grace.Actors.Context
 open Grace.Actors.Events.DirectoryVersion
 open Grace.Actors.Extensions.ActorProxy
+open Grace.Actors.Extensions.MemoryCache
 open Grace.Actors.Interfaces
 open Grace.Actors.Services
 open Grace.Shared
@@ -27,6 +28,8 @@ open System.Threading.Tasks
 open OrganizationName
 
 module DirectoryVersion =
+
+    type PhysicalDeletionReminderState = (DeleteReason * CorrelationId)
 
     let GetActorId (directoryId: DirectoryVersionId) = ActorId($"{directoryId}")
 
@@ -73,6 +76,11 @@ module DirectoryVersion =
             task {
                 let mutable message = String.Empty
 
+                let correlationId =
+                    match memoryCache.GetCorrelationIdEntry this.Id with
+                    | Some correlationId -> correlationId
+                    | None -> String.Empty
+
                 try
                     let! retrievedEvents = Storage.RetrieveState<List<DirectoryVersionEvent>> stateManager eventsStateName
 
@@ -100,10 +108,11 @@ module DirectoryVersion =
                 let duration_ms = getPaddedDuration_ms activateStartTime
 
                 log.LogInformation(
-                    "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId:             ; Activated {ActorType} {ActorId}. {message}.",
+                    "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Activated {ActorType} {ActorId}. {message}.",
                     getCurrentInstantExtended (),
                     getMachineName,
                     duration_ms,
+                    correlationId,
                     actorName,
                     host.Id,
                     message
@@ -167,36 +176,22 @@ module DirectoryVersion =
             logScope.Dispose()
             Task.CompletedTask
 
-        member private this.SetReminderToDeleteCachedState() =
-            //this.RegisterReminderAsync(ReminderType.DeleteCachedState, Array.empty<byte>, TimeSpan.FromDays(1.0), TimeSpan.Zero)
-            Task.CompletedTask
-
-        member private this.OnFirstWrite() = ()
-
-        //try
-        //    let result = this.RegisterReminderAsync("DeleteCachedState", Array.empty<byte>, TimeSpan.FromDays(1.0), TimeSpan.Zero)
-        //    ()
-        //with ex ->
-        //    log.LogError("{CurrentInstant}: Error in {methodName}. Exception: {exception}", getCurrentInstantExtended(), nameof(this.SetReminderToDeleteCachedState), createExceptionResponse ex)
-
         /// Sets a Dapr Actor reminder to perform a physical deletion of this owner.
         member private this.SchedulePhysicalDeletion(deleteReason, correlationId) =
-            this
-                .RegisterReminderAsync(
-                    ReminderType.PhysicalDeletion,
-                    toByteArray (deleteReason, correlationId),
-                    Constants.DefaultPhysicalDeletionReminderTime,
-                    TimeSpan.FromMilliseconds(-1)
-                )
-                .Wait()
+            let (tuple: PhysicalDeletionReminderState) = (deleteReason, correlationId)
+
+            this.RegisterReminderAsync(
+                ReminderType.PhysicalDeletion,
+                toByteArray tuple,
+                Constants.DefaultPhysicalDeletionReminderTime,
+                TimeSpan.FromMilliseconds(-1)
+            )
 
         member private this.ApplyEvent directoryVersionEvent =
             let stateManager = this.StateManager
 
             task {
                 try
-                    if directoryVersionEvents.Count = 0 then this.OnFirstWrite()
-
                     // Add the event to the list of events, and save it to actor state.
                     directoryVersionEvents.Add(directoryVersionEvent)
                     do! DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> stateManager.SetStateAsync(eventsStateName, directoryVersionEvents))
@@ -234,26 +229,6 @@ module DirectoryVersion =
 
                     return Error graceError
             }
-
-        interface IRemindable with
-            member this.ReceiveReminderAsync(reminderName, state, dueTime, period) =
-                let stateManager = this.StateManager
-
-                match reminderName with
-                | ReminderType.DeleteCachedState ->
-                    task {
-                        try // Temporary hack while some existing reminders with an older state are still in the system.
-                            // Get values from state.ds
-                            let (deleteReason, correlationId) = fromByteArray<string * string> state
-                            this.correlationId <- correlationId
-                        with ex ->
-                            ()
-
-                        let! deleteSucceeded = Storage.DeleteState stateManager directoryVersionCacheStateName
-                        ()
-                    }
-                    :> Task
-                | _ -> Task.CompletedTask
 
         interface IDirectoryVersionActor with
             member this.Exists correlationId =
@@ -351,7 +326,7 @@ module DirectoryVersion =
 
                             log.LogDebug("In DirectoryVersionActor.GetDirectoryVersionsRecursive({id}); Storing subdirectoryVersion list.", this.Id)
 
-                            let! _ = this.SetReminderToDeleteCachedState()
+                            let! deletionReminder = this.SchedulePhysicalDeletion("Cache expired", correlationId)
 
                             log.LogDebug("In DirectoryVersionActor.GetDirectoryVersionsRecursive({id}); Delete cached state reminder was set.", this.Id)
 
@@ -360,7 +335,7 @@ module DirectoryVersion =
                         log.LogError(
                             "{CurrentInstant}: Error in {methodName}. Exception: {exception}",
                             getCurrentInstantExtended (),
-                            nameof (this.SetReminderToDeleteCachedState),
+                            "GetRecursiveDirectoryVersions",
                             createExceptionResponse ex
                         )
 
@@ -403,7 +378,7 @@ module DirectoryVersion =
                                     | Create directoryVersion -> return Ok(Created directoryVersion)
                                     | SetRecursiveSize recursiveSize -> return Ok(RecursiveSizeSet recursiveSize)
                                     | DeleteLogical deleteReason ->
-                                        this.SchedulePhysicalDeletion(deleteReason, metadata.CorrelationId)
+                                        let! deletionReminder = this.SchedulePhysicalDeletion(deleteReason, metadata.CorrelationId)
                                         return Ok(LogicalDeleted deleteReason)
                                     | DeletePhysical ->
                                         isDisposed <- true
@@ -442,3 +417,22 @@ module DirectoryVersion =
                     else
                         return directoryVersionDto.RecursiveSize
                 }
+
+        interface IRemindable with
+            member this.ReceiveReminderAsync(reminderName, state, dueTime, period) =
+                let stateManager = this.StateManager
+
+                match reminderName with
+                | ReminderType.DeleteCachedState ->
+                    task {
+                        try
+                            let (deleteReason, correlationId) = fromByteArray<PhysicalDeletionReminderState> state
+                            this.correlationId <- correlationId
+                        with ex ->
+                            ()
+
+                        let! deleteSucceeded = Storage.DeleteState stateManager directoryVersionCacheStateName
+                        ()
+                    }
+                    :> Task
+                | _ -> Task.CompletedTask

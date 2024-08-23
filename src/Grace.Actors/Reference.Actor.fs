@@ -215,7 +215,7 @@ module Reference =
                     return Error graceError
             }
 
-        member private this.SchedulePhysicalDeletion(deleteReason, delay, correlationId) =
+        member public this.SchedulePhysicalDeletion(deleteReason, delay, correlationId) =
             let tuple = (referenceDto.RepositoryId, referenceDto.BranchId, referenceDto.ReferenceId, deleteReason, correlationId)
 
             // There's no good way to do this asynchronously, so we'll just block. Hopefully the Dapr SDK fixes this.
@@ -348,15 +348,6 @@ module Reference =
 
                     return Error graceError
             }
-
-        member private this.SchedulePhysicalDeletion(deleteReason: DeleteReason, delay, correlationId: CorrelationId) =
-            let tuple = (referenceDto.RepositoryId, referenceDto.BranchId, referenceDto.DirectoryId, referenceDto.Sha256Hash, deleteReason, correlationId)
-
-            // There's no good way to do this asynchronously, so we'll just block. Hopefully the Dapr SDK fixes this.
-            this
-                .RegisterReminderAsync(ReminderType.PhysicalDeletion, toByteArray tuple, delay, TimeSpan.FromMilliseconds(-1))
-                .Result
-            |> ignore
 
         interface IReferenceActor with
             member this.Exists correlationId =

@@ -2,6 +2,7 @@ namespace Grace.Actors
 
 open Dapr.Actors
 open Dapr.Actors.Runtime
+open FSharp.Control
 open FSharpPlus
 open Grace.Actors.Constants
 open Grace.Actors.Interfaces
@@ -23,17 +24,18 @@ open Grace.Shared.Validation.Errors.Repository
 open Microsoft.Extensions.Logging
 open NodaTime
 open System
+open System.Collections.Concurrent
 open System.Collections.Generic
 open System.Linq
+open System.Text
 open System.Text.Json
 open System.Threading.Tasks
 open System.Runtime.Serialization
 open Grace.Shared.Services
-open System.Text
-open FSharp.Control
-open System.Collections.Concurrent
 
 module Repository =
+
+    type PhysicalDeletionReminderState = (DeleteReason * CorrelationId)
 
     type RepositoryActor(host: ActorHost) =
         inherit Actor(host)
@@ -408,15 +410,14 @@ module Repository =
 
         /// Schedule an actor reminder to delete the repository from the database.
         member private this.SchedulePhysicalDeletion(deleteReason, correlationId) =
-            this
-                .RegisterReminderAsync(
-                    ReminderType.PhysicalDeletion,
-                    toByteArray (deleteReason, correlationId),
-                    Constants.DefaultPhysicalDeletionReminderTime,
-                    TimeSpan.FromMilliseconds(-1)
-                )
-                .Result
-            |> ignore
+            let (tuple: PhysicalDeletionReminderState) = (deleteReason, correlationId)
+
+            this.RegisterReminderAsync(
+                ReminderType.PhysicalDeletion,
+                toByteArray tuple,
+                Constants.DefaultPhysicalDeletionReminderTime,
+                TimeSpan.FromMilliseconds(-1)
+            )
 
         interface IExportable<RepositoryEvent> with
             member this.Export() =
@@ -598,7 +599,7 @@ module Repository =
                                         // Get the list of branches that aren't already deleted.
                                         let! branches = getBranches repositoryDto.RepositoryId Int32.MaxValue false metadata.CorrelationId
 
-                                        this.SchedulePhysicalDeletion(deleteReason, metadata.CorrelationId)
+                                        let! deletionReminder = this.SchedulePhysicalDeletion(deleteReason, metadata.CorrelationId)
 
                                         // If any branches are not already deleted, and we're not forcing the deletion, then throw an exception.
                                         if
@@ -611,7 +612,9 @@ module Repository =
                                         else
                                             // We have --force specified, so delete the branches that aren't already deleted.
                                             match! this.LogicalDeleteBranches(branches, metadata, deleteReason) with
-                                            | Ok _ -> this.SchedulePhysicalDeletion(deleteReason, metadata.CorrelationId)
+                                            | Ok _ ->
+                                                let! deletionReminder = this.SchedulePhysicalDeletion(deleteReason, metadata.CorrelationId)
+                                                ()
                                             | Error error -> raise (ApplicationException($"{error}"))
 
                                             return LogicalDeleted(force, deleteReason)
@@ -649,7 +652,7 @@ module Repository =
                 | ReminderType.PhysicalDeletion ->
                     task {
                         // Get values from state.
-                        let (deleteReason, correlationId) = fromByteArray<string * string> state
+                        let (deleteReason, correlationId) = fromByteArray<PhysicalDeletionReminderState> state
                         this.correlationId <- correlationId
 
                         // Physically delete the actor state.

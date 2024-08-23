@@ -30,6 +30,8 @@ open Constants
 
 module Owner =
 
+    type PhysicalDeletionReminderState = (DeleteReason * CorrelationId)
+
     let GetActorId (ownerId: OwnerId) = ActorId($"{ownerId}")
 
     type OwnerActor(host: ActorHost) =
@@ -282,15 +284,14 @@ module Owner =
 
         /// Sets a Dapr Actor reminder to perform a physical deletion of this owner.
         member private this.SchedulePhysicalDeletion(deleteReason, correlationId) =
-            this
-                .RegisterReminderAsync(
-                    ReminderType.PhysicalDeletion,
-                    toByteArray (deleteReason, correlationId),
-                    Constants.DefaultPhysicalDeletionReminderTime,
-                    TimeSpan.FromMilliseconds(-1)
-                )
-                .Result
-            |> ignore
+            let (tuple: PhysicalDeletionReminderState) = (deleteReason, correlationId)
+
+            this.RegisterReminderAsync(
+                ReminderType.PhysicalDeletion,
+                toByteArray tuple,
+                Constants.DefaultPhysicalDeletionReminderTime,
+                TimeSpan.FromMilliseconds(-1)
+            )
 
         interface IOwnerActor with
             member this.Exists correlationId =
@@ -379,7 +380,7 @@ module Owner =
                                             // Delete the organizations.
                                             match! this.LogicalDeleteOrganizations(organizations, metadata, deleteReason) with
                                             | Ok _ ->
-                                                this.SchedulePhysicalDeletion(deleteReason, metadata.CorrelationId)
+                                                let! deletionReminder = this.SchedulePhysicalDeletion(deleteReason, metadata.CorrelationId)
                                                 return Ok(LogicalDeleted(force, deleteReason))
                                             | Error error -> return Error error
                                     | OwnerCommand.DeletePhysical ->
@@ -418,7 +419,7 @@ module Owner =
                 | ReminderType.PhysicalDeletion ->
                     task {
                         // Get values from state.
-                        let (deleteReason, correlationId) = fromByteArray<string * string> state
+                        let (deleteReason, correlationId) = fromByteArray<PhysicalDeletionReminderState> state
                         this.correlationId <- correlationId
 
                         // Delete saved state for this actor.

@@ -56,7 +56,6 @@ module MemoryCache =
         /// Check if we have an entry in MemoryCache for an ActorId, and return the CorrelationId if we have it.
         member this.GetCorrelationIdEntry(actorId: ActorId) = this.GetFromCache<string> $"{correlationIdPrefix}:{actorId}"
 
-
         /// Create a new entry in MemoryCache to confirm that an OwnerId exists.
         member this.CreateOwnerIdEntry (ownerId: OwnerId) (value: string) = this.CreateWithDefaultExpirationTime $"{ownerIdPrefix}:{ownerId}" value
 

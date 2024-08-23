@@ -34,6 +34,8 @@ module Branch =
     // Branch should support logical deletes with physical deletes set using a Dapr Timer based on a repository-level setting.
     // Branch Deletion should enumerate and delete each reference in the branch.
 
+    type PhysicalDeletionReminderState = (RepositoryId * BranchId * BranchName * ParentBranchId * DeleteReason * CorrelationId)
+
     type BranchActor(host: ActorHost) =
         inherit Actor(host)
 
@@ -344,14 +346,12 @@ module Branch =
                     return Error graceError
             }
 
+        /// Schedules an actor reminder to delete the physical state for this branch.
         member private this.SchedulePhysicalDeletion(deleteReason, delay, correlationId) =
-            let tuple = (branchDto.RepositoryId, branchDto.BranchId, branchDto.BranchName, branchDto.ParentBranchId, deleteReason, correlationId)
+            let (tuple: PhysicalDeletionReminderState) =
+                (branchDto.RepositoryId, branchDto.BranchId, branchDto.BranchName, branchDto.ParentBranchId, deleteReason, correlationId)
 
-            // There's no good way to do this asynchronously, so we'll just block. Hopefully the Dapr SDK fixes this.
-            this
-                .RegisterReminderAsync(ReminderType.PhysicalDeletion, toByteArray tuple, delay, TimeSpan.FromMilliseconds(-1))
-                .Result
-            |> ignore
+            this.RegisterReminderAsync(ReminderType.PhysicalDeletion, toByteArray tuple, delay, TimeSpan.FromMilliseconds(-1))
 
         interface IBranchActor with
 
@@ -523,7 +523,14 @@ module Branch =
                                     | DeleteLogical(force, deleteReason) ->
                                         let repositoryActorProxy = Repository.CreateActorProxy branchDto.RepositoryId metadata.CorrelationId
                                         let! repositoryDto = repositoryActorProxy.Get(metadata.CorrelationId)
-                                        this.SchedulePhysicalDeletion(deleteReason, TimeSpan.FromDays(repositoryDto.LogicalDeleteDays), metadata.CorrelationId)
+
+                                        let! actorReminder =
+                                            this.SchedulePhysicalDeletion(
+                                                deleteReason,
+                                                TimeSpan.FromDays(repositoryDto.LogicalDeleteDays),
+                                                metadata.CorrelationId
+                                            )
+
                                         return Ok(LogicalDeleted(force, deleteReason))
                                     | DeletePhysical ->
                                         isDisposed <- true
@@ -582,7 +589,7 @@ module Branch =
                     task {
                         // Get values from state.
                         let (repositoryId, branchId, branchName, parentBranchId, deleteReason, correlationId) =
-                            fromByteArray<string * string * string * string * string * string> state
+                            fromByteArray<PhysicalDeletionReminderState> state
 
                         this.correlationId <- correlationId
 
