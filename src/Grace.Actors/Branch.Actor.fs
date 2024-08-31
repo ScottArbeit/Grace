@@ -132,6 +132,45 @@ module Branch =
                 return { newBranchDto with UpdatedAt = Some branchEvent.Metadata.Timestamp }
             }
 
+        /// Updates the branchDto with the latest reference of each type from the branch.
+        let updateLatestReferences (branchDto: BranchDto) correlationId =
+            task {
+                let mutable newBranchDto = branchDto
+
+                // Get the latest references and update the dto.
+                let referenceTypes = [| Save; Checkpoint; Commit; Promotion; Rebase |]
+
+                let! latestReferences = getLatestReferenceByReferenceTypes referenceTypes branchDto.BranchId
+
+                for kvp in latestReferences do
+                    let referenceDto = kvp.Value
+
+                    match kvp.Key with
+                    | Save -> newBranchDto <- { newBranchDto with LatestSave = referenceDto }
+                    | Checkpoint -> newBranchDto <- { newBranchDto with LatestCheckpoint = referenceDto }
+                    | Commit -> newBranchDto <- { newBranchDto with LatestCommit = referenceDto }
+                    | Promotion -> newBranchDto <- { newBranchDto with LatestPromotion = referenceDto; BasedOn = referenceDto }
+                    | Rebase ->
+                        let basedOnLink =
+                            kvp.Value.Links
+                            |> Array.find (fun link ->
+                                match link with
+                                | ReferenceLinkType.BasedOn _ -> true)
+
+                        let basedOnReferenceId =
+                            match basedOnLink with
+                            | ReferenceLinkType.BasedOn referenceId -> referenceId
+
+                        let basedOnReferenceActorProxy = Reference.CreateActorProxy basedOnReferenceId correlationId
+                        let! basedOnReferenceDto = basedOnReferenceActorProxy.Get correlationId
+
+                        newBranchDto <- { newBranchDto with BasedOn = basedOnReferenceDto }
+                    | External -> ()
+                    | Tag -> ()
+
+                return { newBranchDto with ShouldRecomputeLatestReferences = false }
+            }
+
         member val private correlationId: CorrelationId = String.Empty with get, set
 
         override this.OnActivateAsync() =
@@ -158,37 +197,8 @@ module Branch =
                             let! updatedBranchDto = branchDto |> updateDto branchEvent correlationId
                             branchDto <- updatedBranchDto
 
-                        // Get the latest references and update the dto.
-                        let referenceTypes = [| Save; Checkpoint; Commit; Promotion; Rebase |]
-                        //logToConsole $"In Branch.Actor.OnActivateAsync: About to call getLatestReferenceByReferenceTypes()."
-                        let! latestReferences = getLatestReferenceByReferenceTypes referenceTypes branchDto.BranchId
-
-                        for kvp in latestReferences do
-                            let referenceDto = kvp.Value
-
-                            match kvp.Key with
-                            | Save -> branchDto <- { branchDto with LatestSave = referenceDto }
-                            | Checkpoint -> branchDto <- { branchDto with LatestCheckpoint = referenceDto }
-                            | Commit -> branchDto <- { branchDto with LatestCommit = referenceDto }
-                            | Promotion -> branchDto <- { branchDto with LatestPromotion = referenceDto; BasedOn = referenceDto }
-                            | Rebase ->
-                                let basedOnLink =
-                                    kvp.Value.Links
-                                    |> Array.find (fun link ->
-                                        match link with
-                                        | ReferenceLinkType.BasedOn _ -> true)
-
-                                let basedOnReferenceId =
-                                    match basedOnLink with
-                                    | ReferenceLinkType.BasedOn referenceId -> referenceId
-
-                                let basedOnReferenceActorProxy = Reference.CreateActorProxy basedOnReferenceId correlationId
-                                let! basedOnReferenceDto = basedOnReferenceActorProxy.Get correlationId
-
-                                branchDto <- { branchDto with BasedOn = basedOnReferenceDto }
-                            | External -> ()
-                            | Tag -> ()
-
+                        let! branchDtoWithLatestReferences = updateLatestReferences branchDto correlationId
+                        branchDto <- branchDtoWithLatestReferences
                         message <- "Retrieved from database"
                     | None -> message <- "Not found in database"
 
@@ -555,8 +565,15 @@ module Branch =
                 }
 
             member this.Get correlationId =
-                this.correlationId <- correlationId
-                branchDto |> returnTask
+                task {
+                    this.correlationId <- correlationId
+
+                    if branchDto.ShouldRecomputeLatestReferences then
+                        let! branchDtoWithLatestReferences = updateLatestReferences branchDto correlationId
+                        branchDto <- branchDtoWithLatestReferences
+
+                    return branchDto
+                }
 
             member this.GetParentBranch correlationId =
                 task {
@@ -573,6 +590,11 @@ module Branch =
             member this.GetLatestPromotion correlationId =
                 this.correlationId <- correlationId
                 branchDto.LatestPromotion |> returnTask
+
+            member this.MarkForRecompute(correlationId: CorrelationId) : Task =
+                this.correlationId <- correlationId
+                branchDto <- { branchDto with ShouldRecomputeLatestReferences = true }
+                Task.CompletedTask
 
         interface IRemindable with
             override this.ReceiveReminderAsync(reminderName, state, dueTime, period) =

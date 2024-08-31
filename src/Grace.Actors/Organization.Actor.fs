@@ -364,7 +364,7 @@ module Organization =
                                             // Delete the repositories.
                                             match! this.LogicalDeleteRepositories(repositories, metadata, deleteReason) with
                                             | Ok _ ->
-                                                this.SchedulePhysicalDeletion(deleteReason, metadata.CorrelationId)
+                                                let! deletionReminder = this.SchedulePhysicalDeletion(deleteReason, metadata.CorrelationId)
                                                 return Ok(LogicalDeleted(force, deleteReason))
                                             | Error error -> return Error error
                                     | OrganizationCommand.DeletePhysical ->

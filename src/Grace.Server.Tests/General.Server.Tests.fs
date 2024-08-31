@@ -37,6 +37,7 @@ module Services =
     let daprGrpcPort = "50051"
     let daprPlacementPort = "6055"
     let daprSchedulerPort = "6065"
+    let daprSchedulerMetricsPort = "9070"
     let zipkinPort = "9412"
 
     let numberOfRepositories = 3
@@ -189,6 +190,8 @@ type Setup() =
                    "always"
                    "-p"
                    $"{daprSchedulerPort}:50006"
+                   "-p"
+                   $"{daprSchedulerMetricsPort}:9090"
                    "daprio/dapr:1.14.1"
                    "./scheduler"
                    "--etcd-data-dir"

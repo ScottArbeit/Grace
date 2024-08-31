@@ -17,7 +17,7 @@
     "grace diff checkpoint": {
       "commandName": "Project",
       "commandLineArgs": "diff checkpoint",
-      "workingDirectory": "D:\\Source\\PlayWithFlexbox"
+      "workingDirectory": "D:\\Source\\GraceDemo\\Scott"
     },
     "grace merge - PlayWithFlexbox": {
       "commandName": "Project",

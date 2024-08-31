@@ -11,6 +11,7 @@ open Grace.Actors
 open Grace.Actors.Constants
 open Grace.Actors.Context
 open Grace.Actors.Extensions.ActorProxy
+open Grace.Actors.Extensions.MemoryCache
 open Grace.Actors.Interfaces
 open Grace.Actors.Services
 open Grace.Shared
@@ -135,7 +136,7 @@ module Diff =
                 | AWSS3 -> return new MemoryStream() :> Stream
                 | AzureBlobStorage ->
                     let blobClient = BlockBlobClient(Uri(url))
-                    //logToConsole $"In DiffActor.getFileStream(): blobClient.Uri: {blobClient.Uri}."
+                    logToConsole $"In DiffActor.getFileStream(): blobClient.Uri: {blobClient.Uri}."
                     let fileStream = blobClient.OpenRead(position = 0, bufferSize = (64 * 1024))
                     let uncompressedStream = if fileVersion.IsBinary then fileStream else fileStream
                     //let gzStream = new GZipStream(fileStream, CompressionMode.Decompress, leaveOpen = true)
@@ -159,23 +160,30 @@ module Diff =
                 let mutable message = String.Empty
                 let! retrievedDto = Storage.RetrieveState<DiffDto> stateManager dtoStateName
 
+                let correlationId =
+                    match memoryCache.GetCorrelationIdEntry this.Id with
+                    | Some correlationId -> correlationId
+                    | None -> String.Empty
+
                 match retrievedDto with
                 | Some retrievedDto ->
                     diffDto <- retrievedDto
-                    message <- "Retrieved from database."
+                    message <- "Retrieved from database"
                 | None ->
                     diffDto <- DiffDto.Default
-                    message <- "Not found in database."
+                    message <- "Not found in database"
 
                 let duration_ms = getCurrentInstant().Minus(activateStartTime).TotalMilliseconds.ToString("F3")
 
                 log.LogInformation(
-                    "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId:             ; Activated {ActorType} {ActorId}. BranchName: {BranchName}; {message}.",
+                    "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Activated {ActorType} {ActorId}. {message}.",
                     getCurrentInstantExtended (),
+                    getMachineName,
+                    duration_ms,
+                    correlationId,
                     actorName,
                     host.Id,
-                    message,
-                    duration_ms
+                    message
                 )
             }
             :> Task
@@ -193,13 +201,15 @@ module Diff =
             let duration_ms = (getCurrentInstant().Minus(actorStartTime).TotalMilliseconds).ToString("F3")
 
             log.LogInformation(
-                "{CurrentInstant}: CorrelationId: {correlationId}; Finished {ActorName}.{MethodName}; Id: {Id}; Duration: {duration_ms}ms.",
+                "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {ActorName}.{MethodName}; DirectoryId1: {DirectoryId1}; DirectoryId2: {DirectoryId2}.",
                 getCurrentInstantExtended (),
+                getMachineName,
+                duration_ms,
                 this.correlationId,
                 actorName,
                 context.MethodName,
-                this.Id,
-                duration_ms
+                diffDto.DirectoryId1,
+                diffDto.DirectoryId2
             )
 
             logScope.Dispose()
@@ -372,12 +382,12 @@ module Diff =
                     this.correlationId <- correlationId
 
                     if diffDto.DirectoryId1.Equals(DiffDto.Default.DirectoryId1) then
-                        //logToConsole $"In Actor.GetDiff(), not yet populated."
+                        logToConsole $"In Actor.GetDiff(), not yet populated."
                         let! populated = (this :> IDiffActor).Compute correlationId
-                        //logToConsole $"In Actor.GetDiff(), now populated."
+                        logToConsole $"In Actor.GetDiff(), now populated."
                         return diffDto
                     else
-                        //logToConsole $"In Actor.GetDiff(), already populated."
+                        logToConsole $"In Actor.GetDiff(), already populated."
                         return diffDto
                 }
 

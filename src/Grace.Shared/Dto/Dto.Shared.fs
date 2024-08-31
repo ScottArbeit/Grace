@@ -217,6 +217,7 @@ module Dto =
               LatestCommit: ReferenceDto
               LatestCheckpoint: ReferenceDto
               LatestSave: ReferenceDto
+              ShouldRecomputeLatestReferences: bool
               CreatedAt: Instant
               UpdatedAt: Instant option
               DeletedAt: Instant option
@@ -242,6 +243,7 @@ module Dto =
                   LatestCommit = ReferenceDto.Default
                   LatestCheckpoint = ReferenceDto.Default
                   LatestSave = ReferenceDto.Default
+                  ShouldRecomputeLatestReferences = false
                   CreatedAt = Constants.DefaultTimestamp
                   UpdatedAt = None
                   DeletedAt = None

@@ -160,7 +160,9 @@ module Diff =
 
                     let query (context: HttpContext) _ (actorProxy: IDiffActor) =
                         task {
+                            logToConsole $"About to call DiffActor.GetDiff()."
                             let! diff = actorProxy.GetDiff(getCorrelationId context)
+                            logToConsole $"After calling DiffActor.GetDiff()."
                             return diff
                         }
 

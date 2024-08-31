@@ -30,39 +30,33 @@ data:
 ---
 
 apiVersion: v1
-kind: Service
+kind: PersistentVolume
 metadata:
-  name: grace-server
-  labels:
-    app: grace-server
+  name: promethesus-config-pv
 spec:
-  type: LoadBalancer
-  #externalIPs:
-  #- 192.168.1.209
-  ports:
-  - name: http
-    port: 5000
-    targetPort: http-grace
-  - name: https
-    port: 5001
-    targetPort: https-grace
-  - name: zipkin
-    port: 9412
-    targetPort: 9412
-  - name: prometheus
-    port: 9090
-    targetPort: 9090
-  - name: grafana
-    port: 3000
-    targetPort: 3000
-  - name: http-dapr
-    port: 3500
-    targetPort: 3500
-  - name: grpc-dapr
-    port: 50001
-    targetPort: 50001
-  selector:
-    app: grace-server
+  capacity:
+    storage: 1Gi
+  accessModes:
+    - ReadOnlyMany
+  hostPath:
+    path: /mnt/c/Users/scott/.dapr/configuration/prometheus.yml
+    type: FileOrCreate
+  storageClassName: prometheus-config
+
+---
+
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: promethesus-config-pvc
+spec:
+  accessModes:
+    - ReadOnlyMany
+  resources:
+    requests:
+      storage: 1Gi
+  #volumeName: promethesus-config-pv
+  storageClassName: prometheus-config
 
 ---
 
@@ -88,12 +82,14 @@ spec:
         dapr.io/enabled: "true"
         dapr.io/app-id: "grace-server"
         dapr.io/app-port: "5000"
+        dapr.io/config: "featureconfig"
         dapr.io/enable-metrics: "true"
         #dapr.io/env: "GOMEMLIMIT=700MiB"
         dapr.io/log-level: "debug"
         dapr.io/metrics-exporter-type: "prometheus"
         dapr.io/metrics-port: "9090"  # Ensure this matches the port exposed by the Prometheus exporter in the OpenTelemetry Collector configuration
         #dapr.io/placement-host-address: "127.0.0.1:50005"
+        dapr.io/scheduler-host-address: "dapr-scheduler-server.dapr-system.svc.cluster.local:50006"
         dapr.io/sidecar-cpu-limit: "1.0"
         dapr.io/sidecar-memory-limit: "768Mi"
         dapr.io/sidecar-cpu-request: "0.25"
@@ -113,6 +109,10 @@ spec:
       - name: prometheus-config
         configMap:
           name: prometheus-config
+      - name: dapr-scheduler-volume
+        hostPath:
+          path: /mnt/c/Users/scott/.dapr/scheduler
+
       containers:
       - name: grace-server
         image: scottarbeit/grace-server:latest 
@@ -171,6 +171,22 @@ spec:
             secretKeyRef:
               name: cosmoscontainername
               key: cosmoscontainername
+
+      # - name: dapr-scheduler
+      #   image: "daprio/dapr:1.14.1"
+      #   command: [ "/scheduler", "--log-level", "debug" ]
+      #   ports:
+      #   - containerPort: 50006
+      #     protocol: TCP
+      #     name: dapr-scheduler
+      #   - containerPort: 9070
+      #     protocol: TCP
+      #     name: dapr-sch-metric
+      #   volumeMounts:
+      #   - name: dapr-scheduler-volume
+      #     mountPath: /mnt/dapr/scheduler
+      #     readOnly: false
+
       - name: opentelemetry-collector
         image: otel/opentelemetry-collector:latest
         env:
@@ -197,6 +213,7 @@ spec:
           requests:
             cpu: "0.25"
             memory: "256Mi"
+
       - name: zipkin
         image: openzipkin/zipkin:latest
         ports:
@@ -213,23 +230,27 @@ spec:
           requests:
             cpu: "0.25"
             memory: "256Mi"
-      # - name: prometheus
-      #   image: prom/prometheus:latest
-      #   ports:
-      #   - containerPort: 9090
-      #     name: prometheus
-      #     protocol: TCP
-      #   volumeMounts:
-      #   - name: prometheus-config
-      #     mountPath: /etc/prometheus
-      #     readOnly: true
-      #   resources:
-      #     limits:
-      #       cpu: "2.0"
-      #       memory: "1Gi"
-      #     requests:
-      #       cpu: "0.25"
-      #       memory: "400Mi"
+
+      - name: prometheus
+        image: prom/prometheus:latest
+        args:
+          ["--web.listen-address=:9091"]
+        ports:
+        - containerPort: 9091
+          name: prometheus
+          protocol: TCP
+        volumeMounts:
+        - name: prometheus-config
+          mountPath: /prometheus/prometheus.yml
+          subPath: prometheus.yml
+          readOnly: true
+        resources:
+          limits:
+            cpu: "2.0"
+            memory: "1Gi"
+          requests:
+            cpu: "0.25"
+            memory: "400Mi"
       # - name: grafana
       #   image: grafana/grafana:latest
       #   ports:
@@ -243,3 +264,46 @@ spec:
       #     requests:
       #       cpu: "0.25"
       #       memory: "400Mi"
+
+---
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: grace-server
+  labels:
+    app: grace-server
+spec:
+  type: LoadBalancer
+  #externalIPs:
+  #- 192.168.1.209
+  ports:
+  - name: http
+    port: 5000
+    targetPort: http-grace
+  - name: https
+    port: 5001
+    targetPort: https-grace
+  - name: zipkin
+    port: 9412
+    targetPort: 9412
+  - name: prometheus
+    port: 9091
+    targetPort: 9090
+  - name: grafana
+    port: 3000
+    targetPort: 3000
+  - name: http-dapr
+    port: 3500
+    targetPort: 3500
+  - name: grpc-dapr
+    port: 50001
+    targetPort: 50001
+  # - name: dapr-scheduler
+  #   port: 6070
+  #   targetPort: 50006
+  # - name: dapr-sch-metric
+  #   port: 9070
+  #   targetPort: 9090
+  selector:
+    app: grace-server

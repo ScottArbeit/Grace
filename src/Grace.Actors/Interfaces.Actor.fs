@@ -76,6 +76,9 @@ module Interfaces =
         /// Returns true if this branch has been deleted.
         abstract member IsDeleted: correlationId: CorrelationId -> Task<bool>
 
+        /// Marks the branch as needing to recompute its latest references.
+        abstract member MarkForRecompute: correlationId: CorrelationId -> Task
+
     /// Defines the operations for the BranchName actor.
     [<Interface>]
     type IBranchNameActor =

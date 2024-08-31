@@ -27,6 +27,8 @@ open Commands.Reference
 
 module Reference =
 
+    type PhysicalDeletionReminderState = (RepositoryId * BranchId * DirectoryVersionId * Sha256Hash * DeleteReason * CorrelationId)
+
     type ReferenceActor(host: ActorHost) =
         inherit Actor(host)
 
@@ -216,59 +218,10 @@ module Reference =
             }
 
         member public this.SchedulePhysicalDeletion(deleteReason, delay, correlationId) =
-            let tuple = (referenceDto.RepositoryId, referenceDto.BranchId, referenceDto.ReferenceId, deleteReason, correlationId)
+            let (tuple: PhysicalDeletionReminderState) =
+                (referenceDto.RepositoryId, referenceDto.BranchId, referenceDto.DirectoryId, referenceDto.Sha256Hash, deleteReason, correlationId)
 
-            // There's no good way to do this asynchronously, so we'll just block. Hopefully the Dapr SDK fixes this.
-            this
-                .RegisterReminderAsync(ReminderType.PhysicalDeletion, toByteArray tuple, delay, TimeSpan.FromMilliseconds(-1))
-                .Result
-            |> ignore
-
-        interface IRemindable with
-            override this.ReceiveReminderAsync(reminderName, state, dueTime, period) =
-                let stateManager = this.StateManager
-
-                match reminderName with
-                | ReminderType.Maintenance ->
-                    task {
-                        // Do some maintenance
-                        ()
-                    }
-                    :> Task
-                | ReminderType.PhysicalDeletion ->
-                    task {
-                        // Get values from state.
-                        let (repositoryId, branchId, directoryId, sha256Hash, deleteReason, correlationId) =
-                            fromByteArray<RepositoryId * BranchId * DirectoryVersionId * Sha256Hash * DeleteReason * CorrelationId> state
-
-                        this.correlationId <- correlationId
-
-                        // Delete the references for this branch.
-
-
-                        // Delete saved state for this actor.
-                        let! deletedEventsState = Storage.DeleteState stateManager eventsStateName
-
-                        log.LogInformation(
-                            "{currentInstant}: CorrelationId: {correlationId}; Deleted physical state for reference; RepositoryId: {RepositoryId}; BranchId: {BranchId}; ReferenceId: {ReferenceId}; DirectoryId: {DirectoryId}; deleteReason: {deleteReason}.",
-                            getCurrentInstantExtended (),
-                            correlationId,
-                            repositoryId,
-                            branchId,
-                            this.Id,
-                            directoryId,
-                            deleteReason
-                        )
-
-                        // Set all values to default.
-                        referenceDto <- ReferenceDto.Default
-                        referenceEvents.Clear()
-
-                        // Mark the actor as disposed, in case someone tries to use it before Dapr GC's it.
-                        isDisposed <- true
-                    }
-                    :> Task
-                | _ -> failwith "Unknown reminder type."
+            this.RegisterReminderAsync(ReminderType.PhysicalDeletion, toByteArray tuple, delay, TimeSpan.FromMilliseconds(-1))
 
         member private this.ApplyEvent(referenceEvent: ReferenceEvent) =
             let stateManager = this.StateManager
@@ -301,11 +254,14 @@ module Reference =
 
                                     let! repositoryDto = repositoryActorProxy.Get correlationId
 
-                                    this.SchedulePhysicalDeletion(
-                                        $"Deletion for saves of {repositoryDto.SaveDays} days.",
-                                        TimeSpan.FromDays(repositoryDto.SaveDays),
-                                        correlationId
-                                    )
+                                    let! deletionReminder =
+                                        this.SchedulePhysicalDeletion(
+                                            $"Deletion for saves of {repositoryDto.SaveDays} days.",
+                                            TimeSpan.FromDays(repositoryDto.SaveDays),
+                                            correlationId
+                                        )
+
+                                    ()
                                 }
                             | ReferenceType.Checkpoint ->
                                 task {
@@ -313,11 +269,14 @@ module Reference =
 
                                     let! repositoryDto = repositoryActorProxy.Get correlationId
 
-                                    this.SchedulePhysicalDeletion(
-                                        $"Deletion for checkpoints of {repositoryDto.CheckpointDays} days.",
-                                        TimeSpan.FromDays(repositoryDto.CheckpointDays),
-                                        correlationId
-                                    )
+                                    let! deletionReminder =
+                                        this.SchedulePhysicalDeletion(
+                                            $"Deletion for checkpoints of {repositoryDto.CheckpointDays} days.",
+                                            TimeSpan.FromDays(repositoryDto.CheckpointDays),
+                                            correlationId
+                                        )
+
+                                    ()
                                 }
                             | _ -> () |> returnTask
                             :> Task
@@ -396,7 +355,10 @@ module Reference =
                                 | DeleteLogical(force, deleteReason) ->
                                     let repositoryActorProxy = Repository.CreateActorProxy referenceDto.RepositoryId this.correlationId
                                     let! repositoryDto = repositoryActorProxy.Get this.correlationId
-                                    this.SchedulePhysicalDeletion(deleteReason, TimeSpan.FromDays(repositoryDto.LogicalDeleteDays), this.correlationId)
+
+                                    let! deletionReminder =
+                                        this.SchedulePhysicalDeletion(deleteReason, TimeSpan.FromDays(repositoryDto.LogicalDeleteDays), this.correlationId)
+
                                     return LogicalDeleted(force, deleteReason)
                                 | DeletePhysical ->
                                     isDisposed <- true
@@ -418,3 +380,50 @@ module Reference =
                     | Ok command -> return! processCommand command metadata
                     | Error error -> return Error error
                 }
+
+        interface IRemindable with
+            override this.ReceiveReminderAsync(reminderName, state, dueTime, period) =
+                let stateManager = this.StateManager
+
+                match reminderName with
+                | ReminderType.Maintenance ->
+                    task {
+                        // Do some maintenance
+                        ()
+                    }
+                    :> Task
+                | ReminderType.PhysicalDeletion ->
+                    task {
+                        // Get values from state.
+                        let (repositoryId, branchId, directoryVersionId, sha256Hash, deleteReason, correlationId) =
+                            fromByteArray<PhysicalDeletionReminderState> state
+
+                        this.correlationId <- correlationId
+
+                        // Mark the branch as needing to update its latest references.
+                        let branchActorProxy = Branch.CreateActorProxy branchId correlationId
+                        do! branchActorProxy.MarkForRecompute correlationId
+
+                        // Delete saved state for this actor.
+                        let! deletedEventsState = Storage.DeleteState stateManager eventsStateName
+
+                        log.LogInformation(
+                            "{currentInstant}: CorrelationId: {correlationId}; Deleted physical state for reference; RepositoryId: {RepositoryId}; BranchId: {BranchId}; ReferenceId: {ReferenceId}; DirectoryVersionId: {DirectoryVersionId}; deleteReason: {deleteReason}.",
+                            getCurrentInstantExtended (),
+                            correlationId,
+                            repositoryId,
+                            branchId,
+                            this.Id,
+                            directoryVersionId,
+                            deleteReason
+                        )
+
+                        // Set all values to default.
+                        referenceDto <- ReferenceDto.Default
+                        referenceEvents.Clear()
+
+                        // Mark the actor as disposed, in case someone tries to use it before Dapr GC's it.
+                        isDisposed <- true
+                    }
+                    :> Task
+                | _ -> failwith "Unknown reminder type."
