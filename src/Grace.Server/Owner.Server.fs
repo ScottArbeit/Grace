@@ -265,7 +265,7 @@ module Owner =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 try
-                    let validations (parameters: ListOrganizationsParameters) = [| Guid.isValidAndNotEmpty parameters.OwnerId InvalidOwnerId |]
+                    let validations (parameters: ListOrganizationsParameters) = [| Guid.isValidAndNotEmptyGuid parameters.OwnerId InvalidOwnerId |]
 
                     let query (context: HttpContext) (maxCount: int) (actorProxy: IOwnerActor) =
                         task {

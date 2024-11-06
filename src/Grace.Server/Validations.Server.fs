@@ -350,10 +350,10 @@ module Validations =
             }
             |> ValidationResult
 
-        let repositoryNameIsUnique<'T> ownerId ownerName organizationId organizationName repositoryName correlationId (error: 'T) =
+        let repositoryNameIsUnique<'T> ownerId organizationId repositoryName correlationId (error: 'T) =
             task {
                 if not <| String.IsNullOrEmpty(repositoryName) then
-                    match! repositoryNameIsUnique ownerId ownerName organizationId organizationName repositoryName correlationId with
+                    match! repositoryNameIsUnique ownerId organizationId repositoryName correlationId with
                     | Ok isUnique -> if isUnique then return Ok() else return Error error
                     | Error internalError ->
                         logToConsole internalError
@@ -399,39 +399,36 @@ module Validations =
             |> ValidationResult
 
         /// Validates that the branch exists in the database.
-        let branchExists<'T> ownerId ownerName organizationId organizationName repositoryId repositoryName branchId branchName correlationId (error: 'T) =
+        let branchExists<'T> ownerId organizationId repositoryId branchId branchName correlationId (error: 'T) =
             task {
                 let mutable branchGuid = Guid.Empty
 
-                match! resolveRepositoryId ownerId ownerName organizationId organizationName repositoryId repositoryName correlationId with
-                | Some repositoryId ->
-                    match! resolveBranchId repositoryId branchId branchName correlationId with
-                    | Some branchId ->
-                        if Guid.TryParse(branchId, &branchGuid) then
-                            let exists = memoryCache.Get<string>(branchGuid)
+                match! resolveBranchId repositoryId branchId branchName correlationId with
+                | Some branchId ->
+                    if Guid.TryParse(branchId, &branchGuid) then
+                        let exists = memoryCache.Get<string>(branchGuid)
 
-                            match exists with
-                            | MemoryCache.ExistsValue -> return Ok()
-                            | MemoryCache.DoesNotExistValue -> return Error error
-                            | _ ->
-                                let branchActorProxy = Branch.CreateActorProxy branchGuid correlationId
+                        match exists with
+                        | MemoryCache.ExistsValue -> return Ok()
+                        | MemoryCache.DoesNotExistValue -> return Error error
+                        | _ ->
+                            let branchActorProxy = Branch.CreateActorProxy branchGuid correlationId
 
-                                let! exists = branchActorProxy.Exists correlationId
+                            let! exists = branchActorProxy.Exists correlationId
 
-                                if exists then
-                                    use newCacheEntry =
-                                        memoryCache.CreateEntry(
-                                            branchGuid,
-                                            Value = MemoryCache.ExistsValue,
-                                            AbsoluteExpirationRelativeToNow = MemoryCache.DefaultExpirationTime
-                                        )
+                            if exists then
+                                use newCacheEntry =
+                                    memoryCache.CreateEntry(
+                                        branchGuid,
+                                        Value = MemoryCache.ExistsValue,
+                                        AbsoluteExpirationRelativeToNow = MemoryCache.DefaultExpirationTime
+                                    )
 
-                                    return Ok()
-                                else
-                                    return Error error
-                        else
-                            return Error error
-                    | None -> return Error error
+                                return Ok()
+                            else
+                                return Error error
+                    else
+                        return Error error
                 | None -> return Error error
             }
             |> ValidationResult
@@ -525,13 +522,10 @@ module Validations =
             |> ValidationResult
 
         /// Validates that the given branchName does not exist in the database.
-        let branchNameDoesNotExist<'T> ownerId ownerName organizationId organizationName repositoryId repositoryName branchName correlationId (error: 'T) =
+        let branchNameDoesNotExist<'T> ownerId organizationId repositoryId branchName correlationId (error: 'T) =
             task {
-                match! resolveRepositoryId ownerId ownerName organizationId organizationName repositoryId repositoryName correlationId with
-                | Some repositoryId ->
-                    match! resolveBranchId repositoryId String.Empty branchName correlationId with
-                    | Some branchId -> return Error error
-                    | None -> return Ok()
+                match! resolveBranchId repositoryId String.Empty branchName correlationId with
+                | Some branchId -> return Error error
                 | None -> return Ok()
             }
             |> ValidationResult

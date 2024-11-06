@@ -6,19 +6,18 @@ open Grace.Shared.Parameters
 open Grace.Shared.Types
 open Grace.Shared.Utilities
 open System
+open System.Collections.Concurrent
 open System.Collections.Generic
+open System.Diagnostics
 open System.Linq
+open System.Security.Cryptography
 open System.Threading
 open System.Threading.Tasks
-open System.Collections.Concurrent
-open System.Collections.Concurrent
-open System.Security.Cryptography
-open FSharpPlus.Data.NonEmptySeq
 
 module Load =
 
-    let numberOfRepositories = 100
-    let numberOfBranches = 800
+    let numberOfRepositories = 400
+    let numberOfBranches = 5000
     let numberOfEvents = 100000
 
     let showResult<'T> (r: GraceResult<'T>) =
@@ -49,11 +48,11 @@ module Load =
             let organizationId = Guid.NewGuid()
             let organizationName = $"Organization{suffixes[0]}"
 
-            let! r = Owner.Create(Owner.CreateOwnerParameters(OwnerId = $"{ownerId}", OwnerName = ownerName, CorrelationId = generateCorrelationId ()))
+            match! Owner.Create(Owner.CreateOwnerParameters(OwnerId = $"{ownerId}", OwnerName = ownerName, CorrelationId = generateCorrelationId ())) with
+            | Ok result -> logToConsole $"Created owner {ownerId} with OwnerName {ownerName}."
+            | Error error -> logToConsole $"{error}"
 
-            showResult r
-
-            let! r =
+            match!
                 Organization.Create(
                     Organization.CreateOrganizationParameters(
                         OwnerId = $"{ownerId}",
@@ -62,8 +61,33 @@ module Load =
                         CorrelationId = generateCorrelationId ()
                     )
                 )
+            with
+            | Ok result -> logToConsole $"Created organization {organizationId} with OrganizationName {organizationName}."
+            | Error error -> logToConsole $"{error}"
 
-            showResult r
+            // Warm up the /repository/create path.
+            let warmupId = Guid.NewGuid().ToString()
+
+            let! warmupRepo =
+                Repository.Create(
+                    Repository.CreateRepositoryParameters(
+                        OwnerId = $"{ownerId}",
+                        OrganizationId = $"{organizationId}",
+                        RepositoryId = warmupId,
+                        RepositoryName = $"Warmup{suffixes[0]}",
+                        CorrelationId = generateCorrelationId ()
+                    )
+                )
+
+            let! deleteWarmupRepo =
+                Repository.Delete(
+                    Repository.DeleteRepositoryParameters(
+                        OwnerId = $"{ownerId}",
+                        OrganizationId = $"{organizationId}",
+                        RepositoryId = warmupId,
+                        CorrelationId = generateCorrelationId ()
+                    )
+                )
 
             do!
                 Parallel.ForEachAsync(
@@ -72,7 +96,7 @@ module Load =
                     (fun (i: int) (cancellationToken: CancellationToken) ->
                         ValueTask(
                             task {
-                                do! Task.Delay(Random.Shared.Next(25))
+                                do! Task.Delay(Random.Shared.Next(1000))
                                 let repositoryId = Guid.NewGuid()
                                 let repositoryName = $"Repository{suffixes[i]}"
 
@@ -93,7 +117,18 @@ module Load =
                                 | Ok r ->
                                     logToConsole $"Added repository {i}; repositoryId: {repositoryId}; repositoryName: {repositoryName}."
 
-                                    let! mainBranch =
+                                    let! rrrrr =
+                                        Repository.SetLogicalDeleteDays(
+                                            Repository.SetLogicalDeleteDaysParameters(
+                                                OwnerId = $"{ownerId}",
+                                                OrganizationId = $"{organizationId}",
+                                                RepositoryId = $"{repositoryId}",
+                                                LogicalDeleteDays = single (TimeSpan.FromSeconds(45.0).TotalDays),
+                                                CorrelationId = generateCorrelationId ()
+                                            )
+                                        )
+
+                                    match!
                                         Branch.Get(
                                             Branch.GetBranchParameters(
                                                 OwnerId = $"{ownerId}",
@@ -103,12 +138,11 @@ module Load =
                                                 CorrelationId = generateCorrelationId ()
                                             )
                                         )
+                                    with
+                                    | Ok mainBranch ->
+                                        logToConsole $"Adding parentBranchId {i}; mainBranch.ReturnValue.BranchId: {mainBranch.ReturnValue.BranchId}."
 
-                                    match mainBranch with
-                                    | Ok branch ->
-                                        logToConsole $"Adding parentBranchId {i}; branch.ReturnValue.BranchId: {branch.ReturnValue.BranchId}."
-
-                                        parentBranchIds.AddOrUpdate(i, branch.ReturnValue.BranchId, (fun _ _ -> branch.ReturnValue.BranchId))
+                                        parentBranchIds.AddOrUpdate(i, mainBranch.ReturnValue.BranchId, (fun _ _ -> mainBranch.ReturnValue.BranchId))
                                         |> ignore
                                     | Error error -> logToConsole $"Error getting main: {error}"
                                 | Error error -> logToConsole $"Error creating repository: {error}"
@@ -125,7 +159,7 @@ module Load =
                     (fun (i: int) (cancellationToken: CancellationToken) ->
                         ValueTask(
                             task {
-                                do! Task.Delay(Random.Shared.Next(50))
+                                do! Task.Delay(Random.Shared.Next(1000))
                                 let branchId = Guid.NewGuid()
                                 let branchName = $"Branch{suffixes[i]}"
                                 let repositoryIndex = Random.Shared.Next(repositoryIds.Count)
@@ -167,6 +201,10 @@ module Load =
 
             let setupTime = getCurrentInstant ()
             logToConsole $"Setup complete. numberOfRepositories: {numberOfRepositories}; numberOfBranches: {numberOfBranches}; ids.Count: {ids.Count}."
+            logToConsole $"-----------------"
+
+            let mutable chunkStartInstant = getCurrentInstant ()
+            let chunkTransactionsPerSecond = List<float>()
 
             do!
                 Parallel.ForEachAsync(
@@ -176,8 +214,15 @@ module Load =
                         ValueTask(
                             task {
                                 if i % 250 = 0 then
+                                    let chunkTPS = float 250 / (getCurrentInstant () - chunkStartInstant).TotalSeconds
+                                    chunkTransactionsPerSecond.Add(chunkTPS)
+                                    let rollingAverage = chunkTransactionsPerSecond.TakeLast(20).Average()
+                                    let totalTPS = float i / (getCurrentInstant () - setupTime).TotalSeconds
+
                                     logToConsole
-                                        $"Processing event {i} of {numberOfEvents}; Transactions/sec: {float i / (getCurrentInstant () - setupTime).TotalSeconds:F3}"
+                                        $"Processing event {i} of {numberOfEvents}; Chunk transactions/sec: {chunkTPS:F3}; Rolling average (previous 20): {rollingAverage:F3}; Total transactions/sec: {totalTPS:F3}; Thread count: {Process.GetCurrentProcess().Threads.Count}."
+
+                                    chunkStartInstant <- getCurrentInstant ()
 
                                 let rnd = Random.Shared.Next(ids.Count)
                                 let (ownerId, organizationId, repositoryId, branchId) = ids[rnd]
@@ -443,13 +488,15 @@ module Load =
                                 showResult result
                                 let deleteCount = Interlocked.Increment(&deleteCount)
 
-                                if deleteCount % 100 = 0 then
+                                if deleteCount % 25 = 0 then
                                     logToConsole $"Deleted {deleteCount} of {numberOfRepositories} repositories."
 
                             //do! Task.Delay(Random.Shared.Next(50))
                             }
                         ))
                 )
+
+            logToConsole $"Deleted {deleteCount} of {numberOfRepositories} repositories."
 
             let! r =
                 Organization.Delete(

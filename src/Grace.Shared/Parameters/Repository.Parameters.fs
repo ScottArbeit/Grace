@@ -1,4 +1,4 @@
-﻿namespace Grace.Shared.Parameters
+namespace Grace.Shared.Parameters
 
 open Grace.Shared.Parameters.Common
 open Grace.Shared.Types
@@ -49,25 +49,30 @@ module Repository =
         inherit RepositoryParameters()
         member val public RecordSaves = false with get, set
 
+    /// Parameters for the /repository/setLogicalDeleteDays endpoint.
+    type SetLogicalDeleteDaysParameters() =
+        inherit RepositoryParameters()
+        member val public LogicalDeleteDays: single = Single.MinValue with get, set
+
     /// Parameters for the /repository/setSaveDays endpoint.
     type SetSaveDaysParameters() =
         inherit RepositoryParameters()
-        member val public SaveDays: Double = Double.MinValue with get, set
+        member val public SaveDays: single = Single.MinValue with get, set
 
     /// Parameters for the /repository/setCheckpointDays endpoint.
     type SetCheckpointDaysParameters() =
         inherit RepositoryParameters()
-        member val public CheckpointDays: Double = Double.MinValue with get, set
+        member val public CheckpointDays: single = Single.MinValue with get, set
 
     /// Parameters for the /repository/setDirectoryVersionCacheDays endpoint.
     type SetDirectoryVersionCacheDaysParameters() =
         inherit RepositoryParameters()
-        member val public DirectoryVersionCacheDays: Double = Double.MinValue with get, set
+        member val public DirectoryVersionCacheDays: single = Single.MinValue with get, set
 
     /// Parameters for the /repository/setDiffCacheDays endpoint.
     type SetDiffCacheDaysParameters() =
         inherit RepositoryParameters()
-        member val public DiffCacheDays: Double = Double.MinValue with get, set
+        member val public DiffCacheDays: single = Single.MinValue with get, set
 
     /// Parameters for the /repository/setDescription endpoint.
     type SetRepositoryDescriptionParameters() =

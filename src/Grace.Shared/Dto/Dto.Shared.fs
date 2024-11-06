@@ -14,22 +14,24 @@ module Dto =
         [<KnownType("GetKnownTypes")>]
         type DiffDto =
             { Class: string
-              HasDifferences: bool
+              RepositoryId: RepositoryId
               DirectoryId1: DirectoryVersionId
               Directory1CreatedAt: Instant
               DirectoryId2: DirectoryVersionId
               Directory2CreatedAt: Instant
+              HasDifferences: bool
               Differences: List<FileSystemDifference>
               FileDiffs: List<FileDiff> }
 
             static member Default =
                 { Class = nameof (DiffDto)
-                  HasDifferences = false
+                  RepositoryId = RepositoryId.Empty
                   DirectoryId1 = DirectoryVersionId.Empty
                   Directory1CreatedAt = Constants.DefaultTimestamp
                   DirectoryId2 = DirectoryVersionId.Empty
                   Directory2CreatedAt = Constants.DefaultTimestamp
                   Differences = List<FileSystemDifference>()
+                  HasDifferences = false
                   FileDiffs = List<FileDiff>() }
 
             static member GetKnownTypes() = GetKnownTypes<DiffDto>()
@@ -45,7 +47,6 @@ module Dto =
               OrganizationType: OrganizationType
               Description: string
               SearchVisibility: SearchVisibility
-              Repositories: Dictionary<RepositoryId, RepositoryName>
               CreatedAt: Instant
               UpdatedAt: Instant option
               DeletedAt: Instant option
@@ -59,7 +60,6 @@ module Dto =
                   OrganizationType = OrganizationType.Public
                   Description = String.Empty
                   SearchVisibility = Visible
-                  Repositories = new Dictionary<RepositoryId, RepositoryName>()
                   CreatedAt = Constants.DefaultTimestamp
                   UpdatedAt = None
                   DeletedAt = None
@@ -77,7 +77,6 @@ module Dto =
               OwnerType: OwnerType
               Description: string
               SearchVisibility: SearchVisibility
-              Organizations: Dictionary<OrganizationId, OrganizationName>
               CreatedAt: Instant
               UpdatedAt: Instant option
               DeletedAt: Instant option
@@ -90,7 +89,6 @@ module Dto =
                   OwnerType = OwnerType.Public
                   Description = String.Empty
                   SearchVisibility = Visible
-                  Organizations = new Dictionary<OrganizationId, OrganizationName>()
                   CreatedAt = Constants.DefaultTimestamp
                   UpdatedAt = None
                   DeletedAt = None
@@ -145,16 +143,15 @@ module Dto =
               ObjectStorageProvider: ObjectStorageProvider
               StorageAccountName: StorageAccountName
               StorageContainerName: StorageContainerName
-              RepositoryVisibility: RepositoryVisibility
+              RepositoryType: RepositoryType
               RepositoryStatus: RepositoryStatus
-              Branches: SortedSet<BranchName>
               DefaultServerApiVersion: string
               DefaultBranchName: BranchName
-              LogicalDeleteDays: double
-              SaveDays: double
-              CheckpointDays: double
-              DirectoryVersionCacheDays: double
-              DiffCacheDays: double
+              LogicalDeleteDays: single
+              SaveDays: single
+              CheckpointDays: single
+              DirectoryVersionCacheDays: single
+              DiffCacheDays: single
               Description: string
               RecordSaves: bool
               CreatedAt: Instant
@@ -172,16 +169,15 @@ module Dto =
                   ObjectStorageProvider = ObjectStorageProvider.Unknown
                   StorageAccountName = String.Empty
                   StorageContainerName = "grace-objects"
-                  RepositoryVisibility = RepositoryVisibility.Private
+                  RepositoryType = RepositoryType.Private
                   RepositoryStatus = RepositoryStatus.Active
-                  Branches = SortedSet<BranchName>()
                   DefaultServerApiVersion = "latest"
                   DefaultBranchName = BranchName Constants.InitialBranchName
-                  LogicalDeleteDays = 30.0
-                  SaveDays = 7.0
-                  CheckpointDays = 365.0
-                  DirectoryVersionCacheDays = 1.0
-                  DiffCacheDays = 1.0
+                  LogicalDeleteDays = 30.0f
+                  SaveDays = 7.0f
+                  CheckpointDays = 365.0f
+                  DirectoryVersionCacheDays = 1.0f
+                  DiffCacheDays = 1.0f
                   Description = String.Empty
                   RecordSaves = true
                   CreatedAt = Constants.DefaultTimestamp

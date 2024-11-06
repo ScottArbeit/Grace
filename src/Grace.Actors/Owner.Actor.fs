@@ -307,16 +307,23 @@ module Owner =
                 ownerDto |> returnTask
 
             member this.OrganizationExists organizationName correlationId =
-                this.correlationId <- correlationId
+                task {
+                    this.correlationId <- correlationId
+                    let actorProxy = OrganizationName.CreateActorProxy ownerDto.OwnerId organizationName correlationId
 
-                ownerDto.Organizations.ContainsValue(OrganizationName organizationName)
-                |> returnTask
+                    match! actorProxy.GetOrganizationId(correlationId) with
+                    | Some organizationId -> return true
+                    | None -> return false
+                }
 
             member this.ListOrganizations correlationId =
-                this.correlationId <- correlationId
+                task {
+                    this.correlationId <- correlationId
+                    let! organizationDtos = Services.getOrganizations ownerDto.OwnerId Int32.MaxValue false
+                    let dict = organizationDtos.ToDictionary((fun org -> org.OrganizationId), (fun org -> org.OrganizationName))
 
-                ownerDto.Organizations :> IReadOnlyDictionary<OrganizationId, OrganizationName>
-                |> returnTask
+                    return dict :> IReadOnlyDictionary<OrganizationId, OrganizationName>
+                }
 
             member this.Handle command metadata =
                 let isValid command (metadata: EventMetadata) =

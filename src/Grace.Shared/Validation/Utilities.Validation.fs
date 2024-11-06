@@ -1,4 +1,4 @@
-﻿namespace Grace.Shared.Validation
+namespace Grace.Shared.Validation
 
 open FSharp.Control
 open System.Threading.Tasks
@@ -7,11 +7,26 @@ open System
 module Utilities =
 
     /// Returns the first validation that matches the predicate, or None if none match.
-    let tryFind<'T> (predicate: 'T -> bool) (validations: ValueTask<'T> array) =
+    let tryFindOld<'T> (predicate: 'T -> bool) (validations: ValueTask<'T> array) =
         task {
             match validations |> Seq.tryFindIndex (fun validation -> predicate validation.Result) with
             | Some index -> return Some(validations[index].Result)
             | None -> return None
+        }
+
+    /// Returns the first validation that matches the predicate, or None if none match.
+    let tryFind (predicate: 'T -> bool) (validations: ValueTask<'T> array) =
+        task {
+            let mutable i = 0
+            let mutable first = 0
+
+            while i < validations.Length && first = 0 do
+                let! result = validations[i]
+                if predicate result then first <- i
+                i <- i + 1
+
+            // Using .Result here is OK because it would already have been awaited in the while loop above.
+            if first > 0 then return Some(validations[first].Result) else return None
         }
 
     /// Retrieves the first error from a list of validations.

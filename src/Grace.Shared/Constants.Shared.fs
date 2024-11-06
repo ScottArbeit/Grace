@@ -105,6 +105,7 @@ module Constants =
     let GraceObjectCacheFile = "graceObjectCache.json.gz"
 
     /// The default branch name for new repositories.
+    [<Literal>]
     let InitialBranchName = "main"
 
     /// The configuration version number used by this release of Grace.

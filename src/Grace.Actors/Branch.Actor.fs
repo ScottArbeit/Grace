@@ -21,6 +21,7 @@ open Grace.Shared.Validation.Errors.Branch
 open Microsoft.Extensions.Logging
 open System
 open System.Collections.Generic
+open System.Diagnostics
 open System.Runtime.Serialization
 open System.Text
 open System.Threading.Tasks
@@ -28,6 +29,7 @@ open NodaTime
 open System.Text.Json
 open System.Net.Http.Json
 open FSharpPlus.Data.MultiMap
+open System.Threading
 
 module Branch =
 
@@ -257,9 +259,20 @@ module Branch =
         override this.OnPostActorMethodAsync(context) =
             let duration_ms = getPaddedDuration_ms actorStartTime
 
-            if String.IsNullOrEmpty(currentCommand) then
+            let threadCount =
+                match memoryCache.GetThreadCountEntry() with
+                | Some threadCount -> threadCount
+                | None ->
+                    let threads = Process.GetCurrentProcess().Threads.Count
+                    memoryCache.CreateThreadCountEntry(threads)
+                    threads
+
+            if
+                String.IsNullOrEmpty(currentCommand)
+                && not <| (context.MethodName = "ReceiveReminderAsync")
+            then
                 log.LogInformation(
-                    "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {ActorName}.{MethodName}; RepositoryId: {RepositoryId}; BranchId: {Id}; BranchName: {BranchName}.",
+                    "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {ActorName}.{MethodName}; RepositoryId: {RepositoryId}; BranchId: {Id}; BranchName: {BranchName}; ThreadCount: {ThreadCount}.",
                     getCurrentInstantExtended (),
                     getMachineName,
                     duration_ms,
@@ -268,11 +281,12 @@ module Branch =
                     context.MethodName,
                     branchDto.RepositoryId,
                     this.Id,
-                    branchDto.BranchName
+                    branchDto.BranchName,
+                    threadCount
                 )
             else
                 log.LogInformation(
-                    "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {ActorName}.{MethodName}; Command: {Command}; RepositoryId: {RepositoryId}; BranchId: {Id}; BranchName: {BranchName}.",
+                    "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {ActorName}.{MethodName}; Command: {Command}; RepositoryId: {RepositoryId}; BranchId: {Id}; BranchName: {BranchName}; ThreadCount: {ThreadCount}.",
                     getCurrentInstantExtended (),
                     getMachineName,
                     duration_ms,
@@ -282,7 +296,8 @@ module Branch =
                     currentCommand,
                     branchDto.RepositoryId,
                     this.Id,
-                    branchDto.BranchName
+                    branchDto.BranchName,
+                    threadCount
                 )
 
             logScope.Dispose()
@@ -360,6 +375,8 @@ module Branch =
         member private this.SchedulePhysicalDeletion(deleteReason, delay, correlationId) =
             let (tuple: PhysicalDeletionReminderState) =
                 (branchDto.RepositoryId, branchDto.BranchId, branchDto.BranchName, branchDto.ParentBranchId, deleteReason, correlationId)
+
+            logToConsole $"In Branch.Actor.SchedulePhysicalDeletion: tuple: {tuple}."
 
             this.RegisterReminderAsync(ReminderType.PhysicalDeletion, toByteArray tuple, delay, TimeSpan.FromMilliseconds(-1))
 
@@ -450,18 +467,13 @@ module Branch =
                                                     ReferenceType.Rebase
                                                     [| ReferenceLinkType.BasedOn promotionDto.ReferenceId |]
                                             with
-                                            | Ok rebaseReferenceId ->
-                                                logToConsole $"In BranchActor.Handle.processCommand: rebaseReferenceId: {rebaseReferenceId}."
+                                            | Ok rebaseReferenceDto ->
+                                                logToConsole $"In BranchActor.Handle.processCommand: rebaseReferenceDto: {rebaseReferenceDto}."
                                             | Error error ->
                                                 logToConsole
                                                     $"In BranchActor.Handle.processCommand: Error rebasing on referenceId: {basedOn}. promotionDto: {serialize promotionDto}"
 
-                                        use newCacheEntry =
-                                            memoryCache.CreateEntry(
-                                                $"BrN:{branchName}",
-                                                Value = branchId,
-                                                AbsoluteExpirationRelativeToNow = MemoryCache.DefaultExpirationTime
-                                            )
+                                        memoryCache.CreateBranchNameEntry branchName branchId
 
                                         return Ok(Created(branchId, branchName, parentBranchId, basedOn, repositoryId, branchPermissions))
                                     | BranchCommand.Rebase referenceId ->
@@ -484,8 +496,8 @@ module Branch =
                                                 ReferenceType.Rebase
                                                 [| ReferenceLinkType.BasedOn promotionDto.ReferenceId |]
                                         with
-                                        | Ok rebaseReferenceId ->
-                                            logToConsole $"In BranchActor.Handle.processCommand: rebaseReferenceId: {rebaseReferenceId}."
+                                        | Ok rebaseReferenceDto ->
+                                            logToConsole $"In BranchActor.Handle.processCommand: rebaseReferenceDto: {rebaseReferenceDto}."
                                             return Ok(Rebased referenceId)
                                         | Error error ->
                                             logToConsole
@@ -537,7 +549,7 @@ module Branch =
                                         let! actorReminder =
                                             this.SchedulePhysicalDeletion(
                                                 deleteReason,
-                                                TimeSpan.FromDays(repositoryDto.LogicalDeleteDays),
+                                                TimeSpan.FromDays(float repositoryDto.LogicalDeleteDays),
                                                 metadata.CorrelationId
                                             )
 

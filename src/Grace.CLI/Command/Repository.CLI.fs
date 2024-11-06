@@ -98,13 +98,13 @@ module Repository =
             new Option<String>("--description", IsRequired = false, Description = "The description of the repository.", Arity = ArgumentArity.ExactlyOne)
 
         let visibility =
-            (new Option<RepositoryVisibility>(
+            (new Option<RepositoryType>(
                 "--visibility",
                 IsRequired = true,
                 Description = "The visibility of the repository.",
                 Arity = ArgumentArity.ExactlyOne
             ))
-                .FromAmong(listCases<RepositoryVisibility> ())
+                .FromAmong(listCases<RepositoryType> ())
 
         let status =
             (new Option<String>("--status", IsRequired = true, Description = "The status of the repository.", Arity = ArgumentArity.ExactlyOne))
@@ -1120,7 +1120,7 @@ module Repository =
     // Set-SaveDays subcommand
     type SaveDaysParameters() =
         inherit CommonParameters()
-        member val public SaveDays: double = Double.MinValue with get, set
+        member val public SaveDays: single = Single.MinValue with get, set
 
     let private setSaveDaysHandler (parseResult: ParseResult) (parameters: SaveDaysParameters) =
         task {
@@ -1174,7 +1174,7 @@ module Repository =
     // Set-CheckpointDays subcommand
     type CheckpointDaysParameters() =
         inherit CommonParameters()
-        member val public CheckpointDays: double = Double.MinValue with get, set
+        member val public CheckpointDays: single = Single.MinValue with get, set
 
     let private setCheckpointDaysHandler (parseResult: ParseResult) (parameters: CheckpointDaysParameters) =
         task {
@@ -1227,7 +1227,7 @@ module Repository =
 
     type DiffCacheDaysParameters() =
         inherit CommonParameters()
-        member val public DiffCacheDays: double = Double.MinValue with get, set
+        member val public DiffCacheDays: single = Single.MinValue with get, set
 
     let private setDiffCacheDaysHandler (parseResult: ParseResult) (parameters: DiffCacheDaysParameters) =
         task {
@@ -1280,7 +1280,7 @@ module Repository =
 
     type DirectoryVersionCacheDaysParameters() =
         inherit CommonParameters()
-        member val public DirectoryVersionCacheDays: double = Double.MinValue with get, set
+        member val public DirectoryVersionCacheDays: single = Single.MinValue with get, set
 
     let private setDirectoryVersionCacheDaysHandler (parseResult: ParseResult) (parameters: DirectoryVersionCacheDaysParameters) =
         task {

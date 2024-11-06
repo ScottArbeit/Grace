@@ -70,6 +70,8 @@ module Repository =
                     | Some correlationId -> correlationId
                     | None -> String.Empty
 
+                logToConsole $"****In Repository.Actor.OnActivateAsync: CorrelationId: {correlationId}; RepositoryId: {this.Id}."
+
                 match retrievedDto with
                 | Some retrievedDto ->
                     repositoryDto <- retrievedDto
@@ -118,7 +120,10 @@ module Repository =
         override this.OnPostActorMethodAsync(context) =
             let duration_ms = getPaddedDuration_ms actorStartTime
 
-            if String.IsNullOrEmpty(currentCommand) then
+            if
+                String.IsNullOrEmpty(currentCommand)
+                && not <| (context.MethodName = "ReceiveReminderAsync")
+            then
                 log.LogInformation(
                     "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {ActorName}.{MethodName}; RepositoryId: {Id}.",
                     getCurrentInstantExtended (),
@@ -174,7 +179,7 @@ module Repository =
                 | StorageAccountNameSet storageAccountName -> { currentRepositoryDto with StorageAccountName = storageAccountName }
                 | StorageContainerNameSet containerName -> { currentRepositoryDto with StorageContainerName = containerName }
                 | RepositoryStatusSet repositoryStatus -> { currentRepositoryDto with RepositoryStatus = repositoryStatus }
-                | RepositoryVisibilitySet repositoryVisibility -> { currentRepositoryDto with RepositoryVisibility = repositoryVisibility }
+                | RepositoryTypeSet repositoryType -> { currentRepositoryDto with RepositoryType = repositoryType }
                 | RecordSavesSet recordSaves -> { currentRepositoryDto with RecordSaves = recordSaves }
                 | DefaultServerApiVersionSet version -> { currentRepositoryDto with DefaultServerApiVersion = version }
                 | DefaultBranchNameSet defaultBranchName -> { currentRepositoryDto with DefaultBranchName = defaultBranchName }
@@ -584,7 +589,7 @@ module Repository =
                                     | SetStorageAccountName storageAccountName -> return StorageAccountNameSet storageAccountName
                                     | SetStorageContainerName containerName -> return StorageContainerNameSet containerName
                                     | SetRepositoryStatus repositoryStatus -> return RepositoryStatusSet repositoryStatus
-                                    | SetVisibility repositoryVisibility -> return RepositoryVisibilitySet repositoryVisibility
+                                    | SetRepositoryType repositoryType -> return RepositoryTypeSet repositoryType
                                     | SetRecordSaves recordSaves -> return RecordSavesSet recordSaves
                                     | SetDefaultServerApiVersion version -> return DefaultServerApiVersionSet version
                                     | SetDefaultBranchName defaultBranchName -> return DefaultBranchNameSet defaultBranchName
@@ -607,7 +612,6 @@ module Repository =
                                             && branches.Length > 0
                                             && branches.Any(fun branch -> branch.DeletedAt |> Option.isNone)
                                         then
-                                            //raise (ApplicationException($"{error}"))
                                             return LogicalDeleted(force, deleteReason)
                                         else
                                             // We have --force specified, so delete the branches that aren't already deleted.

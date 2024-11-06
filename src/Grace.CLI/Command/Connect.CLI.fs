@@ -84,7 +84,7 @@ module Connect =
 
             if parseResult.HasOption(Options.repositoryId) then
                 match
-                    (Guid.isValidAndNotEmpty commonParameters.RepositoryId InvalidRepositoryId)
+                    (Guid.isValidAndNotEmptyGuid commonParameters.RepositoryId InvalidRepositoryId)
                         .Result
                 with
                 | Ok result -> Result.Ok(parseResult, commonParameters)
@@ -107,7 +107,7 @@ module Connect =
             let mutable ownerId: Guid = Guid.Empty
 
             if parseResult.HasOption(Options.ownerId) then
-                match (Guid.isValidAndNotEmpty commonParameters.OwnerId InvalidOwnerId).Result with
+                match (Guid.isValidAndNotEmptyGuid commonParameters.OwnerId InvalidOwnerId).Result with
                 | Ok result -> Result.Ok(parseResult, commonParameters)
                 | Error error -> Result.Error error
             else
@@ -126,7 +126,7 @@ module Connect =
 
             if parseResult.HasOption(Options.organizationId) then
                 match
-                    (Guid.isValidAndNotEmpty commonParameters.OrganizationId InvalidOrganizationId)
+                    (Guid.isValidAndNotEmptyGuid commonParameters.OrganizationId InvalidOrganizationId)
                         .Result
                 with
                 | Ok result -> Result.Ok(parseResult, commonParameters)

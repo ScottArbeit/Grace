@@ -8,8 +8,11 @@
 		<PublishReadyToRun>true</PublishReadyToRun>
 	</PropertyGroup>
 	<ItemGroup>
-		<PackageReference Include="Azure.Core" Version="1.42.0" />
-		<PackageReference Include="Microsoft.Azure.Cosmos" Version="3.42.0" />
+		<PackageReference Include="Azure.Core" Version="1.44.1" />
+		<PackageReference Include="Microsoft.Azure.Cosmos" Version="3.45.0-preview.1" />
+        <PackageReference Include="System.Net.Http" Version="4.3.4" />
+        <PackageReference Include="System.Text.RegularExpressions" Version="4.3.1" />
+        <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
 	</ItemGroup>
 
 </Project>

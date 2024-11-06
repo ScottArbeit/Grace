@@ -38,6 +38,8 @@ module Diff =
         let directoryIds = id.GetId().Split("*")
         (DirectoryVersionId directoryIds[0], DirectoryVersionId directoryIds[1])
 
+    type PhysicalDeletionReminderState = (RepositoryId * DeleteReason * CorrelationId)
+
     type DiffActor(host: ActorHost) =
         inherit Actor(host)
 
@@ -146,11 +148,10 @@ module Diff =
                 | ObjectStorageProvider.Unknown -> return new MemoryStream() :> Stream
             }
 
-        /// Sets a delete reminder for this actor's state.
-        member private this.setDeleteReminder() =
-            let task = this.RegisterReminderAsync(ReminderType.DeleteCachedState, Array.empty<byte>, TimeSpan.FromDays(3.0), TimeSpan.FromMilliseconds(-1.0))
-            task.Wait()
-            ()
+        /// Schedules an actor reminder to delete the physical state for this branch.
+        member private this.SchedulePhysicalDeletion(deleteReason, delay, correlationId) =
+            let (tuple: PhysicalDeletionReminderState) = (diffDto.RepositoryId, deleteReason, correlationId)
+            this.RegisterReminderAsync(ReminderType.PhysicalDeletion, toByteArray tuple, delay, TimeSpan.FromMilliseconds(-1))
 
         override this.OnActivateAsync() =
             let activateStartTime = getCurrentInstant ()
@@ -254,17 +255,8 @@ module Diff =
 
                             //logToConsole $"In Actor.Populate(), got differences."
 
-                            // If there are any differences - there likely are - get the RepositoryDto so we can get download url's.
-                            let! repositoryDto =
-                                task {
-                                    if differences.Count > 0 then
-                                        let repositoryActorProxy = Repository.CreateActorProxy repositoryId1 correlationId
-
-                                        let! repositoryDtoFromActor = repositoryActorProxy.Get correlationId
-                                        return repositoryDtoFromActor
-                                    else
-                                        return RepositoryDto.Default
-                                }
+                            let repositoryActorProxy = Repository.CreateActorProxy repositoryId1 correlationId
+                            let! repositoryDto = repositoryActorProxy.Get correlationId
 
                             /// Gets a Stream for a given RelativePath.
                             let getFileStream (graceIndex: ServerGraceIndex) (relativePath: RelativePath) (repositoryDto: RepositoryDto) =
@@ -351,6 +343,7 @@ module Diff =
                             diffDto <-
                                 { diffDto with
                                     HasDifferences = differences.Count <> 0
+                                    RepositoryId = repositoryDto.RepositoryId
                                     DirectoryId1 = directoryId1
                                     Directory1CreatedAt = createdAt1
                                     DirectoryId2 = directoryId2
@@ -359,7 +352,13 @@ module Diff =
 
                             do! Storage.SaveState stateManager dtoStateName diffDto
 
-                            this.setDeleteReminder ()
+                            let! deletionReminder =
+                                this.SchedulePhysicalDeletion(
+                                    ReminderType.DeleteCachedState,
+                                    TimeSpan.FromDays(float repositoryDto.DiffCacheDays),
+                                    correlationId
+                                )
+
                             return true
                         with ex ->
                             logToConsole $"Exception in DiffActor.Compute(): {createExceptionResponse ex}"

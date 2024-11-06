@@ -43,17 +43,20 @@
 	</ItemGroup>
 
 	<ItemGroup>
-		<PackageReference Include="Azure.Storage.Blobs" Version="12.21.2" />
-		<PackageReference Include="Azure.Storage.Blobs.Batch" Version="12.18.1" />
-		<PackageReference Include="Azure.Storage.Common" Version="12.20.1" />
+		<PackageReference Include="Azure.Storage.Blobs" Version="12.22.0" />
+		<PackageReference Include="Azure.Storage.Blobs.Batch" Version="12.19.0" />
+		<PackageReference Include="Azure.Storage.Common" Version="12.21.0" />
 		<PackageReference Include="Dapr.Actors" Version="1.14.0" />
 		<PackageReference Include="Dapr.Client" Version="1.14.0" />
 		<PackageReference Include="FSharpPlus" Version="1.6.1" />
-		<PackageReference Include="Microsoft.Azure.Cosmos" Version="3.42.0" />
-		<PackageReference Include="Microsoft.Extensions.Caching.Memory" Version="9.0.0-preview.7.24405.7" />
+		<PackageReference Include="Microsoft.Azure.Cosmos" Version="3.45.0-preview.1" />
+		<PackageReference Include="Microsoft.Extensions.Caching.Memory" Version="9.0.0-rc.2.24473.5" />
+		<PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
 		<PackageReference Include="Nito.AsyncEx" Version="5.1.2" />
-		<PackageReference Include="NodaTime" Version="3.1.11" />
+		<PackageReference Include="NodaTime" Version="3.2.0" />
 		<PackageReference Include="NodaTime.Serialization.SystemTextJson" Version="1.2.0" />
+		<PackageReference Include="System.Net.Http" Version="4.3.4" />
+		<PackageReference Include="System.Text.RegularExpressions" Version="4.3.1" />
 	</ItemGroup>
 
 	<ItemGroup>
@@ -67,7 +70,7 @@
 	</ItemGroup>-->
 
 	<ItemGroup>
-		<PackageReference Update="FSharp.Core" Version="8.0.400" />
+		<PackageReference Update="FSharp.Core" Version="9.0.100-beta.24466.6" />
 	</ItemGroup>
 
 </Project>

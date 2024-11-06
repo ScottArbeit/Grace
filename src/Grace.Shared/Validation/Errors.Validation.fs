@@ -455,6 +455,7 @@ module Errors =
             | InvalidDiffCacheDaysValue
             | InvalidDirectory
             | InvalidDirectoryVersionCacheDaysValue
+            | InvalidLogicalDeleteDaysValue
             | InvalidMaxCountValue
             | InvalidObjectStorageProvider
             | InvalidOrganizationId
@@ -503,6 +504,7 @@ module Errors =
                 | InvalidDiffCacheDaysValue -> getLocalizedString StringResourceName.InvalidDiffCacheDaysValue
                 | InvalidDirectory -> getLocalizedString StringResourceName.InvalidDirectoryPath
                 | InvalidDirectoryVersionCacheDaysValue -> getLocalizedString StringResourceName.InvalidDirectoryVersionCacheDaysValue
+                | InvalidLogicalDeleteDaysValue -> getLocalizedString StringResourceName.InvalidLogicalDeleteDaysValue
                 | InvalidMaxCountValue -> getLocalizedString StringResourceName.InvalidMaxCountValue
                 | InvalidObjectStorageProvider -> getLocalizedString StringResourceName.InvalidObjectStorageProvider
                 | InvalidOwnerId -> getLocalizedString StringResourceName.InvalidOwnerId

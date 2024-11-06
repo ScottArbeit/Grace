@@ -3027,7 +3027,7 @@ module Branch =
                                 let! d2 = Directory.GetDirectoryVersionsRecursive(getLatestReferenceDirectoryParameters)
 
                                 let createFileVersionLookupDictionary (directoryVersions: IEnumerable<DirectoryVersion>) =
-                                    let lookup = Dictionary<RelativePath, LocalFileVersion>()
+                                    let lookup = Dictionary<RelativePath, LocalFileVersion>(StringComparer.OrdinalIgnoreCase)
 
                                     directoryVersions
                                     |> Seq.map (fun dv -> dv.ToLocalDirectoryVersion(dv.CreatedAt.ToDateTimeUtc()))
@@ -3035,6 +3035,7 @@ module Branch =
                                     |> Seq.concat
                                     |> Seq.iter (fun file -> lookup.Add(file.RelativePath, file))
 
+                                    //lookup.GetAlternateLookup()
                                     lookup
 
                                 let (directories, errors) = Result.partition [ d1; d2 ]

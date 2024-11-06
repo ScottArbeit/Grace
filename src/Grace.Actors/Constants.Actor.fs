@@ -128,7 +128,7 @@ module Constants =
 
     /// The time to wait between logical and physical deletion of an actor's state.
     ///
-    /// In Release builds, this is TimeSpan.FromDays(7.0). In Debug builds, it's TimeSpan.FromSeconds(30.0).
+    /// In Release builds, this is TimeSpan.FromDays(7.0). In Debug builds, it's TimeSpan.FromSeconds(300.0).
 #if DEBUG
     let DefaultPhysicalDeletionReminderTime = TimeSpan.FromSeconds(300.0)
 #else

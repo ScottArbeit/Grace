@@ -27,9 +27,9 @@
 	</ItemGroup>
 
 	<ItemGroup>
-		<PackageReference Include="Azure.Storage.Blobs" Version="12.21.2" />
+		<PackageReference Include="Azure.Storage.Blobs" Version="12.22.0" />
 		<PackageReference Include="Dapr.Client" Version="1.14.0" />
-		<PackageReference Include="Polly" Version="8.4.1" />
+		<PackageReference Include="Polly" Version="8.4.2" />
 	</ItemGroup>
 
 	<ItemGroup>
@@ -37,7 +37,7 @@
 	</ItemGroup>
 
 	<ItemGroup>
-		<PackageReference Update="FSharp.Core" Version="8.0.400" />
+		<PackageReference Update="FSharp.Core" Version="9.0.100-beta.24466.6" />
 	</ItemGroup>
 
 </Project>

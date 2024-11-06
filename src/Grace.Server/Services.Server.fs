@@ -87,7 +87,6 @@ module Services =
                 context.SetStatusCode(statusCode)
 
                 //log.LogDebug("{currentInstant}: In returnResult: StatusCode: {statusCode}; result: {result}", getCurrentInstantExtended(), statusCode, serialize result)
-
                 return! context.WriteJsonAsync(result) // .WriteJsonAsync() uses Grace's JsonSerializerOptions.
             with ex ->
                 let exceptionResponse = Utilities.createExceptionResponse ex

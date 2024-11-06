@@ -184,3 +184,13 @@ module MemoryCache =
 
         /// Remove an entry in MemoryCache for a BranchName.
         member this.RemoveBranchNameEntry(branchName: string) = this.Remove($"{branchNamePrefix}:{branchName}")
+
+        /// Create a new entry in MemoryCache to store the current ThreadCount.
+        member this.CreateThreadCountEntry(threadCount: int) =
+            use newCacheEntry =
+                this.CreateEntry("CurrentThreadCount", Value = threadCount, AbsoluteExpiration = DateTimeOffset.UtcNow.Add(TimeSpan.FromSeconds(30.0)))
+
+            ()
+
+        /// Check if we have an entry in MemoryCache for the current ThreadCount.
+        member this.GetThreadCountEntry() = this.GetFromCache<int> "CurrentThreadCount"

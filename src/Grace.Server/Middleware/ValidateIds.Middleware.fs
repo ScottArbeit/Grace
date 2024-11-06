@@ -190,12 +190,12 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
                             let validations =
                                 if path.Equals("/owner/create", StringComparison.InvariantCultureIgnoreCase) then
                                     [| Common.String.isNotEmpty ownerId OwnerIdIsRequired
-                                       Common.Guid.isValidAndNotEmpty ownerId InvalidOwnerId
+                                       Common.Guid.isValidAndNotEmptyGuid ownerId InvalidOwnerId
                                        Common.String.isNotEmpty ownerName OwnerNameIsRequired
                                        Common.String.isValidGraceName ownerName InvalidOwnerName
                                        Common.Input.eitherIdOrNameMustBeProvided ownerId ownerName EitherOwnerIdOrOwnerNameRequired |]
                                 else
-                                    [| Common.Guid.isValidAndNotEmpty ownerId InvalidOwnerId
+                                    [| Common.Guid.isValidAndNotEmptyGuid ownerId InvalidOwnerId
                                        Common.String.isValidGraceName ownerName InvalidOwnerName
                                        Common.Input.eitherIdOrNameMustBeProvided ownerId ownerName EitherOwnerIdOrOwnerNameRequired |]
 
@@ -229,12 +229,12 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
                             let validations =
                                 if path.Equals("/organization/create", StringComparison.InvariantCultureIgnoreCase) then
                                     [| Common.String.isNotEmpty organizationId OrganizationIdIsRequired
-                                       Common.Guid.isValidAndNotEmpty organizationId InvalidOrganizationId
+                                       Common.Guid.isValidAndNotEmptyGuid organizationId InvalidOrganizationId
                                        Common.String.isNotEmpty organizationName OrganizationNameIsRequired
                                        Common.String.isValidGraceName organizationName InvalidOrganizationName
                                        Common.Input.eitherIdOrNameMustBeProvided organizationId organizationName EitherOrganizationIdOrOrganizationNameRequired |]
                                 else
-                                    [| Common.Guid.isValidAndNotEmpty organizationId InvalidOrganizationId
+                                    [| Common.Guid.isValidAndNotEmptyGuid organizationId InvalidOrganizationId
                                        Common.String.isValidGraceName organizationName InvalidOrganizationName
                                        Common.Input.eitherIdOrNameMustBeProvided organizationId organizationName EitherOrganizationIdOrOrganizationNameRequired |]
 
@@ -269,12 +269,12 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
                             let validations =
                                 if path.Equals("/repository/create", StringComparison.InvariantCultureIgnoreCase) then
                                     [| Common.String.isNotEmpty repositoryId RepositoryError.RepositoryIdIsRequired
-                                       Common.Guid.isValidAndNotEmpty repositoryId RepositoryError.InvalidRepositoryId
+                                       Common.Guid.isValidAndNotEmptyGuid repositoryId RepositoryError.InvalidRepositoryId
                                        Common.String.isNotEmpty repositoryName RepositoryError.RepositoryNameIsRequired
                                        Common.String.isValidGraceName repositoryName RepositoryError.InvalidRepositoryName
                                        Common.Input.eitherIdOrNameMustBeProvided repositoryId repositoryName EitherRepositoryIdOrRepositoryNameRequired |]
                                 else
-                                    [| Common.Guid.isValidAndNotEmpty repositoryId RepositoryError.InvalidRepositoryId
+                                    [| Common.Guid.isValidAndNotEmptyGuid repositoryId RepositoryError.InvalidRepositoryId
                                        Common.String.isValidGraceName repositoryName RepositoryError.InvalidRepositoryName
                                        Common.Input.eitherIdOrNameMustBeProvided repositoryId repositoryName EitherRepositoryIdOrRepositoryNameRequired |]
 
@@ -317,12 +317,12 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
                             let validations =
                                 if path.Equals("/branch/create", StringComparison.InvariantCultureIgnoreCase) then
                                     [| Common.String.isNotEmpty branchId BranchIdIsRequired
-                                       Common.Guid.isValidAndNotEmpty branchId InvalidBranchId
+                                       Common.Guid.isValidAndNotEmptyGuid branchId InvalidBranchId
                                        Common.String.isNotEmpty branchName BranchNameIsRequired
                                        Common.String.isValidGraceName branchName InvalidBranchName
                                        Common.Input.eitherIdOrNameMustBeProvided branchId branchName EitherBranchIdOrBranchNameRequired |]
                                 else
-                                    [| Common.Guid.isValidAndNotEmpty branchId InvalidBranchId
+                                    [| Common.Guid.isValidAndNotEmptyGuid branchId InvalidBranchId
                                        Common.String.isValidGraceName branchName InvalidBranchName
                                        Common.Input.eitherIdOrNameMustBeProvided branchId branchName EitherBranchIdOrBranchNameRequired |]
 
@@ -417,10 +417,17 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
                             path,
                             graceIds.OwnerId
                         )
+
                     // -----------------------------------------------------------------------------------------------------
 
                     // Pass control to next middleware instance...
+                    //logToConsole
+                    //    $"********About to call next.Invoke(context) in ValidateIds.Middleware.fs. CorrelationId: {correlationId}. Path: {context.Request.Path}; RepositoryId: {graceIds.RepositoryId}."
+
                     let nextTask = next.Invoke(context)
+
+                    //logToConsole
+                    //    $"********After call to next.Invoke(context) in ValidateIds.Middleware.fs. CorrelationId: {correlationId}. Path: {context.Request.Path}; RepositoryId: {graceIds.RepositoryId}."
 
                     // -----------------------------------------------------------------------------------------------------
                     // On the way out...

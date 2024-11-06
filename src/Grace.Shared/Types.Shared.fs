@@ -359,11 +359,11 @@ module Types =
 
     /// Specifies whether a repository is public or private.
     [<KnownType("GetKnownTypes")>]
-    type RepositoryVisibility =
+    type RepositoryType =
         | Private
         | Public
 
-        static member GetKnownTypes() = GetKnownTypes<RepositoryVisibility>()
+        static member GetKnownTypes() = GetKnownTypes<RepositoryType>()
 
     /// Specifies the current operational status of a repository.
     [<KnownType("GetKnownTypes")>]

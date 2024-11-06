@@ -303,12 +303,24 @@ module Organization =
                 Task.FromResult(organizationDto)
 
             member this.RepositoryExists repositoryName correlationId =
-                this.correlationId <- correlationId
-                Task.FromResult(false)
+                task {
+                    this.correlationId <- correlationId
+                    let actorProxy = RepositoryName.CreateActorProxy organizationDto.OwnerId organizationDto.OrganizationId repositoryName correlationId
+
+                    match! actorProxy.GetRepositoryId(correlationId) with
+                    | Some repositoryId -> return true
+                    | None -> return false
+                }
 
             member this.ListRepositories correlationId =
-                this.correlationId <- correlationId
-                Task.FromResult(organizationDto.Repositories :> IReadOnlyDictionary<RepositoryId, RepositoryName>)
+                task {
+                    this.correlationId <- correlationId
+                    let! organizationDtos = Services.getRepositories organizationDto.OrganizationId Int32.MaxValue false
+                    let dict = organizationDtos.ToDictionary((fun repo -> repo.RepositoryId), (fun repo -> repo.RepositoryName))
+
+                    return dict :> IReadOnlyDictionary<RepositoryId, RepositoryName>
+                }
+            //Task.FromResult(organizationDto.Repositories :> IReadOnlyDictionary<RepositoryId, RepositoryName>)
 
             member this.Handle (command: OrganizationCommand) metadata =
                 let isValid (command: OrganizationCommand) (metadata: EventMetadata) =

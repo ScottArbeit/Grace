@@ -5,8 +5,10 @@ open Grace.Actors.Extensions.MemoryCache
 open Grace.Actors.Constants
 open Grace.Actors.Context
 open Grace.Actors.Interfaces
+open Grace.Shared
 open Grace.Shared.Constants
 open Grace.Shared.Types
+open Grace.Shared.Utilities
 open System
 
 module ActorProxy =
@@ -16,6 +18,7 @@ module ActorProxy =
         member this.CreateActorProxyWithCorrelationId<'T when 'T :> IActor>(actorId: ActorId, actorType: string, correlationId: CorrelationId) =
             let actorProxy = actorProxyFactory.CreateActorProxy<'T>(actorId, actorType)
             memoryCache.CreateCorrelationIdEntry actorId correlationId
+            //logToConsole $"Created actor proxy: CorrelationId: {correlationId}; ActorType: {actorType}; ActorId: {actorId}."
             actorProxy
 
     module Branch =

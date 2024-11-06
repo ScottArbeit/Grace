@@ -198,27 +198,23 @@ module Branch =
     let Create: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
+                let graceIds = getGraceIds context
+
                 let validations (parameters: CreateBranchParameters) =
-                    [| Guid.isValidAndNotEmpty parameters.ParentBranchId InvalidBranchId
+                    [| Guid.isValidAndNotEmptyGuid parameters.ParentBranchId InvalidBranchId
                        String.isValidGraceName parameters.ParentBranchName InvalidBranchName
                        Branch.branchExists
-                           parameters.OwnerId
-                           parameters.OwnerName
-                           parameters.OrganizationId
-                           parameters.OrganizationName
-                           parameters.RepositoryId
-                           parameters.RepositoryName
+                           graceIds.OwnerId
+                           graceIds.OrganizationId
+                           graceIds.RepositoryId
                            parameters.ParentBranchId
                            parameters.ParentBranchName
                            parameters.CorrelationId
                            ParentBranchDoesNotExist
                        Branch.branchNameDoesNotExist
                            parameters.OwnerId
-                           parameters.OwnerName
                            parameters.OrganizationId
-                           parameters.OrganizationName
                            parameters.RepositoryId
-                           parameters.RepositoryName
                            parameters.BranchName
                            parameters.CorrelationId
                            BranchNameAlreadyExists |]
@@ -1352,7 +1348,7 @@ module Branch =
                 try
                     let validations (parameters: ListContentsParameters) =
                         [| String.isEmptyOrValidSha256Hash parameters.Sha256Hash InvalidSha256Hash
-                           Guid.isValidAndNotEmpty parameters.ReferenceId InvalidReferenceId |]
+                           Guid.isValidAndNotEmptyGuid parameters.ReferenceId InvalidReferenceId |]
 
                     let query (context: HttpContext) maxCount (actorProxy: IBranchActor) =
                         task {
@@ -1442,7 +1438,7 @@ module Branch =
                 try
                     let validations (parameters: ListContentsParameters) =
                         [| String.isEmptyOrValidSha256Hash parameters.Sha256Hash InvalidSha256Hash
-                           Guid.isValidAndNotEmpty parameters.ReferenceId InvalidReferenceId |]
+                           Guid.isValidAndNotEmptyGuid parameters.ReferenceId InvalidReferenceId |]
 
                     let query (context: HttpContext) maxCount (actorProxy: IBranchActor) =
                         task {
@@ -1535,7 +1531,7 @@ module Branch =
                 try
                     let validations (parameters: GetBranchVersionParameters) =
                         [| String.isEmptyOrValidSha256Hash parameters.Sha256Hash InvalidSha256Hash
-                           Guid.isValidAndNotEmpty parameters.ReferenceId InvalidReferenceId |]
+                           Guid.isValidAndNotEmptyGuid parameters.ReferenceId InvalidReferenceId |]
 
                     let query (context: HttpContext) maxCount (actorProxy: IBranchActor) =
                         task {

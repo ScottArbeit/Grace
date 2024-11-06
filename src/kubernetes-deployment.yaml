@@ -28,7 +28,20 @@ data:
   TEMP: /tmp
 
 ---
-
+# PersistentVolumeClaim for Dapr Scheduler's persistent storage
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: dapr-scheduler-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+      
+---
+# PersistentVolume for Prometheus configuration
 apiVersion: v1
 kind: PersistentVolume
 metadata:
@@ -44,7 +57,7 @@ spec:
   storageClassName: prometheus-config
 
 ---
-
+# PersistentVolumeClaim for Prometheus configuration
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -86,11 +99,11 @@ spec:
         dapr.io/enable-metrics: "true"
         #dapr.io/env: "GOMEMLIMIT=700MiB"
         dapr.io/log-level: "debug"
-        dapr.io/metrics-exporter-type: "prometheus"
-        dapr.io/metrics-port: "9090"  # Ensure this matches the port exposed by the Prometheus exporter in the OpenTelemetry Collector configuration
-        #dapr.io/placement-host-address: "127.0.0.1:50005"
+        #dapr.io/metrics-exporter-type: "prometheus"
+        #dapr.io/metrics-port: "9090"  # Ensure this matches the port exposed by the Prometheus exporter in the OpenTelemetry Collector configuration
+        dapr.io/placement-host-address: "dapr-placement-server.dapr-system.svc.cluster.local:50005"
         dapr.io/scheduler-host-address: "dapr-scheduler-server.dapr-system.svc.cluster.local:50006"
-        dapr.io/sidecar-cpu-limit: "1.0"
+        dapr.io/sidecar-cpu-limit: "4.0"
         dapr.io/sidecar-memory-limit: "768Mi"
         dapr.io/sidecar-cpu-request: "0.25"
         dapr.io/sidecar-memory-request: "256Mi"

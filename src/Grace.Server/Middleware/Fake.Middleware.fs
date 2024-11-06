@@ -10,22 +10,12 @@ open Microsoft.Extensions.ObjectPool
 open System
 open System.Text
 
-// Define a StringBuilder policy for the pool
-type StringBuilderPooledObjectPolicy() =
-    inherit PooledObjectPolicy<StringBuilder>()
-
-    override _.Create() = new StringBuilder()
-
-    override _.Return(sb: StringBuilder) =
-        sb.Clear() |> ignore
-        true
-
 /// Checks the incoming request for an X-Correlation-Id header. If there's no CorrelationId header, it generates one and adds it to the response headers.
-type LogRequestHeadersMiddleware(next: RequestDelegate) =
+type FakeMiddleware(next: RequestDelegate) =
 
     let pooledObjectPolicy = StringBuilderPooledObjectPolicy()
     let stringBuilderPool = ObjectPool.Create<StringBuilder>(pooledObjectPolicy)
-    let log = ApplicationContext.loggerFactory.CreateLogger(nameof (LogRequestHeadersMiddleware))
+    let log = ApplicationContext.loggerFactory.CreateLogger(nameof (FakeMiddleware))
 
     member this.Invoke(context: HttpContext) =
 
@@ -34,23 +24,11 @@ type LogRequestHeadersMiddleware(next: RequestDelegate) =
 #if DEBUG
         let middlewareTraceHeader = context.Request.Headers["X-MiddlewareTraceIn"]
 
-        context.Request.Headers["X-MiddlewareTraceIn"] <- $"{middlewareTraceHeader}{nameof (LogRequestHeadersMiddleware)} --> "
+        context.Request.Headers["X-MiddlewareTraceIn"] <- $"{middlewareTraceHeader}{nameof (FakeMiddleware)} --> "
 #endif
-        //let path = context.Request.Path.ToString()
 
-        //if path = "/healthz" then
-        //    logToConsole $"In LogRequestHeadersMiddleware.Middleware.fs: Path: {path}."
-
-        if log.IsEnabled(LogLevel.Debug) then
-            let sb = stringBuilderPool.Get()
-
-            try
-                context.Request.Headers
-                |> Seq.iter (fun kv -> sb.AppendLine($"{kv.Key} = {kv.Value}") |> ignore)
-
-                log.LogDebug("Request headers: {headers}", sb.ToString())
-            finally
-                stringBuilderPool.Return(sb)
+        let path = context.Request.Path.ToString()
+        logToConsole $"****In FakeMiddleware; Path: {path}."
 
         // -----------------------------------------------------------------------------------------------------
         // Pass control to next middleware instance...
@@ -61,6 +39,6 @@ type LogRequestHeadersMiddleware(next: RequestDelegate) =
 #if DEBUG
         let middlewareTraceOutHeader = context.Request.Headers["X-MiddlewareTraceOut"]
 
-        context.Request.Headers["X-MiddlewareTraceOut"] <- $"{middlewareTraceOutHeader}{nameof (LogRequestHeadersMiddleware)} --> "
+        context.Request.Headers["X-MiddlewareTraceOut"] <- $"{middlewareTraceOutHeader}{nameof (FakeMiddleware)} --> "
 #endif
         nextTask

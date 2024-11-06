@@ -42,7 +42,7 @@ open Microsoft.Extensions.DependencyInjection
 
 module Services =
     type ServerGraceIndex = Dictionary<RelativePath, DirectoryVersion>
-    type OwnerIdRecord = { ownerId: string }
+    type OwnerIdRecord = { OwnerId: string }
     type OrganizationIdRecord = { organizationId: string }
     type RepositoryIdRecord = { repositoryId: string }
     type BranchIdRecord = { branchId: string }
@@ -121,7 +121,7 @@ module Services =
                             let blobContainerClient = BlobContainerClient(azureStorageConnectionString, containerName)
 
                             // Make sure the container exists before returning the client.
-                            let metadata = Dictionary<string, string>() :> IDictionary<string, string>
+                            let metadata = Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) :> IDictionary<string, string>
                             metadata[nameof (OwnerId)] <- $"{repositoryDto.OwnerId}"
                             metadata[nameof (OrganizationId)] <- $"{repositoryDto.OrganizationId}"
                             metadata[nameof (RepositoryId)] <- $"{repositoryDto.RepositoryId}"
@@ -237,7 +237,7 @@ module Services =
                         QueryDefinition(
                             """SELECT c["value"].OwnerId
                             FROM c
-                            WHERE ENDSWITH(c.id, @stateStorageName)
+                            WHERE c["value"].Class = @stateStorageName
                                 AND STRINGEQUALS(c["value"].OwnerName, @ownerName, true)"""
                         )
                             .WithParameter("@ownerName", ownerName)
@@ -248,9 +248,11 @@ module Services =
 
                     if iterator.HasMoreResults then
                         let! currentResultSet = iterator.ReadNextAsync()
-                        let ownerId = currentResultSet.FirstOrDefault({ ownerId = String.Empty }).ownerId
+                        currentResultSet |> Seq.iter (fun owner -> logToConsole $"Owner: {owner}")
+                        let ownerId = currentResultSet.FirstOrDefault({ OwnerId = String.Empty }).OwnerId
 
                         if String.IsNullOrEmpty(ownerId) && cacheResultIfNotFound then
+                            logToConsole $"Did not find ownerId using OwnerName {ownerName}. cacheResultIfNotFound: {cacheResultIfNotFound}."
                             // We didn't find the OwnerId, so add this OwnerName to the MemoryCache and indicate that we have already checked.
                             //use newCacheEntry =
                             //    memoryCache.CreateEntry(
@@ -353,7 +355,7 @@ module Services =
                             // We have already checked and the owner exists.
                             match memoryCache.GetOwnerNameEntry ownerName with
                             | Some ownerGuid -> return Some $"{ownerGuid}"
-                            | None -> // This should never happen, because we just populated the cache in nameExists.
+                            | None -> // This should never happen, because we just populated the cache in ownerNameExists.
                                 return None
                         else
                             // The owner name does not exist.
@@ -499,7 +501,28 @@ module Services =
             let repositoryGuid = Guid.Parse(repositoryId)
             let repositoryActorProxy = Repository.CreateActorProxy repositoryGuid correlationId
 
+            log.Value.LogInformation(
+                "{currentInstant}:****In Services.Actor.repositoryExists, before repositoryActorProxy.Exists: CorrelationId: {correlationId}; RepositoryId: {repositoryId}; repositoryActorProxy.GetHashCode(): {actorProxyHashCode}; threadCount: {threadCount}; threadId: {threadId}.",
+                getCurrentInstantExtended (),
+                correlationId,
+                repositoryId,
+                repositoryActorProxy.GetHashCode(),
+                Process.GetCurrentProcess().Threads.Count,
+                Thread.CurrentThread.ManagedThreadId
+            )
+
             let! exists = repositoryActorProxy.Exists correlationId
+
+            log.Value.LogInformation(
+                "{currentInstant}:****In Services.Actor.repositoryExists: CorrelationId: {correlationId}; RepositoryId: {repositoryId}; Exists: {exists}; repositoryActorProxy.GetHashCode(): {actorProxyHashCode}; threadCount: {threadCount}; threadId: {threadId}.",
+                getCurrentInstantExtended (),
+                correlationId,
+                repositoryId,
+                exists,
+                repositoryActorProxy.GetHashCode(),
+                Process.GetCurrentProcess().Threads.Count,
+                Thread.CurrentThread.ManagedThreadId
+            )
 
             if exists then
                 // Add this RepositoryId to the MemoryCache.
@@ -831,45 +854,37 @@ module Services =
         }
 
     /// Checks if the specified repository name is unique for the specified organization.
-    let repositoryNameIsUnique<'T>
-        (ownerId: string)
-        (ownerName: string)
-        (organizationId: string)
-        (organizationName: string)
-        (repositoryName: string)
-        (correlationId: CorrelationId)
-        =
+    let repositoryNameIsUnique<'T> (ownerId: string) (organizationId: string) (repositoryName: string) (correlationId: CorrelationId) =
         task {
             match actorStateStorageProvider with
             | Unknown -> return Ok false
             | AzureCosmosDb ->
                 try
-                    match! resolveOrganizationId ownerId ownerName organizationId organizationName correlationId with
-                    | Some organizationId ->
-                        let queryDefinition =
-                            QueryDefinition(
-                                """SELECT c["value"].RepositoryId FROM c WHERE c["value"].OrganizationId = @organizationId AND c["value"].RepositoryName = @repositoryName AND c["value"].Class = @class"""
-                            )
-                                .WithParameter("@organizationId", organizationId)
-                                .WithParameter("@repositoryName", repositoryName)
-                                .WithParameter("@class", nameof (RepositoryDto))
-                        //logToConsole (queryDefinition.QueryText.Replace("@organizationId", $"\"{organizationId}\"").Replace("@repositoryName", $"\"{repositoryName}\""))
-                        let iterator = cosmosContainer.GetItemQueryIterator<RepositoryIdRecord>(queryDefinition, requestOptions = queryRequestOptions)
+                    let queryDefinition =
+                        QueryDefinition(
+                            """SELECT c["value"].RepositoryId FROM c WHERE c["value"].OwnerId = @ownerId AND c["value"].OrganizationId = @organizationId AND c["value"].RepositoryName = @repositoryName AND c["value"].Class = @class"""
+                        )
+                            .WithParameter("@ownerId", ownerId)
+                            .WithParameter("@organizationId", organizationId)
+                            .WithParameter("@repositoryName", repositoryName)
+                            .WithParameter("@class", nameof (RepositoryDto))
+                    //logToConsole (queryDefinition.QueryText.Replace("@organizationId", $"\"{organizationId}\"").Replace("@repositoryName", $"\"{repositoryName}\""))
+                    let iterator = cosmosContainer.GetItemQueryIterator<RepositoryIdRecord>(queryDefinition, requestOptions = queryRequestOptions)
 
-                        if iterator.HasMoreResults then
-                            let! currentResultSet = iterator.ReadNextAsync()
-                            // If a row is returned, and repositoryId gets a value, then the repository name is not unique.
-                            let repositoryId = currentResultSet.FirstOrDefault({ repositoryId = String.Empty }).repositoryId
+                    if iterator.HasMoreResults then
+                        let! currentResultSet = iterator.ReadNextAsync()
 
-                            if String.IsNullOrEmpty(repositoryId) then
-                                // The repository name is unique.
-                                return Ok true
-                            else
-                                // The repository name is not unique.
-                                return Ok false
+                        // If a row is returned, and repositoryId gets a value, then the repository name is not unique.
+                        let repositoryId = currentResultSet.FirstOrDefault({ repositoryId = String.Empty }).repositoryId
+
+                        if String.IsNullOrEmpty(repositoryId) then
+                            // The repository name is unique.
+                            return Ok true
                         else
-                            return Ok true // This else should never be hit.
-                    | None -> return Ok false
+                            // The repository name is not unique.
+                            return Ok false
+                    else
+                        return Ok true // This else should never be hit.
                 with ex ->
                     return Error $"{createExceptionResponse ex}"
             | MongoDB -> return Ok false
@@ -1098,7 +1113,7 @@ module Services =
 
             try
                 // (MaxDegreeOfParallelism = 3) runs at 700 RU's, so it fits under the free 1,000 RU limit for CosmosDB, without getting throttled.
-                let parallelOptions = ParallelOptions(MaxDegreeOfParallelism = 3)
+                let parallelOptions = ParallelOptions(MaxDegreeOfParallelism = 8)
 
                 let itemRequestOptions = ItemRequestOptions()
 

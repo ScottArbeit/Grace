@@ -13,23 +13,23 @@ type Validations() =
 
     [<Test>]
     member this.``valid Guid returns Ok``() =
-        let result = (Guid.isValidAndNotEmpty "6fddb3c1-24c2-4e2e-8f57-98d0838c0c3f" "error").Result
+        let result = (Guid.isValidAndNotEmptyGuid "6fddb3c1-24c2-4e2e-8f57-98d0838c0c3f" "error").Result
 
         Assert.That(result, Is.EqualTo(Common.okResult))
 
     [<Test>]
     member this.``empty string for guid returns Ok``() =
-        let result = (Guid.isValidAndNotEmpty "" "error").Result
+        let result = (Guid.isValidAndNotEmptyGuid "" "error").Result
         Assert.That(result, Is.EqualTo(Common.okResult))
 
     [<Test>]
     member this.``invalid Guid returns Error``() =
-        let result = (Guid.isValidAndNotEmpty "not a Guid" "error").Result
+        let result = (Guid.isValidAndNotEmptyGuid "not a Guid" "error").Result
         Assert.That(result, Is.EqualTo(Common.errorResult))
 
     [<Test>]
     member this.``Guid Empty returns Error``() =
-        let result = (Guid.isValidAndNotEmpty (Guid.Empty.ToString()) "error").Result
+        let result = (Guid.isValidAndNotEmptyGuid (Guid.Empty.ToString()) "error").Result
         Assert.That(result, Is.EqualTo(Common.errorResult))
 
     [<Test>]

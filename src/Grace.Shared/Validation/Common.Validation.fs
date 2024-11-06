@@ -12,7 +12,7 @@ module Common =
     module Guid =
 
         /// Validates that a string is a valid Guid, and is not Guid.Empty.
-        let isValidAndNotEmpty<'T> (s: string) (error: 'T) =
+        let isValidAndNotEmptyGuid<'T> (s: string) (error: 'T) =
             if not <| String.IsNullOrEmpty(s) then
                 let mutable guid = Guid.Empty
 

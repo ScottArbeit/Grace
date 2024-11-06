@@ -257,7 +257,7 @@ module Reference =
                                     let! deletionReminder =
                                         this.SchedulePhysicalDeletion(
                                             $"Deletion for saves of {repositoryDto.SaveDays} days.",
-                                            TimeSpan.FromDays(repositoryDto.SaveDays),
+                                            TimeSpan.FromDays(float repositoryDto.SaveDays),
                                             correlationId
                                         )
 
@@ -272,7 +272,7 @@ module Reference =
                                     let! deletionReminder =
                                         this.SchedulePhysicalDeletion(
                                             $"Deletion for checkpoints of {repositoryDto.CheckpointDays} days.",
-                                            TimeSpan.FromDays(repositoryDto.CheckpointDays),
+                                            TimeSpan.FromDays(float repositoryDto.CheckpointDays),
                                             correlationId
                                         )
 
@@ -357,7 +357,11 @@ module Reference =
                                     let! repositoryDto = repositoryActorProxy.Get this.correlationId
 
                                     let! deletionReminder =
-                                        this.SchedulePhysicalDeletion(deleteReason, TimeSpan.FromDays(repositoryDto.LogicalDeleteDays), this.correlationId)
+                                        this.SchedulePhysicalDeletion(
+                                            deleteReason,
+                                            TimeSpan.FromDays(float repositoryDto.LogicalDeleteDays),
+                                            this.correlationId
+                                        )
 
                                     return LogicalDeleted(force, deleteReason)
                                 | DeletePhysical ->

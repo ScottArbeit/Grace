@@ -84,7 +84,7 @@ type Repository() =
     member public this.SetSaveDaysWithValidValues() =
         task {
             let parameters = Parameters.Repository.SetSaveDaysParameters()
-            parameters.SaveDays <- 17.5
+            parameters.SaveDays <- 17.5f
             parameters.OwnerId <- ownerId
             parameters.OrganizationId <- organizationId
             parameters.RepositoryId <- repositoryIds[(rnd.Next(0, numberOfRepositories))]
@@ -100,7 +100,7 @@ type Repository() =
     member public this.SetSaveDaysWithInvalidValues() =
         task {
             let parameters = Parameters.Repository.SetSaveDaysParameters()
-            parameters.SaveDays <- -1
+            parameters.SaveDays <- -1f
             parameters.OwnerId <- ownerId
             parameters.OrganizationId <- organizationId
             parameters.RepositoryId <- repositoryIds[(rnd.Next(0, numberOfRepositories))]
@@ -117,7 +117,7 @@ type Repository() =
     member public this.SetCheckpointDaysWithValidValues() =
         task {
             let parameters = Parameters.Repository.SetCheckpointDaysParameters()
-            parameters.CheckpointDays <- 17.5
+            parameters.CheckpointDays <- 17.5f
             parameters.OwnerId <- ownerId
             parameters.OrganizationId <- organizationId
             parameters.RepositoryId <- repositoryIds[(rnd.Next(0, numberOfRepositories))]
@@ -133,7 +133,7 @@ type Repository() =
     member public this.SetCheckpointDaysWithInvalidValues() =
         task {
             let parameters = Parameters.Repository.SetCheckpointDaysParameters()
-            parameters.CheckpointDays <- -1
+            parameters.CheckpointDays <- -1f
             parameters.OwnerId <- ownerId
             parameters.OrganizationId <- organizationId
             parameters.RepositoryId <- repositoryIds[(rnd.Next(0, numberOfRepositories))]

@@ -1,10 +1,11 @@
-﻿namespace Grace.SDK
+namespace Grace.SDK
 
 open Grace.SDK.Common
 open Grace.Shared.Dto.Branch
 open Grace.Shared.Dto.Reference
 open Grace.Shared.Dto.Repository
 open Grace.Shared.Parameters.Repository
+open Grace.Shared.Utilities
 open Grace.Shared.Types
 open System
 open System.Collections.Generic
@@ -19,6 +20,7 @@ type Repository() =
     /// </summary>
     /// <param name="parameters">Values to use when creating the new repository.</param>
     static member public Create(parameters: CreateRepositoryParameters) =
+        logToConsole $"Creating repository: RepositoryId: {parameters.RepositoryId}; RepositoryName: {parameters.RepositoryName}."
         postServer<CreateRepositoryParameters, String> (parameters |> ensureCorrelationIdIsSet, $"repository/{nameof (Repository.Create)}")
 
     /// <summary>
@@ -66,6 +68,10 @@ type Repository() =
     /// <param name="parameters">Values to use when setting the repository default for whether saves should be kept.</param>
     static member public SetRecordSaves(parameters: RecordSavesParameters) =
         postServer<RecordSavesParameters, String> (parameters |> ensureCorrelationIdIsSet, $"repository/{nameof (Repository.SetRecordSaves)}")
+
+    /// Sets the number of days to keep logical deletes in this repository.
+    static member public SetLogicalDeleteDays(parameters: SetLogicalDeleteDaysParameters) =
+        postServer<SetLogicalDeleteDaysParameters, String> (parameters |> ensureCorrelationIdIsSet, $"repository/{nameof (Repository.SetLogicalDeleteDays)}")
 
     /// <summary>
     /// Sets the number of days to keep saves in this repository.

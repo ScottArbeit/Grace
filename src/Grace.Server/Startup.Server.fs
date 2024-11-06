@@ -59,16 +59,16 @@ module Application =
 
         let mustBeLoggedIn = requiresAuthentication notLoggedIn
 
+        let fileVersion =
+            FileVersionInfo
+                .GetVersionInfo(Assembly.GetExecutingAssembly().Location)
+                .FileVersion
+
         let endpoints =
             [ GET
                   [ route
                         "/"
                         (warbler (fun _ ->
-                            let fileVersion =
-                                FileVersionInfo
-                                    .GetVersionInfo(Assembly.GetExecutingAssembly().Location)
-                                    .FileVersion
-
                             htmlString
                                 $"<h1>Hello From Grace Server {fileVersion}!</h1><br/><p>The current server time is: {getCurrentInstantExtended ()}.</p>"))
                     route
@@ -231,6 +231,8 @@ module Application =
                           |> addMetadata typeof<Repository.SetDefaultServerApiVersionParameters>
                           route "/setDescription" Repository.SetDescription
                           |> addMetadata typeof<Repository.SetRepositoryDescriptionParameters>
+                          route "/setLogicalDeleteDays" Repository.SetLogicalDeleteDays
+                          |> addMetadata typeof<Repository.SetLogicalDeleteDaysParameters>
                           route "/setName" Repository.SetName
                           |> addMetadata typeof<Repository.SetRepositoryNameParameters>
                           route "/setRecordSaves" Repository.SetRecordSaves
@@ -496,6 +498,7 @@ module Application =
                 |> ignore
 
             app
+                //.UseMiddleware<FakeMiddleware>()
                 .UseW3CLogging()
                 .UseCloudEvents()
                 .UseAuthentication()

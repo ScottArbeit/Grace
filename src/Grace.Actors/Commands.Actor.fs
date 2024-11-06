@@ -100,16 +100,16 @@ module Commands =
             | SetObjectStorageProvider of objectStorageProvider: ObjectStorageProvider
             | SetStorageAccountName of storageAccountName: StorageAccountName
             | SetStorageContainerName of storageContainerName: StorageContainerName
-            | SetVisibility of repositoryVisibility: RepositoryVisibility
+            | SetRepositoryType of repositoryVisibility: RepositoryType
             | SetRepositoryStatus of repositoryStatus: RepositoryStatus
             | SetRecordSaves of recordSaves: bool
             | SetDefaultServerApiVersion of defaultServerApiVersion: string
             | SetDefaultBranchName of defaultBranchName: BranchName
-            | SetLogicalDeleteDays of duration: double
-            | SetSaveDays of duration: double
-            | SetCheckpointDays of duration: double
-            | SetDirectoryVersionCacheDays of duration: double
-            | SetDiffCacheDays of duration: double
+            | SetLogicalDeleteDays of duration: single
+            | SetSaveDays of duration: single
+            | SetCheckpointDays of duration: single
+            | SetDirectoryVersionCacheDays of duration: single
+            | SetDiffCacheDays of duration: single
             | SetName of repositoryName: RepositoryName
             | SetDescription of description: string
             | DeleteLogical of force: bool * DeleteReason: DeleteReason

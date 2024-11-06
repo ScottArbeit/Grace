@@ -156,16 +156,16 @@ module Events =
             | ObjectStorageProviderSet of objectStorageProvider: ObjectStorageProvider
             | StorageAccountNameSet of storageAccountName: StorageAccountName
             | StorageContainerNameSet of storageContainerName: StorageContainerName
-            | RepositoryVisibilitySet of repositoryVisibility: RepositoryVisibility
+            | RepositoryTypeSet of repositoryVisibility: RepositoryType
             | RepositoryStatusSet of repositoryStatus: RepositoryStatus
             | RecordSavesSet of recordSaves: bool
             | DefaultServerApiVersionSet of defaultServerApiVersion: string
             | DefaultBranchNameSet of defaultBranchName: BranchName
-            | LogicalDeleteDaysSet of duration: double
-            | SaveDaysSet of duration: double
-            | CheckpointDaysSet of duration: double
-            | DirectoryVersionCacheDaysSet of duration: double
-            | DiffCacheDaysSet of duration: double
+            | LogicalDeleteDaysSet of duration: single
+            | SaveDaysSet of duration: single
+            | CheckpointDaysSet of duration: single
+            | DirectoryVersionCacheDaysSet of duration: single
+            | DiffCacheDaysSet of duration: single
             | NameSet of repositoryName: RepositoryName
             | DescriptionSet of description: string
             | LogicalDeleted of force: bool * DeleteReason: DeleteReason

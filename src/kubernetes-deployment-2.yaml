@@ -1,0 +1,423 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: grace-namespace
+---
+# PersistentVolumeClaim for Dapr Scheduler's persistent storage
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: dapr-scheduler-pvc
+  namespace: grace-namespace
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grace-environment
+data:
+  ASPNETCORE_ENVIRONMENT: Development
+  ASPNETCORE_HTTP_PORTS: "5000"
+  ASPNETCORE_HTTPS_PORTS: "5001"
+  ASPNETCORE_URLS: https://+:5001;http://+:5000
+  # ASPNETCORE_Kestrel__Certificates__Default__Path: /https/aspnetapp.pfx
+  # ASPNETCORE_Kestrel__Certificates__Default__Password: CrypticPassword8=5
+  APPLICATIONINSIGHTS_CONNECTION_STRING: "InstrumentationKey=e0955eb4-1817-4a94-bf6e-d48f6ae54a8c;IngestionEndpoint=https://westus2-2.in.applicationinsights.azure.com/"
+  # Azure_CosmosDB_Connection_String: "AccountEndpoint=https://localhost:8081/;AccountKey=C2y6yDjf5/R+ob0N8A7Cgv30VRDJIWEHLM+4QDU5DE2nQ9nDuVTqobD4b8mGGyPMbIZnqyMsEcaGQy67XIw/Jw==" # This is a well-known default key.
+  DAPR_APP_ID: "grace-server"
+  DAPR_APP_PORT: "5000"
+  DAPR_HTTP_PORT: "3500"
+  DAPR_GRPC_PORT: "50001"
+  DAPR_SERVER_URI: http://127.0.0.1
+  Logging__LogLevel__Default: "Information"
+  #Logging__LogLevel__Default: "Debug"
+  TEMP: /tmp
+  OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4317"
+  OTEL_RESOURCE_ATTRIBUTES: "service.name=grace-server"
+---
+# Deployment for Grace.Server with Dapr sidecar
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grace-server
+  namespace: grace-namespace
+  labels:
+    app: grace-server
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: grace-server
+  template:
+    metadata:
+      labels:
+        app: grace-server
+      annotations:
+        # Enable Dapr sidecar injection
+        dapr.io/enabled: "true"
+        # Specify Dapr app ID
+        dapr.io/app-id: "grace-server"
+        # Expose necessary ports for Dapr
+        dapr.io/app-port: "5000"
+        dapr.io/config: "featureconfig"
+        dapr.io/enable-metrics: "true"
+        dapr.io/log-level: "debug"
+        dapr.io/sidecar-cpu-limit: "1.0"
+        dapr.io/sidecar-memory-limit: "2Gi"
+        dapr.io/sidecar-cpu-request: "0.25"
+        dapr.io/sidecar-memory-request: "256Mi"
+    spec:
+      volumes:
+      - name: dapr-config
+        hostPath:
+          path: /mnt/c/Users/Scott/.dapr/
+          type: Directory
+      containers:
+      - name: grace-server
+        image: scottarbeit/grace-server:latest # Replace with your actual image
+        resources:
+          limits:
+            cpu: "2.0"
+            memory: "12288Mi"
+          requests:
+            cpu: "2.0"
+            memory: "8192Mi"
+        envFrom:
+        - configMapRef:
+            name: grace-environment
+        ports:
+        - containerPort: 5000
+          name: http-grace
+          protocol: TCP
+        - containerPort: 5001
+          name: https-grace
+          protocol: TCP
+---
+# Deployment for Dapr Scheduler with persistent storage
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dapr-scheduler
+  namespace: grace-namespace
+  labels:
+    app: dapr-scheduler
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: dapr-scheduler
+  template:
+    metadata:
+      labels:
+        app: dapr-scheduler
+    spec:
+      containers:
+        - name: dapr-scheduler
+          image: "daprio/dapr:latest" # Use appropriate Dapr scheduler image
+          command: ["dapr", "scheduler", "run"]
+          volumeMounts:
+            - name: scheduler-storage
+              mountPath: /data
+          env:
+            - name: SCHEDULER_STORAGE_PATH
+              value: "/data"
+      volumes:
+        - name: scheduler-storage
+          persistentVolumeClaim:
+            claimName: dapr-scheduler-pvc
+---
+# ConfigMap for OpenTelemetry Collector configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: otel-collector-config
+  namespace: grace-namespace
+data:
+  otel-collector-config.yaml: |
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+          http:
+    processors:
+      batch:
+    exporters:
+      zipkin:
+        endpoint: "http://zipkin:9411/api/v2/spans"
+      prometheus:
+        endpoint: "0.0.0.0:8889/prometheus"
+    service:
+      pipelines:
+        traces:
+          receivers: [otlp]
+          processors: [batch]
+          exporters: [zipkin]
+        metrics:
+          receivers: [otlp]
+          processors: [batch]
+          exporters: [prometheus]
+---
+# Deployment for OpenTelemetry Collector
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: otel-collector
+  namespace: grace-namespace
+  labels:
+    app: otel-collector
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: otel-collector
+  template:
+    metadata:
+      labels:
+        app: otel-collector
+    spec:
+      containers:
+        - name: otel-collector
+          image: otel/opentelemetry-collector:latest
+          command:
+            - "/otelcol"
+            - "--config=/etc/otel-collector-config.yaml"
+          ports:
+            - containerPort: 4317 # OTLP gRPC
+            - containerPort: 4318 # OTLP HTTP
+            - containerPort: 8889 # Prometheus metrics
+          volumeMounts:
+            - name: config
+              mountPath: /etc/otel-collector-config.yaml
+              subPath: otel-collector-config.yaml
+      volumes:
+        - name: config
+          configMap:
+            name: otel-collector-config
+---
+# Deployment for Prometheus
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prometheus
+  namespace: grace-namespace
+  labels:
+    app: prometheus
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: prometheus
+  template:
+    metadata:
+      labels:
+        app: prometheus
+    spec:
+      containers:
+        - name: prometheus
+          image: prom/prometheus:latest
+          args:
+            - "--config.file=/etc/prometheus/prometheus.yml"
+          ports:
+            - containerPort: 9090
+          volumeMounts:
+            - name: prometheus-config
+              mountPath: /etc/prometheus/prometheus.yml
+              subPath: prometheus.yml
+      volumes:
+        - name: prometheus-config
+          configMap:
+            name: prometheus-config
+---
+# ConfigMap for Prometheus configuration with default scrape settings
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-config
+  namespace: grace-namespace
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s
+    scrape_configs:
+      - job_name: 'grace-server'
+        static_configs:
+          - targets: ['grace-server.grace-namespace.svc.cluster.local:80']
+      - job_name: 'otel-collector'
+        static_configs:
+          - targets: ['otel-collector.grace-namespace.svc.cluster.local:8889']
+---
+# Service for Prometheus
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus
+  namespace: grace-namespace
+  labels:
+    app: prometheus
+spec:
+  type: ClusterIP
+  ports:
+    - port: 9090
+      targetPort: 9090
+      name: http
+  selector:
+    app: prometheus
+---
+# Deployment for Zipkin
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: zipkin
+  namespace: grace-namespace
+  labels:
+    app: zipkin
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: zipkin
+  template:
+    metadata:
+      labels:
+        app: zipkin
+    spec:
+      containers:
+        - name: zipkin
+          image: openzipkin/zipkin:latest
+          ports:
+            - containerPort: 9411
+          env:
+            - name: STORAGE_TYPE
+              value: "memory" # Use in-memory storage for development
+---
+# Service for Zipkin
+apiVersion: v1
+kind: Service
+metadata:
+  name: zipkin
+  namespace: grace-namespace
+  labels:
+    app: zipkin
+spec:
+  type: ClusterIP
+  ports:
+    - port: 9411
+      targetPort: 9411
+      name: http
+  selector:
+    app: zipkin
+---
+# Service for OpenTelemetry Collector to expose Prometheus metrics
+apiVersion: v1
+kind: Service
+metadata:
+  name: otel-collector
+  namespace: grace-namespace
+  labels:
+    app: otel-collector
+spec:
+  type: ClusterIP
+  ports:
+    - port: 4317
+      targetPort: 4317
+      name: otlp-grpc
+    - port: 4318
+      targetPort: 4318
+      name: otlp-http
+    - port: 8889
+      targetPort: 8889
+      name: prometheus
+  selector:
+    app: otel-collector
+---
+# Service for Dapr Sidecar (optional if not using Dapr's internal service discovery)
+apiVersion: v1
+kind: Service
+metadata:
+  name: grace-server
+  namespace: grace-namespace
+  labels:
+    app: grace-server
+spec:
+  type: ClusterIP
+  ports:
+    - port: 80
+      targetPort: 80
+      name: http
+    - port: 3500
+      targetPort: 3500
+      name: dapr
+  selector:
+    app: grace-server
+---
+# Service for Dapr Scheduler (optional)
+apiVersion: v1
+kind: Service
+metadata:
+  name: dapr-scheduler
+  namespace: grace-namespace
+  labels:
+    app: dapr-scheduler
+spec:
+  type: ClusterIP
+  ports:
+    - port: 8080
+      targetPort: 8080
+      name: http
+  selector:
+    app: dapr-scheduler
+---
+# Ingress (Optional: To expose services externally)
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: grace-ingress
+  namespace: grace-namespace
+  annotations:
+    kubernetes.io/ingress.class: "nginx" # Assuming NGINX Ingress Controller
+spec:
+  rules:
+    - host: grace.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: grace-server
+                port:
+                  name: http
+---
+# Additional ServiceMonitor for Prometheus (if using Prometheus Operator)
+# Uncomment if applicable
+# apiVersion: monitoring.coreos.com/v1
+# kind: ServiceMonitor
+# metadata:
+#   name: grace-servicemonitor
+#   namespace: grace-namespace
+#   labels:
+#     release: prometheus
+# spec:
+#   selector:
+#     matchLabels:
+#       app: grace-server
+#   endpoints:
+#     - port: http
+#       interval: 15s
+---
+# Comments:
+# - Namespace `grace-namespace` isolates all resources.
+# - Dapr sidecar is enabled via annotations in the Grace.Server deployment.
+# - PersistentVolumeClaim `dapr-scheduler-pvc` provides storage for Dapr Scheduler.
+# - OpenTelemetry Collector is configured to receive OTLP traces and metrics,
+#   export traces to Zipkin, and expose Prometheus metrics.
+# - Prometheus is set up with default scrape configurations targeting Grace.Server and OpenTelemetry Collector.
+# - Zipkin uses in-memory storage suitable for development; switch to persistent storage for production.
+# - Services expose each component internally within the cluster.
+# - Environment variables in Grace.Server configure OpenTelemetry exporters.
+# - Ingress is optional and provided for external access using NGINX Ingress Controller.

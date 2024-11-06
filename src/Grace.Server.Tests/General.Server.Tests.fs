@@ -176,9 +176,11 @@ type Setup() =
             let daprComponentsPath = Path.Combine(homeDirectory, ".dapr", "components-integration")
             let daprConfigFilePath = Path.Combine(daprComponentsPath, "dapr-config.yaml")
 
+            logToTestConsole $"Current process id: {Environment.ProcessId}. Process start time: {Process.GetCurrentProcess().StartTime}."
             logToTestConsole $"Current directory: {Environment.CurrentDirectory}"
             let correlationId = generateCorrelationId ()
 
+            // Delete any existing integration test containers.
             do! this.DeleteContainers()
 
             let daprSchedulerDockerRunArguments =
@@ -204,7 +206,7 @@ type Setup() =
                     .WithArguments(daprSchedulerDockerRunArguments)
                     .WithStandardOutputPipe(PipeTarget.ToStringBuilder(sbOutput))
                     .WithStandardErrorPipe(PipeTarget.ToStringBuilder(sbError))
-                    .WithValidation(CliWrap.CommandResultValidation.None)
+                    .WithValidation(CommandResultValidation.None)
                     .ExecuteAsync()
 
             if daprSchedulerResult.ExitCode = 0 then
@@ -273,7 +275,7 @@ type Setup() =
                     .WithArguments(zipkinArguments)
                     .WithStandardOutputPipe(PipeTarget.ToStringBuilder(sbOutput))
                     .WithStandardErrorPipe(PipeTarget.ToStringBuilder(sbError))
-                    .WithValidation(CliWrap.CommandResultValidation.None)
+                    .WithValidation(CommandResultValidation.None)
                     .ExecuteAsync()
 
             if zipkinResult.ExitCode = 0 then
@@ -350,7 +352,7 @@ type Setup() =
                     .WithArguments(daprRuntimeArguments)
                     .WithWorkingDirectory(graceServerPath)
                     .WithEnvironmentVariables(daprEnvironmentVariables)
-                    .WithValidation(CliWrap.CommandResultValidation.None)
+                    .WithValidation(CommandResultValidation.None)
                     .WithStandardOutputPipe(PipeTarget.ToStringBuilder(sbOutput))
                     .WithStandardErrorPipe(PipeTarget.ToStringBuilder(sbError))
 
@@ -367,7 +369,7 @@ type Setup() =
 
             // Give time for Dapr to warm up.
             logToTestConsole "Waiting for Dapr to warm up..."
-            //do! Task.Delay(8000)
+
             while not
                   <| (sbOutput.ToString().Contains("dapr initialized")
                       && (sbOutput.ToString().Contains("Placement order received: unlock"))) do
@@ -375,107 +377,151 @@ type Setup() =
 
             logToTestConsole "Warm up complete."
 
-            // Create the owner we'll use for this test run.
             try
+                // Create the owner we'll use for this test run.
                 let ownerParameters = Parameters.Owner.CreateOwnerParameters()
                 ownerParameters.OwnerId <- ownerId
-                ownerParameters.OwnerName <- $"TestOwner{rnd.Next(1000)}"
+                ownerParameters.OwnerName <- $"TestOwner{rnd.Next(65535):X4}"
                 ownerParameters.CorrelationId <- correlationId
-
-                //logToTestConsole $"Creating owner {ownerParameters.OwnerName} with ID {ownerParameters.OwnerId}. About to call server."
-
                 let! response = Client.PostAsync("/owner/create", createJsonContent ownerParameters)
 
-                if not <| response.IsSuccessStatusCode then
+                if response.IsSuccessStatusCode then
+                    logToTestConsole $"Owner {ownerParameters.OwnerName} created successfully."
+                else
                     let! content = response.Content.ReadAsStringAsync()
+                    Assert.That(content.Length, Is.GreaterThan(0))
                     let error = deserialize<GraceError> content
                     logToTestConsole $"StatusCode: {response.StatusCode}; Content: {error}"
 
                 response.EnsureSuccessStatusCode() |> ignore
+
+                // Create the organization we'll use for this test run.
+                let organizationParameters = Parameters.Organization.CreateOrganizationParameters()
+                organizationParameters.OwnerId <- ownerId
+                organizationParameters.OrganizationId <- organizationId
+                organizationParameters.OrganizationName <- $"TestOrganization{rnd.Next(65535):X4}"
+                organizationParameters.CorrelationId <- correlationId
+                let! response = Client.PostAsync("/organization/create", createJsonContent organizationParameters)
+
+                if response.IsSuccessStatusCode then
+                    logToTestConsole $"Organization {organizationParameters.OrganizationName} created successfully."
+                else
+                    let! content = response.Content.ReadAsStringAsync()
+                    Assert.That(content.Length, Is.GreaterThan(0))
+                    let error = deserialize<GraceError> content
+                    logToTestConsole $"StatusCode: {response.StatusCode}; Content: {error}"
+
+                response.EnsureSuccessStatusCode() |> ignore
+
+                // Create the repositories we'll use for this test run.
+                do!
+                    Parallel.ForEachAsync(
+                        repositoryIds,
+                        Constants.ParallelOptions,
+                        (fun repositoryId ct ->
+                            ValueTask(
+                                task {
+                                    let repositoryParameters = Parameters.Repository.CreateRepositoryParameters()
+                                    repositoryParameters.OwnerId <- ownerId
+                                    repositoryParameters.OrganizationId <- organizationId
+                                    repositoryParameters.RepositoryId <- repositoryId
+                                    repositoryParameters.RepositoryName <- $"TestRepository{rnd.Next():X8}"
+                                    repositoryParameters.CorrelationId <- correlationId
+                                    let! response = Client.PostAsync("/repository/create", createJsonContent repositoryParameters)
+
+                                    if response.IsSuccessStatusCode then
+                                        logToTestConsole $"Repository {repositoryParameters.RepositoryName} created successfully."
+                                    else
+                                        let! content = response.Content.ReadAsStringAsync()
+                                        Assert.That(content.Length, Is.GreaterThan(0))
+                                        let error = deserialize<GraceError> content
+                                        logToTestConsole $"StatusCode: {response.StatusCode}; Content: {error}"
+
+                                    response.EnsureSuccessStatusCode() |> ignore
+                                }
+                            ))
+                    )
             with ex ->
                 let msg =
                     $"Exception in Setup().{Environment.NewLine}Message: {ex.Message}{Environment.NewLine}Stack trace:{Environment.NewLine}{ex.StackTrace}"
 
                 logToTestConsole msg
-
-            // Create the organization we'll use for this test run.
-            let organizationParameters = Parameters.Organization.CreateOrganizationParameters()
-            organizationParameters.OwnerId <- ownerId
-            organizationParameters.OrganizationId <- organizationId
-            organizationParameters.OrganizationName <- $"TestOrganization{rnd.Next(1000)}"
-            organizationParameters.CorrelationId <- correlationId
-            let! response = Client.PostAsync("/organization/create", createJsonContent organizationParameters)
-            let! content = response.Content.ReadAsStringAsync()
-            //logToTestConsole $"StatusCode: {response.StatusCode}; Content: {content}"
-            response.EnsureSuccessStatusCode() |> ignore
-
-            // Create the repositories we'll use for this test run.
-            do!
-                Parallel.ForEachAsync(
-                    repositoryIds,
-                    Constants.ParallelOptions,
-                    (fun repositoryId ct ->
-                        ValueTask(
-                            task {
-                                let repositoryParameters = Parameters.Repository.CreateRepositoryParameters()
-                                repositoryParameters.OwnerId <- ownerId
-                                repositoryParameters.OrganizationId <- organizationId
-                                repositoryParameters.RepositoryId <- repositoryId
-                                repositoryParameters.RepositoryName <- $"TestRepository{rnd.Next(100000):X4}"
-                                repositoryParameters.CorrelationId <- correlationId
-                                let! response = Client.PostAsync("/repository/create", createJsonContent repositoryParameters)
-
-                                let! content = response.Content.ReadAsStringAsync()
-                                response.EnsureSuccessStatusCode() |> ignore
-                                Assert.That(content.Length, Is.GreaterThan(0))
-                            }
-                        ))
-                )
+                exit -1
         }
 
     [<OneTimeTearDown>]
     member public this.Teardown() =
         task {
-            do!
-                Parallel.ForEachAsync(
-                    repositoryIds,
-                    Constants.ParallelOptions,
-                    (fun repositoryId ct ->
-                        ValueTask(
-                            task {
-                                let repositoryDeleteParameters = Parameters.Repository.DeleteRepositoryParameters()
-                                repositoryDeleteParameters.OwnerId <- ownerId
-                                repositoryDeleteParameters.OrganizationId <- organizationId
-                                repositoryDeleteParameters.RepositoryId <- repositoryId
-                                repositoryDeleteParameters.DeleteReason <- "Deleting test repository"
+            let correlationId = generateCorrelationId ()
 
-                                let! response = Client.PostAsync("/repository/delete", createJsonContent repositoryDeleteParameters)
+            try
+                // Delete the repositories we created for this test run.
+                do!
+                    Parallel.ForEachAsync(
+                        repositoryIds,
+                        Constants.ParallelOptions,
+                        (fun repositoryId ct ->
+                            ValueTask(
+                                task {
+                                    let repositoryDeleteParameters = Parameters.Repository.DeleteRepositoryParameters()
+                                    repositoryDeleteParameters.OwnerId <- ownerId
+                                    repositoryDeleteParameters.OrganizationId <- organizationId
+                                    repositoryDeleteParameters.RepositoryId <- repositoryId
+                                    repositoryDeleteParameters.DeleteReason <- "Deleting test repository"
+                                    repositoryDeleteParameters.CorrelationId <- correlationId
+                                    repositoryDeleteParameters.Force <- true
 
-                                let! content = response.Content.ReadAsStringAsync()
-                                response.EnsureSuccessStatusCode() |> ignore
-                                Assert.That(content.Length, Is.GreaterThan(0))
-                            }
-                        ))
-                )
+                                    let! response = Client.PostAsync("/repository/delete", createJsonContent repositoryDeleteParameters)
 
-            let organizationDeleteParameters = Parameters.Organization.DeleteOrganizationParameters()
+                                    if not <| response.IsSuccessStatusCode then
+                                        let! content = response.Content.ReadAsStringAsync()
+                                        Assert.That(content.Length, Is.GreaterThan(0))
+                                        let error = deserialize<GraceError> content
+                                        logToTestConsole $"StatusCode: {response.StatusCode}; Content: {error}"
 
-            organizationDeleteParameters.OwnerId <- ownerId
-            organizationDeleteParameters.OrganizationId <- organizationId
-            organizationDeleteParameters.DeleteReason <- "Deleting test organization"
+                                    response.EnsureSuccessStatusCode() |> ignore
+                                }
+                            ))
+                    )
 
-            let! response = Client.PostAsync("/organization/delete", createJsonContent organizationDeleteParameters)
+                // Delete the organization we created for this test run.
+                let organizationDeleteParameters = Parameters.Organization.DeleteOrganizationParameters()
+                organizationDeleteParameters.OwnerId <- ownerId
+                organizationDeleteParameters.OrganizationId <- organizationId
+                organizationDeleteParameters.DeleteReason <- "Deleting test organization"
+                organizationDeleteParameters.CorrelationId <- correlationId
+                organizationDeleteParameters.Force <- true
+                let! response = Client.PostAsync("/organization/delete", createJsonContent organizationDeleteParameters)
 
-            let ownerDeleteParameters = Parameters.Owner.DeleteOwnerParameters()
-            ownerDeleteParameters.OwnerId <- ownerId
-            ownerDeleteParameters.DeleteReason <- "Deleting test owner"
-            let! response = Client.PostAsync("/owner/delete", createJsonContent ownerDeleteParameters)
+                if not <| response.IsSuccessStatusCode then
+                    let! content = response.Content.ReadAsStringAsync()
+                    Assert.That(content.Length, Is.GreaterThan(0))
+                    let error = deserialize<GraceError> content
+                    logToTestConsole $"StatusCode: {response.StatusCode}; Content: {error}"
 
-            let! content = response.Content.ReadAsStringAsync()
-            response.EnsureSuccessStatusCode() |> ignore
-            Assert.That(content.Length, Is.GreaterThan(0))
+                // Delete the owner we created for this test run.
+                let ownerDeleteParameters = Parameters.Owner.DeleteOwnerParameters()
+                ownerDeleteParameters.OwnerId <- ownerId
+                ownerDeleteParameters.DeleteReason <- "Deleting test owner"
+                ownerDeleteParameters.CorrelationId <- generateCorrelationId ()
+                ownerDeleteParameters.Force <- true
+                let! response = Client.PostAsync("/owner/delete", createJsonContent ownerDeleteParameters)
 
-            do! this.DeleteContainers()
+                if not <| response.IsSuccessStatusCode then
+                    let! content = response.Content.ReadAsStringAsync()
+                    Assert.That(content.Length, Is.GreaterThan(0))
+                    let error = deserialize<GraceError> content
+                    logToTestConsole $"StatusCode: {response.StatusCode}; Content: {error}"
+
+                response.EnsureSuccessStatusCode() |> ignore
+
+                // Delete all of the integration test containers.
+                do! this.DeleteContainers()
+            with ex ->
+                let msg =
+                    $"Exception in Teardown().{Environment.NewLine}Message: {ex.Message}{Environment.NewLine}Stack trace:{Environment.NewLine}{ex.StackTrace}"
+
+                logToTestConsole msg
         }
 
 [<Parallelizable(ParallelScope.All)>]
