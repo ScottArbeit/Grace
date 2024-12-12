@@ -211,3 +211,6 @@ FakesAssemblies/
 .ionide
 /src/OpenAPI/Grace.OpenAPI.html
 /src/OpenAPI/GenerateOpenAPI.ps1
+/src/Check-CosmosDB-RUs.ps1
+*.nettrace
+*.gcdump
