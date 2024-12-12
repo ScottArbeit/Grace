@@ -556,7 +556,7 @@ module Watch =
                             //logToAnsiConsole Colors.Verbose $"Memory before GC: {memoryBeforeGC:N0}; after: {Process.GetCurrentProcess().WorkingSet64:N0}."
                             previousGC <- getCurrentInstant ()
                 with ex ->
-                    //let exceptionMarkup = Markup.Escape($"{createExceptionResponse ex}").Replace("\\\\", @"\").Replace("\r\n", Environment.NewLine)
+                    //let exceptionMarkup = Markup.Escape($"{ExceptionResponse.Create ex}").Replace("\\\\", @"\").Replace("\r\n", Environment.NewLine)
                     //logToAnsiConsole Colors.Error $"{exceptionMarkup}"
                     let exceptionSettings = ExceptionSettings()
                     // Need to fill in some exception styles here.

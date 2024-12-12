@@ -12,6 +12,8 @@ open Grace.Actors.Extensions.ActorProxy
 open Grace.Actors.Extensions.MemoryCache
 open Grace.Actors.Events
 open Grace.Actors.Interfaces
+open Grace.Actors.Timing
+open Grace.Actors.Types
 open Grace.Shared
 open Grace.Shared.Constants
 open Grace.Shared.Dto.Branch
@@ -24,6 +26,7 @@ open Microsoft.Azure.Cosmos
 open Microsoft.Azure.Cosmos.Linq
 open Microsoft.Extensions.Caching.Memory
 open Microsoft.Extensions.Logging
+open NodaTime
 open System
 open System.Collections.Concurrent
 open System.Collections.Generic
@@ -39,6 +42,8 @@ open System.Threading.Tasks
 open System.Threading
 open System
 open Microsoft.Extensions.DependencyInjection
+open System.Runtime.Serialization
+open System.Reflection
 
 module Services =
     type ServerGraceIndex = Dictionary<RelativePath, DirectoryVersion>
@@ -76,16 +81,16 @@ module Services =
     let private sharedKeyCredential = StorageSharedKeyCredential(DefaultObjectStorageAccount, azureStorageKey)
 
     /// Logger instance for the Services.Actor module.
-    let log = Lazy<ILogger>(fun () -> loggerFactory.CreateLogger("Services.Actor"))
+    let log = loggerFactory.CreateLogger("Services.Actor")
 
     /// Cosmos LINQ serializer options
     let linqSerializerOptions = CosmosLinqSerializerOptions(PropertyNamingPolicy = CosmosPropertyNamingPolicy.CamelCase)
 
     /// Custom QueryRequestOptions that requests Index Metrics only in DEBUG build.
     let queryRequestOptions = QueryRequestOptions()
-#if DEBUG
-    queryRequestOptions.PopulateIndexMetrics <- true
-#endif
+    //#if DEBUG
+    //    queryRequestOptions.PopulateIndexMetrics <- true
+    //#endif
 
     /// Adds the parameters from the API call to a GraceReturnValue instance.
     let addParametersToGraceReturnValue<'T> parameters (graceReturnValue: GraceReturnValue<'T>) =
@@ -501,28 +506,7 @@ module Services =
             let repositoryGuid = Guid.Parse(repositoryId)
             let repositoryActorProxy = Repository.CreateActorProxy repositoryGuid correlationId
 
-            log.Value.LogInformation(
-                "{currentInstant}:****In Services.Actor.repositoryExists, before repositoryActorProxy.Exists: CorrelationId: {correlationId}; RepositoryId: {repositoryId}; repositoryActorProxy.GetHashCode(): {actorProxyHashCode}; threadCount: {threadCount}; threadId: {threadId}.",
-                getCurrentInstantExtended (),
-                correlationId,
-                repositoryId,
-                repositoryActorProxy.GetHashCode(),
-                Process.GetCurrentProcess().Threads.Count,
-                Thread.CurrentThread.ManagedThreadId
-            )
-
             let! exists = repositoryActorProxy.Exists correlationId
-
-            log.Value.LogInformation(
-                "{currentInstant}:****In Services.Actor.repositoryExists: CorrelationId: {correlationId}; RepositoryId: {repositoryId}; Exists: {exists}; repositoryActorProxy.GetHashCode(): {actorProxyHashCode}; threadCount: {threadCount}; threadId: {threadId}.",
-                getCurrentInstantExtended (),
-                correlationId,
-                repositoryId,
-                exists,
-                repositoryActorProxy.GetHashCode(),
-                Process.GetCurrentProcess().Threads.Count,
-                Thread.CurrentThread.ManagedThreadId
-            )
 
             if exists then
                 // Add this RepositoryId to the MemoryCache.
@@ -762,6 +746,7 @@ module Services =
     type DirectoryVersionValue() =
         member val public value = DirectoryVersion.Default with get, set
 
+
     /// Gets a list of organizations for the specified owner.
     let getOrganizations (ownerId: OwnerId) (maxCount: int) includeDeleted =
         task {
@@ -802,7 +787,7 @@ module Services =
                     |> ignore
                 with ex ->
                     logToConsole $"Got an exception."
-                    logToConsole $"{createExceptionResponse ex}"
+                    logToConsole $"{ExceptionResponse.Create ex}"
             | MongoDB -> ()
 
             return repositories
@@ -849,7 +834,7 @@ module Services =
                     else
                         return Ok true // This else should never be hit.
                 with ex ->
-                    return Error $"{createExceptionResponse ex}"
+                    return Error $"{ExceptionResponse.Create ex}"
             | MongoDB -> return Ok false
         }
 
@@ -886,7 +871,7 @@ module Services =
                     else
                         return Ok true // This else should never be hit.
                 with ex ->
-                    return Error $"{createExceptionResponse ex}"
+                    return Error $"{ExceptionResponse.Create ex}"
             | MongoDB -> return Ok false
         }
 
@@ -930,7 +915,7 @@ module Services =
                     |> ignore
                 with ex ->
                     logToConsole $"Got an exception."
-                    logToConsole $"{createExceptionResponse ex}"
+                    logToConsole $"{ExceptionResponse.Create ex}"
             | MongoDB -> ()
 
             return repositories
@@ -948,20 +933,27 @@ module Services =
                 try
                     let indexMetrics = StringBuilder()
                     let requestCharge = StringBuilder()
+                    let requestCharge2 = StringBuilder()
 
                     let includeDeletedClause =
                         if includeDeleted then
                             String.Empty
                         else
-                            """ AND IS_NULL(c["value"].DeletedAt)"""
+                            """ AND (
+                                (SELECT VALUE COUNT(1)
+                                 FROM c JOIN subEvent IN c["value"]
+                                 WHERE IS_DEFINED(subEvent.Event.logicalDeleted)) =
+                                (SELECT VALUE COUNT(1)
+                                 FROM c JOIN subEvent IN c["value"]
+                                 WHERE IS_DEFINED(subEvent.Event.undeleted))
+                            ) """
 
                     let queryDefinition =
                         QueryDefinition(
-                            """SELECT TOP @maxCount event.Event.created.branchId
+                            $"""SELECT TOP @maxCount event.Event.created.branchId
                                 FROM c JOIN event IN c["value"] 
                                 WHERE event.Event.created.repositoryId = @repositoryId
-                                    AND LENGTH(event.Event.created.branchName) > 0
-                                ORDER BY c["value"].CreatedAt DESC"""
+                                    AND LENGTH(event.Event.created.branchName) > 0 {includeDeletedClause}"""
                         )
                             .WithParameter("@maxCount", maxCount)
                             .WithParameter("@repositoryId", $"{repositoryId}")
@@ -969,7 +961,9 @@ module Services =
                     let iterator = cosmosContainer.GetItemQueryIterator<BranchIdValue>(queryDefinition, requestOptions = queryRequestOptions)
 
                     while iterator.HasMoreResults do
+                        addTiming TimingFlag.BeforeStorageQuery "getBranches" correlationId
                         let! results = iterator.ReadNextAsync()
+                        addTiming TimingFlag.AfterStorageQuery "getBranches" correlationId
                         indexMetrics.Append($"{results.IndexMetrics}, ") |> ignore
                         requestCharge.Append($"{results.RequestCharge}, ") |> ignore
                         results.Resource |> Seq.iter (fun r -> branchIds.Add(r.branchId))
@@ -995,7 +989,7 @@ module Services =
                         )
                 with ex ->
                     logToConsole $"Got an exception."
-                    logToConsole $"{createExceptionResponse ex}"
+                    logToConsole $"{ExceptionResponse.Create ex}"
             | MongoDB -> ()
 
             return branches.ToArray()
@@ -1055,7 +1049,7 @@ module Services =
         }
 
     /// Gets a list of references for a given branch.
-    let getReferences (branchId: BranchId) (maxCount: int) =
+    let getReferences (branchId: BranchId) (maxCount: int) (correlationId: CorrelationId) =
         task {
             let references = List<ReferenceDto>()
 
@@ -1079,6 +1073,7 @@ module Services =
                 let iterator = cosmosContainer.GetItemQueryIterator<ReferenceEventValue>(queryDefinition, requestOptions = queryRequestOptions)
 
                 while iterator.HasMoreResults do
+                    addTiming TimingFlag.BeforeStorageQuery "getReferences" correlationId
                     let! results = DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> iterator.ReadNextAsync())
                     //let! results = iterator.ReadNextAsync()
                     indexMetrics.Append($"{results.IndexMetrics}, ") |> ignore
@@ -1113,13 +1108,13 @@ module Services =
 
             try
                 // (MaxDegreeOfParallelism = 3) runs at 700 RU's, so it fits under the free 1,000 RU limit for CosmosDB, without getting throttled.
-                let parallelOptions = ParallelOptions(MaxDegreeOfParallelism = 8)
+                let parallelOptions = ParallelOptions(MaxDegreeOfParallelism = 3)
 
-                let itemRequestOptions = ItemRequestOptions()
+                let itemRequestOptions =
+                    ItemRequestOptions(AddRequestHeaders = fun headers -> headers.Add(Constants.CorrelationIdHeaderKey, "Deleting all records from CosmosDB"))
 
-                itemRequestOptions.AddRequestHeaders <- fun headers -> headers.Add(Constants.CorrelationIdHeaderKey, "Deleting all records from CosmosDB")
-
-                let queryDefinition = QueryDefinition("SELECT c.id, c.partitionKey FROM c ORDER BY c.partitionKey")
+                let queryDefinition = QueryDefinition("""SELECT c.id, c.partitionKey FROM c ORDER BY c.partitionKey""")
+                //let queryDefinition = QueryDefinition("""SELECT c.id, c.partitionKey FROM c WHERE ENDSWITH(c.id, "||Rmd") ORDER BY c.partitionKey""")
 
                 let mutable totalRecordsDeleted = 0
                 let overallStartTime = getCurrentInstant ()
@@ -1139,7 +1134,7 @@ module Services =
 
                     do!
                         Parallel.ForEachAsync(
-                            batchResults.Resource,
+                            batchResults,
                             parallelOptions,
                             (fun document ct ->
                                 ValueTask(
@@ -1168,7 +1163,7 @@ module Services =
 
                 return failed
             with ex ->
-                failed.Add((createExceptionResponse ex).``exception``)
+                failed.Add((ExceptionResponse.Create ex).``exception``)
                 return failed
 #else
             return List<string>([ "Not implemented" ])
@@ -1176,7 +1171,7 @@ module Services =
         }
 
     /// Gets a list of references of a given ReferenceType for a branch.
-    let getReferencesByType (referenceType: ReferenceType) (branchId: BranchId) (maxCount: int) =
+    let getReferencesByType (referenceType: ReferenceType) (branchId: BranchId) (maxCount: int) (correlationId: CorrelationId) =
         task {
             let references = List<ReferenceDto>()
 
@@ -1203,7 +1198,9 @@ module Services =
                 let iterator = cosmosContainer.GetItemQueryIterator<ReferenceEventValue>(queryDefinition, requestOptions = queryRequestOptions)
 
                 while iterator.HasMoreResults do
+                    addTiming TimingFlag.BeforeStorageQuery "getReferencesByType" correlationId
                     let! results = DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> iterator.ReadNextAsync())
+                    addTiming TimingFlag.AfterStorageQuery "getReferencesByType" correlationId
                     indexMetrics.Append($"{results.IndexMetrics}, ") |> ignore
                     requestCharge.Append($"{results.RequestCharge}, ") |> ignore
 
@@ -1455,9 +1452,9 @@ module Services =
                         .SetTag("requestCharge", $"{requestCharge.Remove(requestCharge.Length - 2, 2)}")
                     |> ignore
                 with ex ->
-                    log.Value.LogError(
+                    log.LogError(
                         ex,
-                        "{currentInstant}: Exception in Services.getDirectoryBySha256Hash(). QueryDefinition: {queryDefinition}",
+                        "{CurrentInstant}: Exception in Services.getDirectoryBySha256Hash(). QueryDefinition: {queryDefinition}",
                         getCurrentInstantExtended (),
                         (serialize queryDefinition)
                     )
@@ -1519,9 +1516,9 @@ module Services =
                         queryDefinition.GetQueryParameters()
                         |> Seq.fold (fun (state: StringBuilder) (struct (k, v)) -> state.Append($"{k} = {v}; ")) (StringBuilder())
 
-                    log.Value.LogError(
+                    log.LogError(
                         ex,
-                        "{currentInstant}: Exception in Services.getRootDirectoryBySha256Hash(). QueryText: {queryText}. Parameters: {parameters}",
+                        "{CurrentInstant}: Exception in Services.getRootDirectoryBySha256Hash(). QueryText: {queryText}. Parameters: {parameters}",
                         getCurrentInstantExtended (),
                         (queryDefinition.QueryText),
                         parameters.ToString()
@@ -1589,7 +1586,7 @@ module Services =
         }
 
     /// Gets a list of ReferenceDtos based on ReferenceIds. The list is returned in the same order as the supplied ReferenceIds.
-    let getReferencesByReferenceId (referenceIds: IEnumerable<ReferenceId>) (maxCount: int) =
+    let getReferencesByReferenceId (referenceIds: IEnumerable<ReferenceId>) (maxCount: int) (correlationId: CorrelationId) =
         task {
             let referenceDtos = List<ReferenceDto>()
 
@@ -1648,7 +1645,9 @@ module Services =
                 let queryResults = Dictionary<ReferenceId, ReferenceDto>()
 
                 while iterator.HasMoreResults do
+                    addTiming TimingFlag.BeforeStorageQuery "getReferencesByReferenceId" correlationId
                     let! results = iterator.ReadNextAsync()
+                    addTiming TimingFlag.AfterStorageQuery "getReferencesByReferenceId" correlationId
                     requestCharge <- requestCharge + results.RequestCharge
                     clientElapsedTime <- clientElapsedTime + results.Diagnostics.GetClientElapsedTime()
 
@@ -1729,3 +1728,31 @@ module Services =
 
             return branchDtos
         }
+
+    /// Gets a message that says whether an actor's state was retrieved from the database.
+    let getActorActivationMessage retrievedItem =
+        match retrievedItem with
+        | Some item -> "Retrieved from database"
+        | None -> "Not found in database"
+
+    /// Logs the activation of an actor.
+    let logActorActivation (log: ILogger) activateStartTime (correlationId: string) (actorName: string) (actorId: ActorId) (message: string) =
+        log.LogInformation(
+            "{CurrentInstant}: Node: {HostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Activated {ActorType} {ActorId}. {message}.",
+            getCurrentInstantExtended (),
+            getMachineName,
+            (getPaddedDuration_ms activateStartTime),
+            correlationId,
+            actorName,
+            actorId,
+            message
+        )
+
+    /// Creates a new reminder actor instance.
+    let createReminder (reminder: ReminderDto) =
+        task {
+            let reminderActorProxy = Reminder.CreateActorProxy reminder.ReminderId reminder.CorrelationId
+
+            do! reminderActorProxy.Create reminder reminder.CorrelationId
+        }
+        :> Task

@@ -17,37 +17,33 @@ open OrganizationName
 
 module BranchName =
 
-    let actorName = ActorName.BranchName
-    let mutable actorStartTime = Instant.MinValue
-    let mutable logScope: IDisposable = null
+    let log = loggerFactory.CreateLogger("BranchName.Actor")
 
     type BranchNameActor(host: ActorHost) =
         inherit Actor(host)
 
+        static let actorName = ActorName.BranchName
+
+        let mutable actorStartTime = Instant.MinValue
+        let mutable logScope: IDisposable = null
+
         let idSections = host.Id.GetId().Split('|')
         let branchName = idSections[0]
         let repositoryId = idSections[1]
-
-        let log = loggerFactory.CreateLogger("BranchName.Actor")
 
         let mutable cachedBranchId: Guid option = None
 
         member val private correlationId: CorrelationId = String.Empty with get, set
 
         override this.OnActivateAsync() =
+            let activateStartTime = getCurrentInstant ()
+
             let correlationId =
                 match memoryCache.GetCorrelationIdEntry this.Id with
                 | Some correlationId -> correlationId
                 | None -> String.Empty
 
-            log.LogInformation(
-                "{CurrentInstant}: Node: {hostName}; Duration:   0.100ms; CorrelationId: {correlationId}; Activated {ActorType} {ActorId}.",
-                getCurrentInstantExtended (),
-                getMachineName,
-                correlationId,
-                this.GetType().Name,
-                host.Id
-            )
+            logActorActivation log activateStartTime correlationId actorName this.Id "In-memory only"
 
             Task.CompletedTask
 
@@ -64,7 +60,7 @@ module BranchName =
             let duration_ms = getPaddedDuration_ms actorStartTime
 
             log.LogInformation(
-                "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {ActorName}.{MethodName}; RepositoryId: {RepositoryId}; BranchName: {BranchName}; BranchId: {BranchId}.",
+                "{CurrentInstant}: Node: {HostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {ActorName}.{MethodName}; RepositoryId: {RepositoryId}; BranchName: {BranchName}; BranchId: {BranchId}.",
                 getCurrentInstantExtended (),
                 getMachineName,
                 duration_ms,

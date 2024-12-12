@@ -83,7 +83,7 @@ module Repository =
                             |> ignore
 
                             log.LogDebug(
-                                "{currentInstant}: In Branch.Server.handleCommand: error from actorProxy.Handle: {error}",
+                                "{CurrentInstant}: In Branch.Server.handleCommand: error from actorProxy.Handle: {error}",
                                 getCurrentInstantExtended (),
                                 (graceError.ToString())
                             )
@@ -92,7 +92,7 @@ module Repository =
                     }
 
                 log.LogInformation(
-                    "{currentInstant}: ****In Repository.Server.processCommand; about to run validations: CorrelationId: {correlationId}; RepositoryId: {repositoryId}.",
+                    "{CurrentInstant}: ****In Repository.Server.processCommand; about to run validations: CorrelationId: {correlationId}; RepositoryId: {repositoryId}.",
                     getCurrentInstantExtended (),
                     correlationId,
                     graceIds.RepositoryId
@@ -103,7 +103,7 @@ module Repository =
                 let! validationsPassed = validationResults |> allPass
 
                 log.LogInformation(
-                    "{currentInstant}: ****In Repository.Server.processCommand: CorrelationId: {correlationId}; RepositoryId: {repositoryId}; validationsPassed: {validationsPassed}.",
+                    "{CurrentInstant}: ****In Repository.Server.processCommand: CorrelationId: {correlationId}; RepositoryId: {repositoryId}; validationsPassed: {validationsPassed}.",
                     getCurrentInstantExtended (),
                     correlationId,
                     graceIds.RepositoryId,
@@ -117,7 +117,7 @@ module Repository =
                 else
                     let! error = validationResults |> getFirstError
                     let errorMessage = RepositoryError.getErrorMessage error
-                    log.LogDebug("{currentInstant}: error: {error}", getCurrentInstantExtended (), errorMessage)
+                    log.LogDebug("{CurrentInstant}: error: {error}", getCurrentInstantExtended (), errorMessage)
 
                     let graceError =
                         (GraceError.CreateWithMetadata errorMessage correlationId (getParametersAsDictionary parameters))
@@ -132,14 +132,14 @@ module Repository =
             with ex ->
                 log.LogError(
                     ex,
-                    "{currentInstant}: Exception in Repository.Server.processCommand; Path: {path}; CorrelationId: {correlationId}.",
+                    "{CurrentInstant}: Exception in Repository.Server.processCommand; Path: {path}; CorrelationId: {correlationId}.",
                     getCurrentInstantExtended (),
                     context.Request.Path,
                     (getCorrelationId context)
                 )
 
                 let graceError =
-                    (GraceError.Create $"{Utilities.createExceptionResponse ex}" (getCorrelationId context))
+                    (GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (getCorrelationId context))
                         .enhance(nameof (OwnerId), graceIds.OwnerId)
                         .enhance(nameof (OrganizationId), graceIds.OrganizationId)
                         .enhance(nameof (RepositoryId), graceIds.RepositoryId)
@@ -195,14 +195,14 @@ module Repository =
             with ex ->
                 log.LogError(
                     ex,
-                    "{currentInstant}: Exception in Repository.Server.processQuery; Path: {path}; CorrelationId: {correlationId}.",
+                    "{CurrentInstant}: Exception in Repository.Server.processQuery; Path: {path}; CorrelationId: {correlationId}.",
                     getCurrentInstantExtended (),
                     context.Request.Path,
                     correlationId
                 )
 
                 let graceError =
-                    (GraceError.Create $"{createExceptionResponse ex}" correlationId)
+                    (GraceError.Create $"{ExceptionResponse.Create ex}" correlationId)
                         .enhance(nameof (OwnerId), graceIds.OwnerId)
                         .enhance(nameof (OrganizationId), graceIds.OrganizationId)
                         .enhance(nameof (RepositoryId), graceIds.RepositoryId)
@@ -459,7 +459,7 @@ module Repository =
                     let duration_ms = getPaddedDuration_ms startTime
 
                     log.LogInformation(
-                        "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {path}; RepositoryId: {repositoryId}.",
+                        "{CurrentInstant}: Node: {HostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {path}; RepositoryId: {repositoryId}.",
                         getCurrentInstantExtended (),
                         getMachineName,
                         duration_ms,
@@ -474,7 +474,7 @@ module Repository =
 
                     log.LogError(
                         ex,
-                        "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Error in {path}; RepositoryId: {repositoryId}.",
+                        "{CurrentInstant}: Node: {HostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Error in {path}; RepositoryId: {repositoryId}.",
                         getCurrentInstantExtended (),
                         getMachineName,
                         duration_ms,
@@ -485,7 +485,7 @@ module Repository =
 
                     return!
                         context
-                        |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
+                        |> result500ServerError (GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId context))
             }
 
     /// Checks if a repository is empty - that is, just created - or not.
@@ -507,7 +507,7 @@ module Repository =
                     let duration_ms = getPaddedDuration_ms startTime
 
                     log.LogInformation(
-                        "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {path}; RepositoryId: {repositoryId}.",
+                        "{CurrentInstant}: Node: {HostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {path}; RepositoryId: {repositoryId}.",
                         getCurrentInstantExtended (),
                         getMachineName,
                         duration_ms,
@@ -522,7 +522,7 @@ module Repository =
 
                     log.LogError(
                         ex,
-                        "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Error in {path}; RepositoryId: {repositoryId}.",
+                        "{CurrentInstant}: Node: {HostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Error in {path}; RepositoryId: {repositoryId}.",
                         getCurrentInstantExtended (),
                         getMachineName,
                         duration_ms,
@@ -533,7 +533,7 @@ module Repository =
 
                     return!
                         context
-                        |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
+                        |> result500ServerError (GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId context))
             }
 
     /// Gets a repository.
@@ -554,7 +554,7 @@ module Repository =
                     let duration_ms = getPaddedDuration_ms startTime
 
                     log.LogInformation(
-                        "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {path}; RepositoryId: {repositoryId}.",
+                        "{CurrentInstant}: Node: {HostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {path}; RepositoryId: {repositoryId}.",
                         getCurrentInstantExtended (),
                         getMachineName,
                         duration_ms,
@@ -569,7 +569,7 @@ module Repository =
 
                     log.LogError(
                         ex,
-                        "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Error in {path}; RepositoryId: {repositoryId}.",
+                        "{CurrentInstant}: Node: {HostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Error in {path}; RepositoryId: {repositoryId}.",
                         getCurrentInstantExtended (),
                         getMachineName,
                         duration_ms,
@@ -580,7 +580,7 @@ module Repository =
 
                     return!
                         context
-                        |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
+                        |> result500ServerError (GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId context))
             }
 
     /// Gets a repository's branches.
@@ -608,7 +608,7 @@ module Repository =
                     let duration_ms = getPaddedDuration_ms startTime
 
                     log.LogInformation(
-                        "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {path}; RepositoryId: {repositoryId}.",
+                        "{CurrentInstant}: Node: {HostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {path}; RepositoryId: {repositoryId}.",
                         getCurrentInstantExtended (),
                         getMachineName,
                         duration_ms,
@@ -623,7 +623,7 @@ module Repository =
 
                     log.LogError(
                         ex,
-                        "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Error in {path}; RepositoryId: {repositoryId}.",
+                        "{CurrentInstant}: Node: {HostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Error in {path}; RepositoryId: {repositoryId}.",
                         getCurrentInstantExtended (),
                         getMachineName,
                         duration_ms,
@@ -634,7 +634,7 @@ module Repository =
 
                     return!
                         context
-                        |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
+                        |> result500ServerError (GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId context))
             }
 
     /// Gets a list of references, given a list of reference IDs.
@@ -655,7 +655,7 @@ module Repository =
 
                             log.LogDebug("In Repository.Server.GetReferencesByReferenceId: ReferenceIds: {referenceIds}", serialize referenceIds)
 
-                            return! getReferencesByReferenceId referenceIds maxCount
+                            return! getReferencesByReferenceId referenceIds maxCount (getCorrelationId context)
                         }
 
                     let! parameters = context |> parse<GetReferencesByReferenceIdParameters>
@@ -665,7 +665,7 @@ module Repository =
                     let duration_ms = getPaddedDuration_ms startTime
 
                     log.LogInformation(
-                        "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {path}; RepositoryId: {repositoryId}.",
+                        "{CurrentInstant}: Node: {HostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {path}; RepositoryId: {repositoryId}.",
                         getCurrentInstantExtended (),
                         getMachineName,
                         duration_ms,
@@ -680,7 +680,7 @@ module Repository =
 
                     log.LogError(
                         ex,
-                        "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Error in {path}; RepositoryId: {repositoryId}.",
+                        "{CurrentInstant}: Node: {HostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Error in {path}; RepositoryId: {repositoryId}.",
                         getCurrentInstantExtended (),
                         getMachineName,
                         duration_ms,
@@ -691,7 +691,7 @@ module Repository =
 
                     return!
                         context
-                        |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
+                        |> result500ServerError (GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId context))
             }
 
     /// Gets a list of branches, given a list of branch IDs.
@@ -734,7 +734,7 @@ module Repository =
                     let duration_ms = getPaddedDuration_ms startTime
 
                     log.LogInformation(
-                        "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {path}; RepositoryId: {repositoryId}.",
+                        "{CurrentInstant}: Node: {HostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {path}; RepositoryId: {repositoryId}.",
                         getCurrentInstantExtended (),
                         getMachineName,
                         duration_ms,
@@ -749,7 +749,7 @@ module Repository =
 
                     log.LogError(
                         ex,
-                        "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Error in {path}; RepositoryId: {repositoryId}.",
+                        "{CurrentInstant}: Node: {HostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Error in {path}; RepositoryId: {repositoryId}.",
                         getCurrentInstantExtended (),
                         getMachineName,
                         duration_ms,
@@ -760,5 +760,5 @@ module Repository =
 
                     return!
                         context
-                        |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
+                        |> result500ServerError (GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId context))
             }

@@ -11,6 +11,7 @@ open Grace.Shared
 open Grace.Shared.Utilities
 open Grace.Server
 open Grace.Server.Middleware
+open Grace.Server.ReminderService
 open Grace.Shared.Converters
 open Grace.Shared.Parameters
 open Grace.Shared.Types
@@ -362,66 +363,83 @@ module Application =
             // Telemetry configuration
             let graceServerAppId = "grace-server-integration-test"
 
-            services
-                .AddOpenTelemetry()
-                .ConfigureResource(fun resourceBuilder -> resourceBuilder.AddService(graceServerAppId) |> ignore)
-                //.WithTracing(fun tracerProviderBuilder ->
-                //    tracerProviderBuilder
-                //        .AddSource(graceServerAppId)
-                //        .SetResourceBuilder(
-                //            ResourceBuilder
-                //                .CreateDefault()
-                //                .AddService(graceServerAppId)
-                //                .AddTelemetrySdk()
-                //                .AddAttributes(globalOpenTelemetryAttributes)
-                //        )
-                //        .AddAspNetCoreInstrumentation(fun options -> options.EnrichWithHttpRequest <- enrichTelemetry)
-                //        .AddHttpClientInstrumentation()
-                //        .AddAzureMonitorTraceExporter(fun options -> options.ConnectionString <- azureMonitorConnectionString)
-                //    |> ignore)
-                .WithMetrics(fun meterProviderBuilder ->
-                    meterProviderBuilder
+            let tracingOtlpEndpoint = Environment.GetEnvironmentVariable("OTLP_ENDPOINT_URL")
+            let zipkinEndpoint = Environment.GetEnvironmentVariable("ZIPKIN_ENDPOINT_URL")
+            let otel = services.AddOpenTelemetry()
+
+            otel
+                .ConfigureResource(fun resourceBuilder ->
+                    resourceBuilder
+                        .AddService(graceServerAppId)
+                        .AddTelemetrySdk()
+                        .AddAttributes(globalOpenTelemetryAttributes)
+                    |> ignore)
+
+                .WithMetrics(fun metricsBuilder ->
+                    metricsBuilder
+                        .AddAspNetCoreInstrumentation()
+                        .AddMeter("Microsoft.AspNetCore.Hosting")
+                        .AddMeter("Microsoft.AspNetCore.Server.Kestrel")
+                        .AddPrometheusExporter(fun prometheusOptions -> prometheusOptions.ScrapeEndpointPath <- "/metrics")
+                    //.AddAzureMonitorMetricExporter(fun options -> options.ConnectionString <- azureMonitorConnectionString)
+                    |> ignore)
+                .WithTracing(fun traceBuilder ->
+                    traceBuilder
                         .AddAspNetCoreInstrumentation()
                         .AddHttpClientInstrumentation()
-                        .AddAzureMonitorMetricExporter(fun options -> options.ConnectionString <- azureMonitorConnectionString)
-                        .AddOtlpExporter()
-                    |> ignore)
-            //.StartWithHost()
-            //.AddZipkinExporter()
-            //.WithLogging().ConfigureResource(fun resourceBuilder ->
-            //    resourceBuilder.AddService(Constants.GraceServerAppId)
-            //                   .AddTelemetrySdk()
-            //                   .AddAttributes(globalOpenTelemetryAttributes) |> ignore)
+                        .AddSource(graceServerAppId)
+                    //.AddZipkinExporter(fun zipkinOptions -> zipkinOptions.Endpoint <- Uri(zipkinEndpoint))
+                    //.AddAzureMonitorTraceExporter(fun options -> options.ConnectionString <- azureMonitorConnectionString)
+                    |> ignore
+
+                    if tracingOtlpEndpoint <> null then
+                        logToConsole $"Added OpenTelemetry exporter endpoint: {tracingOtlpEndpoint}."
+
+                        traceBuilder.AddOtlpExporter(fun options -> options.Endpoint <- Uri(tracingOtlpEndpoint))
+                        |> ignore
+                    else
+                        traceBuilder.AddConsoleExporter() |> ignore)
             |> ignore
+
+            //services
+            //    .ConfigureOpenTelemetryTracerProvider(fun tracerProviderBuilder ->
+            //        tracerProviderBuilder
+            //            .AddSource(graceServerAppId)
+            //            .AddAspNetCoreInstrumentation(fun options -> options.EnrichWithHttpRequest <- enrichTelemetry)
+            //            .AddHttpClientInstrumentation()
+            //            .AddAzureMonitorTraceExporter(fun options -> options.ConnectionString <- azureMonitorConnectionString)
+            //            .AddOtlpExporter()
+            //        |> ignore)
+            //    .ConfigureOpenTelemetryMeterProvider(fun meterProviderBuilder ->
+            //        meterProviderBuilder
+            //            .AddAspNetCoreInstrumentation()
+            //            .AddHttpClientInstrumentation()
+            //            .AddAzureMonitorMetricExporter(fun options -> options.ConnectionString <- azureMonitorConnectionString)
+            //            .AddOtlpExporter()
+            //        |> ignore)
+            //|> ignore
 
             services.AddAuthentication() |> ignore
 
-            services
-                .AddRouting()
-                .AddLogging()
-                //.AddSwaggerGen(fun config -> config.SwaggerDoc("v0.1", openApiInfo))
-                .AddGiraffe()
-                //.AddSingleton(Constants.JsonSerializerOptions)
+            services.AddW3CLogging(fun options ->
+                options.FileName <- "Grace.Server.log-"
 
+                options.LogDirectory <- Path.Combine(Environment.GetEnvironmentVariable("TEMP"), "Grace.Server.Logs"))
+            |> ignore
+
+            services
+                .AddGiraffe()
                 // Next line adds the Json serializer that Giraffe uses internally.
                 .AddSingleton<Json.ISerializer>(Json.Serializer(Constants.JsonSerializerOptions))
+                .AddRouting()
+                .AddLogging()
 
-                .AddHttpLogging(fun loggingOptions ->
-                    loggingOptions.CombineLogs <- true
-                    loggingOptions.LoggingFields <- HttpLoggingFields.All)
-                .AddW3CLogging(fun options ->
-                    options.FileName <- "Grace.Server.log-"
+                .AddHostedService<ReminderService>()
 
-                    options.LogDirectory <- Path.Combine(Environment.GetEnvironmentVariable("TEMP"), "Grace.Server.Logs"))
+                .AddHttpLogging()
                 .AddSingleton<ActorProxyOptions>(actorProxyOptions)
                 .AddSingleton<IActorProxyFactory>(actorProxyFactory)
             |> ignore
-            //.AddDaprClient(fun daprClientBuilder ->
-            //    daprClientBuilder.
-            //        .UseJsonSerializationOptions(Constants.JsonSerializerOptions)
-            //        //.UseDaprApiToken(Environment.GetEnvironmentVariable("DAPR_API_TOKEN"))
-            //        .Build() // This builds the DaprClient.
-            //    |> ignore)
 
             let apiVersioningBuilder =
                 services.AddApiVersioning(fun options ->
@@ -462,11 +480,13 @@ module Application =
                 actors.RegisterActor<DirectoryVersion.DirectoryVersionActor>()
                 actors.RegisterActor<DirectoryAppearance.DirectoryAppearanceActor>()
                 actors.RegisterActor<FileAppearance.FileAppearanceActor>()
+                actors.RegisterActor<GlobalLock.GlobalLockActor>()
                 actors.RegisterActor<Organization.OrganizationActor>()
                 actors.RegisterActor<OrganizationName.OrganizationNameActor>()
                 actors.RegisterActor<Owner.OwnerActor>()
                 actors.RegisterActor<OwnerName.OwnerNameActor>()
                 actors.RegisterActor<Reference.ReferenceActor>()
+                actors.RegisterActor<Reminder.ReminderActor>()
                 actors.RegisterActor<Repository.RepositoryActor>()
                 actors.RegisterActor<RepositoryName.RepositoryNameActor>()
 
@@ -476,10 +496,6 @@ module Application =
                 options.DrainOngoingCallTimeout <- TimeSpan.FromSeconds(30.0) // Default is 60s
                 options.DrainRebalancedActors <- true // Default is false
                 options.RemindersStoragePartitions <- 0 // Default is 0 (which means all actors of a given type share the same reminder actor).
-            (* I wonder what the right number for `RemindersStoragePartitions` is to handle significant scale.
-
-                   When Dapr redesigns Reminders (which they are planning to do), we'll switch to the new design 
-                   immediately, which will make this problem go away. *)
             )
 
             services
@@ -499,14 +515,15 @@ module Application =
 
             app
                 //.UseMiddleware<FakeMiddleware>()
-                .UseW3CLogging()
                 .UseCloudEvents()
+                .UseW3CLogging()
                 .UseAuthentication()
                 .UseStatusCodePages()
                 .UseStaticFiles()
                 .UseRouting()
-                .UseMiddleware<LogRequestHeadersMiddleware>()
                 .UseMiddleware<CorrelationIdMiddleware>()
+                .UseMiddleware<TimingMiddleware>()
+                .UseMiddleware<LogRequestHeadersMiddleware>()
                 .UseMiddleware<HttpSecurityHeadersMiddleware>()
                 .UseMiddleware<ValidateIdsMiddleware>()
                 .UseEndpoints(fun endpointBuilder ->
@@ -516,12 +533,14 @@ module Application =
                     // Add Dapr pub/sub endpoints
                     endpointBuilder.MapSubscribeHandler() |> ignore
 
-                    // Add Giraffe (Web API) endpoints
-                    endpointBuilder.MapGiraffeEndpoints(endpoints)
+                    endpointBuilder.MapPrometheusScrapingEndpoint() |> ignore
 
                     // Add SignalR hub endpoints
                     endpointBuilder.MapHub<Notifications.NotificationHub>("/notifications")
-                    |> ignore)
+                    |> ignore
+
+                    // Add Giraffe (Web API) endpoints
+                    endpointBuilder.MapGiraffeEndpoints(endpoints))
 
                 // If we get here, we didn't find a route.
                 .UseGiraffe(notFoundHandler)

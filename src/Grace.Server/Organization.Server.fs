@@ -74,7 +74,7 @@ module Organization =
                             |> ignore
 
                             log.LogDebug(
-                                "{currentInstant}: In Branch.Server.handleCommand: error from actorProxy.Handle: {error}",
+                                "{CurrentInstant}: In Branch.Server.handleCommand: error from actorProxy.Handle: {error}",
                                 getCurrentInstantExtended (),
                                 (graceError.ToString())
                             )
@@ -86,7 +86,7 @@ module Organization =
                 let! validationsPassed = validationResults |> allPass
 
                 log.LogDebug(
-                    "{currentInstant}: In Organization.Server.processCommand: validationsPassed: {validationsPassed}.",
+                    "{CurrentInstant}: In Organization.Server.processCommand: validationsPassed: {validationsPassed}.",
                     getCurrentInstantExtended (),
                     validationsPassed
                 )
@@ -97,7 +97,7 @@ module Organization =
                 else
                     let! error = validationResults |> getFirstError
                     let errorMessage = OrganizationError.getErrorMessage error
-                    log.LogDebug("{currentInstant}: error: {error}", getCurrentInstantExtended (), errorMessage)
+                    log.LogDebug("{CurrentInstant}: error: {error}", getCurrentInstantExtended (), errorMessage)
 
                     let graceError =
                         (GraceError.CreateWithMetadata errorMessage (getCorrelationId context) (getParametersAsDictionary parameters))
@@ -111,13 +111,13 @@ module Organization =
             with ex ->
                 log.LogError(
                     ex,
-                    "{currentInstant}: Exception in Organization.Server.processCommand. CorrelationId: {correlationId}.",
+                    "{CurrentInstant}: Exception in Organization.Server.processCommand. CorrelationId: {correlationId}.",
                     getCurrentInstantExtended (),
                     (getCorrelationId context)
                 )
 
                 let graceError =
-                    (GraceError.Create $"{Utilities.createExceptionResponse ex}" (getCorrelationId context))
+                    (GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (getCorrelationId context))
                         .enhance(nameof (OwnerId), graceIds.OwnerId)
                         .enhance(nameof (OrganizationId), graceIds.OrganizationId)
                         .enhance ("Path", context.Request.Path)
@@ -170,7 +170,7 @@ module Organization =
                     return! context |> result400BadRequest graceError
             with ex ->
                 let graceError =
-                    (GraceError.Create $"{createExceptionResponse ex}" correlationId)
+                    (GraceError.Create $"{ExceptionResponse.Create ex}" correlationId)
                         .enhance(nameof (OwnerId), graceIds.OwnerId)
                         .enhance(nameof (OrganizationId), graceIds.OrganizationId)
                         .enhance ("Path", context.Request.Path)
@@ -206,7 +206,7 @@ module Organization =
                     }
                     |> ValueTask<OrganizationCommand>
 
-                log.LogDebug("{currentInstant}: In Grace.Server.Create.", getCurrentInstantExtended ())
+                log.LogDebug("{CurrentInstant}: In Grace.Server.Create.", getCurrentInstantExtended ())
                 context.Items.Add("Command", nameof (Create))
                 return! processCommand context validations command
             }
@@ -299,7 +299,7 @@ module Organization =
                 with ex ->
                     return!
                         context
-                        |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
+                        |> result500ServerError (GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId context))
             }
 
     /// Delete an organization.
@@ -349,7 +349,7 @@ module Organization =
                     let duration_ms = getPaddedDuration_ms startTime
 
                     log.LogInformation(
-                        "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {path}; OwnerId: {ownerId}; OrganizationId: {organizationId}.",
+                        "{CurrentInstant}: Node: {HostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {path}; OwnerId: {ownerId}; OrganizationId: {organizationId}.",
                         getCurrentInstantExtended (),
                         getMachineName,
                         duration_ms,
@@ -364,7 +364,7 @@ module Organization =
                     let duration_ms = getPaddedDuration_ms startTime
 
                     let graceError =
-                        (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
+                        (GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId context))
                             .enhance(nameof (OwnerId), graceIds.OwnerId)
                             .enhance(nameof (OrganizationId), graceIds.OrganizationId)
                             .enhance ("Path", context.Request.Path)

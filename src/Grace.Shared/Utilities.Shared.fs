@@ -43,6 +43,9 @@ module Utilities =
     /// Gets the current instant.
     let getCurrentInstant () = SystemClock.Instance.GetCurrentInstant()
 
+    /// Gets a future instant by adding the provided duration to the current time.
+    let getFutureInstant (duration: Duration) = getCurrentInstant().Plus(duration)
+
     /// Formats an instant as a string in ExtendedIso format.
     ///
     /// Example: "2019-06-15T13:45:30.9040833Z".
@@ -68,6 +71,11 @@ module Utilities =
     ///
     /// Example: "2019-06-15T13:45:30Z".
     let formatInstantGeneral (instant: Instant) = instant.ToString(InstantPattern.General.PatternText, CultureInfo.InvariantCulture)
+
+    /// Gets a future Instant, by adding the provided duration to the current time, and outputs it as a string in ExtendedIso format.
+    ///
+    /// Example output: "2024-06-01T08:27:04.3273839Z"
+    let formatFutureInstantExtended (duration: Duration) = formatInstantExtended (getCurrentInstant().Plus(duration))
 
     /// Gets the current instant as a string in General format.
     ///
@@ -348,7 +356,7 @@ module Utilities =
         let json = Encoding.UTF8.GetString(bytes)
         deserialize<'T> json
 
-    /// Universal Grace exception reponse type
+    /// The universal Grace exception response type
     type ExceptionResponse =
         { ``exception``: string
           innerException: string }
@@ -358,15 +366,15 @@ module Utilities =
             | null -> $"Exception: {this.``exception``}{Environment.NewLine}{Environment.NewLine}"
             | innerEx -> $"Exception: {this.``exception``}{Environment.NewLine}{Environment.NewLine}Inner exception: {this.innerException}{Environment.NewLine}"
 
-    /// Converts an Exception-based instance into an ExceptionResponse instance.
-    let createExceptionResponse (ex: Exception) : ExceptionResponse =
-        //#if DEBUG
-        let exceptionMessage (ex: Exception) =
-            $"Message: {ex.Message}{Environment.NewLine}{Environment.NewLine}Stack trace:{Environment.NewLine}{ex.StackTrace}{Environment.NewLine}"
+        /// Creates an ExceptionResponse instance from an Exception-based instance.
+        static member Create(ex: Exception) =
+            //#if DEBUG
+            let exceptionMessage (ex: Exception) =
+                $"Message: {ex.Message}{Environment.NewLine}{Environment.NewLine}Stack trace:{Environment.NewLine}{ex.StackTrace}{Environment.NewLine}"
 
-        match ex.InnerException with
-        | null -> { ``exception`` = exceptionMessage ex; innerException = "null" }
-        | innerEx -> { ``exception`` = exceptionMessage ex; innerException = exceptionMessage ex.InnerException }
+            match ex.InnerException with
+            | null -> { ``exception`` = exceptionMessage ex; innerException = "null" }
+            | innerEx -> { ``exception`` = exceptionMessage ex; innerException = exceptionMessage ex.InnerException }
     //#else
     //        {|message = $"Internal server error, and, yes, it's been logged. The correlationId is in the X-Correlation-Id header."|}
     //#endif

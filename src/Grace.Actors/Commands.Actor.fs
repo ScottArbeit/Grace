@@ -3,6 +3,7 @@ namespace Grace.Actors
 open Grace.Shared.Dto.Reference
 open Grace.Shared.Types
 open Grace.Shared.Utilities
+open NodaTime
 open System.Runtime.Serialization
 
 module Commands =

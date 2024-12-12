@@ -369,7 +369,7 @@ module Services =
 
                 return differences.ToList()
             with ex ->
-                logToAnsiConsole Colors.Error $"{createExceptionResponse ex}"
+                logToAnsiConsole Colors.Error $"{ExceptionResponse.Create ex}"
                 return List<FileSystemDifference>()
         }
 
@@ -1407,7 +1407,7 @@ module Services =
                     logToAnsiConsole Colors.Error $"File {filePath} does not exist."
                     return None
             with ex ->
-                logToAnsiConsole Colors.Error $"Exception in copyToObjectDirectory: {createExceptionResponse ex}"
+                logToAnsiConsole Colors.Error $"Exception in copyToObjectDirectory: {ExceptionResponse.Create ex}"
                 return None
         }
 

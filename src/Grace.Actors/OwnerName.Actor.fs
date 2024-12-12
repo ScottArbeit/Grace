@@ -16,35 +16,29 @@ open System.Threading.Tasks
 
 module OwnerName =
 
-    let actorName = ActorName.OwnerName
-    let mutable actorStartTime = Instant.MinValue
-    let mutable logScope: IDisposable = null
-
     let GetActorId (ownerName: string) = ActorId(ownerName)
+    let log = loggerFactory.CreateLogger("OwnerName.Actor")
 
     type OwnerNameActor(host: ActorHost) =
         inherit Actor(host)
 
-        let log = loggerFactory.CreateLogger("OwnerName.Actor")
+        static let actorName = ActorName.OwnerName
 
         let mutable cachedOwnerId: OwnerId option = None
+        let mutable logScope: IDisposable = null
+        let mutable actorStartTime = Instant.MinValue
 
         member val private correlationId: CorrelationId = String.Empty with get, set
 
         override this.OnActivateAsync() =
+            let activateStartTime = getCurrentInstant ()
+
             let correlationId =
                 match memoryCache.GetCorrelationIdEntry this.Id with
                 | Some correlationId -> correlationId
                 | None -> String.Empty
 
-            log.LogInformation(
-                "{CurrentInstant}: Node: {hostName}; Duration:   0.100ms; CorrelationId: {correlationId}; Activated {ActorType} {ActorId}.",
-                getCurrentInstantExtended (),
-                getMachineName,
-                correlationId,
-                this.GetType().Name,
-                host.Id
-            )
+            logActorActivation log activateStartTime correlationId actorName this.Id "In-memory only"
 
             Task.CompletedTask
 
@@ -61,7 +55,7 @@ module OwnerName =
             let duration_ms = getPaddedDuration_ms actorStartTime
 
             log.LogInformation(
-                "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {ActorName}.{MethodName}; OwnerName: {OwnerName}; OwnerId: {ownerId}.",
+                "{CurrentInstant}: Node: {HostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {ActorName}.{MethodName}; OwnerName: {OwnerName}; OwnerId: {ownerId}.",
                 getCurrentInstantExtended (),
                 getMachineName,
                 duration_ms,

@@ -74,7 +74,7 @@ module Owner =
                             |> ignore
 
                             log.LogDebug(
-                                "{currentInstant}: In Branch.Server.handleCommand: error from actorProxy.Handle: {error}",
+                                "{CurrentInstant}: In Branch.Server.handleCommand: error from actorProxy.Handle: {error}",
                                 getCurrentInstantExtended (),
                                 (graceError.ToString())
                             )
@@ -87,7 +87,7 @@ module Owner =
                 let! validationsPassed = validationResults |> allPass
 
                 log.LogDebug(
-                    "{currentInstant}: In Owner.Server.processCommand: validationsPassed: {validationsPassed}.",
+                    "{CurrentInstant}: In Owner.Server.processCommand: validationsPassed: {validationsPassed}.",
                     getCurrentInstantExtended (),
                     validationsPassed
                 )
@@ -98,7 +98,7 @@ module Owner =
                 else
                     let! error = validationResults |> getFirstError
                     let errorMessage = OwnerError.getErrorMessage error
-                    log.LogDebug("{currentInstant}: error: {error}", getCurrentInstantExtended (), errorMessage)
+                    log.LogDebug("{CurrentInstant}: error: {error}", getCurrentInstantExtended (), errorMessage)
 
                     let graceError =
                         (GraceError.CreateWithMetadata errorMessage (getCorrelationId context) (getParametersAsDictionary parameters))
@@ -111,13 +111,13 @@ module Owner =
             with ex ->
                 log.LogError(
                     ex,
-                    "{currentInstant}: Exception in Organization.Server.processCommand. CorrelationId: {correlationId}.",
+                    "{CurrentInstant}: Exception in Organization.Server.processCommand. CorrelationId: {correlationId}.",
                     getCurrentInstantExtended (),
                     (getCorrelationId context)
                 )
 
                 let graceError =
-                    (GraceError.Create $"{Utilities.createExceptionResponse ex}" (getCorrelationId context))
+                    (GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (getCorrelationId context))
                         .enhance(nameof (OwnerId), graceIds.OwnerId)
                         .enhance ("Path", context.Request.Path)
 
@@ -168,7 +168,7 @@ module Owner =
                     return! context |> result400BadRequest graceError
             with ex ->
                 let graceError =
-                    (GraceError.Create $"{createExceptionResponse ex}" correlationId)
+                    (GraceError.Create $"{ExceptionResponse.Create ex}" correlationId)
                         .enhance(nameof (OwnerId), graceIds.OwnerId)
                         .enhance ("Path", context.Request.Path)
 
@@ -278,7 +278,7 @@ module Owner =
                 with ex ->
                     return!
                         context
-                        |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
+                        |> result500ServerError (GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId context))
             }
 
     /// Delete an owner.
@@ -328,7 +328,7 @@ module Owner =
                     let duration_ms = getPaddedDuration_ms startTime
 
                     log.LogInformation(
-                        "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {path}; OwnerId: {ownerId}.",
+                        "{CurrentInstant}: Node: {HostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {path}; OwnerId: {ownerId}.",
                         getCurrentInstantExtended (),
                         getMachineName,
                         duration_ms,
@@ -343,7 +343,7 @@ module Owner =
 
                     log.LogError(
                         ex,
-                        "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Error in {path}; OwnerId: {ownerId}.",
+                        "{CurrentInstant}: Node: {HostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Error in {path}; OwnerId: {ownerId}.",
                         getCurrentInstantExtended (),
                         getMachineName,
                         duration_ms,
@@ -353,7 +353,7 @@ module Owner =
                     )
 
                     let graceError =
-                        (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
+                        (GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId context))
                             .enhance(nameof (OwnerId), graceIds.OwnerId)
                             .enhance ("Path", context.Request.Path)
 

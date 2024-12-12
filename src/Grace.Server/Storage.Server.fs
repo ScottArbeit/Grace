@@ -124,7 +124,7 @@ module Storage =
                     return! context.WriteStringAsync $"{uploadUri}"
                 with ex ->
                     context.SetStatusCode StatusCodes.Status500InternalServerError
-                    logToConsole $"Exception in GetUploadUri: {(createExceptionResponse ex)}"
+                    logToConsole $"Exception in GetUploadUri: {(ExceptionResponse.Create ex)}"
 
                     return! context.WriteTextAsync $"{getCurrentInstantExtended ()} Error in {context.Request.Path} at {DateTime.Now.ToLongTimeString()}."
             }

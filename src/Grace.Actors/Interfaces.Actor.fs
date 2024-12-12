@@ -2,6 +2,7 @@ namespace Grace.Actors
 
 open Dapr.Actors
 open Grace.Actors.Commands
+open Grace.Actors.Types
 open Grace.Shared.Dto.Branch
 open Grace.Shared.Dto.Diff
 open Grace.Shared.Dto.Organization
@@ -14,6 +15,8 @@ open NodaTime
 open System
 open System.Collections.Generic
 open System.Threading.Tasks
+open Constants
+open System.Reflection.Metadata
 
 module Interfaces =
 
@@ -47,10 +50,17 @@ module Interfaces =
         abstract member RevertToInstant: Instant -> PersistAction -> Task<Result<'T, RevertError>>
         abstract member RevertBack: int -> PersistAction -> Task<Result<'T, RevertError>>
 
+    /// Defines the operations that an actor must implement to handle Grace reminders.
+    [<Interface>]
+    type IGraceReminder =
+        inherit IActor
+        abstract member ReceiveReminderAsync: reminder: ReminderDto -> Task<Result<unit, GraceError>>
+        abstract member ScheduleReminderAsync: reminderType: ReminderTypes -> delay: Duration -> state: string -> correlationId: CorrelationId -> Task
+
     /// Defines the operations for the Branch actor.
     [<Interface>]
     type IBranchActor =
-        inherit IActor
+        inherit IGraceReminder
 
         /// Validates that a branch with this BranchId exists.
         abstract member Exists: correlationId: CorrelationId -> Task<bool>
@@ -93,7 +103,7 @@ module Interfaces =
     /// Defines the operations for the Diff actor.
     [<Interface>]
     type IDiffActor =
-        inherit IActor
+        inherit IGraceReminder
 
         /// Populates the contents of the diff without returning the results.
         abstract member Compute: correlationId: CorrelationId -> Task<bool>
@@ -104,7 +114,7 @@ module Interfaces =
     ///Defines the operations for the DirectoryVersion actor.
     [<Interface>]
     type IDirectoryVersionActor =
-        inherit IActor
+        inherit IGraceReminder
 
         /// Returns true if the actor instance already exists.
         abstract member Exists: correlationId: CorrelationId -> Task<bool>
@@ -139,10 +149,24 @@ module Interfaces =
         /// Validates incoming commands and converts them to events that are stored in the database.
         abstract member Handle: command: DirectoryVersion.DirectoryVersionCommand -> eventMetadata: EventMetadata -> Task<GraceResult<string>>
 
+    /// Defines the operations for the ReminderServiceLock actor.
+    [<Interface>]
+    type IGlobalLockActor =
+        inherit IActor
+
+        /// Attempts to acquire a glocal lock for the Reminder Service. Returns true if the lock was acquired, otherwise false.
+        abstract member AcquireLock: lockedBy: string -> Task<bool>
+
+        /// Releases the global lock for the Reminder Service.
+        abstract member ReleaseLock: releasedBy: string -> Task<Result<unit, string>>
+
+        /// Returns true if the lock is currently held by any instance.
+        abstract member IsLocked: Task<bool>
+
     ///Defines the operations for the Organization actor.
     [<Interface>]
     type IOrganizationActor =
-        inherit IActor
+        inherit IGraceReminder
 
         /// Returns true if an organization with this ActorId already exists in the database.
         abstract member Exists: correlationId: CorrelationId -> Task<bool>
@@ -176,13 +200,17 @@ module Interfaces =
     /// Defines the operations for the Owner actor.
     [<Interface>]
     type IOwnerActor =
-        inherit IActor
+        inherit IGraceReminder
+
         /// Returns true if an owner with this ActorId already exists in the database.
         abstract member Exists: correlationId: CorrelationId -> Task<bool>
+
         /// Returns true if an owner with this ActorId has been deleted.
         abstract member IsDeleted: correlationId: CorrelationId -> Task<bool>
+
         /// Returns true if an organization with this name exists for this owner.
         abstract member OrganizationExists: organizationName: string -> correlationId: CorrelationId -> Task<bool>
+
         /// Returns the current state of the owner.
         abstract member Get: correlationId: CorrelationId -> Task<OwnerDto>
 
@@ -198,16 +226,17 @@ module Interfaces =
         inherit IActor
         /// Clears the OwnerId for the given OwnerName.
         abstract member ClearOwnerId: correlationId: CorrelationId -> Task
+
         /// Returns the OwnerId for the given OwnerName.
         abstract member GetOwnerId: correlationId: CorrelationId -> Task<OwnerId option>
+
         /// Sets the OwnerId for a given OwnerName.
         abstract member SetOwnerId: ownerId: OwnerId -> correlationId: CorrelationId -> Task
-
 
     /// Defines the operations for the Reference actor.
     [<Interface>]
     type IReferenceActor =
-        inherit IActor
+        inherit IGraceReminder
 
         /// Returns true if the reference already exists in the database.
         abstract member Exists: correlationId: CorrelationId -> Task<bool>
@@ -224,10 +253,29 @@ module Interfaces =
         /// Returns true if the reference has been deleted.
         abstract member IsDeleted: correlationId: CorrelationId -> Task<bool>
 
+    [<Interface>]
+    type IReminderActor =
+        inherit IActor
+
+        /// Creates a new reminder in the database.
+        abstract member Create: reminder: ReminderDto -> correlationId: CorrelationId -> Task
+
+        /// Deletes the reminder from the database.
+        abstract member Delete: correlationId: CorrelationId -> Task
+
+        /// Returns true if the reminder exists in the database.
+        abstract member Exists: correlationId: CorrelationId -> Task<bool>
+
+        /// Returns the reminder from the database.
+        abstract member Get: correlationId: CorrelationId -> Task<ReminderDto>
+
+        /// Sends the reminder to the source actor.
+        abstract member Remind: correlationId: CorrelationId -> Task<Result<unit, GraceError>>
+
     /// Defines the operations for the Repository actor.
     [<Interface>]
     type IRepositoryActor =
-        inherit IActor
+        inherit IGraceReminder
 
         /// Returns true if this actor already exists in the database, otherwise false.
         abstract member Exists: correlationId: CorrelationId -> Task<bool>

@@ -1,10 +1,24 @@
-apiVersion: v1
-kind: Namespace
-metadata: 
-  name: grace-dev
+# apiVersion: v1
+# kind: Namespace
+# metadata: 
+#   name: default
 
 ---
+apiVersion: dapr.io/v1alpha1
+kind: Configuration
+metadata:
+  name: dapr-config
+spec:
+  mtls:
+    enabled: true
+  tracing:
+    samplingRate: "1"
+    otel:
+      endpointAddress: "localhost:4317"
+      isSecure: false
+      protocol: "grpc"
 
+---
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -23,9 +37,34 @@ data:
   DAPR_HTTP_PORT: "3500"
   DAPR_GRPC_PORT: "50001"
   DAPR_SERVER_URI: http://127.0.0.1
+  InProcessFeatures__Enabled: "true"
   Logging__LogLevel__Default: "Information"
   #Logging__LogLevel__Default: "Debug"
+  OTLP_ENDPOINT_URL: http://localhost:4317
   TEMP: /tmp
+  #ZIPKIN_ENDPOINT_URL: http://localhost:9412
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-config
+data:
+  prometheus.yml: |
+    # your Prometheus configuration here
+    global:
+      scrape_interval:     15s # By default, scrape targets every 15 seconds.
+
+    # A scrape configuration containing exactly one endpoint to scrape:
+    # Here it's Prometheus itself.
+    scrape_configs:
+      - job_name: 'dapr'
+
+        # Override the global default and scrape targets from this job every 5 seconds.
+        scrape_interval: 5s
+
+        static_configs:
+          - targets: ['localhost:9090'] # Replace with Dapr metrics port if not default
 
 ---
 # PersistentVolumeClaim for Dapr Scheduler's persistent storage
@@ -40,39 +79,212 @@ spec:
     requests:
       storage: 1Gi
       
+# ---
+# # PersistentVolume for Prometheus configuration
+# apiVersion: v1
+# kind: PersistentVolume
+# metadata:
+#   name: promethesus-config-pv
+# spec:
+#   capacity:
+#     storage: 1Gi
+#   accessModes:
+#     - ReadOnlyMany
+#   hostPath:
+#     path: /mnt/c/Users/scott/.dapr/configuration/prometheus.yml
+#     type: FileOrCreate
+#   storageClassName: prometheus-config
+
+# ---
+# # PersistentVolumeClaim for Prometheus configuration
+# apiVersion: v1
+# kind: PersistentVolumeClaim
+# metadata:
+#   name: promethesus-config-pvc
+# spec:
+#   accessModes:
+#     - ReadOnlyMany
+#   resources:
+#     requests:
+#       storage: 1Gi
+#   #volumeName: promethesus-config-pv
+#   storageClassName: prometheus-config
+
 ---
-# PersistentVolume for Prometheus configuration
 apiVersion: v1
-kind: PersistentVolume
+kind: ServiceAccount
 metadata:
-  name: promethesus-config-pv
-spec:
-  capacity:
-    storage: 1Gi
-  accessModes:
-    - ReadOnlyMany
-  hostPath:
-    path: /mnt/c/Users/scott/.dapr/configuration/prometheus.yml
-    type: FileOrCreate
-  storageClassName: prometheus-config
+  name: otel-service-account
+  namespace: default # or the namespace where your deployment resides
 
 ---
-# PersistentVolumeClaim for Prometheus configuration
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: pod-reader
+rules:
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list", "watch"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: read-pods-global
+subjects:
+- kind: ServiceAccount
+  name: otel-service-account
+  namespace: default
+roleRef:
+  kind: ClusterRole
+  name: pod-reader
+  apiGroup: rbac.authorization.k8s.io
+    
+---
 apiVersion: v1
-kind: PersistentVolumeClaim
+kind: ConfigMap
 metadata:
-  name: promethesus-config-pvc
-spec:
-  accessModes:
-    - ReadOnlyMany
-  resources:
-    requests:
-      storage: 1Gi
-  #volumeName: promethesus-config-pv
-  storageClassName: prometheus-config
+  name: dotnet-monitor-egress
+data:
+  Egress__FileSystem__monitorFile__directoryPath: /diag
+  # Egress__AzureBlobStorage__monitorBlob__accountUri: "https://exampleaccount.blob.core.windows.net"
+  # Egress__AzureBlobStorage__monitorBlob__containerName: "dotnet-monitor"
+  # Egress__AzureBlobStorage__monitorBlob__blobPrefix: "artifacts"
+  # Egress__AzureBlobStorage__monitorBlob__managedIdentityClientId: "ffffffff-ffff-ffff-ffff-ffffffffffff"
 
 ---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dotnet-monitor-triggers
+data:
+  settings.json: |
+    {
+        "$schema": "https://raw.githubusercontent.com/dotnet/dotnet-monitor/main/documentation/schema.json",
+        "DiagnosticPort": {
+          "ConnectionMode": "Listen",
+          "EndpointName": "/diag/dotnet-monitor.sock"
+        },
+        "CollectionRules":{
+            "BadResponseStatus": {
+                "Trigger": {
+                    "Type": "AspNetResponseStatus",
+                    "Settings": {
+                        "ResponseCount": 1,
+                        "StatusCodes": [
+                            "400-499"
+                        ]
+                    }
+                },
+                "Actions": [
+                    {
+                        "Type": "CollectDump",
+                        "Settings": {
+                        "Egress": "monitorBlob",
+                        "Type": "Mini"
+                        }
+                    }
+                ],
+                "Limits": {
+                    "ActionCount": 1
+                }
+            }
+        }
+    }
 
+---
+# kubernetes/open-telemetry.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: otel-collector-config
+data:
+  otel-collector-config.yaml: |
+    receivers:
+      prometheus:
+        config:
+          scrape_configs:
+            - job_name: 'kubernetes'
+              kubernetes_sd_configs:
+                - role: pod
+              relabel_configs:
+                - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+                  action: keep
+                  regex: true
+                - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+                  action: replace
+                  target_label: __metrics_path__
+                  regex: (.+)
+                - source_labels: [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
+                  action: replace
+                  regex: (.+):(?:\d+);(\d+)
+                  replacement: $1:$2
+                  target_label: __address__
+            - job_name: 'grace-metrics'
+              static_configs:
+                - targets: ['localhost:5000']  # grace-server metrics
+                - targets: ['localhost:9091']  # dapr sidecar metrics
+              metrics_path: '/metrics'
+              scrape_interval: 5s
+      otlp:
+        protocols:
+          grpc:
+          http:
+
+    processors:
+      memory_limiter:
+        check_interval: 1s
+        limit_mib: 16000
+        spike_limit_mib: 1000
+      batch:
+        send_batch_size: 1024
+        timeout: 10s
+      filter:
+        metrics:
+          include:
+            match_type: regexp
+            metric_names:
+              - ".*"
+          exclude:
+            match_type: regexp
+            metric_names:
+              - ".*healthz.*"
+        spans:
+          include:
+            match_type: regexp
+            services:
+              - ".*"
+          exclude:
+            match_type: regexp
+            attributes:
+              - key: "http.route"
+                value: ".*(healthz|metrics).*"
+
+    exporters:
+      azuremonitor:
+        instrumentation_key: ${APPLICATIONINSIGHTS_CONNECTION_STRING}
+      prometheus:
+        endpoint: "localhost:9092"
+      # zipkin:
+      #   endpoint: "http://localhost:9412/api/v2/spans"
+      debug:
+        verbosity: basic
+
+    service:
+      pipelines:
+        traces:
+          receivers: [otlp]
+          processors: [memory_limiter, filter]
+          #exporters: [azuremonitor]
+          exporters: [debug]
+        metrics:
+          receivers: [prometheus]
+          processors: [memory_limiter, filter]
+          #exporters: [prometheus, azuremonitor]
+          exporters: [debug]
+
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -89,44 +301,68 @@ spec:
       labels:
         app: grace-server
       annotations:
-        prometheus.io/scrape: "true"
-        prometheus.io/path: /metrics
-        prometheus.io/port: "8080"
+        # prometheus.io/scrape: "true"
+        # prometheus.io/path: /metrics
+        # prometheus.io/port: "9093"
         dapr.io/enabled: "true"
+        dapr.io/app-health-probe-interval: "10"
         dapr.io/app-id: "grace-server"
         dapr.io/app-port: "5000"
-        dapr.io/config: "featureconfig"
+        #dapr.io/config: "featureconfig"
+        dapr.io/config: "dapr-config"
         dapr.io/enable-metrics: "true"
+        dapr.io/enable-profiling: "true"
         #dapr.io/env: "GOMEMLIMIT=700MiB"
-        dapr.io/log-level: "debug"
-        #dapr.io/metrics-exporter-type: "prometheus"
-        #dapr.io/metrics-port: "9090"  # Ensure this matches the port exposed by the Prometheus exporter in the OpenTelemetry Collector configuration
+        dapr.io/log-level: "info"
+        dapr.io/metrics-exporter-type: "prometheus"
+        dapr.io/metrics-port: "9091"  # Ensure this matches the port exposed by the Prometheus exporter in the OpenTelemetry Collector configuration
         dapr.io/placement-host-address: "dapr-placement-server.dapr-system.svc.cluster.local:50005"
         dapr.io/scheduler-host-address: "dapr-scheduler-server.dapr-system.svc.cluster.local:50006"
+        #dapr.io/scheduler-host-address: "dapr-scheduler:6060"
         dapr.io/sidecar-cpu-limit: "4.0"
         dapr.io/sidecar-memory-limit: "768Mi"
         dapr.io/sidecar-cpu-request: "0.25"
         dapr.io/sidecar-memory-request: "256Mi"
     spec:
+      serviceAccountName: otel-service-account
+      shareProcessNamespace: true
       volumes:
       - name: dapr-config
         hostPath:
           path: /mnt/c/Users/Scott/.dapr/
           type: Directory
-      - name: secret-volume
+      - name: grace-certificate-volume
         secret:
           secretName: gracedevcert
-      - name: otel-collector-config
-        configMap:
-          name: otel-collector-config
       - name: prometheus-config
         configMap:
           name: prometheus-config
       - name: dapr-scheduler-volume
         hostPath:
           path: /mnt/c/Users/scott/.dapr/scheduler
+      - name: otel-config
+        configMap:
+          name: otel-collector-config
+      - name: diagvol
+        emptyDir: {}
+      - name: dotnet-monitor-config
+        projected:
+          defaultMode: 400
+          sources:
+            - configMap:
+                name: dotnet-monitor-egress
+                optional: false
+            - configMap:
+                name: dotnet-monitor-triggers
+                optional: false
+            - secret:
+                name: dotnetmonitorapikey
 
       containers:
+      #############################################
+      # grace-server
+      # Dapr sidecar (through annotations above)
+      #############################################
       - name: grace-server
         image: scottarbeit/grace-server:latest 
         imagePullPolicy: IfNotPresent
@@ -138,23 +374,22 @@ spec:
           name: https-grace
           protocol: TCP
         volumeMounts:
-        - name: secret-volume
+        - name: grace-certificate-volume
           mountPath: /etc/certificates
           readOnly: true
-        - name: otel-collector-config
-          mountPath: /etc/otel/config.yaml
-          readOnly: true
-        # volumeMounts:
-        #   - name: dapr-config
-        #     mountPath: /dapr/
-        #     readOnly: true
+        - name: diagvol
+          mountPath: /diag
+          readOnly: false
+        # - name: otel-config
+        #   mountPath: /etc/otelcol-contrib/config.yaml
+        #   readOnly: true
         resources:
           limits:
-            cpu: "2.0"
+            cpu: "8.0"
             memory: "12288Mi"
           requests:
             cpu: "2.0"
-            memory: "8192Mi"
+            memory: "2048Mi"
         envFrom:
         - configMapRef:
             name: grace-environment
@@ -184,6 +419,8 @@ spec:
             secretKeyRef:
               name: cosmoscontainername
               key: cosmoscontainername
+        - name: DOTNET_DiagnosticPorts
+          value: /diag/dotnet-monitor.sock
 
       # - name: dapr-scheduler
       #   image: "daprio/dapr:1.14.1"
@@ -199,9 +436,12 @@ spec:
       #   - name: dapr-scheduler-volume
       #     mountPath: /mnt/dapr/scheduler
       #     readOnly: false
-
+      
+      #############################################
+      # OpenTelemetry Collector
+      #############################################
       - name: opentelemetry-collector
-        image: otel/opentelemetry-collector:latest
+        image: otel/opentelemetry-collector-contrib:latest
         env:
         - name: APPLICATIONINSIGHTS_CONNECTION_STRING
           valueFrom:
@@ -210,46 +450,54 @@ spec:
               key: applicationinsightsconnectionstring
         ports:
         - containerPort: 4317 # gRPC port for traces
+          name: otlp-grpc
           protocol: TCP
         - containerPort: 4318 # HTTP port for traces and metrics
+          name: otlp-http
           protocol: TCP
         - containerPort: 55681 # HTTP port for logs (OTLP/HTTP)
+          name: otlp-http-logs
+          protocol: TCP
+        - containerPort: 9092 # HTTP port for metrics (OTLP/HTTP)
+          name: otlp-metrics
           protocol: TCP
         volumeMounts:
-        - name: otel-collector-config
-          mountPath: /etc/otel/collector
-          readOnly: true
+        - name: otel-config
+          mountPath: /etc/otelcol-contrib/config.yaml
+          subPath: otel-collector-config.yaml
         resources:
           limits:
-            cpu: "2.0"
-            memory: "1Gi"
+            cpu: "8.0"
+            memory: "16Gi"
           requests:
-            cpu: "0.25"
-            memory: "256Mi"
-
-      - name: zipkin
-        image: openzipkin/zipkin:latest
-        ports:
-        - containerPort: 9412
-          name: zipkin
-          protocol: TCP
-        env:
-          - name: SERVER_PORT
-            value: "9412"
-        resources:
-          limits:
             cpu: "2.0"
-            memory: "1Gi"
-          requests:
-            cpu: "0.25"
-            memory: "256Mi"
+            memory: "8Gi"
+      # - name: zipkin
+      #   image: openzipkin/zipkin:latest
+      #   ports:
+      #   - containerPort: 9412
+      #     name: zipkin
+      #     protocol: TCP
+      #   env:
+      #     - name: SERVER_PORT
+      #       value: "9412"
+      #   resources:
+      #     limits:
+      #       cpu: "4.0"
+      #       memory: "4Gi"
+      #     requests:
+      #       cpu: "0.25"
+      #       memory: "1Gi"
 
+      #############################################
+      # Prometheus
+      #############################################
       - name: prometheus
         image: prom/prometheus:latest
         args:
-          ["--web.listen-address=:9091"]
+          ["--web.listen-address=:9093"]
         ports:
-        - containerPort: 9091
+        - containerPort: 9093
           name: prometheus
           protocol: TCP
         volumeMounts:
@@ -260,10 +508,64 @@ spec:
         resources:
           limits:
             cpu: "2.0"
-            memory: "1Gi"
+            memory: "2Gi"
           requests:
             cpu: "0.25"
             memory: "400Mi"
+
+      #############################################
+      # dotnet monitor
+      #############################################
+      - name: dotnet-monitor
+        image: mcr.microsoft.com/dotnet/monitor:latest
+        args: [
+          "collect", 
+          "--urls", 
+          "http://+:52323", 
+          "--metricUrls", 
+          "http://+:52325",
+          "--no-auth"
+          ]
+        ports:
+        - containerPort: 52323  # Default port for dotnet-monitor
+          name: monitor
+          protocol: TCP
+        - containerPort: 52325  # Default port for dotnet-monitor metrics
+          name: monitor-metrics
+          protocol: TCP
+        env:
+        # - name: DotnetMonitor_Authentication__ApiKey__ApiKeyHash
+        #   value: "NnFBVWRkSjUwZ0RaT0hMSDE2RVFRQnhKaEdZRHNnSkp3amdBMm82NFlaOD0="  # Replace with the hashed API key
+        - name: Monitor_Telemetry_OptOut
+          value: "true"
+        - name: DotnetMonitor_DiagnosticPort__ConnectionMode
+          value: Listen
+        - name: DotnetMonitor_DiagnosticPort__EndpointName
+          value: /diag/dotnet-monitor.sock
+        # ALWAYS use the HTTPS form of the URL for deployments in production; the removal of HTTPS is done for
+        # demonstration purposes only in this example. Please continue reading after this example for further details.
+        - name: DotnetMonitor_Urls
+          value: 'http://0.0.0.0:52323'
+        - name: DotnetMonitor_Storage__DumpTempFolder
+          value: /diag/dumps
+        - name: DotnetMonitor_Logging__Console__FormatterName
+          value: simple
+        volumeMounts:
+        - name: diagvol
+          mountPath: /diag
+          readOnly: false
+        - mountPath: /etc/dotnet-monitor
+          name: dotnet-monitor-config
+          subPath: "settings.json"
+          readOnly: false
+        resources:
+          limits:
+            cpu: "0.25"
+            memory: "256Mi"
+          requests:
+            cpu: "0.1"
+            memory: "32Mi"
+
       # - name: grafana
       #   image: grafana/grafana:latest
       #   ports:
@@ -297,21 +599,39 @@ spec:
   - name: https
     port: 5001
     targetPort: https-grace
-  - name: zipkin
-    port: 9412
-    targetPort: 9412
+  # - name: zipkin
+  #   port: 9412
+  #   targetPort: 9412
+  # - name: grafana
+  #   port: 3000
+  #   targetPort: 3000
+  # - name: http-dapr
+  #   port: 3500
+  #   targetPort: 3500
+  # - name: grpc-dapr
+  #   port: 50001
+  #   targetPort: 50001
+  - name: otlp-grpc
+    port: 4317
+    targetPort: otlp-grpc
+  - name: otlp-http
+    port: 4318
+    targetPort: otlp-http
+  - name: otlp-http-logs
+    port: 55681
+    targetPort: otlp-http-logs
+  - name: otlp-metrics
+    port: 9092
+    targetPort: otlp-metrics
   - name: prometheus
-    port: 9091
-    targetPort: 9090
-  - name: grafana
-    port: 3000
-    targetPort: 3000
-  - name: http-dapr
-    port: 3500
-    targetPort: 3500
-  - name: grpc-dapr
-    port: 50001
-    targetPort: 50001
+    port: 9093
+    targetPort: 9093
+  - name: monitor
+    port: 52323
+    targetPort: monitor
+  - name: monitor-metrics
+    port: 52325
+    targetPort: monitor-metrics
   # - name: dapr-scheduler
   #   port: 6070
   #   targetPort: 50006

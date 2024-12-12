@@ -57,7 +57,7 @@ type EntityProperties =
 /// If the Ids and/or Names aren't found, it returns 404 Not Found.
 type ValidateIdsMiddleware(next: RequestDelegate) =
 
-    let log = ApplicationContext.loggerFactory.CreateLogger("ValidateIds.Middleware")
+    let log = ApplicationContext.loggerFactory.CreateLogger($"{nameof (ValidateIdsMiddleware)}.Server")
 
     /// Holds the request body type for each endpoint.
     let typeLookup = ConcurrentDictionary<String, Type>()
@@ -80,7 +80,7 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
             let endpoint = context.GetEndpoint()
 
             if isNull (endpoint) then
-                log.LogDebug("{currentInstant}: Path: {path}; Endpoint: null.", getCurrentInstantExtended (), path)
+                log.LogDebug("{CurrentInstant}: Path: {path}; Endpoint: null.", getCurrentInstantExtended (), path)
                 None
             elif endpoint.Metadata.Count > 0 then
                 let requestBodyType =
@@ -90,7 +90,7 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
 
                 if requestBodyType |> Option.isSome then
                     log.LogDebug(
-                        "{currentInstant}: Path: {path}; Endpoint: {endpoint.DisplayName}; RequestBodyType: {requestBodyType.Value.Name}.",
+                        "{CurrentInstant}: Path: {path}; Endpoint: {endpoint.DisplayName}; RequestBodyType: {requestBodyType.Value.Name}.",
                         getCurrentInstantExtended (),
                         path,
                         endpoint.DisplayName,
@@ -99,7 +99,7 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
 
                 requestBodyType
             else
-                log.LogDebug("{currentInstant}: Path: {path}; endpoint.Metadata.Count = 0.", getCurrentInstantExtended (), path)
+                log.LogDebug("{CurrentInstant}: Path: {path}; endpoint.Metadata.Count = 0.", getCurrentInstantExtended (), path)
 
                 None
         else
@@ -175,7 +175,7 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
                         // logToConsole $"Path: {context.Request.Path}; Properties: {sb.ToString()}."
 
                         log.LogDebug(
-                            "{currentInstant}: requestBodyType: {requestBodyType}; Request body: {requestBody}",
+                            "{CurrentInstant}: requestBodyType: {requestBodyType}; Request body: {requestBody}",
                             getCurrentInstantExtended (),
                             requestBodyType.Name,
                             serialize requestBody
@@ -356,7 +356,7 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
                     context.Items.Add("BadRequest", error.Error)
 
                     log.LogWarning(
-                        "{currentInstant}: CorrelationId: {correlationId}; {currentFunction}: Path: {path}; {message}; Duration: {duration_ms}ms.",
+                        "{CurrentInstant}: CorrelationId: {correlationId}; {currentFunction}: Path: {path}; {message}; Duration: {duration_ms}ms.",
                         getCurrentInstantExtended (),
                         correlationId,
                         nameof (ValidateIdsMiddleware),
@@ -373,7 +373,7 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
                 else
                     if graceIds.HasBranch then
                         log.LogInformation(
-                            "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; ValidateIds.Middleware: Path: {path}; OwnerId: {OwnerId}; OrganizationId: {OrganizationId}; RepositoryId: {RepositoryId}; BranchId: {BranchId}.",
+                            "{CurrentInstant}: Node: {HostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; ValidateIds.Middleware: Path: {path}; OwnerId: {OwnerId}; OrganizationId: {OrganizationId}; RepositoryId: {RepositoryId}; BranchId: {BranchId}.",
                             getCurrentInstantExtended (),
                             getMachineName,
                             duration_ms,
@@ -386,7 +386,7 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
                         )
                     elif graceIds.HasRepository then
                         log.LogInformation(
-                            "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; ValidateIds.Middleware: Path: {path}; OwnerId: {OwnerId}; OrganizationId: {OrganizationId}; RepositoryId: {RepositoryId}.",
+                            "{CurrentInstant}: Node: {HostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; ValidateIds.Middleware: Path: {path}; OwnerId: {OwnerId}; OrganizationId: {OrganizationId}; RepositoryId: {RepositoryId}.",
                             getCurrentInstantExtended (),
                             getMachineName,
                             duration_ms,
@@ -398,7 +398,7 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
                         )
                     elif graceIds.HasOrganization then
                         log.LogInformation(
-                            "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; ValidateIds.Middleware: Path: {path}; OwnerId: {OwnerId}; OrganizationId: {OrganizationId}.",
+                            "{CurrentInstant}: Node: {HostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; ValidateIds.Middleware: Path: {path}; OwnerId: {OwnerId}; OrganizationId: {OrganizationId}.",
                             getCurrentInstantExtended (),
                             getMachineName,
                             duration_ms,
@@ -409,7 +409,7 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
                         )
                     elif graceIds.HasOwner then
                         log.LogInformation(
-                            "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; ValidateIds.Middleware: Path: {path}; OwnerId: {OwnerId}.",
+                            "{CurrentInstant}: Node: {HostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; ValidateIds.Middleware: Path: {path}; OwnerId: {OwnerId}.",
                             getCurrentInstantExtended (),
                             getMachineName,
                             duration_ms,
@@ -443,7 +443,7 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
                             |> Seq.exists (fun ignorePath -> path.StartsWith(ignorePath, StringComparison.InvariantCultureIgnoreCase)))
                     then
                         log.LogDebug(
-                            "{currentInstant}: Path: {path}; Elapsed: {elapsed}ms; Status code: {statusCode}; graceIds: {graceIds}",
+                            "{CurrentInstant}: Path: {path}; Elapsed: {elapsed}ms; Status code: {statusCode}; graceIds: {graceIds}",
                             getCurrentInstantExtended (),
                             context.Request.Path,
                             duration_ms,
@@ -455,7 +455,7 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
             with ex ->
                 log.LogError(
                     ex,
-                    "{currentInstant}: An unhandled exception occurred in the {middlewareName} middleware.",
+                    "{CurrentInstant}: An unhandled exception occurred in the {middlewareName} middleware.",
                     getCurrentInstantExtended (),
                     nameof (ValidateIdsMiddleware)
                 )

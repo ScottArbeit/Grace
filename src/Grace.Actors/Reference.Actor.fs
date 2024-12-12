@@ -9,6 +9,8 @@ open Grace.Actors.Extensions.ActorProxy
 open Grace.Actors.Extensions.MemoryCache
 open Grace.Actors.Interfaces
 open Grace.Actors.Services
+open Grace.Actors.Timing
+open Grace.Actors.Types
 open Grace.Shared
 open Grace.Shared.Client.Configuration
 open Grace.Shared.Dto.Reference
@@ -19,7 +21,6 @@ open NodaTime
 open System
 open System.Collections.Generic
 open System.Threading.Tasks
-open Types
 open Events.Reference
 open Grace.Shared.Validation.Errors.Reference
 open Grace.Shared.Constants
@@ -28,17 +29,19 @@ open Commands.Reference
 module Reference =
 
     type PhysicalDeletionReminderState = (RepositoryId * BranchId * DirectoryVersionId * Sha256Hash * DeleteReason * CorrelationId)
+    let log = loggerFactory.CreateLogger("Reference.Actor")
 
     type ReferenceActor(host: ActorHost) =
         inherit Actor(host)
 
-        let actorName = ActorName.Reference
+        static let actorName = ActorName.Reference
+        static let eventsStateName = StateName.Reference
+
         let mutable actorStartTime = Instant.MinValue
-        let log = loggerFactory.CreateLogger("Reference.Actor")
         let mutable logScope: IDisposable = null
         let mutable currentCommand = String.Empty
+        let mutable stateManager = Unchecked.defaultof<IActorStateManager>
 
-        let eventsStateName = StateName.Reference
         let mutable referenceDto = ReferenceDto.Default
         let referenceEvents = List<ReferenceEvent>()
 
@@ -76,41 +79,35 @@ module Reference =
 
         override this.OnActivateAsync() =
             let activateStartTime = getCurrentInstant ()
-            let stateManager = this.StateManager
+            stateManager <- this.StateManager
 
             task {
-                let mutable message = String.Empty
-                let! retrievedEvents = Storage.RetrieveState<List<ReferenceEvent>> stateManager eventsStateName
-
                 let correlationId =
                     match memoryCache.GetCorrelationIdEntry this.Id with
                     | Some correlationId -> correlationId
                     | None -> String.Empty
 
-                match retrievedEvents with
-                | Some retrievedEvents ->
-                    referenceEvents.AddRange(retrievedEvents)
+                addTiming AfterGettingCorrelationIdFromMemoryCache eventsStateName correlationId
 
-                    // Apply all events to the state.
-                    referenceDto <-
-                        retrievedEvents
-                        |> Seq.fold (fun referenceDto referenceEvent -> referenceDto |> updateDto referenceEvent) ReferenceDto.Default
+                try
+                    let! retrievedEvents = Storage.RetrieveState<List<ReferenceEvent>> stateManager eventsStateName correlationId
 
-                    message <- "Retrieved from database"
-                | None -> message <- "Not found in database"
+                    match retrievedEvents with
+                    | Some retrievedEvents ->
+                        referenceEvents.AddRange(retrievedEvents)
 
-                let duration_ms = getPaddedDuration_ms activateStartTime
+                        // Apply all events to the state.
+                        referenceDto <-
+                            retrievedEvents
+                            |> Seq.fold (fun referenceDto referenceEvent -> referenceDto |> updateDto referenceEvent) ReferenceDto.Default
+                    | None -> ()
 
-                log.LogInformation(
-                    "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Activated {ActorType} {ActorId}. {message}.",
-                    getCurrentInstantExtended (),
-                    getMachineName,
-                    duration_ms,
-                    correlationId,
-                    actorName,
-                    host.Id,
-                    message
-                )
+                    logActorActivation log activateStartTime correlationId actorName this.Id (getActorActivationMessage retrievedEvents)
+                with ex ->
+                    let exc = ExceptionResponse.Create ex
+                    log.LogError("{CurrentInstant} Error activating {ActorType} {ActorId}.", getCurrentInstantExtended (), this.GetType().Name, host.Id)
+                    log.LogError("{CurrentInstant} {ExceptionDetails}", getCurrentInstantExtended (), exc.ToString())
+                    logActorActivation log activateStartTime correlationId actorName this.Id "Exception occurred during activation."
             }
             :> Task
 
@@ -141,7 +138,7 @@ module Reference =
 
             if String.IsNullOrEmpty(currentCommand) then
                 log.LogInformation(
-                    "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {ActorName}.{MethodName}; RepositoryId: {RepositoryId}; BranchId: {BranchId}; ReferenceId: {ReferenceId}.",
+                    "{CurrentInstant}: Node: {HostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {ActorName}.{MethodName}; RepositoryId: {RepositoryId}; BranchId: {BranchId}; ReferenceId: {ReferenceId}.",
                     getCurrentInstantExtended (),
                     getMachineName,
                     duration_ms,
@@ -154,7 +151,7 @@ module Reference =
                 )
             else
                 log.LogInformation(
-                    "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {ActorName}.{MethodName}; Command: {Command}; RepositoryId: {RepositoryId}; BranchId: {BranchId}; ReferenceId: {ReferenceId}.",
+                    "{CurrentInstant}: Node: {HostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {ActorName}.{MethodName}; Command: {Command}; RepositoryId: {RepositoryId}; BranchId: {BranchId}; ReferenceId: {ReferenceId}.",
                     getCurrentInstantExtended (),
                     getMachineName,
                     duration_ms,
@@ -170,71 +167,81 @@ module Reference =
             logScope.Dispose()
             Task.CompletedTask
 
-        member private this.ApplyEventOld referenceEvent =
-            let stateManager = this.StateManager
+        interface IGraceReminder with
+            /// Schedules a Grace reminder.
+            member this.ScheduleReminderAsync reminderType delay state correlationId =
+                task {
+                    let reminder = ReminderDto.Create actorName $"{this.Id}" reminderType (getFutureInstant delay) state correlationId
+                    do! createReminder reminder
+                }
+                :> Task
 
-            task {
-                try
-                    //if referenceEvents.Count = 0 then do! this.OnFirstWrite()
+            /// Receives a Grace reminder.
+            member this.ReceiveReminderAsync(reminder: ReminderDto) : Task<Result<unit, GraceError>> =
+                task {
+                    match reminder.ReminderType with
+                    | ReminderTypes.PhysicalDeletion ->
+                        // Get values from state.
+                        let (repositoryId, branchId, directoryVersionId, sha256Hash, deleteReason, correlationId) =
+                            deserialize<PhysicalDeletionReminderState> reminder.State
 
-                    // Add the event to the branchEvents list, and save it to actor state.
-                    referenceEvents.Add(referenceEvent)
-                    do! Storage.SaveState stateManager eventsStateName referenceEvents
+                        this.correlationId <- correlationId
 
-                    // Update the referenceDto with the event.
-                    referenceDto <- referenceDto |> updateDto referenceEvent
+                        // Mark the branch as needing to update its latest references.
+                        let branchActorProxy = Branch.CreateActorProxy branchId correlationId
+                        do! branchActorProxy.MarkForRecompute correlationId
 
-                    // Publish the event to the rest of the world.
-                    let graceEvent = Events.GraceEvent.ReferenceEvent referenceEvent
-                    let message = serialize graceEvent
-                    do! daprClient.PublishEventAsync(GracePubSubService, GraceEventStreamTopic, graceEvent)
+                        // Delete saved state for this actor.
+                        let! deleted = Storage.DeleteState stateManager eventsStateName
 
-                    let returnValue = GraceReturnValue.Create "Reference command succeeded." referenceEvent.Metadata.CorrelationId
+                        if deleted then
+                            log.LogInformation(
+                                "{CurrentInstant}: CorrelationId: {correlationId}; Deleted physical state for reference; RepositoryId: {RepositoryId}; BranchId: {BranchId}; ReferenceId: {ReferenceId}; DirectoryVersionId: {DirectoryVersionId}; deleteReason: {deleteReason}.",
+                                getCurrentInstantExtended (),
+                                correlationId,
+                                repositoryId,
+                                branchId,
+                                this.Id,
+                                directoryVersionId,
+                                deleteReason
+                            )
+                        else
+                            log.LogWarning(
+                                "{CurrentInstant}: CorrelationId: {correlationId}; Physical state for reference could not be deleted because it was not found; RepositoryId: {RepositoryId}; BranchId: {BranchId}; ReferenceId: {ReferenceId}; DirectoryVersionId: {DirectoryVersionId}; deleteReason: {deleteReason}.",
+                                getCurrentInstantExtended (),
+                                correlationId,
+                                repositoryId,
+                                branchId,
+                                this.Id,
+                                directoryVersionId,
+                                deleteReason
+                            )
 
-                    returnValue
-                        .enhance(nameof (RepositoryId), $"{referenceDto.RepositoryId}")
-                        .enhance(nameof (BranchId), $"{referenceDto.BranchId}")
-                        .enhance(nameof (ReferenceId), $"{referenceDto.ReferenceId}")
-                        .enhance(nameof (ReferenceType), $"{discriminatedUnionCaseName referenceDto.ReferenceType}")
-                        .enhance (nameof (ReferenceEventType), $"{getDiscriminatedUnionFullName referenceEvent.Event}")
-                    |> ignore
+                        // Set all values to default.
+                        referenceDto <- ReferenceDto.Default
+                        referenceEvents.Clear()
 
-                    return Ok returnValue
-                with ex ->
-                    let exceptionResponse = createExceptionResponse ex
-
-                    let graceError = GraceError.Create (ReferenceError.getErrorMessage FailedWhileApplyingEvent) referenceEvent.Metadata.CorrelationId
-
-                    graceError
-                        .enhance("Exception details", exceptionResponse.``exception`` + exceptionResponse.innerException)
-                        .enhance(nameof (RepositoryId), $"{referenceDto.RepositoryId}")
-                        .enhance(nameof (BranchId), $"{referenceDto.BranchId}")
-                        .enhance(nameof (ReferenceId), $"{referenceDto.ReferenceId}")
-                        .enhance(nameof (ReferenceType), $"{discriminatedUnionCaseName referenceDto.ReferenceType}")
-                        .enhance (nameof (ReferenceEventType), $"{getDiscriminatedUnionFullName referenceEvent.Event}")
-                    |> ignore
-
-                    return Error graceError
-            }
-
-        member public this.SchedulePhysicalDeletion(deleteReason, delay, correlationId) =
-            let (tuple: PhysicalDeletionReminderState) =
-                (referenceDto.RepositoryId, referenceDto.BranchId, referenceDto.DirectoryId, referenceDto.Sha256Hash, deleteReason, correlationId)
-
-            this.RegisterReminderAsync(ReminderType.PhysicalDeletion, toByteArray tuple, delay, TimeSpan.FromMilliseconds(-1))
+                        // Mark the actor as disposed, in case someone tries to use it before Dapr GC's it.
+                        isDisposed <- true
+                        return Ok()
+                    | _ ->
+                        return
+                            Error(
+                                (GraceError.Create
+                                    $"{actorName} does not process reminder type {discriminatedUnionCaseName reminder.ReminderType}."
+                                    this.correlationId)
+                                    .enhance ("IsRetryable", "false")
+                            )
+                }
 
         member private this.ApplyEvent(referenceEvent: ReferenceEvent) =
-            let stateManager = this.StateManager
-
             task {
                 let correlationId = referenceEvent.Metadata.CorrelationId
 
                 try
-                    //if referenceEvents.Count = 0 then do! this.OnFirstWrite()
-
                     // Add the event to the referenceEvents list, and save it to actor state.
                     referenceEvents.Add(referenceEvent)
-                    do! Storage.SaveState stateManager eventsStateName referenceEvents
+                    do! Storage.SaveState stateManager eventsStateName referenceEvents this.correlationId
 
                     // Update the referenceDto with the event.
                     referenceDto <- referenceDto |> updateDto referenceEvent
@@ -251,32 +258,42 @@ module Reference =
                             | ReferenceType.Save ->
                                 task {
                                     let repositoryActorProxy = Repository.CreateActorProxy referenceDto.RepositoryId correlationId
-
                                     let! repositoryDto = repositoryActorProxy.Get correlationId
 
-                                    let! deletionReminder =
-                                        this.SchedulePhysicalDeletion(
-                                            $"Deletion for saves of {repositoryDto.SaveDays} days.",
-                                            TimeSpan.FromDays(float repositoryDto.SaveDays),
-                                            correlationId
-                                        )
+                                    let reminderState: PhysicalDeletionReminderState =
+                                        (referenceDto.RepositoryId,
+                                         referenceDto.BranchId,
+                                         referenceDto.DirectoryId,
+                                         referenceDto.Sha256Hash,
+                                         $"Save: automatic deletion after {repositoryDto.SaveDays} days.",
+                                         correlationId)
 
-                                    ()
+                                    do!
+                                        (this :> IGraceReminder).ScheduleReminderAsync
+                                            ReminderTypes.PhysicalDeletion
+                                            (Duration.FromDays(float repositoryDto.SaveDays))
+                                            (serialize reminderState)
+                                            correlationId
                                 }
                             | ReferenceType.Checkpoint ->
                                 task {
                                     let repositoryActorProxy = Repository.CreateActorProxy referenceDto.RepositoryId correlationId
-
                                     let! repositoryDto = repositoryActorProxy.Get correlationId
 
-                                    let! deletionReminder =
-                                        this.SchedulePhysicalDeletion(
-                                            $"Deletion for checkpoints of {repositoryDto.CheckpointDays} days.",
-                                            TimeSpan.FromDays(float repositoryDto.CheckpointDays),
-                                            correlationId
-                                        )
+                                    let reminderState: PhysicalDeletionReminderState =
+                                        (referenceDto.RepositoryId,
+                                         referenceDto.BranchId,
+                                         referenceDto.DirectoryId,
+                                         referenceDto.Sha256Hash,
+                                         $"Checkpoint: automatic deletion after {repositoryDto.CheckpointDays} days.",
+                                         correlationId)
 
-                                    ()
+                                    do!
+                                        (this :> IGraceReminder).ScheduleReminderAsync
+                                            ReminderTypes.PhysicalDeletion
+                                            (Duration.FromDays(float repositoryDto.CheckpointDays))
+                                            (serialize reminderState)
+                                            correlationId
                                 }
                             | _ -> () |> returnTask
                             :> Task
@@ -293,7 +310,7 @@ module Reference =
 
                     return Ok graceReturnValue
                 with ex ->
-                    let exceptionResponse = createExceptionResponse ex
+                    let exceptionResponse = ExceptionResponse.Create ex
 
                     let graceError =
                         (GraceError.Create (ReferenceError.getErrorMessage FailedWhileApplyingEvent) correlationId)
@@ -356,12 +373,20 @@ module Reference =
                                     let repositoryActorProxy = Repository.CreateActorProxy referenceDto.RepositoryId this.correlationId
                                     let! repositoryDto = repositoryActorProxy.Get this.correlationId
 
-                                    let! deletionReminder =
-                                        this.SchedulePhysicalDeletion(
-                                            deleteReason,
-                                            TimeSpan.FromDays(float repositoryDto.LogicalDeleteDays),
-                                            this.correlationId
-                                        )
+                                    let reminderState: PhysicalDeletionReminderState =
+                                        (referenceDto.RepositoryId,
+                                         referenceDto.BranchId,
+                                         referenceDto.DirectoryId,
+                                         referenceDto.Sha256Hash,
+                                         deleteReason,
+                                         metadata.CorrelationId)
+
+                                    do!
+                                        (this :> IGraceReminder).ScheduleReminderAsync
+                                            ReminderTypes.PhysicalDeletion
+                                            (Duration.FromDays(float repositoryDto.LogicalDeleteDays))
+                                            (serialize reminderState)
+                                            metadata.CorrelationId
 
                                     return LogicalDeleted(force, deleteReason)
                                 | DeletePhysical ->
@@ -384,50 +409,3 @@ module Reference =
                     | Ok command -> return! processCommand command metadata
                     | Error error -> return Error error
                 }
-
-        interface IRemindable with
-            override this.ReceiveReminderAsync(reminderName, state, dueTime, period) =
-                let stateManager = this.StateManager
-
-                match reminderName with
-                | ReminderType.Maintenance ->
-                    task {
-                        // Do some maintenance
-                        ()
-                    }
-                    :> Task
-                | ReminderType.PhysicalDeletion ->
-                    task {
-                        // Get values from state.
-                        let (repositoryId, branchId, directoryVersionId, sha256Hash, deleteReason, correlationId) =
-                            fromByteArray<PhysicalDeletionReminderState> state
-
-                        this.correlationId <- correlationId
-
-                        // Mark the branch as needing to update its latest references.
-                        let branchActorProxy = Branch.CreateActorProxy branchId correlationId
-                        do! branchActorProxy.MarkForRecompute correlationId
-
-                        // Delete saved state for this actor.
-                        let! deletedEventsState = Storage.DeleteState stateManager eventsStateName
-
-                        log.LogInformation(
-                            "{currentInstant}: CorrelationId: {correlationId}; Deleted physical state for reference; RepositoryId: {RepositoryId}; BranchId: {BranchId}; ReferenceId: {ReferenceId}; DirectoryVersionId: {DirectoryVersionId}; deleteReason: {deleteReason}.",
-                            getCurrentInstantExtended (),
-                            correlationId,
-                            repositoryId,
-                            branchId,
-                            this.Id,
-                            directoryVersionId,
-                            deleteReason
-                        )
-
-                        // Set all values to default.
-                        referenceDto <- ReferenceDto.Default
-                        referenceEvents.Clear()
-
-                        // Mark the actor as disposed, in case someone tries to use it before Dapr GC's it.
-                        isDisposed <- true
-                    }
-                    :> Task
-                | _ -> failwith "Unknown reminder type."

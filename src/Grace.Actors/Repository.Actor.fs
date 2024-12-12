@@ -12,6 +12,7 @@ open Grace.Actors.Events.Repository
 open Grace.Actors.Extensions.ActorProxy
 open Grace.Actors.Extensions.MemoryCache
 open Grace.Actors.Services
+open Grace.Actors.Types
 open Grace.Shared
 open Grace.Shared.Combinators
 open Grace.Shared.Constants
@@ -32,22 +33,25 @@ open System.Text.Json
 open System.Threading.Tasks
 open System.Runtime.Serialization
 open Grace.Shared.Services
+open Dapr.Client.Autogen.Grpc.v1
 
 module Repository =
 
     type PhysicalDeletionReminderState = (DeleteReason * CorrelationId)
 
+    let log = loggerFactory.CreateLogger("Repository.Actor")
+
     type RepositoryActor(host: ActorHost) =
         inherit Actor(host)
 
-        let actorName = ActorName.Repository
-        let log = loggerFactory.CreateLogger("Repository.Actor")
+        static let actorName = ActorName.Repository
+        static let dtoStateName = StateName.RepositoryDto
+        static let eventsStateName = StateName.Repository
+
         let mutable actorStartTime = Instant.MinValue
         let mutable logScope: IDisposable = null
         let mutable currentCommand = String.Empty
-
-        let dtoStateName = StateName.RepositoryDto
-        let eventsStateName = StateName.Repository
+        let mutable stateManager = Unchecked.defaultof<IActorStateManager>
 
         /// Indicates that the actor is in an undefined state, and should be reset.
         let mutable isDisposed = false
@@ -59,39 +63,27 @@ module Repository =
 
         override this.OnActivateAsync() =
             let activateStartTime = getCurrentInstant ()
-            let stateManager = this.StateManager
+            stateManager <- this.StateManager
 
             task {
-                let mutable message = String.Empty
-                let! retrievedDto = Storage.RetrieveState<RepositoryDto> stateManager dtoStateName
-
                 let correlationId =
                     match memoryCache.GetCorrelationIdEntry this.Id with
                     | Some correlationId -> correlationId
                     | None -> String.Empty
 
-                logToConsole $"****In Repository.Actor.OnActivateAsync: CorrelationId: {correlationId}; RepositoryId: {this.Id}."
+                try
+                    let! retrievedDto = Storage.RetrieveState<RepositoryDto> stateManager dtoStateName correlationId
 
-                match retrievedDto with
-                | Some retrievedDto ->
-                    repositoryDto <- retrievedDto
-                    message <- "Retrieved from database"
-                | None ->
-                    repositoryDto <- RepositoryDto.Default
-                    message <- "Not found in database"
+                    match retrievedDto with
+                    | Some retrievedDto -> repositoryDto <- retrievedDto
+                    | None -> repositoryDto <- RepositoryDto.Default
 
-                let duration_ms = getPaddedDuration_ms activateStartTime
-
-                log.LogInformation(
-                    "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Activated {ActorType} {ActorId}. {message}.",
-                    getCurrentInstantExtended (),
-                    getMachineName,
-                    duration_ms,
-                    correlationId,
-                    actorName,
-                    host.Id,
-                    message
-                )
+                    logActorActivation log activateStartTime correlationId actorName host.Id (getActorActivationMessage retrievedDto)
+                with ex ->
+                    let exc = ExceptionResponse.Create ex
+                    log.LogError("{CurrentInstant} Error activating {ActorType} {ActorId}.", getCurrentInstantExtended (), this.GetType().Name, host.Id)
+                    log.LogError("{CurrentInstant} {ExceptionDetails}", getCurrentInstantExtended (), exc.ToString())
+                    logActorActivation log activateStartTime correlationId actorName this.Id "Exception occurred during activation."
             }
             :> Task
 
@@ -125,7 +117,7 @@ module Repository =
                 && not <| (context.MethodName = "ReceiveReminderAsync")
             then
                 log.LogInformation(
-                    "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {ActorName}.{MethodName}; RepositoryId: {Id}.",
+                    "{CurrentInstant}: Node: {HostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {ActorName}.{MethodName}; RepositoryId: {Id}.",
                     getCurrentInstantExtended (),
                     getMachineName,
                     duration_ms,
@@ -136,7 +128,7 @@ module Repository =
                 )
             else
                 log.LogInformation(
-                    "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {ActorName}.{MethodName}; Command: {Command}; RepositoryId: {Id}.",
+                    "{CurrentInstant}: Node: {HostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {ActorName}.{MethodName}; Command: {Command}; RepositoryId: {Id}.",
                     getCurrentInstantExtended (),
                     getMachineName,
                     duration_ms,
@@ -149,17 +141,6 @@ module Repository =
 
             logScope.Dispose()
             Task.CompletedTask
-
-        member private this.SetMaintenanceReminder() =
-            this.RegisterReminderAsync(ReminderType.Maintenance, Array.empty<byte>, TimeSpan.FromDays(7.0), TimeSpan.FromDays(7.0))
-
-        member private this.UnregisterMaintenanceReminder() = this.UnregisterReminderAsync(ReminderType.Maintenance)
-
-        member private this.OnFirstWrite() =
-            task {
-                //let! _ = DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> this.SetMaintenanceReminder())
-                ()
-            }
 
         member private this.updateDto repositoryEvent currentRepositoryDto =
             let newRepositoryDto =
@@ -199,11 +180,9 @@ module Repository =
         // This is essentially an object-oriented implementation of the Lazy<T> pattern. I was having issues with Lazy<T>,
         //   and after a solid day wrestling with it, I dropped it and did this. Works a treat.
         member private this.RepositoryEvents() =
-            let stateManager = this.StateManager
-
             task {
                 if repositoryEvents = null then
-                    let! retrievedEvents = Storage.RetrieveState<List<RepositoryEvent>> stateManager eventsStateName
+                    let! retrievedEvents = Storage.RetrieveState<List<RepositoryEvent>> stateManager eventsStateName this.correlationId
 
                     repositoryEvents <-
                         match retrievedEvents with
@@ -214,13 +193,9 @@ module Repository =
             }
 
         member private this.ApplyEvent(repositoryEvent) =
-            let stateManager = this.StateManager
-
             task {
                 try
                     let! repositoryEvents = this.RepositoryEvents()
-
-                    if repositoryEvents.Count = 0 then do! this.OnFirstWrite()
 
                     repositoryEvents.Add(repositoryEvent)
 
@@ -354,7 +329,7 @@ module Repository =
                         return Ok returnValue
                     | Error graceError -> return Error graceError
                 with ex ->
-                    let exceptionResponse = createExceptionResponse ex
+                    let exceptionResponse = ExceptionResponse.Create ex
 
                     let graceError =
                         GraceError.Create (RepositoryError.getErrorMessage RepositoryError.FailedWhileApplyingEvent) repositoryEvent.Metadata.CorrelationId
@@ -413,16 +388,53 @@ module Repository =
                 | Some error -> return Error error
             }
 
-        /// Schedule an actor reminder to delete the repository from the database.
-        member private this.SchedulePhysicalDeletion(deleteReason, correlationId) =
-            let (tuple: PhysicalDeletionReminderState) = (deleteReason, correlationId)
+        interface IGraceReminder with
+            /// Schedules a Grace reminder.
+            member this.ScheduleReminderAsync reminderType delay state correlationId =
+                task {
+                    let reminder = ReminderDto.Create actorName $"{this.Id}" reminderType (getFutureInstant delay) state correlationId
+                    do! createReminder reminder
+                }
+                :> Task
 
-            this.RegisterReminderAsync(
-                ReminderType.PhysicalDeletion,
-                toByteArray tuple,
-                Constants.DefaultPhysicalDeletionReminderTime,
-                TimeSpan.FromMilliseconds(-1)
-            )
+            /// Receives a Grace reminder.
+            member this.ReceiveReminderAsync(reminder: ReminderDto) : Task<Result<unit, GraceError>> =
+                task {
+                    match reminder.ReminderType with
+                    | ReminderTypes.PhysicalDeletion ->
+                        // Get values from state.
+                        let (deleteReason, correlationId) = deserialize<PhysicalDeletionReminderState> reminder.State
+                        this.correlationId <- correlationId
+
+                        // Physically delete the actor state.
+                        let! deletedDtoState = stateManager.TryRemoveStateAsync(dtoStateName)
+                        let! deletedEventsState = stateManager.TryRemoveStateAsync(eventsStateName)
+
+                        // Mark the actor as disposed, in case someone tries to use it before Dapr GC's it.
+                        isDisposed <- true
+
+                        log.LogInformation(
+                            "{CurrentInstant}: CorrelationId: {correlationId}; Deleted physical state for repository; RepositoryId: {}; RepositoryName: {}; OrganizationId: {organizationId}; OwnerId: {ownerId}; deleteReason: {deleteReason}.",
+                            getCurrentInstantExtended (),
+                            correlationId,
+                            repositoryDto.RepositoryId,
+                            repositoryDto.RepositoryName,
+                            repositoryDto.OrganizationId,
+                            repositoryDto.OwnerId,
+                            deleteReason
+                        )
+
+                        // Set all values to default.
+                        repositoryDto <- RepositoryDto.Default
+                        return Ok()
+                    | _ ->
+                        return
+                            Error(
+                                GraceError.Create
+                                    $"{actorName} does not process reminder type {discriminatedUnionCaseName reminder.ReminderType}."
+                                    this.correlationId
+                            )
+                }
 
         interface IExportable<RepositoryEvent> with
             member this.Export() =
@@ -435,12 +447,10 @@ module Repository =
                         else
                             return Error ExportError.EventListIsEmpty
                     with ex ->
-                        return Error(ExportError.Exception(createExceptionResponse ex))
+                        return Error(ExportError.Exception(ExceptionResponse.Create ex))
                 }
 
             member this.Import(events: IReadOnlyList<RepositoryEvent>) =
-                let stateManager = this.StateManager
-
                 task {
                     try
                         let! repositoryEvents = this.RepositoryEvents()
@@ -455,13 +465,11 @@ module Repository =
 
                         return Ok repositoryEvents.Count
                     with ex ->
-                        return Error(ImportError.Exception(createExceptionResponse ex))
+                        return Error(ImportError.Exception(ExceptionResponse.Create ex))
                 }
 
         interface IRevertable<RepositoryDto> with
             member this.RevertBack (eventsToRevert: int) (persist: PersistAction) =
-                let stateManager = this.StateManager
-
                 task {
                     try
                         let! repositoryEvents = this.RepositoryEvents()
@@ -490,12 +498,10 @@ module Repository =
                         else
                             return Error RevertError.EmptyEventList
                     with ex ->
-                        return Error(RevertError.Exception(createExceptionResponse ex))
+                        return Error(RevertError.Exception(ExceptionResponse.Create ex))
                 }
 
             member this.RevertToInstant (whenToRevertTo: Instant) (persist: PersistAction) =
-                let stateManager = this.StateManager
-
                 task {
                     try
                         let! repositoryEvents = this.RepositoryEvents()
@@ -527,7 +533,7 @@ module Repository =
                         else
                             return Error RevertError.EmptyEventList
                     with ex ->
-                        return Error(RevertError.Exception(createExceptionResponse ex))
+                        return Error(RevertError.Exception(ExceptionResponse.Create ex))
                 }
 
             member this.EventCount() =
@@ -604,8 +610,6 @@ module Repository =
                                         // Get the list of branches that aren't already deleted.
                                         let! branches = getBranches repositoryDto.RepositoryId Int32.MaxValue false metadata.CorrelationId
 
-                                        let! deletionReminder = this.SchedulePhysicalDeletion(deleteReason, metadata.CorrelationId)
-
                                         // If any branches are not already deleted, and we're not forcing the deletion, then throw an exception.
                                         if
                                             not <| force
@@ -617,7 +621,15 @@ module Repository =
                                             // We have --force specified, so delete the branches that aren't already deleted.
                                             match! this.LogicalDeleteBranches(branches, metadata, deleteReason) with
                                             | Ok _ ->
-                                                let! deletionReminder = this.SchedulePhysicalDeletion(deleteReason, metadata.CorrelationId)
+                                                let (reminderState: PhysicalDeletionReminderState) = (deleteReason, metadata.CorrelationId)
+
+                                                do!
+                                                    (this :> IGraceReminder).ScheduleReminderAsync
+                                                        ReminderTypes.PhysicalDeletion
+                                                        (Duration.FromDays(float repositoryDto.LogicalDeleteDays))
+                                                        (serialize reminderState)
+                                                        metadata.CorrelationId
+
                                                 ()
                                             | Error error -> raise (ApplicationException($"{error}"))
 
@@ -630,7 +642,7 @@ module Repository =
 
                             return! this.ApplyEvent { Event = event; Metadata = metadata }
                         with ex ->
-                            return Error(GraceError.Create $"{createExceptionResponse ex}{Environment.NewLine}{metadata}" metadata.CorrelationId)
+                            return Error(GraceError.Create $"{ExceptionResponse.Create ex}{Environment.NewLine}{metadata}" metadata.CorrelationId)
                     }
 
                 task {
@@ -641,44 +653,3 @@ module Repository =
                     | Ok command -> return! processCommand command metadata
                     | Error error -> return Error error
                 }
-
-        interface IRemindable with
-            override this.ReceiveReminderAsync(reminderName, state, dueTime, period) =
-                let stateManager = this.StateManager
-
-                match reminderName with
-                | ReminderType.Maintenance ->
-                    task {
-                        // Do some maintenance
-                        ()
-                    }
-                    :> Task
-                | ReminderType.PhysicalDeletion ->
-                    task {
-                        // Get values from state.
-                        let (deleteReason, correlationId) = fromByteArray<PhysicalDeletionReminderState> state
-                        this.correlationId <- correlationId
-
-                        // Physically delete the actor state.
-                        let! deletedDtoState = stateManager.TryRemoveStateAsync(dtoStateName)
-                        let! deletedEventsState = stateManager.TryRemoveStateAsync(eventsStateName)
-
-                        // Mark the actor as disposed, in case someone tries to use it before Dapr GC's it.
-                        isDisposed <- true
-
-                        log.LogInformation(
-                            "{currentInstant}: CorrelationId: {correlationId}; Deleted physical state for repository; RepositoryId: {}; RepositoryName: {}; OrganizationId: {organizationId}; OwnerId: {ownerId}; deleteReason: {deleteReason}.",
-                            getCurrentInstantExtended (),
-                            correlationId,
-                            repositoryDto.RepositoryId,
-                            repositoryDto.RepositoryName,
-                            repositoryDto.OrganizationId,
-                            repositoryDto.OwnerId,
-                            deleteReason
-                        )
-
-                        // Set all values to default.
-                        repositoryDto <- RepositoryDto.Default
-                    }
-                    :> Task
-                | _ -> failwith "Unknown reminder type."

@@ -16,40 +16,36 @@ open System.Threading.Tasks
 
 module RepositoryName =
 
-    let actorName = ActorName.RepositoryName
-    let mutable actorStartTime = Instant.MinValue
-    let mutable logScope: IDisposable = null
-
     let GetActorId (repositoryName: string) = ActorId(repositoryName)
+
+    let log = loggerFactory.CreateLogger("RepositoryName.Actor")
 
     type RepositoryNameActor(host: ActorHost) =
         inherit Actor(host)
+
+        static let actorName = ActorName.RepositoryName
+
+        let mutable actorStartTime = Instant.MinValue
+        let mutable logScope: IDisposable = null
 
         let idSections = host.Id.GetId().Split('|')
         let repositoryName = idSections[0]
         let ownerId = idSections[1]
         let organizationId = idSections[2]
 
-        let log = loggerFactory.CreateLogger("RepositoryName.Actor")
-
         let mutable cachedRepositoryId: string option = None
 
         member val private correlationId: CorrelationId = String.Empty with get, set
 
         override this.OnActivateAsync() =
+            let activateStartTime = getCurrentInstant ()
+
             let correlationId =
                 match memoryCache.GetCorrelationIdEntry this.Id with
                 | Some correlationId -> correlationId
                 | None -> String.Empty
 
-            log.LogInformation(
-                "{CurrentInstant}: Node: {hostName}; Duration:   0.100ms; CorrelationId: {correlationId}; Activated {ActorType} {ActorId}.",
-                getCurrentInstantExtended (),
-                getMachineName,
-                correlationId,
-                this.GetType().Name,
-                host.Id
-            )
+            logActorActivation log activateStartTime correlationId actorName this.Id "In-memory only"
 
             Task.CompletedTask
 
@@ -66,7 +62,7 @@ module RepositoryName =
             let duration_ms = getPaddedDuration_ms actorStartTime
 
             log.LogInformation(
-                "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {ActorName}.{MethodName}; OwnerId: {OwnerId}; OrganizationId: {OrganizationId}; RepositoryName: {RepositoryName}; RepositoryId: {RepositoryId}.",
+                "{CurrentInstant}: Node: {HostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {ActorName}.{MethodName}; OwnerId: {OwnerId}; OrganizationId: {OrganizationId}; RepositoryName: {RepositoryName}; RepositoryId: {RepositoryId}.",
                 getCurrentInstantExtended (),
                 getMachineName,
                 duration_ms,

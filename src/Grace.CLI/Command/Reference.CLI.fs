@@ -411,7 +411,7 @@ module Reference =
                         return! Branch.GetRecursiveSize(sdkParameters)
                 | Error error -> return Error error
             with ex ->
-                return Error(GraceError.Create $"{createExceptionResponse ex}" (parseResult |> getCorrelationId))
+                return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
         }
 
     let private GetRecursiveSize =
@@ -518,7 +518,7 @@ module Reference =
                         return! Branch.ListContents(sdkParameters)
                 | Error error -> return Error error
             with ex ->
-                return Error(GraceError.Create $"{createExceptionResponse ex}" (parseResult |> getCorrelationId))
+                return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
         }
 
     let private ListContents =
@@ -608,7 +608,7 @@ module Reference =
                         return! Branch.Assign(parameters)
                 | Error error -> return Error error
             with ex ->
-                return Error(GraceError.Create $"{createExceptionResponse ex}" (parseResult |> getCorrelationId))
+                return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
         }
 
     let private Assign =
@@ -831,7 +831,7 @@ module Reference =
                         return result
                 | Error error -> return Error error
             with ex ->
-                return Error(GraceError.Create $"{createExceptionResponse ex}" (parseResult |> getCorrelationId))
+                return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
         }
 
     let promotionHandler (parseResult: ParseResult) (parameters: CreateRefParameters) =
@@ -1019,7 +1019,7 @@ module Reference =
                         return Error(GraceError.Create "Need to implement the else clause." (parseResult |> getCorrelationId))
                 | Error error -> return Error error
             with ex ->
-                return Error(GraceError.Create $"{createExceptionResponse ex}" (parseResult |> getCorrelationId))
+                return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
         }
 
     let private Promote =
@@ -1030,7 +1030,7 @@ module Reference =
 
                     return result |> renderOutput parseResult
                 with ex ->
-                    logToAnsiConsole Colors.Error (Markup.Escape($"{createExceptionResponse ex}"))
+                    logToAnsiConsole Colors.Error (Markup.Escape($"{ExceptionResponse.Create ex}"))
                     return -1
             })
 
@@ -1150,7 +1150,7 @@ module Reference =
                         return! Branch.Get(sdkParameters)
                 | Error error -> return Error error
             with ex ->
-                return Error(GraceError.Create $"{createExceptionResponse ex}" (parseResult |> getCorrelationId))
+                return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
         }
 
     let private getEventsHandler (parseResult: ParseResult) (parameters: GetParameters) =
@@ -1190,7 +1190,7 @@ module Reference =
                         return! Branch.GetEvents(sdkParameters)
                 | Error error -> return Error error
             with ex ->
-                return Error(GraceError.Create $"{createExceptionResponse ex}" (parseResult |> getCorrelationId))
+                return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
         }
 
     let private Get =
@@ -1268,7 +1268,7 @@ module Reference =
                         return! Branch.Delete(deleteParameters)
                 | Error error -> return Error error
             with ex ->
-                return Error(GraceError.Create $"{createExceptionResponse ex}" (parseResult |> getCorrelationId))
+                return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
         }
 
     let private Delete =

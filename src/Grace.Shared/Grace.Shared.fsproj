@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 	<PropertyGroup>
 		<TargetFramework>net9.0</TargetFramework>
 		<LangVersion>preview</LangVersion>
@@ -54,8 +54,8 @@
 		<PackageReference Include="FSharp.Control.TaskSeq" Version="0.4.0" />
 		<PackageReference Include="FSharp.SystemTextJson" Version="1.3.13" />
 		<PackageReference Include="FSharpPlus" Version="1.6.1" />
-		<PackageReference Include="Microsoft.Extensions.Caching.Memory" Version="9.0.0-rc.2.24473.5" />
-		<PackageReference Include="Microsoft.Extensions.ObjectPool" Version="9.0.0-rc.2.24474.3" />
+		<PackageReference Include="Microsoft.Extensions.Caching.Memory" Version="9.0.0" />
+		<PackageReference Include="Microsoft.Extensions.ObjectPool" Version="9.0.0" />
 		<PackageReference Include="MimeTypeMapOfficial" Version="1.0.17" />
 		<PackageReference Include="MimeTypes" Version="2.5.2">
 			<PrivateAssets>all</PrivateAssets>
@@ -64,12 +64,13 @@
 		<PackageReference Include="Nanoid" Version="3.1.0" />
 		<PackageReference Include="NodaTime" Version="3.2.0" />
 		<PackageReference Include="NodaTime.Serialization.SystemTextJson" Version="1.2.0" />
-		<PackageReference Include="Polly" Version="8.4.2" />
+		<PackageReference Include="Polly" Version="8.5.0" />
 		<PackageReference Include="Polly.Contrib.WaitAndRetry" Version="1.1.1" />
+        <PackageReference Include="System.Text.Json" Version="9.0.0" />
 	</ItemGroup>
 
 	<ItemGroup>
-		<PackageReference Update="FSharp.Core" Version="9.0.100-beta.24466.6" />
+		<PackageReference Update="FSharp.Core" Version="9.0.100" />
 	</ItemGroup>
 
 </Project>

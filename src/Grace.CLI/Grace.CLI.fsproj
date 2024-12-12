@@ -38,24 +38,24 @@
 	</ItemGroup>
 	<ItemGroup>
 		<PackageReference Include="Ben.Demystifier" Version="0.4.1" />
-		<PackageReference Include="Microsoft.AspNetCore.SignalR.Client" Version="9.0.0-rc.2.24474.3" />
-		<PackageReference Include="Microsoft.AspNetCore.SignalR.Protocols.Json" Version="9.0.0-rc.2.24474.3" />
-		<PackageReference Include="Microsoft.Extensions.Logging.Configuration" Version="9.0.0-rc.2.24473.5" />
-		<PackageReference Include="Microsoft.Extensions.Logging.Console" Version="9.0.0-rc.2.24473.5" />
+		<PackageReference Include="Microsoft.AspNetCore.SignalR.Client" Version="9.0.0" />
+		<PackageReference Include="Microsoft.AspNetCore.SignalR.Protocols.Json" Version="9.0.0" />
+		<PackageReference Include="Microsoft.Extensions.Logging.Configuration" Version="9.0.0" />
+		<PackageReference Include="Microsoft.Extensions.Logging.Console" Version="9.0.0" />
 		<PackageReference Include="NodaTime" Version="3.2.0" />
 		<PackageReference Include="NodaTime.Serialization.SystemTextJson" Version="1.2.0" />
-		<PackageReference Include="OpenTelemetry" Version="1.9.0" />
-		<PackageReference Include="OpenTelemetry.Api" Version="1.9.0" />
-		<PackageReference Include="OpenTelemetry.Exporter.Console" Version="1.9.0" />
-		<PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.9.0" />
-		<PackageReference Include="OpenTelemetry.Exporter.Zipkin" Version="1.9.0" />
-		<PackageReference Include="Polly" Version="8.4.2" />
-		<PackageReference Include="Spectre.Console" Version="0.49.2-preview.0.44" />
-		<PackageReference Include="Spectre.Console.ImageSharp" Version="0.49.2-preview.0.44" />
-		<PackageReference Include="Spectre.Console.Json" Version="0.49.2-preview.0.44" />
+		<PackageReference Include="OpenTelemetry" Version="1.10.0" />
+		<PackageReference Include="OpenTelemetry.Api" Version="1.10.0" />
+		<PackageReference Include="OpenTelemetry.Exporter.Console" Version="1.10.0" />
+		<PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.10.0" />
+		<PackageReference Include="OpenTelemetry.Exporter.Zipkin" Version="1.10.0" />
+		<PackageReference Include="Polly" Version="8.5.0" />
+		<PackageReference Include="Spectre.Console" Version="0.49.2-preview.0.50" />
+		<PackageReference Include="Spectre.Console.ImageSharp" Version="0.49.2-preview.0.50" />
+		<PackageReference Include="Spectre.Console.Json" Version="0.49.2-preview.0.50" />
 		<PackageReference Include="System.CommandLine" Version="2.0.0-beta4.22272.1" />
 		<PackageReference Include="System.CommandLine.Hosting" Version="0.4.0-alpha.22272.1" />
-		<PackageReference Include="System.Diagnostics.DiagnosticSource" Version="9.0.0-rc.2.24473.5" />
+		<PackageReference Include="System.Diagnostics.DiagnosticSource" Version="9.0.0" />
 		<PackageReference Include="System.Reactive" Version="6.0.1" />
 	</ItemGroup>
 	<ItemGroup>
@@ -63,6 +63,6 @@
 		<ProjectReference Include="..\Grace.Shared\Grace.Shared.fsproj" />
 	</ItemGroup>
 	<ItemGroup>
-		<PackageReference Update="FSharp.Core" Version="9.0.100-beta.24466.6" />
+		<PackageReference Update="FSharp.Core" Version="9.0.100" />
 	</ItemGroup>
 </Project>

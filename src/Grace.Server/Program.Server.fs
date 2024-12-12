@@ -34,6 +34,8 @@ module Program =
                     .UseStartup<Application.Startup>()
                     .UseKestrel(fun kestrelServerOptions ->
                         kestrelServerOptions.Listen(IPAddress.Any, graceAppPort)
+                        kestrelServerOptions.Limits.MaxConcurrentConnections <- 1000
+                        kestrelServerOptions.Limits.MaxConcurrentUpgradedConnections <- 1000
                         //kestrelServerOptions.Listen(IPAddress.Any, 5001, (fun listenOptions -> listenOptions.UseHttps("/etc/certificates/gracedevcert.pfx", "GraceDevCert") |> ignore))
                         kestrelServerOptions.ConfigureEndpointDefaults(fun listenOptions -> listenOptions.Protocols <- HttpProtocols.Http1AndHttp2)
 

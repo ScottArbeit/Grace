@@ -98,12 +98,7 @@ module Repository =
             new Option<String>("--description", IsRequired = false, Description = "The description of the repository.", Arity = ArgumentArity.ExactlyOne)
 
         let visibility =
-            (new Option<RepositoryType>(
-                "--visibility",
-                IsRequired = true,
-                Description = "The visibility of the repository.",
-                Arity = ArgumentArity.ExactlyOne
-            ))
+            (new Option<RepositoryType>("--visibility", IsRequired = true, Description = "The visibility of the repository.", Arity = ArgumentArity.ExactlyOne))
                 .FromAmong(listCases<RepositoryType> ())
 
         let status =
@@ -128,10 +123,10 @@ module Repository =
                 .FromAmong(listCases<Constants.ServerApiVersions> ())
 
         let saveDays =
-            new Option<double>("--saveDays", IsRequired = true, Description = "How many days to keep saves. [default: 7.0]", Arity = ArgumentArity.ExactlyOne)
+            new Option<single>("--saveDays", IsRequired = true, Description = "How many days to keep saves. [default: 7.0]", Arity = ArgumentArity.ExactlyOne)
 
         let checkpointDays =
-            new Option<double>(
+            new Option<single>(
                 "--checkpointDays",
                 IsRequired = true,
                 Description = "How many days to keep checkpoints. [default: 365.0]",
@@ -139,7 +134,7 @@ module Repository =
             )
 
         let diffCacheDays =
-            new Option<double>(
+            new Option<single>(
                 "--diffCacheDays",
                 IsRequired = true,
                 Description = "How many days to keep diff results cached in the database. [default: 3.0]",
@@ -147,10 +142,18 @@ module Repository =
             )
 
         let directoryVersionCacheDays =
-            new Option<double>(
+            new Option<single>(
                 "--directoryVersionCacheDays",
                 IsRequired = true,
                 Description = "How many days to keep recursive directory version contents cached. [default: 3.0]",
+                Arity = ArgumentArity.ExactlyOne
+            )
+
+        let logicalDeleteDays =
+            new Option<single>(
+                "--logicalDeleteDays",
+                IsRequired = true,
+                Description = "How many days to keep deleted branches before permanently deleting them. [default: 30.0]",
                 Arity = ArgumentArity.ExactlyOne
             )
 
@@ -191,13 +194,9 @@ module Repository =
                 Arity = ArgumentArity.ExactlyOne
             )
 
-        let includeDeleted =
-            new Option<bool>(
-                "--includeDeleted",
-                IsRequired = false,
-                Description = "True to include deleted branches; false to exclude them.",
-                Arity = ArgumentArity.ZeroOrOne
-            )
+        let includeDeleted = new Option<bool>([| "--include-deleted"; "-d" |], IsRequired = false, Description = "Include deleted branches in the result.")
+
+        includeDeleted.SetDefaultValue(false)
 
     let mustBeAValidGuid (parseResult: ParseResult) (parameters: CommonParameters) (option: Option) (value: string) (error: RepositoryError) =
         let mutable guid = Guid.Empty
@@ -389,7 +388,7 @@ module Repository =
                         return! Repository.Create(enhancedParameters)
                 | Error error -> return Error error
             with ex ->
-                return Error(GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
+                return Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
         }
 
     let private Create =
@@ -759,7 +758,7 @@ module Repository =
                     | Error error -> return Error error
                 | Error error -> return Error error
             with ex ->
-                return Error(GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
+                return Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
         }
 
     let private Init =
@@ -810,7 +809,7 @@ module Repository =
                         return! Repository.Get(parameters)
                 | Error error -> return Error error
             with ex ->
-                return Error(GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
+                return Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
         }
 
     let private Get =
@@ -871,7 +870,7 @@ module Repository =
                         return! Repository.GetBranches(getBranchesParameters)
                 | Error error -> return Error error
             with ex ->
-                return Error(GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
+                return Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
         }
 
     let private GetBranches =
@@ -999,7 +998,7 @@ module Repository =
                         return! Repository.SetVisibility(visibilityParameters)
                 | Error error -> return Error error
             with ex ->
-                return Error(GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
+                return Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
         }
 
     let private SetVisibility =
@@ -1053,7 +1052,7 @@ module Repository =
                         return! Repository.SetStatus(statusParameters)
                 | Error error -> return Error error
             with ex ->
-                return Error(GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
+                return Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
         }
 
     let private SetStatus =
@@ -1107,7 +1106,7 @@ module Repository =
                         return! Repository.SetRecordSaves(recordSavesParameters)
                 | Error error -> return Error error
             with ex ->
-                return Error(GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
+                return Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
         }
 
     let private SetRecordSaves =
@@ -1161,7 +1160,7 @@ module Repository =
                         return! Repository.SetSaveDays(setSaveDaysParameters)
                 | Error error -> return Error error
             with ex ->
-                return Error(GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
+                return Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
         }
 
     let private SetSaveDays =
@@ -1215,7 +1214,7 @@ module Repository =
                         return! Repository.SetCheckpointDays(checkpointDaysParameters)
                 | Error error -> return Error error
             with ex ->
-                return Error(GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
+                return Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
         }
 
     let private SetCheckpointDays =
@@ -1268,7 +1267,7 @@ module Repository =
                         return! Repository.SetDiffCacheDays(diffCacheDaysParameters)
                 | Error error -> return Error error
             with ex ->
-                return Error(GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
+                return Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
         }
 
     let private SetDiffCacheDays =
@@ -1322,13 +1321,64 @@ module Repository =
                         return! Repository.SetDirectoryVersionCacheDays(directoryVersionCacheDaysParameters)
                 | Error error -> return Error error
             with ex ->
-                return Error(GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
+                return Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
         }
 
     let private SetDirectoryVersionCacheDays =
         CommandHandler.Create(fun (parseResult: ParseResult) (directoryVersionCacheDaysParameters: DirectoryVersionCacheDaysParameters) ->
             task {
                 let! result = setDirectoryVersionCacheDaysHandler parseResult directoryVersionCacheDaysParameters
+                return result |> renderOutput parseResult
+            })
+
+    type LogicalDeleteDaysParameters() =
+        inherit CommonParameters()
+        member val public LogicalDeleteDays: single = Single.MinValue with get, set
+
+    let private setLogicalDeleteDaysHandler (parseResult: ParseResult) (parameters: LogicalDeleteDaysParameters) =
+        task {
+            try
+                if parseResult |> verbose then printParseResult parseResult
+                let validateIncomingParameters = CommonValidations(parseResult, parameters)
+
+                match validateIncomingParameters with
+                | Ok _ ->
+                    let normalizedParameters = parameters |> normalizeIdsAndNames parseResult
+
+                    let logicalDeleteDaysParameters =
+                        Repository.SetLogicalDeleteDaysParameters(
+                            OwnerId = normalizedParameters.OwnerId,
+                            OwnerName = normalizedParameters.OwnerName,
+                            OrganizationId = normalizedParameters.OrganizationId,
+                            OrganizationName = normalizedParameters.OrganizationName,
+                            RepositoryId = normalizedParameters.RepositoryId,
+                            RepositoryName = normalizedParameters.RepositoryName,
+                            CorrelationId = normalizedParameters.CorrelationId,
+                            LogicalDeleteDays = normalizedParameters.LogicalDeleteDays
+                        )
+
+                    if parseResult |> hasOutput then
+                        return!
+                            progress
+                                .Columns(progressColumns)
+                                .StartAsync(fun progressContext ->
+                                    task {
+                                        let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
+                                        let! result = Repository.SetLogicalDeleteDays(logicalDeleteDaysParameters)
+                                        t0.Increment(100.0)
+                                        return result
+                                    })
+                    else
+                        return! Repository.SetLogicalDeleteDays(logicalDeleteDaysParameters)
+                | Error error -> return Error error
+            with ex ->
+                return Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
+        }
+
+    let private SetLogicalDeleteDays =
+        CommandHandler.Create(fun (parseResult: ParseResult) (logicalDeleteDaysParameters: LogicalDeleteDaysParameters) ->
+            task {
+                let! result = setLogicalDeleteDaysHandler parseResult logicalDeleteDaysParameters
                 return result |> renderOutput parseResult
             })
 
@@ -1383,7 +1433,7 @@ module Repository =
                         return! command enablePromotionTypeParameters
                 | Error error -> return Error error
             with ex ->
-                return Error(GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
+                return Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
         }
 
     // Set-DefaultServerApiVersion subcommand
@@ -1431,7 +1481,7 @@ module Repository =
                         return! Repository.SetDefaultServerApiVersion(defaultServerApiVersionParameters)
                 | Error error -> return Error error
             with ex ->
-                return Error(GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
+                return Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
         }
 
     let private SetDefaultServerApiVersion =
@@ -1485,7 +1535,7 @@ module Repository =
                         return! Repository.SetName(setNameParameters)
                 | Error error -> return Error error
             with ex ->
-                return Error(GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
+                return Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
         }
 
     let private SetName =
@@ -1539,7 +1589,7 @@ module Repository =
                         return! Repository.SetDescription(setDescriptionParameters)
                 | Error error -> return Error error
             with ex ->
-                return Error(GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
+                return Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
         }
 
     let private SetDescription =
@@ -1595,7 +1645,7 @@ module Repository =
                         return! Repository.Delete(enhancedParameters)
                 | Error error -> return Error error
             with ex ->
-                return Error(GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
+                return Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
         }
 
     let private Delete =
@@ -1647,7 +1697,7 @@ module Repository =
                         return! Repository.Undelete(undeleteParameters)
                 | Error error -> return Error error
             with ex ->
-                return Error(GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
+                return Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
         }
 
     let private Undelete =
@@ -1778,6 +1828,17 @@ module Repository =
 
         setDirectoryVersionCacheDaysCommand.Handler <- SetDirectoryVersionCacheDays
         repositoryCommand.AddCommand(setDirectoryVersionCacheDaysCommand)
+
+        let setLogicalDeleteDaysCommand =
+            new Command(
+                "set-logicaldeletedays",
+                Description = "Sets the number of days to keep deleted branches in the repository before permanently deleting them."
+            )
+            |> addOption Options.logicalDeleteDays
+            |> addCommonOptions
+
+        setLogicalDeleteDaysCommand.Handler <- SetLogicalDeleteDays
+        repositoryCommand.AddCommand(setLogicalDeleteDaysCommand)
 
         let setNameCommand =
             new Command("set-name", Description = "Sets the name of the repository.")

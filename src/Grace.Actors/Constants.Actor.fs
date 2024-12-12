@@ -1,12 +1,18 @@
 namespace Grace.Actors
 
+open Grace.Shared
 open Grace.Shared.Types
+open Grace.Shared.Utilities
+open NodaTime
 open System
 open System.Collections.Concurrent
+open System.Runtime.Serialization
 
 module Constants =
 
     /// Constants for the names of the actors.
+    ///
+    /// These names should exactly match the actors' typenames.
     module ActorName =
         [<Literal>]
         let Branch = "BranchActor"
@@ -30,6 +36,9 @@ module Constants =
         let FileAppearance = "FileAppearanceActor"
 
         [<Literal>]
+        let GlobalLock = "GlobalLockActor"
+
+        [<Literal>]
         let Organization = "OrganizationActor"
 
         [<Literal>]
@@ -46,6 +55,9 @@ module Constants =
 
         [<Literal>]
         let Reference = "ReferenceActor"
+
+        [<Literal>]
+        let Reminder = "ReminderActor"
 
         [<Literal>]
         let Repository = "RepositoryActor"
@@ -100,6 +112,9 @@ module Constants =
         let Reference = "Ref"
 
         [<Literal>]
+        let Reminder = "Rmd"
+
+        [<Literal>]
         let Repository = "Repo"
 
         [<Literal>]
@@ -122,6 +137,10 @@ module Constants =
         [<Literal>]
         let DeleteCachedState = "DeleteCachedState"
 
+    module LockName =
+        [<Literal>]
+        let ReminderLock = "ReminderLock"
+
     let DefaultObjectStorageProvider = ObjectStorageProvider.AzureBlobStorage
     let DefaultObjectStorageAccount = "gracevcsdevelopment"
     let DefaultObjectStorageContainerName = "grace-objects"
@@ -130,7 +149,10 @@ module Constants =
     ///
     /// In Release builds, this is TimeSpan.FromDays(7.0). In Debug builds, it's TimeSpan.FromSeconds(300.0).
 #if DEBUG
-    let DefaultPhysicalDeletionReminderTime = TimeSpan.FromSeconds(300.0)
+    let DefaultPhysicalDeletionReminderDuration = Duration.FromSeconds(300.0)
 #else
-    let DefaultPhysicalDeletionReminderTime = TimeSpan.FromDays(7.0)
+    let DefaultPhysicalDeletionReminderTime = Duration.FromDays(7.0)
 #endif
+
+    /// The time to wait between logical and physical deletion of an actor's state, as a TimeSpan.
+    let DefaultPhysicalDeletionReminderTimeSpan = DefaultPhysicalDeletionReminderDuration.ToTimeSpan()

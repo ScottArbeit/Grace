@@ -162,7 +162,7 @@ module Notifications =
                                 .NotifyOnPromotion(branchDto.BranchId, branchDto.BranchName, referenceDto.ReferenceId)
 
                         // Create the diff between the new promotion and previous promotion.
-                        let! latestTwoPromotions = getPromotions referenceDto.BranchId 2
+                        let! latestTwoPromotions = getPromotions referenceDto.BranchId 2 (getCorrelationId context)
 
                         if latestTwoPromotions.Count = 2 then
                             do! diffTwoDirectoryVersions latestTwoPromotions[0].DirectoryId latestTwoPromotions[1].DirectoryId
@@ -177,7 +177,7 @@ module Notifications =
                                 .NotifyOnCommit(branchDto.BranchName, parentBranchDto.BranchName, parentBranchDto.ParentBranchId, referenceDto.ReferenceId)
 
                         // Create the diff between the new commit and the previous commit.
-                        let! latestTwoCommits = getCommits referenceDto.BranchId 2
+                        let! latestTwoCommits = getCommits referenceDto.BranchId 2 (getCorrelationId context)
 
                         if latestTwoCommits.Count = 2 then
                             do! diffTwoDirectoryVersions latestTwoCommits[0].DirectoryId latestTwoCommits[1].DirectoryId
@@ -197,7 +197,7 @@ module Notifications =
                                 .NotifyOnCheckpoint(branchDto.BranchName, parentBranchDto.BranchName, parentBranchDto.ParentBranchId, referenceDto.ReferenceId)
 
                         // Create the diff between the two most recent checkpoints.
-                        let! checkpoints = getCheckpoints branchDto.BranchId 2
+                        let! checkpoints = getCheckpoints branchDto.BranchId 2 (getCorrelationId context)
 
                         if checkpoints.Count = 2 then
                             do! diffTwoDirectoryVersions checkpoints[0].DirectoryId checkpoints[1].DirectoryId
@@ -217,7 +217,7 @@ module Notifications =
                                 .NotifyOnSave(branchDto.BranchName, parentBranchDto.BranchName, parentBranchDto.ParentBranchId, referenceDto.ReferenceId)
 
                         // Create the diff between the new save and the previous save.
-                        let! latestTwoSaves = getSaves referenceDto.BranchId 2
+                        let! latestTwoSaves = getSaves referenceDto.BranchId 2 (getCorrelationId context)
 
                         if latestTwoSaves.Count = 2 then
                             do! diffTwoDirectoryVersions latestTwoSaves[0].DirectoryId latestTwoSaves[1].DirectoryId

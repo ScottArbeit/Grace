@@ -130,7 +130,7 @@ module Storage =
                 else
                     return Error(GraceError.Create (StorageError.getErrorMessage FilesMustNotBeEmpty) correlationId)
             with ex ->
-                let exceptionResponse = createExceptionResponse ex
+                let exceptionResponse = ExceptionResponse.Create ex
                 return Error(GraceError.Create (exceptionResponse.ToString()) correlationId)
         }
 
@@ -222,13 +222,13 @@ module Storage =
                             returnValue.Properties.Add(nameof (RepositoryId), $"{fileVersion.RepositoryId}")
                             return Ok returnValue
                     with ex ->
-                        let exceptionResponse = createExceptionResponse ex
+                        let exceptionResponse = ExceptionResponse.Create ex
                         logToConsole $"In SaveFileToObjectStorageWithMetadata: exceptionResponse: {exceptionResponse}."
                         return Error(GraceError.Create (exceptionResponse.ToString()) correlationId)
                 | ObjectStorageProvider.AWSS3 -> return Error(GraceError.Create (StorageError.getErrorMessage NotImplemented) correlationId)
                 | ObjectStorageProvider.GoogleCloudStorage -> return Error(GraceError.Create (StorageError.getErrorMessage NotImplemented) correlationId)
             with ex ->
-                let exceptionResponse = createExceptionResponse ex
+                let exceptionResponse = ExceptionResponse.Create ex
                 return Error(GraceError.Create (exceptionResponse.ToString()) correlationId)
         }
 
@@ -251,7 +251,7 @@ module Storage =
                 | ObjectStorageProvider.AWSS3 -> return Error(GraceError.Create (StorageError.getErrorMessage NotImplemented) correlationId)
                 | ObjectStorageProvider.GoogleCloudStorage -> return Error(GraceError.Create (StorageError.getErrorMessage NotImplemented) correlationId)
             with ex ->
-                let exceptionResponse = createExceptionResponse ex
+                let exceptionResponse = ExceptionResponse.Create ex
                 logToConsole $"exception: {exceptionResponse.ToString()}"
                 return Error(GraceError.Create (exceptionResponse.ToString()) correlationId)
         }
@@ -272,7 +272,7 @@ module Storage =
                 | ObjectStorageProvider.AWSS3 -> return Error(GraceError.Create (StorageError.getErrorMessage NotImplemented) correlationId)
                 | ObjectStorageProvider.GoogleCloudStorage -> return Error(GraceError.Create (StorageError.getErrorMessage NotImplemented) correlationId)
             with ex ->
-                let exceptionResponse = createExceptionResponse ex
+                let exceptionResponse = ExceptionResponse.Create ex
                 logToConsole $"exception: {exceptionResponse.ToString()}"
                 return Error(GraceError.Create (exceptionResponse.ToString()) correlationId)
         }

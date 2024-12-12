@@ -1,4 +1,4 @@
-﻿namespace Grace.CLI.Command
+namespace Grace.CLI.Command
 
 open FSharpPlus
 open Grace.CLI.Common
@@ -228,7 +228,7 @@ module Organization =
                         return! Organization.Create(parameters)
                 | Error error -> return Error error
             with ex ->
-                return Error(GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
+                return Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
         }
 
     let private Create =
@@ -289,7 +289,7 @@ module Organization =
                         return! Organization.Get(parameters)
                 | Error error -> return Error error
             with ex ->
-                return Error(GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
+                return Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
         }
 
     let private Get =
@@ -346,7 +346,7 @@ module Organization =
                         return! Organization.SetName(parameters)
                 | Error error -> return Error error
             with ex ->
-                return Error(GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
+                return Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
         }
 
     let private SetName =
@@ -396,7 +396,7 @@ module Organization =
                         return! Organization.SetType(parameters)
                 | Error error -> return Error error
             with ex ->
-                return Error(GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
+                return Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
         }
 
     let private SetType =
@@ -452,7 +452,7 @@ module Organization =
                         return! Organization.SetSearchVisibility(parameters)
                 | Error error -> return Error error
             with ex ->
-                return Error(GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
+                return Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
         }
 
     let private SetSearchVisibility =
@@ -503,7 +503,7 @@ module Organization =
                         return! Organization.SetDescription(parameters)
                 | Error error -> return Error error
             with ex ->
-                return Error(GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
+                return Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
         }
 
     let private SetDescription =
@@ -556,7 +556,7 @@ module Organization =
                         return! Organization.Delete(parameters)
                 | Error error -> return Error error
             with ex ->
-                return Error(GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
+                return Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
         }
 
     let private Delete =
@@ -604,7 +604,7 @@ module Organization =
                         return! Organization.Delete(parameters)
                 | Error error -> return Error error
             with ex ->
-                return Error(GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
+                return Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
         }
 
     let private Undelete =

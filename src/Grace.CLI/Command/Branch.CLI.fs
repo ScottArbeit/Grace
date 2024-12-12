@@ -459,7 +459,7 @@ module Branch =
                         return! Branch.Create(parameters)
                 | Error error -> return Error error
             with ex ->
-                return Error(GraceError.Create $"{createExceptionResponse ex}" (parseResult |> getCorrelationId))
+                return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
         }
 
     let private Create =
@@ -531,7 +531,7 @@ module Branch =
                         return! Branch.GetRecursiveSize(sdkParameters)
                 | Error error -> return Error error
             with ex ->
-                return Error(GraceError.Create $"{createExceptionResponse ex}" (parseResult |> getCorrelationId))
+                return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
         }
 
     let private GetRecursiveSize =
@@ -638,7 +638,7 @@ module Branch =
                         return! Branch.ListContents(sdkParameters)
                 | Error error -> return Error error
             with ex ->
-                return Error(GraceError.Create $"{createExceptionResponse ex}" (parseResult |> getCorrelationId))
+                return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
         }
 
     let private ListContents =
@@ -713,7 +713,7 @@ module Branch =
                         return! Branch.SetName(parameters)
                 | Error error -> return Error error
             with ex ->
-                return Error(GraceError.Create $"{createExceptionResponse ex}" (parseResult |> getCorrelationId))
+                return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
         }
 
     let private SetName =
@@ -775,7 +775,7 @@ module Branch =
                         return! Branch.Assign(parameters)
                 | Error error -> return Error error
             with ex ->
-                return Error(GraceError.Create $"{createExceptionResponse ex}" (parseResult |> getCorrelationId))
+                return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
         }
 
     let private Assign =
@@ -998,7 +998,7 @@ module Branch =
                         return result
                 | Error error -> return Error error
             with ex ->
-                return Error(GraceError.Create $"{createExceptionResponse ex}" (parseResult |> getCorrelationId))
+                return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
         }
 
     let promotionHandler (parseResult: ParseResult) (parameters: CreateRefParameters) =
@@ -1186,7 +1186,7 @@ module Branch =
                         return Error(GraceError.Create "Need to implement the else clause." (parseResult |> getCorrelationId))
                 | Error error -> return Error error
             with ex ->
-                return Error(GraceError.Create $"{createExceptionResponse ex}" (parseResult |> getCorrelationId))
+                return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
         }
 
     let private Promote =
@@ -1197,7 +1197,7 @@ module Branch =
 
                     return result |> renderOutput parseResult
                 with ex ->
-                    logToAnsiConsole Colors.Error (Markup.Escape($"{createExceptionResponse ex}"))
+                    logToAnsiConsole Colors.Error (Markup.Escape($"{ExceptionResponse.Create ex}"))
                     return -1
             })
 
@@ -1426,7 +1426,7 @@ module Branch =
                         return! Branch.Get(sdkParameters)
                 | Error error -> return Error error
             with ex ->
-                return Error(GraceError.Create $"{createExceptionResponse ex}" (parseResult |> getCorrelationId))
+                return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
         }
 
     let private getEventsHandler (parseResult: ParseResult) (parameters: GetParameters) =
@@ -1466,7 +1466,7 @@ module Branch =
                         return! Branch.GetEvents(sdkParameters)
                 | Error error -> return Error error
             with ex ->
-                return Error(GraceError.Create $"{createExceptionResponse ex}" (parseResult |> getCorrelationId))
+                return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
         }
 
     let private Get =
@@ -1582,7 +1582,7 @@ module Branch =
                         | (_, Error error) -> return Error error
                 | Error error -> return Error error
             with ex ->
-                return Error(GraceError.Create $"{createExceptionResponse ex}" (parseResult |> getCorrelationId))
+                return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
         }
 
     let private printReferences (parseResult: ParseResult) (branchDto: BranchDto) (references: ReferenceDto array) (referenceTypes: string) =
@@ -2337,8 +2337,8 @@ module Branch =
                                emptyTask
                                emptyTask |]
             with ex ->
-                logToConsole $"{createExceptionResponse ex}"
-                logToAnsiConsole Colors.Error (Markup.Escape($"{createExceptionResponse ex}"))
+                logToConsole $"{ExceptionResponse.Create ex}"
+                logToAnsiConsole Colors.Error (Markup.Escape($"{ExceptionResponse.Create ex}"))
                 logToAnsiConsole Colors.Important $"CorrelationId: {(parseResult |> getCorrelationId)}"
                 return -1
         }
@@ -3412,7 +3412,7 @@ module Branch =
                     logToAnsiConsole Colors.Error (Markup.Escape($"{error}"))
                     return -1
             with ex ->
-                logToAnsiConsole Colors.Error (Markup.Escape($"{createExceptionResponse ex}"))
+                logToAnsiConsole Colors.Error (Markup.Escape($"{ExceptionResponse.Create ex}"))
                 return -1
         }
 
@@ -3466,7 +3466,7 @@ module Branch =
                         return! Branch.Delete(deleteParameters)
                 | Error error -> return Error error
             with ex ->
-                return Error(GraceError.Create $"{createExceptionResponse ex}" (parseResult |> getCorrelationId))
+                return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
         }
 
     let private Delete =
@@ -3499,7 +3499,7 @@ module Branch =
     //                    return! Owner.Undelete(parameters)
     //            | Error error -> return Error error
     //        with
-    //            | ex -> return Error (GraceError.Create $"{createExceptionResponse ex}" (parseResult |> getCorrelationId))
+    //            | ex -> return Error (GraceError.Create $"{ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
     //    }
     //let private Undelete =
     //    CommandHandler.Create(fun (parseResult: ParseResult) (undeleteParameters: UndeleteParameters) ->

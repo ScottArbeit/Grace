@@ -81,7 +81,7 @@ module Branch =
                             |> ignore
 
                             log.LogError(
-                                "{currentInstant}: In Branch.Server.handleCommand: error from actorProxy.Handle: {error}",
+                                "{CurrentInstant}: In Branch.Server.handleCommand: error from actorProxy.Handle: {error}",
                                 getCurrentInstantExtended (),
                                 (graceError.ToString())
                             )
@@ -94,7 +94,7 @@ module Branch =
                 let! validationsPassed = validationResults |> allPass
 
                 log.LogDebug(
-                    "{currentInstant}: In Branch.Server.processCommand: validationsPassed: {validationsPassed}.",
+                    "{CurrentInstant}: In Branch.Server.processCommand: validationsPassed: {validationsPassed}.",
                     getCurrentInstantExtended (),
                     validationsPassed
                 )
@@ -105,7 +105,7 @@ module Branch =
                 else
                     let! error = validationResults |> getFirstError
                     let errorMessage = BranchError.getErrorMessage error
-                    log.LogDebug("{currentInstant}: error: {error}", getCurrentInstantExtended (), errorMessage)
+                    log.LogDebug("{CurrentInstant}: error: {error}", getCurrentInstantExtended (), errorMessage)
 
                     let graceError =
                         (GraceError.CreateWithMetadata errorMessage correlationId (getParametersAsDictionary parameters))
@@ -119,13 +119,13 @@ module Branch =
             with ex ->
                 log.LogError(
                     ex,
-                    "{currentInstant}: Exception in Organization.Server.processCommand. CorrelationId: {correlationId}.",
+                    "{CurrentInstant}: Exception in Organization.Server.processCommand. CorrelationId: {correlationId}.",
                     getCurrentInstantExtended (),
                     (getCorrelationId context)
                 )
 
                 let graceError =
-                    (GraceError.Create $"{Utilities.createExceptionResponse ex}" correlationId)
+                    (GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" correlationId)
                         .enhance(nameof (OwnerId), graceIds.OwnerId)
                         .enhance(nameof (OrganizationId), graceIds.OrganizationId)
                         .enhance(nameof (RepositoryId), graceIds.RepositoryId)
@@ -184,7 +184,7 @@ module Branch =
                     return! context |> result400BadRequest graceError
             with ex ->
                 let graceError =
-                    (GraceError.CreateWithMetadata $"{Utilities.createExceptionResponse ex}" correlationId (getParametersAsDictionary parameters))
+                    (GraceError.CreateWithMetadata $"{Utilities.ExceptionResponse.Create ex}" correlationId (getParametersAsDictionary parameters))
                         .enhance(nameof (OwnerId), graceIds.OwnerId)
                         .enhance(nameof (OrganizationId), graceIds.OrganizationId)
                         .enhance(nameof (RepositoryId), graceIds.RepositoryId)
@@ -635,7 +635,7 @@ module Branch =
                     let duration_ms = getPaddedDuration_ms startTime
 
                     log.LogInformation(
-                        "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {path}; BranchId: {branchId}.",
+                        "{CurrentInstant}: Node: {HostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {path}; BranchId: {branchId}.",
                         getCurrentInstantExtended (),
                         getMachineName,
                         duration_ms,
@@ -650,7 +650,7 @@ module Branch =
 
                     log.LogError(
                         ex,
-                        "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Error in {path}; BranchId: {branchId}.",
+                        "{CurrentInstant}: Node: {HostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Error in {path}; BranchId: {branchId}.",
                         getCurrentInstantExtended (),
                         getMachineName,
                         duration_ms,
@@ -661,7 +661,7 @@ module Branch =
 
                     return!
                         context
-                        |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
+                        |> result500ServerError (GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId context))
             }
 
     /// Gets the events handled by this branch.
@@ -687,7 +687,7 @@ module Branch =
                     let duration_ms = getPaddedDuration_ms startTime
 
                     log.LogInformation(
-                        "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {path}; BranchId: {branchId}.",
+                        "{CurrentInstant}: Node: {HostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {path}; BranchId: {branchId}.",
                         getCurrentInstantExtended (),
                         getMachineName,
                         duration_ms,
@@ -702,7 +702,7 @@ module Branch =
 
                     log.LogError(
                         ex,
-                        "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Error in {path}; BranchId: {branchId}.",
+                        "{CurrentInstant}: Node: {HostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Error in {path}; BranchId: {branchId}.",
                         getCurrentInstantExtended (),
                         getMachineName,
                         duration_ms,
@@ -713,7 +713,7 @@ module Branch =
 
                     return!
                         context
-                        |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
+                        |> result500ServerError (GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId context))
             }
 
     /// Gets details about the parent branch of the provided branch.
@@ -738,7 +738,7 @@ module Branch =
                     let duration_ms = getPaddedDuration_ms startTime
 
                     log.LogInformation(
-                        "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {path}; BranchId: {branchId}.",
+                        "{CurrentInstant}: Node: {HostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {path}; BranchId: {branchId}.",
                         getCurrentInstantExtended (),
                         getMachineName,
                         duration_ms,
@@ -753,7 +753,7 @@ module Branch =
 
                     log.LogError(
                         ex,
-                        "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Error in {path}; BranchId: {branchId}.",
+                        "{CurrentInstant}: Node: {HostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Error in {path}; BranchId: {branchId}.",
                         getCurrentInstantExtended (),
                         getMachineName,
                         duration_ms,
@@ -764,7 +764,7 @@ module Branch =
 
                     return!
                         context
-                        |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
+                        |> result500ServerError (GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId context))
             }
 
     /// Gets details about the reference with the provided ReferenceId.
@@ -794,7 +794,7 @@ module Branch =
                     let duration_ms = getPaddedDuration_ms startTime
 
                     log.LogInformation(
-                        "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {path}; BranchId: {branchId}.",
+                        "{CurrentInstant}: Node: {HostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {path}; BranchId: {branchId}.",
                         getCurrentInstantExtended (),
                         getMachineName,
                         duration_ms,
@@ -809,7 +809,7 @@ module Branch =
 
                     log.LogError(
                         ex,
-                        "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Error in {path}; BranchId: {branchId}.",
+                        "{CurrentInstant}: Node: {HostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Error in {path}; BranchId: {branchId}.",
                         getCurrentInstantExtended (),
                         getMachineName,
                         duration_ms,
@@ -820,7 +820,7 @@ module Branch =
 
                     return!
                         context
-                        |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
+                        |> result500ServerError (GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId context))
             }
 
     /// Gets details about multiple references in one API call.
@@ -836,7 +836,7 @@ module Branch =
                     let query (context: HttpContext) (maxCount: int) (actorProxy: IBranchActor) =
                         task {
                             let! branchDto = actorProxy.Get(getCorrelationId context)
-                            let! results = getReferences branchDto.BranchId maxCount
+                            let! results = getReferences branchDto.BranchId maxCount (getCorrelationId context)
                             return results
                         }
 
@@ -846,7 +846,7 @@ module Branch =
                     let duration_ms = getPaddedDuration_ms startTime
 
                     log.LogInformation(
-                        "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {path}; BranchId: {branchId}.",
+                        "{CurrentInstant}: Node: {HostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {path}; BranchId: {branchId}.",
                         getCurrentInstantExtended (),
                         getMachineName,
                         duration_ms,
@@ -861,7 +861,7 @@ module Branch =
 
                     log.LogError(
                         ex,
-                        "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Error in {path}; BranchId: {branchId}.",
+                        "{CurrentInstant}: Node: {HostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Error in {path}; BranchId: {branchId}.",
                         getCurrentInstantExtended (),
                         getMachineName,
                         duration_ms,
@@ -872,7 +872,7 @@ module Branch =
 
                     return!
                         context
-                        |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
+                        |> result500ServerError (GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId context))
             }
 
     /// Gets a list of references, given a list of reference IDs.
@@ -905,7 +905,7 @@ module Branch =
                     let duration_ms = getPaddedDuration_ms startTime
 
                     log.LogInformation(
-                        "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {path}; RepositoryId: {repositoryId}.",
+                        "{CurrentInstant}: Node: {HostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {path}; RepositoryId: {repositoryId}.",
                         getCurrentInstantExtended (),
                         getMachineName,
                         duration_ms,
@@ -920,7 +920,7 @@ module Branch =
 
                     log.LogError(
                         ex,
-                        "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Error in {path}; RepositoryId: {repositoryId}.",
+                        "{CurrentInstant}: Node: {HostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Error in {path}; RepositoryId: {repositoryId}.",
                         getCurrentInstantExtended (),
                         getMachineName,
                         duration_ms,
@@ -931,7 +931,7 @@ module Branch =
 
                     return!
                         context
-                        |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
+                        |> result500ServerError (GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId context))
             }
 
     /// Retrieves the diffs between references in a branch by ReferenceType.
@@ -957,7 +957,7 @@ module Branch =
                                 (context.Items[nameof (ReferenceType)] :?> String)
                                 |> discriminatedUnionFromString<ReferenceType>
 
-                            let! references = getReferencesByType referenceType.Value branchDto.BranchId maxCount
+                            let! references = getReferencesByType referenceType.Value branchDto.BranchId maxCount (getCorrelationId context)
 
                             let sortedRefs =
                                 references
@@ -996,7 +996,7 @@ module Branch =
                     let duration_ms = getPaddedDuration_ms startTime
 
                     log.LogInformation(
-                        "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {path}; BranchId: {branchId}.",
+                        "{CurrentInstant}: Node: {HostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {path}; BranchId: {branchId}.",
                         getCurrentInstantExtended (),
                         getMachineName,
                         duration_ms,
@@ -1011,7 +1011,7 @@ module Branch =
 
                     log.LogError(
                         ex,
-                        "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Error in {path}; BranchId: {branchId}.",
+                        "{CurrentInstant}: Node: {HostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Error in {path}; BranchId: {branchId}.",
                         getCurrentInstantExtended (),
                         getMachineName,
                         duration_ms,
@@ -1022,7 +1022,7 @@ module Branch =
 
                     return!
                         context
-                        |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
+                        |> result500ServerError (GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId context))
             }
 
     /// Gets the promotions in a branch.
@@ -1038,7 +1038,7 @@ module Branch =
                     let query (context: HttpContext) maxCount (actorProxy: IBranchActor) =
                         task {
                             let! branchDto = actorProxy.Get(getCorrelationId context)
-                            let! results = getPromotions branchDto.BranchId maxCount
+                            let! results = getPromotions branchDto.BranchId maxCount (getCorrelationId context)
                             return results
                         }
 
@@ -1048,7 +1048,7 @@ module Branch =
                     let duration_ms = getPaddedDuration_ms startTime
 
                     log.LogInformation(
-                        "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {path}; BranchId: {branchId}.",
+                        "{CurrentInstant}: Node: {HostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {path}; BranchId: {branchId}.",
                         getCurrentInstantExtended (),
                         getMachineName,
                         duration_ms,
@@ -1063,7 +1063,7 @@ module Branch =
 
                     log.LogError(
                         ex,
-                        "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Error in {path}; BranchId: {branchId}.",
+                        "{CurrentInstant}: Node: {HostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Error in {path}; BranchId: {branchId}.",
                         getCurrentInstantExtended (),
                         getMachineName,
                         duration_ms,
@@ -1074,7 +1074,7 @@ module Branch =
 
                     return!
                         context
-                        |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
+                        |> result500ServerError (GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId context))
             }
 
     /// Gets the commits in a branch.
@@ -1090,7 +1090,7 @@ module Branch =
                     let query (context: HttpContext) maxCount (actorProxy: IBranchActor) =
                         task {
                             let! branchDto = actorProxy.Get(getCorrelationId context)
-                            let! results = getCommits branchDto.BranchId maxCount
+                            let! results = getCommits branchDto.BranchId maxCount (getCorrelationId context)
                             return results
                         }
 
@@ -1100,7 +1100,7 @@ module Branch =
                     let duration_ms = getPaddedDuration_ms startTime
 
                     log.LogInformation(
-                        "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {path}; BranchId: {branchId}.",
+                        "{CurrentInstant}: Node: {HostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {path}; BranchId: {branchId}.",
                         getCurrentInstantExtended (),
                         getMachineName,
                         duration_ms,
@@ -1115,7 +1115,7 @@ module Branch =
 
                     log.LogError(
                         ex,
-                        "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Error in {path}; BranchId: {branchId}.",
+                        "{CurrentInstant}: Node: {HostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Error in {path}; BranchId: {branchId}.",
                         getCurrentInstantExtended (),
                         getMachineName,
                         duration_ms,
@@ -1126,7 +1126,7 @@ module Branch =
 
                     return!
                         context
-                        |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
+                        |> result500ServerError (GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId context))
             }
 
     /// Gets the checkpoints in a branch.
@@ -1142,7 +1142,7 @@ module Branch =
                     let query (context: HttpContext) maxCount (actorProxy: IBranchActor) =
                         task {
                             let! branchDto = actorProxy.Get(getCorrelationId context)
-                            let! results = getCheckpoints branchDto.BranchId maxCount
+                            let! results = getCheckpoints branchDto.BranchId maxCount (getCorrelationId context)
                             return results
                         }
 
@@ -1152,7 +1152,7 @@ module Branch =
                     let duration_ms = getPaddedDuration_ms startTime
 
                     log.LogInformation(
-                        "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {path}; BranchId: {branchId}.",
+                        "{CurrentInstant}: Node: {HostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {path}; BranchId: {branchId}.",
                         getCurrentInstantExtended (),
                         getMachineName,
                         duration_ms,
@@ -1167,7 +1167,7 @@ module Branch =
 
                     log.LogError(
                         ex,
-                        "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Error in {path}; BranchId: {branchId}.",
+                        "{CurrentInstant}: Node: {HostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Error in {path}; BranchId: {branchId}.",
                         getCurrentInstantExtended (),
                         getMachineName,
                         duration_ms,
@@ -1178,7 +1178,7 @@ module Branch =
 
                     return!
                         context
-                        |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
+                        |> result500ServerError (GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId context))
             }
 
     /// Gets the saves in a branch.
@@ -1195,7 +1195,7 @@ module Branch =
                     let query (context: HttpContext) maxCount (actorProxy: IBranchActor) =
                         task {
                             let! branchDto = actorProxy.Get(getCorrelationId context)
-                            let! results = getSaves branchDto.BranchId maxCount
+                            let! results = getSaves branchDto.BranchId maxCount (getCorrelationId context)
                             return results
                         }
 
@@ -1205,7 +1205,7 @@ module Branch =
                     let duration_ms = getPaddedDuration_ms startTime
 
                     log.LogInformation(
-                        "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {path}; BranchId: {branchId}.",
+                        "{CurrentInstant}: Node: {HostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {path}; BranchId: {branchId}.",
                         getCurrentInstantExtended (),
                         getMachineName,
                         duration_ms,
@@ -1220,7 +1220,7 @@ module Branch =
 
                     log.LogError(
                         ex,
-                        "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Error in {path}; BranchId: {branchId}.",
+                        "{CurrentInstant}: Node: {HostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Error in {path}; BranchId: {branchId}.",
                         getCurrentInstantExtended (),
                         getMachineName,
                         duration_ms,
@@ -1231,7 +1231,7 @@ module Branch =
 
                     return!
                         context
-                        |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
+                        |> result500ServerError (GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId context))
             }
 
     /// Gets the tags in a branch.
@@ -1247,7 +1247,7 @@ module Branch =
                     let query (context: HttpContext) maxCount (actorProxy: IBranchActor) =
                         task {
                             let! branchDto = actorProxy.Get(getCorrelationId context)
-                            let! results = getTags branchDto.BranchId maxCount
+                            let! results = getTags branchDto.BranchId maxCount (getCorrelationId context)
                             return results
                         }
 
@@ -1257,7 +1257,7 @@ module Branch =
                     let duration_ms = getPaddedDuration_ms startTime
 
                     log.LogInformation(
-                        "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {path}; BranchId: {branchId}.",
+                        "{CurrentInstant}: Node: {HostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {path}; BranchId: {branchId}.",
                         getCurrentInstantExtended (),
                         getMachineName,
                         duration_ms,
@@ -1272,7 +1272,7 @@ module Branch =
 
                     log.LogError(
                         ex,
-                        "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Error in {path}; BranchId: {branchId}.",
+                        "{CurrentInstant}: Node: {HostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Error in {path}; BranchId: {branchId}.",
                         getCurrentInstantExtended (),
                         getMachineName,
                         duration_ms,
@@ -1283,7 +1283,7 @@ module Branch =
 
                     return!
                         context
-                        |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
+                        |> result500ServerError (GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId context))
             }
 
     /// Gets the external references in a branch.
@@ -1299,7 +1299,7 @@ module Branch =
                     let query (context: HttpContext) maxCount (actorProxy: IBranchActor) =
                         task {
                             let! branchDto = actorProxy.Get(getCorrelationId context)
-                            let! results = getExternals branchDto.BranchId maxCount
+                            let! results = getExternals branchDto.BranchId maxCount (getCorrelationId context)
                             return results
                         }
 
@@ -1309,7 +1309,7 @@ module Branch =
                     let duration_ms = getPaddedDuration_ms startTime
 
                     log.LogInformation(
-                        "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {path}; BranchId: {branchId}.",
+                        "{CurrentInstant}: Node: {HostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {path}; BranchId: {branchId}.",
                         getCurrentInstantExtended (),
                         getMachineName,
                         duration_ms,
@@ -1324,7 +1324,7 @@ module Branch =
 
                     log.LogError(
                         ex,
-                        "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Error in {path}; BranchId: {branchId}.",
+                        "{CurrentInstant}: Node: {HostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Error in {path}; BranchId: {branchId}.",
                         getCurrentInstantExtended (),
                         getMachineName,
                         duration_ms,
@@ -1335,7 +1335,7 @@ module Branch =
 
                     return!
                         context
-                        |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" (getCorrelationId context))
+                        |> result500ServerError (GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId context))
             }
 
     let GetRecursiveSize: HttpHandler =
@@ -1399,7 +1399,7 @@ module Branch =
                     let duration_ms = getPaddedDuration_ms startTime
 
                     log.LogInformation(
-                        "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {path}; BranchId: {branchId}.",
+                        "{CurrentInstant}: Node: {HostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {path}; BranchId: {branchId}.",
                         getCurrentInstantExtended (),
                         getMachineName,
                         duration_ms,
@@ -1414,7 +1414,7 @@ module Branch =
 
                     log.LogError(
                         ex,
-                        "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Error in {path}; BranchId: {branchId}.",
+                        "{CurrentInstant}: Node: {HostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Error in {path}; BranchId: {branchId}.",
                         getCurrentInstantExtended (),
                         getMachineName,
                         duration_ms,
@@ -1425,7 +1425,7 @@ module Branch =
 
                     return!
                         context
-                        |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" correlationId)
+                        |> result500ServerError (GraceError.Create $"{ExceptionResponse.Create ex}" correlationId)
             }
 
     let ListContents: HttpHandler =
@@ -1492,7 +1492,7 @@ module Branch =
                     let duration_ms = getPaddedDuration_ms startTime
 
                     log.LogInformation(
-                        "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {path}; BranchId: {branchId}.",
+                        "{CurrentInstant}: Node: {HostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {path}; BranchId: {branchId}.",
                         getCurrentInstantExtended (),
                         getMachineName,
                         duration_ms,
@@ -1507,7 +1507,7 @@ module Branch =
 
                     log.LogError(
                         ex,
-                        "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Error in {path}; BranchId: {branchId}.",
+                        "{CurrentInstant}: Node: {HostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Error in {path}; BranchId: {branchId}.",
                         getCurrentInstantExtended (),
                         getMachineName,
                         duration_ms,
@@ -1518,7 +1518,7 @@ module Branch =
 
                     return!
                         context
-                        |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" correlationId)
+                        |> result500ServerError (GraceError.Create $"{ExceptionResponse.Create ex}" correlationId)
             }
 
     let GetVersion: HttpHandler =
@@ -1623,7 +1623,7 @@ module Branch =
 
                     log.LogError(
                         ex,
-                        "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Error in {path}; BranchId: {branchId}.",
+                        "{CurrentInstant}: Node: {HostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Error in {path}; BranchId: {branchId}.",
                         getCurrentInstantExtended (),
                         getMachineName,
                         duration_ms,
@@ -1634,5 +1634,5 @@ module Branch =
 
                     return!
                         context
-                        |> result500ServerError (GraceError.Create $"{createExceptionResponse ex}" correlationId)
+                        |> result500ServerError (GraceError.Create $"{ExceptionResponse.Create ex}" correlationId)
             }

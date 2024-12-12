@@ -1,11 +1,16 @@
 namespace Grace.Actors
 
 open Dapr.Actors.Client
+open Grace.Actors.Types
 open Grace.Shared.Types
 open Microsoft.Azure.Cosmos
 open Microsoft.Extensions.Caching.Memory
+open Microsoft.Extensions.ObjectPool
 open Microsoft.Extensions.Logging
 open System
+open System.Text
+open System.Collections.Concurrent
+open System.Collections.Generic
 
 module Context =
 
@@ -50,3 +55,11 @@ module Context =
 
     /// Setter for memory cache
     let setMemoryCache (cache: IMemoryCache) = memoryCache <- cache
+
+    let mutable internal stringBuilderPool: ObjectPool<StringBuilder> = null
+
+    /// Setter for the string builder pool
+    let setStringBuilderPool (pool: ObjectPool<StringBuilder>) = stringBuilderPool <- pool
+
+    let mutable internal timings = ConcurrentDictionary<CorrelationId, List<Timing>>()
+    let setTimings (timing: ConcurrentDictionary<CorrelationId, List<Timing>>) = timings <- timing

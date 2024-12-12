@@ -13,6 +13,7 @@ open System.Text
 open System.Threading.Tasks
 open System.Text.Json
 open System.IO.Enumeration
+open Microsoft.Extensions.ObjectPool
 
 module Types =
 
@@ -33,6 +34,7 @@ module Types =
     type ReferenceId = Guid
     type ReferenceName = string
     type ReferenceText = string
+    type ReminderId = Guid
     type RepositoryId = Guid
     type RepositoryName = string
     type RelativePath = string
@@ -624,3 +626,14 @@ module Types =
               HasBranch = false }
 
         override this.ToString() = serialize this
+
+    /// Holds the different types of reminders used in Grace.
+    [<KnownType("GetKnownTypes")>]
+    type ReminderTypes =
+        | Maintenance
+        | PhysicalDeletion
+        | DeleteCachedState
+
+        static member GetKnownTypes() = GetKnownTypes<ReminderTypes>()
+
+        override this.ToString() = Utilities.getDiscriminatedUnionFullName this

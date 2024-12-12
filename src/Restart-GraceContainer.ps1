@@ -2,16 +2,19 @@ $startTime = Get-Date
 
 # Using Start-Process here to run the deletion of the current deployment asynchronously.
 Write-Host "Deleting Kubernetes deployment..."
-Start-Process -FilePath 'C:\Program Files\Docker\Docker\resources\bin\kubectl.exe' -ArgumentList 'delete -f .\kubernetes-deployment.yaml'
+Start-Process -FilePath 'C:\Program Files\Docker\Docker\resources\bin\kubectl.exe' -ArgumentList 'delete -f .\kubernetes-deployment.yaml' -WindowStyle Minimized
+#k delete -f .\kubernetes-deployment.yaml
+docker image rm --force scottarbeit/grace-server:latest scottarbeit/grace-server:0.1
+Write-Host
 
 $startBulidTime = Get-Date
 Write-Host "Building the solution..."
-dotnet build .\Grace.sln -c Debug
+Start-Process -FilePath 'C:\Program Files\dotnet\dotnet.exe' -ArgumentList 'build .\Grace.sln -c Debug' -WindowStyle Minimized
 Write-Host
 
 Write-Host "Publishing Grace.Server container to local registry..."
-dotnet publish .\Grace.Server\Grace.Server.fsproj --no-build -c Debug -t:PublishContainer
-#docker build -t "scottarbeit/grace-server:latest,scottarbeit/grace-server:0.1" .\Grace.Server\Dockerfile
+#dotnet publish .\Grace.Server\Grace.Server.fsproj --no-build -c Debug -t:PublishContainer
+docker build -t scottarbeit/grace-server:latest -t scottarbeit/grace-server:0.1 --progress=plain -f .\Grace.Server\Dockerfile .
 Write-Host
 
 #Write-Host "Pushing Docker image to Docker Hub..."

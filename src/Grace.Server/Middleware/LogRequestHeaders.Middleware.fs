@@ -1,6 +1,7 @@
 namespace Grace.Server.Middleware
 
 open Grace.Server
+open Grace.Server.ApplicationContext
 open Grace.Shared
 open Grace.Shared.Resources.Text
 open Grace.Shared.Utilities
@@ -10,22 +11,10 @@ open Microsoft.Extensions.ObjectPool
 open System
 open System.Text
 
-// Define a StringBuilder policy for the pool
-type StringBuilderPooledObjectPolicy() =
-    inherit PooledObjectPolicy<StringBuilder>()
-
-    override _.Create() = new StringBuilder()
-
-    override _.Return(sb: StringBuilder) =
-        sb.Clear() |> ignore
-        true
-
 /// Checks the incoming request for an X-Correlation-Id header. If there's no CorrelationId header, it generates one and adds it to the response headers.
 type LogRequestHeadersMiddleware(next: RequestDelegate) =
 
-    let pooledObjectPolicy = StringBuilderPooledObjectPolicy()
-    let stringBuilderPool = ObjectPool.Create<StringBuilder>(pooledObjectPolicy)
-    let log = ApplicationContext.loggerFactory.CreateLogger(nameof (LogRequestHeadersMiddleware))
+    let log = loggerFactory.CreateLogger($"{nameof (LogRequestHeadersMiddleware)}.Server")
 
     member this.Invoke(context: HttpContext) =
 

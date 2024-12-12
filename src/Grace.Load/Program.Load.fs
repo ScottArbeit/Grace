@@ -16,26 +16,28 @@ open System.Threading.Tasks
 
 module Load =
 
-    let numberOfRepositories = 400
-    let numberOfBranches = 5000
-    let numberOfEvents = 100000
+    let numberOfRepositories = 10
+    let numberOfBranches = 100
+    let numberOfEvents = 5000
 
     let showResult<'T> (r: GraceResult<'T>) =
         match r with
         | Ok result -> () //logToConsole (sprintf "%s - CorrelationId: %s" (result.Properties["EventType"]) result.CorrelationId)
         | Error error -> logToConsole $"{error}"
 
-    let parallelOptions = ParallelOptions(MaxDegreeOfParallelism = Environment.ProcessorCount * 4)
+
+    let parallelOptions = ParallelOptions(MaxDegreeOfParallelism = Environment.ProcessorCount * 2)
 
     [<EntryPoint>]
     let main args =
         (task {
             let startTime = getCurrentInstant ()
             let cancellationToken = new CancellationToken()
+            //ThreadPool.SetMinThreads(200, 200) |> ignore
 
             let suffixes = ConcurrentDictionary<int, string>()
 
-            for i in { 0 .. Math.Max(numberOfRepositories, numberOfBranches) } do
+            for i in seq { 0 .. Math.Max(numberOfRepositories, numberOfBranches) } do
                 suffixes[i] <- Random.Shared.Next(Int32.MaxValue).ToString("X8")
 
             let repositoryIds = ConcurrentDictionary<int, RepositoryId>()
@@ -65,7 +67,8 @@ module Load =
             | Ok result -> logToConsole $"Created organization {organizationId} with OrganizationName {organizationName}."
             | Error error -> logToConsole $"{error}"
 
-            // Warm up the /repository/create path.
+            // Warm up the /repository/create path so it's JIT-compiled and ready for
+            //   the Parallel.ForEachAsync below.
             let warmupId = Guid.NewGuid().ToString()
 
             let! warmupRepo =
@@ -91,12 +94,12 @@ module Load =
 
             do!
                 Parallel.ForEachAsync(
-                    { 0 .. (numberOfRepositories - 1) },
+                    seq { 0 .. (numberOfRepositories - 1) },
                     parallelOptions,
                     (fun (i: int) (cancellationToken: CancellationToken) ->
                         ValueTask(
                             task {
-                                do! Task.Delay(Random.Shared.Next(1000))
+                                //do! Task.Delay(Random.Shared.Next(1000))
                                 let repositoryId = Guid.NewGuid()
                                 let repositoryName = $"Repository{suffixes[i]}"
 
@@ -154,12 +157,12 @@ module Load =
 
             do!
                 Parallel.ForEachAsync(
-                    { 0 .. (numberOfBranches - 1) },
+                    seq { 0 .. (numberOfBranches - 1) },
                     parallelOptions,
                     (fun (i: int) (cancellationToken: CancellationToken) ->
                         ValueTask(
                             task {
-                                do! Task.Delay(Random.Shared.Next(1000))
+                                //do! Task.Delay(Random.Shared.Next(1000))
                                 let branchId = Guid.NewGuid()
                                 let branchName = $"Branch{suffixes[i]}"
                                 let repositoryIndex = Random.Shared.Next(repositoryIds.Count)
@@ -208,7 +211,7 @@ module Load =
 
             do!
                 Parallel.ForEachAsync(
-                    { 0 .. (numberOfEvents - 1) },
+                    seq { 1..numberOfEvents },
                     parallelOptions,
                     (fun (i: int) (cancellationToken: CancellationToken) ->
                         ValueTask(
@@ -216,11 +219,15 @@ module Load =
                                 if i % 250 = 0 then
                                     let chunkTPS = float 250 / (getCurrentInstant () - chunkStartInstant).TotalSeconds
                                     chunkTransactionsPerSecond.Add(chunkTPS)
+
                                     let rollingAverage = chunkTransactionsPerSecond.TakeLast(20).Average()
+
                                     let totalTPS = float i / (getCurrentInstant () - setupTime).TotalSeconds
 
+                                    let threads = $"ThreadCount: {ThreadPool.ThreadCount}; PendingWorkItemCount: {ThreadPool.PendingWorkItemCount}"
+
                                     logToConsole
-                                        $"Processing event {i} of {numberOfEvents}; Chunk transactions/sec: {chunkTPS:F3}; Rolling average (previous 20): {rollingAverage:F3}; Total transactions/sec: {totalTPS:F3}; Thread count: {Process.GetCurrentProcess().Threads.Count}."
+                                        $"Processing event {i} of {numberOfEvents}; Chunk transactions/sec: {chunkTPS:F3}; Rolling average (previous 20): {rollingAverage:F3}; Total transactions/sec: {totalTPS:F3}; Thread counts: {threads}."
 
                                     chunkStartInstant <- getCurrentInstant ()
 
@@ -352,12 +359,11 @@ module Load =
                                     showResult r
                                 | 8 ->
                                     let! r =
-                                        Repository.GetBranches(
+                                        Repository.Get(
                                             Repository.GetBranchesParameters(
                                                 OwnerId = $"{ownerId}",
                                                 OrganizationId = $"{organizationId}",
                                                 RepositoryId = $"{repositoryId}",
-                                                MaxCount = 30,
                                                 CorrelationId = generateCorrelationId ()
                                             )
                                         )

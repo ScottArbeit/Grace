@@ -209,7 +209,7 @@ module Validations =
                     else
                         return Error error
                 with ex ->
-                    log.LogError(ex, "{currentInstant}: Exception in Grace.Server.Validations.organizationExists.", getCurrentInstantExtended ())
+                    log.LogError(ex, "{CurrentInstant}: Exception in Grace.Server.Validations.organizationExists.", getCurrentInstantExtended ())
 
                     return Error error
             }

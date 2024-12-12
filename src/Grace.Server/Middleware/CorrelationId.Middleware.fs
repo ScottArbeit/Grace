@@ -25,7 +25,10 @@ type CorrelationIdMiddleware(next: RequestDelegate) =
             else
                 generateCorrelationId ()
 
+        // Add the CorrelationId to HttpContext so it's easily available.
         context.Items.Add(Constants.CorrelationId, correlationId)
+
+        // Add the CorrelationId to the response headers.
         context.Response.Headers.Add(Constants.CorrelationIdHeaderKey, correlationId)
 
         // -----------------------------------------------------------------------------------------------------

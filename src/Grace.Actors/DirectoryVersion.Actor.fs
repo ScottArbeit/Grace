@@ -11,6 +11,7 @@ open Grace.Actors.Extensions.ActorProxy
 open Grace.Actors.Extensions.MemoryCache
 open Grace.Actors.Interfaces
 open Grace.Actors.Services
+open Grace.Actors.Types
 open Grace.Shared
 open Grace.Shared.Constants
 open Grace.Shared.Services
@@ -29,9 +30,11 @@ open OrganizationName
 
 module DirectoryVersion =
 
-    type PhysicalDeletionReminderState = (DeleteReason * CorrelationId)
+    type PhysicalDeletionReminderState = DeleteReason * CorrelationId
+    type DeleteCachedStateReminderState = unit
 
     let GetActorId (directoryId: DirectoryVersionId) = ActorId($"{directoryId}")
+    let log = loggerFactory.CreateLogger("DirectoryVersion.Actor")
 
     type DirectoryVersionDto =
         { DirectoryVersion: DirectoryVersion
@@ -45,16 +48,17 @@ module DirectoryVersion =
     type DirectoryVersionActor(host: ActorHost) =
         inherit Actor(host)
 
-        let actorName = ActorName.DirectoryVersion
-        let log = loggerFactory.CreateLogger("DirectoryVersion.Actor")
-        let eventsStateName = StateName.DirectoryVersion
-        let directoryVersionCacheStateName = StateName.DirectoryVersionCache
+        static let actorName = ActorName.DirectoryVersion
+        static let eventsStateName = StateName.DirectoryVersion
+        static let directoryVersionCacheStateName = StateName.DirectoryVersionCache
+
         let directoryVersionEvents = List<DirectoryVersionEvent>()
 
         let mutable directoryVersionDto = DirectoryVersionDto.Default
         let mutable actorStartTime = Instant.MinValue
         let mutable logScope: IDisposable = null
         let mutable currentCommand = String.Empty
+        let mutable stateManager = Unchecked.defaultof<IActorStateManager>
 
         /// Indicates that the actor is in an undefined state, and should be reset.
         let mutable isDisposed = false
@@ -71,18 +75,16 @@ module DirectoryVersion =
 
         override this.OnActivateAsync() =
             let activateStartTime = getCurrentInstant ()
-            let stateManager = this.StateManager
+            stateManager <- this.StateManager
 
             task {
-                let mutable message = String.Empty
-
                 let correlationId =
                     match memoryCache.GetCorrelationIdEntry this.Id with
                     | Some correlationId -> correlationId
                     | None -> String.Empty
 
                 try
-                    let! retrievedEvents = Storage.RetrieveState<List<DirectoryVersionEvent>> stateManager eventsStateName
+                    let! retrievedEvents = Storage.RetrieveState<List<DirectoryVersionEvent>> stateManager eventsStateName correlationId
 
                     match retrievedEvents with
                     | Some retrievedEvents ->
@@ -95,28 +97,14 @@ module DirectoryVersion =
                             |> Seq.fold
                                 (fun directoryVersionDto directoryVersionEvent -> directoryVersionDto |> updateDto directoryVersionEvent.Event)
                                 DirectoryVersionDto.Default
+                    | None -> ()
 
-                        message <- "Retrieved from database"
-                    | None -> message <- "Not found in database"
+                    logActorActivation log activateStartTime correlationId actorName this.Id (getActorActivationMessage retrievedEvents)
                 with ex ->
-                    let exc = createExceptionResponse ex
-
-                    log.LogError("{CurrentInstant} Error in {ActorType} {ActorId}.", getCurrentInstantExtended (), this.GetType().Name, host.Id)
-
+                    let exc = ExceptionResponse.Create ex
+                    log.LogError("{CurrentInstant} Error activating {ActorType} {ActorId}.", getCurrentInstantExtended (), this.GetType().Name, host.Id)
                     log.LogError("{CurrentInstant} {ExceptionDetails}", getCurrentInstantExtended (), exc.ToString())
-
-                let duration_ms = getPaddedDuration_ms activateStartTime
-
-                log.LogInformation(
-                    "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Activated {ActorType} {ActorId}. {message}.",
-                    getCurrentInstantExtended (),
-                    getMachineName,
-                    duration_ms,
-                    correlationId,
-                    actorName,
-                    host.Id,
-                    message
-                )
+                    logActorActivation log activateStartTime correlationId actorName this.Id "Exception occurred during activation."
             }
             :> Task
 
@@ -151,7 +139,7 @@ module DirectoryVersion =
 
             if String.IsNullOrEmpty(currentCommand) then
                 log.LogInformation(
-                    "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {ActorName}.{MethodName}; Id: {Id}.",
+                    "{CurrentInstant}: Node: {HostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {ActorName}.{MethodName}; Id: {Id}.",
                     getCurrentInstantExtended (),
                     getMachineName,
                     duration_ms,
@@ -162,7 +150,7 @@ module DirectoryVersion =
                 )
             else
                 log.LogInformation(
-                    "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {ActorName}.{MethodName}; Command: {Command}; Id: {Id}.",
+                    "{CurrentInstant}: Node: {HostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {ActorName}.{MethodName}; Command: {Command}; Id: {Id}.",
                     getCurrentInstantExtended (),
                     getMachineName,
                     duration_ms,
@@ -176,20 +164,101 @@ module DirectoryVersion =
             logScope.Dispose()
             Task.CompletedTask
 
-        /// Sets a Dapr Actor reminder to perform a physical deletion of this owner.
-        member private this.SchedulePhysicalDeletion(deleteReason, correlationId) =
-            let (tuple: PhysicalDeletionReminderState) = (deleteReason, correlationId)
 
-            this.RegisterReminderAsync(
-                ReminderType.PhysicalDeletion,
-                toByteArray tuple,
-                Constants.DefaultPhysicalDeletionReminderTime,
-                TimeSpan.FromMilliseconds(-1)
-            )
+        interface IGraceReminder with
+            /// Schedules a Grace reminder.
+            member this.ScheduleReminderAsync reminderType delay state correlationId =
+                task {
+                    let reminder = ReminderDto.Create actorName $"{this.Id}" reminderType (getFutureInstant delay) state correlationId
+                    do! createReminder reminder
+                }
+                :> Task
+
+            /// Receives a Grace reminder.
+            member this.ReceiveReminderAsync(reminder: ReminderDto) : Task<Result<unit, GraceError>> =
+                task {
+                    match reminder.ReminderType with
+                    | ReminderTypes.DeleteCachedState ->
+                        // Get values from state.
+                        let (deleteReason, correlationId) = deserialize<PhysicalDeletionReminderState> reminder.State
+
+                        this.correlationId <- correlationId
+
+                        // Delete saved state for this actor.
+                        let! deleted = Storage.DeleteState stateManager directoryVersionCacheStateName
+
+                        if deleted then
+                            log.LogInformation(
+                                "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; Deleted cache for directory version; RepositoryId: {RepositoryId}; DirectoryVersionId: {DirectoryVersionId}; deleteReason: {deleteReason}.",
+                                getCurrentInstantExtended (),
+                                getMachineName,
+                                correlationId,
+                                directoryVersionDto.DirectoryVersion.RepositoryId,
+                                directoryVersionDto.DirectoryVersion.DirectoryVersionId,
+                                deleteReason
+                            )
+                        else
+                            log.LogWarning(
+                                "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; Failed to delete cache for directory version (it may have already been deleted); RepositoryId: {RepositoryId}; DirectoryVersionId: {DirectoryVersionId}; deleteReason: {deleteReason}.",
+                                getCurrentInstantExtended (),
+                                getMachineName,
+                                correlationId,
+                                directoryVersionDto.DirectoryVersion.RepositoryId,
+                                directoryVersionDto.DirectoryVersion.DirectoryVersionId,
+                                deleteReason
+                            )
+
+                        // Mark the actor as disposed, in case someone tries to use it before Dapr GC's it.
+                        isDisposed <- true
+                        return Ok()
+                    | ReminderTypes.PhysicalDeletion ->
+                        // Get values from state.
+                        let (deleteReason, correlationId) = deserialize<PhysicalDeletionReminderState> reminder.State
+
+                        this.correlationId <- correlationId
+
+                        // Delete saved state for this actor.
+                        let! deleted = Storage.DeleteState stateManager eventsStateName
+
+                        if deleted then
+                            log.LogInformation(
+                                "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; Deleted state for directory version; RepositoryId: {RepositoryId}; DirectoryVersionId: {DirectoryVersionId}; deleteReason: {deleteReason}.",
+                                getCurrentInstantExtended (),
+                                getMachineName,
+                                correlationId,
+                                directoryVersionDto.DirectoryVersion.RepositoryId,
+                                directoryVersionDto.DirectoryVersion.DirectoryVersionId,
+                                deleteReason
+                            )
+                        else
+                            log.LogWarning(
+                                "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; Failed to delete state for directory version (it may have already been deleted); RepositoryId: {RepositoryId}; DirectoryVersionId: {DirectoryVersionId}; deleteReason: {deleteReason}.",
+                                getCurrentInstantExtended (),
+                                getMachineName,
+                                correlationId,
+                                directoryVersionDto.DirectoryVersion.RepositoryId,
+                                directoryVersionDto.DirectoryVersion.DirectoryVersionId,
+                                deleteReason
+                            )
+
+                        // Set all values to default.
+                        directoryVersionDto <- DirectoryVersionDto.Default
+                        directoryVersionEvents.Clear()
+
+                        // Mark the actor as disposed, in case someone tries to use it before Dapr GC's it.
+                        isDisposed <- true
+                        return Ok()
+                    | _ ->
+                        return
+                            Error(
+                                (GraceError.Create
+                                    $"{actorName} does not process reminder type {discriminatedUnionCaseName reminder.ReminderType}."
+                                    this.correlationId)
+                                    .enhance ("IsRetryable", "false")
+                            )
+                }
 
         member private this.ApplyEvent directoryVersionEvent =
-            let stateManager = this.StateManager
-
             task {
                 try
                     // Add the event to the list of events, and save it to actor state.
@@ -214,7 +283,7 @@ module DirectoryVersion =
 
                     return Ok returnValue
                 with ex ->
-                    let exceptionResponse = createExceptionResponse ex
+                    let exceptionResponse = ExceptionResponse.Create ex
 
                     let graceError =
                         GraceError.Create (DirectoryVersionError.getErrorMessage FailedWhileApplyingEvent) directoryVersionEvent.Metadata.CorrelationId
@@ -270,7 +339,6 @@ module DirectoryVersion =
 
             member this.GetRecursiveDirectoryVersions (forceRegenerate: bool) correlationId =
                 this.correlationId <- correlationId
-                let stateManager = this.StateManager
 
                 task {
                     try
@@ -278,7 +346,7 @@ module DirectoryVersion =
                         let cachedSubdirectoryVersions =
                             task {
                                 if not <| forceRegenerate then
-                                    return! Storage.RetrieveState<DirectoryVersion array> stateManager directoryVersionCacheStateName
+                                    return! Storage.RetrieveState<DirectoryVersion array> stateManager directoryVersionCacheStateName correlationId
                                 else
                                     return None
                             }
@@ -322,11 +390,19 @@ module DirectoryVersion =
                                 |> Array.sortBy (fun directoryVersion -> directoryVersion.RelativePath)
 
                             logToConsole $"In DirectoryVersionActor.GetDirectoryVersionsRecursive({this.Id}); Storing subdirectoryVersion list."
-                            do! Storage.SaveState stateManager directoryVersionCacheStateName subdirectoryVersionsList
+                            do! Storage.SaveState stateManager directoryVersionCacheStateName subdirectoryVersionsList this.correlationId
 
                             log.LogDebug("In DirectoryVersionActor.GetDirectoryVersionsRecursive({id}); Storing subdirectoryVersion list.", this.Id)
 
-                            let! deletionReminder = this.SchedulePhysicalDeletion("Cache expired", correlationId)
+                            let repositoryActorProxy = Repository.CreateActorProxy directoryVersionDto.DirectoryVersion.RepositoryId correlationId
+                            let! repositoryDto = repositoryActorProxy.Get correlationId
+
+                            do!
+                                (this :> IGraceReminder).ScheduleReminderAsync
+                                    ReminderTypes.DeleteCachedState
+                                    (Duration.FromDays(float repositoryDto.DirectoryVersionCacheDays))
+                                    String.Empty
+                                    correlationId
 
                             log.LogDebug("In DirectoryVersionActor.GetDirectoryVersionsRecursive({id}); Delete cached state reminder was set.", this.Id)
 
@@ -336,7 +412,7 @@ module DirectoryVersion =
                             "{CurrentInstant}: Error in {methodName}. Exception: {exception}",
                             getCurrentInstantExtended (),
                             "GetRecursiveDirectoryVersions",
-                            createExceptionResponse ex
+                            ExceptionResponse.Create ex
                         )
 
                         return Array.Empty<DirectoryVersion>()
@@ -378,7 +454,20 @@ module DirectoryVersion =
                                     | Create directoryVersion -> return Ok(Created directoryVersion)
                                     | SetRecursiveSize recursiveSize -> return Ok(RecursiveSizeSet recursiveSize)
                                     | DeleteLogical deleteReason ->
-                                        let! deletionReminder = this.SchedulePhysicalDeletion(deleteReason, metadata.CorrelationId)
+                                        let repositoryActorProxy =
+                                            Repository.CreateActorProxy directoryVersionDto.DirectoryVersion.RepositoryId metadata.CorrelationId
+
+                                        let! repositoryDto = repositoryActorProxy.Get metadata.CorrelationId
+
+                                        let (reminderState: PhysicalDeletionReminderState) = (deleteReason, metadata.CorrelationId)
+
+                                        do!
+                                            (this :> IGraceReminder).ScheduleReminderAsync
+                                                ReminderTypes.PhysicalDeletion
+                                                (Duration.FromDays(float repositoryDto.LogicalDeleteDays))
+                                                (serialize reminderState)
+                                                metadata.CorrelationId
+
                                         return Ok(LogicalDeleted deleteReason)
                                     | DeletePhysical ->
                                         isDisposed <- true
@@ -390,7 +479,7 @@ module DirectoryVersion =
                             | Ok event -> return! this.ApplyEvent { Event = event; Metadata = metadata }
                             | Error error -> return Error error
                         with ex ->
-                            return Error(GraceError.CreateWithMetadata $"{createExceptionResponse ex}" metadata.CorrelationId metadata.Properties)
+                            return Error(GraceError.CreateWithMetadata $"{ExceptionResponse.Create ex}" metadata.CorrelationId metadata.Properties)
                     }
 
                 task {
@@ -420,14 +509,12 @@ module DirectoryVersion =
 
         interface IRemindable with
             member this.ReceiveReminderAsync(reminderName, state, dueTime, period) =
-                let stateManager = this.StateManager
-
                 match reminderName with
                 | ReminderType.DeleteCachedState ->
                     task {
                         try
-                            let (deleteReason, correlationId) = fromByteArray<PhysicalDeletionReminderState> state
-                            this.correlationId <- correlationId
+                            let deleteReason = fromByteArray<PhysicalDeletionReminderState> state
+                            this.correlationId <- this.correlationId
                         with ex ->
                             ()
 

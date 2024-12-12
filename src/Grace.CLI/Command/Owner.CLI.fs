@@ -178,7 +178,7 @@ module Owner =
                         return! Owner.Create(parameters)
                 | Error error -> return Error error
             with ex ->
-                return Error(GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
+                return Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
         }
 
     let private Create =
@@ -236,7 +236,7 @@ module Owner =
                         return! Owner.Get(parameters)
                 | Error error -> return Error error
             with ex ->
-                return Error(GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
+                return Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
         }
 
     let private Get =
@@ -309,7 +309,7 @@ module Owner =
                         return result
                 | Error error -> return Error error
             with ex ->
-                return Error(GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
+                return Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
         }
 
     let private SetName =
@@ -356,7 +356,7 @@ module Owner =
                         return! Owner.SetType(parameters)
                 | Error error -> return Error error
             with ex ->
-                return Error(GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
+                return Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
         }
 
     let private SetType =
@@ -403,7 +403,7 @@ module Owner =
                         return! Owner.SetSearchVisibility(parameters)
                 | Error error -> return Error error
             with ex ->
-                return Error(GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
+                return Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
         }
 
     let private SetSearchVisibility =
@@ -451,7 +451,7 @@ module Owner =
                         return! Owner.SetDescription(parameters)
                 | Error error -> return Error error
             with ex ->
-                return Error(GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
+                return Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
         }
 
     let private SetDescription =
@@ -501,7 +501,7 @@ module Owner =
                         return! Owner.Delete(parameters)
                 | Error error -> return Error error
             with ex ->
-                return Error(GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
+                return Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
         }
 
     let private Delete =
@@ -546,7 +546,7 @@ module Owner =
                         return! Owner.Undelete(parameters)
                 | Error error -> return Error error
             with ex ->
-                return Error(GraceError.Create $"{Utilities.createExceptionResponse ex}" (parseResult |> getCorrelationId))
+                return Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
         }
 
     let private Undelete =

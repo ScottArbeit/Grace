@@ -7,6 +7,7 @@ open Dapr.Client
 open Dapr.Actors.Client
 open Grace.Actors.Constants
 open Grace.Actors.Context
+open Grace.Actors.Types
 open Grace.Shared
 open Grace.Shared.Types
 open Grace.Shared.Utilities
@@ -15,22 +16,44 @@ open Microsoft.Extensions.Caching.Memory
 open Microsoft.Extensions.Configuration
 open Microsoft.Extensions.DependencyInjection
 open Microsoft.Extensions.Logging
+open Microsoft.Extensions.ObjectPool
 open NodaTime
 open System
 open System.Collections.Concurrent
 open System.Collections.Generic
 open System.Globalization
+open System.IO
 open System.Linq
+open System.Net.Http
+open System.Net.Sockets
+open System.Reflection
+open System.Text
 open System.Threading
 open System.Threading.Tasks
-open System.Net.Http
-open System
-open System.Net.Sockets
 
 module ApplicationContext =
 
     let mutable private configuration: IConfiguration = null
     let Configuration () : IConfiguration = configuration
+    let mutable private log: ILogger = null
+
+    /// Defines a PooledObjectPolicy specialized for the StringBuilder type.
+    type StringBuilderPooledObjectPolicy() =
+        inherit PooledObjectPolicy<StringBuilder>()
+
+        override _.Create() = new StringBuilder()
+
+        override _.Return(sb: StringBuilder) =
+            sb.Clear() |> ignore
+            true
+
+    let pooledObjectPolicy = StringBuilderPooledObjectPolicy()
+
+    /// An ObjectPool that can be used to efficiently get StringBuilder instances.
+    let stringBuilderPool = ObjectPool.Create<StringBuilder>(pooledObjectPolicy)
+
+    /// Global dictionary of timing information for each request.
+    let timings = ConcurrentDictionary<CorrelationId, List<Timing>>()
 
     /// Dapr actor proxy factory instance
     let mutable actorProxyFactory: IActorProxyFactory = null
@@ -44,9 +67,21 @@ module ApplicationContext =
     /// Grace Server's universal .NET memory cache
     let mutable memoryCache: IMemoryCache = null
 
+    /// CosmosDB client instance
+    let mutable cosmosClient: CosmosClient = null
+
+    /// CosmosDB container client instance
+    let mutable cosmosContainer: Container = null
+
     /// Sets the Application global configuration.
     let setConfiguration (config: IConfiguration) =
+        let assembly = Assembly.GetExecutingAssembly()
+        let version = assembly.GetName().Version
+        let fileInfo = FileInfo(assembly.Location)
+
         logToConsole $"In setConfiguration: isNull(config): {isNull (config)}."
+        logToConsole $"Grace Server version: {version}; build time (UTC): {fileInfo.LastWriteTimeUtc}."
+
         configuration <- config
     //configuration.AsEnumerable() |> Seq.iter (fun kvp -> logToConsole $"{kvp.Key}: {kvp.Value}")
 
@@ -63,6 +98,7 @@ module ApplicationContext =
     /// Sets the ILoggerFactory for the application.
     let setLoggerFactory logFactory =
         loggerFactory <- logFactory
+        log <- loggerFactory.CreateLogger("ApplicationContext.Server")
         setLoggerFactory loggerFactory
 
     /// Holds information about each Azure Storage Account used by the application.
@@ -87,6 +123,7 @@ module ApplicationContext =
 
     let mutable sharedKeyCredential: StorageSharedKeyCredential = null
     let mutable grpcPortListener: TcpListener = null
+    let secondsToWaitForDaprToBeReady = 30.0
 
     let defaultObjectStorageProvider = ObjectStorageProvider.AzureBlobStorage
 
@@ -94,7 +131,16 @@ module ApplicationContext =
     let Set =
         task {
             let mutable isReady = false
-            let secondsToWaitForDaprToBeReady = 30.0
+
+            let mutable workerThreads = 0
+            let mutable completionPortThreads = 0
+            ThreadPool.GetMaxThreads(&workerThreads, &completionPortThreads)
+            logToConsole $"Initial ThreadPool.GetMaxThreads: workerThreads: {workerThreads}; completionPortThreads: {completionPortThreads}."
+            ThreadPool.GetAvailableThreads(&workerThreads, &completionPortThreads)
+            logToConsole $"Initial ThreadPool.GetAvailableThreads: workerThreads: {workerThreads}; completionPortThreads: {completionPortThreads}."
+
+            //let threadPoolSet = ThreadPool.SetMinThreads(25, 1000)
+            //if not <| threadPoolSet then logToConsole "Could not set ThreadPool.MinThreads."
 
             // Wait for the Dapr gRPC port to be ready.
             logToConsole
@@ -168,7 +214,7 @@ module ApplicationContext =
             //cosmosClientOptions.HttpClientFactory <- httpClientFactory
             //cosmosClientOptions.ConnectionMode <- ConnectionMode.Direct
 #endif
-            let cosmosClient = new CosmosClient(cosmosDbConnectionString, cosmosClientOptions)
+            cosmosClient <- new CosmosClient(cosmosDbConnectionString, cosmosClientOptions)
             let! databaseResponse = cosmosClient.CreateDatabaseIfNotExistsAsync(cosmosDatabaseName)
             let database = databaseResponse.Database
 
@@ -176,12 +222,13 @@ module ApplicationContext =
             let containerProperties = ContainerProperties(Id = cosmosContainerName, PartitionKeyPath = "/partitionKey", DefaultTimeToLive = 3600)
 
             let! containerResponse = database.CreateContainerIfNotExistsAsync(containerProperties)
-            let cosmosContainer = containerResponse.Container
+            cosmosContainer <- containerResponse.Container
 
             logToConsole $"CosmosDB database '{cosmosDatabaseName}' and container '{cosmosContainer.Id}' are ready."
 
             // Create a MemoryCache instance.
-            let memoryCacheOptions = MemoryCacheOptions(TrackStatistics = true, TrackLinkedCacheEntries = true)
+            let memoryCacheOptions =
+                MemoryCacheOptions(TrackStatistics = false, TrackLinkedCacheEntries = false, ExpirationScanFrequency = TimeSpan.FromSeconds(30.0))
             //memoryCacheOptions.SizeLimit <- 100L * 1024L * 1024L
             memoryCache <- new MemoryCache(memoryCacheOptions, loggerFactory)
 
@@ -189,6 +236,8 @@ module ApplicationContext =
             setCosmosClient cosmosClient
             setCosmosContainer cosmosContainer
             setMemoryCache memoryCache
+            setStringBuilderPool stringBuilderPool
+            setTimings timings
 
             logToConsole "Grace Server is ready."
         }

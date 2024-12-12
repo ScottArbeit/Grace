@@ -56,6 +56,7 @@ module MemoryCache =
         /// Check if we have an entry in MemoryCache for an ActorId, and return the CorrelationId if we have it.
         member this.GetCorrelationIdEntry(actorId: ActorId) = this.GetFromCache<string> $"{correlationIdPrefix}:{actorId}"
 
+
         /// Create a new entry in MemoryCache to confirm that an OwnerId exists.
         member this.CreateOwnerIdEntry (ownerId: OwnerId) (value: string) = this.CreateWithDefaultExpirationTime $"{ownerIdPrefix}:{ownerId}" value
 
@@ -185,12 +186,11 @@ module MemoryCache =
         /// Remove an entry in MemoryCache for a BranchName.
         member this.RemoveBranchNameEntry(branchName: string) = this.Remove($"{branchNamePrefix}:{branchName}")
 
-        /// Create a new entry in MemoryCache to store the current ThreadCount.
-        member this.CreateThreadCountEntry(threadCount: int) =
-            use newCacheEntry =
-                this.CreateEntry("CurrentThreadCount", Value = threadCount, AbsoluteExpiration = DateTimeOffset.UtcNow.Add(TimeSpan.FromSeconds(30.0)))
 
+        /// Create a new entry in MemoryCache to store the current thread count information.
+        member this.CreateThreadCountEntry(threadInfo: string) =
+            use newCacheEntry = this.CreateEntry("ThreadCounts", Value = threadInfo, AbsoluteExpiration = DateTimeOffset.UtcNow.Add(TimeSpan.FromSeconds(1.0)))
             ()
 
         /// Check if we have an entry in MemoryCache for the current ThreadCount.
-        member this.GetThreadCountEntry() = this.GetFromCache<int> "CurrentThreadCount"
+        member this.GetThreadCountEntry() = this.GetFromCache<string> "ThreadCounts"

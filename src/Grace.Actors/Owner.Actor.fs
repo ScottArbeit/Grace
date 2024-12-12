@@ -9,6 +9,7 @@ open Grace.Actors.Events.Owner
 open Grace.Actors.Extensions.ActorProxy
 open Grace.Actors.Extensions.MemoryCache
 open Grace.Actors.Services
+open Grace.Actors.Types
 open Grace.Actors.Interfaces
 open Grace.Shared
 open Grace.Shared.Constants
@@ -33,18 +34,19 @@ module Owner =
     type PhysicalDeletionReminderState = (DeleteReason * CorrelationId)
 
     let GetActorId (ownerId: OwnerId) = ActorId($"{ownerId}")
+    let log = loggerFactory.CreateLogger("Owner.Actor")
 
     type OwnerActor(host: ActorHost) =
         inherit Actor(host)
 
-        let actorName = Constants.ActorName.Owner
-        let log = loggerFactory.CreateLogger("Owner.Actor")
+        static let actorName = ActorName.Owner
+        static let dtoStateName = StateName.OwnerDto
+        static let eventsStateName = StateName.Owner
+
         let mutable actorStartTime = Instant.MinValue
         let mutable logScope: IDisposable = null
         let mutable currentCommand = String.Empty
-
-        let dtoStateName = StateName.OwnerDto
-        let eventsStateName = StateName.Owner
+        let mutable stateManager = Unchecked.defaultof<IActorStateManager>
 
         let mutable ownerDto = OwnerDto.Default
         let mutable ownerEvents: List<OwnerEvent> = null
@@ -81,37 +83,27 @@ module Owner =
 
         override this.OnActivateAsync() =
             let activateStartTime = getCurrentInstant ()
-            let stateManager = this.StateManager
+            stateManager <- this.StateManager
 
             task {
-                let mutable message = String.Empty
-                let! retrievedDto = Storage.RetrieveState<OwnerDto> stateManager (dtoStateName)
-
                 let correlationId =
                     match memoryCache.GetCorrelationIdEntry this.Id with
                     | Some correlationId -> correlationId
                     | None -> String.Empty
 
-                match retrievedDto with
-                | Some retrievedDto ->
-                    ownerDto <- retrievedDto
-                    message <- "Retrieved from database"
-                | None ->
-                    ownerDto <- OwnerDto.Default
-                    message <- "Not found in database"
+                try
+                    let! retrievedDto = Storage.RetrieveState<OwnerDto> stateManager (dtoStateName) correlationId
 
-                let duration_ms = getPaddedDuration_ms activateStartTime
+                    match retrievedDto with
+                    | Some retrievedDto -> ownerDto <- retrievedDto
+                    | None -> ownerDto <- OwnerDto.Default
 
-                log.LogInformation(
-                    "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Activated {ActorType} {ActorId}. {message}.",
-                    getCurrentInstantExtended (),
-                    getMachineName,
-                    duration_ms,
-                    correlationId,
-                    actorName,
-                    host.Id,
-                    message
-                )
+                    logActorActivation log activateStartTime correlationId actorName this.Id (getActorActivationMessage retrievedDto)
+                with ex ->
+                    let exc = ExceptionResponse.Create ex
+                    log.LogError("{CurrentInstant} Error activating {ActorType} {ActorId}.", getCurrentInstantExtended (), this.GetType().Name, host.Id)
+                    log.LogError("{CurrentInstant} {ExceptionDetails}", getCurrentInstantExtended (), exc.ToString())
+                    logActorActivation log activateStartTime correlationId actorName this.Id "Exception occurred during activation."
             }
             :> Task
 
@@ -151,7 +143,7 @@ module Owner =
 
             if String.IsNullOrEmpty(currentCommand) then
                 log.LogInformation(
-                    "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {ActorName}.{MethodName}; OwnerId: {Id}.",
+                    "{CurrentInstant}: Node: {HostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {ActorName}.{MethodName}; OwnerId: {Id}.",
                     getCurrentInstantExtended (),
                     getMachineName,
                     duration_ms,
@@ -162,7 +154,7 @@ module Owner =
                 )
             else
                 log.LogInformation(
-                    "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {ActorName}.{MethodName}; Command: {Command}; OwnerId: {Id}.",
+                    "{CurrentInstant}: Node: {HostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {ActorName}.{MethodName}; Command: {Command}; OwnerId: {Id}.",
                     getCurrentInstantExtended (),
                     getMachineName,
                     duration_ms,
@@ -179,11 +171,9 @@ module Owner =
         // This is essentially an object-oriented implementation of the Lazy<T> pattern. I was having issues with Lazy<T>,
         //   and after a solid day wrestling with it, I dropped it and did this. Works a treat.
         member private this.OwnerEvents() =
-            let stateManager = this.StateManager
-
             task {
                 if ownerEvents = null then
-                    let! retrievedEvents = Storage.RetrieveState<List<OwnerEvent>> stateManager eventsStateName
+                    let! retrievedEvents = Storage.RetrieveState<List<OwnerEvent>> stateManager eventsStateName this.correlationId
 
                     ownerEvents <-
                         match retrievedEvents with
@@ -194,8 +184,6 @@ module Owner =
             }
 
         member private this.ApplyEvent ownerEvent =
-            let stateManager = this.StateManager
-
             task {
                 try
                     let! ownerEvents = this.OwnerEvents()
@@ -225,7 +213,7 @@ module Owner =
 
                     return Ok returnValue
                 with ex ->
-                    let exceptionResponse = createExceptionResponse ex
+                    let exceptionResponse = ExceptionResponse.Create ex
                     log.LogError(ex, "Exception in Owner.Actor: event: {event}", (serialize ownerEvent))
                     let graceError = GraceError.Create (OwnerError.getErrorMessage OwnerError.FailedWhileApplyingEvent) ownerEvent.Metadata.CorrelationId
 
@@ -282,16 +270,51 @@ module Owner =
                 | Some error -> return Error error
             }
 
-        /// Sets a Dapr Actor reminder to perform a physical deletion of this owner.
-        member private this.SchedulePhysicalDeletion(deleteReason, correlationId) =
-            let (tuple: PhysicalDeletionReminderState) = (deleteReason, correlationId)
+        interface IGraceReminder with
+            /// Schedules a Grace reminder.
+            member this.ScheduleReminderAsync reminderType delay state correlationId =
+                task {
+                    let reminder = ReminderDto.Create actorName $"{this.Id}" reminderType (getFutureInstant delay) state correlationId
+                    do! createReminder reminder
+                }
+                :> Task
 
-            this.RegisterReminderAsync(
-                ReminderType.PhysicalDeletion,
-                toByteArray tuple,
-                Constants.DefaultPhysicalDeletionReminderTime,
-                TimeSpan.FromMilliseconds(-1)
-            )
+            /// Receives a Grace reminder.
+            member this.ReceiveReminderAsync(reminder: ReminderDto) : Task<Result<unit, GraceError>> =
+                task {
+                    match reminder.ReminderType with
+                    | ReminderTypes.PhysicalDeletion ->
+                        // Get values from state.
+                        let (deleteReason, correlationId) = deserialize<PhysicalDeletionReminderState> reminder.State
+                        this.correlationId <- correlationId
+
+                        // Delete saved state for this actor.
+                        let! deletedDtoState = stateManager.TryRemoveStateAsync(dtoStateName)
+                        let! deletedEventsState = stateManager.TryRemoveStateAsync(eventsStateName)
+
+                        // Mark the actor as disposed, in case someone tries to use it before Dapr GC's it.
+                        isDisposed <- true
+
+                        log.LogInformation(
+                            "{CurrentInstant}: CorrelationId: {correlationId}; Deleted physical state for owner; OwnerId: {ownerId}; OwnerName: {ownerName}; deleteReason: {deleteReason}.",
+                            getCurrentInstantExtended (),
+                            correlationId,
+                            ownerDto.OwnerId,
+                            ownerDto.OwnerName,
+                            deleteReason
+                        )
+
+                        // Set all values to default.
+                        ownerDto <- OwnerDto.Default
+                        return Ok()
+                    | _ ->
+                        return
+                            Error(
+                                GraceError.Create
+                                    $"{actorName} does not process reminder type {discriminatedUnionCaseName reminder.ReminderType}."
+                                    this.correlationId
+                            )
+                }
 
         interface IOwnerActor with
             member this.Exists correlationId =
@@ -387,7 +410,15 @@ module Owner =
                                             // Delete the organizations.
                                             match! this.LogicalDeleteOrganizations(organizations, metadata, deleteReason) with
                                             | Ok _ ->
-                                                let! deletionReminder = this.SchedulePhysicalDeletion(deleteReason, metadata.CorrelationId)
+                                                let (reminderState: PhysicalDeletionReminderState) = (deleteReason, metadata.CorrelationId)
+
+                                                do!
+                                                    (this :> IGraceReminder).ScheduleReminderAsync
+                                                        ReminderTypes.PhysicalDeletion
+                                                        DefaultPhysicalDeletionReminderDuration
+                                                        (serialize reminderState)
+                                                        metadata.CorrelationId
+
                                                 return Ok(LogicalDeleted(force, deleteReason))
                                             | Error error -> return Error error
                                     | OwnerCommand.DeletePhysical ->
@@ -400,7 +431,7 @@ module Owner =
                             | Ok event -> return! this.ApplyEvent { Event = event; Metadata = metadata }
                             | Error error -> return Error error
                         with ex ->
-                            return Error(GraceError.CreateWithMetadata $"{createExceptionResponse ex}" metadata.CorrelationId metadata.Properties)
+                            return Error(GraceError.CreateWithMetadata $"{ExceptionResponse.Create ex}" metadata.CorrelationId metadata.Properties)
                     }
 
                 task {
@@ -411,42 +442,3 @@ module Owner =
                     | Ok command -> return! processCommand command metadata
                     | Error error -> return Error error
                 }
-
-        interface IRemindable with
-            override this.ReceiveReminderAsync(reminderName, state, dueTime, period) =
-                let stateManager = this.StateManager
-
-                match reminderName with
-                | ReminderType.Maintenance ->
-                    task {
-                        // Do some maintenance
-                        ()
-                    }
-                    :> Task
-                | ReminderType.PhysicalDeletion ->
-                    task {
-                        // Get values from state.
-                        let (deleteReason, correlationId) = fromByteArray<PhysicalDeletionReminderState> state
-                        this.correlationId <- correlationId
-
-                        // Delete saved state for this actor.
-                        let! deletedDtoState = stateManager.TryRemoveStateAsync(dtoStateName)
-                        let! deletedEventsState = stateManager.TryRemoveStateAsync(eventsStateName)
-
-                        // Mark the actor as disposed, in case someone tries to use it before Dapr GC's it.
-                        isDisposed <- true
-
-                        log.LogInformation(
-                            "{currentInstant}: CorrelationId: {correlationId}; Deleted physical state for owner; OwnerId: {ownerId}; OwnerName: {ownerName}; deleteReason: {deleteReason}.",
-                            getCurrentInstantExtended (),
-                            correlationId,
-                            ownerDto.OwnerId,
-                            ownerDto.OwnerName,
-                            deleteReason
-                        )
-
-                        // Set all values to default.
-                        ownerDto <- OwnerDto.Default
-                    }
-                    :> Task
-                | _ -> failwith "Unknown reminder type."

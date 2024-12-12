@@ -62,7 +62,7 @@ module DirectoryVersion =
                     graceError.Properties.Add("Path", context.Request.Path)
                     return! context |> result400BadRequest graceError
             with ex ->
-                let graceError = GraceError.Create $"{Utilities.createExceptionResponse ex}" (getCorrelationId context)
+                let graceError = GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (getCorrelationId context)
 
                 graceError.Properties.Add("Path", context.Request.Path)
                 return! context |> result500ServerError graceError
@@ -108,7 +108,7 @@ module DirectoryVersion =
             with ex ->
                 return!
                     context
-                    |> result500ServerError (GraceError.Create $"{Utilities.createExceptionResponse ex}" correlationId)
+                    |> result500ServerError (GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" correlationId)
         }
 
     /// Create a new directory version.

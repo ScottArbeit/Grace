@@ -73,7 +73,7 @@ module Diff =
     //                graceError.Properties.Add("Path", context.Request.Path)
     //                return! context |> result400BadRequest graceError
     //        with ex ->
-    //            return! context |> result500ServerError (GraceError.Create $"{Utilities.createExceptionResponse ex}" (getCorrelationId context))
+    //            return! context |> result500ServerError (GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (getCorrelationId context))
     //    }
 
     let processQuery<'T, 'U when 'T :> DiffParameters>
@@ -119,7 +119,7 @@ module Diff =
             with ex ->
                 return!
                     context
-                    |> result500ServerError (GraceError.Create $"{Utilities.createExceptionResponse ex}" (getCorrelationId context))
+                    |> result500ServerError (GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (getCorrelationId context))
         }
 
     /// Populates the diff actor, without returning the diff. This is meant to be used when generating the diff through reacting to an event.
@@ -144,7 +144,7 @@ module Diff =
                 with ex ->
                     return!
                         context
-                        |> result500ServerError (GraceError.Create $"{Utilities.createExceptionResponse ex}" (getCorrelationId context))
+                        |> result500ServerError (GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (getCorrelationId context))
             }
 
     /// Retrieves the contents of the diff.
@@ -172,7 +172,7 @@ module Diff =
                 with ex ->
                     return!
                         context
-                        |> result500ServerError (GraceError.Create $"{Utilities.createExceptionResponse ex}" (getCorrelationId context))
+                        |> result500ServerError (GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (getCorrelationId context))
             }
 
     /// Retrieves a diff taken by comparing two DirectoryVersions by Sha256Hash.
@@ -209,5 +209,5 @@ module Diff =
                 with ex ->
                     return!
                         context
-                        |> result500ServerError (GraceError.Create $"{Utilities.createExceptionResponse ex}" (getCorrelationId context))
+                        |> result500ServerError (GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (getCorrelationId context))
             }

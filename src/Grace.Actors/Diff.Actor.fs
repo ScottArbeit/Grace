@@ -14,7 +14,9 @@ open Grace.Actors.Extensions.ActorProxy
 open Grace.Actors.Extensions.MemoryCache
 open Grace.Actors.Interfaces
 open Grace.Actors.Services
+open Grace.Actors.Types
 open Grace.Shared
+open Grace.Shared.Constants
 open Grace.Shared.Diff
 open Grace.Shared.Dto.Diff
 open Grace.Shared.Dto.Repository
@@ -34,21 +36,24 @@ open System.Threading.Tasks
 module Diff =
 
     /// Deconstructs an ActorId of the form "{directoryId1}*{directoryId2}" into a tuple of the two DirectoryId values.
-    let private deconstructActorId (id: ActorId) =
+    let deconstructActorId (id: ActorId) =
         let directoryIds = id.GetId().Split("*")
         (DirectoryVersionId directoryIds[0], DirectoryVersionId directoryIds[1])
 
-    type PhysicalDeletionReminderState = (RepositoryId * DeleteReason * CorrelationId)
+    type DeleteCachedStateReminderState = RepositoryId * CorrelationId
+
+    let log = loggerFactory.CreateLogger("Diff.Actor")
 
     type DiffActor(host: ActorHost) =
         inherit Actor(host)
 
-        let dtoStateName = StateName.Diff
+        static let actorName = ActorName.Diff
+        static let dtoStateName = StateName.Diff
+
         let mutable diffDto: DiffDto = DiffDto.Default
-        let actorName = ActorName.Diff
-        let log = loggerFactory.CreateLogger("Diff.Actor")
         let mutable actorStartTime = Instant.MinValue
         let mutable logScope: IDisposable = null
+        let mutable stateManager = Unchecked.defaultof<IActorStateManager>
 
         /// Gets a Dictionary for indexed lookups by relative path.
         let getLookupCache (graceIndex: ServerGraceIndex) =
@@ -148,44 +153,29 @@ module Diff =
                 | ObjectStorageProvider.Unknown -> return new MemoryStream() :> Stream
             }
 
-        /// Schedules an actor reminder to delete the physical state for this branch.
-        member private this.SchedulePhysicalDeletion(deleteReason, delay, correlationId) =
-            let (tuple: PhysicalDeletionReminderState) = (diffDto.RepositoryId, deleteReason, correlationId)
-            this.RegisterReminderAsync(ReminderType.PhysicalDeletion, toByteArray tuple, delay, TimeSpan.FromMilliseconds(-1))
-
         override this.OnActivateAsync() =
             let activateStartTime = getCurrentInstant ()
-            let stateManager = this.StateManager
+            stateManager <- this.StateManager
 
             task {
-                let mutable message = String.Empty
-                let! retrievedDto = Storage.RetrieveState<DiffDto> stateManager dtoStateName
-
                 let correlationId =
                     match memoryCache.GetCorrelationIdEntry this.Id with
                     | Some correlationId -> correlationId
                     | None -> String.Empty
 
-                match retrievedDto with
-                | Some retrievedDto ->
-                    diffDto <- retrievedDto
-                    message <- "Retrieved from database"
-                | None ->
-                    diffDto <- DiffDto.Default
-                    message <- "Not found in database"
+                try
+                    let! retrievedDto = Storage.RetrieveState<DiffDto> stateManager dtoStateName correlationId
 
-                let duration_ms = getCurrentInstant().Minus(activateStartTime).TotalMilliseconds.ToString("F3")
+                    match retrievedDto with
+                    | Some retrievedDto -> diffDto <- retrievedDto
+                    | None -> diffDto <- DiffDto.Default
 
-                log.LogInformation(
-                    "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Activated {ActorType} {ActorId}. {message}.",
-                    getCurrentInstantExtended (),
-                    getMachineName,
-                    duration_ms,
-                    correlationId,
-                    actorName,
-                    host.Id,
-                    message
-                )
+                    logActorActivation log activateStartTime correlationId actorName this.Id (getActorActivationMessage retrievedDto)
+                with ex ->
+                    let exc = ExceptionResponse.Create ex
+                    log.LogError("{CurrentInstant} Error activating {ActorType} {ActorId}.", getCurrentInstantExtended (), this.GetType().Name, host.Id)
+                    log.LogError("{CurrentInstant} {ExceptionDetails}", getCurrentInstantExtended (), exc.ToString())
+                    logActorActivation log activateStartTime correlationId actorName this.Id "Exception occurred during activation."
             }
             :> Task
 
@@ -202,7 +192,7 @@ module Diff =
             let duration_ms = (getCurrentInstant().Minus(actorStartTime).TotalMilliseconds).ToString("F3")
 
             log.LogInformation(
-                "{currentInstant}: Node: {hostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {ActorName}.{MethodName}; DirectoryId1: {DirectoryId1}; DirectoryId2: {DirectoryId2}.",
+                "{CurrentInstant}: Node: {HostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {ActorName}.{MethodName}; DirectoryId1: {DirectoryId1}; DirectoryId2: {DirectoryId2}.",
                 getCurrentInstantExtended (),
                 getMachineName,
                 duration_ms,
@@ -222,6 +212,62 @@ module Diff =
             else
                 Some diffDto |> returnValueTask
 
+        interface IGraceReminder with
+            /// Sets a Grace reminder to perform a physical deletion of this actor.
+            member this.ScheduleReminderAsync reminderType delay state correlationId =
+                task {
+                    let reminder = ReminderDto.Create actorName $"{this.Id}" reminderType (getFutureInstant delay) state correlationId
+                    do! createReminder reminder
+                }
+                :> Task
+
+            /// Receives a Grace reminder.
+            member this.ReceiveReminderAsync(reminder: ReminderDto) : Task<Result<unit, GraceError>> =
+                task {
+                    match reminder.ReminderType with
+                    | ReminderTypes.DeleteCachedState ->
+                        // Get values from state.
+                        let (deleteReason, correlationId) = deserialize<DeleteCachedStateReminderState> reminder.State
+
+                        this.correlationId <- correlationId
+
+                        // Delete saved state for this actor.
+                        let! deleted = Storage.DeleteState stateManager dtoStateName
+
+                        if deleted then
+                            log.LogInformation(
+                                "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; Deleted cache for diff; RepositoryId: {RepositoryId}; DirectoryId1: {DirectoryId1}; DirectoryId2: {DirectoryId2}; deleteReason: {deleteReason}.",
+                                getCurrentInstantExtended (),
+                                getMachineName,
+                                correlationId,
+                                diffDto.RepositoryId,
+                                diffDto.DirectoryId1,
+                                diffDto.DirectoryId2,
+                                deleteReason
+                            )
+                        else
+                            log.LogWarning(
+                                "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; Failed to delete cache for diff (it may have already been deleted); RepositoryId: {RepositoryId}; DirectoryId1: {DirectoryId1}; DirectoryId2: {DirectoryId2}; deleteReason: {deleteReason}.",
+                                getCurrentInstantExtended (),
+                                getMachineName,
+                                correlationId,
+                                diffDto.RepositoryId,
+                                diffDto.DirectoryId1,
+                                diffDto.DirectoryId2,
+                                deleteReason
+                            )
+
+                        return Ok()
+                    | _ ->
+                        return
+                            Error(
+                                (GraceError.Create
+                                    $"{actorName} does not process reminder type {discriminatedUnionCaseName reminder.ReminderType}."
+                                    this.correlationId)
+                                    .enhance ("IsRetryable", "false")
+                            )
+                }
+
         interface IDiffActor with
             member this.Compute correlationId =
                 this.correlationId <- correlationId
@@ -230,7 +276,7 @@ module Diff =
                 if diffDto.DirectoryId1 <> DiffDto.Default.DirectoryId1 then
                     (true |> returnTask)
                 else
-                    let stateManager = this.StateManager
+                    //let stateManager = this.StateManager
 
                     task {
                         let (directoryId1, directoryId2) = deconstructActorId this.Id
@@ -350,18 +396,20 @@ module Diff =
                                     Directory2CreatedAt = createdAt2
                                     Differences = differences }
 
-                            do! Storage.SaveState stateManager dtoStateName diffDto
+                            do! Storage.SaveState stateManager dtoStateName diffDto this.correlationId
 
-                            let! deletionReminder =
-                                this.SchedulePhysicalDeletion(
-                                    ReminderType.DeleteCachedState,
-                                    TimeSpan.FromDays(float repositoryDto.DiffCacheDays),
+                            let (reminderState: DeleteCachedStateReminderState) = (diffDto.RepositoryId, correlationId)
+
+                            do!
+                                (this :> IGraceReminder).ScheduleReminderAsync
+                                    ReminderTypes.DeleteCachedState
+                                    (Duration.FromDays(float repositoryDto.DiffCacheDays))
+                                    (serialize reminderState)
                                     correlationId
-                                )
 
                             return true
                         with ex ->
-                            logToConsole $"Exception in DiffActor.Compute(): {createExceptionResponse ex}"
+                            logToConsole $"Exception in DiffActor.Compute(): {ExceptionResponse.Create ex}"
                             logToConsole $"directoryId1: {directoryId1}; directoryId2: {directoryId2}"
 
                             Activity.Current
@@ -389,12 +437,3 @@ module Diff =
                         logToConsole $"In Actor.GetDiff(), already populated."
                         return diffDto
                 }
-
-        interface IRemindable with
-            member this.ReceiveReminderAsync(reminderName, state, dueTime, period) =
-                match reminderName with
-                | ReminderType.DeleteCachedState ->
-                    let stateManager = this.StateManager
-
-                    task { return! Storage.DeleteState stateManager dtoStateName } :> Task
-                | _ -> Task.CompletedTask

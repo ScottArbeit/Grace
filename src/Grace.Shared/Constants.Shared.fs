@@ -68,6 +68,10 @@ module Constants =
         let (case, _) = FSharpValue.GetUnionFields(value, discriminatedUnionType)
         $"{case.Name}"
 
+    /// The name of the Grace System user.
+    [<Literal>]
+    let GraceSystemUser = "gracesystem"
+
     /// The name of the Dapr service for Grace object storage.
     let GraceObjectStorage = "graceobjectstorage"
 
@@ -79,6 +83,15 @@ module Constants =
 
     /// The name of the event topic to publish to.
     let GraceEventStreamTopic = "graceeventstream"
+
+    /// The name of the reminders topic to publish to.
+    let GraceRemindersStorage = "actorstorage" // For now, keeping reminders in the same storage as actors.
+
+    /// The name of the reminders topic to publish to.
+    let GraceRemindersTopic = "gracereminders"
+
+    /// The name of the reminders subscription to subscribe to.
+    let GraceRemindersSubscription = "reminder-service"
 
     /// The name of the Dapr service for retrieving application secrets.
     let GraceSecretStoreName = "kubernetessecretstore"
@@ -124,6 +137,26 @@ module Constants =
 
     /// Environment variables used by Grace.
     module EnvironmentVariables =
+        /// The environment variable that contains the Azure Cosmos DB Connection String.
+        [<Literal>]
+        let AzureCosmosDBConnectionString = "azurecosmosdbconnectionstring"
+
+        /// The environment variable that contains the Azure Storage Connection String.
+        [<Literal>]
+        let AzureStorageConnectionString = "azurestorageconnectionstring"
+
+        /// The environment variable that contains the Azure Storage Key.
+        [<Literal>]
+        let AzureStorageKey = "azurestoragekey"
+
+        /// The environment variable that contains the name of the CosmosDB container to use for Grace.
+        [<Literal>]
+        let CosmosContainerName = "cosmoscontainername"
+
+        /// The environment variable that contains the name of the CosmosDB database to use for Grace.
+        [<Literal>]
+        let CosmosDatabaseName = "cosmosdatabasename"
+
         /// The environment variable that contains the Dapr application ID.
         [<Literal>]
         let DaprAppId = "DAPR_APP_ID"
@@ -144,25 +177,9 @@ module Constants =
         [<Literal>]
         let DaprGrpcPort = "DAPR_GRPC_PORT"
 
-        /// The environment variable that contains the Azure Cosmos DB Connection String.
+        /// The environment variable that contains the maximum number of reminders that each Grace instance should retrieve from the database and publish for processing.
         [<Literal>]
-        let AzureCosmosDBConnectionString = "azurecosmosdbconnectionstring"
-
-        /// The environment variable that contains the Azure Storage Connection String.
-        [<Literal>]
-        let AzureStorageConnectionString = "azurestorageconnectionstring"
-
-        /// The environment variable that contains the Azure Storage Key.
-        [<Literal>]
-        let AzureStorageKey = "azurestoragekey"
-
-        /// The environment variable that contains the name of the CosmosDB database to use for Grace.
-        [<Literal>]
-        let CosmosDatabaseName = "cosmosdatabasename"
-
-        /// The environment variable that contains the name of the CosmosDB container to use for Grace.
-        [<Literal>]
-        let CosmosContainerName = "cosmoscontainername"
+        let GraceReminderCount = "graceremindercount"
 
     /// The default CacheControl header for object storage.
     [<Literal>]
@@ -240,9 +257,11 @@ module Constants =
     let DefaultParentBranchId = Guid("38EC9A98-00B0-4FA3-8CC5-ACFB04E445A7") // There's nothing special about this Guid. I just generated it one day.
 
     /// The name of the inter-process communication file used by grace watch to share status with other invocations of Grace.
+    [<Literal>]
     let IpcFileName = "graceWatchStatus.json"
 
     /// The name of the file to let `grace watch` know that `grace rebase` or `grace switch` is underway.
+    [<Literal>]
     let UpdateInProgressFileName = "graceUpdateInProgress.txt"
 
     /// The custom alphabet to use when generating a CorrelationId. This alphabet is URL-safe. Consists of "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz._-".
@@ -255,16 +274,16 @@ module Constants =
     /// Values used with Grace's MemoryCache.
     module MemoryCache =
         /// A special Guid value that means "false" or "we know there's no value here". Used in places where the cache entry value is a Guid.
-        let EntityDoesNotExistGuid = Guid("27F21D8A-DA1D-4C73-8773-4AA5A5712612")
+        let EntityDoesNotExistGuid = Guid("27F21D8A-DA1D-4C73-8773-4AA5A5712612") // There's nothing special about this Guid. I just generated it one day.
 
         /// A special Guid value that means "false" or "we know there's no value here". Used in places where the cache entry value is a Guid.
-        let EntityDoesNotExist = box EntityDoesNotExistGuid // There's nothing special about this Guid. I just generated it one day.
+        let EntityDoesNotExist = box EntityDoesNotExistGuid
 
-        /// The default value to store in Grace's MemoryCache when an entity is known to exist. This is a one-character string because MemoryCache values are Objects; although a bool would make more sense, using a constant string avoids boxing.
+        /// The default value to store in Grace's MemoryCache when an entity is known to exist. This is a one-character string because MemoryCache values are Objects, and constant string avoids boxing.
         [<Literal>]
         let ExistsValue = "y"
 
-        /// The default value to store in Grace's MemoryCache when a value is known not to exist. This is a one-character string because MemoryCache values are Objects; although a bool would make more sense, using a constant string avoids boxing.
+        /// The default value to store in Grace's MemoryCache when a value is known not to exist. This is a one-character string because MemoryCache values are Objects, and constant string avoids boxing.
         [<Literal>]
         let DoesNotExistValue = "n"
 
