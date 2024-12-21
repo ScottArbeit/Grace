@@ -14,6 +14,10 @@ open System.Text.Json.Serialization
 open System.Text.RegularExpressions
 open System.Collections.Generic
 open System.Threading.Tasks
+open MessagePack
+open MessagePack.FSharp
+open MessagePack.NodaTime
+open MessagePack.Resolvers
 
 module Constants =
 
@@ -38,14 +42,12 @@ module Constants =
 
     /// The universal JSON serialization options for Grace.
     let public JsonSerializerOptions = JsonSerializerOptions()
-    JsonSerializerOptions.AllowTrailingCommas <- true
     JsonSerializerOptions.Converters.Add(JsonFSharpConverter(jsonFSharpOptions))
-
-    JsonSerializerOptions.ConfigureForNodaTime(NodaTime.DateTimeZoneProviders.Tzdb)
-    |> ignore
-
+    JsonSerializerOptions.AllowTrailingCommas <- true
     JsonSerializerOptions.DefaultBufferSize <- 64 * 1024
     JsonSerializerOptions.DefaultIgnoreCondition <- JsonIgnoreCondition.WhenWritingDefault // JsonSerializerOptions.IgnoreNullValues is deprecated. This is the new way to say it.
+    JsonSerializerOptions.IndentSize <- 2
+    JsonSerializerOptions.MaxDepth <- 64 // Default is 64, and I'm assuming this setting would need to change if there were a directory depth greater than 64 in a repo.
     JsonSerializerOptions.NumberHandling <- JsonNumberHandling.AllowReadingFromString
     JsonSerializerOptions.PropertyNameCaseInsensitive <- true // Case sensitivity is from the 1970's. We should let it go.
     //JsonSerializerOptions.PropertyNamingPolicy <- JsonNamingPolicy.CamelCase
@@ -54,18 +56,31 @@ module Constants =
     JsonSerializerOptions.RespectNullableAnnotations <- true
     JsonSerializerOptions.UnknownTypeHandling <- JsonUnknownTypeHandling.JsonElement
     JsonSerializerOptions.WriteIndented <- true
-    JsonSerializerOptions.MaxDepth <- 16 // Default is 64, but if we exceed a depth of 16, we're probably doing something wrong.
 
-    /// Converts the full name of a discriminated union to a string. Example: ServerApiVersions.Latest -> "ServerApiVersions.Latest"
-    let discriminatedUnionFullName (value: 'T) =
+    JsonSerializerOptions.ConfigureForNodaTime(NodaTime.DateTimeZoneProviders.Tzdb)
+    |> ignore
+
+    /// The universal MessagePack serialization options for Grace.
+    let messagePackSerializerOptions =
+        MessagePackSerializerOptions.Standard
+            .WithResolver(CompositeResolver.Create(NodatimeResolver.Instance, StandardResolver.Instance))
+            .WithCompression(MessagePackCompression.Lz4BlockArray)
+            .WithSecurity(MessagePackSecurity.UntrustedData)
+
+    /// Converts both the type name and case name of a discriminated union to a string.
+    ///
+    /// Example: Animal.Dog -> "Animal.Dog"
+    let getDiscriminatedUnionFullName (x: 'T) =
         let discriminatedUnionType = typeof<'T>
-        let (case, _) = FSharpValue.GetUnionFields(value, discriminatedUnionType)
+        let (case, _) = FSharpValue.GetUnionFields(x, discriminatedUnionType)
         $"{discriminatedUnionType.Name}.{case.Name}"
 
-    /// Converts just the case name of a discriminated union to a string. Example: ServerApiVersions.Latest -> "Latest"
-    let discriminatedUnionCaseName (value: 'T) =
+    /// Converts just the case name of a discriminated union to a string.
+    ///
+    /// Example: Animal.Dog -> "Dog"
+    let getDiscriminatedUnionCaseName (x: 'T) =
         let discriminatedUnionType = typeof<'T>
-        let (case, _) = FSharpValue.GetUnionFields(value, discriminatedUnionType)
+        let (case, _) = FSharpValue.GetUnionFields(x, discriminatedUnionType)
         $"{case.Name}"
 
     /// The name of the Grace System user.
@@ -112,10 +127,10 @@ module Constants =
     let GraceIgnoreFileName = "graceignore.txt"
 
     /// The name of the file that holds the current local index for Grace.
-    let GraceStatusFileName = "gracestatus.json.gz"
+    let GraceStatusFileName = "gracestatus.msgpack"
 
     /// The name of the file that holds the current local index for Grace.
-    let GraceObjectCacheFile = "graceObjectCache.json.gz"
+    let GraceObjectCacheFile = "graceObjectCache.msgpack"
 
     /// The default branch name for new repositories.
     [<Literal>]
@@ -133,7 +148,7 @@ module Constants =
         | Latest
         | Edge
 
-        override this.ToString() = discriminatedUnionFullName this
+        override this.ToString() = getDiscriminatedUnionFullName this
 
     /// Environment variables used by Grace.
     module EnvironmentVariables =

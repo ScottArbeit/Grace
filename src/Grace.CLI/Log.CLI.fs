@@ -1,9 +1,13 @@
-﻿namespace Grace.CLI
-//////
+namespace Grace.CLI
+
 open Grace.Shared
+open Grace.Shared.Types
 open Grace.Shared.Utilities
 open NodaTime
+open System
 open System.Globalization
+open System.Collections.Concurrent
+open MessagePack
 
 module Log =
 

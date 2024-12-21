@@ -319,8 +319,8 @@ spec:
         dapr.io/placement-host-address: "dapr-placement-server.dapr-system.svc.cluster.local:50005"
         dapr.io/scheduler-host-address: "dapr-scheduler-server.dapr-system.svc.cluster.local:50006"
         #dapr.io/scheduler-host-address: "dapr-scheduler:6060"
-        dapr.io/sidecar-cpu-limit: "4.0"
-        dapr.io/sidecar-memory-limit: "768Mi"
+        dapr.io/sidecar-cpu-limit: "2.0"
+        dapr.io/sidecar-memory-limit: "1536Mi"
         dapr.io/sidecar-cpu-request: "0.25"
         dapr.io/sidecar-memory-request: "256Mi"
     spec:

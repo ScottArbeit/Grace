@@ -2,6 +2,7 @@ namespace Grace.Shared
 
 open Grace.Shared.Constants
 open Grace.Shared.Resources
+open Microsoft.Extensions.Caching.Memory
 open Microsoft.FSharp.NativeInterop
 open Microsoft.FSharp.Reflection
 open NodaTime
@@ -21,6 +22,8 @@ open System.Net
 open System
 open System.Reflection
 open System.Collections.Concurrent
+open System.Buffers
+open Microsoft.Extensions.ObjectPool
 
 #nowarn "9"
 
@@ -40,6 +43,23 @@ module Combinators =
     let (>=>) s1 s2 = s1 >> bind s2
 
 module Utilities =
+    let mutable memoryCache: IMemoryCache = null
+
+    /// Defines a PooledObjectPolicy specialized for the StringBuilder type.
+    type StringBuilderPooledObjectPolicy() =
+        inherit PooledObjectPolicy<StringBuilder>()
+
+        override _.Create() = new StringBuilder()
+
+        override _.Return(sb: StringBuilder) =
+            sb.Clear() |> ignore
+            true
+
+    let pooledObjectPolicy = StringBuilderPooledObjectPolicy()
+
+    /// An ObjectPool that can be used to efficiently get StringBuilder instances.
+    let stringBuilderPool = ObjectPool.Create<StringBuilder>(pooledObjectPolicy)
+
     /// Gets the current instant.
     let getCurrentInstant () = SystemClock.Instance.GetCurrentInstant()
 
@@ -121,18 +141,12 @@ module Utilities =
     /// Converts both the type name and case name of a discriminated union to a string.
     ///
     /// Example: Animal.Dog -> "Animal.Dog"
-    let getDiscriminatedUnionFullName (x: 'T) =
-        let discriminatedUnionType = typeof<'T>
-        let (case, _) = FSharpValue.GetUnionFields(x, discriminatedUnionType)
-        $"{discriminatedUnionType.Name}.{case.Name}"
+    let getDiscriminatedUnionFullName (x: 'T) = getDiscriminatedUnionFullName x
 
     /// Converts just the case name of a discriminated union to a string.
     ///
     /// Example: Animal.Dog -> "Dog"
-    let getDiscriminatedUnionCaseName (x: 'T) =
-        let discriminatedUnionType = typeof<'T>
-        let (case, _) = FSharpValue.GetUnionFields(x, discriminatedUnionType)
-        $"{case.Name}"
+    let getDiscriminatedUnionCaseName (x: 'T) = getDiscriminatedUnionCaseName x
 
     /// Converts a string into the corresponding case of a discriminated union type.
     ///
@@ -210,36 +224,69 @@ module Utilities =
         | _ -> false
 
     /// Returns the given path, replacing any Windows-style backslash characters (\) with forward-slash characters (/).
-    let normalizeFilePath (filePath: string) = filePath.Replace(@"\", "/")
+    let normalizedTimeSpan = TimeSpan.FromMinutes(1.0)
+
+    let normalizeFilePath (filePath: string) =
+        let mutable result = String.Empty
+
+        if not <| memoryCache.TryGetValue(filePath, &result) then
+            let normalized = filePath.Replace(@"\", "/")
+            memoryCache.Set(filePath, normalized, normalizedTimeSpan) |> ignore
+            normalized
+        else
+            result
 
     /// Switches "/" to "\" when we're running on Windows.
     let getNativeFilePath (filePath: string) = if runningOnWindows then filePath.Replace("/", @"\") else filePath
+
+    /// File stream options for reading files efficiently in Grace.
+    let fileStreamOptionsRead =
+        FileStreamOptions(
+            BufferSize = 8 * 1024,
+            Mode = FileMode.Open,
+            Access = FileAccess.Read,
+            Share = FileShare.Read,
+            Options = (FileOptions.Asynchronous ||| FileOptions.SequentialScan)
+        )
+
+    /// File stream options for writing files efficiently in Grace.
+    let fileStreamOptionsWrite =
+        FileStreamOptions(BufferSize = 8 * 1024, Mode = FileMode.Create, Access = FileAccess.Write, Share = FileShare.None, Options = FileOptions.Asynchronous)
+
+    let nulChar = char (0)
 
     /// Checks if a file is a binary file by scanning the first 8K for a 0x00 character; if it finds one, we assume the file is binary.
     ///
     /// This is the same algorithm used by Git.
     let isBinaryFile (stream: Stream) =
         task {
-            let defaultBytesToCheck = 8 * 1024
-            let nulChar = char (0)
-
             // If the file is smaller than 8K, we'll check the whole file.
+            let defaultBytesToCheck = 8 * 1024
+
             let bytesToCheck =
                 if stream.Length > defaultBytesToCheck then
                     defaultBytesToCheck
                 else
                     int (stream.Length)
 
-            // Create a buffer to hold the part of the file we're going to check.
-            let startingBytes = Array.zeroCreate<byte> bytesToCheck
+            // Get a buffer to hold the part of the file we're going to check.
+            let startingBytes = ArrayPool<byte>.Shared.Rent(bytesToCheck)
 
-            // Read the file into the buffer.
-            let! bytesRead = stream.ReadAsync(startingBytes, 0, bytesToCheck)
+            try
+                // Read the beginning of the file into the buffer.
+                let! bytesRead = stream.ReadAsync(startingBytes, 0, bytesToCheck)
 
-            // Search for a 0x00 character.
-            match startingBytes |> Array.tryFind (fun b -> char (b) = nulChar) with
-            | Some nul -> return true
-            | None -> return false
+                // Search for a 0x00 character.
+                match
+                    startingBytes
+                    |> Array.take bytesRead
+                    |> Array.tryFind (fun b -> char (b) = nulChar)
+                with
+                | Some nul -> return true
+                | None -> return false
+            finally
+                // Return the rented buffer to the pool, even if an exception is thrown.
+                if not <| isNull startingBytes then ArrayPool<byte>.Shared.Return(startingBytes)
         }
 
     /// Returns the directory of a file, relative to the root of the repository's working directory.
@@ -255,13 +302,18 @@ module Utilities =
         if relativePathParts.Length = 1 then
             Constants.RootDirectoryPath
         else
-            let relativeDirectoryPath =
-                relativePathParts[0..^1]
-                |> Array.fold (fun (sb: StringBuilder) currentPart -> sb.Append($"{currentPart}/")) (StringBuilder(standardizedFilePath.Length))
+            let sb = stringBuilderPool.Get()
 
-            relativeDirectoryPath.Remove(relativeDirectoryPath.Length - 1, 1) |> ignore // Remove trailing slash.
-            //logToConsole $"relativeDirectoryPath.ToString(): {relativeDirectoryPath.ToString()}"
-            (relativeDirectoryPath.ToString())
+            try
+                let relativeDirectoryPath =
+                    relativePathParts[0..^1]
+                    |> Array.fold (fun (sb: StringBuilder) currentPart -> sb.Append($"{currentPart}/")) sb
+
+                relativeDirectoryPath.Remove(relativeDirectoryPath.Length - 1, 1) |> ignore // Remove trailing slash.
+                //logToConsole $"relativeDirectoryPath.ToString(): {relativeDirectoryPath.ToString()}"
+                (relativeDirectoryPath.ToString())
+            finally
+                stringBuilderPool.Return(sb)
 
     /// Returns the directory of a file, relative to the root of the repository's working directory.
     let getLocalRelativeDirectory (filePath: string) rootDirectory =
@@ -282,15 +334,18 @@ module Utilities =
         then
             Constants.RootDirectoryPath
         else
-            let relativeDirectoryPath =
-                relativePathParts
-                |> Array.fold
-                    (fun (sb: StringBuilder) currentPart -> sb.Append($"{currentPart}{Path.DirectorySeparatorChar}"))
-                    (StringBuilder(originalFileRelativePath.Length))
+            let sb = stringBuilderPool.Get()
 
-            relativeDirectoryPath.Remove(relativeDirectoryPath.Length - 1, 1) |> ignore
-            //logToConsole $"In getRelativeDirectory: relativeDirectoryPath.ToString(): {relativeDirectoryPath.ToString()}"
-            (relativeDirectoryPath.ToString())
+            try
+                let relativeDirectoryPath =
+                    relativePathParts
+                    |> Array.fold (fun (sb: StringBuilder) currentPart -> sb.Append($"{currentPart}{Path.DirectorySeparatorChar}")) sb
+
+                relativeDirectoryPath.Remove(relativeDirectoryPath.Length - 1, 1) |> ignore
+                //logToConsole $"In getRelativeDirectory: relativeDirectoryPath.ToString(): {relativeDirectoryPath.ToString()}"
+                (relativeDirectoryPath.ToString())
+            finally
+                stringBuilderPool.Return(sb)
 
     /// Returns a randomly-generated, 12-character NanoId as a new CorrelationId.
     let generateCorrelationId () =
@@ -321,12 +376,15 @@ module Utilities =
     ///
     /// NOTE: This is different from Encoding.UTF8.GetString, which interprets the bytes as UTF-8 characters.
     let byteArrayToString (array: Span<byte>) =
-        let sb = StringBuilder(array.Length * 2)
+        let sb = stringBuilderPool.Get()
 
-        for b in array do
-            sb.Append($"{b:x2}") |> ignore
+        try
+            for b in array do
+                sb.Append($"{b:x2}") |> ignore
 
-        sb.ToString()
+            sb.ToString()
+        finally
+            stringBuilderPool.Return(sb)
 
     /// Converts a string of hexadecimal numbers to a byte array. For example, "ab1503" -> [0xab, 0x15, 0x03]
     ///

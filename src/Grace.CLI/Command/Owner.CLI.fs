@@ -132,7 +132,8 @@ module Owner =
             && not <| isNull (parseResult.CommandResult.FindResultFor(Options.ownerName))
             && not <| parseResult.CommandResult.FindResultFor(Options.ownerName).IsImplicit
         then
-            parameters.OwnerId <- String.Empty
+            //parameters.OwnerId <- String.Empty
+            ()
 
         parameters
 

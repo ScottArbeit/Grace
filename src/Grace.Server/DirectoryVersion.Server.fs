@@ -272,16 +272,17 @@ module DirectoryVersion =
                             Parallel.ForEachAsync(
                                 parameters.DirectoryVersions,
                                 Constants.ParallelOptions,
-                                (fun dv ct ->
+                                (fun directoryVersion ct ->
                                     ValueTask(
                                         task {
                                             // Check if the directory version exists. If it doesn't, create it.
-                                            let directoryVersionActor = DirectoryVersion.CreateActorProxy dv.DirectoryVersionId correlationId
+                                            let directoryVersionActor = DirectoryVersion.CreateActorProxy directoryVersion.DirectoryVersionId correlationId
 
                                             let! exists = directoryVersionActor.Exists parameters.CorrelationId
                                             //logToConsole $"In SaveDirectoryVersions: {dv.DirectoryId} exists: {exists}"
                                             if not <| exists then
-                                                let! createResult = directoryVersionActor.Handle (DirectoryVersion.Create dv) (createMetadata context)
+                                                let! createResult =
+                                                    directoryVersionActor.Handle (DirectoryVersion.Create directoryVersion) (createMetadata context)
 
                                                 results.Enqueue(createResult)
                                         }
@@ -296,16 +297,19 @@ module DirectoryVersion =
                                 | Error _ -> true)
 
                         match firstError with
-                        | None -> return GraceResult.Ok(GraceReturnValue.Create "Uploaded new directory versions." correlationId)
+                        | None -> return Ok(GraceReturnValue.Create "Uploaded new directory versions." correlationId)
                         | Some error ->
-                            let sb = StringBuilder()
+                            let sb = stringBuilderPool.Get()
 
-                            for result in results do
-                                match result with
-                                | Ok _ -> ()
-                                | Error error -> sb.Append($"{error.Error}; ") |> ignore
+                            try
+                                for result in results do
+                                    match result with
+                                    | Ok _ -> ()
+                                    | Error error -> sb.Append($"{error.Error}; ") |> ignore
 
-                            return GraceResult.Error(GraceError.Create (sb.ToString()) correlationId)
+                                return Error(GraceError.Create (sb.ToString()) correlationId)
+                            finally
+                                stringBuilderPool.Return(sb)
                     }
 
                 return! processCommand context validations command

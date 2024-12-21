@@ -2,6 +2,7 @@ namespace Grace.Actors
 
 open Grace.Actors.Context
 open Grace.Actors.Types
+open Grace.Shared.Types
 open Grace.Shared.Utilities
 open System
 open System.Collections.Generic
@@ -16,23 +17,21 @@ module Timing =
         logToConsole message
 
     let addTiming flag actorStateName correlationId =
-        let timingList = timings.GetOrAdd(correlationId, (fun _ -> List<Timing>()))
-        let timing = Timing.Create flag actorStateName
-        timingList.Add(timing)
+        //let timingList = timings.GetOrAdd(correlationId, (fun _ -> List<Timing>()))
+        //let timing = Timing.Create flag actorStateName
+        //timingList.Add(timing)
         ()
 
     let reportTimings path correlationId =
-        let mutable timingQueue = null
+        let mutable timingList = null
         let sb = stringBuilderPool.Get()
 
         try
-            if timings.TryGetValue(correlationId, &timingQueue) then
-                match timingQueue.Count with
+            if timings.TryGetValue(correlationId, &timingList) then
+                match timingList.Count with
                 | 0
                 | 1 -> ()
                 | _ ->
-                    let timingList = timingQueue.ToList()
-
                     sb.AppendLine().AppendLine(String.replicate 80 "=") |> ignore
 
                     sb.AppendLine($"CorrelationId: {correlationId}; Path: {path}; Timings: {timingList.Count} ")
@@ -46,6 +45,7 @@ module Timing =
                     for i in 1 .. timingList.Count - 1 do
                         let previousTiming = timingList[i - 1]
                         let currentTiming = timingList[i]
+                        logToConsole $"*******In reportTimings: correlationId: {correlationId}; timingList.Count: {timingList.Count}; i: {i}."
 
                         let previousActorStateName =
                             if String.IsNullOrEmpty(previousTiming.ActorStateName) then

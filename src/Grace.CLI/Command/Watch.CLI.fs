@@ -199,17 +199,20 @@ module Watch =
                     if fileDifferences.Count = 0 then
                         String.Empty
                     else
-                        let sb = StringBuilder()
+                        let sb = stringBuilderPool.Get()
 
-                        for fileDifference in fileDifferences do
-                            //sb.AppendLine($"{(discriminatedUnionCaseNameToString fileDifference.DifferenceType)}: {fileDifference.RelativePath}") |> ignore
-                            match fileDifference.DifferenceType with
-                            | Change -> sb.AppendLine($"{fileDifference.RelativePath}") |> ignore
-                            | Add -> sb.AppendLine($"Add {fileDifference.RelativePath}") |> ignore
-                            | Delete -> sb.AppendLine($"Delete {fileDifference.RelativePath}") |> ignore
+                        try
+                            for fileDifference in fileDifferences do
+                                //sb.AppendLine($"{(getDiscriminatedUnionCaseNameToString fileDifference.DifferenceType)}: {fileDifference.RelativePath}") |> ignore
+                                match fileDifference.DifferenceType with
+                                | Change -> sb.AppendLine($"{fileDifference.RelativePath}") |> ignore
+                                | Add -> sb.AppendLine($"Add {fileDifference.RelativePath}") |> ignore
+                                | Delete -> sb.AppendLine($"Delete {fileDifference.RelativePath}") |> ignore
 
-                        let saveMessage = sb.ToString()
-                        saveMessage.Remove(saveMessage.LastIndexOf(Environment.NewLine), Environment.NewLine.Length)
+                            let saveMessage = sb.ToString()
+                            saveMessage.Remove(saveMessage.LastIndexOf(Environment.NewLine), Environment.NewLine.Length)
+                        finally
+                            stringBuilderPool.Return(sb)
 
                 // If there are changes either to files or just to directories, create a save reference.
                 if (differences.Count > 0) then

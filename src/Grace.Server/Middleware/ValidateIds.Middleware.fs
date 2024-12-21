@@ -145,7 +145,7 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
                     match! deserializeToType requestBodyType context with
                     | None -> ()
                     | Some requestBody ->
-                        let mutable entityProperties: EntityProperties = EntityProperties.Default
+                        let mutable entityProperties = EntityProperties.Default
 
                         // Get the available entity properties for this endpoint from the cache.
                         //   If we don't already have them, figure out which properties are available for this type, and cache that.
@@ -154,9 +154,10 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
                             // Get all of the properties on the request body type.
                             let properties = requestBodyType.GetProperties(BindingFlags.Public ||| BindingFlags.Instance)
 
-                            let findProperty name = properties |> Seq.tryFind (fun p -> p.Name = name)
+                            /// Checks if a property with the given name exists on the request body type.
+                            let findProperty name = properties |> Seq.tryFind (fun property -> property.Name = name)
 
-                            // Check if these indivudal properties exist on the request body type.
+                            // Check if these entity properties exist on the request body type.
                             entityProperties <-
                                 { OwnerId = findProperty (nameof (OwnerId))
                                   OwnerName = findProperty (nameof (OwnerName))

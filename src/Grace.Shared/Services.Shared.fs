@@ -75,12 +75,12 @@ module Services =
                 hasher.AppendData(BitConverter.GetBytes(stream.Length))
                 // 4. Get the SHA-256 hash as a byte array.
                 let sha256Bytes = stackalloc<byte> SHA256.HashSizeInBytes
-                hasher.GetHashAndReset(sha256Bytes) |> ignore
+                hasher.GetCurrentHash(sha256Bytes) |> ignore
                 // 5. Convert the SHA-256 value from a byte[] to a string, and return it.
                 //    Example: byte[]{0x43, 0x2a, 0x01, 0xfa} -> "432a01fa"
                 return byteArrayToString (sha256Bytes)
             finally
-                if not <| isNull (buffer) then
+                if not <| isNull buffer then
                     ArrayPool<byte>.Shared.Return(buffer, clearArray = true)
 
                 if not <| isNull hasher then incrementalHashPool.Return(hasher)
@@ -113,7 +113,7 @@ module Services =
 
             // Convert the SHA-256 value from a byte[] to a string, and return it.
             //   Example: byte[]{0x43, 0x2a, 0x01, 0xfa} -> "432a01fa"
-            byteArrayToString sha256Bytes
+            Sha256Hash(byteArrayToString sha256Bytes)
         finally
             if not <| isNull hasher then incrementalHashPool.Return(hasher)
 

@@ -37,21 +37,6 @@ module ApplicationContext =
     let Configuration () : IConfiguration = configuration
     let mutable private log: ILogger = null
 
-    /// Defines a PooledObjectPolicy specialized for the StringBuilder type.
-    type StringBuilderPooledObjectPolicy() =
-        inherit PooledObjectPolicy<StringBuilder>()
-
-        override _.Create() = new StringBuilder()
-
-        override _.Return(sb: StringBuilder) =
-            sb.Clear() |> ignore
-            true
-
-    let pooledObjectPolicy = StringBuilderPooledObjectPolicy()
-
-    /// An ObjectPool that can be used to efficiently get StringBuilder instances.
-    let stringBuilderPool = ObjectPool.Create<StringBuilder>(pooledObjectPolicy)
-
     /// Global dictionary of timing information for each request.
     let timings = ConcurrentDictionary<CorrelationId, List<Timing>>()
 
@@ -232,11 +217,13 @@ module ApplicationContext =
             //memoryCacheOptions.SizeLimit <- 100L * 1024L * 1024L
             memoryCache <- new MemoryCache(memoryCacheOptions, loggerFactory)
 
+            // Inject things into Grace.Shared.
+            Utilities.memoryCache <- memoryCache
+
             // Inject things into Actor Services.
             setCosmosClient cosmosClient
             setCosmosContainer cosmosContainer
             setMemoryCache memoryCache
-            setStringBuilderPool stringBuilderPool
             setTimings timings
 
             logToConsole "Grace Server is ready."

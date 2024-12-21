@@ -274,20 +274,22 @@ module Application =
             let user = context.User
 
             if user.Identity.IsAuthenticated then
+                let claimsList = stringBuilderPool.Get()
 
-                let claimsList = new StringBuilder()
+                try
+                    if not <| isNull user.Claims then
+                        for claim in user.Claims do
+                            claimsList.Append($"{claim.Type}:{claim.Value};") |> ignore
 
-                if not <| isNull user.Claims then
-                    for claim in user.Claims do
-                        claimsList.Append($"{claim.Type}:{claim.Value};") |> ignore
+                    if claimsList.Length > 1 then
+                        claimsList.Remove(claimsList.Length - 1, 1) |> ignore
 
-                if claimsList.Length > 1 then
-                    claimsList.Remove(claimsList.Length - 1, 1) |> ignore
-
-                activity
-                    .AddTag("enduser.id", user.Identity.Name)
-                    .AddTag("enduser.claims", claimsList.ToString())
-                |> ignore
+                    activity
+                        .AddTag("enduser.id", user.Identity.Name)
+                        .AddTag("enduser.claims", claimsList.ToString())
+                    |> ignore
+                finally
+                    stringBuilderPool.Return(claimsList)
 
             activity
                 .AddTag("working_set", currentWorkingSet)
@@ -522,7 +524,7 @@ module Application =
                 .UseStaticFiles()
                 .UseRouting()
                 .UseMiddleware<CorrelationIdMiddleware>()
-                .UseMiddleware<TimingMiddleware>()
+                //.UseMiddleware<TimingMiddleware>()
                 .UseMiddleware<LogRequestHeadersMiddleware>()
                 .UseMiddleware<HttpSecurityHeadersMiddleware>()
                 .UseMiddleware<ValidateIdsMiddleware>()

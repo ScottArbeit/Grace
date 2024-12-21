@@ -317,7 +317,7 @@ module Organization =
                         return
                             Error(
                                 GraceError.Create
-                                    $"{actorName} does not process reminder type {discriminatedUnionCaseName reminder.ReminderType}."
+                                    $"{actorName} does not process reminder type {getDiscriminatedUnionCaseName reminder.ReminderType}."
                                     this.correlationId
                             )
                 }

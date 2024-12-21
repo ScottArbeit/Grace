@@ -26,7 +26,7 @@ module Load =
         | Error error -> logToConsole $"{error}"
 
 
-    let parallelOptions = ParallelOptions(MaxDegreeOfParallelism = Environment.ProcessorCount * 2)
+    let parallelOptions = ParallelOptions(MaxDegreeOfParallelism = Environment.ProcessorCount * 8)
 
     [<EntryPoint>]
     let main args =

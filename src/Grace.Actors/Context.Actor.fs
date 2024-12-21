@@ -56,10 +56,5 @@ module Context =
     /// Setter for memory cache
     let setMemoryCache (cache: IMemoryCache) = memoryCache <- cache
 
-    let mutable internal stringBuilderPool: ObjectPool<StringBuilder> = null
-
-    /// Setter for the string builder pool
-    let setStringBuilderPool (pool: ObjectPool<StringBuilder>) = stringBuilderPool <- pool
-
     let mutable internal timings = ConcurrentDictionary<CorrelationId, List<Timing>>()
     let setTimings (timing: ConcurrentDictionary<CorrelationId, List<Timing>>) = timings <- timing

@@ -723,27 +723,31 @@ module Repository =
                     let! parameters = context |> parse<GetBranchesByBranchIdParameters>
 
                     let branchIdList = parameters.BranchIds.ToList() // We need .Count below, so may as well materialize it once here.
+                    let sb = stringBuilderPool.Get()
 
-                    let branchIds = branchIdList.Aggregate(StringBuilder(), (fun state branchId -> state.Append($"{branchId},")))
+                    try
+                        let branchIds = branchIdList.Aggregate(sb, (fun sb branchId -> sb.Append($"{branchId},")))
 
-                    context.Items.Add("BranchIds", (branchIds.ToString())[0..^1])
-                    context.Items.Add("IncludeDeleted", parameters.IncludeDeleted)
+                        context.Items.Add("BranchIds", (branchIds.ToString())[0..^1])
+                        context.Items.Add("IncludeDeleted", parameters.IncludeDeleted)
 
-                    let! result = processQuery context parameters validations (branchIdList.Count) query
+                        let! result = processQuery context parameters validations (branchIdList.Count) query
 
-                    let duration_ms = getPaddedDuration_ms startTime
+                        let duration_ms = getPaddedDuration_ms startTime
 
-                    log.LogInformation(
-                        "{CurrentInstant}: Node: {HostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {path}; RepositoryId: {repositoryId}.",
-                        getCurrentInstantExtended (),
-                        getMachineName,
-                        duration_ms,
-                        (getCorrelationId context),
-                        context.Request.Path,
-                        graceIds.RepositoryId
-                    )
+                        log.LogInformation(
+                            "{CurrentInstant}: Node: {HostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {path}; RepositoryId: {repositoryId}.",
+                            getCurrentInstantExtended (),
+                            getMachineName,
+                            duration_ms,
+                            (getCorrelationId context),
+                            context.Request.Path,
+                            graceIds.RepositoryId
+                        )
 
-                    return result
+                        return result
+                    finally
+                        stringBuilderPool.Return(sb)
                 with ex ->
                     let duration_ms = getPaddedDuration_ms startTime
 

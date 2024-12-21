@@ -5,6 +5,7 @@ open FSharp.Collections
 open Grace.SDK
 open Grace.Shared.Client.Configuration
 open Grace.Shared
+open Grace.Shared.Constants
 open Grace.Shared.Parameters.Directory
 open Grace.Shared.Services
 open Grace.Shared.Types
@@ -23,12 +24,14 @@ open System.Globalization
 open System.IO
 open System.IO.Compression
 open System.IO.Enumeration
+open System.IO.Pipelines
 open System.Linq
 open System.Security.Cryptography
 open System.Text
 open System.Text.Json
 open System.Threading.Tasks
 open System.Reactive.Linq
+open MessagePack
 
 module Services =
 
@@ -192,7 +195,8 @@ module Services =
         task {
             if fileInfo.Exists then
                 let relativePath = Path.GetRelativePath(Current().RootDirectory, fileInfo.FullName)
-                use stream = fileInfo.Open(FileMode.Open, FileAccess.Read, FileShare.Read)
+
+                use stream = fileInfo.Open(fileStreamOptionsRead)
                 let! isBinary = isBinaryFile stream
                 stream.Position <- 0
                 let! shaValue = computeSha256ForFile stream relativePath
@@ -253,11 +257,45 @@ module Services =
 
         localWriteTimes
 
+    /// Serializes an object of type 'T to the specified file path using MessagePack.
+    let serializeMessagePack<'T> (filePath: string) (data: 'T) =
+        task {
+            let startInstant = getCurrentInstant ()
+            use fileStream = new FileStream(filePath, FileMode.Create, FileAccess.Write, FileShare.None, bufferSize = 65536, useAsync = true)
+            do! MessagePackSerializer.SerializeAsync(fileStream, data, messagePackSerializerOptions)
+            let duration = $"{(getCurrentInstant () - startInstant).TotalSeconds:F3}"
+            logToAnsiConsole Colors.Important $"Serialized file {filePath}; compressed length: {fileStream.Length}; time elapsed: {duration}s."
+        }
+        :> Task
+
+    /// Deserializes an object of type 'T from the specified file path using MessagePack.
+    let deserializeMessagePack<'T> (filePath: string) =
+        task {
+            let startInstant = getCurrentInstant ()
+            use fileStream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read, bufferSize = 65536, useAsync = true)
+            let! returnValue = MessagePackSerializer.DeserializeAsync<'T>(fileStream, messagePackSerializerOptions)
+            let duration = $"{(getCurrentInstant () - startInstant).TotalSeconds:F3}"
+            logToAnsiConsole Colors.Important $"Deserialized file {filePath}; compressed length: {fileStream.Length}; time elapsed: {duration}s."
+            return returnValue
+        }
+
     /// Retrieves the Grace status file and returns it as a GraceStatus instance.
     let readGraceStatusFile () =
         task {
+            if
+                File.Exists(Current().GraceStatusFile)
+                && FileInfo(Current().GraceStatusFile).Length > 0L
+            then
+                return! deserializeMessagePack<GraceStatus> (Current().GraceStatusFile)
+            else
+                return GraceStatus.Default
+        }
+
+    /// Retrieves the Grace status file and returns it as a GraceStatus instance.
+    let readGraceStatusFileOld () =
+        task {
             if File.Exists(Current().GraceStatusFile) then
-                use fileStream = Constants.DefaultRetryPolicy.Execute(fun _ -> File.Open(Current().GraceStatusFile, FileMode.Open, FileAccess.Read))
+                use fileStream = Constants.DefaultRetryPolicy.Execute(fun _ -> File.Open(Current().GraceStatusFile, fileStreamOptionsRead))
 
                 use gzStream = new GZipStream(fileStream, CompressionMode.Decompress, leaveOpen = false)
 
@@ -269,14 +307,22 @@ module Services =
         }
 
     /// Writes the Grace status file to disk.
-    let writeGraceStatusFile (graceStatus: GraceStatus) =
+    let writeGraceStatusFile (graceStatus: GraceStatus) = task { do! serializeMessagePack (Current().GraceStatusFile) graceStatus }
+
+    /// Writes the Grace status file to disk.
+    let writeGraceStatusFileOld (graceStatus: GraceStatus) =
         (task {
-            use fileStream =
-                Constants.DefaultRetryPolicy.Execute(fun _ -> File.Open(Current().GraceStatusFile, FileMode.Create, FileAccess.Write, FileShare.None))
+            use fileStream = Constants.DefaultRetryPolicy.Execute(fun _ -> File.Open(Current().GraceStatusFile, fileStreamOptionsWrite))
+
+            logToAnsiConsole Colors.Important $"About to serialize Grace Status file to GZIPStream; uncompressed length: {fileStream.Length}."
 
             use gzStream = new GZipStream(fileStream, CompressionLevel.SmallestSize, leaveOpen = false)
 
             do! serializeAsync gzStream graceStatus
+
+            logToAnsiConsole
+                Colors.Important
+                $"Wrote Grace Status file to GZIPStream; uncompressed length: {fileStream.Length}; compressed length: {gzStream.Length}."
         //logToAnsiConsole Colors.Important $"Wrote new Grace Status file to disk."
         })
         :> Task
@@ -284,8 +330,20 @@ module Services =
     /// Retrieves the Grace object cache file and returns it as a GraceIndex instance.
     let readGraceObjectCacheFile () =
         task {
+            if
+                File.Exists(Current().GraceObjectCacheFile)
+                && FileInfo(Current().GraceObjectCacheFile).Length > 0L
+            then
+                return! deserializeMessagePack<GraceObjectCache> (Current().GraceObjectCacheFile)
+            else
+                return GraceObjectCache.Default
+        }
+
+    /// Retrieves the Grace object cache file and returns it as a GraceIndex instance.
+    let readGraceObjectCacheFileOld () =
+        task {
             if File.Exists(Current().GraceObjectCacheFile) then
-                use fileStream = Constants.DefaultRetryPolicy.Execute(fun _ -> File.Open(Current().GraceStatusFile, FileMode.Open, FileAccess.Read))
+                use fileStream = Constants.DefaultRetryPolicy.Execute(fun _ -> File.Open(Current().GraceStatusFile, fileStreamOptionsRead))
 
                 use gzStream = new GZipStream(fileStream, CompressionMode.Decompress, leaveOpen = false)
 
@@ -296,10 +354,12 @@ module Services =
         }
 
     /// Writes the Grace object cache file to disk.
-    let writeGraceObjectCacheFile (graceObjectCache: GraceObjectCache) =
+    let writeGraceObjectCacheFile (graceObjectCache: GraceObjectCache) = task { do! serializeMessagePack (Current().GraceObjectCacheFile) graceObjectCache }
+
+    /// Writes the Grace object cache file to disk.
+    let writeGraceObjectCacheFileOld (graceObjectCache: GraceObjectCache) =
         (task {
-            use fileStream =
-                Constants.DefaultRetryPolicy.Execute(fun _ -> File.Open(Current().GraceObjectCacheFile, FileMode.Create, FileAccess.Write, FileShare.None))
+            use fileStream = Constants.DefaultRetryPolicy.Execute(fun _ -> File.Open(Current().GraceObjectCacheFile, fileStreamOptionsWrite))
 
             use gzStream = new GZipStream(fileStream, CompressionLevel.SmallestSize, leaveOpen = false)
 
@@ -404,6 +464,8 @@ module Services =
                     )
 
                 // Create or reuse existing LocalDirectoryVersion instances for each subdirectory in this directory.
+                let defaultDirectoryVersion = KeyValuePair(String.Empty, LocalDirectoryVersion.Default)
+
                 do!
                     Parallel.ForEachAsync(
                         directoryInfo
@@ -423,7 +485,7 @@ module Services =
                                         previousDirectoryVersions
                                             .FirstOrDefault(
                                                 (fun existingDirectoryVersion -> existingDirectoryVersion.Key = normalizeFilePath subdirectoryRelativePath),
-                                                defaultValue = KeyValuePair(String.Empty, LocalDirectoryVersion.Default)
+                                                defaultValue = defaultDirectoryVersion
                                             )
                                             .Value
 
@@ -613,17 +675,23 @@ module Services =
                         | Error _ -> false)
 
                 if errors.Count() > 0 then
-                    let sb = StringBuilder($"Some files could not be downloaded from object storage.{Environment.NewLine}")
+                    let sb = stringBuilderPool.Get()
 
-                    errors
-                    |> Seq.iter (fun e ->
-                        match e with
-                        | Ok _ -> ()
-                        | Error e ->
-                            sb.AppendLine($"{e.Error}{Environment.NewLine}{serialize e.Properties}")
-                            |> ignore)
+                    try
+                        sb.Append($"Some files could not be downloaded from object storage.{Environment.NewLine}")
+                        |> ignore
 
-                    return Error(sb.ToString())
+                        errors
+                        |> Seq.iter (fun e ->
+                            match e with
+                            | Ok _ -> ()
+                            | Error e ->
+                                sb.AppendLine($"{e.Error}{Environment.NewLine}{serialize e.Properties}")
+                                |> ignore)
+
+                        return Error(sb.ToString())
+                    finally
+                        stringBuilderPool.Return(sb) |> ignore
                 else
                     return Ok()
             | AWSS3 -> return Ok()
@@ -1354,13 +1422,13 @@ module Services =
                     // Now that we've copied it, compute the SHA-256 hash.
                     let relativeFilePath = Path.GetRelativePath(Current().RootDirectory, filePath)
 
-                    use tempFileStream = File.Open(tempFilePath, FileMode.Open, FileAccess.Read, FileShare.Read)
+                    use tempFileStream = File.Open(tempFilePath, fileStreamOptionsRead)
 
                     let! sha256Hash = computeSha256ForFile tempFileStream relativeFilePath
                     //logToConsole $"filePath: {filePath}; tempFilePath: {tempFilePath}; SHA256: {sha256Hash}"
 
                     // I'm going to rename this file below, using the SHA-256 hash, so I'll be polite and close the file stream here.
-                    tempFileStream.Dispose()
+                    do! tempFileStream.DisposeAsync()
 
                     // Get the new name for this version of the file, including the SHA-256 hash.
                     let relativeDirectoryPath = getLocalRelativeDirectory filePath (Current().RootDirectory)
@@ -1381,7 +1449,7 @@ module Services =
                         //logToConsole $"After moving temp file to object storage..."
                         let objectFilePathInfo = FileInfo(objectFilePath)
                         //logToConsole $"After creating FileInfo; Exists: {objectFilePathInfo.Exists}; FullName = {objectFilePathInfo.FullName}..."
-                        use objectFileStream = objectFilePathInfo.Open(FileMode.Open, FileAccess.Read)
+                        use objectFileStream = objectFilePathInfo.Open(fileStreamOptionsRead)
                         //logToConsole $"After creating stream; .Length = {objectFileStream.Length}..."
                         let! isBinary = isBinaryFile objectFileStream
                         //logToConsole $"Finished copyToObjectDirectory for {filePath}; isBinary: {isBinary}; moved temp file to object directory."

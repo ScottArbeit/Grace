@@ -27,6 +27,7 @@ open System.Globalization
 open System.IO
 open System.Linq
 open System.Threading.Tasks
+open Microsoft.Extensions.Caching.Memory
 
 module Configuration =
 
@@ -348,6 +349,11 @@ module GraceCommand =
     [<EntryPoint>]
     let main args =
         let startTime = getCurrentInstant ()
+        // Create a MemoryCache instance.
+        let memoryCacheOptions =
+            MemoryCacheOptions(TrackStatistics = false, TrackLinkedCacheEntries = false, ExpirationScanFrequency = TimeSpan.FromSeconds(30.0))
+
+        memoryCache <- new MemoryCache(memoryCacheOptions)
 
         (task {
             let mutable parseResult: ParseResult = null

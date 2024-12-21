@@ -14,6 +14,8 @@ open System.Threading.Tasks
 open System.Text.Json
 open System.IO.Enumeration
 open Microsoft.Extensions.ObjectPool
+open System.Text.Json.Serialization
+open MessagePack
 
 module Types =
 
@@ -172,15 +174,24 @@ module Types =
     /// A LocalFileVersion represents a version of a file in a repository with unique contents, and therefore with a unique SHA-256 hash. It is immutable.
     ///
     /// It is the local representation of the FileVersion type, used on the server.
-    and [<KnownType("GetKnownTypes"); CLIMutable>] LocalFileVersion =
-        { Class: string
+    and [<KnownType("GetKnownTypes"); CLIMutable; MessagePackObject>] LocalFileVersion =
+        { [<Key(0)>]
+          Class: string
+          [<Key(1)>]
           RepositoryId: RepositoryId
+          [<Key(2)>]
           RelativePath: RelativePath
+          [<Key(3)>]
           Sha256Hash: Sha256Hash
+          [<Key(4)>]
           IsBinary: bool
+          [<Key(5)>]
           Size: int64
+          [<Key(6)>]
           CreatedAt: Instant
+          [<Key(7)>]
           UploadedToObjectStorage: bool
+          [<Key(8)>]
           LastWriteTimeUtc: DateTime }
 
         static member GetKnownTypes() = GetKnownTypes<LocalFileVersion>()
@@ -206,12 +217,15 @@ module Types =
               LastWriteTimeUtc = lastWriteTimeUtc }
 
         /// Converts a LocalFileVersion to a FileVersion. NOTE: at this point, we don't know the BlobUri.
+        [<IgnoreMember>]
         member this.ToFileVersion = FileVersion.Create this.RepositoryId this.RelativePath this.Sha256Hash String.Empty this.IsBinary this.Size
 
         /// Get the object directory file name, which includes the SHA256 Hash value. Example: hello.js -> hello_04bef0a4b298de9c02930234.js
+        [<IgnoreMember>]
         member this.GetObjectFileName = getObjectFileName this.RelativePath this.Sha256Hash
 
         /// Gets the relative directory path of the file. Example: "/dir/subdir/file.js" -> "/dir/subdir/".
+        [<IgnoreMember>]
         member this.RelativeDirectory = getRelativeDirectory $"{this.RelativePath}" ""
 
     /// A DirectoryVersion represents a version of a directory in a repository with unique contents, and therefore with a unique SHA-256 hash.
@@ -275,16 +289,26 @@ module Types =
     /// A LocalDirectoryVersion represents a version of a directory in a repository with unique contents, and therefore with a unique SHA-256 hash.
     ///
     /// It is the local representation of the DirectoryVersion type. DirectoryVersion is used on the server.
-    and [<KnownType("GetKnownTypes"); CLIMutable>] LocalDirectoryVersion =
-        { Class: string
+    and [<KnownType("GetKnownTypes"); CLIMutable; MessagePackObject>] LocalDirectoryVersion =
+        { [<Key(0)>]
+          Class: string
+          [<Key(1)>]
           DirectoryVersionId: DirectoryVersionId
+          [<Key(2)>]
           RepositoryId: RepositoryId
+          [<Key(3)>]
           RelativePath: RelativePath
+          [<Key(4)>]
           Sha256Hash: Sha256Hash
+          [<Key(5)>]
           Directories: List<DirectoryVersionId>
+          [<Key(6)>]
           Files: List<LocalFileVersion>
+          [<Key(7)>]
           Size: int64
+          [<Key(8)>]
           CreatedAt: Instant
+          [<Key(9)>]
           LastWriteTimeUtc: DateTime }
 
         static member GetKnownTypes() = GetKnownTypes<LocalDirectoryVersion>()
@@ -323,6 +347,7 @@ module Types =
               LastWriteTimeUtc = lastWriteTimeUtc }
 
         /// Converts a LocalDirectoryVersion to a DirectoryVersion.
+        [<IgnoreMember>]
         member this.ToDirectoryVersion =
             DirectoryVersion.Create
                 this.DirectoryVersionId
@@ -483,13 +508,18 @@ module Types =
             this
 
         override this.ToString() =
-            let sb =
-                this.Properties
-                |> Seq.fold (fun (state: StringBuilder) kvp -> state.AppendLine($"  {kvp.Key}: {kvp.Value}; ")) (StringBuilder())
+            let sb = stringBuilderPool.Get()
 
-            if sb.Length >= 2 then sb.Remove(sb.Length - 2, 2) |> ignore
+            try
+                let errorText =
+                    this.Properties
+                    |> Seq.fold (fun (state: StringBuilder) kvp -> state.AppendLine($"  {kvp.Key}: {kvp.Value}; ")) sb
 
-            $"Error: {this.Error}{Environment.NewLine}EventTime: {formatInstantExtended this.EventTime}{Environment.NewLine}CorrelationId: {this.CorrelationId}{Environment.NewLine}Properties:{Environment.NewLine}{sb.ToString()}{Environment.NewLine}"
+                if sb.Length >= 2 then sb.Remove(sb.Length - 2, 2) |> ignore
+
+                $"Error: {this.Error}{Environment.NewLine}EventTime: {formatInstantExtended this.EventTime}{Environment.NewLine}CorrelationId: {this.CorrelationId}{Environment.NewLine}Properties:{Environment.NewLine}{errorText.ToString()}{Environment.NewLine}"
+            finally
+                stringBuilderPool.Return(sb)
 
     /// The primary type used to represent Grace operations results.
     type GraceResult<'T> = Result<GraceReturnValue<'T>, GraceError>
@@ -526,13 +556,8 @@ module Types =
 
     type UploadMetadata = { BlobUriWithSasToken: Uri; Sha256Hash: Sha256Hash }
 
-    /// GraceIndex is Grace's representation of the contents of the local object cache. It is an index from the DirectoryId of a LocalDirectoryVersion to the LocalDirectoryVersion itself.
-    type GraceIndex = ConcurrentDictionary<Guid, LocalDirectoryVersion>
-
-    //type ObjectCache = ConcurrentDictionary<Guid, LocalDirectoryVersion>
-
-    /// ObjectIndex is an index from the SHA-256 hash of a LocalDirectoryVersion to the LocalDirectoryVersion itself.
-    type ObjectIndex = ConcurrentDictionary<Sha256Hash, LocalDirectoryVersion>
+    /// GraceIndex is Grace's representation of the contents of the local working directory (in GraceStatus), or of the object cache (in GraceObjectCache).
+    type GraceIndex = ConcurrentDictionary<DirectoryVersionId, LocalDirectoryVersion>
 
     /// GraceStatus is a snapshot of the status that `grace watch` holds about the repository and branch while running.
     ///
@@ -540,11 +565,17 @@ module Types =
     /// It gets deserialized by Grace CLI, and is used to speed up the CLI by holding pre-computed results when running certain commands.
     ///
     /// If the interprocess cache file is missing or corrupt, Grace CLI assumes that `grace watch` is not running, and runs all commands from scratch.
+    [<MessagePackObject>]
     type GraceStatus =
-        { Index: GraceIndex
+        { [<Key(0)>]
+          Index: GraceIndex
+          [<Key(1)>]
           RootDirectoryId: DirectoryVersionId
+          [<Key(2)>]
           RootDirectorySha256Hash: Sha256Hash
+          [<Key(3)>]
           LastSuccessfulFileUpload: Instant
+          [<Key(4)>]
           LastSuccessfulDirectoryVersionUpload: Instant }
 
         static member Default =
@@ -555,8 +586,10 @@ module Types =
               LastSuccessfulDirectoryVersionUpload = getCurrentInstant () }
 
     /// GraceObjectCache is a snapshot of the contents of the local object cache.
+    [<MessagePackObject>]
     type GraceObjectCache =
-        { Index: GraceIndex }
+        { [<Key(0)>]
+          Index: GraceIndex }
 
         static member Default = { Index = GraceIndex() }
 

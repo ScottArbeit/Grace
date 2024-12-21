@@ -134,6 +134,8 @@ module Storage =
                 return Error(GraceError.Create (exceptionResponse.ToString()) correlationId)
         }
 
+    let storageTransferOptions = StorageTransferOptions(MaximumConcurrency = Constants.ParallelOptions.MaxDegreeOfParallelism)
+
     let SaveFileToObjectStorageWithMetadata (fileVersion: FileVersion) (blobUriWithSasToken: Uri) (metadata: Dictionary<string, string>) correlationId =
         task {
             try
@@ -167,8 +169,6 @@ module Storage =
 
                         // If it doesn't exist, upload it.
                         if not <| (blobAlreadyExists.Value) then
-                            let storageTransferOptions = StorageTransferOptions(MaximumConcurrency = Constants.ParallelOptions.MaxDegreeOfParallelism)
-
                             let blobUploadOptions = BlobUploadOptions(Metadata = metadata, Tags = metadata, TransferOptions = storageTransferOptions)
 
                             blobUploadOptions.HttpHeaders <-
@@ -184,7 +184,7 @@ module Storage =
 
                             let normalizedObjectFilePath = Path.GetFullPath(objectFilePath)
 
-                            use fileStream = File.Open(normalizedObjectFilePath, FileMode.Open, FileAccess.Read, FileShare.Read)
+                            use fileStream = File.Open(normalizedObjectFilePath, fileStreamOptionsRead)
 
                             let! blobContentInfo =
                                 task {

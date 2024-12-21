@@ -755,39 +755,43 @@ module Services =
             match actorStateStorageProvider with
             | Unknown -> ()
             | AzureCosmosDb ->
+                let indexMetrics = stringBuilderPool.Get()
+                let requestCharge = stringBuilderPool.Get()
+
                 try
-                    let indexMetrics = StringBuilder()
-                    let requestCharge = StringBuilder()
+                    try
+                        let includeDeletedClause =
+                            if includeDeleted then
+                                String.Empty
+                            else
+                                """ AND IS_NULL(c["value"].DeletedAt)"""
 
-                    let includeDeletedClause =
-                        if includeDeleted then
-                            String.Empty
-                        else
-                            """ AND IS_NULL(c["value"].DeletedAt)"""
+                        let queryDefinition =
+                            QueryDefinition(
+                                $"""SELECT TOP @maxCount c["value"] FROM c WHERE c["value"].OwnerId = @ownerId AND c["value"].Class = @class {includeDeletedClause} ORDER BY c["value"].CreatedAt DESC"""
+                            )
+                                .WithParameter("@ownerId", ownerId)
+                                .WithParameter("@maxCount", maxCount)
+                                .WithParameter("@class", nameof (OrganizationDto))
 
-                    let queryDefinition =
-                        QueryDefinition(
-                            $"""SELECT TOP @maxCount c["value"] FROM c WHERE c["value"].OwnerId = @ownerId AND c["value"].Class = @class {includeDeletedClause} ORDER BY c["value"].CreatedAt DESC"""
-                        )
-                            .WithParameter("@ownerId", ownerId)
-                            .WithParameter("@maxCount", maxCount)
-                            .WithParameter("@class", nameof (OrganizationDto))
+                        let iterator = cosmosContainer.GetItemQueryIterator<OrganizationDtoValue>(queryDefinition, requestOptions = queryRequestOptions)
 
-                    let iterator = cosmosContainer.GetItemQueryIterator<OrganizationDtoValue>(queryDefinition, requestOptions = queryRequestOptions)
+                        while iterator.HasMoreResults do
+                            let! results = iterator.ReadNextAsync()
+                            indexMetrics.Append($"{results.IndexMetrics}, ") |> ignore
+                            requestCharge.Append($"{results.RequestCharge}, ") |> ignore
+                            repositories.AddRange(results.Resource.Select(fun v -> v.value))
 
-                    while iterator.HasMoreResults do
-                        let! results = iterator.ReadNextAsync()
-                        indexMetrics.Append($"{results.IndexMetrics}, ") |> ignore
-                        requestCharge.Append($"{results.RequestCharge}, ") |> ignore
-                        repositories.AddRange(results.Resource.Select(fun v -> v.value))
-
-                    Activity.Current
-                        .SetTag("indexMetrics", $"{indexMetrics.Remove(indexMetrics.Length - 2, 2)}")
-                        .SetTag("requestCharge", $"{requestCharge.Remove(requestCharge.Length - 2, 2)}")
-                    |> ignore
-                with ex ->
-                    logToConsole $"Got an exception."
-                    logToConsole $"{ExceptionResponse.Create ex}"
+                        Activity.Current
+                            .SetTag("indexMetrics", $"{indexMetrics.Remove(indexMetrics.Length - 2, 2)}")
+                            .SetTag("requestCharge", $"{requestCharge.Remove(requestCharge.Length - 2, 2)}")
+                        |> ignore
+                    with ex ->
+                        logToConsole $"Got an exception."
+                        logToConsole $"{ExceptionResponse.Create ex}"
+                finally
+                    stringBuilderPool.Return(indexMetrics)
+                    stringBuilderPool.Return(requestCharge)
             | MongoDB -> ()
 
             return repositories
@@ -883,39 +887,43 @@ module Services =
             match actorStateStorageProvider with
             | Unknown -> ()
             | AzureCosmosDb ->
+                let indexMetrics = stringBuilderPool.Get()
+                let requestCharge = stringBuilderPool.Get()
+
                 try
-                    let indexMetrics = StringBuilder()
-                    let requestCharge = StringBuilder()
+                    try
+                        let includeDeletedClause =
+                            if includeDeleted then
+                                String.Empty
+                            else
+                                """ AND IS_NULL(c["value"].DeletedAt)"""
 
-                    let includeDeletedClause =
-                        if includeDeleted then
-                            String.Empty
-                        else
-                            """ AND IS_NULL(c["value"].DeletedAt)"""
+                        let queryDefinition =
+                            QueryDefinition(
+                                $"""SELECT TOP @maxCount c["value"] FROM c WHERE c["value"].OrganizationId = @organizationId AND c["value"].Class = @class {includeDeletedClause} ORDER BY c["value"].CreatedAt DESC"""
+                            )
+                                .WithParameter("@organizationId", organizationId)
+                                .WithParameter("@maxCount", maxCount)
+                                .WithParameter("@class", nameof (RepositoryDto))
 
-                    let queryDefinition =
-                        QueryDefinition(
-                            $"""SELECT TOP @maxCount c["value"] FROM c WHERE c["value"].OrganizationId = @organizationId AND c["value"].Class = @class {includeDeletedClause} ORDER BY c["value"].CreatedAt DESC"""
-                        )
-                            .WithParameter("@organizationId", organizationId)
-                            .WithParameter("@maxCount", maxCount)
-                            .WithParameter("@class", nameof (RepositoryDto))
+                        let iterator = cosmosContainer.GetItemQueryIterator<RepositoryDtoValue>(queryDefinition, requestOptions = queryRequestOptions)
 
-                    let iterator = cosmosContainer.GetItemQueryIterator<RepositoryDtoValue>(queryDefinition, requestOptions = queryRequestOptions)
+                        while iterator.HasMoreResults do
+                            let! results = iterator.ReadNextAsync()
+                            indexMetrics.Append($"{results.IndexMetrics}, ") |> ignore
+                            requestCharge.Append($"{results.RequestCharge}, ") |> ignore
+                            repositories.AddRange(results.Resource.Select(fun v -> v.value))
 
-                    while iterator.HasMoreResults do
-                        let! results = iterator.ReadNextAsync()
-                        indexMetrics.Append($"{results.IndexMetrics}, ") |> ignore
-                        requestCharge.Append($"{results.RequestCharge}, ") |> ignore
-                        repositories.AddRange(results.Resource.Select(fun v -> v.value))
-
-                    Activity.Current
-                        .SetTag("indexMetrics", $"{indexMetrics.Remove(indexMetrics.Length - 2, 2)}")
-                        .SetTag("requestCharge", $"{requestCharge.Remove(requestCharge.Length - 2, 2)}")
-                    |> ignore
-                with ex ->
-                    logToConsole $"Got an exception."
-                    logToConsole $"{ExceptionResponse.Create ex}"
+                        Activity.Current
+                            .SetTag("indexMetrics", $"{indexMetrics.Remove(indexMetrics.Length - 2, 2)}")
+                            .SetTag("requestCharge", $"{requestCharge.Remove(requestCharge.Length - 2, 2)}")
+                        |> ignore
+                    with ex ->
+                        logToConsole $"Got an exception."
+                        logToConsole $"{ExceptionResponse.Create ex}"
+                finally
+                    stringBuilderPool.Return(indexMetrics)
+                    stringBuilderPool.Return(requestCharge)
             | MongoDB -> ()
 
             return repositories
@@ -930,66 +938,69 @@ module Services =
             match actorStateStorageProvider with
             | Unknown -> ()
             | AzureCosmosDb ->
+                let indexMetrics = stringBuilderPool.Get()
+                let requestCharge = stringBuilderPool.Get()
+
                 try
-                    let indexMetrics = StringBuilder()
-                    let requestCharge = StringBuilder()
-                    let requestCharge2 = StringBuilder()
+                    try
+                        let includeDeletedClause =
+                            if includeDeleted then
+                                String.Empty
+                            else
+                                """ AND (
+                                    (SELECT VALUE COUNT(1)
+                                     FROM c JOIN subEvent IN c["value"]
+                                     WHERE IS_DEFINED(subEvent.Event.logicalDeleted)) =
+                                    (SELECT VALUE COUNT(1)
+                                     FROM c JOIN subEvent IN c["value"]
+                                     WHERE IS_DEFINED(subEvent.Event.undeleted))
+                                ) """
 
-                    let includeDeletedClause =
-                        if includeDeleted then
-                            String.Empty
-                        else
-                            """ AND (
-                                (SELECT VALUE COUNT(1)
-                                 FROM c JOIN subEvent IN c["value"]
-                                 WHERE IS_DEFINED(subEvent.Event.logicalDeleted)) =
-                                (SELECT VALUE COUNT(1)
-                                 FROM c JOIN subEvent IN c["value"]
-                                 WHERE IS_DEFINED(subEvent.Event.undeleted))
-                            ) """
+                        let queryDefinition =
+                            QueryDefinition(
+                                $"""SELECT TOP @maxCount event.Event.created.branchId
+                                    FROM c JOIN event IN c["value"] 
+                                    WHERE event.Event.created.repositoryId = @repositoryId
+                                        AND LENGTH(event.Event.created.branchName) > 0 {includeDeletedClause}"""
+                            )
+                                .WithParameter("@maxCount", maxCount)
+                                .WithParameter("@repositoryId", $"{repositoryId}")
 
-                    let queryDefinition =
-                        QueryDefinition(
-                            $"""SELECT TOP @maxCount event.Event.created.branchId
-                                FROM c JOIN event IN c["value"] 
-                                WHERE event.Event.created.repositoryId = @repositoryId
-                                    AND LENGTH(event.Event.created.branchName) > 0 {includeDeletedClause}"""
-                        )
-                            .WithParameter("@maxCount", maxCount)
-                            .WithParameter("@repositoryId", $"{repositoryId}")
+                        let iterator = cosmosContainer.GetItemQueryIterator<BranchIdValue>(queryDefinition, requestOptions = queryRequestOptions)
 
-                    let iterator = cosmosContainer.GetItemQueryIterator<BranchIdValue>(queryDefinition, requestOptions = queryRequestOptions)
+                        while iterator.HasMoreResults do
+                            addTiming TimingFlag.BeforeStorageQuery "getBranches" correlationId
+                            let! results = iterator.ReadNextAsync()
+                            addTiming TimingFlag.AfterStorageQuery "getBranches" correlationId
+                            indexMetrics.Append($"{results.IndexMetrics}, ") |> ignore
+                            requestCharge.Append($"{results.RequestCharge}, ") |> ignore
+                            results.Resource |> Seq.iter (fun r -> branchIds.Add(r.branchId))
 
-                    while iterator.HasMoreResults do
-                        addTiming TimingFlag.BeforeStorageQuery "getBranches" correlationId
-                        let! results = iterator.ReadNextAsync()
-                        addTiming TimingFlag.AfterStorageQuery "getBranches" correlationId
-                        indexMetrics.Append($"{results.IndexMetrics}, ") |> ignore
-                        requestCharge.Append($"{results.RequestCharge}, ") |> ignore
-                        results.Resource |> Seq.iter (fun r -> branchIds.Add(r.branchId))
+                        Activity.Current
+                            .SetTag("indexMetrics", $"{indexMetrics.Remove(indexMetrics.Length - 2, 2)}")
+                            .SetTag("requestCharge", $"{requestCharge.Remove(requestCharge.Length - 2, 2)}")
+                        |> ignore
 
-                    Activity.Current
-                        .SetTag("indexMetrics", $"{indexMetrics.Remove(indexMetrics.Length - 2, 2)}")
-                        .SetTag("requestCharge", $"{requestCharge.Remove(requestCharge.Length - 2, 2)}")
-                    |> ignore
-
-                    // Now we have the branchIds, let's get the BranchDto's. Right now the best way is just to get them as individual actors.
-                    do!
-                        Parallel.ForEachAsync(
-                            branchIds,
-                            Constants.ParallelOptions,
-                            (fun branchId ct ->
-                                ValueTask(
-                                    task {
-                                        let branchActorProxy = Branch.CreateActorProxy branchId correlationId
-                                        let! branchDto = branchActorProxy.Get correlationId
-                                        branches.Add(branchDto)
-                                    }
-                                ))
-                        )
-                with ex ->
-                    logToConsole $"Got an exception."
-                    logToConsole $"{ExceptionResponse.Create ex}"
+                        // Now we have the branchIds, let's get the BranchDto's. Right now the best way is just to get them as individual actors.
+                        do!
+                            Parallel.ForEachAsync(
+                                branchIds,
+                                Constants.ParallelOptions,
+                                (fun branchId ct ->
+                                    ValueTask(
+                                        task {
+                                            let branchActorProxy = Branch.CreateActorProxy branchId correlationId
+                                            let! branchDto = branchActorProxy.Get correlationId
+                                            branches.Add(branchDto)
+                                        }
+                                    ))
+                            )
+                    with ex ->
+                        logToConsole $"Got an exception."
+                        logToConsole $"{ExceptionResponse.Create ex}"
+                finally
+                    stringBuilderPool.Return(indexMetrics)
+                    stringBuilderPool.Return(requestCharge)
             | MongoDB -> ()
 
             return branches.ToArray()
@@ -1003,39 +1014,43 @@ module Services =
             match actorStateStorageProvider with
             | Unknown -> ()
             | AzureCosmosDb ->
-                let indexMetrics = StringBuilder()
-                let requestCharge = StringBuilder()
+                let indexMetrics = stringBuilderPool.Get()
+                let requestCharge = stringBuilderPool.Get()
 
-                let queryDefinition =
-                    QueryDefinition(
-                        """SELECT TOP @maxCount event FROM c JOIN event IN c["value"] 
-                            WHERE event.Event.created.BranchId = @branchId
-                                AND STARTSWITH(event.Event.created.Sha256Hash, @sha256Hash, true)
-                                AND event.Event.created.Class = @class
-                            ORDER BY c["value"].CreatedAt DESC"""
-                    )
-                        .WithParameter("@maxCount", maxCount)
-                        .WithParameter("@sha256Hash", sha256Hash)
-                        .WithParameter("@branchId", branchId)
-                        .WithParameter("@class", nameof (ReferenceDto))
+                try
+                    let queryDefinition =
+                        QueryDefinition(
+                            """SELECT TOP @maxCount event FROM c JOIN event IN c["value"] 
+                                WHERE event.Event.created.BranchId = @branchId
+                                    AND STARTSWITH(event.Event.created.Sha256Hash, @sha256Hash, true)
+                                    AND event.Event.created.Class = @class
+                                ORDER BY c["value"].CreatedAt DESC"""
+                        )
+                            .WithParameter("@maxCount", maxCount)
+                            .WithParameter("@sha256Hash", sha256Hash)
+                            .WithParameter("@branchId", branchId)
+                            .WithParameter("@class", nameof (ReferenceDto))
 
-                let iterator = cosmosContainer.GetItemQueryIterator<ReferenceEventValue>(queryDefinition, requestOptions = queryRequestOptions)
+                    let iterator = cosmosContainer.GetItemQueryIterator<ReferenceEventValue>(queryDefinition, requestOptions = queryRequestOptions)
 
-                while iterator.HasMoreResults do
-                    let! results = DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> iterator.ReadNextAsync())
-                    indexMetrics.Append($"{results.IndexMetrics}, ") |> ignore
-                    requestCharge.Append($"{results.RequestCharge}, ") |> ignore
+                    while iterator.HasMoreResults do
+                        let! results = DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> iterator.ReadNextAsync())
+                        indexMetrics.Append($"{results.IndexMetrics}, ") |> ignore
+                        requestCharge.Append($"{results.RequestCharge}, ") |> ignore
 
-                    results.Resource
-                    |> Seq.iter (fun r ->
-                        match r.event.Event with
-                        | Reference.ReferenceEventType.Created refDto -> references.Add(refDto)
-                        | _ -> ())
+                        results.Resource
+                        |> Seq.iter (fun r ->
+                            match r.event.Event with
+                            | Reference.ReferenceEventType.Created refDto -> references.Add(refDto)
+                            | _ -> ())
 
-                Activity.Current
-                    .SetTag("indexMetrics", $"{indexMetrics.Remove(indexMetrics.Length - 2, 2)}")
-                    .SetTag("requestCharge", $"{requestCharge.Remove(requestCharge.Length - 2, 2)}")
-                |> ignore
+                    Activity.Current
+                        .SetTag("indexMetrics", $"{indexMetrics.Remove(indexMetrics.Length - 2, 2)}")
+                        .SetTag("requestCharge", $"{requestCharge.Remove(requestCharge.Length - 2, 2)}")
+                    |> ignore
+                finally
+                    stringBuilderPool.Return(indexMetrics)
+                    stringBuilderPool.Return(requestCharge)
             | MongoDB -> ()
 
             return references :> IReadOnlyList<ReferenceDto>
@@ -1056,39 +1071,43 @@ module Services =
             match actorStateStorageProvider with
             | Unknown -> ()
             | AzureCosmosDb ->
-                let indexMetrics = StringBuilder()
-                let requestCharge = StringBuilder()
+                let indexMetrics = stringBuilderPool.Get()
+                let requestCharge = stringBuilderPool.Get()
 
-                let queryDefinition =
-                    QueryDefinition(
-                        """SELECT TOP @maxCount event FROM c JOIN event IN c["value"] 
-                            WHERE event.Event.created.BranchId = @branchId
-                                AND event.Event.created.Class = @class
-                            ORDER BY c["value"].CreatedAt DESC"""
-                    )
-                        .WithParameter("@maxCount", maxCount)
-                        .WithParameter("@branchId", branchId)
-                        .WithParameter("@class", nameof (ReferenceDto))
+                try
+                    let queryDefinition =
+                        QueryDefinition(
+                            """SELECT TOP @maxCount event FROM c JOIN event IN c["value"] 
+                                WHERE event.Event.created.BranchId = @branchId
+                                    AND event.Event.created.Class = @class
+                                ORDER BY c["value"].CreatedAt DESC"""
+                        )
+                            .WithParameter("@maxCount", maxCount)
+                            .WithParameter("@branchId", branchId)
+                            .WithParameter("@class", nameof (ReferenceDto))
 
-                let iterator = cosmosContainer.GetItemQueryIterator<ReferenceEventValue>(queryDefinition, requestOptions = queryRequestOptions)
+                    let iterator = cosmosContainer.GetItemQueryIterator<ReferenceEventValue>(queryDefinition, requestOptions = queryRequestOptions)
 
-                while iterator.HasMoreResults do
-                    addTiming TimingFlag.BeforeStorageQuery "getReferences" correlationId
-                    let! results = DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> iterator.ReadNextAsync())
-                    //let! results = iterator.ReadNextAsync()
-                    indexMetrics.Append($"{results.IndexMetrics}, ") |> ignore
-                    requestCharge.Append($"{results.RequestCharge}, ") |> ignore
+                    while iterator.HasMoreResults do
+                        addTiming TimingFlag.BeforeStorageQuery "getReferences" correlationId
+                        let! results = DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> iterator.ReadNextAsync())
+                        //let! results = iterator.ReadNextAsync()
+                        indexMetrics.Append($"{results.IndexMetrics}, ") |> ignore
+                        requestCharge.Append($"{results.RequestCharge}, ") |> ignore
 
-                    results.Resource
-                    |> Seq.iter (fun r ->
-                        match r.event.Event with
-                        | Reference.ReferenceEventType.Created refDto -> references.Add(refDto)
-                        | _ -> ())
+                        results.Resource
+                        |> Seq.iter (fun r ->
+                            match r.event.Event with
+                            | Reference.ReferenceEventType.Created refDto -> references.Add(refDto)
+                            | _ -> ())
 
-                Activity.Current
-                    .SetTag("indexMetrics", $"{indexMetrics.Remove(indexMetrics.Length - 2, 2)}")
-                    .SetTag("requestCharge", $"{requestCharge.Remove(requestCharge.Length - 2, 2)}")
-                |> ignore
+                    Activity.Current
+                        .SetTag("indexMetrics", $"{indexMetrics.Remove(indexMetrics.Length - 2, 2)}")
+                        .SetTag("requestCharge", $"{requestCharge.Remove(requestCharge.Length - 2, 2)}")
+                    |> ignore
+                finally
+                    stringBuilderPool.Return(indexMetrics)
+                    stringBuilderPool.Return(requestCharge)
             | MongoDB -> ()
 
             return references :> IReadOnlyList<ReferenceDto>
@@ -1178,42 +1197,46 @@ module Services =
             match actorStateStorageProvider with
             | Unknown -> ()
             | AzureCosmosDb ->
-                let indexMetrics = StringBuilder()
-                let requestCharge = StringBuilder()
+                let indexMetrics = stringBuilderPool.Get()
+                let requestCharge = stringBuilderPool.Get()
 
-                let queryDefinition =
-                    QueryDefinition(
-                        """SELECT TOP @maxCount event
-                            FROM c JOIN event IN c["value"] 
-                            WHERE event.Event.created.BranchId = @branchId
-                                AND event.Event.created.Class = @class
-                                AND STRINGEQUALS(event.Event.created.ReferenceType, @referenceType, true)
-                            ORDER BY c["value"].CreatedAt DESC"""
-                    )
-                        .WithParameter("@maxCount", maxCount)
-                        .WithParameter("@branchId", branchId)
-                        .WithParameter("@referenceType", getDiscriminatedUnionCaseName referenceType)
-                        .WithParameter("@class", nameof (ReferenceDto))
+                try
+                    let queryDefinition =
+                        QueryDefinition(
+                            """SELECT TOP @maxCount event
+                                FROM c JOIN event IN c["value"] 
+                                WHERE event.Event.created.BranchId = @branchId
+                                    AND event.Event.created.Class = @class
+                                    AND STRINGEQUALS(event.Event.created.ReferenceType, @referenceType, true)
+                                ORDER BY c["value"].CreatedAt DESC"""
+                        )
+                            .WithParameter("@maxCount", maxCount)
+                            .WithParameter("@branchId", branchId)
+                            .WithParameter("@referenceType", getDiscriminatedUnionCaseName referenceType)
+                            .WithParameter("@class", nameof (ReferenceDto))
 
-                let iterator = cosmosContainer.GetItemQueryIterator<ReferenceEventValue>(queryDefinition, requestOptions = queryRequestOptions)
+                    let iterator = cosmosContainer.GetItemQueryIterator<ReferenceEventValue>(queryDefinition, requestOptions = queryRequestOptions)
 
-                while iterator.HasMoreResults do
-                    addTiming TimingFlag.BeforeStorageQuery "getReferencesByType" correlationId
-                    let! results = DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> iterator.ReadNextAsync())
-                    addTiming TimingFlag.AfterStorageQuery "getReferencesByType" correlationId
-                    indexMetrics.Append($"{results.IndexMetrics}, ") |> ignore
-                    requestCharge.Append($"{results.RequestCharge}, ") |> ignore
+                    while iterator.HasMoreResults do
+                        addTiming TimingFlag.BeforeStorageQuery "getReferencesByType" correlationId
+                        let! results = DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> iterator.ReadNextAsync())
+                        addTiming TimingFlag.AfterStorageQuery "getReferencesByType" correlationId
+                        indexMetrics.Append($"{results.IndexMetrics}, ") |> ignore
+                        requestCharge.Append($"{results.RequestCharge}, ") |> ignore
 
-                    results.Resource
-                    |> Seq.iter (fun r ->
-                        match r.event.Event with
-                        | Reference.ReferenceEventType.Created refDto -> references.Add(refDto)
-                        | _ -> ())
+                        results.Resource
+                        |> Seq.iter (fun r ->
+                            match r.event.Event with
+                            | Reference.ReferenceEventType.Created refDto -> references.Add(refDto)
+                            | _ -> ())
 
-                Activity.Current
-                    .SetTag("indexMetrics", $"{indexMetrics.Remove(indexMetrics.Length - 2, 2)}")
-                    .SetTag("requestCharge", $"{requestCharge.Remove(requestCharge.Length - 2, 2)}")
-                |> ignore
+                    Activity.Current
+                        .SetTag("indexMetrics", $"{indexMetrics.Remove(indexMetrics.Length - 2, 2)}")
+                        .SetTag("requestCharge", $"{requestCharge.Remove(requestCharge.Length - 2, 2)}")
+                    |> ignore
+                finally
+                    stringBuilderPool.Return(indexMetrics)
+                    stringBuilderPool.Return(requestCharge)
             | MongoDB -> ()
 
             return references :> IReadOnlyList<ReferenceDto>
@@ -1232,44 +1255,48 @@ module Services =
             match actorStateStorageProvider with
             | Unknown -> return None
             | AzureCosmosDb ->
-                let indexMetrics = StringBuilder()
-                let requestCharge = StringBuilder()
+                let indexMetrics = stringBuilderPool.Get()
+                let requestCharge = stringBuilderPool.Get()
 
-                let queryDefinition =
-                    QueryDefinition(
-                        //"""SELECT TOP 1 c["value"] FROM c WHERE c["value"].BranchId = @branchId AND c["value"].Class = @class AND STRINGEQUALS(c["value"].ReferenceType, @referenceType, true) ORDER BY c["value"].CreatedAt DESC"""
-                        """SELECT TOP 1 event FROM c JOIN event IN c["value"] 
-                                    WHERE event.Event.created.BranchId = @branchId
-                                        AND event.Event.created.Class = @class
-                                        ORDER BY c["value"].CreatedAt DESC"""
-                    )
-                        .WithParameter("@branchId", $"{branchId}")
-                        .WithParameter("@class", nameof (ReferenceDto))
+                try
+                    let queryDefinition =
+                        QueryDefinition(
+                            //"""SELECT TOP 1 c["value"] FROM c WHERE c["value"].BranchId = @branchId AND c["value"].Class = @class AND STRINGEQUALS(c["value"].ReferenceType, @referenceType, true) ORDER BY c["value"].CreatedAt DESC"""
+                            """SELECT TOP 1 event FROM c JOIN event IN c["value"] 
+                                        WHERE event.Event.created.BranchId = @branchId
+                                            AND event.Event.created.Class = @class
+                                            ORDER BY c["value"].CreatedAt DESC"""
+                        )
+                            .WithParameter("@branchId", $"{branchId}")
+                            .WithParameter("@class", nameof (ReferenceDto))
 
-                let iterator = cosmosContainer.GetItemQueryIterator<ReferenceEventValue>(queryDefinition, requestOptions = queryRequestOptions)
+                    let iterator = cosmosContainer.GetItemQueryIterator<ReferenceEventValue>(queryDefinition, requestOptions = queryRequestOptions)
 
-                let mutable referenceDto = ReferenceDto.Default
+                    let mutable referenceDto = ReferenceDto.Default
 
-                while iterator.HasMoreResults do
-                    let! results = iterator.ReadNextAsync()
-                    indexMetrics.Append($"{results.IndexMetrics}, ") |> ignore
-                    requestCharge.Append($"{results.RequestCharge}, ") |> ignore
+                    while iterator.HasMoreResults do
+                        let! results = iterator.ReadNextAsync()
+                        indexMetrics.Append($"{results.IndexMetrics}, ") |> ignore
+                        requestCharge.Append($"{results.RequestCharge}, ") |> ignore
 
-                    if results.Count > 0 then
-                        referenceDto <-
-                            match results.Resource.FirstOrDefault().event.Event with
-                            | Reference.ReferenceEventType.Created refDto -> refDto
-                            | _ -> ReferenceDto.Default
+                        if results.Count > 0 then
+                            referenceDto <-
+                                match results.Resource.FirstOrDefault().event.Event with
+                                | Reference.ReferenceEventType.Created refDto -> refDto
+                                | _ -> ReferenceDto.Default
 
-                Activity.Current
-                    .SetTag("indexMetrics", $"{indexMetrics.Remove(indexMetrics.Length - 2, 2)}")
-                    .SetTag("requestCharge", $"{requestCharge.Remove(requestCharge.Length - 2, 2)}")
-                |> ignore
+                    Activity.Current
+                        .SetTag("indexMetrics", $"{indexMetrics.Remove(indexMetrics.Length - 2, 2)}")
+                        .SetTag("requestCharge", $"{requestCharge.Remove(requestCharge.Length - 2, 2)}")
+                    |> ignore
 
-                if referenceDto.ReferenceId <> ReferenceDto.Default.ReferenceId then
-                    return Some referenceDto
-                else
-                    return None
+                    if referenceDto.ReferenceId <> ReferenceDto.Default.ReferenceId then
+                        return Some referenceDto
+                    else
+                        return None
+                finally
+                    stringBuilderPool.Return(indexMetrics)
+                    stringBuilderPool.Return(requestCharge)
             | MongoDB -> return None
         }
 
@@ -1281,60 +1308,64 @@ module Services =
             match actorStateStorageProvider with
             | Unknown -> ()
             | AzureCosmosDb ->
-                let indexMetrics = StringBuilder()
-                let requestCharge = StringBuilder()
+                let indexMetrics = stringBuilderPool.Get()
+                let requestCharge = stringBuilderPool.Get()
 
-                // CosmosDb SQL doesn't have a UNION clause. That means that the only way to get the latest reference for each ReferenceType is to do separate queries for each ReferenceType that gets passed in.
-                // It's annoying, but at least let's do it in parallel.
+                try
+                    // CosmosDB SQL doesn't have a UNION clause. That means that the only way to get the latest reference for each ReferenceType is to do separate queries for each ReferenceType that gets passed in.
+                    // It's annoying, but at least let's do it in parallel.
 
-                do!
-                    Parallel.ForEachAsync(
-                        referenceTypes,
-                        Constants.ParallelOptions,
-                        (fun referenceType ct ->
-                            ValueTask(
-                                task {
-                                    let queryDefinition =
-                                        QueryDefinition(
-                                            //"""SELECT TOP 1 c["value"] FROM c WHERE c["value"].BranchId = @branchId AND c["value"].Class = @class AND STRINGEQUALS(c["value"].ReferenceType, @referenceType, true) ORDER BY c["value"].CreatedAt DESC"""
-                                            """SELECT TOP 1 event FROM c JOIN event IN c["value"] 
-                                                    WHERE event.Event.created.BranchId = @branchId
-                                                        AND event.Event.created.Class = @class
-                                                        AND STRINGEQUALS(event.Event.created.ReferenceType, @referenceType, true)
-                                                        ORDER BY c["value"].CreatedAt DESC"""
-                                        )
-                                            .WithParameter("@branchId", branchId)
-                                            .WithParameter("@referenceType", getDiscriminatedUnionCaseName referenceType)
-                                            .WithParameter("@class", nameof (ReferenceDto))
+                    do!
+                        Parallel.ForEachAsync(
+                            referenceTypes,
+                            Constants.ParallelOptions,
+                            (fun referenceType ct ->
+                                ValueTask(
+                                    task {
+                                        let queryDefinition =
+                                            QueryDefinition(
+                                                //"""SELECT TOP 1 c["value"] FROM c WHERE c["value"].BranchId = @branchId AND c["value"].Class = @class AND STRINGEQUALS(c["value"].ReferenceType, @referenceType, true) ORDER BY c["value"].CreatedAt DESC"""
+                                                """SELECT TOP 1 event FROM c JOIN event IN c["value"] 
+                                                        WHERE event.Event.created.BranchId = @branchId
+                                                            AND event.Event.created.Class = @class
+                                                            AND STRINGEQUALS(event.Event.created.ReferenceType, @referenceType, true)
+                                                            ORDER BY c["value"].CreatedAt DESC"""
+                                            )
+                                                .WithParameter("@branchId", branchId)
+                                                .WithParameter("@referenceType", getDiscriminatedUnionCaseName referenceType)
+                                                .WithParameter("@class", nameof (ReferenceDto))
 
-                                    let iterator =
-                                        cosmosContainer.GetItemQueryIterator<ReferenceEventValue>(queryDefinition, requestOptions = queryRequestOptions)
+                                        let iterator =
+                                            cosmosContainer.GetItemQueryIterator<ReferenceEventValue>(queryDefinition, requestOptions = queryRequestOptions)
 
-                                    let mutable referenceDto = ReferenceDto.Default
+                                        let mutable referenceDto = ReferenceDto.Default
 
-                                    while iterator.HasMoreResults do
-                                        let! results = DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> iterator.ReadNextAsync())
-                                        indexMetrics.Append($"{results.IndexMetrics}, ") |> ignore
-                                        requestCharge.Append($"{results.RequestCharge}, ") |> ignore
+                                        while iterator.HasMoreResults do
+                                            let! results = DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> iterator.ReadNextAsync())
+                                            indexMetrics.Append($"{results.IndexMetrics}, ") |> ignore
+                                            requestCharge.Append($"{results.RequestCharge}, ") |> ignore
 
-                                        if results.Count > 0 then
-                                            referenceDto <-
-                                                match results.Resource.FirstOrDefault().event.Event with
-                                                | Reference.ReferenceEventType.Created refDto -> refDto
-                                                | _ -> ReferenceDto.Default
+                                            if results.Count > 0 then
+                                                referenceDto <-
+                                                    match results.Resource.FirstOrDefault().event.Event with
+                                                    | Reference.ReferenceEventType.Created refDto -> refDto
+                                                    | _ -> ReferenceDto.Default
 
-                                    if referenceDto.ReferenceId <> ReferenceDto.Default.ReferenceId then
-                                        referenceDtos.TryAdd(referenceType, referenceDto) |> ignore
+                                        if referenceDto.ReferenceId <> ReferenceDto.Default.ReferenceId then
+                                            referenceDtos.TryAdd(referenceType, referenceDto) |> ignore
 
-                                //logToConsole $"In getLatestReferenceByReferenceTypes:{Environment.NewLine}{referenceDto}."
-                                }
-                            ))
-                    )
+                                    //logToConsole $"In getLatestReferenceByReferenceTypes:{Environment.NewLine}{referenceDto}."
+                                    }
+                                ))
+                        )
 
-                Activity.Current
-                    .SetTag("indexMetrics", $"{indexMetrics.Remove(indexMetrics.Length - 2, 2)}")
-                    .SetTag("requestCharge", $"{requestCharge.Remove(requestCharge.Length - 2, 2)}")
-                |> ignore
+                    Activity.Current
+                        .SetTag("indexMetrics", $"{indexMetrics.Remove(indexMetrics.Length - 2, 2)}")
+                        .SetTag("requestCharge", $"{requestCharge.Remove(requestCharge.Length - 2, 2)}")
+                    |> ignore
+                finally
+                    stringBuilderPool.Return(indexMetrics)
+                    stringBuilderPool.Return(requestCharge)
             | MongoDB -> ()
 
             return referenceDtos :> IReadOnlyDictionary<ReferenceType, ReferenceDto>
@@ -1346,46 +1377,50 @@ module Services =
             match actorStateStorageProvider with
             | Unknown -> return None
             | AzureCosmosDb ->
-                let indexMetrics = StringBuilder()
-                let requestCharge = StringBuilder()
+                let indexMetrics = stringBuilderPool.Get()
+                let requestCharge = stringBuilderPool.Get()
 
-                let queryDefinition =
-                    QueryDefinition(
-                        //"""SELECT TOP 1 c["value"] FROM c WHERE c["value"].BranchId = @branchId AND c["value"].Class = @class AND STRINGEQUALS(c["value"].ReferenceType, @referenceType, true) ORDER BY c["value"].CreatedAt DESC"""
-                        """SELECT TOP 1 event FROM c JOIN event IN c["value"] 
-                                    WHERE event.Event.created.BranchId = @branchId
-                                        AND event.Event.created.Class = @class
-                                        AND STRINGEQUALS(event.Event.created.ReferenceType, @referenceType, true)
-                                        ORDER BY c["value"].CreatedAt DESC"""
-                    )
-                        .WithParameter("@branchId", branchId)
-                        .WithParameter("@referenceType", getDiscriminatedUnionCaseName referenceType)
-                        .WithParameter("@class", nameof (ReferenceDto))
+                try
+                    let queryDefinition =
+                        QueryDefinition(
+                            //"""SELECT TOP 1 c["value"] FROM c WHERE c["value"].BranchId = @branchId AND c["value"].Class = @class AND STRINGEQUALS(c["value"].ReferenceType, @referenceType, true) ORDER BY c["value"].CreatedAt DESC"""
+                            """SELECT TOP 1 event FROM c JOIN event IN c["value"] 
+                                        WHERE event.Event.created.BranchId = @branchId
+                                            AND event.Event.created.Class = @class
+                                            AND STRINGEQUALS(event.Event.created.ReferenceType, @referenceType, true)
+                                            ORDER BY c["value"].CreatedAt DESC"""
+                        )
+                            .WithParameter("@branchId", branchId)
+                            .WithParameter("@referenceType", getDiscriminatedUnionCaseName referenceType)
+                            .WithParameter("@class", nameof (ReferenceDto))
 
-                let iterator = cosmosContainer.GetItemQueryIterator<ReferenceEventValue>(queryDefinition, requestOptions = queryRequestOptions)
+                    let iterator = cosmosContainer.GetItemQueryIterator<ReferenceEventValue>(queryDefinition, requestOptions = queryRequestOptions)
 
-                let mutable referenceDto = ReferenceDto.Default
+                    let mutable referenceDto = ReferenceDto.Default
 
-                while iterator.HasMoreResults do
-                    let! results = DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> iterator.ReadNextAsync())
-                    indexMetrics.Append($"{results.IndexMetrics}, ") |> ignore
-                    requestCharge.Append($"{results.RequestCharge}, ") |> ignore
+                    while iterator.HasMoreResults do
+                        let! results = DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> iterator.ReadNextAsync())
+                        indexMetrics.Append($"{results.IndexMetrics}, ") |> ignore
+                        requestCharge.Append($"{results.RequestCharge}, ") |> ignore
 
-                    if results.Count > 0 then
-                        referenceDto <-
-                            match results.Resource.FirstOrDefault().event.Event with
-                            | Reference.ReferenceEventType.Created refDto -> refDto
-                            | _ -> ReferenceDto.Default
+                        if results.Count > 0 then
+                            referenceDto <-
+                                match results.Resource.FirstOrDefault().event.Event with
+                                | Reference.ReferenceEventType.Created refDto -> refDto
+                                | _ -> ReferenceDto.Default
 
-                Activity.Current
-                    .SetTag("indexMetrics", $"{indexMetrics.Remove(indexMetrics.Length - 2, 2)}")
-                    .SetTag("requestCharge", $"{requestCharge.Remove(requestCharge.Length - 2, 2)}")
-                |> ignore
+                    Activity.Current
+                        .SetTag("indexMetrics", $"{indexMetrics.Remove(indexMetrics.Length - 2, 2)}")
+                        .SetTag("requestCharge", $"{requestCharge.Remove(requestCharge.Length - 2, 2)}")
+                    |> ignore
 
-                if referenceDto.ReferenceId <> ReferenceDto.Default.ReferenceId then
-                    return Some referenceDto
-                else
-                    return None
+                    if referenceDto.ReferenceId <> ReferenceDto.Default.ReferenceId then
+                        return Some referenceDto
+                    else
+                        return None
+                finally
+                    stringBuilderPool.Return(indexMetrics)
+                    stringBuilderPool.Return(requestCharge)
             | MongoDB -> return None
         }
 
@@ -1418,46 +1453,50 @@ module Services =
             match actorStateStorageProvider with
             | Unknown -> ()
             | AzureCosmosDb ->
-                let indexMetrics = StringBuilder()
-                let requestCharge = StringBuilder()
-
-                let queryDefinition =
-                    QueryDefinition(
-                        """SELECT TOP 1 event FROM c JOIN event IN c["value"] 
-                            WHERE STARTSWITH(event.Event.created.Sha256Hash, @sha256Hash, true)
-                                AND event.Event.created.RepositoryId = @repositoryId
-                                AND event.Event.created.Class = @class"""
-                    )
-                        //let queryDefinition = QueryDefinition("""SELECT TOP 1 c["value"] FROM c WHERE c["value"].RepositoryId = @repositoryId AND STARTSWITH(c["value"].Sha256Hash, @sha256Hash, true) AND c["value"].Class = @class""")
-                        .WithParameter("@sha256Hash", sha256Hash)
-                        .WithParameter("@repositoryId", repositoryId)
-                        .WithParameter("@class", nameof (DirectoryVersion))
+                let indexMetrics = stringBuilderPool.Get()
+                let requestCharge = stringBuilderPool.Get()
 
                 try
-                    let iterator = cosmosContainer.GetItemQueryIterator<DirectoryVersionEventValue>(queryDefinition, requestOptions = queryRequestOptions)
+                    let queryDefinition =
+                        QueryDefinition(
+                            """SELECT TOP 1 event FROM c JOIN event IN c["value"] 
+                                WHERE STARTSWITH(event.Event.created.Sha256Hash, @sha256Hash, true)
+                                    AND event.Event.created.RepositoryId = @repositoryId
+                                    AND event.Event.created.Class = @class"""
+                        )
+                            //let queryDefinition = QueryDefinition("""SELECT TOP 1 c["value"] FROM c WHERE c["value"].RepositoryId = @repositoryId AND STARTSWITH(c["value"].Sha256Hash, @sha256Hash, true) AND c["value"].Class = @class""")
+                            .WithParameter("@sha256Hash", sha256Hash)
+                            .WithParameter("@repositoryId", repositoryId)
+                            .WithParameter("@class", nameof (DirectoryVersion))
 
-                    while iterator.HasMoreResults do
-                        let! results = DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> iterator.ReadNextAsync())
-                        indexMetrics.Append($"{results.IndexMetrics}, ") |> ignore
-                        requestCharge.Append($"{results.RequestCharge}, ") |> ignore
+                    try
+                        let iterator = cosmosContainer.GetItemQueryIterator<DirectoryVersionEventValue>(queryDefinition, requestOptions = queryRequestOptions)
 
-                        if results.Resource.Count() > 0 then
-                            directoryVersion <-
-                                match results.Resource.FirstOrDefault().event.Event with
-                                | DirectoryVersion.DirectoryVersionEventType.Created directoryVersion -> directoryVersion
-                                | _ -> DirectoryVersion.Default
+                        while iterator.HasMoreResults do
+                            let! results = DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> iterator.ReadNextAsync())
+                            indexMetrics.Append($"{results.IndexMetrics}, ") |> ignore
+                            requestCharge.Append($"{results.RequestCharge}, ") |> ignore
 
-                    Activity.Current
-                        .SetTag("indexMetrics", $"{indexMetrics.Remove(indexMetrics.Length - 2, 2)}")
-                        .SetTag("requestCharge", $"{requestCharge.Remove(requestCharge.Length - 2, 2)}")
-                    |> ignore
-                with ex ->
-                    log.LogError(
-                        ex,
-                        "{CurrentInstant}: Exception in Services.getDirectoryBySha256Hash(). QueryDefinition: {queryDefinition}",
-                        getCurrentInstantExtended (),
-                        (serialize queryDefinition)
-                    )
+                            if results.Resource.Count() > 0 then
+                                directoryVersion <-
+                                    match results.Resource.FirstOrDefault().event.Event with
+                                    | DirectoryVersion.DirectoryVersionEventType.Created directoryVersion -> directoryVersion
+                                    | _ -> DirectoryVersion.Default
+
+                        Activity.Current
+                            .SetTag("indexMetrics", $"{indexMetrics.Remove(indexMetrics.Length - 2, 2)}")
+                            .SetTag("requestCharge", $"{requestCharge.Remove(requestCharge.Length - 2, 2)}")
+                        |> ignore
+                    with ex ->
+                        log.LogError(
+                            ex,
+                            "{CurrentInstant}: Exception in Services.getDirectoryBySha256Hash(). QueryDefinition: {queryDefinition}",
+                            getCurrentInstantExtended (),
+                            (serialize queryDefinition)
+                        )
+                finally
+                    stringBuilderPool.Return(indexMetrics)
+                    stringBuilderPool.Return(requestCharge)
             | MongoDB -> ()
 
             if
@@ -1477,52 +1516,56 @@ module Services =
             match actorStateStorageProvider with
             | Unknown -> ()
             | AzureCosmosDb ->
-                let indexMetrics = StringBuilder()
-                let requestCharge = StringBuilder()
-
-                let queryDefinition =
-                    QueryDefinition(
-                        $"""SELECT TOP 1 event FROM c JOIN event in c["value"]
-                                                            WHERE STARTSWITH(event.Event.created.Sha256Hash, @sha256Hash, true)
-                                                                AND event.Event.created.RepositoryId = @repositoryId
-                                                                AND event.Event.created.RelativePath = @relativePath
-                                                                AND event.Event.created.Class = @class"""
-                    )
-                        .WithParameter("@sha256Hash", sha256Hash)
-                        .WithParameter("@repositoryId", repositoryId)
-                        .WithParameter("@relativePath", Constants.RootDirectoryPath)
-                        .WithParameter("@class", nameof (DirectoryVersion))
+                let indexMetrics = stringBuilderPool.Get()
+                let requestCharge = stringBuilderPool.Get()
 
                 try
-                    let iterator = cosmosContainer.GetItemQueryIterator<DirectoryVersionEventValue>(queryDefinition, requestOptions = queryRequestOptions)
+                    let queryDefinition =
+                        QueryDefinition(
+                            $"""SELECT TOP 1 event FROM c JOIN event in c["value"]
+                                                                WHERE STARTSWITH(event.Event.created.Sha256Hash, @sha256Hash, true)
+                                                                    AND event.Event.created.RepositoryId = @repositoryId
+                                                                    AND event.Event.created.RelativePath = @relativePath
+                                                                    AND event.Event.created.Class = @class"""
+                        )
+                            .WithParameter("@sha256Hash", sha256Hash)
+                            .WithParameter("@repositoryId", repositoryId)
+                            .WithParameter("@relativePath", Constants.RootDirectoryPath)
+                            .WithParameter("@class", nameof (DirectoryVersion))
 
-                    while iterator.HasMoreResults do
-                        let! results = iterator.ReadNextAsync()
-                        indexMetrics.Append($"{results.IndexMetrics}, ") |> ignore
-                        requestCharge.Append($"{results.RequestCharge}, ") |> ignore
+                    try
+                        let iterator = cosmosContainer.GetItemQueryIterator<DirectoryVersionEventValue>(queryDefinition, requestOptions = queryRequestOptions)
 
-                        if results.Resource.Count() > 0 then
-                            directoryVersion <-
-                                match results.Resource.FirstOrDefault().event.Event with
-                                | DirectoryVersion.DirectoryVersionEventType.Created directoryVersion -> directoryVersion
-                                | _ -> DirectoryVersion.Default
+                        while iterator.HasMoreResults do
+                            let! results = iterator.ReadNextAsync()
+                            indexMetrics.Append($"{results.IndexMetrics}, ") |> ignore
+                            requestCharge.Append($"{results.RequestCharge}, ") |> ignore
 
-                    Activity.Current
-                        .SetTag("indexMetrics", $"{indexMetrics.Remove(indexMetrics.Length - 2, 2)}")
-                        .SetTag("requestCharge", $"{requestCharge.Remove(requestCharge.Length - 2, 2)}")
-                    |> ignore
-                with ex ->
-                    let parameters =
-                        queryDefinition.GetQueryParameters()
-                        |> Seq.fold (fun (state: StringBuilder) (struct (k, v)) -> state.Append($"{k} = {v}; ")) (StringBuilder())
+                            if results.Resource.Count() > 0 then
+                                directoryVersion <-
+                                    match results.Resource.FirstOrDefault().event.Event with
+                                    | DirectoryVersion.DirectoryVersionEventType.Created directoryVersion -> directoryVersion
+                                    | _ -> DirectoryVersion.Default
 
-                    log.LogError(
-                        ex,
-                        "{CurrentInstant}: Exception in Services.getRootDirectoryBySha256Hash(). QueryText: {queryText}. Parameters: {parameters}",
-                        getCurrentInstantExtended (),
-                        (queryDefinition.QueryText),
-                        parameters.ToString()
-                    )
+                        Activity.Current
+                            .SetTag("indexMetrics", $"{indexMetrics.Remove(indexMetrics.Length - 2, 2)}")
+                            .SetTag("requestCharge", $"{requestCharge.Remove(requestCharge.Length - 2, 2)}")
+                        |> ignore
+                    with ex ->
+                        let parameters =
+                            queryDefinition.GetQueryParameters()
+                            |> Seq.fold (fun (state: StringBuilder) (struct (k, v)) -> state.Append($"{k} = {v}; ")) (StringBuilder())
+
+                        log.LogError(
+                            ex,
+                            "{CurrentInstant}: Exception in Services.getRootDirectoryBySha256Hash(). QueryText: {queryText}. Parameters: {parameters}",
+                            getCurrentInstantExtended (),
+                            (queryDefinition.QueryText),
+                            parameters.ToString()
+                        )
+                finally
+                    stringBuilderPool.Return(indexMetrics)
+                    stringBuilderPool.Return(requestCharge)
             | MongoDB -> ()
 
             if
@@ -1595,6 +1638,7 @@ module Services =
             | AzureCosmosDb ->
                 let mutable requestCharge = 0.0
                 let mutable clientElapsedTime = TimeSpan.Zero
+                let queryText = stringBuilderPool.Get()
 
                 (*("""SELECT TOP 1 event FROM c JOIN event IN c["value"] 
                     WHERE event.Event.created.BranchId = @branchId
@@ -1606,72 +1650,75 @@ module Services =
         .WithParameter("@referenceType", $"{referenceType}")
         .WithParameter("@class", "Reference")
         *)
-
-                // In order to build the IN clause, we need to create a parameter for each referenceId. (I tried just using string concatenation, it didn't work for some reason. Anyway...)
-                // The query starts with:
-                let queryText =
-                    StringBuilder(
+                try
+                    // In order to build the IN clause, we need to create a parameter for each referenceId.
+                    //   (I tried just using string concatenation, it didn't work for some reason. Anyway...)
+                    // The query starts with:
+                    queryText.Append(
                         @"SELECT TOP @maxCount event
-                                                FROM c JOIN event IN c[""value""]
-                                                WHERE event.Event.created.Class = @class
-                                                AND event.Event.created.ReferenceId IN ("
+                                                    FROM c JOIN event IN c[""value""]
+                                                    WHERE event.Event.created.Class = @class
+                                                    AND event.Event.created.ReferenceId IN ("
                     )
-                // Then we add a parameter for each referenceId.
-                referenceIds
-                    .Where(fun referenceId -> not <| referenceId.Equals(ReferenceId.Empty))
-                    .Distinct()
-                |> Seq.iteri (fun i referenceId -> queryText.Append($"@referenceId{i},") |> ignore)
-                // Then we remove the last comma and close the parenthesis.
-                queryText.Remove(queryText.Length - 1, 1).Append(")") |> ignore
+                    |> ignore
+                    // Then we add a parameter for each referenceId.
+                    referenceIds
+                        .Where(fun referenceId -> not <| referenceId.Equals(ReferenceId.Empty))
+                        .Distinct()
+                    |> Seq.iteri (fun i referenceId -> queryText.Append($"@referenceId{i},") |> ignore)
+                    // Then we remove the last comma and close the parenthesis.
+                    queryText.Remove(queryText.Length - 1, 1).Append(")") |> ignore
 
-                // Create the query definition.
-                let queryDefinition =
-                    QueryDefinition(queryText.ToString())
-                        .WithParameter("@maxCount", referenceIds.Count())
-                        .WithParameter("@class", nameof (ReferenceDto))
+                    // Create the query definition.
+                    let queryDefinition =
+                        QueryDefinition(queryText.ToString())
+                            .WithParameter("@maxCount", referenceIds.Count())
+                            .WithParameter("@class", nameof (ReferenceDto))
 
-                // Add a .WithParameter for each referenceId.
-                referenceIds
-                    .Where(fun referenceId -> not <| referenceId.Equals(ReferenceId.Empty))
-                    .Distinct()
-                |> Seq.iteri (fun i referenceId -> queryDefinition.WithParameter($"@referenceId{i}", $"{referenceId}") |> ignore)
+                    // Add a .WithParameter for each referenceId.
+                    referenceIds
+                        .Where(fun referenceId -> not <| referenceId.Equals(ReferenceId.Empty))
+                        .Distinct()
+                    |> Seq.iteri (fun i referenceId -> queryDefinition.WithParameter($"@referenceId{i}", $"{referenceId}") |> ignore)
 
-                // Execute the query.
-                let iterator = cosmosContainer.GetItemQueryIterator<ReferenceEventValue>(queryDefinition, requestOptions = queryRequestOptions)
+                    // Execute the query.
+                    let iterator = cosmosContainer.GetItemQueryIterator<ReferenceEventValue>(queryDefinition, requestOptions = queryRequestOptions)
 
-                // The query will return fewer results than the number of referenceIds if the supplied referenceIds have duplicates.
-                //   This is normal for `grace status` (BasedOn and Latest Promotion are likely to be the same, for instance).
-                //   We need to gather the query results, and then iterate through the referenceId's to return the dto's in the same order.
-                let queryResults = Dictionary<ReferenceId, ReferenceDto>()
+                    // The query will return fewer results than the number of referenceIds if the supplied referenceIds have duplicates.
+                    //   This is normal for `grace status` (BasedOn and Latest Promotion are likely to be the same, for instance).
+                    //   We need to gather the query results, and then iterate through the referenceId's to return the dto's in the same order.
+                    let queryResults = Dictionary<ReferenceId, ReferenceDto>()
 
-                while iterator.HasMoreResults do
-                    addTiming TimingFlag.BeforeStorageQuery "getReferencesByReferenceId" correlationId
-                    let! results = iterator.ReadNextAsync()
-                    addTiming TimingFlag.AfterStorageQuery "getReferencesByReferenceId" correlationId
-                    requestCharge <- requestCharge + results.RequestCharge
-                    clientElapsedTime <- clientElapsedTime + results.Diagnostics.GetClientElapsedTime()
+                    while iterator.HasMoreResults do
+                        addTiming TimingFlag.BeforeStorageQuery "getReferencesByReferenceId" correlationId
+                        let! results = iterator.ReadNextAsync()
+                        addTiming TimingFlag.AfterStorageQuery "getReferencesByReferenceId" correlationId
+                        requestCharge <- requestCharge + results.RequestCharge
+                        clientElapsedTime <- clientElapsedTime + results.Diagnostics.GetClientElapsedTime()
 
-                    results.Resource
-                    |> Seq.iter (fun ev ->
-                        match ev.event.Event with
-                        | Reference.ReferenceEventType.Created refDto -> queryResults.Add(refDto.ReferenceId, refDto)
-                        | _ -> ())
+                        results.Resource
+                        |> Seq.iter (fun ev ->
+                            match ev.event.Event with
+                            | Reference.ReferenceEventType.Created refDto -> queryResults.Add(refDto.ReferenceId, refDto)
+                            | _ -> ())
 
-                // Add the results to the list in the same order as the supplied referenceIds.
-                referenceIds
-                |> Seq.iter (fun referenceId ->
-                    if referenceId <> ReferenceId.Empty then
-                        if queryResults.ContainsKey(referenceId) then
-                            referenceDtos.Add(queryResults[referenceId])
-                    else
-                        // In case the caller supplied an empty referenceId, add a default ReferenceDto.
-                        referenceDtos.Add(ReferenceDto.Default))
+                    // Add the results to the list in the same order as the supplied referenceIds.
+                    referenceIds
+                    |> Seq.iter (fun referenceId ->
+                        if referenceId <> ReferenceId.Empty then
+                            if queryResults.ContainsKey(referenceId) then
+                                referenceDtos.Add(queryResults[referenceId])
+                        else
+                            // In case the caller supplied an empty referenceId, add a default ReferenceDto.
+                            referenceDtos.Add(ReferenceDto.Default))
 
-                Activity.Current
-                    .SetTag("referenceDtos.Count", $"{referenceDtos.Count}")
-                    .SetTag("clientElapsedTime", $"{clientElapsedTime}")
-                    .SetTag("totalRequestCharge", $"{requestCharge}")
-                |> ignore
+                    Activity.Current
+                        .SetTag("referenceDtos.Count", $"{referenceDtos.Count}")
+                        .SetTag("clientElapsedTime", $"{clientElapsedTime}")
+                        .SetTag("totalRequestCharge", $"{requestCharge}")
+                    |> ignore
+                finally
+                    stringBuilderPool.Return(queryText)
             | MongoDB -> ()
 
             return referenceDtos

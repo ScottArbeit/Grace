@@ -59,6 +59,393 @@ module Maintenance =
 
         path.SetDefaultValue("*.*")
 
+    let private Test =
+        CommandHandler.Create(fun (parseResult: ParseResult) (parameters: CommonParameters) ->
+            task {
+                if parseResult |> verbose then printParseResult parseResult
+
+                if parseResult |> hasOutput then
+                    let! graceStatus =
+                        progress
+                            .Columns(progressColumns)
+                            .StartAsync(fun progressContext ->
+                                task {
+                                    let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Reading existing Grace index file.[/]")
+
+                                    let t1 = progressContext.AddTask($"[{Color.DodgerBlue1}]Computing new Grace index file.[/]", autoStart = false)
+
+                                    let t2 = progressContext.AddTask($"[{Color.DodgerBlue1}]Writing new Grace index file.[/]", autoStart = false)
+
+                                    let t3 = progressContext.AddTask($"[{Color.DodgerBlue1}]Ensure files are in the object cache.[/]", autoStart = false)
+
+                                    let t4 = progressContext.AddTask($"[{Color.DodgerBlue1}]Ensure object cache index is up-to-date.[/]", autoStart = false)
+
+                                    let t5 =
+                                        progressContext.AddTask($"[{Color.DodgerBlue1}]Ensure files are uploaded to object storage.[/]", autoStart = false)
+
+                                    let t6 =
+                                        progressContext.AddTask(
+                                            $"[{Color.DodgerBlue1}]Ensure directory versions are uploaded to Grace Server.[/]",
+                                            autoStart = false
+                                        )
+
+                                    // Read the existing Grace status file.
+                                    t0.Increment(0.0)
+                                    //let! previousGraceStatus = readGraceStatusFile ()
+                                    let! graceStatus = readGraceStatusFile ()
+                                    t0.Increment(100.0)
+
+                                    // Compute the new Grace status file, based on the contents of the working directory.
+                                    t1.StartTask()
+
+                                    if parseResult |> verbose then
+                                        logToAnsiConsole Colors.Verbose "Computing new Grace index file."
+
+                                    //let! graceStatus = createNewGraceStatusFile previousGraceStatus parseResult
+                                    //let graceStatus = previousGraceStatus
+
+                                    if parseResult |> verbose then
+                                        logToAnsiConsole Colors.Verbose "Done computing new Grace index file."
+
+                                    t1.Value <- 100.0
+
+                                    // Write the new Grace status file to disk.
+                                    t2.StartTask()
+                                    do! writeGraceStatusFile graceStatus
+                                    t2.Value <- 100.0
+
+                                    // Ensure all files are in the object cache.
+                                    t3.StartTask()
+                                    let fileVersions = ConcurrentDictionary<RelativePath, LocalFileVersion>()
+
+                                    // Loop through the local directory versions, and populate fileVersions with all of the files in the repo.
+                                    let plr =
+                                        Parallel.ForEach(
+                                            graceStatus.Index.Values,
+                                            Constants.ParallelOptions,
+                                            (fun ldv ->
+                                                for fileVersion in ldv.Files do
+                                                    fileVersions.TryAdd(fileVersion.RelativePath, fileVersion) |> ignore)
+                                        )
+
+                                    // New F# 8.0 way to do this.
+                                    //graceStatus.Index.Values |> Seq.toArray |> Array.Parallel.iter (fun ldv ->
+                                    //    for fileVersion in ldv.Files do
+                                    //        fileVersions.TryAdd(fileVersion.RelativePath, fileVersion) |> ignore
+                                    //)
+
+                                    let incrementAmount = 100.0 / double fileVersions.Count
+
+                                    // Loop through the files, and copy them to the object cache if they don't already exist.
+                                    let plr =
+                                        Parallel.ForEach(
+                                            fileVersions,
+                                            Constants.ParallelOptions,
+                                            (fun kvp _ ->
+                                                let fileVersion = kvp.Value
+                                                let fullObjectPath = fileVersion.FullObjectPath
+
+                                                if not <| File.Exists(fullObjectPath) then
+                                                    Directory.CreateDirectory(Path.GetDirectoryName(fullObjectPath)) |> ignore // If the directory already exists, this will do nothing.
+
+                                                    File.Copy(Path.Combine(Current().RootDirectory, fileVersion.RelativePath), fullObjectPath)
+
+                                                t3.Increment(incrementAmount))
+                                        )
+
+                                    t3.Value <- 100.0
+
+                                    // Ensure the object cache index is up-to-date.
+                                    t4.StartTask()
+                                    let! objectCache = readGraceObjectCacheFile ()
+                                    let incrementAmount = 100.0 / double graceStatus.Index.Count
+
+                                    let plr =
+                                        Parallel.ForEach(
+                                            graceStatus.Index.Values,
+                                            Constants.ParallelOptions,
+                                            (fun localDirectoryVersion ->
+                                                if not <| objectCache.Index.ContainsKey(localDirectoryVersion.DirectoryVersionId) then
+                                                    objectCache.Index.AddOrUpdate(
+                                                        localDirectoryVersion.DirectoryVersionId,
+                                                        (fun _ -> localDirectoryVersion),
+                                                        (fun _ _ -> localDirectoryVersion)
+                                                    )
+                                                    |> ignore
+
+                                                t4.Increment(incrementAmount))
+                                        )
+
+                                    do! writeGraceObjectCacheFile objectCache
+                                    objectCache.Index.Clear() // Clear the object cache index to release memory.
+                                    t4.Value <- 100.0
+
+                                    // Ensure all files are uploaded to object storage.
+                                    t5.StartTask()
+                                    let incrementAmount = 100.0 / double fileVersions.Count
+
+                                    match Current().ObjectStorageProvider with
+                                    | ObjectStorageProvider.Unknown -> ()
+                                    | AzureBlobStorage ->
+                                        if parseResult |> verbose then
+                                            logToAnsiConsole Colors.Verbose "Uploading files to Azure Blob Storage."
+
+                                        // Breaking the uploads into chunks allows us to interleave checking to see if files are already uploaded with actually uploading them when they don't.
+                                        let chunkSize = 32
+                                        let fileVersionGroups = fileVersions.Chunk(chunkSize)
+                                        fileVersions.Clear()
+                                        let succeeded = ConcurrentQueue<GraceReturnValue<string>>()
+                                        let errors = ConcurrentQueue<GraceError>()
+
+                                        // Loop through the groups of file versions, and upload files that aren't already in object storage.
+                                        do!
+                                            Parallel.ForEachAsync(
+                                                fileVersionGroups,
+                                                Constants.ParallelOptions,
+                                                (fun fileVersions ct ->
+                                                    ValueTask(
+                                                        task {
+                                                            let! graceResult =
+                                                                Storage.FilesExistInObjectStorage
+                                                                    (fileVersions.Select(fun f -> f.Value.ToFileVersion).ToList())
+                                                                    (getCorrelationId parseResult)
+
+                                                            match graceResult with
+                                                            | Ok graceReturnValue ->
+                                                                let uploadMetadata = graceReturnValue.ReturnValue
+                                                                // Increment the counter for the files that we don't have to upload.
+                                                                t5.Increment(incrementAmount * double (fileVersions.Count() - uploadMetadata.Count))
+
+                                                                // Index all of the file versions by their SHA256 hash; we'll look up the files to upload with it.
+                                                                let filesIndexedBySha256Hash =
+                                                                    Dictionary<Sha256Hash, LocalFileVersion>(
+                                                                        fileVersions.Select(fun kvp -> KeyValuePair(kvp.Value.Sha256Hash, kvp.Value))
+                                                                    )
+
+                                                                // Upload the files in this chunk to object storage.
+                                                                do!
+                                                                    Parallel.ForEachAsync(
+                                                                        uploadMetadata,
+                                                                        Constants.ParallelOptions,
+                                                                        (fun upload ct ->
+                                                                            ValueTask(
+                                                                                task {
+                                                                                    let fileVersion =
+                                                                                        filesIndexedBySha256Hash[upload.Sha256Hash].ToFileVersion
+
+                                                                                    let! result =
+                                                                                        Storage.SaveFileToObjectStorage
+                                                                                            fileVersion
+                                                                                            (upload.BlobUriWithSasToken)
+                                                                                            (getCorrelationId parseResult)
+
+                                                                                    // Increment the counter for each file that we do upload.
+                                                                                    t5.Increment(incrementAmount)
+
+                                                                                    match result with
+                                                                                    | Ok result -> succeeded.Enqueue(result)
+                                                                                    | Error error -> errors.Enqueue(error)
+                                                                                }
+                                                                            ))
+                                                                    )
+
+                                                            | Error error -> AnsiConsole.Write((new Panel($"{error}")).BorderColor(Color.Red3))
+                                                        }
+                                                    ))
+                                            )
+
+                                        if errors.Count = 0 then
+                                            if parseResult |> verbose then
+                                                logToAnsiConsole Colors.Verbose "All files uploaded successfully."
+
+                                            ()
+                                        else
+                                            AnsiConsole.MarkupLine($"{errors.Count} errors occurred while uploading files to object storage.")
+
+                                            let mutable error = GraceError.Create String.Empty String.Empty
+
+                                            while not <| errors.IsEmpty do
+                                                if errors.TryDequeue(&error) then
+                                                    AnsiConsole.MarkupLine($"[{Colors.Error}]{error.Error.EscapeMarkup()}[/]")
+                                    | AWSS3 -> ()
+                                    | GoogleCloudStorage -> ()
+
+                                    t5.Value <- 100.0
+
+                                    // Ensure all directory versions are uploaded to Grace Server.
+                                    t6.StartTask()
+
+                                    if parseResult |> verbose then
+                                        logToAnsiConsole Colors.Verbose "Uploading new directory versions to the server."
+
+                                    let chunkSize = 16
+                                    let succeeded = ConcurrentQueue<GraceReturnValue<string>>()
+                                    let errors = ConcurrentQueue<GraceError>()
+
+                                    // We'll segment the uploads by the number of segments in the path,
+                                    //   so we process the deepest paths first, and the new children exist before the parent is created.
+                                    //   Within each segment group, we'll parallelize the processing for performance.
+                                    let segmentGroups =
+                                        graceStatus.Index.Values
+                                            .GroupBy(fun dv -> countSegments dv.RelativePath)
+                                            .OrderByDescending(fun group -> group.Key)
+
+                                    for group in segmentGroups do
+                                        let directoryVersionGroups = group.Chunk(chunkSize)
+                                        let incrementAmount = 100.0 / double (directoryVersionGroups.Count())
+
+                                        do!
+                                            Parallel.ForEachAsync(
+                                                directoryVersionGroups,
+                                                Constants.ParallelOptions,
+                                                (fun directoryVersionGroup ct ->
+                                                    ValueTask(
+                                                        task {
+                                                            let saveDirectoryVersionsParameters =
+                                                                SaveDirectoryVersionsParameters(
+                                                                    DirectoryVersions =
+                                                                        directoryVersionGroup.Select(fun dv -> dv.ToDirectoryVersion).ToList(),
+                                                                    CorrelationId = getCorrelationId parseResult
+                                                                )
+
+                                                            match! Directory.SaveDirectoryVersions saveDirectoryVersionsParameters with
+                                                            | Ok result -> succeeded.Enqueue(result)
+                                                            | Error error -> errors.Enqueue(error)
+
+                                                            t6.Increment(incrementAmount * double directoryVersionGroup.Length)
+                                                        }
+                                                    ))
+                                            )
+
+                                    t6.Value <- 100.0
+
+                                    AnsiConsole.MarkupLine($"[{Colors.Important}]succeeded: {succeeded.Count}; errors: {errors.Count}.[/]")
+
+                                    let mutable error = GraceError.Create String.Empty String.Empty
+
+                                    while not <| errors.IsEmpty do
+                                        errors.TryDequeue(&error) |> ignore
+
+                                        if error.Error.Contains("TRetval") then logToConsole $"********* {error.Error}"
+
+                                        AnsiConsole.MarkupLine($"[{Colors.Error}]{error.Error.EscapeMarkup()}[/]")
+
+                                    return graceStatus
+                                })
+
+                    let fileCount =
+                        graceStatus.Index.Values
+                            .Select(fun directoryVersion -> directoryVersion.Files.Count)
+                            .Sum()
+
+                    let totalFileSize = graceStatus.Index.Values.Sum(fun directoryVersion -> directoryVersion.Files.Sum(fun f -> int64 f.Size))
+
+                    let rootDirectoryVersion = graceStatus.Index.Values.First(fun d -> d.RelativePath = Constants.RootDirectoryPath)
+
+                    AnsiConsole.MarkupLine($"[{Colors.Highlighted}]Number of directories scanned: {graceStatus.Index.Count}.[/]")
+
+                    AnsiConsole.MarkupLine($"[{Colors.Highlighted}]Number of files scanned: {fileCount}; total file size: {totalFileSize:N0}.[/]")
+
+                    AnsiConsole.MarkupLine $"[{Colors.Highlighted}]Root SHA-256 hash: {rootDirectoryVersion.Sha256Hash.Substring(0, 8)}[/]"
+                else
+                    let! previousGraceStatus = readGraceStatusFile ()
+                    let! graceStatus = createNewGraceStatusFile previousGraceStatus parseResult
+                    do! writeGraceStatusFile graceStatus
+
+                    let fileVersions = ConcurrentDictionary<RelativePath, LocalFileVersion>()
+
+                    let plr =
+                        Parallel.ForEach(
+                            graceStatus.Index.Values,
+                            Constants.ParallelOptions,
+                            (fun ldv ->
+                                for fileVersion in ldv.Files do
+                                    fileVersions.TryAdd(fileVersion.RelativePath, fileVersion) |> ignore)
+                        )
+
+                    let plr =
+                        Parallel.ForEach(
+                            fileVersions,
+                            Constants.ParallelOptions,
+                            (fun kvp _ ->
+                                let fileVersion = kvp.Value
+                                let fullObjectPath = fileVersion.FullObjectPath
+
+                                if not <| File.Exists(fullObjectPath) then
+                                    Directory.CreateDirectory(Path.GetDirectoryName(fullObjectPath)) |> ignore
+
+                                    File.Copy(Path.Combine(Current().RootDirectory, fileVersion.RelativePath), fullObjectPath))
+                        )
+
+                    match Current().ObjectStorageProvider with
+                    | ObjectStorageProvider.Unknown -> ()
+                    | AzureBlobStorage ->
+                        let chunkSize = 32
+                        let fileVersionGroups = fileVersions.Chunk(chunkSize)
+                        let succeeded = ConcurrentQueue<GraceReturnValue<string>>()
+                        let errors = ConcurrentQueue<GraceError>()
+
+                        do!
+                            Parallel.ForEachAsync(
+                                fileVersionGroups,
+                                Constants.ParallelOptions,
+                                (fun fileVersions ct ->
+                                    ValueTask(
+                                        task {
+                                            let! graceResult =
+                                                Storage.FilesExistInObjectStorage
+                                                    (fileVersions.Select(fun f -> f.Value.ToFileVersion).ToList())
+                                                    (getCorrelationId parseResult)
+
+                                            match graceResult with
+                                            | Ok graceReturnValue ->
+                                                let uploadMetadata = graceReturnValue.ReturnValue
+
+                                                let filesIndexedBySha256Hash =
+                                                    Dictionary<Sha256Hash, LocalFileVersion>(
+                                                        fileVersions.Select(fun kvp -> KeyValuePair(kvp.Value.Sha256Hash, kvp.Value))
+                                                    )
+
+                                                do!
+                                                    Parallel.ForEachAsync(
+                                                        uploadMetadata,
+                                                        Constants.ParallelOptions,
+                                                        (fun upload ct ->
+                                                            ValueTask(
+                                                                task {
+                                                                    let fileVersion = filesIndexedBySha256Hash[upload.Sha256Hash].ToFileVersion
+
+                                                                    let! result =
+                                                                        Storage.SaveFileToObjectStorage
+                                                                            fileVersion
+                                                                            (upload.BlobUriWithSasToken)
+                                                                            (getCorrelationId parseResult)
+
+                                                                    match result with
+                                                                    | Ok result -> succeeded.Enqueue(result)
+                                                                    | Error error -> errors.Enqueue(error)
+                                                                }
+                                                            ))
+                                                    )
+                                            | Error error -> AnsiConsole.MarkupLine($"[{Colors.Error}]{error}[/]")
+                                        }
+                                    ))
+                            )
+
+                        if errors.Count = 0 then
+                            ()
+                        else
+                            AnsiConsole.MarkupLine($"{errors.Count} errors occurred.")
+                            let mutable error = GraceError.Create String.Empty String.Empty
+
+                            while not <| errors.IsEmpty do
+                                if errors.TryDequeue(&error) then
+                                    AnsiConsole.MarkupLine($"[{Colors.Error}]{error.Error.EscapeMarkup()}[/]")
+                    | AWSS3 -> ()
+                    | GoogleCloudStorage -> ()
+            }
+            :> Task)
+
     let private UpdateIndex =
         CommandHandler.Create(fun (parseResult: ParseResult) (parameters: CommonParameters) ->
             task {
@@ -162,12 +549,16 @@ module Maintenance =
                                         Parallel.ForEach(
                                             graceStatus.Index.Values,
                                             Constants.ParallelOptions,
-                                            (fun ldv ->
-                                                if not <| objectCache.Index.ContainsKey(ldv.DirectoryVersionId) then
-                                                    objectCache.Index.AddOrUpdate(ldv.DirectoryVersionId, (fun _ -> ldv), (fun _ _ -> ldv))
+                                            (fun localDirectoryVersion ->
+                                                if not <| objectCache.Index.ContainsKey(localDirectoryVersion.DirectoryVersionId) then
+                                                    objectCache.Index.AddOrUpdate(
+                                                        localDirectoryVersion.DirectoryVersionId,
+                                                        (fun _ -> localDirectoryVersion),
+                                                        (fun _ _ -> localDirectoryVersion)
+                                                    )
                                                     |> ignore
 
-                                                    t4.Increment(incrementAmount))
+                                                t4.Increment(incrementAmount))
                                         )
 
                                     do! writeGraceObjectCacheFile objectCache
@@ -626,5 +1017,9 @@ module Maintenance =
 
         listContentsCommand.Handler <- ListContents
         maintenanceCommand.AddCommand(listContentsCommand)
+
+        let testCommand = new Command("test", Description = "Just a test.")
+        testCommand.Handler <- Test
+        maintenanceCommand.AddCommand(testCommand)
 
         maintenanceCommand

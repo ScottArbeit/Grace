@@ -228,7 +228,7 @@ module Reference =
                         return
                             Error(
                                 (GraceError.Create
-                                    $"{actorName} does not process reminder type {discriminatedUnionCaseName reminder.ReminderType}."
+                                    $"{actorName} does not process reminder type {getDiscriminatedUnionCaseName reminder.ReminderType}."
                                     this.correlationId)
                                     .enhance ("IsRetryable", "false")
                             )
@@ -305,7 +305,7 @@ module Reference =
                             .enhance(nameof (BranchId), $"{referenceDto.BranchId}")
                             .enhance(nameof (ReferenceId), $"{referenceDto.ReferenceId}")
                             .enhance(nameof (DirectoryVersionId), $"{referenceDto.DirectoryId}")
-                            .enhance(nameof (ReferenceType), $"{discriminatedUnionCaseName referenceDto.ReferenceType}")
+                            .enhance(nameof (ReferenceType), $"{getDiscriminatedUnionCaseName referenceDto.ReferenceType}")
                             .enhance (nameof (ReferenceEventType), $"{getDiscriminatedUnionFullName referenceEvent.Event}")
 
                     return Ok graceReturnValue
@@ -319,7 +319,7 @@ module Reference =
                             .enhance(nameof (BranchId), $"{referenceDto.BranchId}")
                             .enhance(nameof (ReferenceId), $"{referenceDto.ReferenceId}")
                             .enhance(nameof (DirectoryVersionId), $"{referenceDto.DirectoryId}")
-                            .enhance(nameof (ReferenceType), $"{discriminatedUnionCaseName referenceDto.ReferenceType}")
+                            .enhance(nameof (ReferenceType), $"{getDiscriminatedUnionCaseName referenceDto.ReferenceType}")
                             .enhance (nameof (ReferenceEventType), $"{getDiscriminatedUnionFullName referenceEvent.Event}")
 
                     return Error graceError
