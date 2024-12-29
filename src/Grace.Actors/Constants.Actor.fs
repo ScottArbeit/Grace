@@ -151,7 +151,7 @@ module Constants =
 #if DEBUG
     let DefaultPhysicalDeletionReminderDuration = Duration.FromSeconds(300.0)
 #else
-    let DefaultPhysicalDeletionReminderTime = Duration.FromDays(7.0)
+    let DefaultPhysicalDeletionReminderDuration = Duration.FromDays(7.0)
 #endif
 
     /// The time to wait between logical and physical deletion of an actor's state, as a TimeSpan.

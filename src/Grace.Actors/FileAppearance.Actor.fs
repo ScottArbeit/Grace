@@ -19,7 +19,6 @@ open System.Threading.Tasks
 
 module FileAppearance =
 
-    let GetActorId (fileVersion: FileVersion) = ActorId($"{fileVersion.RepositoryId}*{fileVersion.RelativePath}*{fileVersion.Sha256Hash}")
     let actorName = ActorName.FileAppearance
     let log = loggerFactory.CreateLogger("FileAppearance.Actor")
 

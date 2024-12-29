@@ -32,6 +32,9 @@ open System.Text.Json
 open System.Threading.Tasks
 open System.Reactive.Linq
 open MessagePack
+open System.Threading
+open Grace.Shared.Parameters
+open Grace.Shared.Parameters.Storage
 
 module Services =
 
@@ -204,7 +207,6 @@ module Services =
                 return
                     Some(
                         LocalFileVersion.Create
-                            (Current().RepositoryId)
                             (RelativePath(normalizeFilePath relativePath))
                             (Sha256Hash shaValue)
                             isBinary
@@ -307,7 +309,13 @@ module Services =
         }
 
     /// Writes the Grace status file to disk.
-    let writeGraceStatusFile (graceStatus: GraceStatus) = task { do! serializeMessagePack (Current().GraceStatusFile) graceStatus }
+    let writeGraceStatusFile (graceStatus: GraceStatus) =
+        task {
+            Directory.CreateDirectory(Path.GetDirectoryName(Current().GraceStatusFile))
+            |> ignore // No-op if the directory already exists
+
+            do! serializeMessagePack (Current().GraceStatusFile) graceStatus
+        }
 
     /// Writes the Grace status file to disk.
     let writeGraceStatusFileOld (graceStatus: GraceStatus) =
@@ -354,7 +362,13 @@ module Services =
         }
 
     /// Writes the Grace object cache file to disk.
-    let writeGraceObjectCacheFile (graceObjectCache: GraceObjectCache) = task { do! serializeMessagePack (Current().GraceObjectCacheFile) graceObjectCache }
+    let writeGraceObjectCacheFile (graceObjectCache: GraceObjectCache) =
+        task {
+            Directory.CreateDirectory(Path.GetDirectoryName(Current().GraceObjectCacheFile))
+            |> ignore // No-op if the directory already exists
+
+            do! serializeMessagePack (Current().GraceObjectCacheFile) graceObjectCache
+        }
 
     /// Writes the Grace object cache file to disk.
     let writeGraceObjectCacheFileOld (graceObjectCache: GraceObjectCache) =
@@ -434,6 +448,8 @@ module Services =
         }
 
     //let processedThings = ConcurrentQueue<string>()
+    let mutable newDirectoryVersionCount = 0
+    let mutable existingDirectoryVersionCount = 0
 
     /// Gathers all of the LocalDirectoryVersions and LocalFileVersions for the requested directory and its subdirectories, and returns them along with the Sha256Hash of the requested directory.
     let rec collectDirectoriesAndFiles
@@ -520,6 +536,12 @@ module Services =
                                         newGraceStatus.Index.TryAdd(subdirectoryVersion.DirectoryVersionId, subdirectoryVersion)
                                         |> ignore
 
+                                        Interlocked.Increment(&newDirectoryVersionCount) |> ignore
+
+                                        logToAnsiConsole
+                                            Colors.Important
+                                            $"****Created new DirectoryVersion: RelativePath: {normalizeFilePath subdirectoryRelativePath}; existing SHA256Hash: {existingSubdirectoryVersion.Sha256Hash}; new SHA256Hash: {sha256Hash}."
+
                                         directories.Enqueue(subdirectoryVersion)
                                     else
                                         if parseResult |> isOutputFormat "Verbose" then
@@ -529,6 +551,8 @@ module Services =
                                         //processedThings.Enqueue($"Existing {existingSubdirectoryVersion.RelativePath}")
                                         newGraceStatus.Index.TryAdd(existingSubdirectoryVersion.DirectoryVersionId, existingSubdirectoryVersion)
                                         |> ignore
+
+                                        Interlocked.Increment(&existingDirectoryVersionCount) |> ignore
 
                                         directories.Enqueue(existingSubdirectoryVersion)
                                 }
@@ -549,6 +573,12 @@ module Services =
                     $"In collectDirectoriesAndFiles: Processing {relativeDirectoryPath}: {files.Count} files, {directories.Count} directories."
 
             let sha256Hash = computeSha256ForDirectory relativeDirectoryPath directories files
+
+            //if relativeDirectoryPath = Constants.RootDirectoryPath then
+            logToAnsiConsole
+                Colors.Verbose
+                $"In collectDirectoriesAndFiles: newDirectoryVersionCount: {newDirectoryVersionCount}; existingDirectoryVersionCount: {existingDirectoryVersionCount}."
+
             return (directories, files, sha256Hash)
         }
 
@@ -699,14 +729,15 @@ module Services =
         }
 
     /// Uploads all new or changed files from a directory to object storage.
-    let uploadFilesToObjectStorage (fileVersions: IEnumerable<LocalFileVersion>) (correlationId: string) =
+    let uploadFilesToObjectStorage (parameters: GetUploadMetadataForFilesParameters) =
         task {
             match Current().ObjectStorageProvider with
-            | ObjectStorageProvider.Unknown -> return Error(GraceError.Create (StorageError.getErrorMessage StorageError.NotImplemented) correlationId)
+            | ObjectStorageProvider.Unknown ->
+                return Error(GraceError.Create (StorageError.getErrorMessage StorageError.NotImplemented) parameters.CorrelationId)
             | AzureBlobStorage ->
                 //logToAnsiConsole Colors.Verbose $"Uploading {fileVersions.Count()} files to object storage."
-                if fileVersions.Count() > 0 then
-                    match! Storage.FilesExistInObjectStorage (fileVersions.Select(fun f -> f.ToFileVersion).ToList()) correlationId with
+                if parameters.FileVersions.Count() > 0 then
+                    match! Storage.GetUploadMetadataForFiles parameters with
                     | Ok graceReturnValue ->
                         let filesToUpload = graceReturnValue.ReturnValue
                         //logToAnsiConsole Colors.Verbose $"In Services.uploadFilesToObjectStorage(): filesToUpload: {serialize filesToUpload}."
@@ -720,10 +751,15 @@ module Services =
                                     ValueTask(
                                         task {
                                             let fileVersion =
-                                                (fileVersions.First(fun f -> f.Sha256Hash = uploadMetadata.Sha256Hash))
-                                                    .ToFileVersion
+                                                (parameters.FileVersions.First(fun fileVersion -> fileVersion.Sha256Hash = uploadMetadata.Sha256Hash))
                                             //logToAnsiConsole Colors.Verbose $"In Services.uploadFilesToObjectStorage(): Uploading {fileVersion.GetObjectFileName} to object storage."
-                                            match! Storage.SaveFileToObjectStorage fileVersion (uploadMetadata.BlobUriWithSasToken) correlationId with
+                                            match!
+                                                Storage.SaveFileToObjectStorage
+                                                    (RepositoryId.Parse(parameters.RepositoryId))
+                                                    fileVersion
+                                                    (uploadMetadata.BlobUriWithSasToken)
+                                                    parameters.CorrelationId
+                                            with
                                             | Ok result -> () //logToAnsiConsole Colors.Verbose $"In Services.uploadFilesToObjectStorage(): Uploaded {fileVersion.GetObjectFileName} to object storage."
                                             | Error error -> errors.Enqueue(error)
                                         }
@@ -731,34 +767,20 @@ module Services =
                             )
 
                         if errors.Count = 0 then
-                            return Ok(GraceReturnValue.Create true correlationId)
+                            return Ok(GraceReturnValue.Create true parameters.CorrelationId)
                         else
                             // use Seq.fold to create a single error message from the ConcurrentQueue<GraceError>
                             let errorMessage = errors |> Seq.fold (fun acc error -> $"{acc}\n{error.Error}") ""
 
-                            let graceError = GraceError.Create (StorageError.getErrorMessage StorageError.FailedUploadingFilesToObjectStorage) correlationId
+                            let graceError =
+                                GraceError.Create (StorageError.getErrorMessage StorageError.FailedUploadingFilesToObjectStorage) parameters.CorrelationId
 
                             return Error graceError |> enhance "Errors" errorMessage
                     | Error error -> return Error error
                 else
-                    return Ok(GraceReturnValue.Create true correlationId)
-            | AWSS3 -> return Error(GraceError.Create (StorageError.getErrorMessage StorageError.NotImplemented) correlationId)
-            | GoogleCloudStorage -> return Error(GraceError.Create (StorageError.getErrorMessage StorageError.NotImplemented) correlationId)
-        }
-
-    /// Uploads a new or changed file to object storage.
-    let uploadToServerAsync (fileVersion: FileVersion) correlationId =
-        task {
-            match! Storage.GetUploadUri fileVersion correlationId with
-            | Ok returnValue ->
-                match! Storage.SaveFileToObjectStorage fileVersion (Uri(returnValue.ReturnValue)) correlationId with
-                | Ok message ->
-                    //printfn $"{message}"
-                    return Ok message
-                | Error error ->
-                    printfn $"{error}"
-                    return Error error
-            | Error error -> return Error error
+                    return Ok(GraceReturnValue.Create true parameters.CorrelationId)
+            | AWSS3 -> return Error(GraceError.Create (StorageError.getErrorMessage StorageError.NotImplemented) parameters.CorrelationId)
+            | GoogleCloudStorage -> return Error(GraceError.Create (StorageError.getErrorMessage StorageError.NotImplemented) parameters.CorrelationId)
         }
 
     /// Creates an updated LocalDirectoryVersion instance, with a new DirectoryId, based on changes to an existing one.
@@ -813,7 +835,7 @@ module Services =
         | FileSystemEntryType.File -> false
 
     /// Determines if the given difference is for a file, instead of a directory.
-    let isFileChange difference = not (isDirectoryChange difference)
+    let isFileChange difference = not <| isDirectoryChange difference
 
     /// Gets a list of new or updated LocalDirectoryVersions that reflect changes in the working directory.
     ///
@@ -1455,16 +1477,7 @@ module Services =
                         //logToConsole $"Finished copyToObjectDirectory for {filePath}; isBinary: {isBinary}; moved temp file to object directory."
                         let relativePath = Path.GetRelativePath(Current().RootDirectory, filePath)
 
-                        return
-                            Some(
-                                FileVersion.Create
-                                    (Current().RepositoryId)
-                                    (RelativePath relativePath)
-                                    (Sha256Hash $"{sha256Hash}")
-                                    ("")
-                                    isBinary
-                                    (objectFilePathInfo.Length)
-                            )
+                        return Some(FileVersion.Create (RelativePath relativePath) (Sha256Hash $"{sha256Hash}") ("") isBinary (objectFilePathInfo.Length))
                     else
                         // If we do already have this exact version of the file, just delete the temp file.
                         File.Delete(tempFilePath)

@@ -129,14 +129,10 @@ module Diff =
             }
 
         /// Gets a Stream from object storage for a specific FileVersion, using a generated Uri.
-        member private this.getFileStream (fileVersion: FileVersion) (url: UriWithSharedAccessSignature) correlationId =
+        member private this.getFileStream (repositoryDto: RepositoryDto) (fileVersion: FileVersion) (url: UriWithSharedAccessSignature) correlationId =
             task {
                 this.correlationId <- correlationId
-                let repositoryActorId = Repository.GetActorId(fileVersion.RepositoryId)
-
-                let repositoryActorProxy =
-                    actorProxyFactory.CreateActorProxyWithCorrelationId<IRepositoryActor>(repositoryActorId, ActorName.Repository, correlationId)
-
+                let repositoryActorProxy = Repository.CreateActorProxy repositoryDto.RepositoryId correlationId
                 let! objectStorageProvider = repositoryActorProxy.GetObjectStorageProvider correlationId
 
                 match objectStorageProvider with
@@ -312,7 +308,7 @@ module Diff =
                                     let directory = graceIndex[relativeDirectoryPath]
                                     let fileVersion = directory.Files.First(fun f -> f.RelativePath = relativePath)
                                     let! uri = getReadSharedAccessSignature repositoryDto fileVersion correlationId
-                                    let! stream = this.getFileStream fileVersion (Result.get uri) correlationId
+                                    let! stream = this.getFileStream repositoryDto fileVersion (Result.get uri) correlationId
                                     return (stream, fileVersion)
                                 }
 

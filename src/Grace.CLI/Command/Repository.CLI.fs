@@ -26,12 +26,12 @@ open System.Threading
 open System.Threading.Tasks
 open Grace.Shared.Parameters.Directory
 open Spectre.Console.Json
+open Grace.Shared.Parameters.Storage
 
 module Repository =
 
     type CommonParameters() =
         inherit ParameterBase()
-        member val public Name: RepositoryName = String.Empty with get, set
         member val public OwnerId = String.Empty with get, set
         member val public OwnerName: OwnerName = String.Empty with get, set
         member val public OrganizationId = String.Empty with get, set
@@ -458,6 +458,8 @@ module Repository =
                         match repositoryIsEmpty with
                         | Ok isEmpty ->
                             if isEmpty.ReturnValue = true then
+                                let repositoryId = RepositoryId.Parse(parameters.RepositoryId)
+
                                 if parseResult |> hasOutput then
                                     let! graceStatus =
                                         progress
@@ -590,10 +592,23 @@ module Repository =
                                                                 (fun fileVersions ct ->
                                                                     ValueTask(
                                                                         task {
+                                                                            let getUploadMetadataForFilesParameters =
+                                                                                GetUploadMetadataForFilesParameters(
+                                                                                    OwnerId = parameters.OwnerId,
+                                                                                    OwnerName = parameters.OwnerName,
+                                                                                    OrganizationId = parameters.OrganizationId,
+                                                                                    OrganizationName = parameters.OrganizationName,
+                                                                                    RepositoryId = parameters.RepositoryId,
+                                                                                    RepositoryName = parameters.RepositoryName,
+                                                                                    CorrelationId = getCorrelationId parseResult,
+                                                                                    FileVersions =
+                                                                                        (fileVersions
+                                                                                         |> Seq.map (fun kvp -> kvp.Value.ToFileVersion)
+                                                                                         |> Seq.toArray)
+                                                                                )
+
                                                                             let! graceResult =
-                                                                                Storage.FilesExistInObjectStorage
-                                                                                    (fileVersions.Select(fun f -> f.Value.ToFileVersion).ToList())
-                                                                                    (getCorrelationId parseResult)
+                                                                                Storage.GetUploadMetadataForFiles getUploadMetadataForFilesParameters
 
                                                                             match graceResult with
                                                                             | Ok graceReturnValue ->
@@ -624,6 +639,7 @@ module Repository =
 
                                                                                                     let! result =
                                                                                                         Storage.SaveFileToObjectStorage
+                                                                                                            repositoryId
                                                                                                             fileVersion
                                                                                                             (upload.BlobUriWithSasToken)
                                                                                                             (getCorrelationId parseResult)

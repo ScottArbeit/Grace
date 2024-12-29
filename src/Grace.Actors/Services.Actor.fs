@@ -1120,7 +1120,7 @@ module Services =
     /// Deletes all documents from CosmosDb.
     ///
     /// **** This method is implemented only in Debug configuration. It is a no-op in Release configuration. ****
-    let deleteAllFromCosmosDB () =
+    let deleteAllFromCosmosDBThatMatch (queryDefinition: QueryDefinition) =
         task {
 #if DEBUG
             let failed = List<string>()
@@ -1130,10 +1130,7 @@ module Services =
                 let parallelOptions = ParallelOptions(MaxDegreeOfParallelism = 3)
 
                 let itemRequestOptions =
-                    ItemRequestOptions(AddRequestHeaders = fun headers -> headers.Add(Constants.CorrelationIdHeaderKey, "Deleting all records from CosmosDB"))
-
-                let queryDefinition = QueryDefinition("""SELECT c.id, c.partitionKey FROM c ORDER BY c.partitionKey""")
-                //let queryDefinition = QueryDefinition("""SELECT c.id, c.partitionKey FROM c WHERE ENDSWITH(c.id, "||Rmd") ORDER BY c.partitionKey""")
+                    ItemRequestOptions(AddRequestHeaders = fun headers -> headers.Add(Constants.CorrelationIdHeaderKey, "deleteAllFromCosmosDBThatMatch"))
 
                 let mutable totalRecordsDeleted = 0
                 let overallStartTime = getCurrentInstant ()
@@ -1178,12 +1175,38 @@ module Services =
                     let overallRps = float totalRecordsDeleted / overall_duration_s
 
                     logToConsole
-                        $"In Services.deleteAllFromCosmosDB(): batch duration (s): {duration_s:F3}; batch requests/second: {rps:F3}; failed.Count: {failed.Count}; totalRequestCharge: {float totalRequestCharge / 1000.0:F2}; totalRecordsDeleted: {totalRecordsDeleted}; overall duration (m): {overall_duration_s / 60.0:F3}; overall requests/second: {overallRps:F3}."
+                        $"In Services.deleteAllFromCosmosDBThatMatch(): batch duration (s): {duration_s:F3}; batch requests/second: {rps:F3}; failed.Count: {failed.Count}; totalRequestCharge: {float totalRequestCharge / 1000.0:F2}; totalRecordsDeleted: {totalRecordsDeleted}; overall duration (m): {overall_duration_s / 60.0:F3}; overall requests/second: {overallRps:F3}."
 
                 return failed
             with ex ->
                 failed.Add((ExceptionResponse.Create ex).``exception``)
                 return failed
+#else
+            return List<string>([ "Not implemented" ])
+#endif
+        }
+
+    /// Deletes all documents from CosmosDB.
+    ///
+    /// **** This method is implemented only in Debug configuration. It is a no-op in Release configuration. ****
+    let deleteAllFromCosmosDb () =
+        task {
+#if DEBUG
+            let queryDefinition = QueryDefinition("""SELECT c.id, c.partitionKey FROM c ORDER BY c.partitionKey""")
+            return! deleteAllFromCosmosDBThatMatch queryDefinition
+#else
+            return List<string>([ "Not implemented" ])
+#endif
+        }
+
+    /// Deletes all Reminders from CosmosDB.
+    ///
+    /// **** This method is implemented only in Debug configuration. It is a no-op in Release configuration. ****
+    let deleteAllRemindersFromCosmosDb () =
+        task {
+#if DEBUG
+            let queryDefinition = QueryDefinition("""SELECT c.id, c.partitionKey FROM c WHERE ENDSWITH(c.id, "||Rmd") ORDER BY c.partitionKey""")
+            return! deleteAllFromCosmosDBThatMatch queryDefinition
 #else
             return List<string>([ "Not implemented" ])
 #endif
@@ -1372,7 +1395,7 @@ module Services =
         }
 
     /// Gets the latest reference for a given ReferenceType in a branch.
-    let getLatestReferenceByType referenceType (branchId: BranchId) =
+    let getLatestReferenceByType (referenceType: ReferenceType) (branchId: BranchId) =
         task {
             match actorStateStorageProvider with
             | Unknown -> return None
@@ -1464,7 +1487,6 @@ module Services =
                                     AND event.Event.created.RepositoryId = @repositoryId
                                     AND event.Event.created.Class = @class"""
                         )
-                            //let queryDefinition = QueryDefinition("""SELECT TOP 1 c["value"] FROM c WHERE c["value"].RepositoryId = @repositoryId AND STARTSWITH(c["value"].Sha256Hash, @sha256Hash, true) AND c["value"].Class = @class""")
                             .WithParameter("@sha256Hash", sha256Hash)
                             .WithParameter("@repositoryId", repositoryId)
                             .WithParameter("@class", nameof (DirectoryVersion))

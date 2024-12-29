@@ -249,10 +249,21 @@ module Application =
               subRoute
                   "/storage"
                   [ POST
-                        [ route "/filesExistInObjectStorage" Storage.FilesExistInObjectStorage
+                        [ route "/getUploadMetadataForFiles" Storage.GetUploadMetadataForFiles
+                          |> addMetadata typeof<Storage.GetUploadMetadataForFilesParameters>
                           route "/getDownloadUri" Storage.GetDownloadUri
-                          route "/getUploadUri" Storage.GetUploadUri
-                          route "/deleteAllFromCosmosDb" Storage.DeleteAllFromCosmosDB ] ] ]
+                          |> addMetadata typeof<Storage.GetDownloadUriParameters>
+                          route "/getUploadUri" Storage.GetUploadUris
+                          |> addMetadata typeof<Storage.GetUploadUriParameters> ] ]
+              subRoute
+                  "/admin"
+                  [ POST
+                        [
+#if DEBUG
+                          route "/deleteAllFromCosmosDB" Storage.DeleteAllFromCosmosDB
+                          route "/deleteAllRemindersFromCosmosDB" Storage.DeleteAllRemindersFromCosmosDB
+#endif
+                        ] ] ]
 
         let notFoundHandler = "Not Found" |> text |> RequestErrors.notFound
 

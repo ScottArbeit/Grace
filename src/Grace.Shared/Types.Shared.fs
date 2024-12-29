@@ -137,7 +137,7 @@ module Types =
     [<CLIMutable>]
     type FileVersion =
         { Class: string
-          RepositoryId: RepositoryId
+          //RepositoryId: RepositoryId
           RelativePath: RelativePath
           Sha256Hash: Sha256Hash
           IsBinary: bool
@@ -146,7 +146,7 @@ module Types =
           BlobUri: string }
 
         static member Create
-            (repositoryId: RepositoryId)
+            //(repositoryId: RepositoryId)
             (relativePath: RelativePath)
             (sha256Hash: Sha256Hash)
             (blobUri: string)
@@ -154,7 +154,7 @@ module Types =
             (size: int64)
             =
             { Class = "FileVersion"
-              RepositoryId = repositoryId
+              //RepositoryId = repositoryId
               RelativePath = RelativePath(normalizeFilePath $"{relativePath}")
               Sha256Hash = sha256Hash
               BlobUri = blobUri
@@ -162,9 +162,11 @@ module Types =
               Size = size
               CreatedAt = getCurrentInstant () }
 
+        static member Default = FileVersion.Create String.Empty String.Empty String.Empty false 0L
+
         /// Converts a FileVersion to a LocalFileVersion.
         member this.ToLocalFileVersion lastWriteTimeUtc =
-            LocalFileVersion.Create this.RepositoryId this.RelativePath this.Sha256Hash this.IsBinary this.Size this.CreatedAt true lastWriteTimeUtc
+            LocalFileVersion.Create this.RelativePath this.Sha256Hash this.IsBinary this.Size this.CreatedAt true lastWriteTimeUtc
 
         /// Get the object directory file name, which includes the SHA256 Hash value. Example: hello.js -> hello_04bef0a4b298de9c02930234.js
         member this.GetObjectFileName = getObjectFileName this.RelativePath this.Sha256Hash
@@ -177,8 +179,8 @@ module Types =
     and [<KnownType("GetKnownTypes"); CLIMutable; MessagePackObject>] LocalFileVersion =
         { [<Key(0)>]
           Class: string
-          [<Key(1)>]
-          RepositoryId: RepositoryId
+          //[<Key(1)>]
+          //RepositoryId: RepositoryId
           [<Key(2)>]
           RelativePath: RelativePath
           [<Key(3)>]
@@ -197,7 +199,7 @@ module Types =
         static member GetKnownTypes() = GetKnownTypes<LocalFileVersion>()
 
         static member Create
-            (repositoryId: RepositoryId)
+            //(repositoryId: RepositoryId)
             (relativePath: RelativePath)
             (sha256Hash: Sha256Hash)
             (isBinary: bool)
@@ -207,7 +209,7 @@ module Types =
             (lastWriteTimeUtc: DateTime)
             =
             { Class = "LocalFileVersion"
-              RepositoryId = repositoryId
+              //RepositoryId = repositoryId
               RelativePath = RelativePath(normalizeFilePath $"{relativePath}")
               Sha256Hash = sha256Hash
               IsBinary = isBinary
@@ -218,7 +220,7 @@ module Types =
 
         /// Converts a LocalFileVersion to a FileVersion. NOTE: at this point, we don't know the BlobUri.
         [<IgnoreMember>]
-        member this.ToFileVersion = FileVersion.Create this.RepositoryId this.RelativePath this.Sha256Hash String.Empty this.IsBinary this.Size
+        member this.ToFileVersion = FileVersion.Create this.RelativePath this.Sha256Hash String.Empty this.IsBinary this.Size
 
         /// Get the object directory file name, which includes the SHA256 Hash value. Example: hello.js -> hello_04bef0a4b298de9c02930234.js
         [<IgnoreMember>]

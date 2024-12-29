@@ -194,7 +194,7 @@ module Constants =
 
         /// The environment variable that contains the maximum number of reminders that each Grace instance should retrieve from the database and publish for processing.
         [<Literal>]
-        let GraceReminderCount = "graceremindercount"
+        let GraceReminderBatchSize = "gracereminderbatchsize"
 
     /// The default CacheControl header for object storage.
     [<Literal>]

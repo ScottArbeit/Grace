@@ -22,13 +22,71 @@ open System.Threading.Tasks
 open System.Collections.Generic
 open Grace.Shared.Parameters.Directory
 open Grace.Shared.Services
+open Grace.Shared.Parameters.Storage
 
 module Maintenance =
 
     type CommonParameters() =
         inherit ParameterBase()
+        member val public OwnerId = String.Empty with get, set
+        member val public OwnerName: OwnerName = String.Empty with get, set
+        member val public OrganizationId = String.Empty with get, set
+        member val public OrganizationName: OrganizationName = String.Empty with get, set
+        member val public RepositoryId = String.Empty with get, set
+        member val public RepositoryName: RepositoryName = String.Empty with get, set
 
     module private Options =
+        let ownerId =
+            new Option<String>(
+                "--ownerId",
+                IsRequired = false,
+                Description = "The repository's owner ID <Guid>.",
+                Arity = ArgumentArity.ZeroOrOne,
+                getDefaultValue = (fun _ -> $"{Current().OwnerId}")
+            )
+
+        let ownerName =
+            new Option<String>(
+                "--ownerName",
+                IsRequired = false,
+                Description = "The repository's owner name. [default: current owner]",
+                Arity = ArgumentArity.ExactlyOne
+            )
+
+        let organizationId =
+            new Option<String>(
+                "--organizationId",
+                IsRequired = false,
+                Description = "The repository's organization ID <Guid>.",
+                Arity = ArgumentArity.ZeroOrOne,
+                getDefaultValue = (fun _ -> $"{Current().OrganizationId}")
+            )
+
+        let organizationName =
+            new Option<String>(
+                "--organizationName",
+                IsRequired = false,
+                Description = "The repository's organization name. [default: current organization]",
+                Arity = ArgumentArity.ZeroOrOne
+            )
+
+        let repositoryId =
+            new Option<String>(
+                [| "--repositoryId"; "-r" |],
+                IsRequired = false,
+                Description = "The repository's ID <Guid>.",
+                Arity = ArgumentArity.ExactlyOne,
+                getDefaultValue = (fun _ -> $"{Current().RepositoryId}")
+            )
+
+        let repositoryName =
+            new Option<String>(
+                [| "--repositoryName"; "-n" |],
+                IsRequired = false,
+                Description = "The name of the repository. [default: current repository]",
+                Arity = ArgumentArity.ExactlyOne
+            )
+
         let listDirectories =
             new Option<bool>(
                 "--listDirectories",
@@ -165,13 +223,8 @@ module Maintenance =
                                             graceStatus.Index.Values,
                                             Constants.ParallelOptions,
                                             (fun localDirectoryVersion ->
-                                                if not <| objectCache.Index.ContainsKey(localDirectoryVersion.DirectoryVersionId) then
-                                                    objectCache.Index.AddOrUpdate(
-                                                        localDirectoryVersion.DirectoryVersionId,
-                                                        (fun _ -> localDirectoryVersion),
-                                                        (fun _ _ -> localDirectoryVersion)
-                                                    )
-                                                    |> ignore
+                                                objectCache.Index.GetOrAdd(localDirectoryVersion.DirectoryVersionId, (fun _ -> localDirectoryVersion))
+                                                |> ignore
 
                                                 t4.Increment(incrementAmount))
                                         )
@@ -205,12 +258,20 @@ module Maintenance =
                                                 (fun fileVersions ct ->
                                                     ValueTask(
                                                         task {
-                                                            let! graceResult =
-                                                                Storage.FilesExistInObjectStorage
-                                                                    (fileVersions.Select(fun f -> f.Value.ToFileVersion).ToList())
-                                                                    (getCorrelationId parseResult)
+                                                            let getUploadMetadataForFilesParameters =
+                                                                GetUploadMetadataForFilesParameters(
+                                                                    OwnerId = parameters.OwnerId,
+                                                                    OwnerName = parameters.OwnerName,
+                                                                    OrganizationId = parameters.OrganizationId,
+                                                                    OrganizationName = parameters.OrganizationName,
+                                                                    RepositoryId = parameters.RepositoryId,
+                                                                    RepositoryName = parameters.RepositoryName,
+                                                                    CorrelationId = getCorrelationId parseResult,
+                                                                    FileVersions =
+                                                                        (fileVersions |> Seq.map (fun kvp -> kvp.Value.ToFileVersion) |> Seq.toArray)
+                                                                )
 
-                                                            match graceResult with
+                                                            match! Storage.GetUploadMetadataForFiles getUploadMetadataForFilesParameters with
                                                             | Ok graceReturnValue ->
                                                                 let uploadMetadata = graceReturnValue.ReturnValue
                                                                 // Increment the counter for the files that we don't have to upload.
@@ -235,6 +296,7 @@ module Maintenance =
 
                                                                                     let! result =
                                                                                         Storage.SaveFileToObjectStorage
+                                                                                            (Current().RepositoryId)
                                                                                             fileVersion
                                                                                             (upload.BlobUriWithSasToken)
                                                                                             (getCorrelationId parseResult)
@@ -392,12 +454,19 @@ module Maintenance =
                                 (fun fileVersions ct ->
                                     ValueTask(
                                         task {
-                                            let! graceResult =
-                                                Storage.FilesExistInObjectStorage
-                                                    (fileVersions.Select(fun f -> f.Value.ToFileVersion).ToList())
-                                                    (getCorrelationId parseResult)
+                                            let getUploadMetadataForFilesParameters =
+                                                GetUploadMetadataForFilesParameters(
+                                                    OwnerId = parameters.OwnerId,
+                                                    OwnerName = parameters.OwnerName,
+                                                    OrganizationId = parameters.OrganizationId,
+                                                    OrganizationName = parameters.OrganizationName,
+                                                    RepositoryId = parameters.RepositoryId,
+                                                    RepositoryName = parameters.RepositoryName,
+                                                    CorrelationId = getCorrelationId parseResult,
+                                                    FileVersions = (fileVersions |> Seq.map (fun kvp -> kvp.Value.ToFileVersion) |> Seq.toArray)
+                                                )
 
-                                            match graceResult with
+                                            match! Storage.GetUploadMetadataForFiles getUploadMetadataForFilesParameters with
                                             | Ok graceReturnValue ->
                                                 let uploadMetadata = graceReturnValue.ReturnValue
 
@@ -417,6 +486,7 @@ module Maintenance =
 
                                                                     let! result =
                                                                         Storage.SaveFileToObjectStorage
+                                                                            (Current().RepositoryId)
                                                                             fileVersion
                                                                             (upload.BlobUriWithSasToken)
                                                                             (getCorrelationId parseResult)
@@ -588,12 +658,20 @@ module Maintenance =
                                                 (fun fileVersions ct ->
                                                     ValueTask(
                                                         task {
-                                                            let! graceResult =
-                                                                Storage.FilesExistInObjectStorage
-                                                                    (fileVersions.Select(fun f -> f.Value.ToFileVersion).ToList())
-                                                                    (getCorrelationId parseResult)
+                                                            let getUploadMetadataForFilesParameters =
+                                                                GetUploadMetadataForFilesParameters(
+                                                                    OwnerId = parameters.OwnerId,
+                                                                    OwnerName = parameters.OwnerName,
+                                                                    OrganizationId = parameters.OrganizationId,
+                                                                    OrganizationName = parameters.OrganizationName,
+                                                                    RepositoryId = parameters.RepositoryId,
+                                                                    RepositoryName = parameters.RepositoryName,
+                                                                    CorrelationId = getCorrelationId parseResult,
+                                                                    FileVersions =
+                                                                        (fileVersions |> Seq.map (fun kvp -> kvp.Value.ToFileVersion) |> Seq.toArray)
+                                                                )
 
-                                                            match graceResult with
+                                                            match! Storage.GetUploadMetadataForFiles getUploadMetadataForFilesParameters with
                                                             | Ok graceReturnValue ->
                                                                 let uploadMetadata = graceReturnValue.ReturnValue
                                                                 // Increment the counter for the files that we don't have to upload.
@@ -618,6 +696,7 @@ module Maintenance =
 
                                                                                     let! result =
                                                                                         Storage.SaveFileToObjectStorage
+                                                                                            (Current().RepositoryId)
                                                                                             fileVersion
                                                                                             (upload.BlobUriWithSasToken)
                                                                                             (getCorrelationId parseResult)
@@ -775,12 +854,19 @@ module Maintenance =
                                 (fun fileVersions ct ->
                                     ValueTask(
                                         task {
-                                            let! graceResult =
-                                                Storage.FilesExistInObjectStorage
-                                                    (fileVersions.Select(fun f -> f.Value.ToFileVersion).ToList())
-                                                    (getCorrelationId parseResult)
+                                            let getUploadMetadataForFilesParameters =
+                                                GetUploadMetadataForFilesParameters(
+                                                    OwnerId = parameters.OwnerId,
+                                                    OwnerName = parameters.OwnerName,
+                                                    OrganizationId = parameters.OrganizationId,
+                                                    OrganizationName = parameters.OrganizationName,
+                                                    RepositoryId = parameters.RepositoryId,
+                                                    RepositoryName = parameters.RepositoryName,
+                                                    CorrelationId = getCorrelationId parseResult,
+                                                    FileVersions = (fileVersions |> Seq.map (fun kvp -> kvp.Value.ToFileVersion) |> Seq.toArray)
+                                                )
 
-                                            match graceResult with
+                                            match! Storage.GetUploadMetadataForFiles getUploadMetadataForFilesParameters with
                                             | Ok graceReturnValue ->
                                                 let uploadMetadata = graceReturnValue.ReturnValue
 
@@ -800,6 +886,7 @@ module Maintenance =
 
                                                                     let! result =
                                                                         Storage.SaveFileToObjectStorage
+                                                                            (Current().RepositoryId)
                                                                             fileVersion
                                                                             (upload.BlobUriWithSasToken)
                                                                             (getCorrelationId parseResult)
@@ -990,35 +1077,50 @@ module Maintenance =
             :> Task)
 
     let Build =
+        let addCommonOptions (command: Command) =
+            command
+            |> addOption Options.ownerName
+            |> addOption Options.ownerId
+            |> addOption Options.organizationName
+            |> addOption Options.organizationId
+            |> addOption Options.repositoryId
+            |> addOption Options.repositoryName
+
         let maintenanceCommand = new Command("maintenance", Description = "Performs various maintenance tasks.")
 
         maintenanceCommand.AddAlias("maint")
 
         let updateIndexCommand =
             new Command("update-index", Description = "Recreates the local Grace index file based on the current working directory contents.")
+            |> addCommonOptions
 
         updateIndexCommand.Handler <- UpdateIndex
         maintenanceCommand.AddCommand(updateIndexCommand)
 
-        let scanCommand = new Command("scan", Description = "Scans the working directory contents for changes.")
+        let scanCommand =
+            new Command("scan", Description = "Scans the working directory contents for changes.")
+            |> addCommonOptions
 
         scanCommand.Handler <- Scan
         maintenanceCommand.AddCommand(scanCommand)
 
-        let statsCommand = new Command("stats", Description = "Displays statistics about the current working directory.")
+        let statsCommand =
+            new Command("stats", Description = "Displays statistics about the current working directory.")
+            |> addCommonOptions
 
         statsCommand.Handler <- Stats
         maintenanceCommand.AddCommand(statsCommand)
 
         let listContentsCommand =
             new Command("list-contents", Description = "List directories and files from the Grace Status file.")
+            |> addCommonOptions
             |> addOption Options.listDirectories
             |> addOption Options.listFiles
 
         listContentsCommand.Handler <- ListContents
         maintenanceCommand.AddCommand(listContentsCommand)
 
-        let testCommand = new Command("test", Description = "Just a test.")
+        let testCommand = new Command("test", Description = "Just a test.") |> addCommonOptions
         testCommand.Handler <- Test
         maintenanceCommand.AddCommand(testCommand)
 

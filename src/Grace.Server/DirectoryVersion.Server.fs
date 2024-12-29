@@ -275,16 +275,24 @@ module DirectoryVersion =
                                 (fun directoryVersion ct ->
                                     ValueTask(
                                         task {
-                                            // Check if the directory version exists. If it doesn't, create it.
-                                            let directoryVersionActor = DirectoryVersion.CreateActorProxy directoryVersion.DirectoryVersionId correlationId
+                                            try
+                                                // Check if the directory version exists. If it doesn't, create it.
+                                                let directoryVersionActor = DirectoryVersion.CreateActorProxy directoryVersion.DirectoryVersionId correlationId
 
-                                            let! exists = directoryVersionActor.Exists parameters.CorrelationId
-                                            //logToConsole $"In SaveDirectoryVersions: {dv.DirectoryId} exists: {exists}"
-                                            if not <| exists then
-                                                let! createResult =
-                                                    directoryVersionActor.Handle (DirectoryVersion.Create directoryVersion) (createMetadata context)
+                                                let! exists = directoryVersionActor.Exists parameters.CorrelationId
+                                                //logToConsole $"In SaveDirectoryVersions: {dv.DirectoryId} exists: {exists}"
+                                                if not <| exists then
+                                                    let! createResult =
+                                                        directoryVersionActor.Handle (DirectoryVersion.Create directoryVersion) (createMetadata context)
 
-                                                results.Enqueue(createResult)
+                                                    results.Enqueue(createResult)
+                                            with ex ->
+                                                let exceptionResponse = Utilities.ExceptionResponse.Create ex
+
+                                                logToConsole
+                                                    $"****Error in SaveDirectoryVersions: directoryVersion.Directories.Count: {directoryVersion.Directories.Count}; directoryVersion.Files.Count: {directoryVersion.Files.Count}."
+
+                                                logToConsole $"{exceptionResponse}"
                                         }
                                     ))
                             )

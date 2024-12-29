@@ -110,8 +110,9 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
 
             // -----------------------------------------------------------------------------------------------------
             // On the way in...
-#if DEBUG
             let startTime = getCurrentInstant ()
+
+#if DEBUG
             let middlewareTraceHeader = context.Request.Headers["X-MiddlewareTraceIn"]
 
             context.Request.Headers["X-MiddlewareTraceIn"] <- $"{middlewareTraceHeader}{nameof (ValidateIdsMiddleware)} --> "

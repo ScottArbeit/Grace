@@ -13,6 +13,7 @@ open Grace.Actors.Services
 open Grace.Server.ApplicationContext
 open Grace.Server.Services
 open Grace.Shared.Dto.Repository
+open Grace.Shared.Parameters.Storage
 open Grace.Shared.Types
 open Grace.Shared.Utilities
 open Grace.Shared
@@ -29,6 +30,8 @@ open System.IO
 open System.Text
 open Azure.Storage
 open System.Diagnostics
+open System.Reflection.Metadata
+open System.Net.Http.Json
 
 module Storage =
 
@@ -85,43 +88,58 @@ module Storage =
                 let correlationId = (getCorrelationId context)
 
                 try
-                    let! fileVersion = context.BindJsonAsync<FileVersion>()
-                    let repositoryActor = Repository.CreateActorProxy fileVersion.RepositoryId correlationId
+                    let! parameters = context.BindJsonAsync<GetDownloadUriParameters>()
+                    let repositoryActor = Repository.CreateActorProxy (RepositoryId.Parse(parameters.RepositoryId)) correlationId
                     let! repositoryDto = repositoryActor.Get correlationId
 
-                    match! getReadSharedAccessSignature repositoryDto fileVersion correlationId with
+                    match! getReadSharedAccessSignature repositoryDto parameters.FileVersion correlationId with
                     | Ok downloadUri ->
                         context.SetStatusCode StatusCodes.Status200OK
                         //context.GetLogger().LogTrace("fileVersion: {fileVersion.RelativePath}; downloadUri: {downloadUri}", [| fileVersion.RelativePath, downloadUri |])
-                        logToConsole $"fileVersion: {fileVersion.RelativePath}; downloadUri: {downloadUri}"
+                        logToConsole $"fileVersion: {parameters.FileVersion.RelativePath}; downloadUri: {downloadUri}"
                         return! context.WriteStringAsync $"{downloadUri}"
                     | Error error ->
                         context.SetStatusCode StatusCodes.Status500InternalServerError
 
-                        logToConsole $"Error generating download Uri: fileVersion: {fileVersion.RelativePath}; Error: {error}"
+                        logToConsole $"Error generating download Uri: fileVersion: {parameters.FileVersion.RelativePath}; Error: {error}"
 
-                        return! context.WriteStringAsync $"Error creating download uri for {fileVersion.GetObjectFileName}."
+                        return! context.WriteStringAsync $"Error creating download uri for {parameters.FileVersion.GetObjectFileName}."
                 with ex ->
                     context.SetStatusCode StatusCodes.Status500InternalServerError
                     return! context.WriteTextAsync $"Error in {context.Request.Path} at {DateTime.Now.ToLongTimeString()}."
             }
 
     /// Gets an upload URI for the specified file version that can be used by a Grace client.
-    let GetUploadUri: HttpHandler =
+    let GetUploadUris: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let correlationId = getCorrelationId context
+                let graceIds = getGraceIds context
+                let uris = Dictionary<string, Uri>()
 
                 try
-                    let! fileVersion = context.BindJsonAsync<FileVersion>()
-                    let repositoryActor = Repository.CreateActorProxy fileVersion.RepositoryId correlationId
+                    let! parameters = context.BindJsonAsync<GetUploadUriParameters>()
+                    let repositoryActor = Repository.CreateActorProxy (RepositoryId.Parse(parameters.RepositoryId)) correlationId
                     let! repositoryDto = repositoryActor.Get correlationId
-                    let! uploadUri = getWriteSharedAccessSignature repositoryDto fileVersion correlationId
+
+                    for fileVersion in parameters.FileVersions do
+                        let! uploadUri = getWriteSharedAccessSignature repositoryDto fileVersion correlationId
+                        uris.Add(fileVersion.RelativePath, uploadUri)
+
+                    if log.IsEnabled(LogLevel.Debug) then
+                        let sb = stringBuilderPool.Get()
+
+                        try
+                            for kvp in uris do
+                                sb.AppendLine($"fileVersion: {kvp.Key}; uploadUri: {kvp.Value}") |> ignore
+
+                            log.LogDebug("In GetUploadUri(): Created {count} uri's for these files: {uploadUris}", uris.Count, sb.ToString())
+                        finally
+                            stringBuilderPool.Return(sb)
+
                     context.SetStatusCode StatusCodes.Status200OK
-
-                    log.LogDebug("In GetUploadUri(): fileVersion.RelativePath: {relativePath}; uploadUri: {uploadUri}", fileVersion.RelativePath, uploadUri)
-
-                    return! context.WriteStringAsync $"{uploadUri}"
+                    let jsonContent = JsonContent.Create(uris)
+                    return! context.WriteJsonAsync jsonContent
                 with ex ->
                     context.SetStatusCode StatusCodes.Status500InternalServerError
                     logToConsole $"Exception in GetUploadUri: {(ExceptionResponse.Create ex)}"
@@ -129,25 +147,28 @@ module Storage =
                     return! context.WriteTextAsync $"{getCurrentInstantExtended ()} Error in {context.Request.Path} at {DateTime.Now.ToLongTimeString()}."
             }
 
-    /// Checks if a list of files already exists in object storage, and if any do not, return a URL that the client can use to upload the file.
-    let FilesExistInObjectStorage: HttpHandler =
+    /// Checks if a list of files already exists in object storage, and if any do not, return Uri's that the client can use to upload the file.
+    let GetUploadMetadataForFiles: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let correlationId = getCorrelationId context
+                let graceIds = getGraceIds context
 
                 try
-                    let! fileVersions = context.BindJsonAsync<FileVersion array>()
-                    Activity.Current.SetTag("fileVersions.Count", $"{fileVersions.Count}") |> ignore
+                    let! parameters = context.BindJsonAsync<GetUploadMetadataForFilesParameters>()
 
-                    if fileVersions.Length > 0 then
-                        let repositoryActor = Repository.CreateActorProxy fileVersions[0].RepositoryId correlationId
+                    Activity.Current.SetTag("fileVersions.Count", $"{parameters.FileVersions.Length}")
+                    |> ignore
+
+                    if parameters.FileVersions.Length > 0 then
+                        let repositoryActor = Repository.CreateActorProxy (RepositoryId.Parse(graceIds.RepositoryId)) correlationId
                         let! repositoryDto = repositoryActor.Get correlationId
 
                         let uploadMetadata = ConcurrentQueue<UploadMetadata>()
 
                         do!
                             Parallel.ForEachAsync(
-                                fileVersions,
+                                parameters.FileVersions,
                                 Constants.ParallelOptions,
                                 (fun fileVersion ct ->
                                     ValueTask(
@@ -168,7 +189,7 @@ module Storage =
                         context
                             .GetLogger()
                             .LogInformation(
-                                $"{getCurrentInstantExtended ()} Received {fileVersions.Count} FileVersions; Returning {uploadMetadata.Count} uploadMetadata records."
+                                $"{getCurrentInstantExtended ()} Received {parameters.FileVersions.Count} FileVersions; Returning {uploadMetadata.Count} uploadMetadata records."
                             )
 
                         return!
@@ -191,33 +212,92 @@ module Storage =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
 #if DEBUG
-                context
-                    .GetLogger()
-                    .LogWarning("{CurrentInstant} Deleting all rows from Cosmos DB.", getCurrentInstantExtended ())
+                let correlationId = getCorrelationId context
+                let log = context.GetLogger()
 
-                let! failed = Services.deleteAllFromCosmosDB ()
+                log.LogWarning("{CurrentInstant} Deleting all rows from Cosmos DB.", getCurrentInstantExtended ())
+
+                let! failed = deleteAllFromCosmosDb ()
 
                 if failed.Count = 0 then
-                    context
-                        .GetLogger()
-                        .LogWarning("{CurrentInstant} Deleted all rows from Cosmos DB.", getCurrentInstantExtended ())
+                    log.LogWarning("{CurrentInstant} Succeeded deleting all rows from CosmosDB.", getCurrentInstantExtended ())
 
                     return!
                         context
-                        |> result200Ok (GraceReturnValue.Create "Deleted all rows from Cosmos DB." (getCorrelationId context))
+                        |> result200Ok (GraceReturnValue.Create "Succeeded deleting all rows from Cosmos DB." (getCorrelationId context))
                 else
-                    let sb = StringBuilder()
+                    let sb = stringBuilderPool.Get()
 
-                    for fail in failed do
-                        sb.AppendLine(fail) |> ignore
+                    try
+                        for fail in failed do
+                            sb.AppendLine(fail) |> ignore
+
+                        log.LogWarning(
+                            "{CurrentInstant} Failed to delete all rows from Cosmos DB. Failures: {failedCount}.",
+                            getCurrentInstantExtended (),
+                            failed.Count
+                        )
+
+                        log.LogWarning(sb.ToString())
+
+                        return!
+                            context
+                            |> result500ServerError (
+                                GraceError.Create
+                                    $"Failed to delete all rows from Cosmos DB. Failures: {failed.Count}.{Environment.NewLine}{sb.ToString()}"
+                                    (getCorrelationId context)
+                            )
+                    finally
+                        stringBuilderPool.Return(sb)
+#else
+                return! context |> result404NotFound
+#endif
+            }
+
+    /// Deletes all reminders from Cosmos DB. After calling, the web connection will time-out, but the method will continue to run until Cosmos DB is empty.
+    ///
+    /// **** This method is implemented only in Debug configuration. It is a no-op in Release configuration. ****
+    let DeleteAllRemindersFromCosmosDB: HttpHandler =
+        fun (next: HttpFunc) (context: HttpContext) ->
+            task {
+#if DEBUG
+                let correlationId = getCorrelationId context
+                let log = context.GetLogger()
+
+                log.LogWarning("{CurrentInstant} Deleting all reminders from Cosmos DB.", getCurrentInstantExtended ())
+
+                let! failed = deleteAllRemindersFromCosmosDb ()
+
+                if failed.Count = 0 then
+                    log.LogWarning("{CurrentInstant} Succeeded deleting all reminders from CosmosDB.", getCurrentInstantExtended ())
 
                     return!
                         context
-                        |> result500ServerError (
-                            GraceError.Create
-                                $"Failed to delete all rows from Cosmos DB. Failures: {failed.Count}.{Environment.NewLine}{sb.ToString()}"
-                                (getCorrelationId context)
+                        |> result200Ok (GraceReturnValue.Create "Succeeded deleting all reminders from Cosmos DB." (getCorrelationId context))
+                else
+                    let sb = stringBuilderPool.Get()
+
+                    try
+                        for fail in failed do
+                            sb.AppendLine(fail) |> ignore
+
+                        log.LogWarning(
+                            "{CurrentInstant} Failed to delete all reminders from Cosmos DB. Failures: {failedCount}.",
+                            getCurrentInstantExtended (),
+                            failed.Count
                         )
+
+                        log.LogWarning(sb.ToString())
+
+                        return!
+                            context
+                            |> result500ServerError (
+                                GraceError.Create
+                                    $"Failed to delete all reminders from Cosmos DB. Failures: {failed.Count}.{Environment.NewLine}{sb.ToString()}"
+                                    (getCorrelationId context)
+                            )
+                    finally
+                        stringBuilderPool.Return(sb)
 #else
                 return! context |> result404NotFound
 #endif

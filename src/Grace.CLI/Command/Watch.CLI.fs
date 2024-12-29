@@ -36,6 +36,7 @@ open System.Threading
 open System.Collections.Concurrent
 open Spectre.Console
 open System.Text
+open Grace.Shared.Parameters.Storage
 
 module Watch =
 
@@ -237,13 +238,15 @@ module Watch =
         }
 
     /// Copies a file from the working directory to the object directory, with its SHA-256 hash, and then uploads it to storage.
-    let copyFileToObjectDirectoryAndUploadToStorage fullPath correlationId =
+    let copyFileToObjectDirectoryAndUploadToStorage (getUploadMetadataForFilesParameters: GetUploadMetadataForFilesParameters) fullPath =
         task {
             //logToConsole $"*In fileChanged for {fullPath}."
             match! copyToObjectDirectory fullPath with
             | Some fileVersion ->
-                match! uploadToServerAsync fileVersion correlationId with
-                | Ok correlationId -> logToAnsiConsole Colors.Verbose $"File {fileVersion.GetObjectFileName} has been uploaded to storage."
+                getUploadMetadataForFilesParameters.FileVersions <- [| fileVersion |]
+
+                match! uploadFilesToObjectStorage getUploadMetadataForFilesParameters with
+                | Ok returnValue -> logToAnsiConsole Colors.Verbose $"File {fileVersion.GetObjectFileName} has been uploaded to storage."
                 | Error error -> logToAnsiConsole Colors.Error $"**Failed to upload {fileVersion.GetObjectFileName} to storage."
             | None -> ()
         }
@@ -298,11 +301,18 @@ module Watch =
                     // Loop through no more than 50 files. Copy them to the objects directory, and upload them to storage.
                     //   In the incredibly rare event that more than 50 files have changed, we'll get 50-per-timer-tick,
                     //   and clear the queue quickly without overwhelming the system.
+                    let getUploadMetadataForFilesParameters =
+                        GetUploadMetadataForFilesParameters(
+                            OwnerId = $"{Current().OwnerId}",
+                            OrganizationId = $"{Current().OrganizationId}",
+                            RepositoryId = $"{Current().RepositoryId}",
+                            CorrelationId = correlationId
+                        )
+
                     for fileName in filesToProcess.Keys.Take(50) do
                         if filesToProcess.TryRemove(fileName, &unitValue) then
                             logToAnsiConsole Colors.Verbose $"Processing {fileName}. filesToProcess.Count: {filesToProcess.Count}."
-
-                            do! copyFileToObjectDirectoryAndUploadToStorage (FilePath fileName) correlationId
+                            do! copyFileToObjectDirectoryAndUploadToStorage getUploadMetadataForFilesParameters (FilePath fileName)
                             lastFileUploadInstant <- getCurrentInstant ()
 
                     graceStatus <- { graceStatus with LastSuccessfulFileUpload = lastFileUploadInstant }

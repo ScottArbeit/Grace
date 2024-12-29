@@ -35,6 +35,7 @@ open System.Security.Cryptography
 open System.Threading.Tasks
 open System.Text
 open System.Text.Json
+open Grace.Shared.Parameters
 
 module Branch =
     open Grace.Shared.Validation.Common.Input
@@ -798,6 +799,7 @@ module Branch =
                 if parseResult |> verbose then printParseResult parseResult
 
                 let validateIncomingParameters = CommonValidations parseResult parameters
+                let repositoryId = RepositoryId.Parse(parameters.RepositoryId)
 
                 match validateIncomingParameters with
                 | Ok _ ->
@@ -884,7 +886,22 @@ module Branch =
                                             let mutable lastFileUploadInstant = newGraceStatus.LastSuccessfulFileUpload
 
                                             if newFileVersions.Count() > 0 then
-                                                match! uploadFilesToObjectStorage newFileVersions (getCorrelationId parseResult) with
+                                                let getUploadMetadataForFilesParameters =
+                                                    Storage.GetUploadMetadataForFilesParameters(
+                                                        OwnerId = parameters.OwnerId,
+                                                        OwnerName = parameters.OwnerName,
+                                                        OrganizationId = parameters.OrganizationId,
+                                                        OrganizationName = parameters.OrganizationName,
+                                                        RepositoryId = parameters.RepositoryId,
+                                                        RepositoryName = parameters.RepositoryName,
+                                                        CorrelationId = getCorrelationId parseResult,
+                                                        FileVersions =
+                                                            (newFileVersions
+                                                             |> Seq.map (fun localFileVersion -> localFileVersion.ToFileVersion)
+                                                             |> Seq.toArray)
+                                                    )
+
+                                                match! uploadFilesToObjectStorage getUploadMetadataForFilesParameters with
                                                 | Ok returnValue -> () //logToAnsiConsole Colors.Verbose $"Uploaded all files to object storage."
                                                 | Error error -> logToAnsiConsole Colors.Error $"Error uploading files to object storage: {error.Error}"
 
@@ -970,7 +987,22 @@ module Branch =
                                     .First(fun dv -> dv.Files.Exists(fun file -> file.RelativePath = relativePath))
                                     .Files.First(fun file -> file.RelativePath = relativePath))
 
-                        let! uploadResult = uploadFilesToObjectStorage newFileVersions (getCorrelationId parseResult)
+                        let getUploadMetadataForFilesParameters =
+                            Storage.GetUploadMetadataForFilesParameters(
+                                OwnerId = parameters.OwnerId,
+                                OwnerName = parameters.OwnerName,
+                                OrganizationId = parameters.OrganizationId,
+                                OrganizationName = parameters.OrganizationName,
+                                RepositoryId = parameters.RepositoryId,
+                                RepositoryName = parameters.RepositoryName,
+                                CorrelationId = getCorrelationId parseResult,
+                                FileVersions =
+                                    (newFileVersions
+                                     |> Seq.map (fun localFileVersion -> localFileVersion.ToFileVersion)
+                                     |> Seq.toArray)
+                            )
+
+                        let! uploadResult = uploadFilesToObjectStorage getUploadMetadataForFilesParameters
                         let saveParameters = SaveDirectoryVersionsParameters()
 
                         saveParameters.DirectoryVersions <- newDirectoryVersions.Select(fun dv -> dv.ToDirectoryVersion).ToList()
@@ -1926,6 +1958,7 @@ module Branch =
                     ) =
                     task {
                         t |> startProgressTask showOutput
+                        let repositoryId = RepositoryId.Parse(parameters.RepositoryId)
 
                         if currentBranch.SaveEnabled && newDirectoryVersions.Any() then
                             let updatedRelativePaths =
@@ -1954,7 +1987,22 @@ module Branch =
                                 Colors.Verbose
                                 $"Uploading {newFileVersions.Count()} file(s) from {newDirectoryVersions.Count} new directory version(s) to object storage."
 
-                            match! uploadFilesToObjectStorage newFileVersions (getCorrelationId parseResult) with
+                            let getUploadMetadataForFilesParameters =
+                                Storage.GetUploadMetadataForFilesParameters(
+                                    OwnerId = parameters.OwnerId,
+                                    OwnerName = parameters.OwnerName,
+                                    OrganizationId = parameters.OrganizationId,
+                                    OrganizationName = parameters.OrganizationName,
+                                    RepositoryId = parameters.RepositoryId,
+                                    RepositoryName = parameters.RepositoryName,
+                                    CorrelationId = getCorrelationId parseResult,
+                                    FileVersions =
+                                        (newFileVersions
+                                         |> Seq.map (fun localFileVersion -> localFileVersion.ToFileVersion)
+                                         |> Seq.toArray)
+                                )
+
+                            match! uploadFilesToObjectStorage getUploadMetadataForFilesParameters with
                             | Ok returnValue ->
                                 t |> setProgressTaskValue showOutput 100.0
                                 return Ok(showOutput, parseResult, parameters, currentBranch, newDirectoryVersions)
@@ -2369,6 +2417,7 @@ module Branch =
                         let mutable rootDirectoryId = DirectoryVersionId.Empty
                         let mutable rootDirectorySha256Hash = Sha256Hash String.Empty
                         let mutable previousDirectoryIds: HashSet<DirectoryVersionId> = null
+                        let repositoryId = RepositoryId.Parse(parameters.RepositoryId)
 
                         if parseResult |> hasOutput then
                             return!
@@ -2461,7 +2510,22 @@ module Branch =
                                                                 .First(fun dv -> dv.Files.Exists(fun file -> file.RelativePath = relativePath))
                                                                 .Files.First(fun file -> file.RelativePath = relativePath))
 
-                                                    let! uploadResult = uploadFilesToObjectStorage newFileVersions (getCorrelationId parseResult)
+                                                    let getUploadMetadataForFilesParameters =
+                                                        Storage.GetUploadMetadataForFilesParameters(
+                                                            OwnerId = parameters.OwnerId,
+                                                            OwnerName = parameters.OwnerName,
+                                                            OrganizationId = parameters.OrganizationId,
+                                                            OrganizationName = parameters.OrganizationName,
+                                                            RepositoryId = parameters.RepositoryId,
+                                                            RepositoryName = parameters.RepositoryName,
+                                                            CorrelationId = getCorrelationId parseResult,
+                                                            FileVersions =
+                                                                (newFileVersions
+                                                                 |> Seq.map (fun localFileVersion -> localFileVersion.ToFileVersion)
+                                                                 |> Seq.toArray)
+                                                        )
+
+                                                    let! uploadResult = uploadFilesToObjectStorage getUploadMetadataForFilesParameters
 
                                                     t3.Value <- 100.0
 
@@ -2688,7 +2752,22 @@ module Branch =
                                                 .First(fun dv -> dv.Files.Exists(fun file -> file.RelativePath = relativePath))
                                                 .Files.First(fun file -> file.RelativePath = relativePath))
 
-                                    let! uploadResult = uploadFilesToObjectStorage newFileVersions (getCorrelationId parseResult)
+                                    let getUploadMetadataForFilesParameters =
+                                        Storage.GetUploadMetadataForFilesParameters(
+                                            OwnerId = parameters.OwnerId,
+                                            OwnerName = parameters.OwnerName,
+                                            OrganizationId = parameters.OrganizationId,
+                                            OrganizationName = parameters.OrganizationName,
+                                            RepositoryId = parameters.RepositoryId,
+                                            RepositoryName = parameters.RepositoryName,
+                                            CorrelationId = getCorrelationId parseResult,
+                                            FileVersions =
+                                                (newFileVersions
+                                                 |> Seq.map (fun localFileVersion -> localFileVersion.ToFileVersion)
+                                                 |> Seq.toArray)
+                                        )
+
+                                    let! uploadResult = uploadFilesToObjectStorage getUploadMetadataForFilesParameters
 
                                     let saveParameters = SaveDirectoryVersionsParameters()
 

@@ -32,6 +32,7 @@ open System.Threading.Tasks
 open Spectre.Console
 open Spectre.Console
 open Spectre.Console.Rendering
+open Grace.Shared.Parameters.Storage
 
 module Diff =
 
@@ -346,6 +347,7 @@ module Diff =
                                     let mutable rootDirectoryId = DirectoryVersionId.Empty
                                     let mutable rootDirectorySha256Hash = Sha256Hash String.Empty
                                     let mutable previousDirectoryIds: HashSet<DirectoryVersionId> = null
+                                    let repositoryId = RepositoryId.Parse(parameters.RepositoryId)
 
                                     // Check for latest commit and latest root directory version from grace watch. If it's running, we know GraceStatus is up-to-date.
                                     match! getGraceWatchStatus () with
@@ -380,7 +382,22 @@ module Diff =
 
                                         t3.StartTask()
 
-                                        match! uploadFilesToObjectStorage newFileVersions (getCorrelationId parseResult) with
+                                        let getUploadMetadataForFilesParameters =
+                                            GetUploadMetadataForFilesParameters(
+                                                OwnerId = parameters.OwnerId,
+                                                OwnerName = parameters.OwnerName,
+                                                OrganizationId = parameters.OrganizationId,
+                                                OrganizationName = parameters.OrganizationName,
+                                                RepositoryId = parameters.RepositoryId,
+                                                RepositoryName = parameters.RepositoryName,
+                                                CorrelationId = getCorrelationId parseResult,
+                                                FileVersions =
+                                                    (newFileVersions
+                                                     |> Seq.map (fun localFileVersion -> localFileVersion.ToFileVersion)
+                                                     |> Seq.toArray)
+                                            )
+
+                                        match! uploadFilesToObjectStorage getUploadMetadataForFilesParameters with
                                         | Ok returnValue -> ()
                                         | Error error -> logToAnsiConsole Colors.Error $"Failed to upload changed files to object storage. {error}"
 
@@ -618,6 +635,7 @@ module Diff =
                                         let mutable rootDirectoryId = DirectoryVersionId.Empty
                                         let mutable rootDirectorySha256Hash = Sha256Hash String.Empty
                                         let mutable previousDirectoryIds: HashSet<DirectoryVersionId> = null
+                                        let repositoryId = RepositoryId.Parse(parameters.RepositoryId)
 
                                         // Check for latest commit and latest root directory version from grace watch. If it's running, we know GraceStatus is up-to-date.
                                         match! getGraceWatchStatus () with
@@ -653,7 +671,22 @@ module Diff =
 
                                             t3.StartTask()
 
-                                            match! uploadFilesToObjectStorage newFileVersions (getCorrelationId parseResult) with
+                                            let getUploadMetadataForFilesParameters =
+                                                GetUploadMetadataForFilesParameters(
+                                                    OwnerId = parameters.OwnerId,
+                                                    OwnerName = parameters.OwnerName,
+                                                    OrganizationId = parameters.OrganizationId,
+                                                    OrganizationName = parameters.OrganizationName,
+                                                    RepositoryId = parameters.RepositoryId,
+                                                    RepositoryName = parameters.RepositoryName,
+                                                    CorrelationId = getCorrelationId parseResult,
+                                                    FileVersions =
+                                                        (newFileVersions
+                                                         |> Seq.map (fun localFileVersion -> localFileVersion.ToFileVersion)
+                                                         |> Seq.toArray)
+                                                )
+
+                                            match! uploadFilesToObjectStorage getUploadMetadataForFilesParameters with
                                             | Ok returnValue -> ()
                                             | Error error -> logToAnsiConsole Colors.Error $"Failed to upload changed files to object storage. {error}"
 

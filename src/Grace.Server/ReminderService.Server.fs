@@ -33,15 +33,23 @@ module ReminderService =
     type ReminderService() =
         inherit BackgroundService()
 
-        let mutable reminderCount = 0
-        let defaultReminderCount = 1000
-        let timer = TimeSpan.FromSeconds(10.0)
+        let defaultReminderBatchSize = 5000
+        let timer = TimeSpan.FromSeconds(60.0)
         let log = loggerFactory.CreateLogger("ReminderService.Server")
+
+        let reminderBatchSize =
+            let mutable reminderBatchSize = 0
+            let enviromentValue = Configuration().Item(EnvironmentVariables.GraceReminderBatchSize)
+
+            if Int32.TryParse(enviromentValue, &reminderBatchSize) then
+                reminderBatchSize
+            else
+                defaultReminderBatchSize
 
         /// Retrieves reminders from storage.
         let retrieveReminders (cancellationToken: CancellationToken) =
             task {
-                let reminders = List<ReminderValue>(reminderCount)
+                let reminders = List<ReminderValue>(reminderBatchSize)
 
                 match actorStateStorageProvider with
                 | Unknown -> ()
@@ -54,7 +62,7 @@ module ReminderService =
 
                     let queryDefinition =
                         QueryDefinition(queryText)
-                            .WithParameter("@maxCount", reminderCount)
+                            .WithParameter("@maxCount", reminderBatchSize)
                             .WithParameter("@class", nameof (ReminderDto))
 
                     use iterator = ApplicationContext.cosmosContainer.GetItemQueryIterator<ReminderValue>(queryDefinition)
@@ -171,25 +179,12 @@ module ReminderService =
         override this.StartAsync(cancellationToken: CancellationToken) =
             log.LogInformation("{CurrentInstant}: Node: {HostName}; ReminderService is starting.", getCurrentInstantExtended (), getMachineName)
 
-            let enviromentValue = Configuration().Item(EnvironmentVariables.GraceReminderCount)
-
-            if Int32.TryParse(enviromentValue, &reminderCount) then
-                log.LogInformation(
-                    "{CurrentInstant}: Node: {HostName}; Reminder count set to {reminderCount}.",
-                    getCurrentInstantExtended (),
-                    getMachineName,
-                    reminderCount
-                )
-            else
-                reminderCount <- defaultReminderCount
-
-                log.LogInformation(
-                    "{CurrentInstant}: Node: {HostName}; Reminder count set to default value of {reminderCount}. You can set the `{GraceReminderCount}` environment variable to change the value.",
-                    getCurrentInstantExtended (),
-                    getMachineName,
-                    reminderCount,
-                    EnvironmentVariables.GraceReminderCount
-                )
+            log.LogInformation(
+                "{CurrentInstant}: Node: {HostName}; Reminder batch size set to {reminderBatchSize}.",
+                getCurrentInstantExtended (),
+                getMachineName,
+                reminderBatchSize
+            )
 
             base.StartAsync(cancellationToken)
 
