@@ -293,21 +293,6 @@ module Services =
                 return GraceStatus.Default
         }
 
-    /// Retrieves the Grace status file and returns it as a GraceStatus instance.
-    let readGraceStatusFileOld () =
-        task {
-            if File.Exists(Current().GraceStatusFile) then
-                use fileStream = Constants.DefaultRetryPolicy.Execute(fun _ -> File.Open(Current().GraceStatusFile, fileStreamOptionsRead))
-
-                use gzStream = new GZipStream(fileStream, CompressionMode.Decompress, leaveOpen = false)
-
-                let! graceStatus = deserializeAsync<GraceStatus> gzStream
-                //logToAnsiConsole Colors.Important $"Read Grace Status file from disk."
-                return graceStatus
-            else
-                return GraceStatus.Default
-        }
-
     /// Writes the Grace status file to disk.
     let writeGraceStatusFile (graceStatus: GraceStatus) =
         task {
@@ -316,24 +301,6 @@ module Services =
 
             do! serializeMessagePack (Current().GraceStatusFile) graceStatus
         }
-
-    /// Writes the Grace status file to disk.
-    let writeGraceStatusFileOld (graceStatus: GraceStatus) =
-        (task {
-            use fileStream = Constants.DefaultRetryPolicy.Execute(fun _ -> File.Open(Current().GraceStatusFile, fileStreamOptionsWrite))
-
-            logToAnsiConsole Colors.Important $"About to serialize Grace Status file to GZIPStream; uncompressed length: {fileStream.Length}."
-
-            use gzStream = new GZipStream(fileStream, CompressionLevel.SmallestSize, leaveOpen = false)
-
-            do! serializeAsync gzStream graceStatus
-
-            logToAnsiConsole
-                Colors.Important
-                $"Wrote Grace Status file to GZIPStream; uncompressed length: {fileStream.Length}; compressed length: {gzStream.Length}."
-        //logToAnsiConsole Colors.Important $"Wrote new Grace Status file to disk."
-        })
-        :> Task
 
     /// Retrieves the Grace object cache file and returns it as a GraceIndex instance.
     let readGraceObjectCacheFile () =
@@ -347,20 +314,6 @@ module Services =
                 return GraceObjectCache.Default
         }
 
-    /// Retrieves the Grace object cache file and returns it as a GraceIndex instance.
-    let readGraceObjectCacheFileOld () =
-        task {
-            if File.Exists(Current().GraceObjectCacheFile) then
-                use fileStream = Constants.DefaultRetryPolicy.Execute(fun _ -> File.Open(Current().GraceStatusFile, fileStreamOptionsRead))
-
-                use gzStream = new GZipStream(fileStream, CompressionMode.Decompress, leaveOpen = false)
-
-                return! deserializeAsync<GraceObjectCache> gzStream
-
-            else
-                return GraceObjectCache.Default
-        }
-
     /// Writes the Grace object cache file to disk.
     let writeGraceObjectCacheFile (graceObjectCache: GraceObjectCache) =
         task {
@@ -369,17 +322,6 @@ module Services =
 
             do! serializeMessagePack (Current().GraceObjectCacheFile) graceObjectCache
         }
-
-    /// Writes the Grace object cache file to disk.
-    let writeGraceObjectCacheFileOld (graceObjectCache: GraceObjectCache) =
-        (task {
-            use fileStream = Constants.DefaultRetryPolicy.Execute(fun _ -> File.Open(Current().GraceObjectCacheFile, fileStreamOptionsWrite))
-
-            use gzStream = new GZipStream(fileStream, CompressionLevel.SmallestSize, leaveOpen = false)
-
-            do! serializeAsync gzStream graceObjectCache
-        })
-        :> Task
 
     /// Compared the repository's working directory against the Grace index file and returns the differences.
     let scanForDifferences (previousGraceStatus: GraceStatus) =
