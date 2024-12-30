@@ -129,7 +129,12 @@ module Diff =
             }
 
         /// Gets a Stream from object storage for a specific FileVersion, using a generated Uri.
-        member private this.getFileStream (repositoryDto: RepositoryDto) (fileVersion: FileVersion) (url: UriWithSharedAccessSignature) correlationId =
+        member private this.getUncompressedFileStream
+            (repositoryDto: RepositoryDto)
+            (fileVersion: FileVersion)
+            (url: UriWithSharedAccessSignature)
+            correlationId
+            =
             task {
                 this.correlationId <- correlationId
                 let repositoryActorProxy = Repository.CreateActorProxy repositoryDto.RepositoryId correlationId
@@ -138,12 +143,17 @@ module Diff =
                 match objectStorageProvider with
                 | AWSS3 -> return new MemoryStream() :> Stream
                 | AzureBlobStorage ->
-                    let blobClient = BlockBlobClient(Uri(url))
+                    let blobClient = BlockBlobClient(url)
                     logToConsole $"In DiffActor.getFileStream(): blobClient.Uri: {blobClient.Uri}."
-                    let fileStream = blobClient.OpenRead(position = 0, bufferSize = (64 * 1024))
-                    let uncompressedStream = if fileVersion.IsBinary then fileStream else fileStream
-                    //let gzStream = new GZipStream(fileStream, CompressionMode.Decompress, leaveOpen = true)
-                    //gzStream :> Stream
+                    let! fileStream = blobClient.OpenReadAsync(position = 0, bufferSize = (64 * 1024))
+
+                    let uncompressedStream =
+                        if fileVersion.IsBinary then
+                            fileStream
+                        else
+                            use gzStream = new GZipStream(fileStream, CompressionMode.Decompress, leaveOpen = true)
+                            gzStream :> Stream
+
                     return uncompressedStream
                 | GoogleCloudStorage -> return new MemoryStream() :> Stream
                 | ObjectStorageProvider.Unknown -> return new MemoryStream() :> Stream
@@ -307,9 +317,12 @@ module Diff =
                                     //logToConsole $"In DiffActor.getFileStream(); relativePath: {relativePath}; relativeDirectoryPath: {relativeDirectoryPath}; graceIndex.Count: {graceIndex.Count}."
                                     let directory = graceIndex[relativeDirectoryPath]
                                     let fileVersion = directory.Files.First(fun f -> f.RelativePath = relativePath)
-                                    let! uri = getReadSharedAccessSignature repositoryDto fileVersion correlationId
-                                    let! stream = this.getFileStream repositoryDto fileVersion (Result.get uri) correlationId
-                                    return (stream, fileVersion)
+
+                                    match! getReadSharedAccessSignature repositoryDto fileVersion correlationId with
+                                    | Ok uri ->
+                                        let! uncompressedFileStream = this.getUncompressedFileStream repositoryDto fileVersion uri correlationId
+                                        return Ok(uncompressedFileStream, fileVersion)
+                                    | Error ex -> return Error ex
                                 }
 
                             // Process each difference.
@@ -329,51 +342,53 @@ module Diff =
                                                     | Directory -> () // Might have to revisit this.
                                                     | File ->
                                                         // Get streams for both file versions.
-                                                        let! (fileStream1, fileVersion1) = getFileStream graceIndex1 difference.RelativePath repositoryDto
+                                                        let! result1 = getFileStream graceIndex1 difference.RelativePath repositoryDto
 
-                                                        let! (fileStream2, fileVersion2) = getFileStream graceIndex2 difference.RelativePath repositoryDto
+                                                        let! result2 = getFileStream graceIndex2 difference.RelativePath repositoryDto
 
-                                                        // Compare the streams using DiffPlex, and get the Inline and Side-by-Side diffs.
-                                                        let! diffResults =
-                                                            task {
-                                                                let (fv1, fv2) = (fileVersion1, fileVersion2)
+                                                        match (result1, result2) with
+                                                        | (Ok(fileStream1, fileVersion1), Ok(fileStream2, fileVersion2)) ->
+                                                            try
+                                                                // Compare the streams using DiffPlex, and get the Inline and Side-by-Side diffs.
+                                                                let! diffResults =
+                                                                    task {
+                                                                        if createdAt1.CompareTo(createdAt2) < 0 then
+                                                                            return! diffTwoFiles fileStream1 fileStream2
+                                                                        else
+                                                                            return! diffTwoFiles fileStream2 fileStream1
+                                                                    }
 
-                                                                if createdAt1.CompareTo(createdAt2) < 0 then
-                                                                    return! diffTwoFiles fileStream1 fileStream2
-                                                                else
-                                                                    return! diffTwoFiles fileStream2 fileStream1
-                                                            }
+                                                                // Create a FileDiff with the DiffPlex results and corresponding Sha256Hash values.
+                                                                let fileDiff =
+                                                                    if createdAt1.CompareTo(createdAt2) < 0 then
+                                                                        FileDiff.Create
+                                                                            fileVersion1.RelativePath
+                                                                            fileVersion1.Sha256Hash
+                                                                            fileVersion1.CreatedAt
+                                                                            fileVersion2.Sha256Hash
+                                                                            fileVersion2.CreatedAt
+                                                                            (fileVersion1.IsBinary || fileVersion2.IsBinary)
+                                                                            diffResults.InlineDiff
+                                                                            diffResults.SideBySideOld
+                                                                            diffResults.SideBySideNew
+                                                                    else
+                                                                        FileDiff.Create
+                                                                            fileVersion1.RelativePath
+                                                                            fileVersion2.Sha256Hash
+                                                                            fileVersion1.CreatedAt
+                                                                            fileVersion1.Sha256Hash
+                                                                            fileVersion2.CreatedAt
+                                                                            (fileVersion1.IsBinary || fileVersion2.IsBinary)
+                                                                            diffResults.InlineDiff
+                                                                            diffResults.SideBySideOld
+                                                                            diffResults.SideBySideNew
 
-                                                        if not <| isNull (fileStream1) then do! fileStream1.DisposeAsync()
-
-                                                        if not <| isNull (fileStream2) then do! fileStream2.DisposeAsync()
-
-                                                        // Create a FileDiff with the DiffPlex results and corresponding Sha256Hash values.
-                                                        let fileDiff =
-                                                            if createdAt1.CompareTo(createdAt2) < 0 then
-                                                                FileDiff.Create
-                                                                    fileVersion1.RelativePath
-                                                                    fileVersion1.Sha256Hash
-                                                                    fileVersion1.CreatedAt
-                                                                    fileVersion2.Sha256Hash
-                                                                    fileVersion2.CreatedAt
-                                                                    (fileVersion1.IsBinary || fileVersion2.IsBinary)
-                                                                    diffResults.InlineDiff
-                                                                    diffResults.SideBySideOld
-                                                                    diffResults.SideBySideNew
-                                                            else
-                                                                FileDiff.Create
-                                                                    fileVersion1.RelativePath
-                                                                    fileVersion2.Sha256Hash
-                                                                    fileVersion1.CreatedAt
-                                                                    fileVersion1.Sha256Hash
-                                                                    fileVersion2.CreatedAt
-                                                                    (fileVersion1.IsBinary || fileVersion2.IsBinary)
-                                                                    diffResults.InlineDiff
-                                                                    diffResults.SideBySideOld
-                                                                    diffResults.SideBySideNew
-
-                                                        fileDiffs.Add(fileDiff)
+                                                                fileDiffs.Add(fileDiff)
+                                                            finally
+                                                                if not <| isNull fileStream1 then fileStream1.Dispose()
+                                                                if not <| isNull fileStream2 then fileStream2.Dispose()
+                                                        | (Error ex, _) -> raise ex
+                                                        | (_, Error ex) -> raise ex
                                                 | Add -> ()
                                                 | Delete -> ()
                                             }

@@ -37,27 +37,6 @@ module Storage =
 
     let log = ApplicationContext.loggerFactory.CreateLogger("Storage.Server")
 
-    /// Checks if a file version exists in the object storage provider.
-    let fileExists (repositoryDto: RepositoryDto) (fileVersion: FileVersion) (context: HttpContext) =
-        task {
-            match repositoryDto.ObjectStorageProvider with
-            | AzureBlobStorage ->
-                let! blobClient = getAzureBlobClient repositoryDto fileVersion (getCorrelationId context)
-
-                match blobClient with
-                | Ok blobClient ->
-                    let! azureResponse = blobClient.ExistsAsync()
-                    return azureResponse.Value
-                | Error error -> return false
-            | AWSS3 -> return false
-            | GoogleCloudStorage -> return false
-            | ObjectStorageProvider.Unknown ->
-                log.LogError $"Error: Unknown ObjectStorageProvider in fileExists for repository {repositoryDto.RepositoryId} - {repositoryDto.RepositoryName}."
-
-                logToConsole (sprintf "%A" repositoryDto)
-                return false
-        }
-
     /// Gets the metadata stored in the object storage provider for the specified file.
     let getFileMetadata (repositoryDto: RepositoryDto) (fileVersion: FileVersion) (context: HttpContext) =
         task {
@@ -119,12 +98,13 @@ module Storage =
 
                 try
                     let! parameters = context.BindJsonAsync<GetUploadUriParameters>()
-                    let repositoryActor = Repository.CreateActorProxy (RepositoryId.Parse(parameters.RepositoryId)) correlationId
+                    let repositoryActor = Repository.CreateActorProxy (RepositoryId.Parse(graceIds.RepositoryId)) correlationId
                     let! repositoryDto = repositoryActor.Get correlationId
 
                     for fileVersion in parameters.FileVersions do
-                        let! uploadUri = getWriteSharedAccessSignature repositoryDto fileVersion correlationId
-                        uris.Add(fileVersion.RelativePath, uploadUri)
+                        match! getWriteSharedAccessSignature repositoryDto fileVersion correlationId with
+                        | Ok uploadUri -> uris.Add(fileVersion.RelativePath, uploadUri)
+                        | Error error -> ()
 
                     if log.IsEnabled(LogLevel.Debug) then
                         let sb = stringBuilderPool.Get()
@@ -173,12 +153,13 @@ module Storage =
                                 (fun fileVersion ct ->
                                     ValueTask(
                                         task {
-                                            let! fileExists = fileExists repositoryDto fileVersion context
+                                            //let! fileExists = fileExists repositoryDto fileVersion context
 
-                                            if not <| fileExists then
-                                                let! blobUriWithSasToken = getWriteSharedAccessSignature repositoryDto fileVersion correlationId
-
+                                            //if not <| fileExists then
+                                            match! getWriteSharedAccessSignature repositoryDto fileVersion correlationId with
+                                            | Ok blobUriWithSasToken ->
                                                 uploadMetadata.Enqueue({ BlobUriWithSasToken = blobUriWithSasToken; Sha256Hash = fileVersion.Sha256Hash })
+                                            | Error error -> ()
                                         }
                                     ))
                             )

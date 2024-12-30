@@ -42,12 +42,12 @@ module Watch =
 
     /// Holds a list of the created or changed files that we need to process, as determined by the FileSystemWatcher.
     ///
-    /// NOTE: We're using ConcurrentDictionary because it's safe for multithreading, doesn't allow us to insert the same key twice, and for its algorithms. We're not using the values of the ConcurrentDictionary here, only the keys.
+    /// Note: We're using ConcurrentDictionary because it's safe for multithreading, doesn't allow us to insert the same key twice, and for its algorithms. We're not using the values of the ConcurrentDictionary here, only the keys.
     let private filesToProcess = ConcurrentDictionary<string, unit>()
 
     /// Holds a list of the created or changed directories that we need to process, as determined by the FileSystemWatcher.
     ///
-    /// NOTE: We're using ConcurrentDictionary because it's safe for multithreading, doesn't allow us to insert the same key twice, and for its algorithms. We're not using the values of the ConcurrentDictionary here, only the keys.
+    /// Note: We're using ConcurrentDictionary because it's safe for multithreading, doesn't allow us to insert the same key twice, and for its algorithms. We're not using the values of the ConcurrentDictionary here, only the keys.
     let private directoriesToProcess = ConcurrentDictionary<string, unit>()
 
     type WatchParameters() =

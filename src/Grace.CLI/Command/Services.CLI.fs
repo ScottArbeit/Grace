@@ -703,7 +703,12 @@ module Services =
                                                     parameters.CorrelationId
                                             with
                                             | Ok result -> () //logToAnsiConsole Colors.Verbose $"In Services.uploadFilesToObjectStorage(): Uploaded {fileVersion.GetObjectFileName} to object storage."
-                                            | Error error -> errors.Enqueue(error)
+                                            | Error error ->
+                                                logToAnsiConsole
+                                                    Colors.Error
+                                                    $"Error uploading {fileVersion.GetObjectFileName} to object storage: {error.Error}"
+
+                                                errors.Enqueue(error)
                                         }
                                     ))
                             )

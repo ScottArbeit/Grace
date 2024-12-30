@@ -513,7 +513,7 @@ module Utilities =
 
     /// Creates a Span<`T> on the stack to minimize heap usage and GC. This is an F# implementation of the C# keyword `stackalloc`.
     /// This should be used for smaller allocations, as the stack has ~1MB size.
-    // Borrowed from https://bartoszsypytkowski.com/writing-high-performance-f-code/.
+    // Borrowed with appreciation from https://bartoszsypytkowski.com/writing-high-performance-f-code/.
     let inline stackalloc<'a when 'a: unmanaged> (length: int) : Span<'a> =
         let p = NativePtr.stackalloc<'a> length |> NativePtr.toVoidPtr
         Span<'a>(p, length)

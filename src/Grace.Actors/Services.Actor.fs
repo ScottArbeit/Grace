@@ -166,7 +166,7 @@ module Services =
             let blobSasBuilder =
                 BlobSasBuilder(
                     permissions = permission,
-                    expiresOn = DateTimeOffset.UtcNow.Add(TimeSpan.FromMinutes(Constants.SharedAccessSignatureExpiration)),
+                    expiresOn = DateTimeOffset.UtcNow.Add(TimeSpan.FromMinutes(SharedAccessSignatureExpiration)),
                     StartsOn = DateTimeOffset.UtcNow.Subtract(TimeSpan.FromSeconds(15.0)),
                     BlobContainerName = blobContainerClient.Name,
                     BlobName = Path.Combine($"{fileVersion.RelativePath}", fileVersion.GetObjectFileName),
@@ -175,7 +175,7 @@ module Services =
 
             let sasUriParameters = blobSasBuilder.ToSasQueryParameters(sharedKeyCredential)
 
-            return Ok $"{blobContainerClient.Uri}/{fileVersion.RelativePath}/{fileVersion.GetObjectFileName}?{sasUriParameters}"
+            return UriWithSharedAccessSignature($"{blobContainerClient.Uri}/{fileVersion.RelativePath}/{fileVersion.GetObjectFileName}?{sasUriParameters}")
         }
 
     /// Gets a shared access signature for reading from the object storage provider.
@@ -185,20 +185,17 @@ module Services =
             | AzureBlobStorage ->
                 let permissions = (BlobSasPermissions.Read ||| BlobSasPermissions.List) // These are the minimum permissions needed to read a file.
                 let! sas = createAzureBlobSasUri repositoryDto fileVersion permissions correlationId
-
-                match sas with
-                | Ok sas -> return Ok(sas.ToString())
-                | Error error -> return Error error
-            | AWSS3 -> return Error "Not implemented"
-            | GoogleCloudStorage -> return Error "Not implemented"
-            | ObjectStorageProvider.Unknown -> return Error "Not implemented"
+                return Ok sas
+            | AWSS3 -> return Error(NotImplementedException("AWS S3 storage type is not implemented."))
+            | GoogleCloudStorage -> return Error(NotImplementedException("Google Cloud storage type is not implemented."))
+            | ObjectStorageProvider.Unknown -> return Error(NotImplementedException("Unknown storage type."))
         }
 
     /// Gets a shared access signature for writing to the object storage provider.
     let getWriteSharedAccessSignature (repositoryDto: RepositoryDto) (fileVersion: FileVersion) (correlationId: CorrelationId) =
         task {
             match repositoryDto.ObjectStorageProvider with
-            | AWSS3 -> return Uri("http://localhost:3500")
+            | AWSS3 -> return Error(NotImplementedException("AWS S3 storage type is not implemented."))
             | AzureBlobStorage ->
                 // Adding read permission to allow for calls to .ExistsAsync().
                 let! sas =
@@ -212,15 +209,9 @@ module Services =
                          ||| BlobSasPermissions.Read)
                         correlationId
 
-                match sas with
-                | Ok sas ->
-                    //logToConsole $"In Actor.Services.getWriteSharedAccessSignature; {sas}"
-                    return Uri(sas)
-                | Error error ->
-                    //logToConsole $"In Actor.Services.getWriteSharedAccessSignature; {error}"
-                    return Uri("http://localhost")
-            | GoogleCloudStorage -> return Uri("http://localhost:3500")
-            | ObjectStorageProvider.Unknown -> return Uri("http://localhost:3500")
+                return Ok sas
+            | GoogleCloudStorage -> return Error(NotImplementedException("Google Cloud storage type is not implemented."))
+            | ObjectStorageProvider.Unknown -> return Error(NotImplementedException("Unknown storage type."))
         }
 
     /// Checks whether an owner name exists in the system.

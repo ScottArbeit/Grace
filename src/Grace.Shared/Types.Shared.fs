@@ -44,7 +44,7 @@ module Types =
     type StorageAccountName = string
     type StorageConnectionString = string
     type StorageContainerName = string
-    type UriWithSharedAccessSignature = string
+    type UriWithSharedAccessSignature = Uri
     type UserId = string
     type ValidationResult<'T> = ValueTask<Result<unit, 'T>>
 
