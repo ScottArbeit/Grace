@@ -92,7 +92,7 @@ module DirectoryAppearance =
                     let wasRemoved = dto.Appearances.Remove(appearance)
 
                     if wasRemoved then
-                        if dto.Appearances.Count = 0 then
+                        if dto.Appearances |> Seq.isEmpty then
                             let! deleteSucceeded = Storage.DeleteState stateManager dtoStateName
 
                             if deleteSucceeded then

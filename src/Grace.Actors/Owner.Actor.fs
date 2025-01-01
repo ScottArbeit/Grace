@@ -188,7 +188,7 @@ module Owner =
                 try
                     let! ownerEvents = this.OwnerEvents()
 
-                    if ownerEvents.Count = 0 then this.OnFirstWrite()
+                    if ownerEvents |> Seq.isEmpty then this.OnFirstWrite()
 
                     ownerEvents.Add(ownerEvent)
 

@@ -183,7 +183,7 @@ module Organization =
                 try
                     let! organizationEvents = this.OrganizationEvents()
 
-                    if organizationEvents.Count = 0 then do! this.OnFirstWrite()
+                    if organizationEvents |> Seq.isEmpty then do! this.OnFirstWrite()
 
                     organizationEvents.Add(organizationEvent)
 

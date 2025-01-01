@@ -197,7 +197,7 @@ module Watch =
                         .ToList()
 
                 let message =
-                    if fileDifferences.Count = 0 then
+                    if fileDifferences |> Seq.isEmpty then
                         String.Empty
                     else
                         let sb = stringBuilderPool.Get()
@@ -516,7 +516,7 @@ module Watch =
                     logToAnsiConsole Colors.Verbose $"Scanning for differences."
                     let! differences = scanForDifferences graceStatus // <--- This always finds the directories with updated write times, but we never update GraceStatus below..
 
-                    if differences.Count = 0 then
+                    if differences |> Seq.isEmpty then
                         logToAnsiConsole Colors.Verbose $"Already up-to-date."
                     else
                         logToAnsiConsole Colors.Verbose $"Found {differences.Count} differences."

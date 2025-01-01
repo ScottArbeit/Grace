@@ -64,7 +64,6 @@ module ApplicationContext =
         let version = assembly.GetName().Version
         let fileInfo = FileInfo(assembly.Location)
 
-        logToConsole $"In setConfiguration: isNull(config): {isNull (config)}."
         logToConsole $"Grace Server version: {version}; build time (UTC): {fileInfo.LastWriteTimeUtc}."
 
         configuration <- config
@@ -117,16 +116,6 @@ module ApplicationContext =
         task {
             let mutable isReady = false
 
-            let mutable workerThreads = 0
-            let mutable completionPortThreads = 0
-            ThreadPool.GetMaxThreads(&workerThreads, &completionPortThreads)
-            logToConsole $"Initial ThreadPool.GetMaxThreads: workerThreads: {workerThreads}; completionPortThreads: {completionPortThreads}."
-            ThreadPool.GetAvailableThreads(&workerThreads, &completionPortThreads)
-            logToConsole $"Initial ThreadPool.GetAvailableThreads: workerThreads: {workerThreads}; completionPortThreads: {completionPortThreads}."
-
-            //let threadPoolSet = ThreadPool.SetMinThreads(25, 1000)
-            //if not <| threadPoolSet then logToConsole "Could not set ThreadPool.MinThreads."
-
             // Wait for the Dapr gRPC port to be ready.
             logToConsole
                 $"""----------------------------------------------------------------------------------------------
@@ -136,8 +125,8 @@ module ApplicationContext =
                                 talk to Dapr, so Grace Server will wait for {secondsToWaitForDaprToBeReady} seconds for Dapr to be ready.
                                 If no connection is made, that almost always means that something happened trying
                                 to start the Dapr sidecar, and Kubernetes is going to restart it. If that happens,
-                                Grace Server also will exit and allow Kubernetes to restart it; by the time Grace Server
-                                restarts, the Dapr sidecar will be up and running, and we should connect right away.
+                                Grace Server will exit to allow Kubernetes to restart it; by the time Grace Server
+                                restarts, the Dapr sidecar is usually up and running, and we should connect right away.
                                 -----------------------------------------------------------------------------------------------"""
 
             let mutable gRPCPort: int = 50001 // This is Dapr's default gRPC port.

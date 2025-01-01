@@ -200,7 +200,7 @@ module Storage =
 
                 let! failed = deleteAllFromCosmosDb ()
 
-                if failed.Count = 0 then
+                if failed |> Seq.isEmpty then
                     log.LogWarning("{CurrentInstant} Succeeded deleting all rows from CosmosDB.", getCurrentInstantExtended ())
 
                     return!
@@ -249,7 +249,7 @@ module Storage =
 
                 let! failed = deleteAllRemindersFromCosmosDb ()
 
-                if failed.Count = 0 then
+                if failed |> Seq.isEmpty then
                     log.LogWarning("{CurrentInstant} Succeeded deleting all reminders from CosmosDB.", getCurrentInstantExtended ())
 
                     return!

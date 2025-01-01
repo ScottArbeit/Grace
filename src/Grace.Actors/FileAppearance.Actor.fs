@@ -91,7 +91,7 @@ module FileAppearance =
                     let wasRemoved = dto.Appearances.Remove(appearance)
 
                     if wasRemoved then
-                        if dto.Appearances.Count = 0 then
+                        if dto.Appearances |> Seq.isEmpty then
                             // TODO: Delete the file from storage
                             do! stateManager.RemoveStateAsync(dtoStateName)
                         else

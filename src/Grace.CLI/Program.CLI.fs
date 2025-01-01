@@ -143,7 +143,7 @@ module GraceCommand =
 
         /// If the command has no arguments - the user just typed `grace` - then we'll show the help screen and avoid showing an error message by adding a token that asks for help.
         let noErrorIfNoArgumentsMiddleware (context: InvocationContext) =
-            if context.ParseResult.Tokens.Count = 0 then
+            if context.ParseResult.Tokens |> Seq.isEmpty then
                 context.ParseResult <- context.Parser.Parse(helpOptions[0])
 
         let decideIfThisInstanceShouldBeCaseInsensitiveMiddleware (context: InvocationContext) =

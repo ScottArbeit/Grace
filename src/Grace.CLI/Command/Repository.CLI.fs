@@ -661,7 +661,7 @@ module Repository =
                                                             )
 
                                                         // Print out any errors that occurred.
-                                                        if errors.Count = 0 then
+                                                        if errors |> Seq.isEmpty then
                                                             ()
                                                         else
                                                             AnsiConsole.MarkupLine($"{errors.Count} errors occurred.")

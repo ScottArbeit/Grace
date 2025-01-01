@@ -645,7 +645,7 @@ module Services =
                 return None
             else
                 // Check if we have an active BranchName actor with a cached result.
-                match memoryCache.GetBranchNameEntry branchName with
+                match (memoryCache.GetBranchNameEntry repositoryId branchName) with
                 | Some branchGuid ->
                     if branchGuid.Equals(Constants.MemoryCache.EntityDoesNotExist) then
                         // We have already checked and the branch does not exist.
@@ -661,7 +661,7 @@ module Services =
                     match! branchNameActorProxy.GetBranchId correlationId with
                     | Some branchId ->
                         // Add this BranchName and BranchId to the MemoryCache.
-                        memoryCache.CreateBranchNameEntry branchName branchId
+                        memoryCache.CreateBranchNameEntry repositoryId branchName branchId
                         memoryCache.CreateBranchIdEntry branchId MemoryCache.ExistsValue
                         return Some $"{branchId}"
                     | None ->
@@ -698,7 +698,7 @@ module Services =
                                     branchGuid <- Guid.Parse(branchId)
 
                                     // Add this BranchName and BranchId to the MemoryCache.
-                                    memoryCache.CreateBranchNameEntry branchName branchGuid
+                                    memoryCache.CreateBranchNameEntry repositoryId branchName branchGuid
                                     memoryCache.CreateBranchIdEntry branchGuid MemoryCache.ExistsValue
 
                                     // Set the BranchId in the BranchName actor.
@@ -1092,10 +1092,11 @@ module Services =
                             | Reference.ReferenceEventType.Created refDto -> references.Add(refDto)
                             | _ -> ())
 
-                    Activity.Current
-                        .SetTag("indexMetrics", $"{indexMetrics.Remove(indexMetrics.Length - 2, 2)}")
-                        .SetTag("requestCharge", $"{requestCharge.Remove(requestCharge.Length - 2, 2)}")
-                    |> ignore
+                    if indexMetrics.Length >= 2 then
+                        Activity.Current
+                            .SetTag("indexMetrics", $"{indexMetrics.Remove(indexMetrics.Length - 2, 2)}")
+                            .SetTag("requestCharge", $"{requestCharge.Remove(requestCharge.Length - 2, 2)}")
+                        |> ignore
                 finally
                     stringBuilderPool.Return(indexMetrics)
                     stringBuilderPool.Return(requestCharge)

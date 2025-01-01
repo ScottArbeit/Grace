@@ -262,22 +262,22 @@ module Services =
     /// Serializes an object of type 'T to the specified file path using MessagePack.
     let serializeMessagePack<'T> (filePath: string) (data: 'T) =
         task {
-            let startInstant = getCurrentInstant ()
+            //let startInstant = getCurrentInstant ()
             use fileStream = new FileStream(filePath, FileMode.Create, FileAccess.Write, FileShare.None, bufferSize = 65536, useAsync = true)
             do! MessagePackSerializer.SerializeAsync(fileStream, data, messagePackSerializerOptions)
-            let duration = $"{(getCurrentInstant () - startInstant).TotalSeconds:F3}"
-            logToAnsiConsole Colors.Important $"Serialized file {filePath}; compressed length: {fileStream.Length}; time elapsed: {duration}s."
+        //let duration = $"{(getCurrentInstant () - startInstant).TotalSeconds:F3}"
+        //logToAnsiConsole Colors.Important $"Serialized file {filePath}; compressed length: {fileStream.Length}; time elapsed: {duration}s."
         }
         :> Task
 
     /// Deserializes an object of type 'T from the specified file path using MessagePack.
     let deserializeMessagePack<'T> (filePath: string) =
         task {
-            let startInstant = getCurrentInstant ()
+            //let startInstant = getCurrentInstant ()
             use fileStream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read, bufferSize = 65536, useAsync = true)
             let! returnValue = MessagePackSerializer.DeserializeAsync<'T>(fileStream, messagePackSerializerOptions)
-            let duration = $"{(getCurrentInstant () - startInstant).TotalSeconds:F3}"
-            logToAnsiConsole Colors.Important $"Deserialized file {filePath}; compressed length: {fileStream.Length}; time elapsed: {duration}s."
+            //let duration = $"{(getCurrentInstant () - startInstant).TotalSeconds:F3}"
+            //logToAnsiConsole Colors.Important $"Deserialized file {filePath}; compressed length: {fileStream.Length}; time elapsed: {duration}s."
             return returnValue
         }
 
@@ -713,7 +713,7 @@ module Services =
                                     ))
                             )
 
-                        if errors.Count = 0 then
+                        if errors |> Seq.isEmpty then
                             return Ok(GraceReturnValue.Create true parameters.CorrelationId)
                         else
                             // use Seq.fold to create a single error message from the ConcurrentQueue<GraceError>

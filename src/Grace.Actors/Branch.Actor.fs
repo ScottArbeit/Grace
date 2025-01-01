@@ -23,6 +23,7 @@ open Microsoft.Extensions.Logging
 open System
 open System.Collections.Generic
 open System.Diagnostics
+open System.Linq
 open System.Runtime.Serialization
 open System.Text
 open System.Threading.Tasks
@@ -299,7 +300,7 @@ module Branch =
         member private this.ApplyEvent branchEvent =
             task {
                 try
-                    if branchEvents.Count = 0 then do! this.OnFirstWrite()
+                    if branchEvents |> Seq.isEmpty then do! this.OnFirstWrite()
 
                     // Update the branchDto with the event.
                     let! updatedBranchDto = branchDto |> updateDto branchEvent this.correlationId
@@ -505,7 +506,7 @@ module Branch =
                                                 logToConsole
                                                     $"In BranchActor.Handle.processCommand: Error rebasing on referenceId: {basedOn}. promotionDto: {serialize promotionDto}"
 
-                                        memoryCache.CreateBranchNameEntry branchName branchId
+                                        memoryCache.CreateBranchNameEntry $"{repositoryId}" branchName branchId
 
                                         return Ok(Created(branchId, branchName, parentBranchId, basedOn, repositoryId, branchPermissions))
                                     | BranchCommand.Rebase referenceId ->

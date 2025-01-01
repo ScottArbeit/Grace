@@ -316,7 +316,7 @@ module Maintenance =
                                                     ))
                                             )
 
-                                        if errors.Count = 0 then
+                                        if errors |> Seq.isEmpty then
                                             if parseResult |> verbose then
                                                 logToAnsiConsole Colors.Verbose "All files uploaded successfully."
 
@@ -502,7 +502,7 @@ module Maintenance =
                                     ))
                             )
 
-                        if errors.Count = 0 then
+                        if errors |> Seq.isEmpty then
                             ()
                         else
                             AnsiConsole.MarkupLine($"{errors.Count} errors occurred.")
@@ -716,7 +716,7 @@ module Maintenance =
                                                     ))
                                             )
 
-                                        if errors.Count = 0 then
+                                        if errors |> Seq.isEmpty then
                                             if parseResult |> verbose then
                                                 logToAnsiConsole Colors.Verbose "All files uploaded successfully."
 
@@ -902,7 +902,7 @@ module Maintenance =
                                     ))
                             )
 
-                        if errors.Count = 0 then
+                        if errors |> Seq.isEmpty then
                             ()
                         else
                             AnsiConsole.MarkupLine($"{errors.Count} errors occurred.")

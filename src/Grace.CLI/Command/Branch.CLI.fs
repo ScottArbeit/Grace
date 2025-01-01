@@ -1934,7 +1934,6 @@ module Branch =
 
                         if currentBranch.SaveEnabled then
                             let! (updatedGraceStatus, newVersions) = getNewGraceStatusAndDirectoryVersions previousGraceStatus differences
-
                             newGraceStatus <- updatedGraceStatus
                             newDirectoryVersions <- newVersions
 

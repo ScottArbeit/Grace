@@ -177,14 +177,14 @@ module MemoryCache =
 
 
         /// Create a new entry in MemoryCache to link a BranchName with a BranchId.
-        member this.CreateBranchNameEntry (branchName: string) (branchId: BranchId) =
-            this.CreateWithDefaultExpirationTime $"{branchNamePrefix}:{branchName}" branchId
+        member this.CreateBranchNameEntry (repositoryId: string) (branchName: string) (branchId: BranchId) =
+            this.CreateWithDefaultExpirationTime $"{branchNamePrefix}:{repositoryId}-{branchName}" branchId
 
         /// Check if we have an entry in MemoryCache for a BranchName, and return the BranchId if we have it.
-        member this.GetBranchNameEntry(branchName: string) = this.GetFromCache<Guid> $"{branchNamePrefix}:{branchName}"
+        member this.GetBranchNameEntry (repositoryId: string) (branchName: string) = this.GetFromCache<Guid> $"{branchNamePrefix}:{repositoryId}-{branchName}"
 
         /// Remove an entry in MemoryCache for a BranchName.
-        member this.RemoveBranchNameEntry(branchName: string) = this.Remove($"{branchNamePrefix}:{branchName}")
+        member this.RemoveBranchNameEntry (repositoryId: string) (branchName: string) = this.Remove($"{branchNamePrefix}:{repositoryId}-{branchName}")
 
 
         /// Create a new entry in MemoryCache to store the current thread count information.
