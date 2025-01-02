@@ -227,6 +227,7 @@ module Utilities =
     let normalizedTimeSpan = TimeSpan.FromMinutes(1.0)
 
     let normalizeFilePath (filePath: string) =
+        logToConsole $"In normalizeFilePath: filePath: {filePath}; isNull memoryCache: {isNull memoryCache}."
         let mutable result = String.Empty
 
         if not <| memoryCache.TryGetValue(filePath, &result) then
@@ -252,42 +253,6 @@ module Utilities =
     /// File stream options for writing files efficiently in Grace.
     let fileStreamOptionsWrite =
         FileStreamOptions(BufferSize = 8 * 1024, Mode = FileMode.Create, Access = FileAccess.Write, Share = FileShare.None, Options = FileOptions.Asynchronous)
-
-    let nulChar = char (0)
-
-    /// Checks if a file is a binary file by scanning the first 8K for a 0x00 character; if it finds one, we assume the file is binary.
-    ///
-    /// This is the same algorithm used by Git.
-    let isBinaryFile (stream: Stream) =
-        task {
-            // If the file is smaller than 8K, we'll check the whole file.
-            let defaultBytesToCheck = 8 * 1024
-
-            let bytesToCheck =
-                if stream.Length > defaultBytesToCheck then
-                    defaultBytesToCheck
-                else
-                    int (stream.Length)
-
-            // Get a buffer to hold the part of the file we're going to check.
-            let startingBytes = ArrayPool<byte>.Shared.Rent(bytesToCheck)
-
-            try
-                // Read the beginning of the file into the buffer.
-                let! bytesRead = stream.ReadAsync(startingBytes, 0, bytesToCheck)
-
-                // Search for a 0x00 character.
-                match
-                    startingBytes
-                    |> Array.take bytesRead
-                    |> Array.tryFind (fun b -> char (b) = nulChar)
-                with
-                | Some nul -> return true
-                | None -> return false
-            finally
-                // Return the rented buffer to the pool, even if an exception is thrown.
-                if not <| isNull startingBytes then ArrayPool<byte>.Shared.Return(startingBytes)
-        }
 
     /// Returns the directory of a file, relative to the root of the repository's working directory.
     let getRelativeDirectory (filePath: string) rootDirectory =

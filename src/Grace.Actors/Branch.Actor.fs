@@ -266,7 +266,7 @@ module Branch =
                 && not <| (context.MethodName = "ReceiveReminderAsync")
             then
                 log.LogInformation(
-                    "{CurrentInstant}: Node: {HostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {ActorName}.{MethodName}; RepositoryId: {RepositoryId}; BranchId: {Id}; BranchName: {BranchName}; ThreadCounts: {ThreadCounts}.",
+                    "{CurrentInstant}: Node: {HostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {ActorName}.{MethodName}; RepositoryId: {RepositoryId}; BranchId: {Id}; BranchName: {BranchName}; {ThreadCounts}.",
                     getCurrentInstantExtended (),
                     getMachineName,
                     duration_ms,

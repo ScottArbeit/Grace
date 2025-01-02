@@ -901,12 +901,14 @@ module Repository =
                     if parseResult |> hasOutput then
                         let table = Table(Border = TableBorder.DoubleEdge)
 
-                        table
-                            .AddColumn(TableColumn(Markup($"[{Colors.Important}]Branch[/]")))
-                            .AddColumn(TableColumn(Markup($"[{Colors.Important}]Updated at[/]")))
-                            .AddColumn(TableColumn(Markup($"[{Colors.Important}]Branch Id[/]")))
-                            .AddColumn(TableColumn(Markup($"[{Colors.Important}]Based on latest promotion[/]")))
-                            .AddColumn(TableColumn(Markup($"[{Colors.Important}]Parent branch[/]")))
+                        table.AddColumns(
+                            [| TableColumn($"[{Colors.Important}]Branch[/]")
+                               TableColumn($"[{Colors.Important}]Branch Id[/]")
+                               TableColumn($"[{Colors.Important}]Based on latest promotion[/]")
+                               TableColumn($"[{Colors.Important}]Parent branch[/]")
+                               TableColumn($"[{Colors.Important}]When[/]", Alignment = Justify.Right)
+                               TableColumn($"[{Colors.Important}]Updated at[/]") |]
+                        )
                         |> ignore
 
                         let allBranches = returnValue.ReturnValue
@@ -941,6 +943,7 @@ module Repository =
                                         {| branchId = branch.BranchId
                                            branchName = branch.BranchName
                                            updatedAt = branch.UpdatedAt
+                                           ago = ago branch.CreatedAt
                                            parentBranchName = parent.branchName
                                            basedOnLatestPromotion = (branch.BasedOn.ReferenceId = parent.latestPromotion.ReferenceId) |})
                                 )
@@ -954,13 +957,14 @@ module Repository =
 
                             table.AddRow(
                                 br.branchName,
-                                updatedAt,
                                 $"[{Colors.Deemphasized}]{br.branchId}[/]",
                                 (if br.basedOnLatestPromotion then
                                      $"[{Colors.Added}]Yes[/]"
                                  else
                                      $"[{Colors.Important}]No[/]"),
-                                br.parentBranchName
+                                br.parentBranchName,
+                                br.ago,
+                                $"[{Colors.Deemphasized}]{updatedAt}[/]"
                             )
                             |> ignore
 

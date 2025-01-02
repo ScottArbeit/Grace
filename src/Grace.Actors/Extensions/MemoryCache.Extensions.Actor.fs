@@ -189,7 +189,7 @@ module MemoryCache =
 
         /// Create a new entry in MemoryCache to store the current thread count information.
         member this.CreateThreadCountEntry(threadInfo: string) =
-            use newCacheEntry = this.CreateEntry("ThreadCounts", Value = threadInfo, AbsoluteExpiration = DateTimeOffset.UtcNow.Add(TimeSpan.FromSeconds(1.0)))
+            use newCacheEntry = this.CreateEntry("ThreadCounts", Value = threadInfo, AbsoluteExpiration = DateTimeOffset.UtcNow.Add(TimeSpan.FromSeconds(6.0)))
             ()
 
         /// Check if we have an entry in MemoryCache for the current ThreadCount.

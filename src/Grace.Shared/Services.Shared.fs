@@ -37,9 +37,7 @@ module Services =
 
             member this.Return(hashInstance: IncrementalHash) =
                 // Reset the hash instance so it can be reused.
-                // We're calling GetHashAndReset() to reset - there's no Reset() - but because we're also calling GetHashAndReset()
-                //   when we compute the hash values, calling it here on empty IncrementalHash instances will be as fast as possible.
-                //   I'm betting that GetHashAndReset() on an empty IncrementalHash instance is faster than creating new instances.
+                // We're calling GetHashAndReset() to reset - there's no Reset() function.
                 let throwaway = stackalloc<byte> SHA256.HashSizeInBytes
                 hashInstance.GetHashAndReset(throwaway) |> ignore
                 true // Indicates that the object is okay to be returned to the pool
@@ -47,12 +45,50 @@ module Services =
     /// An ObjectPool for IncrementalHash instances.
     let incrementalHashPool = DefaultObjectPoolProvider().Create(IncrementalHashPolicy())
 
+    /// The 0x00 character.
+    let nulChar = char (0)
+
+    /// Checks if a file is a binary file by scanning the first 8K for a 0x00 character; if it finds one, we assume the file is binary.
+    ///
+    /// This is the same algorithm used by Git.
+    let isBinaryFile (stream: Stream) =
+        task {
+            // If the file is smaller than 8K, we'll check the whole file.
+            let defaultBytesToCheck = 8 * 1024
+
+            let bytesToCheck =
+                if stream.Length > defaultBytesToCheck then
+                    defaultBytesToCheck
+                else
+                    int (stream.Length)
+
+            // Get a buffer to hold the part of the file we're going to check.
+            let startingBytes = ArrayPool<byte>.Shared.Rent(bytesToCheck)
+
+            try
+                // Read the beginning of the file into the buffer.
+                let! bytesRead = stream.ReadAsync(startingBytes, 0, bytesToCheck)
+
+                // Search for a 0x00 character.
+                match
+                    startingBytes
+                    |> Array.take bytesRead
+                    |> Array.tryFind (fun b -> char (b) = nulChar)
+                with
+                | Some nul -> return true
+                | None -> return false
+            finally
+                // Return the rented buffer to the pool, even if an exception is thrown.
+                if not <| isNull startingBytes then ArrayPool<byte>.Shared.Return(startingBytes)
+        }
+
     /// Computes the SHA-256 value for a given file, presented as a stream.
     ///
     /// Sha256Hash values for files are computed by hashing the file's contents, and then appending the relative path of the file, and the file length.
     let computeSha256ForFile (stream: Stream) (relativeFilePath: RelativePath) =
         task {
-            let bufferLength = 64 * 1024 // Did some informal perf testing on large files, this size was best, larger didn't help, and 64K is still on the small object heap.
+            // Did some informal perf testing on large files, this size was best, larger didn't help, and 64K is still on the small object heap.
+            let bufferLength = 64 * 1024
 
             // Using object pooling for both of these.
             let buffer = ArrayPool<byte>.Shared.Rent(bufferLength)

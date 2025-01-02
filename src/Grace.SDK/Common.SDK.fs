@@ -18,6 +18,7 @@ open System.Net.Security
 open System.Text
 open System.Text.Json
 open System.Threading.Tasks
+open Microsoft.Extensions.Caching.Memory
 
 // Supresses the warning for using AllowNoEncryption in Debug builds.
 #nowarn "0044"
@@ -76,6 +77,13 @@ module Common =
 #endif
         httpClient
 
+    let checkMemoryCache () =
+        if isNull memoryCache then
+            let memoryCacheOptions =
+                MemoryCacheOptions(TrackStatistics = false, TrackLinkedCacheEntries = false, ExpirationScanFrequency = TimeSpan.FromSeconds(30.0))
+
+            memoryCache <- new MemoryCache(memoryCacheOptions)
+
     /// <summary>
     /// Sends GET commands to Grace Server.
     /// </summary>
@@ -87,6 +95,7 @@ module Common =
     let getServer<'T, 'U when 'T :> CommonParameters> (parameters: 'T, route: string) =
         task {
             try
+                checkMemoryCache ()
                 use httpClient = getHttpClient parameters.CorrelationId
                 let startTime = getCurrentInstant ()
 
@@ -128,6 +137,7 @@ module Common =
     let postServer<'T, 'U when 'T :> CommonParameters> (parameters: 'T, route: string) =
         task {
             try
+                checkMemoryCache ()
                 use httpClient = getHttpClient parameters.CorrelationId
                 let serverUriWithRoute = Uri($"{Current().ServerUri}/{route}")
                 let startTime = getCurrentInstant ()

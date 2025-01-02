@@ -1393,10 +1393,12 @@ module Services =
 
                     use tempFileStream = File.Open(tempFilePath, fileStreamOptionsRead)
 
+                    let! isBinary = isBinaryFile tempFileStream
+                    tempFileStream.Position <- 0
                     let! sha256Hash = computeSha256ForFile tempFileStream relativeFilePath
                     //logToConsole $"filePath: {filePath}; tempFilePath: {tempFilePath}; SHA256: {sha256Hash}"
 
-                    // I'm going to rename this file below, using the SHA-256 hash, so I'll be polite and close the file stream here.
+                    // I'm going to rename the temp file below, using the SHA-256 hash, so I'll close the file and dispose the stream first.
                     do! tempFileStream.DisposeAsync()
 
                     // Get the new name for this version of the file, including the SHA-256 hash.
@@ -1418,9 +1420,6 @@ module Services =
                         //logToConsole $"After moving temp file to object storage..."
                         let objectFilePathInfo = FileInfo(objectFilePath)
                         //logToConsole $"After creating FileInfo; Exists: {objectFilePathInfo.Exists}; FullName = {objectFilePathInfo.FullName}..."
-                        use objectFileStream = objectFilePathInfo.Open(fileStreamOptionsRead)
-                        //logToConsole $"After creating stream; .Length = {objectFileStream.Length}..."
-                        let! isBinary = isBinaryFile objectFileStream
                         //logToConsole $"Finished copyToObjectDirectory for {filePath}; isBinary: {isBinary}; moved temp file to object directory."
                         let relativePath = Path.GetRelativePath(Current().RootDirectory, filePath)
 
