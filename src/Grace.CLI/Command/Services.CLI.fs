@@ -130,10 +130,18 @@ module Services =
                 normalizeFilePath (directoryInfoToCheck.FullName + "/")
 
         if FileSystemName.MatchesSimpleExpression(expression, normalizedDirectoryPath, ignoreCase) then
-            //AnsiConsole.MarkupLine($"{GetCurrentInstantString()} [{Colors.Deleted}]normalizedDirectoryPath: {normalizedDirectoryPath}; expression: {expression}; matches: true. Should ignore.[/]")
+            //if normalizedDirectoryPath.Contains(".git") then
+            //AnsiConsole.MarkupLine(
+            //    $"{getCurrentInstantExtended ()} [{Colors.Deleted}]In checkIgnoreLineAgainstDirectory(): normalizedDirectoryPath: {normalizedDirectoryPath}; expression: {expression}; matches: true. Should ignore.[/]"
+            //)
+
             true
         else
-            //AnsiConsole.MarkupLine($"{GetCurrentInstantString()} [{Colors.Added}]normalizedDirectoryPath: {normalizedDirectoryPath}; expression: {expression}; matches: false. Should not ignore.[/]")
+            //if normalizedDirectoryPath.Contains(".git") then
+            //AnsiConsole.MarkupLine(
+            //    $"{getCurrentInstantExtended ()} [{Colors.Added}]In checkIgnoreLineAgainstDirectory(): normalizedDirectoryPath: {normalizedDirectoryPath}; expression: {expression}; matches: false. Should not ignore.[/]"
+            //)
+
             false
 
     /// Returns true if filePath should be ignored by Grace, otherwise returns false.
@@ -165,7 +173,9 @@ module Services =
                    |> Array.exists (fun graceIgnoreLine -> checkIgnoreLineAgainstFile filePath graceIgnoreLine)
                 || Current().GraceFileIgnoreEntries // the file name matches a file ignore line
                    |> Array.exists (fun graceIgnoreLine -> checkIgnoreLineAgainstFile filePath graceIgnoreLine)
-            //logToConsole $"In shouldIgnoreFile: filePath: {filePath}; shouldIgnore: {shouldIgnoreThisFile}"
+
+
+            //logToAnsiConsole Colors.Verbose $"In shouldIgnoreFile: filePath: {filePath}; shouldIgnore: {shouldIgnoreThisFile}"
             shouldIgnoreCache.TryAdd(filePath, shouldIgnoreThisFile) |> ignore
             shouldIgnoreThisFile
 
@@ -187,7 +197,7 @@ module Services =
                     |> Array.exists (fun graceIgnoreLine -> checkIgnoreLineAgainstDirectory directoryInfo graceIgnoreLine))
 
             shouldIgnoreCache.TryAdd(directoryPath, shouldIgnoreDirectory) |> ignore
-            //logToConsole $"Should {if shouldIgnoreDirectory then String.Empty else notString}ignore directory {directoryPath}."
+            //logToAnsiConsole Colors.Verbose $"In shouldIgnoreDirectory: directoryPath: {directoryPath}; shouldIgnore: {shouldIgnoreDirectory}"
             shouldIgnoreDirectory
 
     /// Returns true if directoryPath should not be ignored by Grace, otherwise returns false.
@@ -211,7 +221,7 @@ module Services =
                             (Sha256Hash shaValue)
                             isBinary
                             fileInfo.Length
-                            (getCurrentInstant ())
+                            (Instant.FromDateTimeUtc(fileInfo.LastWriteTimeUtc))
                             true
                             fileInfo.LastWriteTimeUtc
                     )
@@ -363,7 +373,10 @@ module Services =
                             match fileSystemEntryType with
                             | FileSystemEntryType.Directory ->
                                 // If it's a directory, just add it to the differences list.
-                                //logToAnsiConsole Colors.Verbose $"scanForDifferences: Difference in directory: {relativePath}; lastWriteTimeUtc: {lastWriteTimeUtc}; knownLastWriteTimeUtc: {knownLastWriteTimeUtc}."
+                                logToAnsiConsole
+                                    Colors.Verbose
+                                    $"scanForDifferences: Difference in directory: {relativePath}; lastWriteTimeUtc: {lastWriteTimeUtc}; knownLastWriteTimeUtc: {knownLastWriteTimeUtc}."
+
                                 differences.Push(FileSystemDifference.Create Change fileSystemEntryType relativePath)
                             | FileSystemEntryType.File ->
                                 // If this is a file, then check that the contents have actually changed.
@@ -480,9 +493,10 @@ module Services =
 
                                         Interlocked.Increment(&newDirectoryVersionCount) |> ignore
 
-                                        logToAnsiConsole
-                                            Colors.Important
-                                            $"****Created new DirectoryVersion: RelativePath: {normalizeFilePath subdirectoryRelativePath}; existing SHA256Hash: {existingSubdirectoryVersion.Sha256Hash}; new SHA256Hash: {sha256Hash}."
+                                        if parseResult |> isOutputFormat "Verbose" then
+                                            logToAnsiConsole
+                                                Colors.Important
+                                                $"Created new DirectoryVersion: RelativePath: {normalizeFilePath subdirectoryRelativePath}; existing SHA256Hash: {existingSubdirectoryVersion.Sha256Hash}; new SHA256Hash: {sha256Hash}."
 
                                         directories.Enqueue(subdirectoryVersion)
                                     else
@@ -516,10 +530,10 @@ module Services =
 
             let sha256Hash = computeSha256ForDirectory relativeDirectoryPath directories files
 
-            //if relativeDirectoryPath = Constants.RootDirectoryPath then
-            logToAnsiConsole
-                Colors.Verbose
-                $"In collectDirectoriesAndFiles: newDirectoryVersionCount: {newDirectoryVersionCount}; existingDirectoryVersionCount: {existingDirectoryVersionCount}."
+            if parseResult |> isOutputFormat "Verbose" then
+                logToAnsiConsole
+                    Colors.Verbose
+                    $"In collectDirectoriesAndFiles: newDirectoryVersionCount: {newDirectoryVersionCount}; existingDirectoryVersionCount: {existingDirectoryVersionCount}."
 
             return (directories, files, sha256Hash)
         }
@@ -869,8 +883,13 @@ module Services =
                     let directoryVersion =
                         // Check if we've already modified this DirectoryVersion, if so, use that one.
                         // Otherwise, take the not-yet-modified one from newGraceIndex.
-                        let changedDirectoryVersion =
-                            changedDirectoryVersions.Values.FirstOrDefault((fun dv -> dv.RelativePath = relativeDirectoryPath), LocalDirectoryVersion.Default)
+                        //let changedDirectoryVersion =
+                        //    changedDirectoryVersions.Values.FirstOrDefault((fun dv -> dv.RelativePath = relativeDirectoryPath), LocalDirectoryVersion.Default)
+
+                        let mutable changedDirectoryVersion = LocalDirectoryVersion.Default
+
+                        changedDirectoryVersions.TryGetValue(relativeDirectoryPath, &changedDirectoryVersion)
+                        |> ignore
 
                         if changedDirectoryVersion.DirectoryVersionId <> Guid.Empty then
                             changedDirectoryVersion
@@ -1058,7 +1077,7 @@ module Services =
 
         let parameters = SaveDirectoryVersionsParameters(CorrelationId = correlationId, DirectoryVersions = directoryVersions)
 
-        Directory.SaveDirectoryVersions parameters
+        DirectoryVersion.SaveDirectoryVersions parameters
 
     //let updateObjectCacheFromWorkingDirectory (graceIndex: GraceIndex) =
     //    task {
@@ -1230,7 +1249,7 @@ module Services =
     let updateWorkingDirectory
         (previousGraceStatus: GraceStatus)
         (updatedGraceStatus: GraceStatus)
-        (newDirectoryVersions: List<DirectoryVersion>)
+        (newDirectoryVersions: IEnumerable<DirectoryVersion>)
         (correlationId: CorrelationId)
         =
         task {
@@ -1261,11 +1280,11 @@ module Services =
 
                             ()
                         | Error error ->
-                            AnsiConsole.MarkupLine(
-                                $"[{Colors.Error}]An error occurred while downloading a file from the object storage provider. CorrelationId: {correlationId}.[/]"
-                            )
+                            logToAnsiConsole
+                                Colors.Error
+                                $"An error occurred while downloading a file from the object storage provider. CorrelationId: {correlationId}."
 
-                            AnsiConsole.MarkupLine($"[{Colors.Error}]{error}[/]")
+                            logToAnsiConsole Colors.Error $"{error}"
 
                     if existingFileOnDisk.Exists then
                         // Need to compare existing file to new version from the object cache.

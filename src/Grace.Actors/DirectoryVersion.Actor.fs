@@ -177,36 +177,39 @@ module DirectoryVersion =
             /// Receives a Grace reminder.
             member this.ReceiveReminderAsync(reminder: ReminderDto) : Task<Result<unit, GraceError>> =
                 task {
+                    this.correlationId <- reminder.CorrelationId
+
                     match reminder.ReminderType with
                     | ReminderTypes.DeleteCachedState ->
                         // Get values from state.
-                        let (deleteReason, correlationId) = deserialize<PhysicalDeletionReminderState> reminder.State
+                        if not <| String.IsNullOrEmpty reminder.State then
+                            let (deleteReason, correlationId) = deserialize<PhysicalDeletionReminderState> reminder.State
 
-                        this.correlationId <- correlationId
+                            this.correlationId <- correlationId
 
-                        // Delete saved state for this actor.
-                        let! deleted = Storage.DeleteState stateManager directoryVersionCacheStateName
+                            // Delete saved state for this actor.
+                            let! deleted = Storage.DeleteState stateManager directoryVersionCacheStateName
 
-                        if deleted then
-                            log.LogInformation(
-                                "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; Deleted cache for directory version; RepositoryId: {RepositoryId}; DirectoryVersionId: {DirectoryVersionId}; deleteReason: {deleteReason}.",
-                                getCurrentInstantExtended (),
-                                getMachineName,
-                                correlationId,
-                                directoryVersionDto.DirectoryVersion.RepositoryId,
-                                directoryVersionDto.DirectoryVersion.DirectoryVersionId,
-                                deleteReason
-                            )
-                        else
-                            log.LogWarning(
-                                "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; Failed to delete cache for directory version (it may have already been deleted); RepositoryId: {RepositoryId}; DirectoryVersionId: {DirectoryVersionId}; deleteReason: {deleteReason}.",
-                                getCurrentInstantExtended (),
-                                getMachineName,
-                                correlationId,
-                                directoryVersionDto.DirectoryVersion.RepositoryId,
-                                directoryVersionDto.DirectoryVersion.DirectoryVersionId,
-                                deleteReason
-                            )
+                            if deleted then
+                                log.LogInformation(
+                                    "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; Deleted cache for directory version; RepositoryId: {RepositoryId}; DirectoryVersionId: {DirectoryVersionId}; deleteReason: {deleteReason}.",
+                                    getCurrentInstantExtended (),
+                                    getMachineName,
+                                    correlationId,
+                                    directoryVersionDto.DirectoryVersion.RepositoryId,
+                                    directoryVersionDto.DirectoryVersion.DirectoryVersionId,
+                                    deleteReason
+                                )
+                            else
+                                log.LogWarning(
+                                    "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; Failed to delete cache for directory version (it may have already been deleted); RepositoryId: {RepositoryId}; DirectoryVersionId: {DirectoryVersionId}; deleteReason: {deleteReason}.",
+                                    getCurrentInstantExtended (),
+                                    getMachineName,
+                                    correlationId,
+                                    directoryVersionDto.DirectoryVersion.RepositoryId,
+                                    directoryVersionDto.DirectoryVersion.DirectoryVersionId,
+                                    deleteReason
+                                )
 
                         // Mark the actor as disposed, in case someone tries to use it before Dapr GC's it.
                         isDisposed <- true
@@ -375,12 +378,21 @@ module DirectoryVersion =
                                     (fun directoryId ct ->
                                         ValueTask(
                                             task {
-                                                let subdirectoryActor = DirectoryVersion.CreateActorProxy directoryId correlationId
+                                                try
+                                                    let subdirectoryActor = DirectoryVersion.CreateActorProxy directoryId correlationId
 
-                                                let! subdirectoryContents = subdirectoryActor.GetRecursiveDirectoryVersions forceRegenerate correlationId
+                                                    let! subdirectoryContents = subdirectoryActor.GetRecursiveDirectoryVersions forceRegenerate correlationId
 
-                                                for directoryVersion in subdirectoryContents do
-                                                    subdirectoryVersions.Enqueue(directoryVersion)
+                                                    for directoryVersion in subdirectoryContents do
+                                                        subdirectoryVersions.Enqueue(directoryVersion)
+                                                with ex ->
+                                                    log.LogError(
+                                                        "{CurrentInstant}: Error in {methodName}; DirectoryId: {directoryId}; Exception: {exception}",
+                                                        getCurrentInstantExtended (),
+                                                        "GetRecursiveDirectoryVersions",
+                                                        directoryId,
+                                                        ExceptionResponse.Create ex
+                                                    )
                                             }
                                         ))
                                 )
@@ -389,7 +401,6 @@ module DirectoryVersion =
                                 subdirectoryVersions.ToArray()
                                 |> Array.sortBy (fun directoryVersion -> directoryVersion.RelativePath)
 
-                            logToConsole $"In DirectoryVersionActor.GetDirectoryVersionsRecursive({this.Id}); Storing subdirectoryVersion list."
                             do! Storage.SaveState stateManager directoryVersionCacheStateName subdirectoryVersionsList this.correlationId
 
                             log.LogDebug("In DirectoryVersionActor.GetDirectoryVersionsRecursive({id}); Storing subdirectoryVersion list.", this.Id)
@@ -506,20 +517,3 @@ module DirectoryVersion =
                     else
                         return directoryVersionDto.RecursiveSize
                 }
-
-        interface IRemindable with
-            member this.ReceiveReminderAsync(reminderName, state, dueTime, period) =
-                match reminderName with
-                | ReminderType.DeleteCachedState ->
-                    task {
-                        try
-                            let deleteReason = fromByteArray<PhysicalDeletionReminderState> state
-                            this.correlationId <- this.correlationId
-                        with ex ->
-                            ()
-
-                        let! deleteSucceeded = Storage.DeleteState stateManager directoryVersionCacheStateName
-                        ()
-                    }
-                    :> Task
-                | _ -> Task.CompletedTask

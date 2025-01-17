@@ -149,7 +149,7 @@ module Maintenance =
 
                                     // Read the existing Grace status file.
                                     t0.Increment(0.0)
-                                    //let! previousGraceStatus = readGraceStatusFile ()
+                                    let! previousGraceStatus = readGraceStatusFile ()
                                     let! graceStatus = readGraceStatusFile ()
                                     t0.Increment(100.0)
 
@@ -159,8 +159,8 @@ module Maintenance =
                                     if parseResult |> verbose then
                                         logToAnsiConsole Colors.Verbose "Computing new Grace index file."
 
-                                    //let! graceStatus = createNewGraceStatusFile previousGraceStatus parseResult
-                                    //let graceStatus = previousGraceStatus
+                                    let! graceStatus = createNewGraceStatusFile previousGraceStatus parseResult
+                                    let graceStatus = previousGraceStatus
 
                                     if parseResult |> verbose then
                                         logToAnsiConsole Colors.Verbose "Done computing new Grace index file."
@@ -370,7 +370,7 @@ module Maintenance =
                                                                     CorrelationId = getCorrelationId parseResult
                                                                 )
 
-                                                            match! Directory.SaveDirectoryVersions saveDirectoryVersionsParameters with
+                                                            match! DirectoryVersion.SaveDirectoryVersions saveDirectoryVersionsParameters with
                                                             | Ok result -> succeeded.Enqueue(result)
                                                             | Error error -> errors.Enqueue(error)
 
@@ -583,12 +583,6 @@ module Maintenance =
                                                     fileVersions.TryAdd(fileVersion.RelativePath, fileVersion) |> ignore)
                                         )
 
-                                    // New F# 8.0 way to do this.
-                                    //graceStatus.Index.Values |> Seq.toArray |> Array.Parallel.iter (fun ldv ->
-                                    //    for fileVersion in ldv.Files do
-                                    //        fileVersions.TryAdd(fileVersion.RelativePath, fileVersion) |> ignore
-                                    //)
-
                                     let incrementAmount = 100.0 / double fileVersions.Count
 
                                     // Loop through the files, and copy them to the object cache if they don't already exist.
@@ -770,7 +764,7 @@ module Maintenance =
                                                                     CorrelationId = getCorrelationId parseResult
                                                                 )
 
-                                                            match! Directory.SaveDirectoryVersions saveDirectoryVersionsParameters with
+                                                            match! DirectoryVersion.SaveDirectoryVersions saveDirectoryVersionsParameters with
                                                             | Ok result -> succeeded.Enqueue(result)
                                                             | Error error -> errors.Enqueue(error)
 
@@ -1051,7 +1045,7 @@ module Maintenance =
 
                         if i = 0 then
                             AnsiConsole.MarkupLine(
-                                $"[{Colors.Important}]Last Write Time              SHA-256            Size  Path{additionalSpaces}[/][{Colors.Deemphasized}] (DirectoryVersionId)[/]"
+                                $"[{Colors.Important}]Last Write Time (UTC)        SHA-256            Size  Path{additionalSpaces}[/][{Colors.Deemphasized}] (DirectoryVersionId)[/]"
                             )
 
                             AnsiConsole.MarkupLine(

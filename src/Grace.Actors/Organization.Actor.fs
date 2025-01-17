@@ -279,6 +279,8 @@ module Organization =
             /// Receives a Grace reminder.
             member this.ReceiveReminderAsync(reminder: ReminderDto) : Task<Result<unit, GraceError>> =
                 task {
+                    this.correlationId <- reminder.CorrelationId
+
                     match reminder.ReminderType with
                     | ReminderTypes.PhysicalDeletion ->
                         // Get values from state.

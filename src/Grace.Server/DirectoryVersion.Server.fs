@@ -28,6 +28,7 @@ open System.Text
 open System.Text.Json
 open System.Threading.Tasks
 open Giraffe.ViewEngine.HtmlElements
+open System.IO
 
 module DirectoryVersion =
 
@@ -178,7 +179,7 @@ module DirectoryVersion =
                     task {
                         let! directoryVersions = actorProxy.GetRecursiveDirectoryVersions false (getCorrelationId context)
 
-                        return directoryVersions
+                        return directoryVersions :> IEnumerable<DirectoryVersion>
                     }
 
                 let! parameters = context |> parse<GetParameters>
@@ -206,7 +207,7 @@ module DirectoryVersion =
                             let! directoryVersion = actorProxy.Get(getCorrelationId context)
                             directoryVersions.Add(directoryVersion)
 
-                        return directoryVersions
+                        return directoryVersions :> IEnumerable<DirectoryVersion>
                     }
 
                 let! parameters = context |> parse<GetByDirectoryIdsParameters>

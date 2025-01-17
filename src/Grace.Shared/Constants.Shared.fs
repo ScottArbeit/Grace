@@ -124,7 +124,7 @@ module Constants =
     let GraceDirectoryVersionCacheName = "directoryVersions"
 
     /// The name of the file that holds the file specifications to ignore.
-    let GraceIgnoreFileName = "graceignore.txt"
+    let GraceIgnoreFileName = ".graceignore"
 
     /// The name of the file that holds the current local index for Grace.
     let GraceStatusFileName = "gracestatus.msgpack"

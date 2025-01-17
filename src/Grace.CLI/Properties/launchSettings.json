@@ -51,7 +51,7 @@
     "grace maint update-index": {
       "commandName": "Project",
       "commandLineArgs": "maint update-index",
-      "workingDirectory": "D:\\Source\\gracedemo\\Chris"
+      "workingDirectory": "D:\\Source\\gracedemo\\Scott"
     },
     "grace repo set-checkpointdays": {
       "commandName": "Project",
@@ -96,7 +96,7 @@
     "grace watch - Chris": {
       "commandName": "Project",
       "commandLineArgs": "watch",
-      "workingDirectory": "D:\\Source\\GraceDemo\\Chris"
+      "workingDirectory": "D:\\Source\\GraceDemo\\Scott"
     },
     "grace switch -c Mika": {
       "commandName": "Project",

@@ -227,7 +227,6 @@ module Utilities =
     let normalizedTimeSpan = TimeSpan.FromMinutes(1.0)
 
     let normalizeFilePath (filePath: string) =
-        logToConsole $"In normalizeFilePath: filePath: {filePath}; isNull memoryCache: {isNull memoryCache}."
         let mutable result = String.Empty
 
         if not <| memoryCache.TryGetValue(filePath, &result) then

@@ -73,6 +73,7 @@ module DirectoryAppearance =
 
             /// Receives a Grace reminder.
             member this.ReceiveReminderAsync(reminder: ReminderDto) : Task<Result<unit, GraceError>> =
+                this.correlationId <- reminder.CorrelationId
                 logToConsole $"Received a reminder: {reminder}."
                 Ok() |> returnTask
 

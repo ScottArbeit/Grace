@@ -41,8 +41,9 @@ module Common =
         )
 #endif
 
-    // This construct is equivalent to using IHttpClientFactory in the ASP.NET Dependency Injection container, for code (like this) that isn't using GenericHost.
-    // See https://docs.microsoft.com/en-us/aspnet/core/fundamentals/http-requests?view=aspnetcore-9.0#alternatives-to-ihttpclientfactory for more information.
+    /// This construct is equivalent to using IHttpClientFactory in the ASP.NET Dependency Injection container, for code (like this) that isn't using GenericHost.
+    ///
+    /// See https://docs.microsoft.com/en-us/aspnet/core/fundamentals/http-requests?view=aspnetcore-9.0#alternatives-to-ihttpclientfactory for more information.
     let private socketsHttpHandler =
         new SocketsHttpHandler(
             AllowAutoRedirect = true, // We expect to use Traffic Manager or equivalents, so there will be redirects.
@@ -77,6 +78,7 @@ module Common =
 #endif
         httpClient
 
+    /// Checks to make sure the .NET MemoryCache is initialized. If not, it will create one.
     let checkMemoryCache () =
         if isNull memoryCache then
             let memoryCacheOptions =

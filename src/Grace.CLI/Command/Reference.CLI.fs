@@ -755,7 +755,7 @@ module Reference =
 
                                                 saveParameters.CorrelationId <- getCorrelationId parseResult
 
-                                                let! uploadDirectoryVersions = Directory.SaveDirectoryVersions saveParameters
+                                                let! uploadDirectoryVersions = DirectoryVersion.SaveDirectoryVersions saveParameters
 
                                                 lastDirectoryVersionUpload <- getCurrentInstant ()
 
@@ -841,7 +841,7 @@ module Reference =
 
                         saveParameters.DirectoryVersions <- newDirectoryVersions.Select(fun dv -> dv.ToDirectoryVersion).ToList()
 
-                        let! uploadDirectoryVersions = Directory.SaveDirectoryVersions saveParameters
+                        let! uploadDirectoryVersions = DirectoryVersion.SaveDirectoryVersions saveParameters
                         let rootDirectoryVersion = getRootDirectoryVersion previousGraceStatus
 
                         let sdkParameters =

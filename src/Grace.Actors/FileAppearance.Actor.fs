@@ -45,6 +45,8 @@ module FileAppearance =
         let dtoStateName = StateName.FileAppearance
         let mutable dto = FileAppearanceDto()
 
+        member val private correlationId: CorrelationId = String.Empty with get, set
+
         override this.OnActivateAsync() =
             stateManager <- this.StateManager
 
@@ -71,6 +73,7 @@ module FileAppearance =
 
             /// Receives a Grace reminder.
             member this.ReceiveReminderAsync(reminder: ReminderDto) : Task<Result<unit, GraceError>> =
+                this.correlationId <- reminder.CorrelationId
                 logToConsole $"Received a reminder: {reminder}."
                 Ok() |> returnTask
 

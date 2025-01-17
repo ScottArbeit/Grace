@@ -710,7 +710,7 @@ module Repository =
 
                                                                             param.CorrelationId <- getCorrelationId parseResult
 
-                                                                            let! sdvResult = Directory.SaveDirectoryVersions param
+                                                                            let! sdvResult = DirectoryVersion.SaveDirectoryVersions param
 
                                                                             match sdvResult with
                                                                             | Ok result -> succeeded.Enqueue(result)

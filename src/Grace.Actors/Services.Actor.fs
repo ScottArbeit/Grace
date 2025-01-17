@@ -1300,10 +1300,11 @@ module Services =
                                 | Reference.ReferenceEventType.Created refDto -> refDto
                                 | _ -> ReferenceDto.Default
 
-                    Activity.Current
-                        .SetTag("indexMetrics", $"{indexMetrics.Remove(indexMetrics.Length - 2, 2)}")
-                        .SetTag("requestCharge", $"{requestCharge.Remove(requestCharge.Length - 2, 2)}")
-                    |> ignore
+                    if (indexMetrics.Length >= 2) && (requestCharge.Length >= 2) then
+                        Activity.Current
+                            .SetTag("indexMetrics", $"{indexMetrics.Remove(indexMetrics.Length - 2, 2)}")
+                            .SetTag("requestCharge", $"{requestCharge.Remove(requestCharge.Length - 2, 2)}")
+                        |> ignore
 
                     if referenceDto.ReferenceId <> ReferenceDto.Default.ReferenceId then
                         return Some referenceDto

@@ -1,40 +1,43 @@
-﻿namespace Grace.SDK
+namespace Grace.SDK
 
 open Grace.SDK.Common
 open Grace.Shared.Dto
 open Grace.Shared.Parameters.Directory
-open Grace.Shared.Types
+open Grace.Shared
 open System
 open System.Collections.Generic
 open System.Threading.Tasks
 
-type Directory() =
+type DirectoryVersion() =
     /// Retrieves a DirectoryVersion instance.
     static member public Get(parameters: GetParameters) =
-        postServer<GetParameters, DirectoryVersion> (parameters |> ensureCorrelationIdIsSet, $"directory/{nameof (Directory.Get)}")
+        postServer<GetParameters, DirectoryVersion> (parameters |> ensureCorrelationIdIsSet, $"directory/{nameof (DirectoryVersion.Get)}")
 
     /// Retrieves a DirectoryVersion instance.
     static member public GetByDirectoryIds(parameters: GetByDirectoryIdsParameters) =
-        postServer<GetByDirectoryIdsParameters, List<DirectoryVersion>> (
+        postServer<GetByDirectoryIdsParameters, IEnumerable<Types.DirectoryVersion>> (
             parameters |> ensureCorrelationIdIsSet,
-            $"directory/{nameof (Directory.GetByDirectoryIds)}"
+            $"directory/{nameof (DirectoryVersion.GetByDirectoryIds)}"
         )
 
     /// Retrieves a DirectoryVersion instance.
     static member public GetBySha256Hash(parameters: GetBySha256HashParameters) =
-        postServer<GetBySha256HashParameters, string> (parameters |> ensureCorrelationIdIsSet, $"directory/{nameof (Directory.GetBySha256Hash)}")
+        postServer<GetBySha256HashParameters, string> (parameters |> ensureCorrelationIdIsSet, $"directory/{nameof (DirectoryVersion.GetBySha256Hash)}")
 
     /// Saves a list of DirectoryVersion instances to the server.
     static member public Create(parameters: CreateParameters) =
-        postServer<CreateParameters, string> (parameters |> ensureCorrelationIdIsSet, $"directory/{nameof (Directory.Create)}")
+        postServer<CreateParameters, string> (parameters |> ensureCorrelationIdIsSet, $"directory/{nameof (DirectoryVersion.Create)}")
 
     /// Saves a list of DirectoryVersion instances to the server.
     static member public SaveDirectoryVersions(parameters: SaveDirectoryVersionsParameters) =
-        postServer<SaveDirectoryVersionsParameters, string> (parameters |> ensureCorrelationIdIsSet, $"directory/{nameof (Directory.SaveDirectoryVersions)}")
+        postServer<SaveDirectoryVersionsParameters, string> (
+            parameters |> ensureCorrelationIdIsSet,
+            $"directory/{nameof (DirectoryVersion.SaveDirectoryVersions)}"
+        )
 
     /// Retrieves the recursive set of DirectoryVersions from a specific DirectoryVersion.
     static member public GetDirectoryVersionsRecursive(parameters: GetParameters) =
-        postServer<GetParameters, List<DirectoryVersion>> (
+        postServer<GetParameters, IEnumerable<Types.DirectoryVersion>> (
             parameters |> ensureCorrelationIdIsSet,
-            $"directory/{nameof (Directory.GetDirectoryVersionsRecursive)}"
+            $"directory/{nameof (DirectoryVersion.GetDirectoryVersionsRecursive)}"
         )

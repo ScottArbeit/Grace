@@ -241,7 +241,7 @@ module Storage =
                                         return response.GetRawResponse().Status
                             }
 
-                        logToConsole $"In SaveFileToObjectStorageWithMetadata: {fileVersion.RelativePath}; upload status: {status}."
+                        //logToConsole $"In SaveFileToObjectStorageWithMetadata: {fileVersion.RelativePath}; upload status: {status}."
 
                         if status = int HttpStatusCode.Created then
                             let returnValue = GraceReturnValue.Create "File successfully saved to object storage." correlationId

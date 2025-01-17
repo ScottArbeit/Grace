@@ -374,6 +374,8 @@ module Branch =
 
             /// Receives a Grace reminder.
             member this.ReceiveReminderAsync(reminder: ReminderDto) : Task<Result<unit, GraceError>> =
+                this.correlationId <- reminder.CorrelationId
+
                 task {
                     match reminder.ReminderType with
                     | ReminderTypes.PhysicalDeletion ->

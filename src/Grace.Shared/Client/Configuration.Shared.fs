@@ -182,10 +182,6 @@ module Configuration =
 
                 match (parseConfigurationFile graceConfigurationFilePath) with
                 | Ok graceConfigurationFromFile ->
-                    let graceIgnoreFullPath = (Path.Combine(graceConfigurationDirectory, Constants.GraceIgnoreFileName))
-
-                    let graceIgnoreEntries = getGraceIgnoreEntries graceIgnoreFullPath
-
                     graceConfiguration <- graceConfigurationFromFile
 
                     graceConfiguration.RootDirectory <- Path.GetFullPath(Path.Combine(graceConfigurationDirectory, ".."))
@@ -203,6 +199,11 @@ module Configuration =
 
                     graceConfiguration.ConfigurationDirectory <- FileInfo(graceConfigurationFilePath).DirectoryName
                     //graceConfiguration.ActivitySource <- new ActivitySource("Grace", "0.1")
+
+                    let graceIgnoreFullPath = (Path.Combine(graceConfiguration.RootDirectory, Constants.GraceIgnoreFileName))
+
+                    let graceIgnoreEntries = getGraceIgnoreEntries graceIgnoreFullPath
+
                     graceConfiguration.GraceIgnoreEntries <- graceIgnoreEntries
 
                     graceConfiguration.GraceFileIgnoreEntries <-

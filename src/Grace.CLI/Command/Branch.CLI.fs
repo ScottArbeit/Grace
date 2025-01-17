@@ -921,7 +921,7 @@ module Branch =
 
                                                 saveParameters.CorrelationId <- getCorrelationId parseResult
 
-                                                let! uploadDirectoryVersions = Directory.SaveDirectoryVersions saveParameters
+                                                let! uploadDirectoryVersions = DirectoryVersion.SaveDirectoryVersions saveParameters
 
                                                 lastDirectoryVersionUpload <- getCurrentInstant ()
 
@@ -1007,7 +1007,7 @@ module Branch =
 
                         saveParameters.DirectoryVersions <- newDirectoryVersions.Select(fun dv -> dv.ToDirectoryVersion).ToList()
 
-                        let! uploadDirectoryVersions = Directory.SaveDirectoryVersions saveParameters
+                        let! uploadDirectoryVersions = DirectoryVersion.SaveDirectoryVersions saveParameters
                         let rootDirectoryVersion = getRootDirectoryVersion previousGraceStatus
 
                         let sdkParameters =
@@ -2031,9 +2031,9 @@ module Branch =
 
                             saveParameters.DirectoryVersions <- newDirectoryVersions.Select(fun dv -> dv.ToDirectoryVersion).ToList()
 
-                            let! uploadDirectoryVersions = Directory.SaveDirectoryVersions saveParameters
+                            let! uploadDirectoryVersions = DirectoryVersion.SaveDirectoryVersions saveParameters
 
-                            match! Directory.SaveDirectoryVersions saveParameters with
+                            match! DirectoryVersion.SaveDirectoryVersions saveParameters with
                             | Ok returnValue ->
                                 t |> setProgressTaskValue showOutput 100.0
 
@@ -2247,7 +2247,7 @@ module Branch =
                                 CorrelationId = parameters.CorrelationId
                             )
 
-                        match! Directory.GetByDirectoryIds getByDirectoryIdParameters with
+                        match! DirectoryVersion.GetByDirectoryIds getByDirectoryIdParameters with
                         | Ok returnValue ->
                             //logToAnsiConsole Colors.Verbose $"Succeeded calling Directory.GetByDirectoryIds."
                             // Create a new version of GraceStatus that includes the new DirectoryVersions.
@@ -2570,9 +2570,9 @@ module Branch =
                                     )
 
                                 // Get the directory versions for the parent promotion that we're rebasing on, and the latest reference.
-                                let! d1 = Directory.GetDirectoryVersionsRecursive(getParentLatestPromotionDirectoryParameters)
+                                let! d1 = DirectoryVersion.GetDirectoryVersionsRecursive(getParentLatestPromotionDirectoryParameters)
 
-                                let! d2 = Directory.GetDirectoryVersionsRecursive(getLatestReferenceDirectoryParameters)
+                                let! d2 = DirectoryVersion.GetDirectoryVersionsRecursive(getLatestReferenceDirectoryParameters)
 
                                 let createFileVersionLookupDictionary (directoryVersions: IEnumerable<DirectoryVersion>) =
                                     let lookup = Dictionary<RelativePath, LocalFileVersion>(StringComparer.OrdinalIgnoreCase)
@@ -2682,7 +2682,7 @@ module Branch =
 
                                                 saveParameters.DirectoryVersions <- newDirectoryVersions.Select(fun dv -> dv.ToDirectoryVersion).ToList()
 
-                                                match! Directory.SaveDirectoryVersions saveParameters with
+                                                match! DirectoryVersion.SaveDirectoryVersions saveParameters with
                                                 | Ok returnValue -> return Ok()
                                                 | Error error -> return Error error
                                             else

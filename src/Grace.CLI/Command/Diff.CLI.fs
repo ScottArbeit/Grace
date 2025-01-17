@@ -412,7 +412,7 @@ module Diff =
                                                 saveDirectoryVersionsParameters.DirectoryVersions <-
                                                     newDirectoryVersions.Select(fun dv -> dv.ToDirectoryVersion).ToList()
 
-                                                match! Directory.SaveDirectoryVersions saveDirectoryVersionsParameters with
+                                                match! DirectoryVersion.SaveDirectoryVersions saveDirectoryVersionsParameters with
                                                 | Ok returnValue -> ()
                                                 | Error error -> logToAnsiConsole Colors.Error $"Failed to upload new directory versions. {error}"
                                             })
@@ -701,7 +701,7 @@ module Diff =
                                                     saveDirectoryVersionsParameters.DirectoryVersions <-
                                                         newDirectoryVersions.Select(fun dv -> dv.ToDirectoryVersion).ToList()
 
-                                                    match! Directory.SaveDirectoryVersions saveDirectoryVersionsParameters with
+                                                    match! DirectoryVersion.SaveDirectoryVersions saveDirectoryVersionsParameters with
                                                     | Ok returnValue -> ()
                                                     | Error error -> logToAnsiConsole Colors.Error $"Failed to upload new directory versions. {error}"
                                                 })
