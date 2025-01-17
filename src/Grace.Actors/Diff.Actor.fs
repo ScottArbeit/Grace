@@ -40,6 +40,7 @@ module Diff =
         let directoryIds = id.GetId().Split("*")
         (DirectoryVersionId directoryIds[0], DirectoryVersionId directoryIds[1])
 
+    /// The data types stored in physical deletion reminders.
     type DeleteCachedStateReminderState = RepositoryId * CorrelationId
 
     let log = loggerFactory.CreateLogger("Diff.Actor")

@@ -38,7 +38,9 @@ module Branch =
     // Branch should support logical deletes with physical deletes set using a Dapr Timer based on a repository-level setting.
     // Branch Deletion should enumerate and delete each reference in the branch.
 
+    /// The data types stored in physical deletion reminders.
     type PhysicalDeletionReminderState = (RepositoryId * BranchId * BranchName * ParentBranchId * DeleteReason * CorrelationId)
+
     let log = loggerFactory.CreateLogger("Branch.Actor")
 
     type BranchActor(host: ActorHost) =

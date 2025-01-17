@@ -30,6 +30,7 @@ open System.Threading.Tasks
 
 module Organization =
 
+    /// The data types stored in physical deletion reminders.
     type PhysicalDeletionReminderState = (DeleteReason * CorrelationId)
 
     let GetActorId (organizationId: OrganizationId) = ActorId($"{organizationId}")

@@ -31,6 +31,7 @@ open Constants
 
 module Owner =
 
+    /// The data types stored in physical deletion reminders.
     type PhysicalDeletionReminderState = (DeleteReason * CorrelationId)
 
     let GetActorId (ownerId: OwnerId) = ActorId($"{ownerId}")

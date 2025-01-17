@@ -30,6 +30,7 @@ open OrganizationName
 
 module DirectoryVersion =
 
+    /// The data types stored in physical deletion reminders.
     type PhysicalDeletionReminderState = DeleteReason * CorrelationId
     type DeleteCachedStateReminderState = unit
 

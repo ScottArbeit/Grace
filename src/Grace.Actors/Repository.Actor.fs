@@ -37,6 +37,7 @@ open Dapr.Client.Autogen.Grpc.v1
 
 module Repository =
 
+    /// The data types stored in physical deletion reminders.
     type PhysicalDeletionReminderState = (DeleteReason * CorrelationId)
 
     let log = loggerFactory.CreateLogger("Repository.Actor")
