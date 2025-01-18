@@ -404,7 +404,7 @@ module Reference =
                     }
 
                 task {
-                    currentCommand <- getDiscriminatedUnionCaseName command
+                    currentCommand <- $"{getDiscriminatedUnionCaseName command} {getDiscriminatedUnionCaseName referenceDto.ReferenceType}"
                     this.correlationId <- metadata.CorrelationId
 
                     match! isValid command metadata with

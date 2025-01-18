@@ -1,4 +1,4 @@
-﻿namespace Grace.Shared
+namespace Grace.Shared
 
 open DiffPlex
 open DiffPlex.Chunkers

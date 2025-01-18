@@ -10,6 +10,7 @@ open Grace.Actors.Extensions.ActorProxy
 open Grace.Actors.Interfaces
 open Grace.Actors.Services
 open Grace.Shared
+open Grace.Shared.Constants
 open Grace.Shared.Dto
 open Grace.Shared.Types
 open Grace.Shared.Utilities
@@ -127,8 +128,9 @@ module Notifications =
             return! branchActorProxy.Get correlationId
         }
 
+    /// This is the path called by the Dapr `graceevents` Pub/Sub component when a message is received.
     [<Topic("graceevents", "graceeventstream")>]
-    let Post: HttpHandler =
+    let ReceiveGraceEventStream: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let correlationId = getCorrelationId context
@@ -137,10 +139,9 @@ module Notifications =
                 let! graceEvent = context.BindJsonAsync<GraceEvent>()
                 //logToConsole $"{serialize graceEvent}"
 
-
-                let diffTwoDirectoryVersions directoryId1 directoryId2 =
+                let diffTwoDirectoryVersions directoryVersionId1 directoryVersionId2 =
                     task {
-                        let diffActorProxy = Diff.CreateActorProxy directoryId1 directoryId2 correlationId
+                        let diffActorProxy = Diff.CreateActorProxy directoryVersionId1 directoryVersionId2 correlationId
 
                         let! x = diffActorProxy.Compute correlationId
                         ()
@@ -153,7 +154,7 @@ module Notifications =
                     logToConsole $"Received BranchEvent: {getDiscriminatedUnionFullName branchEvent.Event} {Environment.NewLine}{branchEvent.Metadata}"
 
                     match branchEvent.Event with
-                    | Branch.Promoted(referenceDto, directoryId, sha256Hash, referenceText) ->
+                    | Branch.Promoted(referenceDto, directoryVersionId, sha256Hash, referenceText) ->
                         let! branchDto = getBranchDto referenceDto.BranchId correlationId
 
                         do!
@@ -167,7 +168,7 @@ module Notifications =
                         if latestTwoPromotions.Count = 2 then
                             do! diffTwoDirectoryVersions latestTwoPromotions[0].DirectoryId latestTwoPromotions[1].DirectoryId
 
-                    | Branch.Committed(referenceDto, directoryId, sha256Hash, referenceText) ->
+                    | Branch.Committed(referenceDto, directoryVersionId, sha256Hash, referenceText) ->
                         let! branchDto = getBranchDto referenceDto.BranchId correlationId
                         let! parentBranchDto = getBranchDto branchDto.ParentBranchId correlationId
 
@@ -186,8 +187,7 @@ module Notifications =
                         match! getLatestPromotion branchDto.ParentBranchId with
                         | Some latestPromotion -> do! diffTwoDirectoryVersions referenceDto.DirectoryId latestPromotion.DirectoryId
                         | None -> ()
-
-                    | Branch.Checkpointed(referenceDto, directoryId, sha256Hash, referenceText) ->
+                    | Branch.Checkpointed(referenceDto, directoryVersionId, sha256Hash, referenceText) ->
                         let! branchDto = getBranchDto referenceDto.BranchId correlationId
                         let! parentBranchDto = getBranchDto branchDto.ParentBranchId correlationId
 
@@ -207,7 +207,7 @@ module Notifications =
                         | Some latestCommit -> do! diffTwoDirectoryVersions referenceDto.DirectoryId latestCommit.DirectoryId
                         | None -> ()
 
-                    | Branch.Saved(referenceDto, directoryId, sha256Hash, referenceText) ->
+                    | Branch.Saved(referenceDto, directoryVersionId, sha256Hash, referenceText) ->
                         let! branchDto = getBranchDto referenceDto.BranchId correlationId
                         let! parentBranchDto = getBranchDto branchDto.ParentBranchId correlationId
 
@@ -238,7 +238,7 @@ module Notifications =
                             if latestCheckpoint.CreatedAt > latestCommit.CreatedAt then
                                 do! diffTwoDirectoryVersions latestCheckpoint.DirectoryId referenceDto.DirectoryId
                         | None -> ()
-                    | Branch.Tagged(referenceId, directoryId, sha256Hash, referenceText) -> ()
+                    | Branch.Tagged(referenceId, directoryVersionId, sha256Hash, referenceText) -> ()
                     | _ -> ()
                 | DirectoryVersionEvent directoryVersionEvent ->
                     logToConsole
@@ -250,6 +250,17 @@ module Notifications =
                     logToConsole $"Received OwnerEvent: {getDiscriminatedUnionFullName ownerEvent.Event} {Environment.NewLine}{ownerEvent.Metadata}"
                 | ReferenceEvent referenceEvent ->
                     logToConsole $"Received ReferenceEvent: {getDiscriminatedUnionFullName referenceEvent.Event} {Environment.NewLine}{referenceEvent.Metadata}"
+
+                    match referenceEvent.Event with
+                    | Reference.Created(referenceDto) ->
+                        if referenceDto.ReferenceType = ReferenceType.Commit then
+                            // Create the directory version contents .zip file.
+                            let directoryVersionActorProxy = DirectoryVersion.CreateActorProxy referenceDto.DirectoryId correlationId
+
+                            match! directoryVersionActorProxy.CreateZipFile correlationId with
+                            | Ok result -> logToConsole $"Successfully created .zip file for DirectoryVersionId {referenceDto.DirectoryId}."
+                            | Error graceError -> logToConsole $"Error creating directory version contents .zip file: {graceError}"
+                    | _ -> ()
                 | RepositoryEvent repositoryEvent ->
                     logToConsole
                         $"Received RepositoryEvent: {getDiscriminatedUnionFullName repositoryEvent.Event} {Environment.NewLine}{repositoryEvent.Metadata}"

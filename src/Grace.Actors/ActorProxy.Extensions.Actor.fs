@@ -47,16 +47,16 @@ module ActorProxy =
 
     module Diff =
         /// Gets an ActorId for a Diff actor.
-        let GetActorId (directoryId1: DirectoryVersionId) (directoryId2: DirectoryVersionId) =
-            if directoryId1 < directoryId2 then
-                ActorId($"{directoryId1}*{directoryId2}")
+        let GetActorId (directoryVersionId1: DirectoryVersionId) (directoryVersionId2: DirectoryVersionId) =
+            if directoryVersionId1 < directoryVersionId2 then
+                ActorId($"{directoryVersionId1}*{directoryVersionId2}")
             else
-                ActorId($"{directoryId2}*{directoryId1}")
+                ActorId($"{directoryVersionId2}*{directoryVersionId1}")
 
         /// Creates an ActorProxy for a Diff actor, and adds the correlationId to the server's MemoryCache so
         ///   it's available in the OnActivateAsync() method.
-        let CreateActorProxy (directoryId1: DirectoryVersionId) (directoryId2: DirectoryVersionId) correlationId =
-            actorProxyFactory.CreateActorProxyWithCorrelationId<IDiffActor>(GetActorId directoryId1 directoryId2, ActorName.Diff, correlationId)
+        let CreateActorProxy (directoryVersionId1: DirectoryVersionId) (directoryVersionId2: DirectoryVersionId) correlationId =
+            actorProxyFactory.CreateActorProxyWithCorrelationId<IDiffActor>(GetActorId directoryVersionId1 directoryVersionId2, ActorName.Diff, correlationId)
 
     module DirectoryVersion =
         /// Gets an ActorId for a DirectoryVersion actor.

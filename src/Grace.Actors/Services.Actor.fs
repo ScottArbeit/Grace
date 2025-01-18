@@ -106,7 +106,7 @@ module Services =
 
         graceError
 
-    /// Gets a CosmosDB container client for the given container.
+    /// Gets an Azure Blob Storage container client for the container that holds the object files for the given repository.
     let getContainerClient (repositoryDto: RepositoryDto) =
         task {
             let containerName = $"{repositoryDto.RepositoryId}"
@@ -142,23 +142,22 @@ module Services =
         }
 
     /// Gets an Azure Blob Storage client instance for the given repository and file version.
-    let getAzureBlobClient (repositoryDto: RepositoryDto) (fileVersion: FileVersion) (correlationId: CorrelationId) =
+    let getAzureBlobClient (repositoryDto: RepositoryDto) (blobName: string) (correlationId: CorrelationId) =
         task {
             //logToConsole $"* In getAzureBlobClient; repositoryId: {repositoryDto.RepositoryId}; fileVersion: {fileVersion.RelativePath}."
             let! containerClient = getContainerClient repositoryDto
 
-            let blobClient = containerClient.GetBlobClient($"{fileVersion.RelativePath}/{fileVersion.GetObjectFileName}")
+            return containerClient.GetBlobClient(blobName)
+        }
 
-            return Ok blobClient
+    let getAzureBlobClientForFileVersion (repositoryDto: RepositoryDto) (fileVersion: FileVersion) (correlationId: CorrelationId) =
+        task {
+            let blobName = $"{fileVersion.RelativePath}/{fileVersion.GetObjectFileName}"
+            return! getAzureBlobClient repositoryDto blobName correlationId
         }
 
     /// Creates a full URI for a specific file version.
-    let private createAzureBlobSasUri
-        (repositoryDto: RepositoryDto)
-        (fileVersion: FileVersion)
-        (permission: BlobSasPermissions)
-        (correlationId: CorrelationId)
-        =
+    let private createAzureBlobSasUri (repositoryDto: RepositoryDto) (blobName: string) (permission: BlobSasPermissions) (correlationId: CorrelationId) =
         task {
             //logToConsole $"In createAzureBlobSasUri; fileVersion.RelativePath: {fileVersion.RelativePath}."
             let! blobContainerClient = getContainerClient repositoryDto
@@ -169,49 +168,61 @@ module Services =
                     expiresOn = DateTimeOffset.UtcNow.Add(TimeSpan.FromMinutes(SharedAccessSignatureExpiration)),
                     StartsOn = DateTimeOffset.UtcNow.Subtract(TimeSpan.FromSeconds(15.0)),
                     BlobContainerName = blobContainerClient.Name,
-                    BlobName = Path.Combine($"{fileVersion.RelativePath}", fileVersion.GetObjectFileName),
+                    BlobName = blobName,
                     CorrelationId = correlationId
                 )
 
             let sasUriParameters = blobSasBuilder.ToSasQueryParameters(sharedKeyCredential)
 
-            return UriWithSharedAccessSignature($"{blobContainerClient.Uri}/{fileVersion.RelativePath}/{fileVersion.GetObjectFileName}?{sasUriParameters}")
+            return UriWithSharedAccessSignature($"{blobContainerClient.Uri}/{blobName}?{sasUriParameters}")
         }
 
-    /// Gets a shared access signature for reading from the object storage provider.
-    let getReadSharedAccessSignature (repositoryDto: RepositoryDto) (fileVersion: FileVersion) (correlationId: CorrelationId) =
+    /// Gets a full Uri, including shared access signature, for reading from the object storage provider.
+    let getUriWithReadSharedAccessSignature (repositoryDto: RepositoryDto) (blobName: string) (correlationId: CorrelationId) =
         task {
             match repositoryDto.ObjectStorageProvider with
             | AzureBlobStorage ->
                 let permissions = (BlobSasPermissions.Read ||| BlobSasPermissions.List) // These are the minimum permissions needed to read a file.
-                let! sas = createAzureBlobSasUri repositoryDto fileVersion permissions correlationId
+                let! sas = createAzureBlobSasUri repositoryDto blobName permissions correlationId
                 return Ok sas
             | AWSS3 -> return Error(NotImplementedException("AWS S3 storage type is not implemented."))
             | GoogleCloudStorage -> return Error(NotImplementedException("Google Cloud storage type is not implemented."))
             | ObjectStorageProvider.Unknown -> return Error(NotImplementedException("Unknown storage type."))
         }
 
-    /// Gets a shared access signature for writing to the object storage provider.
-    let getWriteSharedAccessSignature (repositoryDto: RepositoryDto) (fileVersion: FileVersion) (correlationId: CorrelationId) =
+    /// Gets a full Uri, including shared access signature, for reading from the object storage provider.
+    let getUriWithReadSharedAccessSignatureForFileVersion (repositoryDto: RepositoryDto) (fileVersion: FileVersion) (correlationId: CorrelationId) =
+        task {
+            let blobName = $"{fileVersion.RelativePath}/{fileVersion.GetObjectFileName}"
+            return! getUriWithReadSharedAccessSignature repositoryDto blobName correlationId
+        }
+
+    /// Gets a full Uri, including shared access signature, for writing from the object storage provider.
+    let getUriWithWriteSharedAccessSignature (repositoryDto: RepositoryDto) (blobName: string) (correlationId: CorrelationId) =
         task {
             match repositoryDto.ObjectStorageProvider with
             | AWSS3 -> return Error(NotImplementedException("AWS S3 storage type is not implemented."))
             | AzureBlobStorage ->
                 // Adding read permission to allow for calls to .ExistsAsync().
-                let! sas =
-                    createAzureBlobSasUri
-                        repositoryDto
-                        fileVersion
-                        (BlobSasPermissions.Create
-                         ||| BlobSasPermissions.Write
-                         ||| BlobSasPermissions.Move
-                         ||| BlobSasPermissions.Tag
-                         ||| BlobSasPermissions.Read)
-                        correlationId
+                let permissions =
+                    (BlobSasPermissions.Create
+                     ||| BlobSasPermissions.Write
+                     ||| BlobSasPermissions.Move
+                     ||| BlobSasPermissions.Tag
+                     ||| BlobSasPermissions.Read)
+
+                let! sas = createAzureBlobSasUri repositoryDto blobName permissions correlationId
 
                 return Ok sas
             | GoogleCloudStorage -> return Error(NotImplementedException("Google Cloud storage type is not implemented."))
             | ObjectStorageProvider.Unknown -> return Error(NotImplementedException("Unknown storage type."))
+        }
+
+    /// Gets a full Uri, including shared access signature, for writing from the object storage provider.
+    let getUriWithWriteSharedAccessSignatureForFileVersion (repositoryDto: RepositoryDto) (fileVersion: FileVersion) (correlationId: CorrelationId) =
+        task {
+            let blobName = $"{fileVersion.RelativePath}/{fileVersion.GetObjectFileName}"
+            return! getUriWithWriteSharedAccessSignature repositoryDto blobName correlationId
         }
 
     /// Checks whether an owner name exists in the system.
@@ -1119,7 +1130,7 @@ module Services =
 
             try
                 // (MaxDegreeOfParallelism = 3) runs at 700 RU's, so it fits under the free 1,000 RU limit for CosmosDB, without getting throttled.
-                let parallelOptions = ParallelOptions(MaxDegreeOfParallelism = 3)
+                let parallelOptions = ParallelOptions(MaxDegreeOfParallelism = 2)
 
                 let itemRequestOptions =
                     ItemRequestOptions(AddRequestHeaders = fun headers -> headers.Add(Constants.CorrelationIdHeaderKey, "deleteAllFromCosmosDBThatMatch"))
@@ -1245,10 +1256,11 @@ module Services =
                             | Reference.ReferenceEventType.Created refDto -> references.Add(refDto)
                             | _ -> ())
 
-                    Activity.Current
-                        .SetTag("indexMetrics", $"{indexMetrics.Remove(indexMetrics.Length - 2, 2)}")
-                        .SetTag("requestCharge", $"{requestCharge.Remove(requestCharge.Length - 2, 2)}")
-                    |> ignore
+                    if indexMetrics.Length >= 2 && requestCharge.Length >= 2 then
+                        Activity.Current
+                            .SetTag("indexMetrics", $"{indexMetrics.Remove(indexMetrics.Length - 2, 2)}")
+                            .SetTag("requestCharge", $"{requestCharge.Remove(requestCharge.Length - 2, 2)}")
+                        |> ignore
                 finally
                     stringBuilderPool.Return(indexMetrics)
                     stringBuilderPool.Return(requestCharge)

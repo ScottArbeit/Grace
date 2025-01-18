@@ -118,15 +118,15 @@ module Diff =
 
         let directoryVersionId1 =
             new Option<string>(
-                [| "--directoryId1"; "--d1" |],
+                [| "--directoryVersionId1"; "--d1" |],
                 IsRequired = true,
                 Description = "The first DirectoryId to compare in the diff.",
                 Arity = ArgumentArity.ExactlyOne
             )
 
-        let directoryId2 =
+        let directoryVersionId2 =
             new Option<string>(
-                [| "--directoryId2"; "--d2" |],
+                [| "--directoryVersionId2"; "--d2" |],
                 IsRequired = false,
                 Description = "The second DirectoryId to compare in the diff.",
                 Arity = ArgumentArity.ExactlyOne
@@ -199,15 +199,15 @@ module Diff =
         >>= ``RepositoryName must be a valid Grace name``
 
     let private DirectoryIdValidations (parseResult, parameters) =
-        let ``DirectoryId1 must be a Guid`` (parseResult: ParseResult, parameters: CommonParameters) =
+        let ``DirectoryVersionId1 must be a Guid`` (parseResult: ParseResult, parameters: CommonParameters) =
             mustBeAValidGuid parseResult parameters Options.directoryVersionId1 parameters.DirectoryVersionId1 InvalidDirectoryId
 
-        let ``DirectoryId2 must be a Guid`` (parseResult: ParseResult, parameters: CommonParameters) =
-            mustBeAValidGuid parseResult parameters Options.directoryId2 parameters.DirectoryVersionId2 InvalidDirectoryId
+        let ``DirectoryVersionId2 must be a Guid`` (parseResult: ParseResult, parameters: CommonParameters) =
+            mustBeAValidGuid parseResult parameters Options.directoryVersionId2 parameters.DirectoryVersionId2 InvalidDirectoryId
 
         (parseResult, parameters)
-        |> ``DirectoryId1 must be a Guid``
-        >>= ``DirectoryId2 must be a Guid``
+        |> ``DirectoryVersionId1 must be a Guid``
+        >>= ``DirectoryVersionId2 must be a Guid``
 
     let private sha256Validations (parseResult, parameters) =
         let ``Sha256Hash1 must be a valid SHA-256 hash value`` (parseResult: ParseResult, (parameters: GetDiffBySha256HashParameters)) =
@@ -525,8 +525,8 @@ module Diff =
                                             OrganizationName = parameters.OrganizationName,
                                             RepositoryId = parameters.RepositoryId,
                                             RepositoryName = parameters.RepositoryName,
-                                            DirectoryId1 = latestReference.DirectoryId,
-                                            DirectoryId2 = rootDirectoryId,
+                                            DirectoryVersionId1 = latestReference.DirectoryId,
+                                            DirectoryVersionId2 = rootDirectoryId,
                                             CorrelationId = parameters.CorrelationId
                                         )
 
@@ -580,8 +580,8 @@ module Diff =
 
     type DirectoryIdParameters() =
         inherit CommonParameters()
-        member val public DirectoryId1 = DirectoryVersionId.Empty with get, set
-        member val public DirectoryId2 = DirectoryVersionId.Empty with get, set
+        member val public DirectoryVersionId1 = DirectoryVersionId.Empty with get, set
+        member val public DirectoryVersionId2 = DirectoryVersionId.Empty with get, set
 
     let private DirectoryIdCommand =
         CommandHandler.Create(fun (parseResult: ParseResult) (parameters: DirectoryIdParameters) ->
@@ -823,7 +823,7 @@ module Diff =
             )
             |> addCommonOptions
             |> addOption Options.directoryVersionId1
-            |> addOption Options.directoryId2
+            |> addOption Options.directoryVersionId2
 
         directoryIdCommand.Handler <- DirectoryIdCommand
         diffCommand.AddCommand(directoryIdCommand)

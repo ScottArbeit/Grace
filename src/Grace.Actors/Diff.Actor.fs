@@ -35,13 +35,13 @@ open System.Threading.Tasks
 
 module Diff =
 
-    /// Deconstructs an ActorId of the form "{directoryId1}*{directoryId2}" into a tuple of the two DirectoryId values.
+    /// Deconstructs an ActorId of the form "{directoryVersionId1}*{directoryVersionId2}" into a tuple of the two DirectoryId values.
     let deconstructActorId (id: ActorId) =
         let directoryIds = id.GetId().Split("*")
         (DirectoryVersionId directoryIds[0], DirectoryVersionId directoryIds[1])
 
     /// The data types stored in physical deletion reminders.
-    type DeleteCachedStateReminderState = RepositoryId * CorrelationId
+    type DeleteCachedStateReminderState = DeleteReason * CorrelationId
 
     let log = loggerFactory.CreateLogger("Diff.Actor")
 
@@ -130,29 +130,22 @@ module Diff =
             }
 
         /// Gets a Stream from object storage for a specific FileVersion, using a generated Uri.
-        member private this.getUncompressedFileStream
-            (repositoryDto: RepositoryDto)
-            (fileVersion: FileVersion)
-            (url: UriWithSharedAccessSignature)
-            correlationId
-            =
+        member private this.getUncompressedStream (repositoryDto: RepositoryDto) (fileVersion: FileVersion) (url: UriWithSharedAccessSignature) correlationId =
             task {
                 this.correlationId <- correlationId
-                let repositoryActorProxy = Repository.CreateActorProxy repositoryDto.RepositoryId correlationId
-                let! objectStorageProvider = repositoryActorProxy.GetObjectStorageProvider correlationId
+                let objectStorageProvider = repositoryDto.ObjectStorageProvider
 
                 match objectStorageProvider with
                 | AWSS3 -> return new MemoryStream() :> Stream
                 | AzureBlobStorage ->
                     let blobClient = BlockBlobClient(url)
-                    logToConsole $"In DiffActor.getFileStream(): blobClient.Uri: {blobClient.Uri}."
                     let! fileStream = blobClient.OpenReadAsync(position = 0, bufferSize = (64 * 1024))
 
                     let uncompressedStream =
                         if fileVersion.IsBinary then
                             fileStream
                         else
-                            use gzStream = new GZipStream(fileStream, CompressionMode.Decompress, leaveOpen = true)
+                            let gzStream = new GZipStream(stream = fileStream, mode = CompressionMode.Decompress, leaveOpen = false)
                             gzStream :> Stream
 
                     return uncompressedStream
@@ -199,22 +192,22 @@ module Diff =
             let duration_ms = (getCurrentInstant().Minus(actorStartTime).TotalMilliseconds).ToString("F3")
 
             log.LogInformation(
-                "{CurrentInstant}: Node: {HostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {ActorName}.{MethodName}; DirectoryId1: {DirectoryId1}; DirectoryId2: {DirectoryId2}.",
+                "{CurrentInstant}: Node: {HostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {ActorName}.{MethodName}; DirectoryVersionId1: {DirectoryVersionId1}; DirectoryVersionId2: {DirectoryVersionId2}.",
                 getCurrentInstantExtended (),
                 getMachineName,
                 duration_ms,
                 this.correlationId,
                 actorName,
                 context.MethodName,
-                diffDto.DirectoryId1,
-                diffDto.DirectoryId2
+                diffDto.DirectoryVersionId1,
+                diffDto.DirectoryVersionId2
             )
 
             logScope.Dispose()
             Task.CompletedTask
 
         member private this.GetDiffSimple() =
-            if diffDto.DirectoryId1 = DiffDto.Default.DirectoryId1 then
+            if diffDto.DirectoryVersionId1 = DiffDto.Default.DirectoryVersionId1 then
                 None |> returnValueTask
             else
                 Some diffDto |> returnValueTask
@@ -245,24 +238,24 @@ module Diff =
 
                         if deleted then
                             log.LogInformation(
-                                "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; Deleted cache for diff; RepositoryId: {RepositoryId}; DirectoryId1: {DirectoryId1}; DirectoryId2: {DirectoryId2}; deleteReason: {deleteReason}.",
+                                "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; Deleted cache for diff; RepositoryId: {RepositoryId}; DirectoryVersionId1: {DirectoryVersionId1}; DirectoryVersionId2: {DirectoryVersionId2}; deleteReason: {deleteReason}.",
                                 getCurrentInstantExtended (),
                                 getMachineName,
                                 correlationId,
                                 diffDto.RepositoryId,
-                                diffDto.DirectoryId1,
-                                diffDto.DirectoryId2,
+                                diffDto.DirectoryVersionId1,
+                                diffDto.DirectoryVersionId2,
                                 deleteReason
                             )
                         else
                             log.LogWarning(
-                                "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; Failed to delete cache for diff (it may have already been deleted); RepositoryId: {RepositoryId}; DirectoryId1: {DirectoryId1}; DirectoryId2: {DirectoryId2}; deleteReason: {deleteReason}.",
+                                "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; Failed to delete cache for diff (it may have already been deleted); RepositoryId: {RepositoryId}; DirectoryVersionId1: {DirectoryVersionId1}; DirectoryVersionId2: {DirectoryVersionId2}; deleteReason: {deleteReason}.",
                                 getCurrentInstantExtended (),
                                 getMachineName,
                                 correlationId,
                                 diffDto.RepositoryId,
-                                diffDto.DirectoryId1,
-                                diffDto.DirectoryId2,
+                                diffDto.DirectoryVersionId1,
+                                diffDto.DirectoryVersionId2,
                                 deleteReason
                             )
 
@@ -282,21 +275,21 @@ module Diff =
                 this.correlationId <- correlationId
 
                 // If it's already populated, skip this.
-                if diffDto.DirectoryId1 <> DiffDto.Default.DirectoryId1 then
+                if diffDto.DirectoryVersionId1 <> DiffDto.Default.DirectoryVersionId1 then
                     (true |> returnTask)
                 else
                     //let stateManager = this.StateManager
 
                     task {
-                        let (directoryId1, directoryId2) = deconstructActorId this.Id
+                        let (directoryVersionId1, directoryVersionId2) = deconstructActorId this.Id
 
-                        logToConsole $"In DiffActor.Populate(); DirectoryId1: {directoryId1}; DirectoryId2: {directoryId2}"
+                        logToConsole $"In DiffActor.Populate(); DirectoryVersionId1: {directoryVersionId1}; DirectoryVersionId2: {directoryVersionId2}"
 
                         try
                             // Build a GraceIndex for each DirectoryId.
-                            let! (graceIndex1, createdAt1, repositoryId1) = this.buildGraceIndex directoryId1 correlationId
+                            let! (graceIndex1, createdAt1, repositoryId1) = this.buildGraceIndex directoryVersionId1 correlationId
 
-                            let! (graceIndex2, createdAt2, repositoryId2) = this.buildGraceIndex directoryId2 correlationId
+                            let! (graceIndex2, createdAt2, repositoryId2) = this.buildGraceIndex directoryVersionId2 correlationId
                             //logToConsole $"In DiffActor.Populate(); createdAt1: {createdAt1}; createdAt2: {createdAt2}."
 
                             // Compare the GraceIndices.
@@ -321,10 +314,10 @@ module Diff =
                                     let directory = graceIndex[relativeDirectoryPath]
                                     let fileVersion = directory.Files.First(fun f -> f.RelativePath = relativePath)
 
-                                    match! getReadSharedAccessSignature repositoryDto fileVersion correlationId with
+                                    match! getUriWithReadSharedAccessSignatureForFileVersion repositoryDto fileVersion correlationId with
                                     | Ok uri ->
-                                        let! uncompressedFileStream = this.getUncompressedFileStream repositoryDto fileVersion uri correlationId
-                                        return Ok(uncompressedFileStream, fileVersion)
+                                        let! uncompressedStream = this.getUncompressedStream repositoryDto fileVersion uri correlationId
+                                        return Ok(uncompressedStream, fileVersion)
                                     | Error ex -> return Error ex
                                 }
 
@@ -404,15 +397,15 @@ module Diff =
                                 { diffDto with
                                     HasDifferences = differences.Count <> 0
                                     RepositoryId = repositoryDto.RepositoryId
-                                    DirectoryId1 = directoryId1
+                                    DirectoryVersionId1 = directoryVersionId1
                                     Directory1CreatedAt = createdAt1
-                                    DirectoryId2 = directoryId2
+                                    DirectoryVersionId2 = directoryVersionId2
                                     Directory2CreatedAt = createdAt2
                                     Differences = differences }
 
                             do! Storage.SaveState stateManager dtoStateName diffDto this.correlationId
 
-                            let (reminderState: DeleteCachedStateReminderState) = (diffDto.RepositoryId, correlationId)
+                            let (reminderState: DeleteCachedStateReminderState) = (getDiscriminatedUnionCaseName ReminderTypes.DeleteCachedState, correlationId)
 
                             do!
                                 (this :> IGraceReminder).ScheduleReminderAsync
@@ -424,15 +417,15 @@ module Diff =
                             return true
                         with ex ->
                             logToConsole $"Exception in DiffActor.Compute(): {ExceptionResponse.Create ex}"
-                            logToConsole $"directoryId1: {directoryId1}; directoryId2: {directoryId2}"
+                            logToConsole $"directoryVersionId1: {directoryVersionId1}; directoryVersionId2: {directoryVersionId2}"
 
                             Activity.Current
                                 .SetStatus(ActivityStatusCode.Error, "Exception while creating diff.")
                                 .AddTag("ex.Message", ex.Message)
                                 .AddTag("ex.StackTrace", ex.StackTrace)
 
-                                .AddTag("directoryId1", $"{directoryId1}")
-                                .AddTag("directoryId2", $"{directoryId2}")
+                                .AddTag("directoryVersionId1", $"{directoryVersionId1}")
+                                .AddTag("directoryVersionId2", $"{directoryVersionId2}")
                             |> ignore
 
                             return false
@@ -442,7 +435,7 @@ module Diff =
                 task {
                     this.correlationId <- correlationId
 
-                    if diffDto.DirectoryId1.Equals(DiffDto.Default.DirectoryId1) then
+                    if diffDto.DirectoryVersionId1.Equals(DiffDto.Default.DirectoryVersionId1) then
                         logToConsole $"In Actor.GetDiff(), not yet populated."
                         let! populated = (this :> IDiffActor).Compute correlationId
                         logToConsole $"In Actor.GetDiff(), now populated."

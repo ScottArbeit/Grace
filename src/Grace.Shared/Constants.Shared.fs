@@ -88,48 +88,63 @@ module Constants =
     let GraceSystemUser = "gracesystem"
 
     /// The name of the Dapr service for Grace object storage.
+    [<Literal>]
     let GraceObjectStorage = "graceobjectstorage"
 
     /// The name of the Dapr service for Actor storage. This should be a document database.
+    [<Literal>]
     let GraceActorStorage = "actorstorage"
 
     /// The name of the Dapr service for Grace event pub/sub.
+    [<Literal>]
     let GracePubSubService = "graceevents"
 
     /// The name of the event topic to publish to.
+    [<Literal>]
     let GraceEventStreamTopic = "graceeventstream"
 
     /// The name of the reminders topic to publish to.
+    [<Literal>]
     let GraceRemindersStorage = "actorstorage" // For now, keeping reminders in the same storage as actors.
 
     /// The name of the reminders topic to publish to.
+    [<Literal>]
     let GraceRemindersTopic = "gracereminders"
 
     /// The name of the reminders subscription to subscribe to.
+    [<Literal>]
     let GraceRemindersSubscription = "reminder-service"
 
     /// The name of the Dapr service for retrieving application secrets.
+    [<Literal>]
     let GraceSecretStoreName = "kubernetessecretstore"
 
     /// The name of the directory that holds Grace information in a repository.
+    [<Literal>]
     let GraceConfigDirectory = ".grace"
 
     /// The name of the directory that holds locally-cached files in a repository.
+    [<Literal>]
     let GraceObjectsDirectory = "objects"
 
     /// The name of Grace's configuration file.
+    [<Literal>]
     let GraceConfigFileName = "graceconfig.json"
 
     /// The directory name of Grace's DirectoryVersion cache directory.
+    [<Literal>]
     let GraceDirectoryVersionCacheName = "directoryVersions"
 
     /// The name of the file that holds the file specifications to ignore.
+    [<Literal>]
     let GraceIgnoreFileName = ".graceignore"
 
     /// The name of the file that holds the current local index for Grace.
+    [<Literal>]
     let GraceStatusFileName = "gracestatus.msgpack"
 
     /// The name of the file that holds the current local index for Grace.
+    [<Literal>]
     let GraceObjectCacheFile = "graceObjectCache.msgpack"
 
     /// The default branch name for new repositories.
@@ -140,6 +155,7 @@ module Constants =
     let CurrentConfigurationVersion = "0.1"
 
     /// The configuration version number used by this release of Grace.
+    [<Literal>]
     let ServerApiVersionHeaderKey = "X-Api-Version"
 
     /// A list of known Grace Server API version strings.
@@ -204,18 +220,23 @@ module Constants =
     let SharedAccessSignatureExpiration = 15.0
 
     /// The path that indicates the root directory of the repository.
+    [<Literal>]
     let RootDirectoryPath = "."
 
     /// The key for the HttpContext metadata value that holds the CorrelationId for this transaction.
+    [<Literal>]
     let CorrelationId = "correlationId"
 
     /// The header name for a W3C trace.
+    [<Literal>]
     let Traceparent = "traceparent"
 
     /// The header name for W3C trace state.
+    [<Literal>]
     let Tracestate = "tracestate"
 
     /// The key for the HttpRequest and HttpResponse header that holds the CorrelationId for this transaction.
+    [<Literal>]
     let CorrelationIdHeaderKey = "X-Correlation-Id"
 
     /// <summary>

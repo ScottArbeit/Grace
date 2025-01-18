@@ -1,5 +1,7 @@
 namespace Grace.Actors
 
+open Azure.Storage.Blobs.Models
+open Azure.Storage.Blobs.Specialized
 open Dapr.Actors
 open Dapr.Actors.Client
 open Dapr.Actors.Runtime
@@ -16,6 +18,7 @@ open Grace.Shared
 open Grace.Shared.Constants
 open Grace.Shared.Services
 open Grace.Shared.Types
+open Grace.Shared.Dto.Repository
 open Grace.Shared.Utilities
 open Grace.Shared.Validation.Errors.DirectoryVersion
 open Microsoft.Extensions.Logging
@@ -27,6 +30,8 @@ open System.Diagnostics
 open System.Linq
 open System.Threading.Tasks
 open OrganizationName
+open System.IO
+open System.IO.Compression
 
 module DirectoryVersion =
 
@@ -212,8 +217,45 @@ module DirectoryVersion =
                                     deleteReason
                                 )
 
-                        // Mark the actor as disposed, in case someone tries to use it before Dapr GC's it.
-                        isDisposed <- true
+                        return Ok()
+                    | ReminderTypes.DeleteCachedDirectoryVersionContents ->
+                        // Get values from state.
+                        if not <| String.IsNullOrEmpty reminder.State then
+                            let (deleteReason, correlationId) = deserialize<PhysicalDeletionReminderState> reminder.State
+
+                            this.correlationId <- correlationId
+
+                            let directoryVersion = directoryVersionDto.DirectoryVersion
+                            let repositoryActorProxy = Repository.CreateActorProxy directoryVersion.RepositoryId correlationId
+                            let! repositoryDto = repositoryActorProxy.Get correlationId
+
+                            // Delete cached directory version contents for this actor.
+                            let blobName = $"Grace-DirectoryVersionContents/{directoryVersion.DirectoryVersionId}.zip"
+                            let! zipFileBlobClient = getAzureBlobClient repositoryDto blobName correlationId
+
+                            let! deleted = zipFileBlobClient.DeleteIfExistsAsync()
+
+                            if deleted.Value then
+                                log.LogInformation(
+                                    "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; Deleted cache for directory version; RepositoryId: {RepositoryId}; DirectoryVersionId: {DirectoryVersionId}; deleteReason: {deleteReason}.",
+                                    getCurrentInstantExtended (),
+                                    getMachineName,
+                                    correlationId,
+                                    directoryVersionDto.DirectoryVersion.RepositoryId,
+                                    directoryVersionDto.DirectoryVersion.DirectoryVersionId,
+                                    deleteReason
+                                )
+                            else
+                                log.LogWarning(
+                                    "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; Failed to delete cache for directory version (it may have already been deleted); RepositoryId: {RepositoryId}; DirectoryVersionId: {DirectoryVersionId}; deleteReason: {deleteReason}.",
+                                    getCurrentInstantExtended (),
+                                    getMachineName,
+                                    correlationId,
+                                    directoryVersionDto.DirectoryVersion.RepositoryId,
+                                    directoryVersionDto.DirectoryVersion.DirectoryVersionId,
+                                    deleteReason
+                                )
+
                         return Ok()
                     | ReminderTypes.PhysicalDeletion ->
                         // Get values from state.
@@ -409,11 +451,13 @@ module DirectoryVersion =
                             let repositoryActorProxy = Repository.CreateActorProxy directoryVersionDto.DirectoryVersion.RepositoryId correlationId
                             let! repositoryDto = repositoryActorProxy.Get correlationId
 
+                            let deletionReminderState = (getDiscriminatedUnionCaseName ReminderTypes.DeleteCachedState, correlationId)
+
                             do!
                                 (this :> IGraceReminder).ScheduleReminderAsync
                                     ReminderTypes.DeleteCachedState
                                     (Duration.FromDays(float repositoryDto.DirectoryVersionCacheDays))
-                                    String.Empty
+                                    (serialize deletionReminderState)
                                     correlationId
 
                             log.LogDebug("In DirectoryVersionActor.GetDirectoryVersionsRecursive({id}); Delete cached state reminder was set.", this.Id)
@@ -517,4 +561,119 @@ module DirectoryVersion =
                         | Error error -> return Constants.InitialDirectorySize
                     else
                         return directoryVersionDto.RecursiveSize
+                }
+
+            member this.CreateZipFile(correlationId: CorrelationId) : Task<GraceResult<string>> =
+                this.correlationId <- correlationId
+
+                let createDirectoryZipAsync
+                    (repositoryDto: RepositoryDto)
+                    (directoryVersionId: DirectoryVersionId)
+                    (subdirectories: List<DirectoryVersionId>)
+                    (fileVersions: IEnumerable<FileVersion>)
+                    : Task =
+
+                    task {
+                        let zipFileName = $"{directoryVersionId}.zip"
+                        let tempZipPath = Path.Combine(Path.GetTempPath(), zipFileName)
+
+                        logToConsole
+                            $"In createDirectoryZipAsync: directoryVersionId: {directoryVersionId}; zipFileName: {zipFileName}; tempZipPath: {tempZipPath}."
+
+                        try
+                            // Step 1: Create the ZIP archive
+                            use zipToCreate = new FileStream(tempZipPath, FileMode.Create, FileAccess.Write, FileShare.None, (64 * 1024))
+                            use archive = new ZipArchive(zipToCreate, ZipArchiveMode.Create)
+
+                            // Step 2: Process Subdirectories
+                            for subdirectoryId in subdirectories do
+                                let subZipBlobName = $"Grace-DirectoryVersionContents/{subdirectoryId}.zip"
+                                let! subZipBlobClient = getAzureBlobClient repositoryDto subZipBlobName correlationId
+
+                                // Check if we already have a .zip file for this subdirectory
+                                let! exists = subZipBlobClient.ExistsAsync()
+
+                                logToConsole
+                                    $"In createDirectoryZipAsync: directoryVersionId: {directoryVersionId}; subZipBlobName: {subZipBlobName}; exists: {exists}."
+
+                                // If we don't, call the subdirectory actor to create it.
+                                if exists.Value = false then
+                                    let subdirectoryActorProxy = DirectoryVersion.CreateActorProxy subdirectoryId correlationId
+
+                                    match! subdirectoryActorProxy.CreateZipFile correlationId with
+                                    | Ok graceReturnValue -> logToConsole $"Successfully created subdirectory .zip file: {subdirectoryId}.zip"
+                                    | Error graceError -> logToConsole $"Error creating subdirectory .zip file: {subdirectoryId}.zip. Error: {graceError}"
+
+                                // Now that we know the .zip file for the subdirectory is in Azure Blob Storage,
+                                //   copy the contents to the new .zip we're creating.
+                                use! subZipStream = subZipBlobClient.OpenReadAsync()
+                                use subArchive = new ZipArchive(subZipStream, ZipArchiveMode.Read)
+
+                                for entry in subArchive.Entries do
+                                    if not (String.IsNullOrEmpty(entry.Name)) then
+                                        let newEntry = archive.CreateEntry(entry.FullName, CompressionLevel.NoCompression)
+                                        newEntry.Comment <- entry.Comment
+                                        use entryStream = entry.Open()
+                                        use newEntryStream = newEntry.Open()
+                                        do! entryStream.CopyToAsync(newEntryStream)
+
+                            // Step 3: Process File Versions
+                            for fileVersion in fileVersions do
+                                logToConsole $"In createDirectoryZipAsync: Processing file version: {fileVersion.RelativePath}."
+                                let! fileBlobClient = getAzureBlobClientForFileVersion repositoryDto fileVersion correlationId
+                                let! fileExists = fileBlobClient.ExistsAsync()
+
+                                if fileExists.Value = true then
+                                    use! fileStream = fileBlobClient.OpenReadAsync()
+                                    let zipEntry = archive.CreateEntry(fileVersion.RelativePath, CompressionLevel.NoCompression)
+                                    zipEntry.Comment <- fileVersion.GetObjectFileName
+                                    use zipEntryStream = zipEntry.Open()
+                                    do! fileStream.CopyToAsync(zipEntryStream)
+
+                            // Step 4: Upload the new ZIP to Azure Blob Storage
+                            let destinationBlobName = $"Grace-DirectoryVersionContents/{zipFileName}"
+                            let! destinationBlobClient = getAzureBlobClient repositoryDto destinationBlobName correlationId
+
+                            // Dispose all of the streams before uploading
+                            archive.Dispose()
+                            //do! zipToCreate.FlushAsync()
+                            //do! zipToCreate.DisposeAsync()
+
+                            // Upload the new .zip file to Azure Blob Storage
+                            use uploadStream = File.OpenRead(tempZipPath)
+                            let! response = destinationBlobClient.UploadAsync(uploadStream, true)
+                            logToConsole $"In createDirectoryZipAsync: Successfully uploaded {zipFileName} to Azure Blob Storage. Response: {response}."
+                            ()
+                        finally
+                            // Step 5: Delete the local ZIP file
+                            if File.Exists(tempZipPath) then File.Delete(tempZipPath)
+                    }
+
+                task {
+                    try
+                        let directoryVersion = directoryVersionDto.DirectoryVersion
+                        let repositoryActorProxy = Repository.CreateActorProxy directoryVersion.RepositoryId correlationId
+                        let! repositoryDto = repositoryActorProxy.Get correlationId
+
+                        let blobName = $"Grace-DirectoryVersionContents/{directoryVersion.DirectoryVersionId}.zip"
+                        let! zipFileBlobClient = getAzureBlobClient repositoryDto blobName correlationId
+
+                        let! zipFileExists = zipFileBlobClient.ExistsAsync()
+
+                        if zipFileExists.Value = true then
+                            return Ok(GraceReturnValue.Create "Zip file already exists." correlationId)
+                        else
+                            do! createDirectoryZipAsync repositoryDto directoryVersion.DirectoryVersionId directoryVersion.Directories directoryVersion.Files
+                            let deletionReminderState = (getDiscriminatedUnionCaseName ReminderTypes.DeleteCachedDirectoryVersionContents, correlationId)
+
+                            do!
+                                (this :> IGraceReminder).ScheduleReminderAsync
+                                    ReminderTypes.DeleteCachedDirectoryVersionContents
+                                    (Duration.FromDays(float repositoryDto.DirectoryVersionCacheDays))
+                                    (serialize deletionReminderState)
+                                    correlationId
+
+                            return Ok(GraceReturnValue.Create "Zip file created succeeded." correlationId)
+                    with ex ->
+                        return Error(GraceError.Create $"{ExceptionResponse.Create ex}" correlationId)
                 }

@@ -15,9 +15,9 @@ module Dto =
         type DiffDto =
             { Class: string
               RepositoryId: RepositoryId
-              DirectoryId1: DirectoryVersionId
+              DirectoryVersionId1: DirectoryVersionId
               Directory1CreatedAt: Instant
-              DirectoryId2: DirectoryVersionId
+              DirectoryVersionId2: DirectoryVersionId
               Directory2CreatedAt: Instant
               HasDifferences: bool
               Differences: List<FileSystemDifference>
@@ -26,9 +26,9 @@ module Dto =
             static member Default =
                 { Class = nameof (DiffDto)
                   RepositoryId = RepositoryId.Empty
-                  DirectoryId1 = DirectoryVersionId.Empty
+                  DirectoryVersionId1 = DirectoryVersionId.Empty
                   Directory1CreatedAt = Constants.DefaultTimestamp
-                  DirectoryId2 = DirectoryVersionId.Empty
+                  DirectoryVersionId2 = DirectoryVersionId.Empty
                   Directory2CreatedAt = Constants.DefaultTimestamp
                   Differences = List<FileSystemDifference>()
                   HasDifferences = false

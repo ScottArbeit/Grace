@@ -143,6 +143,9 @@ module Interfaces =
         /// Returns the total size of files contained in this directory and all subdirectories.
         abstract member GetRecursiveSize: correlationId: CorrelationId -> Task<int64>
 
+        /// Creates the Zip file that contains the contents of this directory and all subdirectories, if it doesn't already exist.
+        abstract member CreateZipFile: correlationId: CorrelationId -> Task<GraceResult<string>>
+
         /// Delete the DirectoryVersion and all subdirectories and files.
         abstract member Delete: correlationId: CorrelationId -> Task<GraceResult<string>>
 

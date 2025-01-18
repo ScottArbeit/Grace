@@ -2490,8 +2490,8 @@ module Branch =
                                                 OrganizationId = parameters.OrganizationId,
                                                 OrganizationName = parameters.OrganizationName,
                                                 RepositoryId = $"{branchDto.RepositoryId}",
-                                                DirectoryId1 = basedOn.DirectoryId,
-                                                DirectoryId2 = parentLatestPromotion.DirectoryId,
+                                                DirectoryVersionId1 = basedOn.DirectoryId,
+                                                DirectoryVersionId2 = parentLatestPromotion.DirectoryId,
                                                 CorrelationId = parameters.CorrelationId
                                             )
                                         //logToAnsiConsole Colors.Verbose $"First diff: {Markup.Escape(serialize diffParameters)}"
@@ -2505,8 +2505,8 @@ module Branch =
                                                 OrganizationId = parameters.OrganizationId,
                                                 OrganizationName = parameters.OrganizationName,
                                                 RepositoryId = $"{branchDto.RepositoryId}",
-                                                DirectoryId1 = latestReference.DirectoryId,
-                                                DirectoryId2 = basedOn.DirectoryId,
+                                                DirectoryVersionId1 = latestReference.DirectoryId,
+                                                DirectoryVersionId2 = basedOn.DirectoryId,
                                                 CorrelationId = parameters.CorrelationId
                                             )
                                         //logToAnsiConsole Colors.Verbose $"Second diff: {Markup.Escape(serialize diffParameters)}"
@@ -2524,8 +2524,8 @@ module Branch =
                                                 OrganizationId = parameters.OrganizationId,
                                                 OrganizationName = parameters.OrganizationName,
                                                 RepositoryId = $"{branchDto.RepositoryId}",
-                                                DirectoryId1 = latestReference.DirectoryId,
-                                                DirectoryId2 = parentLatestPromotion.DirectoryId,
+                                                DirectoryVersionId1 = latestReference.DirectoryId,
+                                                DirectoryVersionId2 = parentLatestPromotion.DirectoryId,
                                                 CorrelationId = parameters.CorrelationId
                                             )
                                         //logToAnsiConsole Colors.Verbose $"Initial diff: {Markup.Escape(serialize diffParameters)}"

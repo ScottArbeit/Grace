@@ -48,9 +48,6 @@ open System.IO
 open FSharpPlus
 
 module Application =
-    type FunctionThat_AddsOrUpdatesFile = DirectoryVersion -> FileVersion -> DirectoryVersion
-
-    type FunctionThat_ChecksIfAFileIsInAnyOfTheseDirectories = DirectoryVersion array -> (FileVersion -> DirectoryVersion -> bool) -> DirectoryVersion array
 
     type Startup(configuration: IConfiguration) =
 
@@ -60,7 +57,7 @@ module Application =
 
         let mustBeLoggedIn = requiresAuthentication notLoggedIn
 
-        let fileVersion =
+        let graceServerVersion =
             FileVersionInfo
                 .GetVersionInfo(Assembly.GetExecutingAssembly().Location)
                 .FileVersion
@@ -71,7 +68,7 @@ module Application =
                         "/"
                         (warbler (fun _ ->
                             htmlString
-                                $"<h1>Hello From Grace Server {fileVersion}!</h1><br/><p>The current server time is: {getCurrentInstantExtended ()}.</p>"))
+                                $"<h1>Hello From Grace Server {graceServerVersion}!</h1><br/><p>The current server time is: {getCurrentInstantExtended ()}.</p>"))
                     route
                         "/healthz"
                         (warbler (fun _ ->
@@ -163,7 +160,10 @@ module Application =
                           |> addMetadata typeof<Directory.GetParameters>
                           route "/saveDirectoryVersions" DirectoryVersion.SaveDirectoryVersions
                           |> addMetadata typeof<Directory.SaveDirectoryVersionsParameters> ] ]
-              subRoute "/notifications" [ GET []; POST [ route "/post" Notifications.Post ] ]
+              subRoute
+                  "/notifications"
+                  [ GET []
+                    POST [ route "/receiveGraceEventStream" Notifications.ReceiveGraceEventStream ] ]
               subRoute
                   "/organization"
                   [ POST

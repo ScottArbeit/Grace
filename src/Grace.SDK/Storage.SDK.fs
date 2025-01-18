@@ -222,7 +222,7 @@ module Storage =
                                     // If the file is not a binary file, gzip it, and stream the compressed file to Blob Storage.
                                     blobUploadOptions.HttpHeaders.ContentEncoding <- "gzip"
                                     use memoryStream = new MemoryStream(64 * 1024) // Setting initial capacity larger than most files will need.
-                                    use gzipStream = new GZipStream(memoryStream, CompressionLevel.SmallestSize, leaveOpen = false)
+                                    use gzipStream = new GZipStream(stream = memoryStream, compressionLevel = CompressionLevel.SmallestSize, leaveOpen = false)
                                     do! fileStream.CopyToAsync(gzipStream, bufferSize = (64 * 1024))
                                     do! gzipStream.FlushAsync()
                                     memoryStream.Position <- 0

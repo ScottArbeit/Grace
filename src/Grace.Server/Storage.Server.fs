@@ -42,14 +42,10 @@ module Storage =
         task {
             match repositoryDto.ObjectStorageProvider with
             | AzureBlobStorage ->
-                let! blobClient = getAzureBlobClient repositoryDto fileVersion (getCorrelationId context)
-
-                match blobClient with
-                | Ok blobClient ->
-                    let! azureResponse = blobClient.GetPropertiesAsync()
-                    let blobProperties = azureResponse.Value
-                    return Ok(blobProperties.Metadata :?> IReadOnlyDictionary<string, string>)
-                | Error error -> return Error error
+                let! blobClient = getAzureBlobClientForFileVersion repositoryDto fileVersion (getCorrelationId context)
+                let! azureResponse = blobClient.GetPropertiesAsync()
+                let blobProperties = azureResponse.Value
+                return Ok(blobProperties.Metadata :?> IReadOnlyDictionary<string, string>)
             | AWSS3 -> return Error(StorageError.getErrorMessage NotImplemented)
             | GoogleCloudStorage -> return Error(StorageError.getErrorMessage NotImplemented)
             | ObjectStorageProvider.Unknown ->
@@ -71,7 +67,7 @@ module Storage =
                     let repositoryActor = Repository.CreateActorProxy (RepositoryId.Parse(parameters.RepositoryId)) correlationId
                     let! repositoryDto = repositoryActor.Get correlationId
 
-                    match! getReadSharedAccessSignature repositoryDto parameters.FileVersion correlationId with
+                    match! getUriWithReadSharedAccessSignatureForFileVersion repositoryDto parameters.FileVersion correlationId with
                     | Ok downloadUri ->
                         context.SetStatusCode StatusCodes.Status200OK
                         //context.GetLogger().LogTrace("fileVersion: {fileVersion.RelativePath}; downloadUri: {downloadUri}", [| fileVersion.RelativePath, downloadUri |])
@@ -102,7 +98,7 @@ module Storage =
                     let! repositoryDto = repositoryActor.Get correlationId
 
                     for fileVersion in parameters.FileVersions do
-                        match! getWriteSharedAccessSignature repositoryDto fileVersion correlationId with
+                        match! getUriWithWriteSharedAccessSignatureForFileVersion repositoryDto fileVersion correlationId with
                         | Ok uploadUri -> uris.Add(fileVersion.RelativePath, uploadUri)
                         | Error error -> ()
 
@@ -156,7 +152,7 @@ module Storage =
                                             //let! fileExists = fileExists repositoryDto fileVersion context
 
                                             //if not <| fileExists then
-                                            match! getWriteSharedAccessSignature repositoryDto fileVersion correlationId with
+                                            match! getUriWithWriteSharedAccessSignatureForFileVersion repositoryDto fileVersion correlationId with
                                             | Ok blobUriWithSasToken ->
                                                 uploadMetadata.Enqueue({ BlobUriWithSasToken = blobUriWithSasToken; Sha256Hash = fileVersion.Sha256Hash })
                                             | Error error -> ()

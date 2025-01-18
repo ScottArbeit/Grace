@@ -668,6 +668,7 @@ module Types =
         | Maintenance
         | PhysicalDeletion
         | DeleteCachedState
+        | DeleteCachedDirectoryVersionContents
 
         static member GetKnownTypes() = GetKnownTypes<ReminderTypes>()
 
