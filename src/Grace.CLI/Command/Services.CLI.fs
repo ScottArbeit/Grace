@@ -6,7 +6,7 @@ open Grace.SDK
 open Grace.Shared.Client.Configuration
 open Grace.Shared
 open Grace.Shared.Constants
-open Grace.Shared.Parameters.Directory
+open Grace.Shared.Parameters.DirectoryVersion
 open Grace.Shared.Services
 open Grace.Shared.Types
 open Grace.Shared.Utilities

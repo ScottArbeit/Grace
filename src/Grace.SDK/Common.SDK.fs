@@ -150,7 +150,9 @@ module Common =
                 if response.IsSuccessStatusCode then
                     let! graceReturnValue = response.Content.ReadFromJsonAsync<GraceReturnValue<'U>>(Constants.JsonSerializerOptions)
                     //let! blah = response.Content.ReadAsStringAsync()
+                    //logToConsole $"blah: {blah}"
                     //let graceReturnValue = JsonSerializer.Deserialize<GraceReturnValue<'U>>(blah, Constants.JsonSerializerOptions)
+
                     return
                         Ok graceReturnValue
                         |> enhance "ServerResponseTime" $"{(endTime - startTime).TotalMilliseconds:F3} ms"

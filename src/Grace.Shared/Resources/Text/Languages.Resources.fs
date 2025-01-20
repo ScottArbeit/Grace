@@ -64,7 +64,7 @@ module Text =
         | InvalidDiffCacheDaysValue
         | InvalidDirectoryVersionCacheDaysValue
         | InvalidDirectoryPath
-        | InvalidDirectoryId
+        | InvalidDirectoryVersionId
         | InvalidLogicalDeleteDaysValue
         | InvalidMaxCountValue
         | InvalidObjectStorageProvider

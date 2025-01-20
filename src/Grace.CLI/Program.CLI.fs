@@ -118,6 +118,7 @@ module GraceCommand =
         rootCommand.AddCommand(Connect.Build)
         rootCommand.AddCommand(Watch.Build)
         rootCommand.AddCommand(Branch.Build)
+        rootCommand.AddCommand(DirectoryVersion.Build)
         rootCommand.AddCommand(Diff.Build)
         rootCommand.AddCommand(Repository.Build)
         rootCommand.AddCommand(Organization.Build)
@@ -172,12 +173,15 @@ module GraceCommand =
                     context.ParseResult.CommandResult.Command.Options
                     |> Seq.append context.ParseResult.RootCommandResult.Command.Options
 
+                // Collect all of the aliases for all of the options.
                 let allAliases = commandOptions |> Seq.collect (fun option -> option.Aliases)
 
                 /// Finds tokens that are either aliases for options, or pre-defined valid values for an option (i.e. completions), and converts them to the exact case found in the option definitions.
                 let getCorrectTokenCase (tokens: string array) =
+                    /// The case-corrected list of tokens.
                     let newTokens = List<string>(tokens.Length)
 
+                    // Loop through every token.
                     for i = 0 to (tokens.Length - 1) do
                         let token = tokens[i]
                         // First, check if this is an alias for an option.
@@ -248,7 +252,8 @@ module GraceCommand =
                             tokens
                         else
                             // Convert the first two tokens to lower-case.
-                            Array.append [| tokens[0].ToLowerInvariant(); tokens[1].ToLowerInvariant() |] (getCorrectTokenCase tokens[2..])
+                            //Array.append [| tokens[0].ToLowerInvariant(); tokens[1].ToLowerInvariant() |] (getCorrectTokenCase tokens[2..])
+                            Array.append [| tokens[0].ToLowerInvariant() |] (getCorrectTokenCase tokens[1..])
 
                 // Replace the old ParseResult with one based on the updated tokens with exact casing.
                 context.ParseResult <- context.Parser.Parse(newTokens)
@@ -268,10 +273,17 @@ module GraceCommand =
                     || (helpContext.ParseResult.Tokens.Count = 1
                         && helpOptions.Contains(helpContext.ParseResult.Tokens[0].Value))
                 then
-                    let graceFiglet = FigletText("Grace Version Control System")
-                    graceFiglet.Color <- Color.Green3
+                    //let graceFiglet = FigletText($"Grace Version Control System")
+                    let graceFiglet = FigletText($"Grace")
                     graceFiglet.Justification <- Justify.Center
+                    graceFiglet.Color <- Color.Green3_1
                     AnsiConsole.Write(graceFiglet)
+
+                    let graceFiglet = FigletText($"Version Control System")
+                    graceFiglet.Justification <- Justify.Center
+                    graceFiglet.Color <- Color.DarkOrange
+                    AnsiConsole.Write(graceFiglet)
+
                     AnsiConsole.WriteLine()
 
                     // Skip the description section if we printed FigletText.

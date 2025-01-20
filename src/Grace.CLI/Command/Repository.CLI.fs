@@ -24,7 +24,7 @@ open System.Linq
 open System.IO
 open System.Threading
 open System.Threading.Tasks
-open Grace.Shared.Parameters.Directory
+open Grace.Shared.Parameters.DirectoryVersion
 open Spectre.Console.Json
 open Grace.Shared.Parameters.Storage
 

@@ -101,6 +101,7 @@ module Types =
 
         static member GetKnownTypes() = GetKnownTypes<SearchVisibility>()
 
+    /// Defines the different types of references that can exist in a branch.
     [<KnownType("GetKnownTypes")>]
     type ReferenceType =
         | Promotion
@@ -662,13 +663,17 @@ module Types =
 
         override this.ToString() = serialize this
 
-    /// Holds the different types of reminders used in Grace.
+    /// Defines the different types of reminders used in Grace.
     [<KnownType("GetKnownTypes")>]
     type ReminderTypes =
+        /// Maintenance reminders are used to remind the actor to perform maintenance on itself.
         | Maintenance
+        /// Physical deletion reminders are used to remind the actor to delete itself after the LogicalDelete hold time has expired.
         | PhysicalDeletion
+        /// DeleteCachedState reminders are used to remind the actor to delete its cached state after the time set in the repository has expired.
         | DeleteCachedState
-        | DeleteCachedDirectoryVersionContents
+        /// DeleteZipFile reminders are used to remind the DirectoryVersion actor to delete the directory version contents .zip file after the time set in the repository has expired.
+        | DeleteZipFile
 
         static member GetKnownTypes() = GetKnownTypes<ReminderTypes>()
 

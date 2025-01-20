@@ -135,6 +135,10 @@ module Constants =
     [<Literal>]
     let GraceDirectoryVersionCacheName = "directoryVersions"
 
+    /// The folder name to use in object storage for directory version contents .zip files.
+    [<Literal>]
+    let GraceDirectoryVersionStorageFolderName = "Grace-DirectoryVersionContents"
+
     /// The name of the file that holds the file specifications to ignore.
     [<Literal>]
     let GraceIgnoreFileName = ".graceignore"

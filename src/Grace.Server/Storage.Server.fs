@@ -67,18 +67,10 @@ module Storage =
                     let repositoryActor = Repository.CreateActorProxy (RepositoryId.Parse(parameters.RepositoryId)) correlationId
                     let! repositoryDto = repositoryActor.Get correlationId
 
-                    match! getUriWithReadSharedAccessSignatureForFileVersion repositoryDto parameters.FileVersion correlationId with
-                    | Ok downloadUri ->
-                        context.SetStatusCode StatusCodes.Status200OK
-                        //context.GetLogger().LogTrace("fileVersion: {fileVersion.RelativePath}; downloadUri: {downloadUri}", [| fileVersion.RelativePath, downloadUri |])
-                        logToConsole $"fileVersion: {parameters.FileVersion.RelativePath}; downloadUri: {downloadUri}"
-                        return! context.WriteStringAsync $"{downloadUri}"
-                    | Error error ->
-                        context.SetStatusCode StatusCodes.Status500InternalServerError
-
-                        logToConsole $"Error generating download Uri: fileVersion: {parameters.FileVersion.RelativePath}; Error: {error}"
-
-                        return! context.WriteStringAsync $"Error creating download uri for {parameters.FileVersion.GetObjectFileName}."
+                    let! downloadUri = getUriWithReadSharedAccessSignatureForFileVersion repositoryDto parameters.FileVersion correlationId
+                    context.SetStatusCode StatusCodes.Status200OK
+                    //log.LogTrace("fileVersion: {fileVersion.RelativePath}; downloadUri: {downloadUri}", [| parameters.FileVersion.RelativePath, downloadUri |])
+                    return! context.WriteStringAsync $"{downloadUri}"
                 with ex ->
                     context.SetStatusCode StatusCodes.Status500InternalServerError
                     return! context.WriteTextAsync $"Error in {context.Request.Path} at {DateTime.Now.ToLongTimeString()}."
@@ -98,9 +90,8 @@ module Storage =
                     let! repositoryDto = repositoryActor.Get correlationId
 
                     for fileVersion in parameters.FileVersions do
-                        match! getUriWithWriteSharedAccessSignatureForFileVersion repositoryDto fileVersion correlationId with
-                        | Ok uploadUri -> uris.Add(fileVersion.RelativePath, uploadUri)
-                        | Error error -> ()
+                        let! uploadUri = getUriWithWriteSharedAccessSignatureForFileVersion repositoryDto fileVersion correlationId
+                        uris.Add(fileVersion.RelativePath, uploadUri)
 
                     if log.IsEnabled(LogLevel.Debug) then
                         let sb = stringBuilderPool.Get()
@@ -152,10 +143,10 @@ module Storage =
                                             //let! fileExists = fileExists repositoryDto fileVersion context
 
                                             //if not <| fileExists then
-                                            match! getUriWithWriteSharedAccessSignatureForFileVersion repositoryDto fileVersion correlationId with
-                                            | Ok blobUriWithSasToken ->
-                                                uploadMetadata.Enqueue({ BlobUriWithSasToken = blobUriWithSasToken; Sha256Hash = fileVersion.Sha256Hash })
-                                            | Error error -> ()
+                                            let! blobUriWithSasToken =
+                                                getUriWithWriteSharedAccessSignatureForFileVersion repositoryDto fileVersion correlationId
+
+                                            uploadMetadata.Enqueue({ BlobUriWithSasToken = blobUriWithSasToken; Sha256Hash = fileVersion.Sha256Hash })
                                         }
                                     ))
                             )

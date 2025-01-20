@@ -20,7 +20,7 @@ open System.Text.Json
 open System.Threading
 open System.Threading.Tasks
 open System.Collections.Generic
-open Grace.Shared.Parameters.Directory
+open Grace.Shared.Parameters.DirectoryVersion
 open Grace.Shared.Services
 open Grace.Shared.Parameters.Storage
 

@@ -13,7 +13,7 @@ open Grace.Shared.Dto.Diff
 open Grace.Shared.Dto.Reference
 open Grace.Shared.Parameters.Branch
 open Grace.Shared.Parameters.Diff
-open Grace.Shared.Parameters.Directory
+open Grace.Shared.Parameters.DirectoryVersion
 open Grace.Shared.Types
 open Grace.Shared.Utilities
 open Grace.Shared.Validation.Errors.Diff

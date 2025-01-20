@@ -72,7 +72,7 @@ module en_US =
         | InvalidDiffCacheDaysValue -> "The provided value for DiffCacheDays is invalid."
         | InvalidDirectoryVersionCacheDaysValue -> "The provided value for DirectoryVersionCacheDays is invalid."
         | InvalidDirectoryPath -> "The provided directory is not a valid directory path."
-        | InvalidDirectoryId -> "The provided DirectoryId is not a valid Guid."
+        | InvalidDirectoryVersionId -> "The provided DirectoryVersionId is not a valid Guid."
         | InvalidLogicalDeleteDaysValue -> "The provided value for LogicalDeleteDays is invalid."
         | InvalidMaxCountValue -> "The provided value for MaxCount is invalid."
         | InvalidObjectStorageProvider -> "The provided object storage provider is not valid."

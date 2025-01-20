@@ -11,7 +11,7 @@ open Grace.Shared.Client.Theme
 open Grace.Shared.Dto.Branch
 open Grace.Shared.Dto.Reference
 open Grace.Shared.Parameters.Branch
-open Grace.Shared.Parameters.Directory
+open Grace.Shared.Parameters.DirectoryVersion
 open Grace.Shared.Services
 open Grace.Shared.Types
 open Grace.Shared.Utilities
@@ -203,7 +203,7 @@ module Branch =
                 IsRequired = false,
                 Description = "A list of reference types allowed in this branch.",
                 Arity = ArgumentArity.ZeroOrOne,
-                getDefaultValue = (fun _ -> [| Commit; Checkpoint; Save; Tag |])
+                getDefaultValue = (fun _ -> [| Commit; Checkpoint; Save; Tag; External |])
             )
 
         let toBranchId =
@@ -915,7 +915,7 @@ module Branch =
 
                                             if newDirectoryVersions.Count > 0 then
                                                 let saveParameters = SaveDirectoryVersionsParameters()
-                                                saveParameters.DirectoryId <- $"{newGraceStatus.RootDirectoryId}"
+                                                saveParameters.DirectoryVersionId <- $"{newGraceStatus.RootDirectoryId}"
 
                                                 saveParameters.DirectoryVersions <- newDirectoryVersions.Select(fun dv -> dv.ToDirectoryVersion).ToList()
 
@@ -2242,7 +2242,7 @@ module Branch =
                         let getByDirectoryIdParameters =
                             GetByDirectoryIdsParameters(
                                 RepositoryId = parameters.RepositoryId,
-                                DirectoryId = $"{rootDirectoryId}",
+                                DirectoryVersionId = $"{rootDirectoryId}",
                                 DirectoryIds = missingDirectoryIds,
                                 CorrelationId = parameters.CorrelationId
                             )
@@ -2556,16 +2556,16 @@ module Branch =
                                         filesToDownload.Add(fileDifference)
 
                                 let getParentLatestPromotionDirectoryParameters =
-                                    Parameters.Directory.GetParameters(
+                                    Parameters.DirectoryVersion.GetParameters(
                                         RepositoryId = $"{branchDto.RepositoryId}",
-                                        DirectoryId = $"{parentLatestPromotion.DirectoryId}",
+                                        DirectoryVersionId = $"{parentLatestPromotion.DirectoryId}",
                                         CorrelationId = parameters.CorrelationId
                                     )
 
                                 let getLatestReferenceDirectoryParameters =
-                                    Parameters.Directory.GetParameters(
+                                    Parameters.DirectoryVersion.GetParameters(
                                         RepositoryId = $"{branchDto.RepositoryId}",
-                                        DirectoryId = $"{latestReference.DirectoryId}",
+                                        DirectoryVersionId = $"{latestReference.DirectoryId}",
                                         CorrelationId = parameters.CorrelationId
                                     )
 

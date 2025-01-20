@@ -314,11 +314,9 @@ module Diff =
                                     let directory = graceIndex[relativeDirectoryPath]
                                     let fileVersion = directory.Files.First(fun f -> f.RelativePath = relativePath)
 
-                                    match! getUriWithReadSharedAccessSignatureForFileVersion repositoryDto fileVersion correlationId with
-                                    | Ok uri ->
-                                        let! uncompressedStream = this.getUncompressedStream repositoryDto fileVersion uri correlationId
-                                        return Ok(uncompressedStream, fileVersion)
-                                    | Error ex -> return Error ex
+                                    let! uri = getUriWithReadSharedAccessSignatureForFileVersion repositoryDto fileVersion correlationId
+                                    let! uncompressedStream = this.getUncompressedStream repositoryDto fileVersion uri correlationId
+                                    return Ok(uncompressedStream, fileVersion)
                                 }
 
                             // Process each difference.

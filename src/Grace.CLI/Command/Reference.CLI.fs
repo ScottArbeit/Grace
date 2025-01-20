@@ -11,7 +11,7 @@ open Grace.Shared.Client.Theme
 open Grace.Shared.Dto.Branch
 open Grace.Shared.Dto.Reference
 open Grace.Shared.Parameters.Branch
-open Grace.Shared.Parameters.Directory
+open Grace.Shared.Parameters.DirectoryVersion
 open Grace.Shared.Services
 open Grace.Shared.Types
 open Grace.Shared.Utilities
@@ -749,7 +749,7 @@ module Reference =
 
                                             if newDirectoryVersions.Count > 0 then
                                                 let saveParameters = SaveDirectoryVersionsParameters()
-                                                saveParameters.DirectoryId <- $"{newGraceStatus.RootDirectoryId}"
+                                                saveParameters.DirectoryVersionId <- $"{newGraceStatus.RootDirectoryId}"
 
                                                 saveParameters.DirectoryVersions <- newDirectoryVersions.Select(fun dv -> dv.ToDirectoryVersion).ToList()
 

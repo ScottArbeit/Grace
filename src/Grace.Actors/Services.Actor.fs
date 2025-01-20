@@ -107,7 +107,7 @@ module Services =
         graceError
 
     /// Gets an Azure Blob Storage container client for the container that holds the object files for the given repository.
-    let getContainerClient (repositoryDto: RepositoryDto) =
+    let getContainerClient (repositoryDto: RepositoryDto) correlationId =
         task {
             let containerName = $"{repositoryDto.RepositoryId}"
             let key = $"Con:{repositoryDto.StorageAccountName}-{containerName}"
@@ -124,15 +124,23 @@ module Services =
                             cacheEntry.AbsoluteExpiration <- DateTimeOffset.UtcNow.Add(TimeSpan.FromMinutes(10.0))
 
                             let blobContainerClient = BlobContainerClient(azureStorageConnectionString, containerName)
+                            let! exists = blobContainerClient.ExistsAsync()
 
-                            // Make sure the container exists before returning the client.
-                            let metadata = Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) :> IDictionary<string, string>
-                            metadata[nameof (OwnerId)] <- $"{repositoryDto.OwnerId}"
-                            metadata[nameof (OrganizationId)] <- $"{repositoryDto.OrganizationId}"
-                            metadata[nameof (RepositoryId)] <- $"{repositoryDto.RepositoryId}"
+                            if exists.Value = false then
+                                let ownerActorProxy = Owner.CreateActorProxy repositoryDto.OwnerId CorrelationId.Empty
+                                let! ownerDto = ownerActorProxy.Get correlationId
+                                let organizationActorProxy = Organization.CreateActorProxy repositoryDto.OrganizationId CorrelationId.Empty
+                                let! organizationDto = organizationActorProxy.Get correlationId
+                                let metadata = Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) :> IDictionary<string, string>
+                                metadata[nameof (OwnerId)] <- $"{repositoryDto.OwnerId}"
+                                metadata[nameof (OwnerName)] <- $"{ownerDto.OwnerName}"
+                                metadata[nameof (OrganizationId)] <- $"{repositoryDto.OrganizationId}"
+                                metadata[nameof (OrganizationName)] <- $"{organizationDto.OrganizationName}"
+                                metadata[nameof (RepositoryId)] <- $"{repositoryDto.RepositoryId}"
+                                metadata[nameof (RepositoryName)] <- $"{repositoryDto.RepositoryName}"
 
-                            let! azureResponse =
-                                blobContainerClient.CreateIfNotExistsAsync(publicAccessType = Models.PublicAccessType.None, metadata = metadata)
+                                let! azureResponse = blobContainerClient.CreateAsync(publicAccessType = Models.PublicAccessType.None, metadata = metadata)
+                                ()
 
                             return blobContainerClient
                         }
@@ -145,7 +153,7 @@ module Services =
     let getAzureBlobClient (repositoryDto: RepositoryDto) (blobName: string) (correlationId: CorrelationId) =
         task {
             //logToConsole $"* In getAzureBlobClient; repositoryId: {repositoryDto.RepositoryId}; fileVersion: {fileVersion.RelativePath}."
-            let! containerClient = getContainerClient repositoryDto
+            let! containerClient = getContainerClient repositoryDto correlationId
 
             return containerClient.GetBlobClient(blobName)
         }
@@ -160,7 +168,7 @@ module Services =
     let private createAzureBlobSasUri (repositoryDto: RepositoryDto) (blobName: string) (permission: BlobSasPermissions) (correlationId: CorrelationId) =
         task {
             //logToConsole $"In createAzureBlobSasUri; fileVersion.RelativePath: {fileVersion.RelativePath}."
-            let! blobContainerClient = getContainerClient repositoryDto
+            let! blobContainerClient = getContainerClient repositoryDto correlationId
 
             let blobSasBuilder =
                 BlobSasBuilder(
@@ -184,10 +192,10 @@ module Services =
             | AzureBlobStorage ->
                 let permissions = (BlobSasPermissions.Read ||| BlobSasPermissions.List) // These are the minimum permissions needed to read a file.
                 let! sas = createAzureBlobSasUri repositoryDto blobName permissions correlationId
-                return Ok sas
-            | AWSS3 -> return Error(NotImplementedException("AWS S3 storage type is not implemented."))
-            | GoogleCloudStorage -> return Error(NotImplementedException("Google Cloud storage type is not implemented."))
-            | ObjectStorageProvider.Unknown -> return Error(NotImplementedException("Unknown storage type."))
+                return sas
+            | AWSS3 -> return UriWithSharedAccessSignature(String.Empty)
+            | GoogleCloudStorage -> return UriWithSharedAccessSignature(String.Empty)
+            | ObjectStorageProvider.Unknown -> return UriWithSharedAccessSignature(String.Empty)
         }
 
     /// Gets a full Uri, including shared access signature, for reading from the object storage provider.
@@ -201,7 +209,7 @@ module Services =
     let getUriWithWriteSharedAccessSignature (repositoryDto: RepositoryDto) (blobName: string) (correlationId: CorrelationId) =
         task {
             match repositoryDto.ObjectStorageProvider with
-            | AWSS3 -> return Error(NotImplementedException("AWS S3 storage type is not implemented."))
+            | AWSS3 -> return UriWithSharedAccessSignature(String.Empty)
             | AzureBlobStorage ->
                 // Adding read permission to allow for calls to .ExistsAsync().
                 let permissions =
@@ -213,9 +221,9 @@ module Services =
 
                 let! sas = createAzureBlobSasUri repositoryDto blobName permissions correlationId
 
-                return Ok sas
-            | GoogleCloudStorage -> return Error(NotImplementedException("Google Cloud storage type is not implemented."))
-            | ObjectStorageProvider.Unknown -> return Error(NotImplementedException("Unknown storage type."))
+                return sas
+            | GoogleCloudStorage -> return UriWithSharedAccessSignature(String.Empty)
+            | ObjectStorageProvider.Unknown -> return UriWithSharedAccessSignature(String.Empty)
         }
 
     /// Gets a full Uri, including shared access signature, for writing from the object storage provider.

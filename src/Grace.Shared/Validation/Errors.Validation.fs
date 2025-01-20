@@ -153,7 +153,7 @@ module Errors =
             static member getErrorMessage(diffError: DiffError) : string =
                 match diffError with
                 | DirectoryDoesNotExist -> getLocalizedString StringResourceName.DirectoryDoesNotExist
-                | InvalidDirectoryId -> getLocalizedString StringResourceName.InvalidDirectoryId
+                | InvalidDirectoryId -> getLocalizedString StringResourceName.InvalidDirectoryVersionId
                 | InvalidOrganizationId -> getLocalizedString StringResourceName.InvalidOrganizationId
                 | InvalidOrganizationName -> getLocalizedString StringResourceName.InvalidOrganizationName
                 | InvalidOwnerId -> getLocalizedString StringResourceName.InvalidOwnerId
@@ -176,10 +176,17 @@ module Errors =
             | FailedWhileApplyingEvent
             | FileNotFoundInObjectStorage
             | FileSha256HashDoesNotMatch
-            | InvalidDirectoryId
+            | IndexFileNotFound
+            | InvalidDirectoryVersionId
+            | InvalidOrganizationId
+            | InvalidOrganizationName
+            | InvalidOwnerId
+            | InvalidOwnerName
             | InvalidRepositoryId
+            | InvalidRepositoryName
             | InvalidSha256Hash
             | InvalidSize
+            | ObjectCacheFileNotFound
             | RelativePathMustNotBeEmpty
             | RepositoryDoesNotExist
             | Sha256HashIsRequired
@@ -193,10 +200,17 @@ module Errors =
                 | FailedWhileApplyingEvent -> getLocalizedString StringResourceName.FailedWhileApplyingEvent
                 | FileNotFoundInObjectStorage -> getLocalizedString StringResourceName.FileNotFoundInObjectStorage
                 | FileSha256HashDoesNotMatch -> getLocalizedString StringResourceName.FileSha256HashDoesNotMatch
-                | InvalidDirectoryId -> getLocalizedString StringResourceName.InvalidDirectoryId
+                | IndexFileNotFound -> getLocalizedString StringResourceName.IndexFileNotFound
+                | InvalidDirectoryVersionId -> getLocalizedString StringResourceName.InvalidDirectoryVersionId
+                | InvalidOrganizationId -> getLocalizedString StringResourceName.InvalidOrganizationId
+                | InvalidOrganizationName -> getLocalizedString StringResourceName.InvalidOrganizationName
+                | InvalidOwnerId -> getLocalizedString StringResourceName.InvalidOwnerId
+                | InvalidOwnerName -> getLocalizedString StringResourceName.InvalidOwnerName
                 | InvalidRepositoryId -> getLocalizedString StringResourceName.InvalidRepositoryId
+                | InvalidRepositoryName -> getLocalizedString StringResourceName.InvalidRepositoryName
                 | InvalidSha256Hash -> getLocalizedString StringResourceName.InvalidSha256Hash
                 | InvalidSize -> getLocalizedString StringResourceName.InvalidSize
+                | ObjectCacheFileNotFound -> getLocalizedString StringResourceName.ObjectCacheFileNotFound
                 | RelativePathMustNotBeEmpty -> getLocalizedString StringResourceName.RelativePathMustNotBeEmpty
                 | RepositoryDoesNotExist -> getLocalizedString StringResourceName.RepositoryDoesNotExist
                 | Sha256HashIsRequired -> getLocalizedString StringResourceName.Sha256HashIsRequired

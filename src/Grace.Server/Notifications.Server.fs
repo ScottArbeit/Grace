@@ -16,6 +16,7 @@ open Grace.Shared.Types
 open Grace.Shared.Utilities
 open Microsoft.AspNetCore.Http
 open Microsoft.AspNetCore.SignalR
+open Microsoft.Extensions.Logging
 open System
 open System.Net.Http
 open System.Text.Json
@@ -133,13 +134,12 @@ module Notifications =
     let ReceiveGraceEventStream: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
-                let correlationId = getCorrelationId context
                 let hubContext = context.GetService<IHubContext<NotificationHub, IGraceClientConnection>>()
 
                 let! graceEvent = context.BindJsonAsync<GraceEvent>()
                 //logToConsole $"{serialize graceEvent}"
 
-                let diffTwoDirectoryVersions directoryVersionId1 directoryVersionId2 =
+                let diffTwoDirectoryVersions directoryVersionId1 directoryVersionId2 correlationId =
                     task {
                         let diffActorProxy = Diff.CreateActorProxy directoryVersionId1 directoryVersionId2 correlationId
 
@@ -151,7 +151,12 @@ module Notifications =
                 | BranchEvent branchEvent ->
                     let correlationId = branchEvent.Metadata.CorrelationId
 
-                    logToConsole $"Received BranchEvent: {getDiscriminatedUnionFullName branchEvent.Event} {Environment.NewLine}{branchEvent.Metadata}"
+                    log.LogInformation(
+                        "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; Received BranchEvent notification.",
+                        getCurrentInstantExtended (),
+                        getMachineName,
+                        correlationId
+                    )
 
                     match branchEvent.Event with
                     | Branch.Promoted(referenceDto, directoryVersionId, sha256Hash, referenceText) ->
@@ -166,7 +171,7 @@ module Notifications =
                         let! latestTwoPromotions = getPromotions referenceDto.BranchId 2 (getCorrelationId context)
 
                         if latestTwoPromotions.Count = 2 then
-                            do! diffTwoDirectoryVersions latestTwoPromotions[0].DirectoryId latestTwoPromotions[1].DirectoryId
+                            do! diffTwoDirectoryVersions latestTwoPromotions[0].DirectoryId latestTwoPromotions[1].DirectoryId correlationId
 
                     | Branch.Committed(referenceDto, directoryVersionId, sha256Hash, referenceText) ->
                         let! branchDto = getBranchDto referenceDto.BranchId correlationId
@@ -181,11 +186,11 @@ module Notifications =
                         let! latestTwoCommits = getCommits referenceDto.BranchId 2 (getCorrelationId context)
 
                         if latestTwoCommits.Count = 2 then
-                            do! diffTwoDirectoryVersions latestTwoCommits[0].DirectoryId latestTwoCommits[1].DirectoryId
+                            do! diffTwoDirectoryVersions latestTwoCommits[0].DirectoryId latestTwoCommits[1].DirectoryId correlationId
 
                         // Create the diff between the commit and the parent branch's most recent promotion.
                         match! getLatestPromotion branchDto.ParentBranchId with
-                        | Some latestPromotion -> do! diffTwoDirectoryVersions referenceDto.DirectoryId latestPromotion.DirectoryId
+                        | Some latestPromotion -> do! diffTwoDirectoryVersions referenceDto.DirectoryId latestPromotion.DirectoryId correlationId
                         | None -> ()
                     | Branch.Checkpointed(referenceDto, directoryVersionId, sha256Hash, referenceText) ->
                         let! branchDto = getBranchDto referenceDto.BranchId correlationId
@@ -200,11 +205,11 @@ module Notifications =
                         let! checkpoints = getCheckpoints branchDto.BranchId 2 (getCorrelationId context)
 
                         if checkpoints.Count = 2 then
-                            do! diffTwoDirectoryVersions checkpoints[0].DirectoryId checkpoints[1].DirectoryId
+                            do! diffTwoDirectoryVersions checkpoints[0].DirectoryId checkpoints[1].DirectoryId correlationId
 
                         // Create a diff between the checkpoint and the most recent commit.
                         match! getLatestCommit branchDto.BranchId with
-                        | Some latestCommit -> do! diffTwoDirectoryVersions referenceDto.DirectoryId latestCommit.DirectoryId
+                        | Some latestCommit -> do! diffTwoDirectoryVersions referenceDto.DirectoryId latestCommit.DirectoryId correlationId
                         | None -> ()
 
                     | Branch.Saved(referenceDto, directoryVersionId, sha256Hash, referenceText) ->
@@ -220,7 +225,7 @@ module Notifications =
                         let! latestTwoSaves = getSaves referenceDto.BranchId 2 (getCorrelationId context)
 
                         if latestTwoSaves.Count = 2 then
-                            do! diffTwoDirectoryVersions latestTwoSaves[0].DirectoryId latestTwoSaves[1].DirectoryId
+                            do! diffTwoDirectoryVersions latestTwoSaves[0].DirectoryId latestTwoSaves[1].DirectoryId correlationId
 
                         // Create the diff between the new save and the most recent commit.
                         let mutable latestCommit = Reference.ReferenceDto.Default
@@ -228,7 +233,7 @@ module Notifications =
                         match! getLatestCommit branchDto.BranchId with
                         | Some latest ->
                             latestCommit <- latest
-                            do! diffTwoDirectoryVersions latestCommit.DirectoryId referenceDto.DirectoryId
+                            do! diffTwoDirectoryVersions latestCommit.DirectoryId referenceDto.DirectoryId correlationId
                         | None -> ()
 
                         // Create the diff between the new save and the most recent checkpoint,
@@ -236,32 +241,58 @@ module Notifications =
                         match! getLatestCheckpoint branchDto.BranchId with
                         | Some latestCheckpoint ->
                             if latestCheckpoint.CreatedAt > latestCommit.CreatedAt then
-                                do! diffTwoDirectoryVersions latestCheckpoint.DirectoryId referenceDto.DirectoryId
+                                do! diffTwoDirectoryVersions latestCheckpoint.DirectoryId referenceDto.DirectoryId correlationId
                         | None -> ()
                     | Branch.Tagged(referenceId, directoryVersionId, sha256Hash, referenceText) -> ()
                     | _ -> ()
                 | DirectoryVersionEvent directoryVersionEvent ->
-                    logToConsole
-                        $"Received DirectoryVersionEvent: {getDiscriminatedUnionFullName directoryVersionEvent.Event} {Environment.NewLine}{directoryVersionEvent.Metadata}"
+                    let correlationId = directoryVersionEvent.Metadata.CorrelationId
+
+                    log.LogInformation(
+                        "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; Received DirectoryVersionEvent notification.",
+                        getCurrentInstantExtended (),
+                        getMachineName,
+                        correlationId
+                    )
                 | OrganizationEvent organizationEvent ->
-                    logToConsole
-                        $"Received OrganizationEvent: {getDiscriminatedUnionFullName organizationEvent.Event} {Environment.NewLine}{organizationEvent.Metadata}"
+                    let correlationId = organizationEvent.Metadata.CorrelationId
+
+                    log.LogInformation(
+                        "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; Received OrganizationEvent notification.",
+                        getCurrentInstantExtended (),
+                        getMachineName,
+                        correlationId
+                    )
                 | OwnerEvent ownerEvent ->
-                    logToConsole $"Received OwnerEvent: {getDiscriminatedUnionFullName ownerEvent.Event} {Environment.NewLine}{ownerEvent.Metadata}"
+                    let correlationId = ownerEvent.Metadata.CorrelationId
+
+                    log.LogInformation(
+                        "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; Received OwnerEvent notification.",
+                        getCurrentInstantExtended (),
+                        getMachineName,
+                        correlationId
+                    )
                 | ReferenceEvent referenceEvent ->
-                    logToConsole $"Received ReferenceEvent: {getDiscriminatedUnionFullName referenceEvent.Event} {Environment.NewLine}{referenceEvent.Metadata}"
+                    let correlationId = referenceEvent.Metadata.CorrelationId
+
+                    log.LogInformation(
+                        "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; Received ReferenceEvent notification.",
+                        getCurrentInstantExtended (),
+                        getMachineName,
+                        correlationId
+                    )
 
                     match referenceEvent.Event with
                     | Reference.Created(referenceDto) ->
+                        // If the reference is a commit, we're going to pre-compute the directory version contents .zip file.
                         if referenceDto.ReferenceType = ReferenceType.Commit then
-                            // Create the directory version contents .zip file.
                             let directoryVersionActorProxy = DirectoryVersion.CreateActorProxy referenceDto.DirectoryId correlationId
-
-                            match! directoryVersionActorProxy.CreateZipFile correlationId with
-                            | Ok result -> logToConsole $"Successfully created .zip file for DirectoryVersionId {referenceDto.DirectoryId}."
-                            | Error graceError -> logToConsole $"Error creating directory version contents .zip file: {graceError}"
+                            let! zipFileUri = directoryVersionActorProxy.GetZipFile correlationId
+                            ()
                     | _ -> ()
                 | RepositoryEvent repositoryEvent ->
+                    let correlationId = repositoryEvent.Metadata.CorrelationId
+
                     logToConsole
                         $"Received RepositoryEvent: {getDiscriminatedUnionFullName repositoryEvent.Event} {Environment.NewLine}{repositoryEvent.Metadata}"
 

@@ -150,16 +150,19 @@ module Application =
                   "/directory"
                   [ POST
                         [ route "/create" DirectoryVersion.Create
-                          |> addMetadata typeof<Directory.CreateParameters>
-                          route "/get" DirectoryVersion.Get |> addMetadata typeof<Directory.GetParameters>
+                          |> addMetadata typeof<DirectoryVersion.CreateParameters>
+                          route "/get" DirectoryVersion.Get
+                          |> addMetadata typeof<DirectoryVersion.GetParameters>
                           route "/getByDirectoryIds" DirectoryVersion.GetByDirectoryIds
-                          |> addMetadata typeof<Directory.GetByDirectoryIdsParameters>
+                          |> addMetadata typeof<DirectoryVersion.GetByDirectoryIdsParameters>
                           route "/getBySha256Hash" DirectoryVersion.GetBySha256Hash
-                          |> addMetadata typeof<Directory.GetBySha256HashParameters>
+                          |> addMetadata typeof<DirectoryVersion.GetBySha256HashParameters>
                           route "/getDirectoryVersionsRecursive" DirectoryVersion.GetDirectoryVersionsRecursive
-                          |> addMetadata typeof<Directory.GetParameters>
+                          |> addMetadata typeof<DirectoryVersion.GetParameters>
+                          route "/getZipFile" DirectoryVersion.GetZipFile
+                          |> addMetadata typeof<DirectoryVersion.GetZipFileParameters>
                           route "/saveDirectoryVersions" DirectoryVersion.SaveDirectoryVersions
-                          |> addMetadata typeof<Directory.SaveDirectoryVersionsParameters> ] ]
+                          |> addMetadata typeof<DirectoryVersion.SaveDirectoryVersionsParameters> ] ]
               subRoute
                   "/notifications"
                   [ GET []
