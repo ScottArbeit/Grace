@@ -30,12 +30,10 @@ Use this template to ensure the necessary information is documented and shared.
 
 ### Customer Name
 <!-- Provide the name of the customer or organization involved in this activity -->
-**Customer Name:** 
 
 ### Description
 <!-- Briefly describe the activity, including any goals or expected outcomes -->
-**Activity Description:**
 
 ### Additional Context
 <!-- Optional: Add any relevant context, background, or links to supporting documents -->
-**Additional Context:**
+
