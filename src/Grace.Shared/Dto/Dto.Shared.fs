@@ -145,6 +145,8 @@ module Dto =
               StorageContainerName: StorageContainerName
               RepositoryType: RepositoryType
               RepositoryStatus: RepositoryStatus
+              AnonymousAccess: bool
+              AllowsLargeFiles: bool
               DefaultServerApiVersion: string
               DefaultBranchName: BranchName
               LogicalDeleteDays: single
@@ -171,6 +173,8 @@ module Dto =
                   StorageContainerName = "grace-objects"
                   RepositoryType = RepositoryType.Private
                   RepositoryStatus = RepositoryStatus.Active
+                  AnonymousAccess = false
+                  AllowsLargeFiles = false
                   DefaultServerApiVersion = "latest"
                   DefaultBranchName = BranchName Constants.InitialBranchName
                   LogicalDeleteDays = 30.0f
@@ -209,6 +213,7 @@ module Dto =
               TagEnabled: bool
               ExternalEnabled: bool
               AutoRebaseEnabled: bool
+              LatestReference: ReferenceDto
               LatestPromotion: ReferenceDto
               LatestCommit: ReferenceDto
               LatestCheckpoint: ReferenceDto
@@ -235,6 +240,7 @@ module Dto =
                   TagEnabled = false
                   ExternalEnabled = false
                   AutoRebaseEnabled = true
+                  LatestReference = ReferenceDto.Default
                   LatestPromotion = ReferenceDto.Default
                   LatestCommit = ReferenceDto.Default
                   LatestCheckpoint = ReferenceDto.Default

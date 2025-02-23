@@ -144,11 +144,40 @@ module Branch =
             task {
                 let mutable newBranchDto = branchDto
 
-                // Get the latest references and update the dto.
-                let referenceTypes = [| Save; Checkpoint; Commit; Promotion; Rebase |]
+                // Get the enabled reference types. This allows us to limit the ReferenceTypes we search for.
+                let enabledReferenceTypes = List<ReferenceType>()
 
+                if branchDto.PromotionEnabled then
+                    enabledReferenceTypes.Add(ReferenceType.Promotion)
+
+                if branchDto.CommitEnabled then enabledReferenceTypes.Add(ReferenceType.Commit)
+
+                if branchDto.CheckpointEnabled then
+                    enabledReferenceTypes.Add(ReferenceType.Checkpoint)
+
+                if branchDto.SaveEnabled then enabledReferenceTypes.Add(ReferenceType.Save)
+                if branchDto.TagEnabled then enabledReferenceTypes.Add(ReferenceType.Tag)
+
+                if branchDto.ExternalEnabled then
+                    enabledReferenceTypes.Add(ReferenceType.External)
+
+                if branchDto.AutoRebaseEnabled then
+                    enabledReferenceTypes.Add(ReferenceType.Rebase)
+
+                let referenceTypes = enabledReferenceTypes.ToArray()
+
+                // Get the latest references.
                 let! latestReferences = getLatestReferenceByReferenceTypes referenceTypes branchDto.BranchId
 
+                // Get the latest reference of any type.
+                let latestReference =
+                    latestReferences.Values
+                        .OrderByDescending(fun referenceDto -> referenceDto.UpdatedAt)
+                        .FirstOrDefault(ReferenceDto.Default)
+
+                newBranchDto <- { newBranchDto with LatestReference = latestReference }
+
+                // Get the latest reference of each type.
                 for kvp in latestReferences do
                     let referenceDto = kvp.Value
 

@@ -44,6 +44,16 @@ module Repository =
         inherit RepositoryParameters()
         member val public Status = String.Empty with get, set
 
+    /// Parameters for the /repository/setAnonymousAccess endpoint.
+    type SetAnonymousAccessParameters() =
+        inherit RepositoryParameters()
+        member val public AnonymousAccess = false with get, set
+
+    /// Parameters for the /repository/setAllowsLargeFiles endpoint.
+    type SetAllowsLargeFilesParameters() =
+        inherit RepositoryParameters()
+        member val public AllowsLargeFiles = false with get, set
+
     /// Parameters for the /repository/recordSaves endpoint.
     type RecordSavesParameters() =
         inherit RepositoryParameters()

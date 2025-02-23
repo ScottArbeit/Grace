@@ -407,12 +407,18 @@ module Diff =
 
                                         if (newDirectoryVersions.Count > 0) then
                                             (task {
-                                                let saveDirectoryVersionsParameters = SaveDirectoryVersionsParameters()
+                                                let saveParameters = SaveDirectoryVersionsParameters()
+                                                saveParameters.OwnerId <- parameters.OwnerId
+                                                saveParameters.OwnerName <- parameters.OwnerName
+                                                saveParameters.OrganizationId <- parameters.OrganizationId
+                                                saveParameters.OrganizationName <- parameters.OrganizationName
+                                                saveParameters.RepositoryId <- parameters.RepositoryId
+                                                saveParameters.RepositoryName <- parameters.RepositoryName
+                                                saveParameters.CorrelationId <- getCorrelationId parseResult
 
-                                                saveDirectoryVersionsParameters.DirectoryVersions <-
-                                                    newDirectoryVersions.Select(fun dv -> dv.ToDirectoryVersion).ToList()
+                                                saveParameters.DirectoryVersions <- newDirectoryVersions.Select(fun dv -> dv.ToDirectoryVersion).ToList()
 
-                                                match! DirectoryVersion.SaveDirectoryVersions saveDirectoryVersionsParameters with
+                                                match! DirectoryVersion.SaveDirectoryVersions saveParameters with
                                                 | Ok returnValue -> ()
                                                 | Error error -> logToAnsiConsole Colors.Error $"Failed to upload new directory versions. {error}"
                                             })
@@ -696,12 +702,17 @@ module Diff =
 
                                             if (newDirectoryVersions.Count > 0) then
                                                 (task {
-                                                    let saveDirectoryVersionsParameters = SaveDirectoryVersionsParameters()
+                                                    let saveParameters = SaveDirectoryVersionsParameters()
+                                                    saveParameters.OwnerId <- parameters.OwnerId
+                                                    saveParameters.OwnerName <- parameters.OwnerName
+                                                    saveParameters.OrganizationId <- parameters.OrganizationId
+                                                    saveParameters.OrganizationName <- parameters.OrganizationName
+                                                    saveParameters.RepositoryId <- parameters.RepositoryId
+                                                    saveParameters.RepositoryName <- parameters.RepositoryName
+                                                    saveParameters.CorrelationId <- getCorrelationId parseResult
+                                                    saveParameters.DirectoryVersions <- newDirectoryVersions.Select(fun dv -> dv.ToDirectoryVersion).ToList()
 
-                                                    saveDirectoryVersionsParameters.DirectoryVersions <-
-                                                        newDirectoryVersions.Select(fun dv -> dv.ToDirectoryVersion).ToList()
-
-                                                    match! DirectoryVersion.SaveDirectoryVersions saveDirectoryVersionsParameters with
+                                                    match! DirectoryVersion.SaveDirectoryVersions saveParameters with
                                                     | Ok returnValue -> ()
                                                     | Error error -> logToAnsiConsole Colors.Error $"Failed to upload new directory versions. {error}"
                                                 })

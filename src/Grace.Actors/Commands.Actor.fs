@@ -104,6 +104,8 @@ module Commands =
             | SetRepositoryType of repositoryVisibility: RepositoryType
             | SetRepositoryStatus of repositoryStatus: RepositoryStatus
             | SetRecordSaves of recordSaves: bool
+            | SetAllowsLargeFiles of allowsLargeFiles: bool
+            | SetAnonymousAccess of anonymousAccess: bool
             | SetDefaultServerApiVersion of defaultServerApiVersion: string
             | SetDefaultBranchName of defaultBranchName: BranchName
             | SetLogicalDeleteDays of duration: single

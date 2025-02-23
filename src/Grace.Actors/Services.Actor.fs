@@ -124,23 +124,20 @@ module Services =
                             cacheEntry.AbsoluteExpiration <- DateTimeOffset.UtcNow.Add(TimeSpan.FromMinutes(10.0))
 
                             let blobContainerClient = BlobContainerClient(azureStorageConnectionString, containerName)
-                            let! exists = blobContainerClient.ExistsAsync()
+                            let ownerActorProxy = Owner.CreateActorProxy repositoryDto.OwnerId CorrelationId.Empty
+                            let! ownerDto = ownerActorProxy.Get correlationId
+                            let organizationActorProxy = Organization.CreateActorProxy repositoryDto.OrganizationId CorrelationId.Empty
+                            let! organizationDto = organizationActorProxy.Get correlationId
+                            let metadata = Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) :> IDictionary<string, string>
+                            metadata[nameof (OwnerId)] <- $"{repositoryDto.OwnerId}"
+                            metadata[nameof (OwnerName)] <- $"{ownerDto.OwnerName}"
+                            metadata[nameof (OrganizationId)] <- $"{repositoryDto.OrganizationId}"
+                            metadata[nameof (OrganizationName)] <- $"{organizationDto.OrganizationName}"
+                            metadata[nameof (RepositoryId)] <- $"{repositoryDto.RepositoryId}"
+                            metadata[nameof (RepositoryName)] <- $"{repositoryDto.RepositoryName}"
 
-                            if exists.Value = false then
-                                let ownerActorProxy = Owner.CreateActorProxy repositoryDto.OwnerId CorrelationId.Empty
-                                let! ownerDto = ownerActorProxy.Get correlationId
-                                let organizationActorProxy = Organization.CreateActorProxy repositoryDto.OrganizationId CorrelationId.Empty
-                                let! organizationDto = organizationActorProxy.Get correlationId
-                                let metadata = Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) :> IDictionary<string, string>
-                                metadata[nameof (OwnerId)] <- $"{repositoryDto.OwnerId}"
-                                metadata[nameof (OwnerName)] <- $"{ownerDto.OwnerName}"
-                                metadata[nameof (OrganizationId)] <- $"{repositoryDto.OrganizationId}"
-                                metadata[nameof (OrganizationName)] <- $"{organizationDto.OrganizationName}"
-                                metadata[nameof (RepositoryId)] <- $"{repositoryDto.RepositoryId}"
-                                metadata[nameof (RepositoryName)] <- $"{repositoryDto.RepositoryName}"
-
-                                let! azureResponse = blobContainerClient.CreateAsync(publicAccessType = Models.PublicAccessType.None, metadata = metadata)
-                                ()
+                            let! azureResponse =
+                                blobContainerClient.CreateIfNotExistsAsync(publicAccessType = Models.PublicAccessType.None, metadata = metadata)
 
                             return blobContainerClient
                         }
@@ -986,10 +983,11 @@ module Services =
                             requestCharge.Append($"{results.RequestCharge}, ") |> ignore
                             results.Resource |> Seq.iter (fun r -> branchIds.Add(r.branchId))
 
-                        Activity.Current
-                            .SetTag("indexMetrics", $"{indexMetrics.Remove(indexMetrics.Length - 2, 2)}")
-                            .SetTag("requestCharge", $"{requestCharge.Remove(requestCharge.Length - 2, 2)}")
-                        |> ignore
+                        if indexMetrics.Length >= 2 && requestCharge.Length >= 2 then
+                            Activity.Current
+                                .SetTag("indexMetrics", $"{indexMetrics.Remove(indexMetrics.Length - 2, 2)}")
+                                .SetTag("requestCharge", $"{requestCharge.Remove(requestCharge.Length - 2, 2)}")
+                            |> ignore
 
                         // Now we have the branchIds, let's get the BranchDto's. Right now the best way is just to get them as individual actors.
                         do!

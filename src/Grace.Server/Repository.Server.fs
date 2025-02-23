@@ -91,7 +91,7 @@ module Repository =
                             return! context |> result400BadRequest graceError
                     }
 
-                log.LogInformation(
+                log.LogDebug(
                     "{CurrentInstant}: ****In Repository.Server.processCommand; about to run validations: CorrelationId: {correlationId}; RepositoryId: {repositoryId}.",
                     getCurrentInstantExtended (),
                     correlationId,
@@ -102,7 +102,7 @@ module Repository =
 
                 let! validationsPassed = validationResults |> allPass
 
-                log.LogInformation(
+                log.LogDebug(
                     "{CurrentInstant}: ****In Repository.Server.processCommand: CorrelationId: {correlationId}; RepositoryId: {repositoryId}; validationsPassed: {validationsPassed}.",
                     getCurrentInstantExtended (),
                     correlationId,
@@ -113,7 +113,21 @@ module Repository =
                 if validationsPassed then
                     let repositoryGuid = Guid.Parse(graceIds.RepositoryId)
                     let! cmd = command parameters
-                    return! handleCommand repositoryGuid cmd
+                    let! result = handleCommand repositoryGuid cmd
+
+                    log.LogInformation(
+                        "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; Finished {path}; Status code: {statusCode}; OwnerId: {ownerId}; OrganizationId: {organizationId}; RepositoryId: {repositoryId}.",
+                        getCurrentInstantExtended (),
+                        getMachineName,
+                        correlationId,
+                        context.Request.Path,
+                        context.Response.StatusCode,
+                        graceIds.OwnerId,
+                        graceIds.OrganizationId,
+                        graceIds.RepositoryId
+                    )
+
+                    return result
                 else
                     let! error = validationResults |> getFirstError
                     let errorMessage = RepositoryError.getErrorMessage error
@@ -345,6 +359,32 @@ module Repository =
                     |> returnValueTask
 
                 context.Items.Add("Command", nameof (SetRepositoryStatus))
+                return! processCommand context validations command
+            }
+
+    /// Sets whether the repository allows large files.
+    let SetAllowsLargeFiles: HttpHandler =
+        fun (next: HttpFunc) (context: HttpContext) ->
+            task {
+                let validations (parameters: SetAllowsLargeFilesParameters) =
+                    [| Repository.repositoryIsNotDeleted context parameters.CorrelationId RepositoryIsDeleted |]
+
+                let command (parameters: SetAllowsLargeFilesParameters) = SetAllowsLargeFiles(parameters.AllowsLargeFiles) |> returnValueTask
+
+                context.Items.Add("Command", nameof (SetAllowsLargeFiles))
+                return! processCommand context validations command
+            }
+
+    /// Sets whether the repository allows anonymous access.
+    let SetAnonymousAccess: HttpHandler =
+        fun (next: HttpFunc) (context: HttpContext) ->
+            task {
+                let validations (parameters: SetAnonymousAccessParameters) =
+                    [| Repository.repositoryIsNotDeleted context parameters.CorrelationId RepositoryIsDeleted |]
+
+                let command (parameters: SetAnonymousAccessParameters) = SetAnonymousAccess(parameters.AnonymousAccess) |> returnValueTask
+
+                context.Items.Add("Command", nameof (SetAnonymousAccess))
                 return! processCommand context validations command
             }
 

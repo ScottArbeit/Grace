@@ -386,6 +386,9 @@ module GraceCommand =
                     if configurationFileExists () then
                         parseResult <- command.Parse(args)
 
+                        // Write the ParseResult to Services as global context.
+                        Services.parseResult <- parseResult
+
                         if parseResult |> hasOutput then
                             if parseResult |> verbose then
                                 AnsiConsole.Write(

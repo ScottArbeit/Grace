@@ -144,7 +144,7 @@ module Interfaces =
         abstract member GetRecursiveSize: correlationId: CorrelationId -> Task<int64>
 
         /// Creates the Zip file that contains the contents of this directory and all subdirectories, if it doesn't already exist, and returns a Uri with a shared access signature to download the file.
-        abstract member GetZipFile: correlationId: CorrelationId -> Task<UriWithSharedAccessSignature>
+        abstract member GetZipFileUri: correlationId: CorrelationId -> Task<UriWithSharedAccessSignature>
 
         /// Delete the DirectoryVersion and all subdirectories and files.
         abstract member Delete: correlationId: CorrelationId -> Task<GraceResult<string>>

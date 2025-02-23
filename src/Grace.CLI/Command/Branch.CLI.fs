@@ -64,7 +64,12 @@ module Branch =
                 IsRequired = false,
                 Description = "The branch's ID <Guid>.",
                 Arity = ArgumentArity.ExactlyOne,
-                getDefaultValue = (fun _ -> $"{Current().BranchId}")
+                getDefaultValue =
+                    (fun _ ->
+                        if Current().BranchId = Guid.Empty then
+                            $"{Guid.NewGuid()}"
+                        else
+                            $"{Current().BranchId}")
             )
 
         let branchName =
@@ -84,7 +89,12 @@ module Branch =
                 IsRequired = false,
                 Description = "The repository's owner ID <Guid>.",
                 Arity = ArgumentArity.ZeroOrOne,
-                getDefaultValue = (fun _ -> $"{Current().OwnerId}")
+                getDefaultValue =
+                    (fun _ ->
+                        if Current().OwnerId = Guid.Empty then
+                            $"{Guid.NewGuid()}"
+                        else
+                            $"{Current().OwnerId}")
             )
 
         let ownerName =
@@ -101,7 +111,12 @@ module Branch =
                 IsRequired = false,
                 Description = "The repository's organization ID <Guid>.",
                 Arity = ArgumentArity.ExactlyOne,
-                getDefaultValue = (fun _ -> $"{Current().OrganizationId}")
+                getDefaultValue =
+                    (fun _ ->
+                        if Current().OrganizationId = Guid.Empty then
+                            $"{Guid.NewGuid()}"
+                        else
+                            $"{Current().OrganizationId}")
             )
 
         let organizationName =
@@ -118,7 +133,12 @@ module Branch =
                 IsRequired = false,
                 Description = "The repository's ID <Guid>.",
                 Arity = ArgumentArity.ExactlyOne,
-                getDefaultValue = (fun _ -> $"{Current().RepositoryId}")
+                getDefaultValue =
+                    (fun _ ->
+                        if Current().RepositoryId = Guid.Empty then
+                            $"{Guid.NewGuid()}"
+                        else
+                            $"{Current().RepositoryId}")
             )
 
         let repositoryName =
@@ -915,6 +935,12 @@ module Branch =
 
                                             if newDirectoryVersions.Count > 0 then
                                                 let saveParameters = SaveDirectoryVersionsParameters()
+                                                saveParameters.OwnerId <- parameters.OwnerId
+                                                saveParameters.OwnerName <- parameters.OwnerName
+                                                saveParameters.OrganizationId <- parameters.OrganizationId
+                                                saveParameters.OrganizationName <- parameters.OrganizationName
+                                                saveParameters.RepositoryId <- parameters.RepositoryId
+                                                saveParameters.RepositoryName <- parameters.RepositoryName
                                                 saveParameters.DirectoryVersionId <- $"{newGraceStatus.RootDirectoryId}"
 
                                                 saveParameters.DirectoryVersions <- newDirectoryVersions.Select(fun dv -> dv.ToDirectoryVersion).ToList()
@@ -1004,7 +1030,13 @@ module Branch =
 
                         let! uploadResult = uploadFilesToObjectStorage getUploadMetadataForFilesParameters
                         let saveParameters = SaveDirectoryVersionsParameters()
-
+                        saveParameters.OwnerId <- parameters.OwnerId
+                        saveParameters.OwnerName <- parameters.OwnerName
+                        saveParameters.OrganizationId <- parameters.OrganizationId
+                        saveParameters.OrganizationName <- parameters.OrganizationName
+                        saveParameters.RepositoryId <- parameters.RepositoryId
+                        saveParameters.RepositoryName <- parameters.RepositoryName
+                        saveParameters.CorrelationId <- getCorrelationId parseResult
                         saveParameters.DirectoryVersions <- newDirectoryVersions.Select(fun dv -> dv.ToDirectoryVersion).ToList()
 
                         let! uploadDirectoryVersions = DirectoryVersion.SaveDirectoryVersions saveParameters
@@ -1846,7 +1878,7 @@ module Branch =
                 /// The SHA-256 hash of the root directory version.
                 let mutable rootDirectorySha256Hash = Sha256Hash String.Empty
                 /// The set of DirectoryIds in the working directory after the current version is saved.
-                let mutable newDirectoryIds: HashSet<DirectoryVersionId> = null
+                let mutable directoryIdsInNewGraceStatus: HashSet<DirectoryVersionId> = null
 
                 let showOutput = parseResult |> hasOutput
 
@@ -1939,7 +1971,7 @@ module Branch =
 
                         rootDirectoryId <- newGraceStatus.RootDirectoryId
                         rootDirectorySha256Hash <- newGraceStatus.RootDirectorySha256Hash
-                        newDirectoryIds <- newGraceStatus.Index.Keys.ToHashSet()
+                        directoryIdsInNewGraceStatus <- newGraceStatus.Index.Keys.ToHashSet()
                         t |> setProgressTaskValue showOutput 100.0
                         return Ok(showOutput, parseResult, parameters, currentBranch, differences, newDirectoryVersions)
                     }
@@ -2028,7 +2060,13 @@ module Branch =
 
                         if currentBranch.SaveEnabled && newDirectoryVersions.Any() then
                             let saveParameters = SaveDirectoryVersionsParameters()
-
+                            saveParameters.OwnerId <- parameters.OwnerId
+                            saveParameters.OwnerName <- parameters.OwnerName
+                            saveParameters.OrganizationId <- parameters.OrganizationId
+                            saveParameters.OrganizationName <- parameters.OrganizationName
+                            saveParameters.RepositoryId <- parameters.RepositoryId
+                            saveParameters.RepositoryName <- parameters.RepositoryName
+                            saveParameters.CorrelationId <- getCorrelationId parseResult
                             saveParameters.DirectoryVersions <- newDirectoryVersions.Select(fun dv -> dv.ToDirectoryVersion).ToList()
 
                             let! uploadDirectoryVersions = DirectoryVersion.SaveDirectoryVersions saveParameters
@@ -2050,22 +2088,33 @@ module Branch =
                 // 6. Create a before save reference.
                 let createSaveReference
                     (t: ProgressTask)
-                    (showOutput, parseResult: ParseResult, parameters: CommonParameters, currentBranch: BranchDto, message: string)
+                    (showOutput, parseResult: ParseResult, parameters: CommonParameters, branchDto: BranchDto, message: string)
                     =
                     task {
                         t |> startProgressTask showOutput
 
-                        if currentBranch.SaveEnabled then
+                        if branchDto.SaveEnabled then
+                            logToAnsiConsole Colors.Verbose $"In createSaveReference: BranchName: {branchDto.BranchName}; SaveEnabled; message: {message}"
+
                             match! createSaveReference newGraceStatus.Index[rootDirectoryId] message (getCorrelationId parseResult) with
                             | Ok returnValue ->
+                                logToAnsiConsole
+                                    Colors.Verbose
+                                    $"In createSaveReference: BranchName: {branchDto.BranchName}; SaveEnabled; message: {message}; returnValue: {returnValue}."
+
                                 t |> setProgressTaskValue showOutput 100.0
-                                return Ok(showOutput, parseResult, parameters, currentBranch)
+                                return Ok(showOutput, parseResult, parameters, branchDto)
                             | Error error ->
+                                logToAnsiConsole
+                                    Colors.Verbose
+                                    $"In createSaveReference: BranchName: {branchDto.BranchName}; SaveEnabled; message: {message}; error: {error}."
+
                                 t |> setProgressTaskValue showOutput 50.0
                                 return Error error
                         else
+                            logToAnsiConsole Colors.Verbose $"In createSaveReference: BranchName: {branchDto.BranchName}; Save not enabled; message: {message}"
                             t |> setProgressTaskValue showOutput 100.0
-                            return Ok(showOutput, parseResult, parameters, currentBranch)
+                            return Ok(showOutput, parseResult, parameters, branchDto)
                     }
 
                 /// 7. Get the branch and directory versions for the requested version we're switching to from the server.
@@ -2099,11 +2148,17 @@ module Branch =
                                     CorrelationId = parameters.CorrelationId
                                 )
 
+                            if parseResult |> verbose then
+                                logToAnsiConsole Colors.Verbose $"In getVersionToSwitchTo: getNewBranchParameters: {serialize getNewBranchParameters}."
+
                             match! Branch.Get(getNewBranchParameters) with
                             | Ok returnValue ->
                                 let newBranch = returnValue.ReturnValue
 
-                                let getVersionParameters =
+                                if parseResult |> verbose then
+                                    logToAnsiConsole Colors.Verbose $"In getVersionToSwitchTo: New branch: {serialize newBranch}."
+
+                                let getBranchVersionParameters =
                                     GetBranchVersionParameters(
                                         OwnerId = parameters.OwnerId,
                                         OwnerName = parameters.OwnerName,
@@ -2116,13 +2171,21 @@ module Branch =
                                         CorrelationId = parameters.CorrelationId
                                     )
 
-                                match! Branch.GetVersion getVersionParameters with
+                                if parseResult |> verbose then
+                                    logToAnsiConsole
+                                        Colors.Verbose
+                                        $"In getVersionToSwitchTo: getBranchVersionParameters: {serialize getBranchVersionParameters}."
+
+                                match! Branch.GetVersion getBranchVersionParameters with
                                 | Ok returnValue ->
                                     let directoryIds = returnValue.ReturnValue
 
-                                    logToAnsiConsole Colors.Verbose $"Retrieved {directoryIds.Count()} directory version(s) for branch {newBranch.BranchName}."
+                                    if parseResult |> verbose then
+                                        logToAnsiConsole
+                                            Colors.Verbose
+                                            $"Retrieved {directoryIds.Count()} directory version(s) for branch {newBranch.BranchName}."
 
-                                    logToAnsiConsole Colors.Verbose $"DirectoryIds: {serialize directoryIds}."
+                                    //logToAnsiConsole Colors.Verbose $"DirectoryIds: {serialize directoryIds}."
                                     t |> setProgressTaskValue showOutput 100.0
 
                                     return Ok(showOutput, parseResult, parameters, currentBranch, newBranch, directoryIds)
@@ -2235,13 +2298,21 @@ module Branch =
 
                         let missingDirectoryIds =
                             directoryIds
-                                .Where(fun directoryId -> not <| newDirectoryIds.Contains(directoryId))
+                                .Where(fun directoryId -> not <| directoryIdsInNewGraceStatus.Contains(directoryId))
                                 .ToList()
+
+                        if parseResult |> verbose then
+                            logToAnsiConsole Colors.Verbose $"In updateWorkingDirectory: missingDirectoryIds.Count: {missingDirectoryIds.Count()}."
 
                         // Get missing directory versions from server.
                         let getByDirectoryIdParameters =
                             GetByDirectoryIdsParameters(
+                                OwnerId = parameters.OwnerId,
+                                OwnerName = parameters.OwnerName,
+                                OrganizationId = parameters.OrganizationId,
+                                OrganizationName = parameters.OrganizationName,
                                 RepositoryId = parameters.RepositoryId,
+                                RepositoryName = parameters.RepositoryName,
                                 DirectoryVersionId = $"{rootDirectoryId}",
                                 DirectoryIds = missingDirectoryIds,
                                 CorrelationId = parameters.CorrelationId
@@ -2249,19 +2320,31 @@ module Branch =
 
                         match! DirectoryVersion.GetByDirectoryIds getByDirectoryIdParameters with
                         | Ok returnValue ->
-                            //logToAnsiConsole Colors.Verbose $"Succeeded calling Directory.GetByDirectoryIds."
                             // Create a new version of GraceStatus that includes the new DirectoryVersions.
                             let newDirectoryVersions = returnValue.ReturnValue
 
+                            if parseResult |> verbose then
+                                logToAnsiConsole Colors.Verbose $"In updateWorkingDirectory: newDirectoryVersions.Count: {newDirectoryVersions.Count()}."
+
                             let graceStatusWithNewDirectoryVersionsFromServer =
                                 updateGraceStatusWithNewDirectoryVersionsFromServer newGraceStatus newDirectoryVersions
-                            //logToAnsiConsole Colors.Verbose $"Succeeded calling updateGraceStatusWithNewDirectoryVersions."
 
                             let mutable isError = false
 
                             // Identify files that we don't already have in object cache and download them.
+                            let getDownloadUriParameters =
+                                Storage.GetDownloadUriParameters(
+                                    OwnerId = parameters.OwnerId,
+                                    OwnerName = parameters.OwnerName,
+                                    OrganizationId = parameters.OrganizationId,
+                                    OrganizationName = parameters.OrganizationName,
+                                    RepositoryId = parameters.RepositoryId,
+                                    RepositoryName = parameters.RepositoryName,
+                                    CorrelationId = parameters.CorrelationId
+                                )
+
                             for directoryVersion in graceStatusWithNewDirectoryVersionsFromServer.Index.Values do
-                                match! (downloadFilesFromObjectStorage directoryVersion.Files (getCorrelationId parseResult)) with
+                                match! (downloadFilesFromObjectStorage getDownloadUriParameters directoryVersion.Files (getCorrelationId parseResult)) with
                                 | Ok _ ->
                                     try
                                         //logToAnsiConsole Colors.Verbose $"Succeeded downloading files from object storage for {directoryVersion.RelativePath}."
@@ -2299,13 +2382,40 @@ module Branch =
                                     isError <- true
 
                             if not <| isError then
-                                return Ok(showOutput, parseResult, parameters, currentBranch, $"Save created after branch switch.")
+                                logToAnsiConsole Colors.Verbose $"About to exit updateWorkingDirectory."
+                                return Ok(showOutput, parseResult, parameters, newBranch, $"Save created after branch switch.")
                             else
                                 return Error(GraceError.Create $"Failed downloading files from object storage." (parseResult |> getCorrelationId))
                         | Error error ->
                             logToAnsiConsole Colors.Verbose $"Failed calling Directory.GetByDirectoryIds."
                             logToAnsiConsole Colors.Error $"{error}"
                             return Error(GraceError.Create $"{error}" (parseResult |> getCorrelationId))
+                    }
+
+                let writeNewGraceStatus (t: ProgressTask) (showOutput, parseResult: ParseResult, parameters: CommonParameters, currentBranch: BranchDto) =
+                    task {
+                        t |> startProgressTask showOutput
+                        do! writeGraceStatusFile newGraceStatus
+                        let! objectCache = readGraceObjectCacheFile ()
+
+                        let plr =
+                            Parallel.ForEach(
+                                newGraceStatus.Index.Values,
+                                Constants.ParallelOptions,
+                                (fun localDirectoryVersion ->
+                                    if not <| objectCache.Index.ContainsKey(localDirectoryVersion.DirectoryVersionId) then
+                                        objectCache.Index.AddOrUpdate(
+                                            localDirectoryVersion.DirectoryVersionId,
+                                            (fun _ -> localDirectoryVersion),
+                                            (fun _ _ -> localDirectoryVersion)
+                                        )
+                                        |> ignore)
+                            )
+
+                        do! writeGraceObjectCacheFile objectCache
+
+                        t |> setProgressTaskValue showOutput 100.0
+                        return Ok(showOutput, parseResult, parameters, currentBranch)
                     }
 
                 let generateResult (progressTasks: ProgressTask array) =
@@ -2322,6 +2432,7 @@ module Branch =
                             >>=! getVersionToSwitchTo progressTasks[7]
                             >>=! updateWorkingDirectory progressTasks[8]
                             >>=! createSaveReference progressTasks[9]
+                            >>=! writeNewGraceStatus progressTasks[10]
 
                         match result with
                         | Ok _ -> return 0
@@ -2367,13 +2478,17 @@ module Branch =
 
                                     let t9 = progressContext.AddTask($"[{Color.DodgerBlue1}]{UIString.getString CreatingSaveReference}[/]", autoStart = false)
 
-                                    return! generateResult [| t0; t1; t2; t3; t4; t5; t6; t7; t8; t9 |]
+                                    let t10 =
+                                        progressContext.AddTask($"[{Color.DodgerBlue1}]{UIString.getString WritingGraceStatusFile}[/]", autoStart = false)
+
+                                    return! generateResult [| t0; t1; t2; t3; t4; t5; t6; t7; t8; t9; t10 |]
                                 })
                 else
                     // If we're not showing output, we don't need to create the progress tasks.
                     return!
                         generateResult
                             [| emptyTask
+                               emptyTask
                                emptyTask
                                emptyTask
                                emptyTask
@@ -2606,7 +2721,18 @@ module Branch =
                                     //    logToAnsiConsole Colors.Verbose  $"relativePath: {f.RelativePath}"
 
                                     // Download those FileVersions from object storage, and copy them into the working directory.
-                                    match! downloadFilesFromObjectStorage fileVersionsToDownload parameters.CorrelationId with
+                                    let getDownloadUriParameters =
+                                        Storage.GetDownloadUriParameters(
+                                            OwnerId = parameters.OwnerId,
+                                            OwnerName = parameters.OwnerName,
+                                            OrganizationId = parameters.OrganizationId,
+                                            OrganizationName = parameters.OrganizationName,
+                                            RepositoryId = parameters.RepositoryId,
+                                            RepositoryName = parameters.RepositoryName,
+                                            CorrelationId = parameters.CorrelationId
+                                        )
+
+                                    match! downloadFilesFromObjectStorage getDownloadUriParameters fileVersionsToDownload parameters.CorrelationId with
                                     | Ok _ ->
                                         //logToAnsiConsole Colors.Verbose $"Succeeded in downloadFilesFromObjectStorage."
                                         fileVersionsToDownload
@@ -2679,7 +2805,13 @@ module Branch =
                                         task {
                                             if currentBranch.SaveEnabled && newDirectoryVersions.Any() then
                                                 let saveParameters = SaveDirectoryVersionsParameters()
-
+                                                saveParameters.OwnerId <- parameters.OwnerId
+                                                saveParameters.OwnerName <- parameters.OwnerName
+                                                saveParameters.OrganizationId <- parameters.OrganizationId
+                                                saveParameters.OrganizationName <- parameters.OrganizationName
+                                                saveParameters.RepositoryId <- parameters.RepositoryId
+                                                saveParameters.RepositoryName <- parameters.RepositoryName
+                                                saveParameters.CorrelationId <- getCorrelationId parseResult
                                                 saveParameters.DirectoryVersions <- newDirectoryVersions.Select(fun dv -> dv.ToDirectoryVersion).ToList()
 
                                                 match! DirectoryVersion.SaveDirectoryVersions saveParameters with

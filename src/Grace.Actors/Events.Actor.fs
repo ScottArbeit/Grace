@@ -158,6 +158,8 @@ module Events =
             | StorageContainerNameSet of storageContainerName: StorageContainerName
             | RepositoryTypeSet of repositoryVisibility: RepositoryType
             | RepositoryStatusSet of repositoryStatus: RepositoryStatus
+            | AllowsLargeFilesSet of allowsLargeFiles: bool
+            | AnonymousAccessSet of anonymousAccess: bool
             | RecordSavesSet of recordSaves: bool
             | DefaultServerApiVersionSet of defaultServerApiVersion: string
             | DefaultBranchNameSet of defaultBranchName: BranchName

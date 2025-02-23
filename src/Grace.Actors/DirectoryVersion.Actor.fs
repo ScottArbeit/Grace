@@ -32,6 +32,7 @@ open System.IO
 open System.IO.Compression
 open System.Linq
 open System.Threading.Tasks
+open System.Reflection.Metadata
 
 module DirectoryVersion =
 
@@ -103,6 +104,9 @@ module DirectoryVersion =
                             |> Seq.fold
                                 (fun directoryVersionDto directoryVersionEvent -> directoryVersionDto |> updateDto directoryVersionEvent.Event)
                                 DirectoryVersionDto.Default
+
+                        logToConsole
+                            $"In DirectoryVersionActor.OnActivateAsync: directoryVersion.DirectoryVersionId: {directoryVersionDto.DirectoryVersion.DirectoryVersionId}; directoryVersion.RelativePath: {directoryVersionDto.DirectoryVersion.RelativePath}."
                     | None -> ()
 
                     logActorActivation log activateStartTime correlationId actorName this.Id (getActorActivationMessage retrievedEvents)
@@ -145,18 +149,20 @@ module DirectoryVersion =
 
             if String.IsNullOrEmpty(currentCommand) then
                 log.LogInformation(
-                    "{CurrentInstant}: Node: {HostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {ActorName}.{MethodName}; Id: {Id}.",
+                    "{CurrentInstant}: Node: {HostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {ActorName}.{MethodName}; DirectoryVersionId: {DirectoryVersionId}; RelativePath: {RelativePath}; RepositoryId: {RepositoryId}.",
                     getCurrentInstantExtended (),
                     getMachineName,
                     duration_ms,
                     this.correlationId,
                     actorName,
                     context.MethodName,
-                    this.Id
+                    directoryVersionDto.DirectoryVersion.DirectoryVersionId,
+                    directoryVersionDto.DirectoryVersion.RelativePath,
+                    directoryVersionDto.DirectoryVersion.RepositoryId
                 )
             else
                 log.LogInformation(
-                    "{CurrentInstant}: Node: {HostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {ActorName}.{MethodName}; Command: {Command}; Id: {Id}.",
+                    "{CurrentInstant}: Node: {HostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {ActorName}.{MethodName}; Command: {Command}; DirectoryVersionId: {DirectoryVersionId}; RelativePath: {RelativePath}; RepositoryId: {RepositoryId}.",
                     getCurrentInstantExtended (),
                     getMachineName,
                     duration_ms,
@@ -164,7 +170,9 @@ module DirectoryVersion =
                     actorName,
                     context.MethodName,
                     currentCommand,
-                    this.Id
+                    directoryVersionDto.DirectoryVersion.DirectoryVersionId,
+                    directoryVersionDto.DirectoryVersion.RelativePath,
+                    directoryVersionDto.DirectoryVersion.RepositoryId
                 )
 
             logScope.Dispose()
@@ -313,6 +321,10 @@ module DirectoryVersion =
 
                     // Update the Dto with the event.
                     directoryVersionDto <- directoryVersionDto |> updateDto directoryVersionEvent.Event
+
+                    logToConsole
+                        $"In ApplyEvent(): directoryVersion.DirectoryVersionId: {directoryVersionDto.DirectoryVersion.DirectoryVersionId}; directoryVersion.RelativePath: {directoryVersionDto.DirectoryVersion.RelativePath}."
+
 
                     // Publish the event to the rest of the world.
                     let graceEvent = Events.GraceEvent.DirectoryVersionEvent directoryVersionEvent
@@ -563,8 +575,9 @@ module DirectoryVersion =
                         return directoryVersionDto.RecursiveSize
                 }
 
-            member this.GetZipFile(correlationId: CorrelationId) : Task<UriWithSharedAccessSignature> =
+            member this.GetZipFileUri(correlationId: CorrelationId) : Task<UriWithSharedAccessSignature> =
                 this.correlationId <- correlationId
+                let directoryVersion = directoryVersionDto.DirectoryVersion
 
                 /// Creates a .zip file containing the file contents of the directory version.
                 let createDirectoryVersionZipFile
@@ -580,50 +593,52 @@ module DirectoryVersion =
                         let tempZipPath = Path.Combine(Path.GetTempPath(), zipFileName)
 
                         logToConsole
-                            $"In createDirectoryZipAsync: directoryVersionId: {directoryVersionId}; zipFileName: {zipFileName}; tempZipPath: {tempZipPath}."
+                            $"In createDirectoryZipAsync: directoryVersionId: {directoryVersionId}; relativePath: {directoryVersion.RelativePath}; zipFileName: {zipFileName}; tempZipPath: {tempZipPath}."
 
                         try
-                            // Step 1: Create the ZIP archive
+                            // Step 1: Create the ZIP archive.
                             use zipToCreate = new FileStream(tempZipPath, FileMode.Create, FileAccess.Write, FileShare.None, (64 * 1024))
                             use archive = new ZipArchive(zipToCreate, ZipArchiveMode.Create)
 
-                            // Step 2: Process Subdirectories
+                            // Using this lock to ensure that the files are added to the .zip one at a time. ZipArchive is not thread-safe.
+                            let lockObject = new System.Threading.Lock()
+
+                            // Step 2: Process the subdirectories of the current directory.
                             for subdirectoryId in subdirectories do
+                                // Call the subdirectory actor to get the .zip file URI, which will create of the .zip file if it doesn't already exist.
+                                let subdirectoryActorProxy = DirectoryVersion.CreateActorProxy subdirectoryId correlationId
+                                let! subDirectoryVersion = subdirectoryActorProxy.Get correlationId
+                                logToConsole $"In createDirectoryZipAsync: Processing directory version: {subDirectoryVersion.RelativePath}."
+
+                                let! subdirectoryZipFileUri = subdirectoryActorProxy.GetZipFileUri correlationId
+
+                                // Get an Azure Blob Client for the .zip file.
                                 let subZipBlobName = $"{GraceDirectoryVersionStorageFolderName}/{subdirectoryId}.zip"
                                 let! subZipBlobClient = getAzureBlobClient repositoryDto subZipBlobName correlationId
 
-                                // Check if we already have a .zip file for this subdirectory
-                                let! exists = subZipBlobClient.ExistsAsync()
-
-                                logToConsole
-                                    $"In createDirectoryZipAsync: directoryVersionId: {directoryVersionId}; subZipBlobName: {subZipBlobName}; exists: {exists}."
-
-                                // If we don't, call the subdirectory actor to create it.
-                                if exists.Value = false then
-                                    let subdirectoryActorProxy = DirectoryVersion.CreateActorProxy subdirectoryId correlationId
-                                    let! subdirectoryZipFileUri = subdirectoryActorProxy.GetZipFile correlationId
-                                    ()
-
-                                // Now that we know the .zip file for the subdirectory is in Azure Blob Storage,
-                                //   copy the contents to the new .zip we're creating.
+                                // Copy the contents of the subdirectory's .zip file to the new .zip we're creating.
                                 use! subZipStream = subZipBlobClient.OpenReadAsync()
                                 use subArchive = new ZipArchive(subZipStream, ZipArchiveMode.Read)
 
                                 for entry in subArchive.Entries do
                                     if not (String.IsNullOrEmpty(entry.Name)) then
+                                        // Using CompressionLevel.NoCompression because the files are already GZipped.
+                                        // We're just using .zip as an archive format for already-compressed files.
                                         let newEntry = archive.CreateEntry(entry.FullName, CompressionLevel.NoCompression)
                                         newEntry.Comment <- entry.Comment
                                         use entryStream = entry.Open()
                                         use newEntryStream = newEntry.Open()
                                         do! entryStream.CopyToAsync(newEntryStream)
 
-                            // Step 3: Process File Versions
+                            // Step 3: Process the files in the current directory.
                             for fileVersion in fileVersions do
-                                logToConsole $"In createDirectoryZipAsync: Processing file version: {fileVersion.GetObjectFileName}."
-                                let! fileBlobClient = getAzureBlobClientForFileVersion repositoryDto fileVersion correlationId
-                                let! fileExists = fileBlobClient.ExistsAsync()
+                                logToConsole
+                                    $"In createDirectoryZipAsync: Processing file version: {Path.Combine(directoryVersion.RelativePath, fileVersion.GetObjectFileName)}."
 
-                                if fileExists.Value = true then
+                                let! fileBlobClient = getAzureBlobClientForFileVersion repositoryDto fileVersion correlationId
+                                let! existsResult = fileBlobClient.ExistsAsync()
+
+                                if existsResult.Value = true then
                                     use! fileStream = fileBlobClient.OpenReadAsync()
                                     let zipEntry = archive.CreateEntry(fileVersion.RelativePath, CompressionLevel.NoCompression)
                                     zipEntry.Comment <- fileVersion.GetObjectFileName
@@ -631,17 +646,17 @@ module DirectoryVersion =
                                     do! fileStream.CopyToAsync(zipEntryStream)
 
                             // Step 4: Upload the new ZIP to Azure Blob Storage
-                            let! destinationBlobClient = getAzureBlobClient repositoryDto blobName correlationId
-
                             // Dispose all of the streams before uploading
                             archive.Dispose()
-                            //do! zipToCreate.FlushAsync()
-                            //do! zipToCreate.DisposeAsync()
 
                             // Upload the new .zip file to Azure Blob Storage
+                            let! destinationBlobClient = getAzureBlobClient repositoryDto blobName correlationId
                             use uploadStream = File.OpenRead(tempZipPath)
                             let! response = destinationBlobClient.UploadAsync(uploadStream, true)
-                            logToConsole $"In createDirectoryZipAsync: Successfully uploaded {zipFileName} to Azure Blob Storage. Response: {response}."
+
+                            logToConsole
+                                $"In createDirectoryZipAsync: Successfully uploaded {zipFileName} for relative path {directoryVersion.RelativePath} to Azure Blob Storage."
+
                             ()
                         finally
                             // Step 5: Delete the local ZIP file
@@ -649,7 +664,6 @@ module DirectoryVersion =
                     }
 
                 task {
-                    let directoryVersion = directoryVersionDto.DirectoryVersion
                     let repositoryActorProxy = Repository.CreateActorProxy directoryVersion.RepositoryId correlationId
                     let! repositoryDto = repositoryActorProxy.Get correlationId
 

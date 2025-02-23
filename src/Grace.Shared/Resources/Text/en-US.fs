@@ -159,3 +159,4 @@ module en_US =
         | UpdatingWorkingDirectory -> "Updating your working directory to match the new branch."
         | UploadingFiles -> "Uploading new and updated files to object storage."
         | ValueMustBePositive -> "The value must be positive."
+        | WritingGraceStatusFile -> "Writing Grace status file."

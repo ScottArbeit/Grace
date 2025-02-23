@@ -1,4 +1,4 @@
-﻿namespace Grace.CLI
+namespace Grace.CLI
 
 open Grace.Shared.Utilities
 open Grace.Shared.Resources.Text
@@ -16,6 +16,7 @@ module Text =
         | ScanningWorkingDirectory
         | UpdatingWorkingDirectory
         | UploadingFiles
+        | WritingGraceStatusFile
 
         static member getString(uiString: UIString) : string =
             match uiString with
@@ -28,3 +29,4 @@ module Text =
             | ScanningWorkingDirectory -> getLocalizedString StringResourceName.ScanningWorkingDirectory
             | UpdatingWorkingDirectory -> getLocalizedString StringResourceName.UpdatingWorkingDirectory
             | UploadingFiles -> getLocalizedString StringResourceName.UploadingFiles
+            | WritingGraceStatusFile -> getLocalizedString StringResourceName.WritingGraceStatusFile

@@ -44,6 +44,7 @@ module Owner =
         task {
             let commandName = context.Items["Command"] :?> string
             let graceIds = getGraceIds context
+            let correlationId = getCorrelationId context
 
             try
                 use activity = activitySource.StartActivity("processCommand", ActivityKind.Server)
@@ -94,7 +95,19 @@ module Owner =
 
                 if validationsPassed then
                     let! cmd = command parameters
-                    return! handleCommand graceIds.OwnerId cmd
+                    let! result = handleCommand graceIds.OwnerId cmd
+
+                    log.LogInformation(
+                        "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; Finished {path}; Status code: {statusCode}; OwnerId: {ownerId}.",
+                        getCurrentInstantExtended (),
+                        getMachineName,
+                        correlationId,
+                        context.Request.Path,
+                        context.Response.StatusCode,
+                        graceIds.OwnerId
+                    )
+
+                    return result
                 else
                     let! error = validationResults |> getFirstError
                     let errorMessage = OwnerError.getErrorMessage error

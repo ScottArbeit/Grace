@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
 	<PropertyGroup>
 		<TargetFramework>net9.0</TargetFramework>
@@ -44,6 +44,10 @@
 		<Compile Include="Diff.Actor.fs" />
 		<Compile Include="FileAppearance.Actor.fs" />
 		<Compile Include="DirectoryAppearance.Actor.fs" />
+	</ItemGroup>
+
+	<ItemGroup>
+	  <None Include="Repository.Actor.fs %28ApplyEvent Method%29" />
 	</ItemGroup>
 
 	<ItemGroup>

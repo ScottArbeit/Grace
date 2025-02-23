@@ -78,89 +78,129 @@ module Application =
                   "/branch"
                   [ POST
                         [ route "/assign" Branch.Assign |> addMetadata typeof<Branch.AssignParameters>
+
                           route "/checkpoint" Branch.Checkpoint
                           |> addMetadata typeof<Branch.CreateReferenceParameters>
+
                           route "/commit" Branch.Commit
                           |> addMetadata typeof<Branch.CreateReferenceParameters>
+
                           route "/create" Branch.Create
                           |> addMetadata typeof<Branch.CreateBranchParameters>
+
                           route "/createExternal" Branch.CreateExternal
                           |> addMetadata typeof<Branch.CreateReferenceParameters>
+
                           route "/delete" Branch.Delete
                           |> addMetadata typeof<Branch.DeleteBranchParameters>
+
                           route "/enableAssign" Branch.EnableAssign
                           |> addMetadata typeof<Branch.EnableFeatureParameters>
+
                           route "/enableAutoRebase" Branch.EnableAutoRebase
                           |> addMetadata typeof<Branch.EnableFeatureParameters>
+
                           route "/enableCheckpoint" Branch.EnableCheckpoint
                           |> addMetadata typeof<Branch.EnableFeatureParameters>
+
                           route "/enableCommit" Branch.EnableCommit
                           |> addMetadata typeof<Branch.EnableFeatureParameters>
+
                           route "/enableExternal" Branch.EnableExternal
                           |> addMetadata typeof<Branch.EnableFeatureParameters>
+
                           route "/enablePromotion" Branch.EnablePromotion
                           |> addMetadata typeof<Branch.EnableFeatureParameters>
+
                           route "/enableSave" Branch.EnableSave
                           |> addMetadata typeof<Branch.EnableFeatureParameters>
+
                           route "/enableTag" Branch.EnableTag
                           |> addMetadata typeof<Branch.EnableFeatureParameters>
+
                           route "/get" Branch.Get |> addMetadata typeof<Branch.GetBranchParameters>
+
                           route "/getEvents" Branch.GetEvents
                           |> addMetadata typeof<Branch.GetBranchParameters>
+
                           route "/getExternals" Branch.GetExternals
                           |> addMetadata typeof<Branch.GetReferenceParameters>
+
                           route "/getCheckpoints" Branch.GetCheckpoints
                           |> addMetadata typeof<Branch.GetBranchParameters>
+
                           route "/getCommits" Branch.GetCommits
                           |> addMetadata typeof<Branch.GetBranchParameters>
+
                           route "/getDiffsForReferenceType" Branch.GetDiffsForReferenceType
                           |> addMetadata typeof<Branch.GetDiffsForReferenceTypeParameters>
+
                           route "/getParentBranch" Branch.GetParentBranch
                           |> addMetadata typeof<Branch.GetBranchParameters>
+
                           route "/getPromotions" Branch.GetPromotions
                           |> addMetadata typeof<Branch.GetReferenceParameters>
+
                           route "/getRecursiveSize" Branch.GetRecursiveSize
                           |> addMetadata typeof<Branch.ListContentsParameters>
+
                           route "/getReference" Branch.GetReference
                           |> addMetadata typeof<Branch.GetReferenceParameters>
+
                           route "/getReferences" Branch.GetReferences
                           |> addMetadata typeof<Branch.GetReferencesParameters>
+
                           route "/getSaves" Branch.GetSaves
                           |> addMetadata typeof<Branch.GetReferenceParameters>
+
                           route "/getTags" Branch.GetTags
                           |> addMetadata typeof<Branch.GetReferenceParameters>
+
                           route "/getVersion" Branch.GetVersion
                           |> addMetadata typeof<Branch.GetBranchVersionParameters>
+
                           route "/listContents" Branch.ListContents
                           |> addMetadata typeof<Branch.ListContentsParameters>
+
                           route "/promote" Branch.Promote
                           |> addMetadata typeof<Branch.CreateReferenceParameters>
+
                           route "/rebase" Branch.Rebase |> addMetadata typeof<Branch.RebaseParameters>
+
                           route "/save" Branch.Save
                           |> addMetadata typeof<Branch.CreateReferenceParameters>
+
                           route "/tag" Branch.Tag |> addMetadata typeof<Branch.CreateReferenceParameters> ] ]
               subRoute
                   "/diff"
                   [ POST
                         [ route "/getDiff" Diff.GetDiff |> addMetadata typeof<Diff.GetDiffParameters>
+
                           route "/getDiffBySha256Hash" Diff.GetDiffBySha256Hash
                           |> addMetadata typeof<Diff.GetDiffBySha256HashParameters>
+
                           route "/populate" Diff.Populate |> addMetadata typeof<Diff.PopulateParameters> ] ]
               subRoute
                   "/directory"
                   [ POST
                         [ route "/create" DirectoryVersion.Create
                           |> addMetadata typeof<DirectoryVersion.CreateParameters>
+
                           route "/get" DirectoryVersion.Get
                           |> addMetadata typeof<DirectoryVersion.GetParameters>
+
                           route "/getByDirectoryIds" DirectoryVersion.GetByDirectoryIds
                           |> addMetadata typeof<DirectoryVersion.GetByDirectoryIdsParameters>
+
                           route "/getBySha256Hash" DirectoryVersion.GetBySha256Hash
                           |> addMetadata typeof<DirectoryVersion.GetBySha256HashParameters>
+
                           route "/getDirectoryVersionsRecursive" DirectoryVersion.GetDirectoryVersionsRecursive
                           |> addMetadata typeof<DirectoryVersion.GetParameters>
+
                           route "/getZipFile" DirectoryVersion.GetZipFile
                           |> addMetadata typeof<DirectoryVersion.GetZipFileParameters>
+
                           route "/saveDirectoryVersions" DirectoryVersion.SaveDirectoryVersions
                           |> addMetadata typeof<DirectoryVersion.SaveDirectoryVersionsParameters> ] ]
               subRoute
@@ -172,38 +212,54 @@ module Application =
                   [ POST
                         [ route "/create" Organization.Create
                           |> addMetadata typeof<Organization.CreateOrganizationParameters>
+
                           route "/delete" Organization.Delete
                           |> addMetadata typeof<Organization.DeleteOrganizationParameters>
+
                           route "/get" Organization.Get
                           |> addMetadata typeof<Organization.GetOrganizationParameters>
+
                           route "/listRepositories" Organization.ListRepositories
                           |> addMetadata typeof<Organization.GetOrganizationParameters>
+
                           route "/setDescription" Organization.SetDescription
                           |> addMetadata typeof<Organization.SetOrganizationDescriptionParameters>
+
                           route "/setName" Organization.SetName
                           |> addMetadata typeof<Organization.SetOrganizationNameParameters>
+
                           route "/setSearchVisibility" Organization.SetSearchVisibility
                           |> addMetadata typeof<Organization.SetOrganizationSearchVisibilityParameters>
+
                           route "/setType" Organization.SetType
                           |> addMetadata typeof<Organization.SetOrganizationTypeParameters>
+
                           route "/undelete" Organization.Undelete
                           |> addMetadata typeof<Organization.UndeleteOrganizationParameters> ] ]
               subRoute
                   "/owner"
                   [ POST
                         [ route "/create" Owner.Create |> addMetadata typeof<Owner.CreateOwnerParameters>
+
                           route "/delete" Owner.Delete |> addMetadata typeof<Owner.DeleteOwnerParameters>
+
                           route "/get" Owner.Get |> addMetadata typeof<Owner.GetOwnerParameters>
+
                           route "/listOrganizations" Owner.ListOrganizations
                           |> addMetadata typeof<Owner.GetOwnerParameters>
+
                           route "/setDescription" Owner.SetDescription
                           |> addMetadata typeof<Owner.SetOwnerDescriptionParameters>
+
                           route "/setName" Owner.SetName
                           |> addMetadata typeof<Owner.SetOwnerNameParameters>
+
                           route "/setSearchVisibility" Owner.SetSearchVisibility
                           |> addMetadata typeof<Owner.SetOwnerSearchVisibilityParameters>
+
                           route "/setType" Owner.SetType
                           |> addMetadata typeof<Owner.SetOwnerTypeParameters>
+
                           route "/undelete" Owner.Undelete
                           |> addMetadata typeof<Owner.UndeleteOwnerParameters> ] ]
               subRoute
@@ -211,42 +267,67 @@ module Application =
                   [ POST
                         [ route "/create" Repository.Create
                           |> addMetadata typeof<Repository.CreateRepositoryParameters>
+
                           route "/delete" Repository.Delete
                           |> addMetadata typeof<Repository.DeleteRepositoryParameters>
+
                           route "/exists" Repository.Exists
                           |> addMetadata typeof<Repository.RepositoryParameters>
+
                           route "/get" Repository.Get
                           |> addMetadata typeof<Repository.RepositoryParameters>
+
                           route "/getBranches" Repository.GetBranches
                           |> addMetadata typeof<Repository.GetBranchesParameters>
+
                           route "/getBranchesByBranchId" Repository.GetBranchesByBranchId
                           |> addMetadata typeof<Repository.GetBranchesByBranchIdParameters>
+
                           route "/getReferencesByReferenceId" Repository.GetReferencesByReferenceId
                           |> addMetadata typeof<Repository.GetReferencesByReferenceIdParameters>
+
                           route "/isEmpty" Repository.IsEmpty
                           |> addMetadata typeof<Repository.IsEmptyParameters>
+
+                          route "/setAllowsLargeFiles" Repository.SetAllowsLargeFiles
+                          |> addMetadata typeof<Repository.SetAllowsLargeFilesParameters>
+
+                          route "/setAnonymousAccess" Repository.SetAnonymousAccess
+                          |> addMetadata typeof<Repository.SetAnonymousAccessParameters>
+
                           route "/setCheckpointDays" Repository.SetCheckpointDays
                           |> addMetadata typeof<Repository.SetCheckpointDaysParameters>
+
                           route "/setDiffCacheDays" Repository.SetDiffCacheDays
                           |> addMetadata typeof<Repository.SetDiffCacheDaysParameters>
+
                           route "/setDirectoryVersionCacheDays" Repository.SetDirectoryVersionCacheDays
                           |> addMetadata typeof<Repository.SetDirectoryVersionCacheDaysParameters>
+
                           route "/setDefaultServerApiVersion" Repository.SetDefaultServerApiVersion
                           |> addMetadata typeof<Repository.SetDefaultServerApiVersionParameters>
+
                           route "/setDescription" Repository.SetDescription
                           |> addMetadata typeof<Repository.SetRepositoryDescriptionParameters>
+
                           route "/setLogicalDeleteDays" Repository.SetLogicalDeleteDays
                           |> addMetadata typeof<Repository.SetLogicalDeleteDaysParameters>
+
                           route "/setName" Repository.SetName
                           |> addMetadata typeof<Repository.SetRepositoryNameParameters>
+
                           route "/setRecordSaves" Repository.SetRecordSaves
                           |> addMetadata typeof<Repository.RecordSavesParameters>
+
                           route "/setSaveDays" Repository.SetSaveDays
                           |> addMetadata typeof<Repository.SetSaveDaysParameters>
+
                           route "/setStatus" Repository.SetStatus
                           |> addMetadata typeof<Repository.SetRepositoryStatusParameters>
+
                           route "/setVisibility" Repository.SetVisibility
                           |> addMetadata typeof<Repository.SetRepositoryVisibilityParameters>
+
                           route "/undelete" Repository.Undelete
                           |> addMetadata typeof<Repository.UndeleteRepositoryParameters> ] ]
               subRoute
@@ -254,8 +335,10 @@ module Application =
                   [ POST
                         [ route "/getUploadMetadataForFiles" Storage.GetUploadMetadataForFiles
                           |> addMetadata typeof<Storage.GetUploadMetadataForFilesParameters>
+
                           route "/getDownloadUri" Storage.GetDownloadUri
                           |> addMetadata typeof<Storage.GetDownloadUriParameters>
+
                           route "/getUploadUri" Storage.GetUploadUris
                           |> addMetadata typeof<Storage.GetUploadUriParameters> ] ]
               subRoute
@@ -358,7 +441,7 @@ module Application =
                 $"{Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.DaprServerUri)}:{Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.DaprHttpPort)}"
 
             actorProxyOptions.JsonSerializerOptions <- Constants.JsonSerializerOptions
-            actorProxyOptions.RequestTimeout <- TimeSpan.FromSeconds(60.0)
+            actorProxyOptions.RequestTimeout <- TimeSpan.FromSeconds(600.0)
             services.AddSingleton(actorProxyOptions) |> ignore
 
             let actorProxyFactory = new ActorProxyFactory(actorProxyOptions)

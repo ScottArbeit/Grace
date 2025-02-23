@@ -175,6 +175,8 @@ module Repository =
                 | LogicalDeleted _ -> { currentRepositoryDto with DeletedAt = Some(getCurrentInstant ()) }
                 | PhysicalDeleted -> currentRepositoryDto // Do nothing because it's about to be deleted anyway.
                 | Undeleted -> { currentRepositoryDto with DeletedAt = None; DeleteReason = String.Empty }
+                | AllowsLargeFilesSet allowsLargeFiles -> { currentRepositoryDto with AllowsLargeFiles = allowsLargeFiles }
+                | AnonymousAccessSet anonymousAccess -> { currentRepositoryDto with AnonymousAccess = anonymousAccess }
 
             { newRepositoryDto with UpdatedAt = Some repositoryEvent.Metadata.Timestamp }
 
@@ -597,6 +599,8 @@ module Repository =
                                     | SetStorageContainerName containerName -> return StorageContainerNameSet containerName
                                     | SetRepositoryStatus repositoryStatus -> return RepositoryStatusSet repositoryStatus
                                     | SetRepositoryType repositoryType -> return RepositoryTypeSet repositoryType
+                                    | SetAllowsLargeFiles allowsLargeFiles -> return AllowsLargeFilesSet allowsLargeFiles
+                                    | SetAnonymousAccess anonymousAccess -> return AnonymousAccessSet anonymousAccess
                                     | SetRecordSaves recordSaves -> return RecordSavesSet recordSaves
                                     | SetDefaultServerApiVersion version -> return DefaultServerApiVersionSet version
                                     | SetDefaultBranchName defaultBranchName -> return DefaultBranchNameSet defaultBranchName

@@ -31,19 +31,20 @@ open Azure
 
 module Storage =
 
-    let GetFileFromObjectStorage (fileVersion: FileVersion) correlationId =
+    let GetFileFromObjectStorage (getDownloadUriParameters: GetDownloadUriParameters) correlationId =
         task {
+            let fileVersion = getDownloadUriParameters.FileVersion
+
             try
                 match Current().ObjectStorageProvider with
                 | AzureBlobStorage ->
                     // Get the URI to use when downloading the file. This includes a SAS token.
                     let httpClient = getHttpClient correlationId
                     let serviceUrl = $"{Current().ServerUri}/storage/getDownloadUri"
-                    let jsonContent = createJsonContent fileVersion
+                    let jsonContent = createJsonContent getDownloadUriParameters
                     let! response = httpClient.PostAsync(serviceUrl, jsonContent)
                     let! blobUriWithSasToken = response.Content.ReadAsStringAsync()
                     //logToConsole $"response.StatusCode: {response.StatusCode}; blobUriWithSasToken: {blobUriWithSasToken}"
-
 
                     let relativeDirectory =
                         if fileVersion.RelativeDirectory = Constants.RootDirectoryPath then
@@ -66,22 +67,22 @@ module Storage =
                     let! azureResponse = blobClient.DownloadToAsync(tempFilePath)
 
                     if not <| azureResponse.IsError then
-                        File.Move(tempFilePath, objectFilePath, overwrite = true)
-                        //if fileVersion.IsBinary then
-                        //    File.Move(tempFilePath, objectFilePath, overwrite = true)
-                        //else
-                        //    use tempFileStream = tempFileInfo.OpenRead()
-                        //    tempFileStream.Position <- 0
-                        //    use gzStream = new GZipStream(tempFileStream, CompressionMode.Decompress, leaveOpen = false)
-                        //    use fileWriter = objectFileInfo.OpenWrite()
+                        //File.Move(tempFilePath, objectFilePath, overwrite = true)
+                        if fileVersion.IsBinary then
+                            File.Move(tempFilePath, objectFilePath, overwrite = true)
+                        else
+                            use tempFileStream = tempFileInfo.OpenRead()
+                            use gzStream = new GZipStream(tempFileStream, CompressionMode.Decompress, leaveOpen = false)
+                            use fileWriter = objectFileInfo.OpenWrite()
 
-                        //    do! gzStream.CopyToAsync(fileWriter)
-                        //    logToConsole $"In GetFileFromObjectStorage: After CopyToAsync(). {fileVersion.RelativePath}"
+                            do! gzStream.CopyToAsync(fileWriter)
+                            //logToConsole $"In GetFileFromObjectStorage: After CopyToAsync(). {fileVersion.RelativePath}"
 
-                        //    do! fileWriter.FlushAsync()
-                        //    logToConsole $"In GetFileFromObjectStorage: After FlushAsync(). {fileVersion.RelativePath}"
+                            do! fileWriter.FlushAsync()
+                        //logToConsole $"In GetFileFromObjectStorage: After FlushAsync(). {fileVersion.RelativePath}"
 
-                        //    logToConsole $"After tempFileInfo.Delete(). {fileVersion.RelativePath}"
+                        //logToConsole $"After tempFileInfo.Delete(). {fileVersion.RelativePath}"
+
                         tempFileInfo.Delete()
                         return Ok(GraceReturnValue.Create "Retrieved all files from object storage." correlationId)
                     else
@@ -96,7 +97,7 @@ module Storage =
                 | GoogleCloudStorage -> return Error(GraceError.Create (StorageError.getErrorMessage NotImplemented) correlationId)
                 | ObjectStorageProvider.Unknown -> return Error(GraceError.Create (StorageError.getErrorMessage NotImplemented) correlationId)
             with ex ->
-                logToConsole $"Exception downloading {fileVersion.RelativePath}: {ex.Message}"
+                logToConsole $"Exception downloading {fileVersion.GetObjectFileName}: {ex.Message}"
                 return Error(GraceError.Create (StorageError.getErrorMessage ObjectStorageException) correlationId)
         }
 
@@ -175,7 +176,7 @@ module Storage =
 
                         let blobUploadOptions = BlobUploadOptions(Metadata = metadata, Tags = metadata, TransferOptions = storageTransferOptions)
                         // Setting IfNoneMatch = "*" tells Azure Storage not to upload the file if it already exists.
-                        blobUploadOptions.Conditions <- new BlobRequestConditions(IfNoneMatch = ETag.All)
+                        //blobUploadOptions.Conditions <- new BlobRequestConditions(IfNoneMatch = ETag.All)
 
                         // Add well-known headers to the blob.
                         //   Content-Type: The MIME type of the file.

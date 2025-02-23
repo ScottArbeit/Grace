@@ -46,7 +46,12 @@ module Repository =
                 IsRequired = false,
                 Description = "The repository's owner ID <Guid>.",
                 Arity = ArgumentArity.ZeroOrOne,
-                getDefaultValue = (fun _ -> $"{Current().OwnerId}")
+                getDefaultValue =
+                    (fun _ ->
+                        if Current().OwnerId = Guid.Empty then
+                            $"{Guid.NewGuid()}"
+                        else
+                            $"{Current().OwnerId}")
             )
 
         let ownerName =
@@ -63,7 +68,12 @@ module Repository =
                 IsRequired = false,
                 Description = "The repository's organization ID <Guid>.",
                 Arity = ArgumentArity.ZeroOrOne,
-                getDefaultValue = (fun _ -> $"{Current().OrganizationId}")
+                getDefaultValue =
+                    (fun _ ->
+                        if Current().OrganizationId = Guid.Empty then
+                            $"{Guid.NewGuid()}"
+                        else
+                            $"{Current().OrganizationId}")
             )
 
         let organizationName =
@@ -80,7 +90,12 @@ module Repository =
                 IsRequired = false,
                 Description = "The repository's ID <Guid>.",
                 Arity = ArgumentArity.ExactlyOne,
-                getDefaultValue = (fun _ -> $"{Current().RepositoryId}")
+                getDefaultValue =
+                    (fun _ ->
+                        if Current().RepositoryId = Guid.Empty then
+                            $"{Guid.NewGuid()}"
+                        else
+                            $"{Current().RepositoryId}")
             )
 
         let repositoryName =
@@ -197,6 +212,22 @@ module Repository =
         let includeDeleted = new Option<bool>([| "--include-deleted"; "-d" |], IsRequired = false, Description = "Include deleted branches in the result.")
 
         includeDeleted.SetDefaultValue(false)
+
+        let anonymousAccess =
+            new Option<bool>(
+                "--anonymousAccess",
+                IsRequired = true,
+                Description = "Enable or disable anonymous access for the repository.",
+                Arity = ArgumentArity.ExactlyOne
+            )
+
+        let allowsLargeFiles =
+            new Option<bool>(
+                "--allowsLargeFiles",
+                IsRequired = true,
+                Description = "Enable or disable large file support for the repository.",
+                Arity = ArgumentArity.ExactlyOne
+            )
 
     let mustBeAValidGuid (parseResult: ParseResult) (parameters: CommonParameters) (option: Option) (value: string) (error: RepositoryError) =
         let mutable guid = Guid.Empty
@@ -405,6 +436,8 @@ module Repository =
                         newConfig.RepositoryName <- RepositoryName(returnValue.Properties[nameof (RepositoryName)])
                         newConfig.BranchId <- Guid.Parse(returnValue.Properties[nameof (BranchId)])
                         newConfig.BranchName <- BranchName(returnValue.Properties[nameof (BranchName)])
+                        newConfig.DefaultBranchName <- "main"
+                        newConfig.ObjectStorageProvider <- ObjectStorageProvider.AzureBlobStorage
                         updateConfiguration newConfig
                 | Error error -> logToAnsiConsole Colors.Error (Markup.Escape($"{error}"))
 
@@ -703,14 +736,19 @@ module Repository =
                                                                 (fun directoryVersionGroup ct ->
                                                                     ValueTask(
                                                                         task {
-                                                                            let param = SaveDirectoryVersionsParameters()
+                                                                            let saveParameters = SaveDirectoryVersionsParameters()
+                                                                            saveParameters.OwnerId <- parameters.OwnerId
+                                                                            saveParameters.OwnerName <- parameters.OwnerName
+                                                                            saveParameters.OrganizationId <- parameters.OrganizationId
+                                                                            saveParameters.OrganizationName <- parameters.OrganizationName
+                                                                            saveParameters.RepositoryId <- parameters.RepositoryId
+                                                                            saveParameters.RepositoryName <- parameters.RepositoryName
+                                                                            saveParameters.CorrelationId <- getCorrelationId parseResult
 
-                                                                            param.DirectoryVersions <-
+                                                                            saveParameters.DirectoryVersions <-
                                                                                 directoryVersionGroup.Select(fun dv -> dv.ToDirectoryVersion).ToList()
 
-                                                                            param.CorrelationId <- getCorrelationId parseResult
-
-                                                                            let! sdvResult = DirectoryVersion.SaveDirectoryVersions param
+                                                                            let! sdvResult = DirectoryVersion.SaveDirectoryVersions saveParameters
 
                                                                             match sdvResult with
                                                                             | Ok result -> succeeded.Enqueue(result)
@@ -902,8 +940,9 @@ module Repository =
                         let table = Table(Border = TableBorder.DoubleEdge)
 
                         table.AddColumns(
-                            [| TableColumn($"[{Colors.Important}]Branch[/]")
+                            [| TableColumn($"[{Colors.Important}]Branch name[/]")
                                TableColumn($"[{Colors.Important}]Branch Id[/]")
+                               TableColumn($"[{Colors.Important}]SHA-256 hash[/]")
                                TableColumn($"[{Colors.Important}]Based on latest promotion[/]")
                                TableColumn($"[{Colors.Important}]Parent branch[/]")
                                TableColumn($"[{Colors.Important}]When[/]", Alignment = Justify.Right)
@@ -942,6 +981,7 @@ module Repository =
                                     (fun branch parent ->
                                         {| branchId = branch.BranchId
                                            branchName = branch.BranchName
+                                           sha256Hash = branch.LatestReference.Sha256Hash
                                            updatedAt = branch.UpdatedAt
                                            ago = ago branch.CreatedAt
                                            parentBranchName = parent.branchName
@@ -958,6 +998,7 @@ module Repository =
                             table.AddRow(
                                 br.branchName,
                                 $"[{Colors.Deemphasized}]{br.branchId}[/]",
+                                br.sha256Hash |> getShortSha256Hash,
                                 (if br.basedOnLatestPromotion then
                                      $"[{Colors.Added}]Yes[/]"
                                  else
@@ -1727,6 +1768,107 @@ module Repository =
                 return result |> renderOutput parseResult
             })
 
+    // Set-AnonymousAccess subcommand
+    type SetAnonymousAccessParameters() =
+        inherit CommonParameters()
+        member val public AnonymousAccess = false with get, set
+
+    let private setAnonymousAccessHandler (parseResult: ParseResult) (parameters: SetAnonymousAccessParameters) =
+        task {
+            try
+                if verbose parseResult then printParseResult parseResult
+
+                let validateIncomingParameters = (parseResult, parameters) |> CommonValidations
+
+                match validateIncomingParameters with
+                | Ok _ ->
+                    let setAccessParameters =
+                        Repository.SetAnonymousAccessParameters(
+                            OwnerId = parameters.OwnerId,
+                            OwnerName = parameters.OwnerName,
+                            OrganizationId = parameters.OrganizationId,
+                            OrganizationName = parameters.OrganizationName,
+                            RepositoryId = parameters.RepositoryId,
+                            RepositoryName = parameters.RepositoryName,
+                            AnonymousAccess = parameters.AnonymousAccess,
+                            CorrelationId = parameters.CorrelationId
+                        )
+
+                    if parseResult |> hasOutput then
+                        return!
+                            progress
+                                .Columns(progressColumns)
+                                .StartAsync(fun progressContext ->
+                                    task {
+                                        let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Setting anonymous access.[/]")
+                                        let! result = Repository.SetAnonymousAccess setAccessParameters
+                                        t0.Increment(100.0)
+                                        return result
+                                    })
+                    else
+                        return! Repository.SetAnonymousAccess setAccessParameters
+                | Error error -> return Error error
+            with ex ->
+                return Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
+        }
+
+    let private SetAnonymousAccess =
+        CommandHandler.Create(fun (parseResult: ParseResult) (setAnonymousAccessParameters: SetAnonymousAccessParameters) ->
+            task {
+                let! result = setAnonymousAccessHandler parseResult setAnonymousAccessParameters
+                return result |> renderOutput parseResult
+            })
+
+    // Set-AllowsLargeFiles subcommand
+    type SetAllowsLargeFilesParameters() =
+        inherit CommonParameters()
+        member val public AllowsLargeFiles = false with get, set
+
+    let private setAllowsLargeFilesHandler (parseResult: ParseResult) (parameters: SetAllowsLargeFilesParameters) =
+        task {
+            try
+                if verbose parseResult then printParseResult parseResult
+                let validateIncomingParameters = (parseResult, parameters) |> CommonValidations
+
+                match validateIncomingParameters with
+                | Ok _ ->
+                    let setAllowsLargeFilesParameters =
+                        Repository.SetAllowsLargeFilesParameters(
+                            OwnerId = parameters.OwnerId,
+                            OwnerName = parameters.OwnerName,
+                            OrganizationId = parameters.OrganizationId,
+                            OrganizationName = parameters.OrganizationName,
+                            RepositoryId = parameters.RepositoryId,
+                            RepositoryName = parameters.RepositoryName,
+                            AllowsLargeFiles = parameters.AllowsLargeFiles,
+                            CorrelationId = parameters.CorrelationId
+                        )
+
+                    if parseResult |> hasOutput then
+                        return!
+                            progress
+                                .Columns(progressColumns)
+                                .StartAsync(fun progressContext ->
+                                    task {
+                                        let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Setting allows large files.[/]")
+                                        let! result = Repository.SetAllowsLargeFiles setAllowsLargeFilesParameters
+                                        t0.Increment(100.0)
+                                        return result
+                                    })
+                    else
+                        return! Repository.SetAllowsLargeFiles setAllowsLargeFilesParameters
+                | Error error -> return Error error
+            with ex ->
+                return Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
+        }
+
+    let private SetAllowsLargeFiles =
+        CommandHandler.Create(fun (parseResult: ParseResult) (setAllowsLargeFilesParameters: SetAllowsLargeFilesParameters) ->
+            task {
+                let! result = setAllowsLargeFilesHandler parseResult setAllowsLargeFilesParameters
+                return result |> renderOutput parseResult
+            })
+
     /// Builds the Repository subcommand.
     let Build =
         let addCommonOptionsExceptForRepositoryInfo (command: Command) =
@@ -1800,6 +1942,22 @@ module Repository =
 
         setStatusCommand.Handler <- SetStatus
         repositoryCommand.AddCommand(setStatusCommand)
+
+        let setAnonymousAccessCommand =
+            new Command("set-anonymous-access", Description = "Sets the anonymous access status of the repository.")
+            |> addOption Options.anonymousAccess
+            |> addCommonOptions
+
+        setAnonymousAccessCommand.Handler <- SetAnonymousAccess
+        repositoryCommand.AddCommand(setAnonymousAccessCommand)
+
+        let setAllowsLargeFilesCommand =
+            new Command("set-allows-large-files", Description = "Sets the large files status of the repository.")
+            |> addOption Options.allowsLargeFiles
+            |> addCommonOptions
+
+        setAllowsLargeFilesCommand.Handler <- SetAllowsLargeFiles
+        repositoryCommand.AddCommand(setAllowsLargeFilesCommand)
 
         let setRecordSavesCommand =
             new Command("set-recordsaves", Description = "Sets whether the repository defaults to recording every save.")

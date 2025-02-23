@@ -1,4 +1,4 @@
-﻿namespace Grace.Shared.Client
+namespace Grace.Shared.Client
 
 open System
 open System.Drawing
@@ -47,7 +47,7 @@ module Theme =
            Color.DarkRed
            Color.Red
            Color.White
-           Color.Yellow
+           Color.FromArgb(0xe5, 0xc0, 0x7b)
            Color.Magenta |]
 
     /// Default color theme, with green for adds, red for deletes, etc.

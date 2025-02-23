@@ -363,14 +363,19 @@ module Maintenance =
                                                 (fun directoryVersionGroup ct ->
                                                     ValueTask(
                                                         task {
-                                                            let saveDirectoryVersionsParameters =
-                                                                SaveDirectoryVersionsParameters(
-                                                                    DirectoryVersions =
-                                                                        directoryVersionGroup.Select(fun dv -> dv.ToDirectoryVersion).ToList(),
-                                                                    CorrelationId = getCorrelationId parseResult
-                                                                )
+                                                            let saveParameters = SaveDirectoryVersionsParameters()
+                                                            saveParameters.OwnerId <- parameters.OwnerId
+                                                            saveParameters.OwnerName <- parameters.OwnerName
+                                                            saveParameters.OrganizationId <- parameters.OrganizationId
+                                                            saveParameters.OrganizationName <- parameters.OrganizationName
+                                                            saveParameters.RepositoryId <- parameters.RepositoryId
+                                                            saveParameters.RepositoryName <- parameters.RepositoryName
+                                                            saveParameters.CorrelationId <- getCorrelationId parseResult
 
-                                                            match! DirectoryVersion.SaveDirectoryVersions saveDirectoryVersionsParameters with
+                                                            saveParameters.DirectoryVersions <-
+                                                                directoryVersionGroup.Select(fun dv -> dv.ToDirectoryVersion).ToList()
+
+                                                            match! DirectoryVersion.SaveDirectoryVersions saveParameters with
                                                             | Ok result -> succeeded.Enqueue(result)
                                                             | Error error -> errors.Enqueue(error)
 
@@ -757,14 +762,19 @@ module Maintenance =
                                                 (fun directoryVersionGroup ct ->
                                                     ValueTask(
                                                         task {
-                                                            let saveDirectoryVersionsParameters =
-                                                                SaveDirectoryVersionsParameters(
-                                                                    DirectoryVersions =
-                                                                        directoryVersionGroup.Select(fun dv -> dv.ToDirectoryVersion).ToList(),
-                                                                    CorrelationId = getCorrelationId parseResult
-                                                                )
+                                                            let saveParameters = SaveDirectoryVersionsParameters()
+                                                            saveParameters.OwnerId <- parameters.OwnerId
+                                                            saveParameters.OwnerName <- parameters.OwnerName
+                                                            saveParameters.OrganizationId <- parameters.OrganizationId
+                                                            saveParameters.OrganizationName <- parameters.OrganizationName
+                                                            saveParameters.RepositoryId <- parameters.RepositoryId
+                                                            saveParameters.RepositoryName <- parameters.RepositoryName
+                                                            saveParameters.CorrelationId <- getCorrelationId parseResult
 
-                                                            match! DirectoryVersion.SaveDirectoryVersions saveDirectoryVersionsParameters with
+                                                            saveParameters.DirectoryVersions <-
+                                                                directoryVersionGroup.Select(fun dv -> dv.ToDirectoryVersion).ToList()
+
+                                                            match! DirectoryVersion.SaveDirectoryVersions saveParameters with
                                                             | Ok result -> succeeded.Enqueue(result)
                                                             | Error error -> errors.Enqueue(error)
 

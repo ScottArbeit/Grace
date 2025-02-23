@@ -11,8 +11,6 @@ open System
 open System.Collections.Generic
 open System.Threading.Tasks
 
-[<AutoOpen>]
-
 type Repository() =
 
     /// <summary>
@@ -47,6 +45,14 @@ type Repository() =
     /// <param name="parameters">Values to use when setting the status of the repository.</param>
     static member public SetStatus(parameters: SetRepositoryStatusParameters) =
         postServer<SetRepositoryStatusParameters, String> (parameters |> ensureCorrelationIdIsSet, $"repository/{nameof (Repository.SetStatus)}")
+
+    /// Sets the anonymous access status of the repository.
+    static member public SetAnonymousAccess(parameters: SetAnonymousAccessParameters) =
+        postServer<SetAnonymousAccessParameters, String> (parameters |> ensureCorrelationIdIsSet, $"repository/{nameof (Repository.SetAnonymousAccess)}")
+
+    /// Sets the large file support status of the repository.
+    static member public SetAllowsLargeFiles(parameters: SetAllowsLargeFilesParameters) =
+        postServer<SetAllowsLargeFilesParameters, String> (parameters |> ensureCorrelationIdIsSet, $"repository/{nameof (Repository.SetAllowsLargeFiles)}")
 
     /// <summary>
     /// Sets whether the repository is public or private.

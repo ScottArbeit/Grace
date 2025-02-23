@@ -93,7 +93,20 @@ module Organization =
 
                 if validationsPassed then
                     let! cmd = command parameters
-                    return! handleCommand graceIds.OrganizationId cmd
+                    let! result = handleCommand graceIds.OrganizationId cmd
+
+                    log.LogInformation(
+                        "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; Finished {path}; Status code: {statusCode}; OwnerId: {ownerId}; OrganizationId: {organizationId}.",
+                        getCurrentInstantExtended (),
+                        getMachineName,
+                        correlationId,
+                        context.Request.Path,
+                        context.Response.StatusCode,
+                        graceIds.OwnerId,
+                        graceIds.OrganizationId
+                    )
+
+                    return result
                 else
                     let! error = validationResults |> getFirstError
                     let errorMessage = OrganizationError.getErrorMessage error

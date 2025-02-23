@@ -101,7 +101,22 @@ module Branch =
 
                 if validationsPassed then
                     let! cmd = command parameters
-                    return! handleCommand graceIds.BranchId cmd
+                    let! result = handleCommand graceIds.BranchId cmd
+
+                    log.LogInformation(
+                        "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; Finished {path}; Status code: {statusCode}; OwnerId: {ownerId}; OrganizationId: {organizationId}; RepositoryId: {repositoryId}; BranchId: {branchId}.",
+                        getCurrentInstantExtended (),
+                        getMachineName,
+                        correlationId,
+                        context.Request.Path,
+                        context.Response.StatusCode,
+                        graceIds.OwnerId,
+                        graceIds.OrganizationId,
+                        graceIds.RepositoryId,
+                        graceIds.BranchId
+                    )
+
+                    return result
                 else
                     let! error = validationResults |> getFirstError
                     let errorMessage = BranchError.getErrorMessage error

@@ -35,7 +35,12 @@ module Organization =
                 IsRequired = false,
                 Description = "The organization's owner ID <Guid>.",
                 Arity = ArgumentArity.ExactlyOne,
-                getDefaultValue = (fun _ -> $"{Current().OwnerId}")
+                getDefaultValue =
+                    (fun _ ->
+                        if Current().OwnerId = Guid.Empty then
+                            $"{Guid.NewGuid()}"
+                        else
+                            $"{Current().OwnerId}")
             )
 
         let ownerName =
@@ -52,7 +57,12 @@ module Organization =
                 IsRequired = false,
                 Description = "The organization ID <Guid>.",
                 Arity = ArgumentArity.ExactlyOne,
-                getDefaultValue = (fun _ -> $"{Current().OrganizationId}")
+                getDefaultValue =
+                    (fun _ ->
+                        if Current().OrganizationId = Guid.Empty then
+                            $"{Guid.NewGuid()}"
+                        else
+                            $"{Current().OrganizationId}")
             )
 
         let organizationName =
@@ -238,7 +248,7 @@ module Organization =
 
                 match result with
                 | Ok returnValue ->
-                    // Update the Grace configuration file with the newly-created repository.
+                    // Update the Grace configuration file with the newly-created organization.
                     if not <| parseResult.HasOption(Options.doNotSwitch) then
                         let newConfig = Current()
                         newConfig.OrganizationId <- Guid.Parse(returnValue.Properties[nameof (OrganizationId)])

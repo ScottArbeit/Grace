@@ -24,6 +24,7 @@
 		<Compile Include="Text.CLI.fs" />
 		<Compile Include="Command\Services.CLI.fs" />
 		<Compile Include="Command\Common.CLI.fs" />
+		<Compile Include="Command\Config.CLI.fs" />
 		<Compile Include="Command\Owner.CLI.fs" />
 		<Compile Include="Command\Connect.CLI.fs" />
 		<Compile Include="Command\Organization.CLI.fs" />
@@ -34,7 +35,6 @@
 		<Compile Include="Command\DirectoryVersion.CLI.fs" />
 		<Compile Include="Command\Watch.CLI.fs" />
 		<Compile Include="Command\Maintenance.CLI.fs" />
-		<Compile Include="Command\Config.CLI.fs" />
 		<Compile Include="Program.CLI.fs" />
 	</ItemGroup>
 	<ItemGroup>

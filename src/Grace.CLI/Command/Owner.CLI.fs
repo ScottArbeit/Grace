@@ -35,7 +35,12 @@ module Owner =
                 IsRequired = false,
                 Description = "The Id of the owner <Guid>.",
                 Arity = ArgumentArity.ExactlyOne,
-                getDefaultValue = (fun _ -> $"{Current().OwnerId}")
+                getDefaultValue =
+                    (fun _ ->
+                        if Current().OwnerId = Guid.Empty then
+                            $"{Guid.NewGuid()}"
+                        else
+                            $"{Current().OwnerId}")
             )
 
         let ownerName =
@@ -188,7 +193,7 @@ module Owner =
 
                 match result with
                 | Ok returnValue ->
-                    // Update the Grace configuration file with the newly-created repository.
+                    // Update the Grace configuration file with the newly-created owner.
                     if not <| parseResult.HasOption(Options.doNotSwitch) then
                         let newConfig = Current()
                         newConfig.OwnerId <- Guid.Parse(returnValue.Properties[nameof (OwnerId)])

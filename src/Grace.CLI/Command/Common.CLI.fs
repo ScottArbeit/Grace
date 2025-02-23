@@ -32,10 +32,6 @@ module Common =
         | Silent
         | Verbose
 
-    type CommandLineInstruction<'a, 'b> =
-        | UpdateProgress of ProgressTask * float
-        | Command of (ParseResult * 'a -> Task<'b>)
-
     /// Adds an option (i.e. parameter) to a command, so you can do cool stuff like `|> addOption Options.someOption |> addOption Options.anotherOption`.
     let addOption (option: Option) (command: Command) =
         command.AddOption(option)

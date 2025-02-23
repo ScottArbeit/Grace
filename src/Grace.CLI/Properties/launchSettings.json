@@ -4,11 +4,6 @@
       "commandName": "WSL2",
       "distributionName": ""
     },
-    "grace branch get-references": {
-      "commandName": "Project",
-      "commandLineArgs": "branch get-references",
-      "workingDirectory": "D:\\Source\\github\\github"
-    },
     "grace diff commit": {
       "commandName": "Project",
       "commandLineArgs": "diff commit",
@@ -98,10 +93,15 @@
       "commandLineArgs": "watch",
       "workingDirectory": "D:\\Source\\GraceDemo\\Scott"
     },
-    "grace switch -c Mika": {
+    "grace branch switch": {
       "commandName": "Project",
-      "commandLineArgs": "switch -c Mika",
-      "workingDirectory": "D:\\Source\\GraceDemo\\Chris"
+      "commandLineArgs": "branch switch -c Scott",
+      "workingDirectory": "D:\\Source\\GraceDemo\\User01"
+    },
+    "grace switch -c Scott": {
+      "commandName": "Project",
+      "commandLineArgs": "switch -c Scott -o Verbose",
+      "workingDirectory": "E:\\GraceDemo\\User02"
     }
   }
 }

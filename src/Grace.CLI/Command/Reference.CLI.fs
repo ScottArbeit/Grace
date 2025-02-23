@@ -749,11 +749,16 @@ module Reference =
 
                                             if newDirectoryVersions.Count > 0 then
                                                 let saveParameters = SaveDirectoryVersionsParameters()
+                                                saveParameters.OwnerId <- parameters.OwnerId
+                                                saveParameters.OwnerName <- parameters.OwnerName
+                                                saveParameters.OrganizationId <- parameters.OrganizationId
+                                                saveParameters.OrganizationName <- parameters.OrganizationName
+                                                saveParameters.RepositoryId <- parameters.RepositoryId
+                                                saveParameters.RepositoryName <- parameters.RepositoryName
+                                                saveParameters.CorrelationId <- getCorrelationId parseResult
                                                 saveParameters.DirectoryVersionId <- $"{newGraceStatus.RootDirectoryId}"
 
                                                 saveParameters.DirectoryVersions <- newDirectoryVersions.Select(fun dv -> dv.ToDirectoryVersion).ToList()
-
-                                                saveParameters.CorrelationId <- getCorrelationId parseResult
 
                                                 let! uploadDirectoryVersions = DirectoryVersion.SaveDirectoryVersions saveParameters
 
@@ -838,6 +843,13 @@ module Reference =
 
                         let! uploadResult = uploadFilesToObjectStorage getUploadMetadataForFilesParameters
                         let saveParameters = SaveDirectoryVersionsParameters()
+                        saveParameters.OwnerId <- parameters.OwnerId
+                        saveParameters.OwnerName <- parameters.OwnerName
+                        saveParameters.OrganizationId <- parameters.OrganizationId
+                        saveParameters.OrganizationName <- parameters.OrganizationName
+                        saveParameters.RepositoryId <- parameters.RepositoryId
+                        saveParameters.RepositoryName <- parameters.RepositoryName
+                        saveParameters.CorrelationId <- getCorrelationId parseResult
 
                         saveParameters.DirectoryVersions <- newDirectoryVersions.Select(fun dv -> dv.ToDirectoryVersion).ToList()
 

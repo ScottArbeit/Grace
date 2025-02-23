@@ -143,6 +143,7 @@ module Text =
         | UpdatingWorkingDirectory
         | UploadingFiles
         | ValueMustBePositive
+        | WritingGraceStatusFile
 
     /// Computes text for how long ago an instant was.
     ///

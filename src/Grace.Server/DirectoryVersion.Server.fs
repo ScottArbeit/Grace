@@ -254,7 +254,7 @@ module DirectoryVersion =
 
                 let query (context: HttpContext) (maxCount: int) (actorProxy: IDirectoryVersionActor) =
                     task {
-                        let! zipFile = actorProxy.GetZipFile(getCorrelationId context)
+                        let! zipFile = actorProxy.GetZipFileUri(getCorrelationId context)
                         logToConsole $"In DirectoryVersion.GetZipFile: zipFile: {zipFile}."
                         return zipFile
                     }

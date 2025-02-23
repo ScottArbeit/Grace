@@ -287,7 +287,7 @@ module Notifications =
                         // If the reference is a commit, we're going to pre-compute the directory version contents .zip file.
                         if referenceDto.ReferenceType = ReferenceType.Commit then
                             let directoryVersionActorProxy = DirectoryVersion.CreateActorProxy referenceDto.DirectoryId correlationId
-                            let! zipFileUri = directoryVersionActorProxy.GetZipFile correlationId
+                            let! zipFileUri = directoryVersionActorProxy.GetZipFileUri correlationId
                             ()
                     | _ -> ()
                 | RepositoryEvent repositoryEvent ->

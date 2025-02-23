@@ -168,6 +168,8 @@ module Storage =
                             context
                             |> result400BadRequest (GraceError.Create (StorageError.getErrorMessage FilesMustNotBeEmpty) correlationId)
                 with ex ->
+                    logToConsole $"Exception in GetUploadMetadataForFiles: {(ExceptionResponse.Create ex)}"
+
                     return!
                         context
                         |> result500ServerError (GraceError.Create (StorageError.getErrorMessage ObjectStorageException) correlationId)

@@ -301,7 +301,7 @@ module Diff =
                                         return! scanForDifferences graceIndex2 graceIndex1
                                 }
 
-                            //logToConsole $"In Actor.Populate(), got differences."
+                            //logToConsole $"In Actor.Populate(); got differences."
 
                             let repositoryActorProxy = Repository.CreateActorProxy repositoryId1 correlationId
                             let! repositoryDto = repositoryActorProxy.Get correlationId

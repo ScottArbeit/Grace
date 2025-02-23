@@ -34,11 +34,24 @@ module Types =
     type OwnerName = string
     type ParentBranchId = BranchId
     type ReferenceId = Guid
-    type ReferenceName = string
+
+    /// The text of the reference, generally submitted as the -m parameter in `grace save/checkpoint/commit/etc.`.
     type ReferenceText = string
+
+    /// The Id of the reminder.
     type ReminderId = Guid
+
+    /// The Id of the repository.
     type RepositoryId = Guid
+
+    /// The name of the repository.
     type RepositoryName = string
+
+    /// The path from the root directory of the repository.
+    ///
+    /// Example: Repository root directory is "C:\Source\Grace",
+    /// the full file path is "C:\Source\Grace\src\Grace.Shared\Types.Shared.fs",
+    /// and the relative path is "src\Grace.Shared\Types.Shared.fs".
     type RelativePath = string
     type Sha256Hash = string
     type StorageAccountName = string
@@ -678,3 +691,10 @@ module Types =
         static member GetKnownTypes() = GetKnownTypes<ReminderTypes>()
 
         override this.ToString() = Utilities.getDiscriminatedUnionFullName this
+
+    /// Defines the different statuses of a .zip file.
+    [<KnownType("GetKnownTypes")>]
+    type ZipFileStatus =
+        | NotCreated
+        | Creating
+        | Exists

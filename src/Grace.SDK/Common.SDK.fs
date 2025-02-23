@@ -25,59 +25,6 @@ open Microsoft.Extensions.Caching.Memory
 
 module Common =
 
-    let private sslClientAuthenticationOptions =
-#if DEBUG
-        // In debug mode, we'll accept only TLS 1.2 and allow no encryption to enable access to the CosmosDB emulator without having to deal with certificates.
-        // TLS 1.3 requires a non-null cipher, so limiting ourselves to TLS 1.2 lets us get away with using this.
-        // AllowNoEncryption means: Prefer secure connections, but if there's a null cipher (which we'll get from the CosmosDB emulator because it has a self-signed certificate), we'll allow it.
-        SslClientAuthenticationOptions(EncryptionPolicy = EncryptionPolicy.AllowNoEncryption, EnabledSslProtocols = Security.Authentication.SslProtocols.Tls12)
-#else
-        // In release mode, we'll accept TLS 1.2 and TLS 1.3.
-        SslClientAuthenticationOptions(
-            EncryptionPolicy = EncryptionPolicy.RequireEncryption,
-            EnabledSslProtocols =
-                (Security.Authentication.SslProtocols.Tls12
-                 ||| Security.Authentication.SslProtocols.Tls13)
-        )
-#endif
-
-    /// This construct is equivalent to using IHttpClientFactory in the ASP.NET Dependency Injection container, for code (like this) that isn't using GenericHost.
-    ///
-    /// See https://docs.microsoft.com/en-us/aspnet/core/fundamentals/http-requests?view=aspnetcore-9.0#alternatives-to-ihttpclientfactory for more information.
-    let private socketsHttpHandler =
-        new SocketsHttpHandler(
-            AllowAutoRedirect = true, // We expect to use Traffic Manager or equivalents, so there will be redirects.
-            MaxAutomaticRedirections = 6, // Not sure of the exact right number, but definitely want a limit here.
-            SslOptions = sslClientAuthenticationOptions, // Require TLS 1.2 / 1.3
-            AutomaticDecompression = DecompressionMethods.All, // We'll store blobs using GZip, and we'll enable Brotli on the server
-            EnableMultipleHttp2Connections = true, // I doubt this will ever happen, but don't mind making it possible
-            PooledConnectionLifetime = TimeSpan.FromMinutes(2.0), // Default is 2m
-            PooledConnectionIdleTimeout = TimeSpan.FromMinutes(2.0) // Default is 2m
-        )
-
-    /// Gets an HttpClient instance using our custom SocketsHttpHandler, with OpenTelemetry headers.
-    let getHttpClient (correlationId: string) =
-        let traceIdBytes = stackalloc<byte> 16
-        let parentIdBytes = stackalloc<byte> 8
-        Random.Shared.NextBytes(traceIdBytes)
-        Random.Shared.NextBytes(parentIdBytes)
-        let traceId = byteArrayToString (traceIdBytes)
-        let parentId = byteArrayToString (parentIdBytes)
-
-        let httpClient = new HttpClient(handler = socketsHttpHandler, disposeHandler = false)
-
-        httpClient.DefaultRequestVersion <- HttpVersion.Version20 // We'll aggressively move to Version30 as soon as we can.
-        httpClient.DefaultRequestHeaders.Add(Constants.Traceparent, $"00-{traceId}-{parentId}-01")
-        httpClient.DefaultRequestHeaders.Add(Constants.Tracestate, $"graceserver-{parentId}")
-        httpClient.DefaultRequestHeaders.Add(Constants.CorrelationIdHeaderKey, $"{correlationId}")
-        httpClient.DefaultRequestHeaders.Add(Constants.ServerApiVersionHeaderKey, $"{Constants.ServerApiVersions.Edge}")
-        //httpClient.DefaultVersionPolicy <- HttpVersionPolicy.RequestVersionOrHigher
-#if DEBUG
-        //httpClient.Timeout <- TimeSpan.FromSeconds(1800.0) // Keeps client commands open while debugging.
-        httpClient.Timeout <- TimeSpan.FromSeconds(60.0)
-#endif
-        httpClient
-
     /// Checks to make sure the .NET MemoryCache is initialized. If not, it will create one.
     let checkMemoryCache () =
         if isNull memoryCache then
