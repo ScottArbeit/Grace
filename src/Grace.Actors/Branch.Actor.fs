@@ -107,18 +107,24 @@ module Branch =
                         }
                     | NameSet branchName -> { currentBranchDto with BranchName = branchName } |> returnTask
                     | Assigned(referenceDto, directoryVersion, sha256Hash, referenceText) ->
-                        { currentBranchDto with LatestPromotion = referenceDto; BasedOn = referenceDto }
+                        { currentBranchDto with LatestPromotion = referenceDto; BasedOn = referenceDto; ShouldRecomputeLatestReferences = true }
                         |> returnTask
                     | Promoted(referenceDto, directoryVersion, sha256Hash, referenceText) ->
-                        { currentBranchDto with LatestPromotion = referenceDto; BasedOn = referenceDto }
+                        { currentBranchDto with LatestPromotion = referenceDto; BasedOn = referenceDto; ShouldRecomputeLatestReferences = true }
                         |> returnTask
                     | Committed(referenceDto, directoryVersion, sha256Hash, referenceText) ->
-                        { currentBranchDto with LatestCommit = referenceDto } |> returnTask
+                        { currentBranchDto with LatestCommit = referenceDto; ShouldRecomputeLatestReferences = true }
+                        |> returnTask
                     | Checkpointed(referenceDto, directoryVersion, sha256Hash, referenceText) ->
-                        { currentBranchDto with LatestCheckpoint = referenceDto } |> returnTask
-                    | Saved(referenceDto, directoryVersion, sha256Hash, referenceText) -> { currentBranchDto with LatestSave = referenceDto } |> returnTask
-                    | Tagged(referenceDto, directoryVersion, sha256Hash, referenceText) -> currentBranchDto |> returnTask // No changes to currentBranchDto.
-                    | ExternalCreated(referenceDto, directoryVersion, sha256Hash, referenceText) -> currentBranchDto |> returnTask // No changes to currentBranchDto.
+                        { currentBranchDto with LatestCheckpoint = referenceDto; ShouldRecomputeLatestReferences = true }
+                        |> returnTask
+                    | Saved(referenceDto, directoryVersion, sha256Hash, referenceText) ->
+                        { currentBranchDto with LatestSave = referenceDto; ShouldRecomputeLatestReferences = true }
+                        |> returnTask
+                    | Tagged(referenceDto, directoryVersion, sha256Hash, referenceText) ->
+                        { currentBranchDto with ShouldRecomputeLatestReferences = true } |> returnTask
+                    | ExternalCreated(referenceDto, directoryVersion, sha256Hash, referenceText) ->
+                        { currentBranchDto with ShouldRecomputeLatestReferences = true } |> returnTask
                     | EnabledAssign enabled -> { currentBranchDto with AssignEnabled = enabled } |> returnTask
                     | EnabledPromotion enabled -> { currentBranchDto with PromotionEnabled = enabled } |> returnTask
                     | EnabledCommit enabled -> { currentBranchDto with CommitEnabled = enabled } |> returnTask
