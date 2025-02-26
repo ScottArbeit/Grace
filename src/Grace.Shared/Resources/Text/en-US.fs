@@ -14,6 +14,7 @@ module en_US =
     let getString stringResourceName =
         match stringResourceName with
         | AssignIsDisabled -> "This branch has disabled assign."
+        | Branch -> "Branch"
         | BranchAlreadyExists -> "The branch already exists."
         | BranchDoesNotExist -> "The branch was not found."
         | BranchIdDoesNotExist -> "A branch with the provided BranchId does not exist."
@@ -103,6 +104,7 @@ module en_US =
         | NotImplemented -> "This feature is not yet implemented."
         | ObjectCacheFileNotFound -> "The Grace object cache file was not found. Please run `grace maintenance scan` to recreate it."
         | ObjectStorageException -> "An exception occurred when communicating with the object storage provider."
+        | Organization -> "Organization"
         | OrganizationIdAlreadyExists -> "An Organization with the provided OrganizationId already exists."
         | OrganizationNameAlreadyExists -> "An organization with the same name and owner already exists."
         | OrganizationContainsRepositories ->
@@ -114,6 +116,7 @@ module en_US =
         | OrganizationIsNotDeleted -> "The organization is not deleted."
         | OrganizationNameIsRequired -> "The OrganizationName must be provided."
         | OrganizationTypeIsRequired -> "The OrganizationType must be provided."
+        | Owner -> "Owner"
         | OwnerContainsOrganizations ->
             "The owner cannot be deleted because it contains active organizations. Specify --force if you would like to recursively delete all organizations, and their repositories."
         | OwnerDoesNotExist -> "The owner was not found."
@@ -132,6 +135,7 @@ module en_US =
         | ReferenceIdsAreRequired -> "The list of ReferenceIds must not be empty."
         | ReferenceTypeMustBeProvided -> "The reference type cannot be an empty string."
         | RelativePathMustNotBeEmpty -> "The relative path of the directory cannot be an empty string."
+        | Repository -> "Repository"
         | RepositoryContainsBranches ->
             "The repository cannot be deleted because it contains active branches. Specify --force if you would like to recursively delete all branches."
         | RepositoryDoesNotExist -> "The repository was not found."

@@ -12,6 +12,7 @@ module Text =
 
     type StringResourceName =
         | AssignIsDisabled
+        | Branch
         | BranchAlreadyExists
         | BranchDoesNotExist
         | BranchIdDoesNotExist
@@ -91,6 +92,7 @@ module Text =
         | NotImplemented
         | ObjectCacheFileNotFound
         | ObjectStorageException
+        | Organization
         | OrganizationIdAlreadyExists
         | OrganizationNameAlreadyExists
         | OrganizationContainsRepositories
@@ -101,6 +103,7 @@ module Text =
         | OrganizationIsNotDeleted
         | OrganizationNameIsRequired
         | OrganizationTypeIsRequired
+        | Owner
         | OwnerContainsOrganizations
         | OwnerDoesNotExist
         | OwnerIdDoesNotExist
@@ -118,6 +121,7 @@ module Text =
         | ReferenceIdsAreRequired
         | ReferenceTypeMustBeProvided
         | RelativePathMustNotBeEmpty
+        | Repository
         | RepositoryContainsBranches
         | RepositoryDoesNotExist
         | RepositoryIdAlreadyExists

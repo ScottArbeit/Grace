@@ -13,6 +13,7 @@ open Grace.Shared.Dto.Reference
 open Grace.Shared.Parameters.Branch
 open Grace.Shared.Parameters.DirectoryVersion
 open Grace.Shared.Services
+open Grace.Shared.Resources
 open Grace.Shared.Types
 open Grace.Shared.Utilities
 open Grace.Shared.Validation
@@ -2980,13 +2981,26 @@ module Branch =
                         let latestParentBranchPromotion = parentBranchDto.LatestPromotion
                         let basedOn = branchDto.BasedOn
 
+                        let longestAgoLength =
+                            [ latestSave
+                              latestCheckpoint
+                              latestCommit
+                              latestParentBranchPromotion
+                              basedOn ]
+                            |> Seq.map (fun b -> (ago b.CreatedAt).Length)
+                            |> Seq.max
+
+                        let aligned (s: string) =
+                            let space = " "
+                            $"{String.replicate (longestAgoLength - s.Length) space}{s}"
+
                         let getReferenceRowValue referenceDto =
                             if referenceDto.ReferenceId = ReferenceId.Empty then
                                 $"  None"
                             else if parseResult |> verbose then
-                                $"  {getShortSha256Hash referenceDto.Sha256Hash} - {ago referenceDto.CreatedAt} - {instantToLocalTime referenceDto.CreatedAt} [{Colors.Deemphasized}]- {referenceDto.ReferenceId} - {referenceDto.DirectoryId}[/]"
+                                $"  {getShortSha256Hash referenceDto.Sha256Hash} │ {ago referenceDto.CreatedAt |> aligned} │ {instantToLocalTime referenceDto.CreatedAt} [{Colors.Deemphasized}]│ {referenceDto.ReferenceId} │ {referenceDto.DirectoryId}[/]"
                             else
-                                $"  {getShortSha256Hash referenceDto.Sha256Hash} - {ago referenceDto.CreatedAt} - {instantToLocalTime referenceDto.CreatedAt} [{Colors.Deemphasized}]- {referenceDto.ReferenceId}[/]"
+                                $"  {getShortSha256Hash referenceDto.Sha256Hash} │ {ago referenceDto.CreatedAt |> aligned} │ {instantToLocalTime referenceDto.CreatedAt}"
 
                         let permissions (branchDto: Dto.Branch.BranchDto) =
                             let sb = stringBuilderPool.Get()
@@ -3014,51 +3028,98 @@ module Branch =
                         let table = Table(Border = TableBorder.DoubleEdge)
                         table.ShowHeaders <- false
 
-                        table
-                            .AddColumns(String.replicate (Current().OwnerName.Length) "_", String.replicate (Current().OwnerName.Length) "_") // Using Current().OwnerName.Length is aesthetically pleasing, there's no deeper reason for it.
-                            .AddRow(
-                                $"[{Colors.Important}]Owner[/]",
-                                $"[{Colors.Important}]{Current().OwnerName}[/] [{Colors.Deemphasized}]- {Current().OwnerId}[/]"
+                        let ownerHeader = getLocalizedString Text.StringResourceName.Owner
+                        let organizationHeader = getLocalizedString Text.StringResourceName.Organization
+                        let repositoryHeader = getLocalizedString Text.StringResourceName.Repository
+                        let branchHeader = getLocalizedString Text.StringResourceName.Branch
+
+                        let headerLength = ownerHeader.Length + organizationHeader.Length + repositoryHeader.Length + 6
+
+                        // Using Current().OwnerName.Length is aesthetically pleasing, there's no deeper reason for it.
+                        let borderLength =
+                            Math.Max(
+                                headerLength,
+                                (Current().OwnerName.Length
+                                 + Current().OrganizationName.Length
+                                 + Current().RepositoryName.Length
+                                 + 6)
                             )
-                            .AddRow(
-                                $"[{Colors.Important}]Organization[/]",
-                                $"[{Colors.Important}]{Current().OrganizationName}[/] [{Colors.Deemphasized}]- {Current().OrganizationId}[/]"
-                            )
-                            .AddRow(
-                                $"[{Colors.Important}]Repository[/]",
-                                $"[{Colors.Important}]{Current().RepositoryName}[/] [{Colors.Deemphasized}]- {Current().RepositoryId}[/]"
-                            )
-                            .AddRow(String.Empty, String.Empty)
-                            .AddRow(
-                                $"[{Colors.Important}]Branch[/]",
-                                $"[{Colors.Important}]{branchDto.BranchName}[/] - Allows {permissions branchDto} [{Colors.Deemphasized}]- {branchDto.BranchId}[/]"
-                            )
-                            //.AddRow(String.Empty, $"Permissions: {permissions}.")
-                            .AddRow($"  - latest save ", getReferenceRowValue latestSave)
-                            .AddRow($"  - latest checkpoint ", getReferenceRowValue latestCheckpoint)
-                            .AddRow($"  - latest commit", getReferenceRowValue latestCommit)
-                            .AddRow($"  - based on", getReferenceRowValue basedOn)
+
+                        let column1 = TableColumn(String.replicate headerLength "─")
+                        let column2 = TableColumn(String.replicate borderLength "─").PadRight(7)
+
+                        if parseResult |> verbose then
+                            table
+                                .AddColumns(column1, column2)
+                                .AddRow(
+                                    $"[{Colors.Important}]{ownerHeader}[/] │ [{Colors.Important}]{organizationHeader}[/] │ [{Colors.Important}]{repositoryHeader}[/]",
+                                    $"[{Colors.Important}]{Current().OwnerName}[/] [{Colors.Deemphasized}]│ {Current().OwnerId}[/] │ [{Colors.Important}]{Current().OrganizationName}[/] [{Colors.Deemphasized}]│ {Current().OrganizationId}[/] │ [{Colors.Important}]{Current().RepositoryName}[/] [{Colors.Deemphasized}]│ {Current().RepositoryId}[/]"
+                                )
+                                .AddRow(String.replicate headerLength "─", String.replicate borderLength "─")
+                                .AddRow(
+                                    $"[{Colors.Important}]{branchHeader}[/]",
+                                    $"[{Colors.Important}]{branchDto.BranchName}[/] ─ Allows {permissions branchDto} [{Colors.Deemphasized}]─ {branchDto.BranchId}[/]"
+                                )
+                                .AddEmptyRow()
+                                .AddRow($"  ─ latest save ", getReferenceRowValue latestSave)
+                                .AddRow($"  ─ latest checkpoint ", getReferenceRowValue latestCheckpoint)
+                                .AddRow($"  ─ latest commit", getReferenceRowValue latestCommit)
+                                .AddRow($"  ─ based on", getReferenceRowValue basedOn)
+                        else
+                            table
+                                .AddColumns(column1, column2) // Using Current().OwnerName.Length is aesthetically pleasing, there's no deeper reason for it.
+                                .AddRow(
+                                    $"[{Colors.Important}]{ownerHeader}[/] │ [{Colors.Important}]{organizationHeader}[/] │ [{Colors.Important}]{repositoryHeader}[/]",
+                                    $"[{Colors.Important}]{Current().OwnerName}[/] │ [{Colors.Important}]{Current().OrganizationName}[/] │ [{Colors.Important}]{Current().RepositoryName}[/]"
+                                )
+                                .AddRow(String.replicate headerLength "─", String.replicate borderLength "─")
+                                .AddRow(
+                                    $"[{Colors.Important}]{branchHeader}[/]",
+                                    $"[{Colors.Important}]{branchDto.BranchName}[/] ─ Allows {permissions branchDto}"
+                                )
+                                .AddEmptyRow()
+                                .AddRow($"  ─ latest save ", getReferenceRowValue latestSave)
+                                .AddRow($"  ─ latest checkpoint ", getReferenceRowValue latestCheckpoint)
+                                .AddRow($"  ─ latest commit", getReferenceRowValue latestCommit)
+                                .AddRow($"  ─ based on", getReferenceRowValue basedOn)
                         |> ignore
 
                         if
                             branchDto.BasedOn.ReferenceId = parentBranchDto.LatestPromotion.ReferenceId
                             || branchDto.ParentBranchId = Constants.DefaultParentBranchId
                         then
-                            table.AddRow($"", $"[{Colors.Added}]  Based on latest promotion.[/]") |> ignore
+                            table
+                                .AddEmptyRow()
+                                .AddRow($"", $"[{Colors.Added}]  Based on latest promotion.[/]")
+                            |> ignore
                         else
-                            table.AddRow($"", $"[{Colors.Important}]  Not based on latest promotion.[/]")
+                            table
+                                .AddEmptyRow()
+                                .AddRow($"", $"[{Colors.Important}]  Not based on latest promotion.[/]")
                             |> ignore
 
-                        table.AddRow(String.Empty, String.Empty) |> ignore
+                        table.AddRow(String.replicate headerLength "─", String.replicate borderLength "─")
+                        |> ignore
 
                         if branchDto.ParentBranchId <> Constants.DefaultParentBranchId then
-                            table
-                                .AddRow(
-                                    $"[{Colors.Important}]Parent branch[/]",
-                                    $"[{Colors.Important}]{parentBranchDto.BranchName}[/] - Allows {permissions parentBranchDto} [{Colors.Deemphasized}]- {parentBranchDto.BranchId}[/]"
-                                )
-                                .AddRow($"  - latest promotion", getReferenceRowValue latestParentBranchPromotion)
-                                .AddRow($"", $"  {latestParentBranchPromotion.ReferenceText}")
+                            if parseResult |> verbose then
+                                table
+                                    .AddRow(
+                                        $"[{Colors.Important}]Parent branch[/]",
+                                        $"[{Colors.Important}]{parentBranchDto.BranchName}[/] ─ Allows {permissions parentBranchDto} [{Colors.Deemphasized}]─ {parentBranchDto.BranchId}[/]"
+                                    )
+                                    .AddEmptyRow()
+                                    .AddRow($"  ─ latest promotion", getReferenceRowValue latestParentBranchPromotion)
+                                    .AddRow($"", $"  {latestParentBranchPromotion.ReferenceText}")
+                            else
+                                table
+                                    .AddRow(
+                                        $"[{Colors.Important}]Parent branch[/]",
+                                        $"[{Colors.Important}]{parentBranchDto.BranchName}[/] ─ Allows {permissions parentBranchDto}"
+                                    )
+                                    .AddEmptyRow()
+                                    .AddRow($"  ─ latest promotion", getReferenceRowValue latestParentBranchPromotion)
+                                    .AddRow($"", $"  {latestParentBranchPromotion.ReferenceText}")
                             |> ignore
                         else
                             table.AddRow($"[{Colors.Important}]Parent branch[/]", $"[{Colors.Important}]  None[/]")
