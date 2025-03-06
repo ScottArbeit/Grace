@@ -9,11 +9,6 @@
       "commandLineArgs": "diff commit",
       "workingDirectory": "D:\\Source\\grace\\src"
     },
-    "grace diff checkpoint": {
-      "commandName": "Project",
-      "commandLineArgs": "diff checkpoint",
-      "workingDirectory": "D:\\Source\\GraceDemo\\Scott"
-    },
     "grace merge - PlayWithFlexbox": {
       "commandName": "Project",
       "commandLineArgs": "merge -m \"Merge from Debug\"",
@@ -102,6 +97,11 @@
       "commandName": "Project",
       "commandLineArgs": "switch -c Scott -o Verbose",
       "workingDirectory": "E:\\GraceDemo\\User02"
+    },
+    "grace status": {
+      "commandName": "Project",
+      "commandLineArgs": "status",
+      "workingDirectory": "E:\\GraceDemo\\User01"
     }
   }
 }

@@ -22,6 +22,7 @@ open NodaTime
 open NodaTime.TimeZones
 open Spectre.Console
 open Spectre.Console.Json
+open Spectre.Console.Rendering
 open System
 open System.Collections.Concurrent
 open System.Collections.Generic
@@ -1567,7 +1568,7 @@ module Branch =
             })
 
 
-    type GetReferenceQuery = GetReferencesParameters -> Task<GraceResult<IEnumerable<ReferenceDto>>>
+    type GetReferenceQuery = GetReferencesParameters -> Task<GraceResult<ReferenceDto array>>
 
     type GetRefParameters() =
         inherit CommonParameters()
@@ -1650,59 +1651,65 @@ module Branch =
                 return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
         }
 
-    let private printReferences (parseResult: ParseResult) (branchDto: BranchDto) (references: ReferenceDto array) (referenceTypes: string) =
-        if references.Count() > 0 then
-            let sortedResults = references |> Array.sortByDescending (fun row -> row.CreatedAt)
-            let table = Table(Border = TableBorder.DoubleEdge)
-            table.ShowHeaders <- true
+    let private createReferenceTable (parseResult: ParseResult) (references: ReferenceDto array) =
+        let sortedResults = references |> Array.sortByDescending (fun row -> row.CreatedAt)
 
-            table.AddColumns(
-                [| TableColumn($"[{Colors.Important}]Type[/]")
-                   TableColumn($"[{Colors.Important}]Message[/]")
-                   TableColumn($"[{Colors.Important}]SHA-256[/]")
-                   TableColumn($"[{Colors.Important}]When[/]", Alignment = Justify.Right)
-                   TableColumn($"[{Colors.Important}][/]") |]
-            )
+        let table = Table(Border = TableBorder.DoubleEdge)
+        table.ShowHeaders <- true
+
+        table.AddColumns(
+            [| TableColumn($"[{Colors.Important}]Type[/]")
+               TableColumn($"[{Colors.Important}]Message[/]")
+               TableColumn($"[{Colors.Important}]SHA-256[/]")
+               TableColumn($"[{Colors.Important}]When[/]", Alignment = Justify.Right)
+               TableColumn($"[{Colors.Important}][/]") |]
+        )
+        |> ignore
+
+        if parseResult |> verbose then
+            table.AddColumns([| TableColumn($"[{Colors.Deemphasized}]ReferenceId[/]") |])
+                    .AddColumns([| TableColumn($"[{Colors.Deemphasized}]Root DirectoryVersionId[/]") |])
             |> ignore
 
-            if parseResult |> verbose then
-                table.AddColumns([| TableColumn($"[{Colors.Deemphasized}]ReferenceId[/]") |])
-                |> ignore
-
-            for row in sortedResults do
-                //logToAnsiConsole Colors.Verbose $"{serialize row}"
-                let sha256Hash =
-                    if parseResult.HasOption(Options.fullSha) then
-                        $"{row.Sha256Hash}"
-                    else
-                        $"{getShortSha256Hash row.Sha256Hash}"
-
-                let localCreatedAtTime = row.CreatedAt.ToDateTimeUtc().ToLocalTime()
-
-                let referenceTime = $"""{localCreatedAtTime.ToString("g", CultureInfo.CurrentUICulture)}"""
-
-                if parseResult |> verbose then
-                    table.AddRow(
-                        [| $"{getDiscriminatedUnionCaseName (row.ReferenceType)}"
-                           $"{row.ReferenceText}"
-                           sha256Hash
-                           ago row.CreatedAt
-                           $"[{Colors.Deemphasized}]{referenceTime}[/]"
-                           $"[{Colors.Deemphasized}]{row.ReferenceId}[/]" |]
-                    )
-                    |> ignore
+        for row in sortedResults do
+            //logToAnsiConsole Colors.Verbose $"{serialize row}"
+            let sha256Hash =
+                if parseResult.HasOption(Options.fullSha) then
+                    $"{row.Sha256Hash}"
                 else
-                    table.AddRow(
-                        [| $"{getDiscriminatedUnionCaseName (row.ReferenceType)}"
-                           $"{row.ReferenceText}"
-                           sha256Hash
-                           ago row.CreatedAt
-                           $"[{Colors.Deemphasized}]{referenceTime}[/]" |]
-                    )
-                    |> ignore
+                    $"{getShortSha256Hash row.Sha256Hash}"
 
-            AnsiConsole.MarkupLine($"[{Colors.Important}]{referenceTypes} in branch {branchDto.BranchName}:[/]")
-            AnsiConsole.Write(table)
+            let localCreatedAtTime = row.CreatedAt.ToDateTimeUtc().ToLocalTime()
+
+            let referenceTime = $"""{localCreatedAtTime.ToString("g", CultureInfo.CurrentUICulture)}"""
+
+            if parseResult |> verbose then
+                table.AddRow(
+                    [| $"{getDiscriminatedUnionCaseName (row.ReferenceType)}"
+                       $"{row.ReferenceText}"
+                       sha256Hash
+                       ago row.CreatedAt
+                       $"[{Colors.Deemphasized}]{referenceTime}[/]"
+                       $"[{Colors.Deemphasized}]{row.ReferenceId}[/]"
+                       $"[{Colors.Deemphasized}]{row.DirectoryId}[/]"
+                    |]
+                )
+            else
+                table.AddRow(
+                    [| $"{getDiscriminatedUnionCaseName (row.ReferenceType)}"
+                       $"{row.ReferenceText}"
+                       sha256Hash
+                       ago row.CreatedAt
+                       $"[{Colors.Deemphasized}]{referenceTime}[/]" |]
+                )
+            |> ignore
+
+        table
+
+    let printReferenceTable (table: Table) (references: ReferenceDto array) branchName referenceName =
+        AnsiConsole.MarkupLine($"[{Colors.Important}]{referenceName} in branch {branchName}:[/]")
+        AnsiConsole.Write(table)
+        AnsiConsole.MarkupLine($"[{Colors.Important}]Returned {references.Length} rows.[/]")
 
     let private GetReferences =
         CommandHandler.Create(fun (parseResult: ParseResult) (getReferencesParameters: GetRefParameters) ->
@@ -1716,8 +1723,8 @@ module Branch =
                     let (branchDto, references) = graceReturnValue.ReturnValue
 
                     if parseResult |> hasOutput then
-                        printReferences parseResult branchDto references "References"
-                        AnsiConsole.MarkupLine($"[{Colors.Important}]Returned {references.Length} rows.[/]")
+                        let referenceTable = createReferenceTable parseResult references
+                        printReferenceTable referenceTable references branchDto.BranchName "References"
 
                     return result |> renderOutput parseResult
                 | Error error -> return result |> renderOutput parseResult
@@ -1736,8 +1743,8 @@ module Branch =
                     let intReturn = result |> renderOutput parseResult
 
                     if parseResult |> hasOutput then
-                        printReferences parseResult branchDto references "Promotions"
-                        AnsiConsole.MarkupLine($"[{Colors.Important}]Returned {references.Length} rows.[/]")
+                        let referenceTable = createReferenceTable parseResult references
+                        printReferenceTable referenceTable references branchDto.BranchName "Promotions"
 
                     return intReturn
                 | Error error -> return result |> renderOutput parseResult
@@ -1756,8 +1763,8 @@ module Branch =
                     let intReturn = result |> renderOutput parseResult
 
                     if parseResult |> hasOutput then
-                        printReferences parseResult branchDto references "Commits"
-                        AnsiConsole.MarkupLine($"[{Colors.Important}]Returned {references.Length} rows.[/]")
+                        let referenceTable = createReferenceTable parseResult references
+                        printReferenceTable referenceTable references branchDto.BranchName "Commits"
 
                     return intReturn
                 | Error error -> return result |> renderOutput parseResult
@@ -1774,11 +1781,13 @@ module Branch =
 
                         match checkpointResult.Result, commitResult.Result with
                         | Ok checkpoints, Ok commits ->
+                            // Combining the results of both queries
                             let allReferences =
                                 checkpoints.ReturnValue
                                     .Concat(commits.ReturnValue)
                                     .OrderByDescending(fun ref -> ref.CreatedAt)
                                     .Take(getReferencesParameters.MaxCount)
+                                    .ToArray()
 
                             return Ok(GraceReturnValue.Create allReferences (getCorrelationId parseResult))
                         | Error error, _ -> return Error error
@@ -1793,8 +1802,8 @@ module Branch =
                     let intReturn = result |> renderOutput parseResult
 
                     if parseResult |> hasOutput then
-                        printReferences parseResult branchDto references "Checkpoints"
-                        AnsiConsole.MarkupLine($"[{Colors.Important}]Returned {references.Length} rows.[/]")
+                        let referenceTable = createReferenceTable parseResult references
+                        printReferenceTable referenceTable references branchDto.BranchName "Checkpoints"
 
                     return intReturn
                 | Error error -> return result |> renderOutput parseResult
@@ -1813,8 +1822,8 @@ module Branch =
                     let intReturn = result |> renderOutput parseResult
 
                     if parseResult |> hasOutput then
-                        printReferences parseResult branchDto references "Saves"
-                        AnsiConsole.MarkupLine($"[{Colors.Important}]Returned {references.Length} rows.[/]")
+                        let referenceTable = createReferenceTable parseResult references
+                        printReferenceTable referenceTable references branchDto.BranchName "Saves"
 
                     return intReturn
                 | Error error -> return result |> renderOutput parseResult
@@ -1833,8 +1842,8 @@ module Branch =
                     let intReturn = result |> renderOutput parseResult
 
                     if parseResult |> hasOutput then
-                        printReferences parseResult branchDto references "Tags"
-                        AnsiConsole.MarkupLine($"[{Colors.Important}]Returned {references.Length} rows.[/]")
+                        let referenceTable = createReferenceTable parseResult references
+                        printReferenceTable referenceTable references branchDto.BranchName "Tags"
 
                     return intReturn
                 | Error error -> return result |> renderOutput parseResult
@@ -1853,8 +1862,8 @@ module Branch =
                     let intReturn = result |> renderOutput parseResult
 
                     if parseResult |> hasOutput then
-                        printReferences parseResult branchDto references "Externals"
-                        AnsiConsole.MarkupLine($"[{Colors.Important}]Returned {references.Length} rows.[/]")
+                        let referenceTable = createReferenceTable parseResult references
+                        printReferenceTable referenceTable references branchDto.BranchName "Externals"
 
                     return intReturn
                 | Error error -> return result |> renderOutput parseResult
@@ -2951,6 +2960,7 @@ module Branch =
         task {
             try
                 if parseResult |> verbose then printParseResult parseResult
+                let horizontalLineChar = "─"
 
                 // Show repo and branch names.
                 let getParameters =
@@ -2969,7 +2979,6 @@ module Branch =
                 match! Branch.Get(getParameters) with
                 | Ok returnValue ->
                     let branchDto = returnValue.ReturnValue
-
                     match! Branch.GetParentBranch(getParameters) with
                     | Ok returnValue ->
                         let parentBranchDto = returnValue.ReturnValue
@@ -2994,14 +3003,6 @@ module Branch =
                             let space = " "
                             $"{String.replicate (longestAgoLength - s.Length) space}{s}"
 
-                        let getReferenceRowValue referenceDto =
-                            if referenceDto.ReferenceId = ReferenceId.Empty then
-                                $"  None"
-                            else if parseResult |> verbose then
-                                $"  {getShortSha256Hash referenceDto.Sha256Hash} │ {ago referenceDto.CreatedAt |> aligned} │ {instantToLocalTime referenceDto.CreatedAt} [{Colors.Deemphasized}]│ {referenceDto.ReferenceId} │ {referenceDto.DirectoryId}[/]"
-                            else
-                                $"  {getShortSha256Hash referenceDto.Sha256Hash} │ {ago referenceDto.CreatedAt |> aligned} │ {instantToLocalTime referenceDto.CreatedAt}"
-
                         let permissions (branchDto: Dto.Branch.BranchDto) =
                             let sb = stringBuilderPool.Get()
 
@@ -3025,8 +3026,8 @@ module Branch =
                             finally
                                 if not <| isNull sb then stringBuilderPool.Return(sb)
 
-                        let table = Table(Border = TableBorder.DoubleEdge)
-                        table.ShowHeaders <- false
+                        let outerTable = Table(Border = TableBorder.DoubleEdge)
+                        outerTable.ShowHeaders <- false
 
                         let ownerHeader = getLocalizedString Text.StringResourceName.Owner
                         let organizationHeader = getLocalizedString Text.StringResourceName.Organization
@@ -3035,100 +3036,121 @@ module Branch =
 
                         let headerLength = ownerHeader.Length + organizationHeader.Length + repositoryHeader.Length + 6
 
-                        // Using Current().OwnerName.Length is aesthetically pleasing, there's no deeper reason for it.
-                        let borderLength =
-                            Math.Max(
-                                headerLength,
-                                (Current().OwnerName.Length
-                                 + Current().OrganizationName.Length
-                                 + Current().RepositoryName.Length
-                                 + 6)
+                        let column1 = TableColumn(String.replicate headerLength horizontalLineChar)
+
+                        let getReferencesParameters =
+                            Parameters.Branch.GetReferencesParameters(
+                                BranchId = parameters.BranchId,
+                                BranchName = parameters.BranchName,
+                                OwnerId = parameters.OwnerId,
+                                OwnerName = parameters.OwnerName,
+                                OrganizationId = parameters.OrganizationId,
+                                OrganizationName = parameters.OrganizationName,
+                                RepositoryId = parameters.RepositoryId,
+                                RepositoryName = parameters.RepositoryName,
+                                MaxCount = 5,
+                                CorrelationId = parameters.CorrelationId
                             )
 
-                        let column1 = TableColumn(String.replicate headerLength "─")
-                        let column2 = TableColumn(String.replicate borderLength "─").PadRight(7)
+                        let! lastFiveReferences =
+                            task {
+                                match! Branch.GetReferences(getReferencesParameters) with
+                                | Ok returnValue -> return returnValue.ReturnValue
+                                | Error error -> return Array.Empty<ReferenceDto>()
+                            }
+
+                        let addBasedOnMessage(table: Table) =
+                            let space = " "
+                            (if branchDto.BasedOn.ReferenceId = parentBranchDto.LatestPromotion.ReferenceId || branchDto.ParentBranchId = Constants.DefaultParentBranchId then
+                                 table.AddRow($"{String.replicate (branchHeader.Length + 1) space}[{Colors.Added}]Based on latest promotion.[/]")
+                             else
+                                 table.AddRow($"{String.replicate (branchHeader.Length + 1) space}[{Colors.Important}]Not based on latest promotion.[/]"))
+                             .AddEmptyRow()
+
+                        let referenceTable = createReferenceTable parseResult lastFiveReferences
+                        let mutable borderLength = 0
 
                         if parseResult |> verbose then
-                            table
-                                .AddColumns(column1, column2)
-                                .AddRow(
-                                    $"[{Colors.Important}]{ownerHeader}[/] │ [{Colors.Important}]{organizationHeader}[/] │ [{Colors.Important}]{repositoryHeader}[/]",
-                                    $"[{Colors.Important}]{Current().OwnerName}[/] [{Colors.Deemphasized}]│ {Current().OwnerId}[/] │ [{Colors.Important}]{Current().OrganizationName}[/] [{Colors.Deemphasized}]│ {Current().OrganizationId}[/] │ [{Colors.Important}]{Current().RepositoryName}[/] [{Colors.Deemphasized}]│ {Current().RepositoryId}[/]"
-                                )
-                                .AddRow(String.replicate headerLength "─", String.replicate borderLength "─")
-                                .AddRow(
-                                    $"[{Colors.Important}]{branchHeader}[/]",
-                                    $"[{Colors.Important}]{branchDto.BranchName}[/] ─ Allows {permissions branchDto} [{Colors.Deemphasized}]─ {branchDto.BranchId}[/]"
-                                )
-                                .AddEmptyRow()
-                                .AddRow($"  ─ latest save ", getReferenceRowValue latestSave)
-                                .AddRow($"  ─ latest checkpoint ", getReferenceRowValue latestCheckpoint)
-                                .AddRow($"  ─ latest commit", getReferenceRowValue latestCommit)
-                                .AddRow($"  ─ based on", getReferenceRowValue basedOn)
+                            let header = $"[{Colors.Important}]{ownerHeader}[/] {Current().OwnerName} [{Colors.Deemphasized}]│ {Current().OwnerId}[/] │ [{Colors.Important}]{organizationHeader}[/] {Current().OrganizationName} [{Colors.Deemphasized}]│ {Current().OrganizationId}[/] │ [{Colors.Important}]{repositoryHeader}[/] {Current().RepositoryName} [{Colors.Deemphasized}]│ {Current().RepositoryId}[/]"
+                            borderLength <- header.Length - 72
+                            outerTable
+                                .AddColumns(column1)
+                                .AddRow(header)
+                                .AddRow(String.replicate borderLength horizontalLineChar)
+                                .AddRow($"[{Colors.Important}]{branchHeader}[/] {branchDto.BranchName} ─ Allows {permissions branchDto} [{Colors.Deemphasized}]─ {branchDto.BranchId}[/]")
+                                |> addBasedOnMessage
+                            |> ignore
                         else
-                            table
-                                .AddColumns(column1, column2) // Using Current().OwnerName.Length is aesthetically pleasing, there's no deeper reason for it.
-                                .AddRow(
-                                    $"[{Colors.Important}]{ownerHeader}[/] │ [{Colors.Important}]{organizationHeader}[/] │ [{Colors.Important}]{repositoryHeader}[/]",
-                                    $"[{Colors.Important}]{Current().OwnerName}[/] │ [{Colors.Important}]{Current().OrganizationName}[/] │ [{Colors.Important}]{Current().RepositoryName}[/]"
-                                )
-                                .AddRow(String.replicate headerLength "─", String.replicate borderLength "─")
-                                .AddRow(
-                                    $"[{Colors.Important}]{branchHeader}[/]",
-                                    $"[{Colors.Important}]{branchDto.BranchName}[/] ─ Allows {permissions branchDto}"
-                                )
-                                .AddEmptyRow()
-                                .AddRow($"  ─ latest save ", getReferenceRowValue latestSave)
-                                .AddRow($"  ─ latest checkpoint ", getReferenceRowValue latestCheckpoint)
-                                .AddRow($"  ─ latest commit", getReferenceRowValue latestCommit)
-                                .AddRow($"  ─ based on", getReferenceRowValue basedOn)
+                            let header = $"[{Colors.Important}]{ownerHeader}[/] {Current().OwnerName} │ [{Colors.Important}]{organizationHeader}[/] {Current().OrganizationName} │ [{Colors.Important}]{repositoryHeader}[/] {Current().RepositoryName}"
+                            borderLength <- header.Length - 36
+                            outerTable
+                                .AddColumns(column1)
+                                .AddRow(header)
+                                .AddRow(String.replicate borderLength horizontalLineChar)
+                                .AddRow($"[{Colors.Important}]{branchHeader}[/] {branchDto.BranchName} ─ Allows {permissions branchDto}")
+                                |> addBasedOnMessage
+                            |> ignore
+
+                        outerTable
+                            .AddRow($"[{Colors.Important}]References in branch {branchDto.BranchName}:[/]")
+                            .AddRow(referenceTable)
+                            .AddRow($"[{Colors.Important}]Returned {lastFiveReferences.Length} rows.[/]")
+                            .AddEmptyRow()
+                            //.AddRow($"─ latest save: {getReferenceRowValue latestSave}")
+                            //.AddRow($"─ latest checkpoint: {getReferenceRowValue latestCheckpoint}")
+                            //.AddRow($"─ latest commit: {getReferenceRowValue latestCommit}")
+                            //.AddRow($"─ based on: {getReferenceRowValue basedOn}")
                         |> ignore
 
-                        if
-                            branchDto.BasedOn.ReferenceId = parentBranchDto.LatestPromotion.ReferenceId
-                            || branchDto.ParentBranchId = Constants.DefaultParentBranchId
-                        then
-                            table
-                                .AddEmptyRow()
-                                .AddRow($"", $"[{Colors.Added}]  Based on latest promotion.[/]")
-                            |> ignore
-                        else
-                            table
-                                .AddEmptyRow()
-                                .AddRow($"", $"[{Colors.Important}]  Not based on latest promotion.[/]")
-                            |> ignore
-
-                        table.AddRow(String.replicate headerLength "─", String.replicate borderLength "─")
+                        outerTable.AddRow(String.replicate borderLength "─").AddEmptyRow()
                         |> ignore
 
                         if branchDto.ParentBranchId <> Constants.DefaultParentBranchId then
-                            if parseResult |> verbose then
-                                table
-                                    .AddRow(
-                                        $"[{Colors.Important}]Parent branch[/]",
-                                        $"[{Colors.Important}]{parentBranchDto.BranchName}[/] ─ Allows {permissions parentBranchDto} [{Colors.Deemphasized}]─ {parentBranchDto.BranchId}[/]"
-                                    )
+                            let getParentBranchReferencesParameters = 
+                                GetReferencesParameters(
+                                    BranchId = $"{branchDto.ParentBranchId}",
+                                    OwnerId = parameters.OwnerId,
+                                    OwnerName = parameters.OwnerName,
+                                    OrganizationId = parameters.OrganizationId,
+                                    OrganizationName = parameters.OrganizationName,
+                                    RepositoryId = parameters.RepositoryId,
+                                    RepositoryName = parameters.RepositoryName,
+                                    MaxCount = 5,
+                                    CorrelationId = parameters.CorrelationId
+                                )
+
+                            match! Branch.GetReferences(getParentBranchReferencesParameters) with
+                            | Ok returnValue ->
+                                let parentBranchReferences = returnValue.ReturnValue
+
+                                let parentBranchReferencesTable = createReferenceTable parseResult parentBranchReferences
+
+                                if parseResult |> verbose then
+                                    outerTable
+                                        .AddRow(
+                                            $"[{Colors.Important}]Parent branch[/] {parentBranchDto.BranchName} ─ Allows {permissions parentBranchDto} [{Colors.Deemphasized}]─ {parentBranchDto.BranchId}[/]"
+                                        )
+                                else
+                                    outerTable
+                                        .AddRow(
+                                            $"[{Colors.Important}]Parent branch[/] {parentBranchDto.BranchName} ─ Allows {permissions parentBranchDto}"
+                                        )
+                                |> ignore
+
+                                outerTable
                                     .AddEmptyRow()
-                                    .AddRow($"  ─ latest promotion", getReferenceRowValue latestParentBranchPromotion)
-                                    .AddRow($"", $"  {latestParentBranchPromotion.ReferenceText}")
-                            else
-                                table
-                                    .AddRow(
-                                        $"[{Colors.Important}]Parent branch[/]",
-                                        $"[{Colors.Important}]{parentBranchDto.BranchName}[/] ─ Allows {permissions parentBranchDto}"
-                                    )
-                                    .AddEmptyRow()
-                                    .AddRow($"  ─ latest promotion", getReferenceRowValue latestParentBranchPromotion)
-                                    .AddRow($"", $"  {latestParentBranchPromotion.ReferenceText}")
-                            |> ignore
+                                    .AddRow($"[{Colors.Important}]References in branch {parentBranchDto.BranchName}:[/]")
+                                    .AddRow(parentBranchReferencesTable)
+                                    .AddRow($"[{Colors.Important}]Returned {parentBranchReferences.Length} rows.[/]") |> ignore
+
+                            | Error error ->
+                                logToAnsiConsole Colors.Error (Markup.Escape($"{error}"))
                         else
-                            table.AddRow($"[{Colors.Important}]Parent branch[/]", $"[{Colors.Important}]  None[/]")
+                            outerTable.AddRow($"[{Colors.Important}]Parent branch[/]: None")
                             |> ignore
 
-                        // Need to add this portion of the header after everything else is rendered so we know the width.
-                        //let headerWidth = if table.Columns[0].Width.HasValue then table.Columns[0].Width.Value else 27  // 27 = longest current text
-                        //table.Columns[0].Header <- Markup(String.replicate headerWidth "_")
-                        AnsiConsole.Write(table)
+                        AnsiConsole.Write(outerTable)
+
                         return 0
                     | Error error ->
                         logToAnsiConsole Colors.Error (Markup.Escape($"{error}"))

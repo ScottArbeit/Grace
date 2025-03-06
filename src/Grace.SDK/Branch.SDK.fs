@@ -95,35 +95,35 @@ type Branch() =
 
     /// Gets the references from a branch.
     static member public GetReferences(parameters: GetReferencesParameters) =
-        postServer<GetReferencesParameters, IEnumerable<ReferenceDto>> (parameters |> ensureCorrelationIdIsSet, $"branch/{nameof (Branch.GetReferences)}")
+        postServer<GetReferencesParameters, ReferenceDto array> (parameters |> ensureCorrelationIdIsSet, $"branch/{nameof (Branch.GetReferences)}")
 
     /// Gets the promotions from a branch.
     static member public GetPromotions(parameters: GetReferencesParameters) =
-        postServer<GetReferencesParameters, IEnumerable<ReferenceDto>> (parameters |> ensureCorrelationIdIsSet, $"branch/{nameof (Branch.GetPromotions)}")
+        postServer<GetReferencesParameters, ReferenceDto array> (parameters |> ensureCorrelationIdIsSet, $"branch/{nameof (Branch.GetPromotions)}")
 
     /// Gets the commits from a branch.
     static member public GetCommits(parameters: GetReferencesParameters) =
-        postServer<GetReferencesParameters, IEnumerable<ReferenceDto>> (parameters |> ensureCorrelationIdIsSet, $"branch/{nameof (Branch.GetCommits)}")
+        postServer<GetReferencesParameters, ReferenceDto array> (parameters |> ensureCorrelationIdIsSet, $"branch/{nameof (Branch.GetCommits)}")
 
     /// Gets the checkpoints from a branch.
     static member public GetCheckpoints(parameters: GetReferencesParameters) =
-        postServer<GetReferencesParameters, IEnumerable<ReferenceDto>> (parameters |> ensureCorrelationIdIsSet, $"branch/{nameof (Branch.GetCheckpoints)}")
+        postServer<GetReferencesParameters, ReferenceDto array> (parameters |> ensureCorrelationIdIsSet, $"branch/{nameof (Branch.GetCheckpoints)}")
 
     /// Gets the saves from a branch.
     static member public GetSaves(parameters: GetReferencesParameters) =
-        postServer<GetReferencesParameters, IEnumerable<ReferenceDto>> (parameters |> ensureCorrelationIdIsSet, $"branch/{nameof (Branch.GetSaves)}")
+        postServer<GetReferencesParameters, ReferenceDto array> (parameters |> ensureCorrelationIdIsSet, $"branch/{nameof (Branch.GetSaves)}")
 
     /// Gets the tags from a branch.
     static member public GetTags(parameters: GetReferencesParameters) =
-        postServer<GetReferencesParameters, IEnumerable<ReferenceDto>> (parameters |> ensureCorrelationIdIsSet, $"branch/{nameof (Branch.GetTags)}")
+        postServer<GetReferencesParameters, ReferenceDto array> (parameters |> ensureCorrelationIdIsSet, $"branch/{nameof (Branch.GetTags)}")
 
     /// Gets the external references from a branch.
     static member public GetExternals(parameters: GetReferencesParameters) =
-        postServer<GetReferencesParameters, IEnumerable<ReferenceDto>> (parameters |> ensureCorrelationIdIsSet, $"branch/{nameof (Branch.GetExternals)}")
+        postServer<GetReferencesParameters, ReferenceDto array> (parameters |> ensureCorrelationIdIsSet, $"branch/{nameof (Branch.GetExternals)}")
 
     /// Gets the rebases from a branch.
     static member public GetRebases(parameters: GetReferencesParameters) =
-        postServer<GetReferencesParameters, IEnumerable<ReferenceDto>> (parameters |> ensureCorrelationIdIsSet, $"branch/{nameof (Branch.GetRebases)}")
+        postServer<GetReferencesParameters, ReferenceDto array> (parameters |> ensureCorrelationIdIsSet, $"branch/{nameof (Branch.GetRebases)}")
 
     /// Sets the name of a branch.
     static member public SetName(parameters: SetBranchNameParameters) =
@@ -137,7 +137,7 @@ type Branch() =
     static member public GetEvents(parameters: GetBranchVersionParameters) =
         postServer<GetBranchVersionParameters, IEnumerable<string>> (parameters |> ensureCorrelationIdIsSet, $"branch/{nameof (Branch.GetEvents)}")
 
-    /// Gets the metadata for the parent branch.
+    /// Gets the parent branch of the branch specified in the parameters.
     static member public GetParentBranch(parameters: BranchParameters) =
         postServer<BranchParameters, BranchDto> (parameters |> ensureCorrelationIdIsSet, $"branch/{nameof (Branch.GetParentBranch)}")
 

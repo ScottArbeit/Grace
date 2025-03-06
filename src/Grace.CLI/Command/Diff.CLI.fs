@@ -497,7 +497,7 @@ module Diff =
                                                     if parseResult |> json || parseResult |> verbose then
                                                         logToAnsiConsole Colors.Verbose (serialize error)
 
-                                                return Ok(GraceReturnValue.Create (promotions :> IEnumerable<ReferenceDto>) parameters.CorrelationId)
+                                                return Ok(GraceReturnValue.Create (promotions.ToArray()) parameters.CorrelationId)
                                         }
 
                                     let latestReference =

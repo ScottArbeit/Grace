@@ -1119,7 +1119,7 @@ module Services =
                     stringBuilderPool.Return(requestCharge)
             | MongoDB -> ()
 
-            return references :> IReadOnlyList<ReferenceDto>
+            return references.ToArray()
         }
 
     type DocumentIdentifier() =
