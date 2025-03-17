@@ -11,6 +11,8 @@ metadata:
 spec:
   mtls:
     enabled: true
+    controlPlaneTrustDomain: "dapr.io"
+    sentryAddress: "dapr-sentry.dapr-system.svc.cluster.local:50001"
   tracing:
     samplingRate: "1"
     otel:
@@ -283,7 +285,144 @@ data:
           processors: [memory_limiter, filter]
           #exporters: [prometheus, azuremonitor]
           exporters: [debug]
-
+---
+apiVersion: dapr.io/v1alpha1
+kind: Component
+metadata:
+  name: actorstorage
+spec:
+  type: state.azure.cosmosdb
+  version: v1
+  initTimeout: 1m
+  metadata:
+  - name: url
+    secretKeyRef:
+      name: azurecosmosdburl
+      key: azurecosmosdburl
+  - name: masterKey
+    secretKeyRef:
+      name: azurecosmosdbkey
+      key: azurecosmosdbkey
+  - name: database
+    secretKeyRef:
+      name: cosmosdatabasename
+      key: cosmosdatabasename
+  - name: collection
+    secretKeyRef:
+      name: cosmoscontainername
+      key: cosmoscontainername
+  - name: actorStateStore
+    value: "true"
+auth:
+  secretStore: cloudsecretstore
+---
+apiVersion: dapr.io/v1alpha1
+kind: Configuration
+metadata:
+  name: featureconfig
+spec:
+  tracing:
+    samplingRate: "1"
+    # otel:
+    #   isSecure: false
+    #   protocol: http
+    #   endpointAddress: http://opentelemetry-collector
+    zipkin:
+      endpointAddress: http://127.0.0.1:9411/api/v2/spans
+  metrics:
+    enabled: true
+  features:
+    - name: SchedulerReminders
+      enabled: true
+---
+apiVersion: dapr.io/v1alpha1
+kind: Component
+metadata:
+  name: graceevents
+spec:
+  type: pubsub.azure.servicebus
+  version: v1
+  initTimeout: 1m
+  metadata:
+  - name: connectionString
+    secretKeyRef:
+      name: azureservicebusconnectionstring
+      key: azureservicebusconnectionstring
+  #- name: timeoutInSec
+  #  value: <REPLACE-WITH-TIMEOUT-IN-SEC> # Optional. Default: "60". Timeout for sending messages and management operations.
+  #- name: handlerTimeoutInSec
+  #  value: <REPLACE-WITH-HANDLER-TIMEOUT-IN-SEC> # Optional. Default: "60". Timeout for invoking app handler.
+  - name: disableEntityManagement
+    value: true # Optional. Default: false. When set to true, topics and subscriptions do not get created automatically.
+  - name: maxDeliveryCount
+    value: 10 # Optional. Defines the number of attempts the server will make to deliver a message.
+  - name: lockDurationInSec
+    value: 60 # Optional. Defines the length in seconds that a message will be locked for before expiring.
+  #- name: lockRenewalInSec
+  #  value: <REPLACE-WITH-LOCK-RENEWAL-IN-SEC> # Optional. Default: "20". Defines the frequency at which buffered message locks will be renewed.
+  #- name: maxActiveMessages
+  #  value: <REPLACE-WITH-MAX-ACTIVE-MESSAGES> # Optional. Default: "10000". Defines the maximum number of messages to be buffered or processing at once.
+  #- name: maxActiveMessagesRecoveryInSec
+  #  value: <REPLACE-WITH-MAX-ACTIVE-MESSAGES-RECOVERY-IN-SEC> # Optional. Default: "2". Defines the number of seconds to wait once the maximum active message limit is reached.
+  #- name: maxConcurrentHandlers
+  #  value: <REPLACE-WITH-MAX-CONCURRENT-HANDLERS> # Optional. Defines the maximum number of concurrent message handlers
+  #- name: prefetchCount
+  #  value: <REPLACE-WITH-PREFETCH-COUNT> # Optional. Defines the number of prefetched messages (use for high throughput / low latency scenarios)
+  - name: defaultMessageTimeToLiveInSec
+    value: 1209600 # Optional. 1209600 = (60 * 60 * 24 * 14)
+  #- name: autoDeleteOnIdleInSec
+  #  value: <REPLACE-WITH-AUTO-DELETE-ON-IDLE-IN-SEC> # Optional.
+auth:
+  secretStore: cloudsecretstore
+---
+apiVersion: dapr.io/v1alpha1
+kind: Component
+metadata:
+  name: gracereminders
+spec:
+  type: pubsub.azure.servicebus
+  version: v1
+  initTimeout: 1m
+  metadata:
+  - name: connectionString
+    secretKeyRef:
+      name: azureservicebusconnectionstring
+      key: azureservicebusconnectionstring
+  #- name: timeoutInSec
+  #  value: <REPLACE-WITH-TIMEOUT-IN-SEC> # Optional. Default: "60". Timeout for sending messages and management operations.
+  #- name: handlerTimeoutInSec
+  #  value: <REPLACE-WITH-HANDLER-TIMEOUT-IN-SEC> # Optional. Default: "60". Timeout for invoking app handler.
+  - name: disableEntityManagement
+    value: true # Optional. Default: false. When set to true, topics and subscriptions do not get created automatically.
+  - name: maxDeliveryCount
+    value: 10 # Optional. Defines the number of attempts the server will make to deliver a message.
+  - name: lockDurationInSec
+    value: 60 # Optional. Defines the length in seconds that a message will be locked for before expiring.
+  #- name: lockRenewalInSec
+  #  value: <REPLACE-WITH-LOCK-RENEWAL-IN-SEC> # Optional. Default: "20". Defines the frequency at which buffered message locks will be renewed.
+  #- name: maxActiveMessages
+  #  value: <REPLACE-WITH-MAX-ACTIVE-MESSAGES> # Optional. Default: "10000". Defines the maximum number of messages to be buffered or processing at once.
+  #- name: maxActiveMessagesRecoveryInSec
+  #  value: <REPLACE-WITH-MAX-ACTIVE-MESSAGES-RECOVERY-IN-SEC> # Optional. Default: "2". Defines the number of seconds to wait once the maximum active message limit is reached.
+  #- name: maxConcurrentHandlers
+  #  value: <REPLACE-WITH-MAX-CONCURRENT-HANDLERS> # Optional. Defines the maximum number of concurrent message handlers
+  #- name: prefetchCount
+  #  value: <REPLACE-WITH-PREFETCH-COUNT> # Optional. Defines the number of prefetched messages (use for high throughput / low latency scenarios)
+  - name: defaultMessageTimeToLiveInSec
+    value: 1209600 # Optional. 1209600 = (60 * 60 * 24 * 14)
+  #- name: autoDeleteOnIdleInSec
+  #  value: <REPLACE-WITH-AUTO-DELETE-ON-IDLE-IN-SEC> # Optional.
+auth:
+  secretStore: cloudsecretstore
+---
+apiVersion: dapr.io/v1alpha1
+kind: Subscription
+metadata:
+  name: graceeventssubscription
+spec:
+  topic: graceeventstream
+  route: /notifications/receiveGraceEventStream
+  pubsubname: graceevents
 ---
 apiVersion: apps/v1
 kind: Deployment

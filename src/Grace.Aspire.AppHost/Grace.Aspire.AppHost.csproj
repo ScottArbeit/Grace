@@ -11,14 +11,15 @@
     </PropertyGroup>
 
     <ItemGroup>
-        <PackageReference Include="Aspire.Azure.Security.KeyVault" Version="9.0.0" />
-        <PackageReference Include="Aspire.Hosting.AppHost" Version="9.0.0" />
-        <PackageReference Include="Aspire.Hosting" Version="9.0.0" />
-        <PackageReference Include="Aspire.Hosting.Azure" Version="9.0.0" />
+        <PackageReference Include="Aspire.Azure.Security.KeyVault" Version="9.1.0" />
+        <PackageReference Include="Aspire.Hosting.AppHost" Version="9.1.0" />
+        <PackageReference Include="Aspire.Hosting" Version="9.1.0" />
+        <PackageReference Include="Aspire.Hosting.Azure" Version="9.1.0" />
         <PackageReference Include="Aspire.Hosting.Dapr" Version="9.0.0" />
-        <PackageReference Include="Aspire.Hosting.Redis" Version="9.0.0" />
-        <PackageReference Include="Aspire.Microsoft.Azure.Cosmos" Version="9.0.0" />
-        <PackageReference Include="Azure.Identity" Version="1.13.1" />
+        <PackageReference Include="Aspire.Hosting.Redis" Version="9.1.0" />
+        <PackageReference Include="Aspire.Microsoft.Azure.Cosmos" Version="9.1.0" />
+        <PackageReference Include="Azure.Identity" Version="1.13.2" />
+        <PackageReference Include="CommunityToolkit.Aspire.Hosting.Dapr" Version="9.2.1" />
     </ItemGroup>
 
     <ItemGroup>
