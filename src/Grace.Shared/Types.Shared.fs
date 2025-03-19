@@ -488,6 +488,10 @@ module Types =
 
             this
 
+        member this.enhance(dict: Dictionary<string, string>) =
+            dict |> Seq.iter (fun kvp -> this.Properties[kvp.Key] <- kvp.Value )
+            this
+
         override this.ToString() =
             // Breaking out the Properties because Dictionary<> doesn't have a good ToString() method.
             let output =
@@ -521,6 +525,10 @@ module Types =
             | false, true -> this.Properties[key] <- String.Empty
             | true, _ -> ()
 
+            this
+
+        member this.enhance(dict: Dictionary<string, string>) =
+            dict |> Seq.iter (fun kvp -> this.Properties[kvp.Key] <- kvp.Value )
             this
 
         override this.ToString() =

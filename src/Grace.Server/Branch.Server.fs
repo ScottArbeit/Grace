@@ -41,11 +41,13 @@ module Branch =
         task {
             let graceIds = getGraceIds context
             let correlationId = getCorrelationId context
+            let parameterDictionary = Dictionary<string, string>()
 
             try
                 let commandName = context.Items["Command"] :?> string
                 use activity = activitySource.StartActivity("processCommand", ActivityKind.Server)
                 let! parameters = context |> parse<'T>
+                parameterDictionary.AddRange(getParametersAsDictionary parameters)
 
                 // We know these Id's from ValidateIds.Middleware, so let's set them so we never have to resolve them again.
                 parameters.OwnerId <- graceIds.OwnerId
@@ -60,7 +62,8 @@ module Branch =
 
                         match! actorProxy.Handle cmd (createMetadata context) with
                         | Ok graceReturnValue ->
-                            (graceReturnValue |> addParametersToGraceReturnValue parameters)
+                            graceReturnValue
+                                .enhance(parameterDictionary)
                                 .enhance(nameof (OwnerId), graceIds.OwnerId)
                                 .enhance(nameof (OrganizationId), graceIds.OrganizationId)
                                 .enhance(nameof (RepositoryId), graceIds.RepositoryId)
@@ -71,7 +74,8 @@ module Branch =
 
                             return! context |> result200Ok graceReturnValue
                         | Error graceError ->
-                            (graceError |> addParametersToGraceError parameters)
+                            graceError
+                                .enhance(parameterDictionary)
                                 .enhance(nameof (OwnerId), graceIds.OwnerId)
                                 .enhance(nameof (OrganizationId), graceIds.OrganizationId)
                                 .enhance(nameof (RepositoryId), graceIds.RepositoryId)
@@ -123,7 +127,8 @@ module Branch =
                     log.LogDebug("{CurrentInstant}: error: {error}", getCurrentInstantExtended (), errorMessage)
 
                     let graceError =
-                        (GraceError.CreateWithMetadata errorMessage correlationId (getParametersAsDictionary parameters))
+                        (GraceError.Create errorMessage correlationId)
+                            .enhance(parameterDictionary)
                             .enhance(nameof (OwnerId), graceIds.OwnerId)
                             .enhance(nameof (OrganizationId), graceIds.OrganizationId)
                             .enhance(nameof (RepositoryId), graceIds.RepositoryId)
@@ -141,6 +146,7 @@ module Branch =
 
                 let graceError =
                     (GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" correlationId)
+                        .enhance(parameterDictionary)
                         .enhance(nameof (OwnerId), graceIds.OwnerId)
                         .enhance(nameof (OrganizationId), graceIds.OrganizationId)
                         .enhance(nameof (RepositoryId), graceIds.RepositoryId)
@@ -161,6 +167,7 @@ module Branch =
             use activity = activitySource.StartActivity("processQuery", ActivityKind.Server)
             let graceIds = getGraceIds context
             let correlationId = getCorrelationId context
+            let parameterDictionary = getParametersAsDictionary parameters
 
             try
                 let validationResults = validations parameters
@@ -177,7 +184,8 @@ module Branch =
 
                     // Wrap the query result in a GraceReturnValue.
                     let graceReturnValue =
-                        (GraceReturnValue.CreateWithMetadata queryResult correlationId (getParametersAsDictionary parameters))
+                        (GraceReturnValue.Create queryResult correlationId)
+                            .enhance(parameterDictionary)
                             .enhance(nameof (OwnerId), graceIds.OwnerId)
                             .enhance(nameof (OrganizationId), graceIds.OrganizationId)
                             .enhance(nameof (RepositoryId), graceIds.RepositoryId)
@@ -189,7 +197,8 @@ module Branch =
                     let! error = validationResults |> getFirstError
 
                     let graceError =
-                        (GraceError.CreateWithMetadata (BranchError.getErrorMessage error) correlationId (getParametersAsDictionary parameters))
+                        (GraceError.Create (BranchError.getErrorMessage error) correlationId)
+                            .enhance(parameterDictionary)
                             .enhance(nameof (OwnerId), graceIds.OwnerId)
                             .enhance(nameof (OrganizationId), graceIds.OrganizationId)
                             .enhance(nameof (RepositoryId), graceIds.RepositoryId)
@@ -199,7 +208,8 @@ module Branch =
                     return! context |> result400BadRequest graceError
             with ex ->
                 let graceError =
-                    (GraceError.CreateWithMetadata $"{Utilities.ExceptionResponse.Create ex}" correlationId (getParametersAsDictionary parameters))
+                    (GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" correlationId)
+                        .enhance(parameterDictionary)
                         .enhance(nameof (OwnerId), graceIds.OwnerId)
                         .enhance(nameof (OrganizationId), graceIds.OrganizationId)
                         .enhance(nameof (RepositoryId), graceIds.RepositoryId)

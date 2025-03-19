@@ -92,20 +92,6 @@ module Services =
     //    queryRequestOptions.PopulateIndexMetrics <- true
     //#endif
 
-    /// Adds the parameters from the API call to a GraceReturnValue instance.
-    let addParametersToGraceReturnValue<'T> parameters (graceReturnValue: GraceReturnValue<'T>) =
-        (getParametersAsDictionary parameters)
-        |> Seq.iter (fun kvp -> graceReturnValue.enhance (kvp.Key, kvp.Value) |> ignore)
-
-        graceReturnValue
-
-    /// Adds the parameters from the API call to a GraceError instance.
-    let addParametersToGraceError parameters (graceError: GraceError) =
-        (getParametersAsDictionary parameters)
-        |> Seq.iter (fun kvp -> graceError.enhance (kvp.Key, kvp.Value) |> ignore)
-
-        graceError
-
     /// Gets an Azure Blob Storage container client for the container that holds the object files for the given repository.
     let getContainerClient (repositoryDto: RepositoryDto) correlationId =
         task {
