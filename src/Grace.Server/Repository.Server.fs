@@ -14,6 +14,7 @@ open Grace.Actors.Services
 open Grace.Server.Services
 open Grace.Server.Validations
 open Grace.Shared
+open Grace.Shared.Extensions
 open Grace.Shared.Parameters.Repository
 open Grace.Shared.Types
 open Grace.Shared.Utilities

@@ -484,7 +484,7 @@ module Utilities =
 
     let propertyLookupByType = ConcurrentDictionary<Type, PropertyInfo array>()
 
-    /// Creates a dictionary from the properties of an object.
+    /// Creates a dictionary from the property names and values of a set of parameters.
     let getParametersAsDictionary<'T> (obj: 'T) =
         let mutable properties = Array.Empty<PropertyInfo>()
 
@@ -492,7 +492,7 @@ module Utilities =
             properties <- typeof<'T>.GetProperties(BindingFlags.Instance ||| BindingFlags.Public)
             propertyLookupByType.TryAdd(typeof<'T>, properties) |> ignore
 
-        let dict = Dictionary<string, string>()
+        let dictionary = Dictionary<string, string>()
 
         for prop in properties do
             let value = prop.GetValue(obj)
@@ -503,9 +503,9 @@ module Utilities =
                 | :? string as s -> s
                 | _ -> value.ToString()
 
-            dict[$"parameter:{prop.Name}"] <- valueString
+            dictionary[$"parameter:{prop.Name}"] <- valueString
 
-        dict
+        dictionary
 
     /// This construct is equivalent to using IHttpClientFactory in the ASP.NET Dependency Injection container, for code (like this) that isn't using GenericHost.
     ///

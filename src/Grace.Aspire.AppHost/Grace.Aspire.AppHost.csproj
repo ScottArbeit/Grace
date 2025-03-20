@@ -20,7 +20,7 @@
         <PackageReference Include="Aspire.Hosting.Redis" Version="9.1.0" />
         <PackageReference Include="Aspire.Microsoft.Azure.Cosmos" Version="9.1.0" />
         <PackageReference Include="Azure.Identity" Version="1.13.2" />
-        <PackageReference Include="CommunityToolkit.Aspire.Hosting.Dapr" Version="9.2.1" />
+        <PackageReference Include="CommunityToolkit.Aspire.Hosting.Dapr" Version="9.3.0" />
     </ItemGroup>
 
     <ItemGroup>

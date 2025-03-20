@@ -24,7 +24,7 @@
 		<PackageReference Include="Ben.Demystifier" Version="0.4.1" />
 		<PackageReference Include="FSharp.Control.TaskSeq" Version="0.4.0" />
 		<PackageReference Include="FsUnit" Version="7.0.1" />
-		<PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" Version="9.0.3" />
+		<PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" Version="10.0.0-preview.2.25164.1" />
 		<PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.13.0" />
 		<PackageReference Include="NUnit" Version="4.3.2" />
 		<PackageReference Include="NUnit3TestAdapter" Version="5.0.0" />

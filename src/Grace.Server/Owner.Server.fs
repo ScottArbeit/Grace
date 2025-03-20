@@ -12,7 +12,7 @@ open Grace.Server.ApplicationContext
 open Grace.Server.Services
 open Grace.Server.Validations
 open Grace.Shared
-open Grace.Shared.Constants
+open Grace.Shared.Extensions
 open Grace.Shared.Parameters.Owner
 open Grace.Shared.Validation.Common
 open Grace.Shared.Validation.Utilities

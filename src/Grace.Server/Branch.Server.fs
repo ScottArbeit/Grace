@@ -12,6 +12,7 @@ open Grace.Server.Services
 open Grace.Server.Validations
 open Grace.Shared
 open Grace.Shared.Dto.Diff
+open Grace.Shared.Extensions
 open Grace.Shared.Parameters.Branch
 open Grace.Shared.Types
 open Grace.Shared.Utilities
