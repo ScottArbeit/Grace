@@ -1,7 +1,7 @@
 #See https://aka.ms/customizecontainer to learn how to customize your debug container and how Visual Studio uses this Dockerfile to build your images for faster debugging.
 
 # Using the SDK image as the base instead of the aspnet image lets us run a shell for debugging.
-FROM mcr.microsoft.com/dotnet/sdk:9.0 AS base
+FROM mcr.microsoft.com/dotnet/sdk:10.0-preview AS base
 WORKDIR /app
 EXPOSE 5000
 EXPOSE 5001
@@ -59,7 +59,7 @@ RUN dotnet tool install dotnet-monitor -g --verbosity q
 
 #================================================================================================
 
-FROM mcr.microsoft.com/dotnet/sdk:9.0 AS build
+FROM mcr.microsoft.com/dotnet/sdk:10.0-preview AS build
 WORKDIR /src
 
 # Restoring individual projects to take advantage of layer caching.

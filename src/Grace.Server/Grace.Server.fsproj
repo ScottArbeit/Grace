@@ -3,7 +3,7 @@
         <AssemblyInformationalVersion>0.1.0 (Build Time: $([System.DateTime]::UtcNow.ToString("u")))</AssemblyInformationalVersion>
     </PropertyGroup>
 	<PropertyGroup>
-		<TargetFramework>net9.0</TargetFramework>
+		<TargetFramework>net10.0</TargetFramework>
         <!--<RuntimeIdentifiers>linux-x64;win-x64</RuntimeIdentifiers>-->
 		<Platforms>AnyCPU;x64</Platforms>
 		<LangVersion>preview</LangVersion>
