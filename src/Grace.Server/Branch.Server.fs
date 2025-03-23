@@ -30,8 +30,6 @@ open System.Text.Json
 open System.Threading.Tasks
 
 module Branch =
-    open Grace.Shared.Services
-
     type Validations<'T when 'T :> BranchParameters> = 'T -> ValueTask<Result<unit, BranchError>> array
 
     let activitySource = new ActivitySource("Branch")
@@ -40,6 +38,7 @@ module Branch =
 
     let processCommand<'T when 'T :> BranchParameters> (context: HttpContext) (validations: Validations<'T>) (command: 'T -> ValueTask<BranchCommand>) =
         task {
+            let startTime = getCurrentInstant()
             let graceIds = getGraceIds context
             let correlationId = getCorrelationId context
             let parameterDictionary = Dictionary<string, string>()
@@ -107,11 +106,12 @@ module Branch =
                 if validationsPassed then
                     let! cmd = command parameters
                     let! result = handleCommand graceIds.BranchId cmd
-
+                    let duration = getPaddedDuration_ms startTime
                     log.LogInformation(
-                        "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; Finished {path}; Status code: {statusCode}; OwnerId: {ownerId}; OrganizationId: {organizationId}; RepositoryId: {repositoryId}; BranchId: {branchId}.",
+                        "{CurrentInstant}: Node: {HostName}; Duration: {duration}; CorrelationId: {correlationId}; Finished {path}; Status code: {statusCode}; OwnerId: {ownerId}; OrganizationId: {organizationId}; RepositoryId: {repositoryId}; BranchId: {branchId}.",
                         getCurrentInstantExtended (),
                         getMachineName,
+                        duration,
                         correlationId,
                         context.Request.Path,
                         context.Response.StatusCode,

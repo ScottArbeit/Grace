@@ -582,9 +582,9 @@ module DirectoryVersion =
                 /// Creates a .zip file containing the file contents of the directory version.
                 let createDirectoryVersionZipFile
                     (repositoryDto: RepositoryDto)
-                    (blobName: string)
+                    (zipFileBlobName: string)
                     (directoryVersionId: DirectoryVersionId)
-                    (subdirectories: List<DirectoryVersionId>)
+                    (subdirectoryVersionIds: List<DirectoryVersionId>)
                     (fileVersions: IEnumerable<FileVersion>)
                     =
 
@@ -592,35 +592,35 @@ module DirectoryVersion =
                         let zipFileName = $"{directoryVersionId}.zip"
                         let tempZipPath = Path.Combine(Path.GetTempPath(), zipFileName)
 
-                        logToConsole
-                            $"In createDirectoryZipAsync: directoryVersionId: {directoryVersionId}; relativePath: {directoryVersion.RelativePath}; zipFileName: {zipFileName}; tempZipPath: {tempZipPath}."
+                        //logToConsole $"In createDirectoryZipAsync: directoryVersionId: {directoryVersionId}; relativePath: {directoryVersion.RelativePath}; zipFileName: {zipFileName}; tempZipPath: {tempZipPath}."
 
                         try
                             // Step 1: Create the ZIP archive.
                             use zipToCreate = new FileStream(tempZipPath, FileMode.Create, FileAccess.Write, FileShare.None, (64 * 1024))
                             use archive = new ZipArchive(zipToCreate, ZipArchiveMode.Create)
 
-                            // Using this lock to ensure that the files are added to the .zip one at a time. ZipArchive is not thread-safe.
-                            let lockObject = new System.Threading.Lock()
+                            let zipFileUris = new ConcurrentDictionary<DirectoryVersionId, UriWithSharedAccessSignature>()
 
-                            // Step 2: Process the subdirectories of the current directory.
-                            for subdirectoryId in subdirectories do
-                                // Call the subdirectory actor to get the .zip file URI, which will create of the .zip file if it doesn't already exist.
-                                let subdirectoryActorProxy = DirectoryVersion.CreateActorProxy subdirectoryId correlationId
-                                let! subDirectoryVersion = subdirectoryActorProxy.Get correlationId
-                                logToConsole $"In createDirectoryZipAsync: Processing directory version: {subDirectoryVersion.RelativePath}."
+                            // Step 2: Ensure that .zip files exist for all subdirectories, in parallel.
+                            do! Parallel.ForEachAsync(subdirectoryVersionIds, Constants.ParallelOptions, fun subdirectoryVersionId ct ->
+                                ValueTask(task {
+                                    // Call the subdirectory actor to get the .zip file URI, which will create the .zip file if it doesn't already exist.
+                                    let subdirectoryActorProxy = DirectoryVersion.CreateActorProxy subdirectoryVersionId correlationId
+                                    let! subdirectoryZipFileUri = subdirectoryActorProxy.GetZipFileUri correlationId
+                                    zipFileUris[subdirectoryVersionId] <- subdirectoryZipFileUri
+                                }))
 
-                                let! subdirectoryZipFileUri = subdirectoryActorProxy.GetZipFileUri correlationId
-
+                            // Step 3: Process the subdirectories of the current directory one at a time, because we need to add entries to the .zip file one at a time.
+                            for subdirectoryVersionId in subdirectoryVersionIds do
                                 // Get an Azure Blob Client for the .zip file.
-                                let subZipBlobName = $"{GraceDirectoryVersionStorageFolderName}/{subdirectoryId}.zip"
-                                let! subZipBlobClient = getAzureBlobClient repositoryDto subZipBlobName correlationId
+                                let subdirectoryZipFileName = $"{GraceDirectoryVersionStorageFolderName}/{subdirectoryVersionId}.zip"
+                                let! subdirectoryZipFileClient = getAzureBlobClient repositoryDto subdirectoryZipFileName correlationId
 
                                 // Copy the contents of the subdirectory's .zip file to the new .zip we're creating.
-                                use! subZipStream = subZipBlobClient.OpenReadAsync()
-                                use subArchive = new ZipArchive(subZipStream, ZipArchiveMode.Read)
+                                use! subdirectoryZipFileStream = subdirectoryZipFileClient.OpenReadAsync()
+                                use subdirectoryZipArchive = new ZipArchive(subdirectoryZipFileStream, ZipArchiveMode.Read)
 
-                                for entry in subArchive.Entries do
+                                for entry in subdirectoryZipArchive.Entries do
                                     if not (String.IsNullOrEmpty(entry.Name)) then
                                         // Using CompressionLevel.NoCompression because the files are already GZipped.
                                         // We're just using .zip as an archive format for already-compressed files.
@@ -630,10 +630,9 @@ module DirectoryVersion =
                                         use newEntryStream = newEntry.Open()
                                         do! entryStream.CopyToAsync(newEntryStream)
 
-                            // Step 3: Process the files in the current directory.
+                            // Step 4: Process the files in the current directory.
                             for fileVersion in fileVersions do
-                                logToConsole
-                                    $"In createDirectoryZipAsync: Processing file version: {Path.Combine(directoryVersion.RelativePath, fileVersion.GetObjectFileName)}."
+                                //logToConsole $"In createDirectoryZipAsync: Processing file version: {Path.Combine(directoryVersion.RelativePath, fileVersion.GetObjectFileName)}."
 
                                 let! fileBlobClient = getAzureBlobClientForFileVersion repositoryDto fileVersion correlationId
                                 let! existsResult = fileBlobClient.ExistsAsync()
@@ -645,17 +644,13 @@ module DirectoryVersion =
                                     use zipEntryStream = zipEntry.Open()
                                     do! fileStream.CopyToAsync(zipEntryStream)
 
-                            // Step 4: Upload the new ZIP to Azure Blob Storage
-                            // Dispose all of the streams before uploading
-                            archive.Dispose()
+                            // Step 5: Upload the new ZIP to Azure Blob Storage
+                            archive.Dispose()   // Dispose the archive before uploading to ensure it's properly flushed to the disk.
+                            let! zipFileBlobClient = getAzureBlobClient repositoryDto zipFileBlobName correlationId
+                            use tempZipFileStream = File.OpenRead(tempZipPath)
+                            let! response = zipFileBlobClient.UploadAsync(tempZipFileStream, overwrite = true)
 
-                            // Upload the new .zip file to Azure Blob Storage
-                            let! destinationBlobClient = getAzureBlobClient repositoryDto blobName correlationId
-                            use uploadStream = File.OpenRead(tempZipPath)
-                            let! response = destinationBlobClient.UploadAsync(uploadStream, true)
-
-                            logToConsole
-                                $"In createDirectoryZipAsync: Successfully uploaded {zipFileName} for relative path {directoryVersion.RelativePath} to Azure Blob Storage."
+                            //logToConsole $"In createDirectoryZipAsync: Successfully uploaded {zipFileName} for relative path {directoryVersion.RelativePath} to Azure Blob Storage."
 
                             ()
                         finally
