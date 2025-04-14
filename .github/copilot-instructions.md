@@ -16,3 +16,5 @@ Provide an English description of the generated code.
 If task breakdown is requested for programming, generate discrete steps that could be placed on a Kanban board as separate tasks.
 
 If you don't know the answer to a question, simply say "I don't know."
+
+- @azure Rule - Use Azure Best Practices: When generating code for Azure, running terminal commands for Azure, or performing operations related to Azure, invoke your `azure_development-get_best_practices` tool if available.
