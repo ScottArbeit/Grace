@@ -18,7 +18,7 @@ The choice of SHA-256, as opposed to SHA-384 or other stronger algorithms, comes
 
 In ordinary usage, SHA-256 values are computed by Grace CLI, and those values are used when uploading versions of files and directories, and when creating references on the server.
 
-Specifically, Grace relies on the .NET implementation of [SHA-256](https://docs.microsoft.com/en-us/dotnet/api/system.security.cryptography.sha256?view=net-6.0), found in the [System.Security.Cryptography](https://docs.microsoft.com/en-us/dotnet/api/system.security.cryptography?view=net-6.0) namespace.
+Specifically, Grace relies on the .NET implementation of [SHA-256](https://docs.microsoft.com/en-us/dotnet/api/system.security.cryptography.sha256), found in the [System.Security.Cryptography](https://docs.microsoft.com/en-us/dotnet/api/system.security.cryptography) namespace.
 
 .NET implementations of Grace clients are welcome to use the hashing implementation in Grace.Shared, which is used by both Grace CLI and Grace Server. Implementations in other languages will need to implement this algorithm separately.
 
