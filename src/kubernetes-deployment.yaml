@@ -39,11 +39,18 @@ data:
   DAPR_HTTP_PORT: "3500"
   DAPR_GRPC_PORT: "50001"
   DAPR_SERVER_URI: http://127.0.0.1
+  directoryversion_container: "directoryversion"
+  diff_container: "diff"
   InProcessFeatures__Enabled: "true"
   Logging__LogLevel__Default: "Information"
   #Logging__LogLevel__Default: "Debug"
+  orleans_cluster_id: "grace-orleans-cluster"
+  orleans_service_id: "grace-server"
   OTLP_ENDPOINT_URL: http://localhost:4317
+  redis_host: localhost
+  redis_port: "6379"
   TEMP: /tmp
+  zipfile_container: "zipfile"
   #ZIPKIN_ENDPOINT_URL: http://localhost:9412
 
 ---
@@ -561,21 +568,49 @@ spec:
         - name: DOTNET_DiagnosticPorts
           value: /diag/dotnet-monitor.sock
 
-      # - name: dapr-scheduler
-      #   image: "daprio/dapr:1.14.1"
-      #   command: [ "/scheduler", "--log-level", "debug" ]
-      #   ports:
-      #   - containerPort: 50006
-      #     protocol: TCP
-      #     name: dapr-scheduler
-      #   - containerPort: 9070
-      #     protocol: TCP
-      #     name: dapr-sch-metric
-      #   volumeMounts:
-      #   - name: dapr-scheduler-volume
-      #     mountPath: /mnt/dapr/scheduler
-      #     readOnly: false
+      #############################################
+      # Redis
+      #############################################
+      - name: redis-server
+        image: redis:latest
+        ports:
+        - containerPort: 6379
+          name: redis-server
+          protocol: TCP
+        resources:
+          limits:
+            cpu: "2.0"
+            memory: "2048Mi"
+          requests:
+            cpu: "0.25"
+            memory: "256Mi"
       
+      #############################################
+      # Azurite Storage Emulator (optional)
+      #############################################
+      - name: azurite
+        image: mcr.microsoft.com/azure-storage/azurite:latest
+        ports:
+        - containerPort: 10000 # Blob service
+          name: azurite-blob
+          protocol: TCP
+        - containerPort: 10001 # Queue service
+          name: azurite-queue
+          protocol: TCP
+        - containerPort: 10002 # Table service
+          name: azurite-table
+          protocol: TCP
+        resources:
+          limits:
+            cpu: "0.5"
+            memory: "512Mi"
+          requests:
+            cpu: "0.1"
+            memory: "128Mi"
+        env:
+        - name: AZURITE_ACCOUNTS
+          value: "devstoreaccount1=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw=="
+
       #############################################
       # OpenTelemetry Collector
       #############################################
@@ -771,6 +806,9 @@ spec:
   - name: monitor-metrics
     port: 52325
     targetPort: monitor-metrics
+  - name: redis-server
+    port: 6379
+    targetPort: redis-server
   # - name: dapr-scheduler
   #   port: 6070
   #   targetPort: 50006

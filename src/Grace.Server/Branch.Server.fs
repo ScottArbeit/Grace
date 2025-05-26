@@ -1,9 +1,7 @@
 namespace Grace.Server
 
-open Dapr.Actors
 open Giraffe
 open Grace.Actors
-open Grace.Actors.Commands.Branch
 open Grace.Actors.Constants
 open Grace.Actors.Extensions.ActorProxy
 open Grace.Actors.Interfaces
@@ -11,6 +9,7 @@ open Grace.Actors.Services
 open Grace.Server.Services
 open Grace.Server.Validations
 open Grace.Shared
+open Grace.Shared.Commands.Branch
 open Grace.Shared.Dto.Diff
 open Grace.Shared.Extensions
 open Grace.Shared.Parameters.Branch
@@ -58,7 +57,8 @@ module Branch =
                 let handleCommand (branchId: string) cmd =
                     task {
                         let branchGuid = Guid.Parse(branchId)
-                        let actorProxy = Branch.CreateActorProxy branchGuid correlationId
+                        let repositoryId = Guid.Parse(graceIds.RepositoryId)
+                        let! actorProxy = Branch.CreateActorProxy branchGuid repositoryId correlationId
 
                         match! actorProxy.Handle cmd (createMetadata context) with
                         | Ok graceReturnValue ->
@@ -106,7 +106,7 @@ module Branch =
                 if validationsPassed then
                     let! cmd = command parameters
                     let! result = handleCommand graceIds.BranchId cmd
-                    let duration = getPaddedDuration_ms startTime
+                    let duration = getDurationRightAligned_ms startTime
                     log.LogInformation(
                         "{CurrentInstant}: Node: {HostName}; Duration: {duration}; CorrelationId: {correlationId}; Finished {path}; Status code: {statusCode}; OwnerId: {ownerId}; OrganizationId: {organizationId}; RepositoryId: {repositoryId}; BranchId: {branchId}.",
                         getCurrentInstantExtended (),
@@ -178,7 +178,8 @@ module Branch =
                 if validationsPassed then
                     // Get the actor proxy for the branch.
                     let branchGuid = Guid.Parse(graceIds.BranchId)
-                    let actorProxy = Branch.CreateActorProxy branchGuid correlationId
+                    let repositoryId = Guid.Parse(graceIds.RepositoryId)
+                    let! actorProxy = Branch.CreateActorProxy branchGuid repositoryId correlationId
 
                     // Execute the query.
                     let! queryResult = query context maxCount actorProxy
@@ -250,7 +251,8 @@ module Branch =
                         match! (resolveBranchId parameters.RepositoryId parameters.ParentBranchId parameters.ParentBranchName parameters.CorrelationId) with
                         | Some parentBranchId ->
                             let parentBranchGuid = Guid.Parse(parentBranchId)
-                            let parentBranchActorProxy = Branch.CreateActorProxy parentBranchGuid parameters.CorrelationId
+                            let repositoryId = Guid.Parse(parameters.RepositoryId)
+                            let! parentBranchActorProxy = Branch.CreateActorProxy parentBranchGuid repositoryId parameters.CorrelationId
 
                             let! parentBranch = parentBranchActorProxy.Get parameters.CorrelationId
 
@@ -284,8 +286,11 @@ module Branch =
     let Rebase: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
+                let graceIds = getGraceIds context
+                let repositoryId = Guid.Parse(graceIds.RepositoryId)
+
                 let validations (parameters: RebaseParameters) =
-                    [| Branch.referenceIdExists parameters.BasedOn parameters.CorrelationId ReferenceIdDoesNotExist
+                    [| Branch.referenceIdExists parameters.BasedOn repositoryId parameters.CorrelationId ReferenceIdDoesNotExist
                        Branch.branchAllowsReferenceType
                            parameters.OwnerId
                            parameters.OwnerName
@@ -310,6 +315,7 @@ module Branch =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let graceIds = getGraceIds context
+                let repositoryId = Guid.Parse(graceIds.RepositoryId)
 
                 let validations (parameters: AssignParameters) =
                     [| String.isValidSha256Hash parameters.Sha256Hash Sha256HashIsRequired
@@ -331,7 +337,7 @@ module Branch =
                 let command (parameters: AssignParameters) =
                     task {
                         if parameters.DirectoryVersionId <> Guid.Empty then
-                            let directoryVersionActorProxy = DirectoryVersion.CreateActorProxy parameters.DirectoryVersionId parameters.CorrelationId
+                            let! directoryVersionActorProxy = DirectoryVersion.CreateActorProxy parameters.DirectoryVersionId repositoryId parameters.CorrelationId
 
                             let! directoryVersion = directoryVersionActorProxy.Get(parameters.CorrelationId)
 
@@ -658,7 +664,7 @@ module Branch =
                     let! parameters = context |> parse<GetBranchParameters>
                     let! result = processQuery context parameters validations 1 query
 
-                    let duration_ms = getPaddedDuration_ms startTime
+                    let duration_ms = getDurationRightAligned_ms startTime
 
                     log.LogInformation(
                         "{CurrentInstant}: Node: {HostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {path}; BranchId: {branchId}.",
@@ -672,7 +678,7 @@ module Branch =
 
                     return result
                 with ex ->
-                    let duration_ms = getPaddedDuration_ms startTime
+                    let duration_ms = getDurationRightAligned_ms startTime
 
                     log.LogError(
                         ex,
@@ -710,7 +716,7 @@ module Branch =
                     let! parameters = context |> parse<GetBranchParameters>
                     let! result = processQuery context parameters validations 1 query
 
-                    let duration_ms = getPaddedDuration_ms startTime
+                    let duration_ms = getDurationRightAligned_ms startTime
 
                     log.LogInformation(
                         "{CurrentInstant}: Node: {HostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {path}; BranchId: {branchId}.",
@@ -724,7 +730,7 @@ module Branch =
 
                     return result
                 with ex ->
-                    let duration_ms = getPaddedDuration_ms startTime
+                    let duration_ms = getDurationRightAligned_ms startTime
 
                     log.LogError(
                         ex,
@@ -761,7 +767,7 @@ module Branch =
                     let! parameters = context |> parse<BranchParameters>
                     let! result = processQuery context parameters validations 1 query
 
-                    let duration_ms = getPaddedDuration_ms startTime
+                    let duration_ms = getDurationRightAligned_ms startTime
 
                     log.LogInformation(
                         "{CurrentInstant}: Node: {HostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {path}; BranchId: {branchId}.",
@@ -775,7 +781,7 @@ module Branch =
 
                     return result
                 with ex ->
-                    let duration_ms = getPaddedDuration_ms startTime
+                    let duration_ms = getDurationRightAligned_ms startTime
 
                     log.LogError(
                         ex,
@@ -799,6 +805,7 @@ module Branch =
             task {
                 let startTime = getCurrentInstant ()
                 let graceIds = getGraceIds context
+                let repositoryId = Guid.Parse(graceIds.RepositoryId)
 
                 try
                     let validations (parameters: GetReferenceParameters) = [||]
@@ -807,7 +814,7 @@ module Branch =
                         task {
                             let referenceGuid = Guid.Parse(context.Items["ReferenceId"] :?> string)
 
-                            let referenceActorProxy = Reference.CreateActorProxy referenceGuid (getCorrelationId context)
+                            let! referenceActorProxy = Reference.CreateActorProxy referenceGuid repositoryId (getCorrelationId context)
 
                             let! referenceDto = referenceActorProxy.Get(getCorrelationId context)
                             return referenceDto
@@ -817,7 +824,7 @@ module Branch =
                     context.Items["ReferenceId"] <- parameters.ReferenceId
                     let! result = processQuery context parameters validations 1 query
 
-                    let duration_ms = getPaddedDuration_ms startTime
+                    let duration_ms = getDurationRightAligned_ms startTime
 
                     log.LogInformation(
                         "{CurrentInstant}: Node: {HostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {path}; BranchId: {branchId}.",
@@ -831,7 +838,7 @@ module Branch =
 
                     return result
                 with ex ->
-                    let duration_ms = getPaddedDuration_ms startTime
+                    let duration_ms = getDurationRightAligned_ms startTime
 
                     log.LogError(
                         ex,
@@ -869,7 +876,7 @@ module Branch =
                     let! parameters = context |> parse<GetReferencesParameters>
                     let! result = processQuery context parameters validations (parameters.MaxCount) query
 
-                    let duration_ms = getPaddedDuration_ms startTime
+                    let duration_ms = getDurationRightAligned_ms startTime
 
                     log.LogInformation(
                         "{CurrentInstant}: Node: {HostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {path}; BranchId: {branchId}.",
@@ -883,7 +890,7 @@ module Branch =
 
                     return result
                 with ex ->
-                    let duration_ms = getPaddedDuration_ms startTime
+                    let duration_ms = getDurationRightAligned_ms startTime
 
                     log.LogError(
                         ex,
@@ -928,7 +935,7 @@ module Branch =
                     context.Items.Add("ReferenceTypes", serialize parameters.ReferenceTypes)
                     let! result = processQuery context parameters validations 1 query
 
-                    let duration_ms = getPaddedDuration_ms startTime
+                    let duration_ms = getDurationRightAligned_ms startTime
 
                     log.LogInformation(
                         "{CurrentInstant}: Node: {HostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {path}; RepositoryId: {repositoryId}.",
@@ -942,7 +949,7 @@ module Branch =
 
                     return result
                 with ex ->
-                    let duration_ms = getPaddedDuration_ms startTime
+                    let duration_ms = getDurationRightAligned_ms startTime
 
                     log.LogError(
                         ex,
@@ -998,8 +1005,8 @@ module Branch =
                                     (fun i ct ->
                                         ValueTask(
                                             task {
-                                                let diffActorProxy =
-                                                    Diff.CreateActorProxy sortedRefs[i].DirectoryId sortedRefs[i + 1].DirectoryId correlationId
+                                                let! diffActorProxy =
+                                                    Diff.CreateActorProxy sortedRefs[i].DirectoryId sortedRefs[i + 1].DirectoryId branchDto.RepositoryId correlationId
 
                                                 let! diffDto = diffActorProxy.GetDiff correlationId
                                                 diffDtos.Add(diffDto)
@@ -1019,7 +1026,7 @@ module Branch =
                     context.Items.Add(nameof (ReferenceType), parameters.ReferenceType)
                     let! result = processQuery context parameters validations (parameters.MaxCount) query
 
-                    let duration_ms = getPaddedDuration_ms startTime
+                    let duration_ms = getDurationRightAligned_ms startTime
 
                     log.LogInformation(
                         "{CurrentInstant}: Node: {HostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {path}; BranchId: {branchId}.",
@@ -1033,7 +1040,7 @@ module Branch =
 
                     return result
                 with ex ->
-                    let duration_ms = getPaddedDuration_ms startTime
+                    let duration_ms = getDurationRightAligned_ms startTime
 
                     log.LogError(
                         ex,
@@ -1071,7 +1078,7 @@ module Branch =
                     let! parameters = context |> parse<GetReferencesParameters>
                     let! result = processQuery context parameters validations (parameters.MaxCount) query
 
-                    let duration_ms = getPaddedDuration_ms startTime
+                    let duration_ms = getDurationRightAligned_ms startTime
 
                     log.LogInformation(
                         "{CurrentInstant}: Node: {HostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {path}; BranchId: {branchId}.",
@@ -1085,7 +1092,7 @@ module Branch =
 
                     return result
                 with ex ->
-                    let duration_ms = getPaddedDuration_ms startTime
+                    let duration_ms = getDurationRightAligned_ms startTime
 
                     log.LogError(
                         ex,
@@ -1123,7 +1130,7 @@ module Branch =
                     let! parameters = context |> parse<GetReferencesParameters>
                     let! result = processQuery context parameters validations (parameters.MaxCount) query
 
-                    let duration_ms = getPaddedDuration_ms startTime
+                    let duration_ms = getDurationRightAligned_ms startTime
 
                     log.LogInformation(
                         "{CurrentInstant}: Node: {HostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {path}; BranchId: {branchId}.",
@@ -1137,7 +1144,7 @@ module Branch =
 
                     return result
                 with ex ->
-                    let duration_ms = getPaddedDuration_ms startTime
+                    let duration_ms = getDurationRightAligned_ms startTime
 
                     log.LogError(
                         ex,
@@ -1175,7 +1182,7 @@ module Branch =
                     let! parameters = context |> parse<GetReferencesParameters>
                     let! result = processQuery context parameters validations (parameters.MaxCount) query
 
-                    let duration_ms = getPaddedDuration_ms startTime
+                    let duration_ms = getDurationRightAligned_ms startTime
 
                     log.LogInformation(
                         "{CurrentInstant}: Node: {HostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {path}; BranchId: {branchId}.",
@@ -1189,7 +1196,7 @@ module Branch =
 
                     return result
                 with ex ->
-                    let duration_ms = getPaddedDuration_ms startTime
+                    let duration_ms = getDurationRightAligned_ms startTime
 
                     log.LogError(
                         ex,
@@ -1228,7 +1235,7 @@ module Branch =
                     let! parameters = context |> parse<GetReferencesParameters>
                     let! result = processQuery context parameters validations (parameters.MaxCount) query
 
-                    let duration_ms = getPaddedDuration_ms startTime
+                    let duration_ms = getDurationRightAligned_ms startTime
 
                     log.LogInformation(
                         "{CurrentInstant}: Node: {HostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {path}; BranchId: {branchId}.",
@@ -1242,7 +1249,7 @@ module Branch =
 
                     return result
                 with ex ->
-                    let duration_ms = getPaddedDuration_ms startTime
+                    let duration_ms = getDurationRightAligned_ms startTime
 
                     log.LogError(
                         ex,
@@ -1280,7 +1287,7 @@ module Branch =
                     let! parameters = context |> parse<GetReferencesParameters>
                     let! result = processQuery context parameters validations (parameters.MaxCount) query
 
-                    let duration_ms = getPaddedDuration_ms startTime
+                    let duration_ms = getDurationRightAligned_ms startTime
 
                     log.LogInformation(
                         "{CurrentInstant}: Node: {HostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {path}; BranchId: {branchId}.",
@@ -1294,7 +1301,7 @@ module Branch =
 
                     return result
                 with ex ->
-                    let duration_ms = getPaddedDuration_ms startTime
+                    let duration_ms = getDurationRightAligned_ms startTime
 
                     log.LogError(
                         ex,
@@ -1332,7 +1339,7 @@ module Branch =
                     let! parameters = context |> parse<GetReferencesParameters>
                     let! result = processQuery context parameters validations (parameters.MaxCount) query
 
-                    let duration_ms = getPaddedDuration_ms startTime
+                    let duration_ms = getDurationRightAligned_ms startTime
 
                     log.LogInformation(
                         "{CurrentInstant}: Node: {HostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {path}; BranchId: {branchId}.",
@@ -1346,7 +1353,7 @@ module Branch =
 
                     return result
                 with ex ->
-                    let duration_ms = getPaddedDuration_ms startTime
+                    let duration_ms = getDurationRightAligned_ms startTime
 
                     log.LogError(
                         ex,
@@ -1370,6 +1377,7 @@ module Branch =
                 let startTime = getCurrentInstant ()
                 let graceIds = getGraceIds context
                 let correlationId = getCorrelationId context
+                let repositoryId = Guid.Parse(graceIds.RepositoryId)
 
                 try
                     let validations (parameters: ListContentsParameters) =
@@ -1390,18 +1398,18 @@ module Branch =
 
                                 match latestReference with
                                 | Some latestReference ->
-                                    let directoryActorProxy = DirectoryVersion.CreateActorProxy latestReference.DirectoryId correlationId
+                                    let! directoryActorProxy = DirectoryVersion.CreateActorProxy latestReference.DirectoryId branchDto.RepositoryId correlationId
                                     let! recursiveSize = directoryActorProxy.GetRecursiveSize(getCorrelationId context)
                                     return recursiveSize
                                 | None -> return Constants.InitialDirectorySize
                             elif not <| String.IsNullOrEmpty(listContentsParameters.ReferenceId) then
                                 // We have a ReferenceId, so we'll get the DirectoryVersion from that reference.
                                 let referenceGuid = Guid.Parse(listContentsParameters.ReferenceId)
-                                let referenceActorProxy = Reference.CreateActorProxy referenceGuid correlationId
+                                let! referenceActorProxy = Reference.CreateActorProxy referenceGuid repositoryId correlationId
 
                                 let! referenceDto = referenceActorProxy.Get correlationId
 
-                                let directoryActorProxy = DirectoryVersion.CreateActorProxy referenceDto.DirectoryId correlationId
+                                let! directoryActorProxy = DirectoryVersion.CreateActorProxy referenceDto.DirectoryId repositoryId correlationId
 
                                 let! recursiveSize = directoryActorProxy.GetRecursiveSize correlationId
                                 return recursiveSize
@@ -1411,7 +1419,7 @@ module Branch =
                                     Services.getDirectoryBySha256Hash (Guid.Parse(graceIds.RepositoryId)) listContentsParameters.Sha256Hash correlationId
                                 with
                                 | Some directoryVersion ->
-                                    let directoryActorProxy = DirectoryVersion.CreateActorProxy directoryVersion.DirectoryVersionId correlationId
+                                    let! directoryActorProxy = DirectoryVersion.CreateActorProxy directoryVersion.DirectoryVersionId repositoryId correlationId
 
                                     let! recursiveSize = directoryActorProxy.GetRecursiveSize correlationId
                                     return recursiveSize
@@ -1422,7 +1430,7 @@ module Branch =
                     context.Items["ListContentsParameters"] <- parameters
                     let! result = processQuery context parameters validations 1 query
 
-                    let duration_ms = getPaddedDuration_ms startTime
+                    let duration_ms = getDurationRightAligned_ms startTime
 
                     log.LogInformation(
                         "{CurrentInstant}: Node: {HostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {path}; BranchId: {branchId}.",
@@ -1436,7 +1444,7 @@ module Branch =
 
                     return result
                 with ex ->
-                    let duration_ms = getPaddedDuration_ms startTime
+                    let duration_ms = getDurationRightAligned_ms startTime
 
                     log.LogError(
                         ex,
@@ -1460,6 +1468,7 @@ module Branch =
                 let startTime = getCurrentInstant ()
                 let graceIds = getGraceIds context
                 let correlationId = getCorrelationId context
+                let repositoryId = Guid.Parse(graceIds.RepositoryId)
 
                 try
                     let validations (parameters: ListContentsParameters) =
@@ -1480,7 +1489,7 @@ module Branch =
 
                                 match latestReference with
                                 | Some latestReference ->
-                                    let directoryActorProxy = DirectoryVersion.CreateActorProxy latestReference.DirectoryId correlationId
+                                    let! directoryActorProxy = DirectoryVersion.CreateActorProxy latestReference.DirectoryId repositoryId correlationId
 
                                     let! contents = directoryActorProxy.GetRecursiveDirectoryVersions listContentsParameters.ForceRecompute correlationId
 
@@ -1490,11 +1499,11 @@ module Branch =
                                 // We have a ReferenceId, so we'll get the DirectoryVersion from that reference.
                                 let referenceGuid = Guid.Parse(listContentsParameters.ReferenceId)
 
-                                let referenceActorProxy = Reference.CreateActorProxy referenceGuid correlationId
+                                let! referenceActorProxy = Reference.CreateActorProxy referenceGuid repositoryId correlationId
 
                                 let! referenceDto = referenceActorProxy.Get correlationId
 
-                                let directoryActorProxy = DirectoryVersion.CreateActorProxy referenceDto.DirectoryId correlationId
+                                let! directoryActorProxy = DirectoryVersion.CreateActorProxy referenceDto.DirectoryId repositoryId correlationId
 
                                 let! contents = directoryActorProxy.GetRecursiveDirectoryVersions listContentsParameters.ForceRecompute correlationId
 
@@ -1503,7 +1512,7 @@ module Branch =
                                 // By process of elimination, we have a Sha256Hash, so we'll retrieve the DirectoryVersion using that..
                                 match! getRootDirectoryBySha256Hash (Guid.Parse(graceIds.RepositoryId)) listContentsParameters.Sha256Hash correlationId with
                                 | Some directoryVersion ->
-                                    let directoryActorProxy = DirectoryVersion.CreateActorProxy directoryVersion.DirectoryVersionId correlationId
+                                    let! directoryActorProxy = DirectoryVersion.CreateActorProxy directoryVersion.DirectoryVersionId repositoryId correlationId
 
                                     let! contents = directoryActorProxy.GetRecursiveDirectoryVersions listContentsParameters.ForceRecompute correlationId
 
@@ -1515,7 +1524,7 @@ module Branch =
                     context.Items["ListContentsParameters"] <- parameters
                     let! result = processQuery context parameters validations 1 query
 
-                    let duration_ms = getPaddedDuration_ms startTime
+                    let duration_ms = getDurationRightAligned_ms startTime
 
                     log.LogInformation(
                         "{CurrentInstant}: Node: {HostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {path}; BranchId: {branchId}.",
@@ -1529,7 +1538,7 @@ module Branch =
 
                     return result
                 with ex ->
-                    let duration_ms = getPaddedDuration_ms startTime
+                    let duration_ms = getDurationRightAligned_ms startTime
 
                     log.LogError(
                         ex,
@@ -1553,6 +1562,7 @@ module Branch =
                 let startTime = getCurrentInstant ()
                 let graceIds = getGraceIds context
                 let correlationId = getCorrelationId context
+                let repositoryId = Guid.Parse(graceIds.RepositoryId)
 
                 try
                     let validations (parameters: GetBranchVersionParameters) =
@@ -1582,9 +1592,7 @@ module Branch =
 
                             match rootDirectoryVersion with
                             | Some rootDirectoryVersion ->
-                                let directoryVersionActorId = ActorId($"{rootDirectoryVersion.DirectoryVersionId}")
-
-                                let directoryVersionActorProxy = DirectoryVersion.CreateActorProxy rootDirectoryVersion.DirectoryVersionId correlationId
+                                let! directoryVersionActorProxy = DirectoryVersion.CreateActorProxy rootDirectoryVersion.DirectoryVersionId repositoryId correlationId
 
                                 let! directoryVersions = directoryVersionActorProxy.GetRecursiveDirectoryVersions false correlationId
 
@@ -1607,7 +1615,8 @@ module Branch =
 
                     match repositoryId with
                     | Some repositoryId ->
-                        parameters.RepositoryId <- repositoryId
+                        let repositoryIdString = $"{repositoryId}"
+                        parameters.RepositoryId <- repositoryIdString
 
                         if
                             not <| String.IsNullOrEmpty(parameters.BranchId)
@@ -1615,13 +1624,13 @@ module Branch =
                         then
                             logToConsole $"In Branch.GetVersion: parameters.BranchId: {parameters.BranchId}; parameters.BranchName: {parameters.BranchName}"
 
-                            match! resolveBranchId repositoryId parameters.BranchId parameters.BranchName parameters.CorrelationId with
+                            match! resolveBranchId repositoryIdString parameters.BranchId parameters.BranchName parameters.CorrelationId with
                             | Some branchId -> parameters.BranchId <- branchId
                             | None -> () // This should never happen because it would get caught in validations.
                         elif not <| String.IsNullOrEmpty(parameters.ReferenceId) then
                             logToConsole $"In Branch.GetVersion: parameters.ReferenceId: {parameters.ReferenceId}"
                             let referenceGuid = Guid.Parse(parameters.ReferenceId)
-                            let referenceActorProxy = Reference.CreateActorProxy referenceGuid correlationId
+                            let! referenceActorProxy = Reference.CreateActorProxy referenceGuid repositoryId correlationId
 
                             let! referenceDto = referenceActorProxy.Get(getCorrelationId context)
                             logToConsole $"referenceDto.ReferenceId: {referenceDto.ReferenceId}"
@@ -1645,7 +1654,7 @@ module Branch =
                     context.Items.Add("GetVersionParameters", parameters)
                     return! processQuery context parameters validations 1 query
                 with ex ->
-                    let duration_ms = getPaddedDuration_ms startTime
+                    let duration_ms = getDurationRightAligned_ms startTime
 
                     log.LogError(
                         ex,

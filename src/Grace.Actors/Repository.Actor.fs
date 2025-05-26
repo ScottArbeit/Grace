@@ -1,29 +1,29 @@
 namespace Grace.Actors
 
-open Dapr.Actors
-open Dapr.Actors.Runtime
 open FSharp.Control
 open FSharpPlus
 open Grace.Actors.Constants
 open Grace.Actors.Interfaces
-open Grace.Actors.Commands.Repository
 open Grace.Actors.Context
-open Grace.Actors.Events.Repository
 open Grace.Actors.Extensions.ActorProxy
 open Grace.Actors.Extensions.MemoryCache
 open Grace.Actors.Services
 open Grace.Actors.Types
 open Grace.Shared
+open Grace.Shared.Commands.Repository
 open Grace.Shared.Combinators
 open Grace.Shared.Constants
 open Grace.Shared.Dto.Branch
 open Grace.Shared.Dto.Repository
+open Grace.Shared.Events.Repository
 open Grace.Shared.Resources.Text
 open Grace.Shared.Types
 open Grace.Shared.Utilities
 open Grace.Shared.Validation.Errors.Repository
 open Microsoft.Extensions.Logging
 open NodaTime
+open Orleans
+open Orleans.Runtime
 open System
 open System.Collections.Concurrent
 open System.Collections.Generic
@@ -42,105 +42,21 @@ module Repository =
 
     let log = loggerFactory.CreateLogger("Repository.Actor")
 
-    type RepositoryActor(host: ActorHost) =
-        inherit Actor(host)
+    type RepositoryActor([<PersistentState(StateName.Repository, Constants.GraceActorStorage)>] state: IPersistentState<List<RepositoryEvent>>) =
+        inherit Grain()
 
         static let actorName = ActorName.Repository
-        static let dtoStateName = StateName.RepositoryDto
-        static let eventsStateName = StateName.Repository
-
-        let mutable actorStartTime = Instant.MinValue
-        let mutable logScope: IDisposable = null
-        let mutable currentCommand = String.Empty
-        let mutable stateManager = Unchecked.defaultof<IActorStateManager>
-
-        /// Indicates that the actor is in an undefined state, and should be reset.
-        let mutable isDisposed = false
 
         let mutable repositoryDto = RepositoryDto.Default
-        let mutable repositoryEvents: List<RepositoryEvent> = null
-
         member val private correlationId: CorrelationId = String.Empty with get, set
 
-        override this.OnActivateAsync() =
-            let activateStartTime = getCurrentInstant ()
-            stateManager <- this.StateManager
+        override this.OnActivateAsync(ct) =
+            logActorActivation log this.IdentityString (getActorActivationMessage state.RecordExists)
 
-            task {
-                let correlationId =
-                    match memoryCache.GetCorrelationIdEntry this.Id with
-                    | Some correlationId -> correlationId
-                    | None -> String.Empty
+            repositoryDto <-
+                state.State
+                |> Seq.fold (fun repositoryDto repositoryEvent -> this.updateDto repositoryEvent repositoryDto) RepositoryDto.Default
 
-                try
-                    let! retrievedDto = Storage.RetrieveState<RepositoryDto> stateManager dtoStateName correlationId
-
-                    match retrievedDto with
-                    | Some retrievedDto -> repositoryDto <- retrievedDto
-                    | None -> repositoryDto <- RepositoryDto.Default
-
-                    logActorActivation log activateStartTime correlationId actorName host.Id (getActorActivationMessage retrievedDto)
-                with ex ->
-                    let exc = ExceptionResponse.Create ex
-                    log.LogError("{CurrentInstant} Error activating {ActorType} {ActorId}.", getCurrentInstantExtended (), this.GetType().Name, host.Id)
-                    log.LogError("{CurrentInstant} {ExceptionDetails}", getCurrentInstantExtended (), exc.ToString())
-                    logActorActivation log activateStartTime correlationId actorName this.Id "Exception occurred during activation."
-            }
-            :> Task
-
-        override this.OnPreActorMethodAsync(context) =
-            actorStartTime <- getCurrentInstant ()
-            this.correlationId <- String.Empty
-            logScope <- log.BeginScope("Actor {actorName}", actorName)
-            currentCommand <- String.Empty
-
-            log.LogTrace(
-                "{CurrentInstant}: Started {ActorName}.{MethodName}, RepositoryId: {Id}.",
-                getCurrentInstantExtended (),
-                actorName,
-                context.MethodName,
-                this.Id
-            )
-
-            // This checks if the actor is still active, but in an undefined state, which will _almost_ never happen.
-            // isDisposed is set when the actor is deleted, or if an error occurs where we're not sure of the state and want to reload from the database.
-            if isDisposed then
-                this.OnActivateAsync().Wait()
-                isDisposed <- false
-
-            Task.CompletedTask
-
-        override this.OnPostActorMethodAsync(context) =
-            let duration_ms = getPaddedDuration_ms actorStartTime
-
-            if
-                String.IsNullOrEmpty(currentCommand)
-                && not <| (context.MethodName = "ReceiveReminderAsync")
-            then
-                log.LogInformation(
-                    "{CurrentInstant}: Node: {HostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {ActorName}.{MethodName}; RepositoryId: {Id}.",
-                    getCurrentInstantExtended (),
-                    getMachineName,
-                    duration_ms,
-                    this.correlationId,
-                    actorName,
-                    context.MethodName,
-                    this.Id
-                )
-            else
-                log.LogInformation(
-                    "{CurrentInstant}: Node: {HostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {ActorName}.{MethodName}; Command: {Command}; RepositoryId: {Id}.",
-                    getCurrentInstantExtended (),
-                    getMachineName,
-                    duration_ms,
-                    this.correlationId,
-                    actorName,
-                    context.MethodName,
-                    currentCommand,
-                    this.Id
-                )
-
-            logScope.Dispose()
             Task.CompletedTask
 
         member private this.updateDto repositoryEvent currentRepositoryDto =
@@ -180,34 +96,17 @@ module Repository =
 
             { newRepositoryDto with UpdatedAt = Some repositoryEvent.Metadata.Timestamp }
 
-        // This is essentially an object-oriented implementation of the Lazy<T> pattern. I was having issues with Lazy<T>,
-        //   and after a solid day wrestling with it, I dropped it and did this. Works a treat.
-        member private this.RepositoryEvents() =
-            task {
-                if repositoryEvents = null then
-                    let! retrievedEvents = Storage.RetrieveState<List<RepositoryEvent>> stateManager eventsStateName this.correlationId
-
-                    repositoryEvents <-
-                        match retrievedEvents with
-                        | Some retrievedEvents -> retrievedEvents
-                        | None -> List<RepositoryEvent>()
-
-                return repositoryEvents
-            }
-
-        member private this.ApplyEvent(repositoryEvent) =
+        member private this.ApplyEvent repositoryEvent =
             task {
                 try
-                    let! repositoryEvents = this.RepositoryEvents()
+                    // Add the new event to the list of events, and write the state to storage.
+                    state.State.Add repositoryEvent
+                    do! state.WriteStateAsync()
 
-                    repositoryEvents.Add(repositoryEvent)
-
-                    do! DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> stateManager.SetStateAsync(eventsStateName, repositoryEvents))
-
+                    // Update the repositoryDto with the new event.
                     repositoryDto <- repositoryDto |> this.updateDto repositoryEvent
 
-                    do! DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> stateManager.SetStateAsync(dtoStateName, repositoryDto))
-
+                    /// Concatenates repository errors into a single GraceError instance.
                     let processGraceError (repositoryError: RepositoryError) repositoryEvent previousGraceError =
                         Error(
                             GraceError.Create
@@ -223,7 +122,7 @@ module Repository =
                             | Created(name, repositoryId, ownerId, organizationId) ->
                                 // Create the default branch.
                                 let branchId = (Guid.NewGuid())
-                                let branchActor = Branch.CreateActorProxy branchId this.correlationId
+                                let! branchActor = Branch.CreateActorProxy branchId repositoryDto.RepositoryId this.correlationId
 
                                 // Only allow promotions and tags on the initial branch.
                                 let initialBranchPermissions = [| ReferenceType.Promotion; ReferenceType.Tag; ReferenceType.External |]
@@ -246,7 +145,8 @@ module Repository =
 
                                     let emptySha256Hash = computeSha256ForDirectory RootDirectoryPath (List<LocalDirectoryVersion>()) (List<LocalFileVersion>())
 
-                                    let directoryVersionActorProxy = DirectoryVersion.CreateActorProxy emptyDirectoryId this.correlationId
+                                    let! directoryVersionActorProxy =
+                                        DirectoryVersion.CreateActorProxy emptyDirectoryId repositoryDto.RepositoryId this.correlationId
 
                                     let emptyDirectoryVersion =
                                         DirectoryVersion.Create
@@ -363,7 +263,7 @@ module Repository =
                             ValueTask(
                                 task {
                                     if branch.DeletedAt |> Option.isNone then
-                                        let branchActor = Branch.CreateActorProxy branch.BranchId this.correlationId
+                                        let! branchActor = Branch.CreateActorProxy branch.BranchId branch.RepositoryId this.correlationId
 
                                         let! result =
                                             branchActor.Handle
@@ -391,11 +291,23 @@ module Repository =
                 | Some error -> return Error error
             }
 
-        interface IGraceReminder with
+        interface IHasRepositoryId with
+            member this.GetRepositoryId correlationId = repositoryDto.RepositoryId |> returnTask
+
+        interface IGraceReminderWithGuidKey with
             /// Schedules a Grace reminder.
             member this.ScheduleReminderAsync reminderType delay state correlationId =
                 task {
-                    let reminder = ReminderDto.Create actorName $"{this.Id}" reminderType (getFutureInstant delay) state correlationId
+                    let reminder =
+                        ReminderDto.Create
+                            actorName
+                            $"{this.IdentityString}"
+                            repositoryDto.RepositoryId
+                            reminderType
+                            (getFutureInstant delay)
+                            state
+                            correlationId
+
                     do! createReminder reminder
                 }
                 :> Task
@@ -409,12 +321,7 @@ module Repository =
                         let (deleteReason, correlationId) = deserialize<PhysicalDeletionReminderState> reminder.State
                         this.correlationId <- correlationId
 
-                        // Physically delete the actor state.
-                        let! deletedDtoState = stateManager.TryRemoveStateAsync(dtoStateName)
-                        let! deletedEventsState = stateManager.TryRemoveStateAsync(eventsStateName)
-
-                        // Mark the actor as disposed, in case someone tries to use it before Dapr GC's it.
-                        isDisposed <- true
+                        do! state.ClearStateAsync()
 
                         log.LogInformation(
                             "{CurrentInstant}: CorrelationId: {correlationId}; Deleted physical state for repository; RepositoryId: {}; RepositoryName: {}; OrganizationId: {organizationId}; OwnerId: {ownerId}; deleteReason: {deleteReason}.",
@@ -427,8 +334,7 @@ module Repository =
                             deleteReason
                         )
 
-                        // Set all values to default.
-                        repositoryDto <- RepositoryDto.Default
+                        this.DeactivateOnIdle()
                         return Ok()
                     | _ ->
                         return
@@ -443,10 +349,8 @@ module Repository =
             member this.Export() =
                 task {
                     try
-                        let! repositoryEvents = this.RepositoryEvents()
-
-                        if repositoryEvents.Count > 0 then
-                            return Ok repositoryEvents
+                        if state.State.Count > 0 then
+                            return Ok state.State
                         else
                             return Error ExportError.EventListIsEmpty
                     with ex ->
@@ -456,17 +360,10 @@ module Repository =
             member this.Import(events: IReadOnlyList<RepositoryEvent>) =
                 task {
                     try
-                        let! repositoryEvents = this.RepositoryEvents()
-                        repositoryEvents.Clear()
-                        repositoryEvents.AddRange(events)
-
-                        let newRepositoryDto = repositoryEvents.Aggregate(RepositoryDto.Default, (fun state evnt -> (this.updateDto evnt state)))
-
-                        do! DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> stateManager.SetStateAsync(eventsStateName, this.RepositoryEvents))
-
-                        do! DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> stateManager.SetStateAsync(dtoStateName, newRepositoryDto))
-
-                        return Ok repositoryEvents.Count
+                        state.State.Clear()
+                        state.State.AddRange(events)
+                        do! state.WriteStateAsync()
+                        return Ok events.Count
                     with ex ->
                         return Error(ImportError.Exception(ExceptionResponse.Create ex))
                 }
@@ -475,7 +372,7 @@ module Repository =
             member this.RevertBack (eventsToRevert: int) (persist: PersistAction) =
                 task {
                     try
-                        let! repositoryEvents = this.RepositoryEvents()
+                        let repositoryEvents = state.State
 
                         if repositoryEvents.Count > 0 then
                             let eventsToKeep = repositoryEvents.Count - eventsToRevert
@@ -483,18 +380,15 @@ module Repository =
                             if eventsToKeep <= 0 then
                                 return Error RevertError.OutOfRange
                             else
-                                let revertedEvents = repositoryEvents.Take(eventsToKeep)
+                                let revertedEvents = repositoryEvents.Take eventsToKeep
 
                                 let newRepositoryDto = revertedEvents.Aggregate(RepositoryDto.Default, (fun state evnt -> (this.updateDto evnt state)))
 
                                 match persist with
                                 | PersistAction.Save ->
-                                    repositoryEvents.Clear()
-                                    repositoryEvents.AddRange(revertedEvents)
-
-                                    do! DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> stateManager.SetStateAsync(eventsStateName, revertedEvents))
-
-                                    do! DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> stateManager.SetStateAsync(dtoStateName, newRepositoryDto))
+                                    state.State.Clear()
+                                    state.State.AddRange revertedEvents
+                                    do! state.WriteStateAsync()
                                 | DoNotSave -> ()
 
                                 return Ok newRepositoryDto
@@ -507,7 +401,7 @@ module Repository =
             member this.RevertToInstant (whenToRevertTo: Instant) (persist: PersistAction) =
                 task {
                     try
-                        let! repositoryEvents = this.RepositoryEvents()
+                        let repositoryEvents = state.State
 
                         if repositoryEvents.Count > 0 then
                             let revertedEvents = repositoryEvents.Where(fun evnt -> evnt.Metadata.Timestamp < whenToRevertTo)
@@ -522,12 +416,9 @@ module Repository =
                                 match persist with
                                 | PersistAction.Save ->
                                     task {
-                                        repositoryEvents.Clear()
-                                        repositoryEvents.AddRange(revertedEvents)
-
-                                        do! DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> stateManager.SetStateAsync(eventsStateName, revertedEvents))
-
-                                        do! DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> stateManager.SetStateAsync(dtoStateName, newRepositoryDto))
+                                        state.State.Clear()
+                                        state.State.AddRange revertedEvents
+                                        do! state.WriteStateAsync()
                                     }
                                     |> ignore
                                 | DoNotSave -> ()
@@ -539,11 +430,7 @@ module Repository =
                         return Error(RevertError.Exception(ExceptionResponse.Create ex))
                 }
 
-            member this.EventCount() =
-                task {
-                    let! repositoryEvents = this.RepositoryEvents()
-                    return repositoryEvents.Count
-                }
+            member this.EventCount() = task { return state.State.Count }
 
         interface IRepositoryActor with
             member this.Get correlationId =
@@ -569,9 +456,7 @@ module Repository =
             member this.Handle command metadata =
                 let isValid command (metadata: EventMetadata) =
                     task {
-                        let! repositoryEvents = this.RepositoryEvents()
-
-                        if repositoryEvents.Exists(fun ev -> ev.Metadata.CorrelationId = metadata.CorrelationId) then
+                        if state.State.Exists(fun ev -> ev.Metadata.CorrelationId = metadata.CorrelationId) then
                             return Error(GraceError.Create (RepositoryError.getErrorMessage DuplicateCorrelationId) metadata.CorrelationId)
                         else
                             match command with
@@ -629,7 +514,7 @@ module Repository =
                                                 let (reminderState: PhysicalDeletionReminderState) = (deleteReason, metadata.CorrelationId)
 
                                                 do!
-                                                    (this :> IGraceReminder).ScheduleReminderAsync
+                                                    (this :> IGraceReminderWithGuidKey).ScheduleReminderAsync
                                                         ReminderTypes.PhysicalDeletion
                                                         (Duration.FromDays(float repositoryDto.LogicalDeleteDays))
                                                         (serialize reminderState)
@@ -640,7 +525,9 @@ module Repository =
 
                                             return LogicalDeleted(force, deleteReason)
                                     | DeletePhysical ->
-                                        isDisposed <- true
+                                        // Delete the state from storage, and deactivate the actor.
+                                        do! state.ClearStateAsync()
+                                        this.DeactivateOnIdle()
                                         return PhysicalDeleted
                                     | RepositoryCommand.Undelete -> return Undeleted
                                 }
@@ -652,7 +539,7 @@ module Repository =
 
                 task {
                     this.correlationId <- metadata.CorrelationId
-                    currentCommand <- getDiscriminatedUnionCaseName command
+                    RequestContext.Set(Constants.CurrentCommandProperty, getDiscriminatedUnionCaseName command)
 
                     match! isValid command metadata with
                     | Ok command -> return! processCommand command metadata

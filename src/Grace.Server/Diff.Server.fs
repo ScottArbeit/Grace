@@ -1,12 +1,9 @@
 namespace Grace.Server
 
-open Dapr.Actors
-open Dapr.Actors.Client
 open Giraffe
-open Grace.Actors
-open Grace.Actors.Constants
 open Grace.Actors.Extensions.ActorProxy
 open Grace.Actors.Interfaces
+open Grace.Actors.Services
 open Grace.Server.Services
 open Grace.Server.Validations
 open Grace.Shared
@@ -27,7 +24,6 @@ open System.Globalization
 open System.Diagnostics
 open System.Threading.Tasks
 open System.Text.Json
-open Grace.Actors.Services
 
 module Diff =
     type Validations<'T when 'T :> DiffParameters> = 'T -> ValueTask<Result<unit, DiffError>> array
@@ -84,6 +80,8 @@ module Diff =
         =
         task {
             let correlationId = getCorrelationId context
+            let graceIds = getGraceIds context
+            let repositoryId = Guid.Parse(graceIds.RepositoryId)
 
             try
                 use activity = activitySource.StartActivity("processQuery", ActivityKind.Server)
@@ -92,7 +90,7 @@ module Diff =
                 let! validationsPassed = validationResults |> allPass
 
                 if validationsPassed then
-                    let actorProxy = Diff.CreateActorProxy parameters.DirectoryVersionId1 parameters.DirectoryVersionId2 correlationId
+                    let! actorProxy = Diff.CreateActorProxy parameters.DirectoryVersionId1 parameters.DirectoryVersionId2 repositoryId correlationId
 
                     //// Need to figure this whole part out next.
                     //// Then add SDK implementation of GetDiff.
@@ -127,11 +125,14 @@ module Diff =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 try
+                    let graceIds = getGraceIds context
+                    let repositoryId = Guid.Parse(graceIds.RepositoryId)
+
                     let validations (parameters: PopulateParameters) =
                         [| Guid.isNotEmpty parameters.DirectoryVersionId1 DiffError.InvalidDirectoryId
                            Guid.isNotEmpty parameters.DirectoryVersionId2 DiffError.InvalidDirectoryId
-                           DirectoryVersion.directoryIdExists parameters.DirectoryVersionId1 parameters.CorrelationId DiffError.DirectoryDoesNotExist
-                           DirectoryVersion.directoryIdExists parameters.DirectoryVersionId2 parameters.CorrelationId DiffError.DirectoryDoesNotExist |]
+                           DirectoryVersion.directoryIdExists parameters.DirectoryVersionId1 repositoryId parameters.CorrelationId DiffError.DirectoryDoesNotExist
+                           DirectoryVersion.directoryIdExists parameters.DirectoryVersionId2 repositoryId parameters.CorrelationId DiffError.DirectoryDoesNotExist |]
 
                     let query (context: HttpContext) _ (actorProxy: IDiffActor) =
                         task {
@@ -152,11 +153,14 @@ module Diff =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 try
+                    let graceIds = getGraceIds context
+                    let repositoryId = Guid.Parse(graceIds.RepositoryId)
+
                     let validations (parameters: GetDiffParameters) =
                         [| Guid.isNotEmpty parameters.DirectoryVersionId1 DiffError.InvalidDirectoryId
                            Guid.isNotEmpty parameters.DirectoryVersionId2 DiffError.InvalidDirectoryId
-                           DirectoryVersion.directoryIdExists parameters.DirectoryVersionId1 parameters.CorrelationId DiffError.DirectoryDoesNotExist
-                           DirectoryVersion.directoryIdExists parameters.DirectoryVersionId2 parameters.CorrelationId DiffError.DirectoryDoesNotExist |]
+                           DirectoryVersion.directoryIdExists parameters.DirectoryVersionId1 repositoryId parameters.CorrelationId DiffError.DirectoryDoesNotExist
+                           DirectoryVersion.directoryIdExists parameters.DirectoryVersionId2 repositoryId parameters.CorrelationId DiffError.DirectoryDoesNotExist |]
 
                     let query (context: HttpContext) _ (actorProxy: IDiffActor) =
                         task {

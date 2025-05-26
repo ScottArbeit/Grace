@@ -36,7 +36,7 @@ module Config =
         let directory =
             new Option<string>(
                 "--directory",
-                IsRequired = false,
+                Required = false,
                 Description = "The root path of the repository to initialize Grace in [default: current directory]",
                 Arity = ArgumentArity.ExactlyOne
             )
@@ -44,10 +44,10 @@ module Config =
         let overwrite =
             new Option<bool>(
                 "--overwrite",
-                IsRequired = false,
+                Required = false,
                 Description = "Allows Grace to overwrite an existing graceconfig.json file with default values",
                 Arity = ArgumentArity.ZeroOrOne,
-                getDefaultValue = (fun _ -> false)
+                DefaultValueFactory = (fun _ -> false)
             )
 
     let private CommonValidations (parseResult, parameters) =
@@ -141,7 +141,7 @@ module Config =
             new Command("write", Description = "Initializes a repository with a default Grace configuration.")
             |> addCommonOptions
 
-        writeCommand.Handler <- Write
-        configCommand.AddCommand(writeCommand)
+        writeCommand.Action <- Write
+        configCommand.Subcommands.Add(writeCommand)
 
         configCommand

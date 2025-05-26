@@ -1,15 +1,16 @@
-namespace Grace.Actors
+namespace Grace.Shared
 
 open Grace.Shared.Dto.Reference
 open Grace.Shared.Types
 open Grace.Shared.Utilities
 open NodaTime
+open Orleans
 open System.Runtime.Serialization
 
 module Commands =
 
     module Branch =
-        [<KnownType("GetKnownTypes")>]
+        [<KnownType("GetKnownTypes"); GenerateSerializer>]
         type BranchCommand =
             | Create of
                 branchId: BranchId *
@@ -43,7 +44,7 @@ module Commands =
             static member GetKnownTypes() = GetKnownTypes<BranchCommand>()
 
     module DirectoryVersion =
-        [<KnownType("GetKnownTypes")>]
+        [<KnownType("GetKnownTypes"); GenerateSerializer>]
         type DirectoryVersionCommand =
             | Create of directoryVersion: DirectoryVersion
             | SetRecursiveSize of recursizeSize: int64
@@ -54,7 +55,7 @@ module Commands =
             static member GetKnownTypes() = GetKnownTypes<DirectoryVersionCommand>()
 
     module Organization =
-        [<KnownType("GetKnownTypes")>]
+        [<KnownType("GetKnownTypes"); GenerateSerializer>]
         type OrganizationCommand =
             | Create of organizationId: OrganizationId * organizationName: OrganizationName * ownerId: OwnerId
             | SetName of organizationName: OrganizationName
@@ -68,7 +69,7 @@ module Commands =
             static member GetKnownTypes() = GetKnownTypes<OrganizationCommand>()
 
     module Owner =
-        [<KnownType("GetKnownTypes")>]
+        [<KnownType("GetKnownTypes"); GenerateSerializer>]
         type OwnerCommand =
             | Create of ownerId: OwnerId * ownerName: OwnerName
             | SetName of ownerName: OwnerName
@@ -82,7 +83,7 @@ module Commands =
             static member GetKnownTypes() = GetKnownTypes<OwnerCommand>()
 
     module Reference =
-        [<KnownType("GetKnownTypes")>]
+        [<KnownType("GetKnownTypes"); GenerateSerializer>]
         type ReferenceCommand =
             | Create of referenceDto: ReferenceDto
             | AddLink of link: ReferenceLinkType
@@ -94,7 +95,7 @@ module Commands =
             static member GetKnownTypes() = GetKnownTypes<ReferenceCommand>()
 
     module Repository =
-        [<KnownType("GetKnownTypes")>]
+        [<KnownType("GetKnownTypes"); GenerateSerializer>]
         type RepositoryCommand =
             | Create of repositoryName: RepositoryName * repositoryId: RepositoryId * ownerId: OwnerId * organizationId: OrganizationId
             | Initialize

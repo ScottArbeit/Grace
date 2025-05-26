@@ -1,9 +1,10 @@
-namespace Grace.Actors
+namespace Grace.Shared
 
 open Grace.Shared.Dto.Reference
 open Grace.Shared.Types
 open Grace.Shared.Utilities
 open NodaTime
+open Orleans
 open System.Runtime.Serialization
 
 module Events =
@@ -11,7 +12,7 @@ module Events =
     /// Defines the events for the Branch actor.
     module Branch =
         /// Defines the events for the Branch actor.
-        [<KnownType("GetKnownTypes")>]
+        [<KnownType("GetKnownTypes"); GenerateSerializer>]
         type BranchEventType =
             | Created of
                 branchId: BranchId *
@@ -45,6 +46,7 @@ module Events =
             static member GetKnownTypes() = GetKnownTypes<BranchEventType>()
 
         /// Record that holds the event type and metadata for a Branch event.
+        [<GenerateSerializer>]
         type BranchEvent =
             {
                 /// The BranchEventType case that describes the event.
@@ -56,7 +58,7 @@ module Events =
     /// Defines the events for the DirectoryVersion actor.
     module DirectoryVersion =
         /// Defines the events for the DirectoryVersion actor.
-        [<KnownType("GetKnownTypes")>]
+        [<KnownType("GetKnownTypes"); GenerateSerializer>]
         type DirectoryVersionEventType =
             | Created of directoryVersion: DirectoryVersion
             | RecursiveSizeSet of recursiveSize: int64
@@ -65,6 +67,7 @@ module Events =
             | Undeleted
 
         /// Record that holds the event type and metadata for a DirectoryVersion event.
+        [<GenerateSerializer>]
         type DirectoryVersionEvent =
             {
                 /// The DirectoryVersionEventType case that describes the event.
@@ -76,7 +79,7 @@ module Events =
     /// Defines the events for the Organization actor.
     module Organization =
         /// Defines the events for the Organization actor.
-        [<KnownType("GetKnownTypes")>]
+        [<KnownType("GetKnownTypes"); GenerateSerializer>]
         type OrganizationEventType =
             | Created of organizationId: OrganizationId * organizationName: OrganizationName * ownerId: OwnerId
             | NameSet of organizationName: OrganizationName
@@ -90,6 +93,7 @@ module Events =
             static member GetKnownTypes() = GetKnownTypes<OrganizationEventType>()
 
         /// Record that holds the event type and metadata for an Organization event.
+        [<GenerateSerializer>]
         type OrganizationEvent =
             {
                 /// The OrganizationEventType case that describes the event.
@@ -101,7 +105,7 @@ module Events =
     /// Defines the events for the Owner actor.
     module Owner =
         /// Defines the events for the Owner actor.
-        [<KnownType("GetKnownTypes")>]
+        [<KnownType("GetKnownTypes"); GenerateSerializer>]
         type OwnerEventType =
             | Created of ownerId: OwnerId * ownerName: OwnerName
             | NameSet of ownerName: OwnerName
@@ -115,6 +119,7 @@ module Events =
             static member GetKnownTypes() = GetKnownTypes<OwnerEventType>()
 
         /// Record that holds the event type and metadata for an Owner event.
+        [<GenerateSerializer>]
         type OwnerEvent =
             {
                 /// The OwnerEventType case that describes the event.
@@ -126,7 +131,7 @@ module Events =
     /// Defines the events for the Reference actor.
     module Reference =
         /// Defines the events for the Reference actor.
-        [<KnownType("GetKnownTypes")>]
+        [<KnownType("GetKnownTypes"); GenerateSerializer>]
         type ReferenceEventType =
             | Created of referenceDto: ReferenceDto
             | LinkAdded of link: ReferenceLinkType
@@ -138,6 +143,7 @@ module Events =
             static member GetKnownTypes() = GetKnownTypes<ReferenceEventType>()
 
         /// Record that holds the event type and metadata for a Reference event.
+        [<GenerateSerializer>]
         type ReferenceEvent =
             {
                 /// The ReferenceEventType case that describes the event.
@@ -149,7 +155,7 @@ module Events =
     /// Defines the events for the Repository actor.
     module Repository =
         /// Defines the events for the Repository actor.
-        [<KnownType("GetKnownTypes")>]
+        [<KnownType("GetKnownTypes"); GenerateSerializer>]
         type RepositoryEventType =
             | Created of repositoryName: RepositoryName * repositoryId: RepositoryId * ownerId: OwnerId * organizationId: OrganizationId
             | Initialized
@@ -177,6 +183,7 @@ module Events =
             static member GetKnownTypes() = GetKnownTypes<RepositoryEventType>()
 
         /// Record that holds the event type and metadata for a Repository event.
+        [<GenerateSerializer>]
         type RepositoryEvent =
             {
                 /// The RepositoryEventType case that describes the event.
@@ -186,7 +193,7 @@ module Events =
             }
 
     /// A discriminated union that holds all of the possible events for Grace. Used for publishing events to graceEventStream.
-    [<KnownType("GetKnownTypes")>]
+    [<KnownType("GetKnownTypes"); GenerateSerializer>]
     type GraceEvent =
         | BranchEvent of Branch.BranchEvent
         | DirectoryVersionEvent of DirectoryVersion.DirectoryVersionEvent

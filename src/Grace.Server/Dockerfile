@@ -1,7 +1,7 @@
 #See https://aka.ms/customizecontainer to learn how to customize your debug container and how Visual Studio uses this Dockerfile to build your images for faster debugging.
 
 # Using the SDK image as the base instead of the aspnet image lets us run a shell for debugging.
-FROM mcr.microsoft.com/dotnet/sdk:10.0-preview AS base
+FROM mcr.microsoft.com/dotnet/nightly/sdk:10.0-preview AS base
 WORKDIR /app
 EXPOSE 5000
 EXPOSE 5001
@@ -59,10 +59,12 @@ RUN dotnet tool install dotnet-monitor -g --verbosity q
 
 #================================================================================================
 
-FROM mcr.microsoft.com/dotnet/sdk:10.0-preview AS build
+FROM mcr.microsoft.com/dotnet/nightly/sdk:10.0-preview AS build
 WORKDIR /src
 
 # Restoring individual projects to take advantage of layer caching.
+COPY ["nuget.config", "nuget.config"]
+
 COPY ["Grace.Aspire.ServiceDefaults/Grace.Aspire.ServiceDefaults.csproj", "Grace.Aspire.ServiceDefaults/"]
 RUN dotnet restore "Grace.Aspire.ServiceDefaults/Grace.Aspire.ServiceDefaults.csproj"
 COPY Grace.Aspire.ServiceDefaults/ Grace.Aspire.ServiceDefaults/
@@ -82,6 +84,11 @@ COPY ["Grace.Actors/Grace.Actors.fsproj", "Grace.Actors/"]
 RUN dotnet restore "Grace.Actors/Grace.Actors.fsproj"
 COPY Grace.Actors/ Grace.Actors/
 RUN dotnet build "Grace.Actors/Grace.Actors.fsproj" --no-restore -c Debug /p:DebugType=full
+
+COPY ["Grace.Orleans.CodeGen/Grace.Orleans.CodeGen.csproj", "Grace.Orleans.CodeGen/"]
+RUN dotnet restore "Grace.Orleans.CodeGen/Grace.Orleans.CodeGen.csproj"
+COPY Grace.Orleans.CodeGen/ Grace.Orleans.CodeGen/
+RUN dotnet build "Grace.Orleans.CodeGen/Grace.Orleans.CodeGen.csproj" --no-restore -c Debug /p:DebugType=full
 
 COPY ["Grace.Server/Grace.Server.fsproj", "Grace.Server/"]
 RUN dotnet restore "Grace.Server/Grace.Server.fsproj"

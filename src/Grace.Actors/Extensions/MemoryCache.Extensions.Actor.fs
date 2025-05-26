@@ -1,8 +1,8 @@
 namespace Grace.Actors.Extensions
 
-open Dapr.Actors
 open Grace.Shared.Constants
 open Grace.Shared.Types
+open Orleans.Runtime
 open Microsoft.Extensions.Caching.Memory
 open System
 
@@ -43,19 +43,18 @@ module MemoryCache =
 
         /// Create a new entry in MemoryCache with a default expiration time.
         member this.CreateWithDefaultExpirationTime (key: string) value =
-            use newCacheEntry = this.CreateEntry(key, Value = value, AbsoluteExpiration = DateTimeOffset.UtcNow.Add(MemoryCache.DefaultExpirationTime))
+            use newCacheEntry = this.CreateEntry(key, Value = value, AbsoluteExpiration = DateTimeOffset.UtcNow.Add MemoryCache.DefaultExpirationTime)
             ()
 
         /// Create a new entry in MemoryCache to link an ActorId with a CorrelationId.
-        member this.CreateCorrelationIdEntry (actorId: ActorId) (correlationId: CorrelationId) =
+        member this.CreateCorrelationIdEntry (identityString: string) (correlationId: CorrelationId) =
             use newCacheEntry =
-                this.CreateEntry($"{correlationIdPrefix}:{actorId}", Value = correlationId, AbsoluteExpiration = DateTimeOffset.UtcNow.AddSeconds(5))
+                this.CreateEntry($"{correlationIdPrefix}:{identityString}", Value = correlationId, AbsoluteExpiration = DateTimeOffset.UtcNow.AddSeconds 5)
 
             ()
 
         /// Check if we have an entry in MemoryCache for an ActorId, and return the CorrelationId if we have it.
-        member this.GetCorrelationIdEntry(actorId: ActorId) = this.GetFromCache<string> $"{correlationIdPrefix}:{actorId}"
-
+        member this.GetCorrelationIdEntry(identityString: string) = this.GetFromCache<string> $"{correlationIdPrefix}:{identityString}"
 
         /// Create a new entry in MemoryCache to confirm that an OwnerId exists.
         member this.CreateOwnerIdEntry (ownerId: OwnerId) (value: string) = this.CreateWithDefaultExpirationTime $"{ownerIdPrefix}:{ownerId}" value

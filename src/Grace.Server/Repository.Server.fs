@@ -1,12 +1,8 @@
 namespace Grace.Server
 
-open Dapr.Actors
-open Dapr.Actors.Client
 open FSharpPlus
 open Giraffe
 open Grace.Actors
-open Grace.Actors.Commands.Branch
-open Grace.Actors.Commands.Repository
 open Grace.Actors.Constants
 open Grace.Actors.Extensions.ActorProxy
 open Grace.Actors.Interfaces
@@ -14,6 +10,8 @@ open Grace.Actors.Services
 open Grace.Server.Services
 open Grace.Server.Validations
 open Grace.Shared
+open Grace.Shared.Commands.Branch
+open Grace.Shared.Commands.Repository
 open Grace.Shared.Extensions
 open Grace.Shared.Parameters.Repository
 open Grace.Shared.Types
@@ -63,7 +61,7 @@ module Repository =
 
                 let handleCommand repositoryId cmd =
                     task {
-                        let actorProxy = Repository.CreateActorProxy repositoryId correlationId
+                        let! actorProxy = Repository.CreateActorProxy repositoryId correlationId
 
                         match! actorProxy.Handle cmd (createMetadata context) with
                         | Ok graceReturnValue ->
@@ -189,7 +187,7 @@ module Repository =
                 if validationsPassed then
                     // Get the actor proxy for the repository.
                     let repositoryGuid = Guid.Parse(graceIds.RepositoryId)
-                    let actorProxy = Repository.CreateActorProxy repositoryGuid correlationId
+                    let! actorProxy = Repository.CreateActorProxy repositoryGuid correlationId
 
                     // Execute the query.
                     let! queryResult = query context maxCount actorProxy
@@ -507,7 +505,7 @@ module Repository =
                     let! parameters = context |> parse<RepositoryParameters>
                     let! result = processQuery context parameters validations 1 query
 
-                    let duration_ms = getPaddedDuration_ms startTime
+                    let duration_ms = getDurationRightAligned_ms startTime
 
                     log.LogInformation(
                         "{CurrentInstant}: Node: {HostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {path}; RepositoryId: {repositoryId}.",
@@ -521,7 +519,7 @@ module Repository =
 
                     return result
                 with ex ->
-                    let duration_ms = getPaddedDuration_ms startTime
+                    let duration_ms = getDurationRightAligned_ms startTime
 
                     log.LogError(
                         ex,
@@ -555,7 +553,7 @@ module Repository =
                     let! parameters = context |> parse<RepositoryParameters>
                     let! result = processQuery context parameters validations 1 query
 
-                    let duration_ms = getPaddedDuration_ms startTime
+                    let duration_ms = getDurationRightAligned_ms startTime
 
                     log.LogInformation(
                         "{CurrentInstant}: Node: {HostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {path}; RepositoryId: {repositoryId}.",
@@ -569,7 +567,7 @@ module Repository =
 
                     return result
                 with ex ->
-                    let duration_ms = getPaddedDuration_ms startTime
+                    let duration_ms = getDurationRightAligned_ms startTime
 
                     log.LogError(
                         ex,
@@ -602,7 +600,7 @@ module Repository =
                     let! parameters = context |> parse<RepositoryParameters>
                     let! result = processQuery context parameters validations 1 query
 
-                    let duration_ms = getPaddedDuration_ms startTime
+                    let duration_ms = getDurationRightAligned_ms startTime
 
                     log.LogInformation(
                         "{CurrentInstant}: Node: {HostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {path}; RepositoryId: {repositoryId}.",
@@ -616,7 +614,7 @@ module Repository =
 
                     return result
                 with ex ->
-                    let duration_ms = getPaddedDuration_ms startTime
+                    let duration_ms = getDurationRightAligned_ms startTime
 
                     log.LogError(
                         ex,
@@ -656,7 +654,7 @@ module Repository =
                     context.Items.Add("IncludeDeleted", parameters.IncludeDeleted)
                     let! result = processQuery context parameters validations 1000 query
 
-                    let duration_ms = getPaddedDuration_ms startTime
+                    let duration_ms = getDurationRightAligned_ms startTime
 
                     log.LogInformation(
                         "{CurrentInstant}: Node: {HostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {path}; RepositoryId: {repositoryId}.",
@@ -670,7 +668,7 @@ module Repository =
 
                     return result
                 with ex ->
-                    let duration_ms = getPaddedDuration_ms startTime
+                    let duration_ms = getDurationRightAligned_ms startTime
 
                     log.LogError(
                         ex,
@@ -713,7 +711,7 @@ module Repository =
                     context.Items.Add("ReferenceIds", parameters.ReferenceIds)
                     let! result = processQuery context parameters validations parameters.MaxCount query
 
-                    let duration_ms = getPaddedDuration_ms startTime
+                    let duration_ms = getDurationRightAligned_ms startTime
 
                     log.LogInformation(
                         "{CurrentInstant}: Node: {HostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {path}; RepositoryId: {repositoryId}.",
@@ -727,7 +725,7 @@ module Repository =
 
                     return result
                 with ex ->
-                    let duration_ms = getPaddedDuration_ms startTime
+                    let duration_ms = getDurationRightAligned_ms startTime
 
                     log.LogError(
                         ex,
@@ -784,7 +782,7 @@ module Repository =
 
                         let! result = processQuery context parameters validations (branchIdList.Count) query
 
-                        let duration_ms = getPaddedDuration_ms startTime
+                        let duration_ms = getDurationRightAligned_ms startTime
 
                         log.LogInformation(
                             "{CurrentInstant}: Node: {HostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {path}; RepositoryId: {repositoryId}.",
@@ -800,7 +798,7 @@ module Repository =
                     finally
                         stringBuilderPool.Return(sb)
                 with ex ->
-                    let duration_ms = getPaddedDuration_ms startTime
+                    let duration_ms = getDurationRightAligned_ms startTime
 
                     log.LogError(
                         ex,

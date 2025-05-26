@@ -32,10 +32,11 @@ module Owner =
         let ownerId =
             new Option<String>(
                 "--ownerId",
-                IsRequired = false,
+                [||],
+                Required = false,
                 Description = "The Id of the owner <Guid>.",
                 Arity = ArgumentArity.ExactlyOne,
-                getDefaultValue =
+                DefaultValueFactory =
                     (fun _ ->
                         if Current().OwnerId = Guid.Empty then
                             $"{Guid.NewGuid()}"
@@ -46,43 +47,45 @@ module Owner =
         let ownerName =
             new Option<String>(
                 "--ownerName",
-                IsRequired = false,
+                Required = false,
                 Description = "The name of the owner. [default: current owner]",
                 Arity = ArgumentArity.ExactlyOne
             )
 
-        let ownerNameRequired = new Option<String>("--ownerName", IsRequired = true, Description = "The name of the owner.", Arity = ArgumentArity.ExactlyOne)
+        let ownerNameRequired = new Option<String>("--ownerName", Required = true, Description = "The name of the owner.", Arity = ArgumentArity.ExactlyOne)
 
         let ownerTypeRequired =
-            (new Option<String>("--ownerType", IsRequired = true, Description = "The type of owner. [default: Public]", Arity = ArgumentArity.ExactlyOne))
-                .FromAmong(Utilities.listCases<OwnerType> ())
+            (new Option<String>("--ownerType", Required = true, Description = "The type of owner. [default: Public]", Arity = ArgumentArity.ExactlyOne))
+
+        ownerTypeRequired.AcceptOnlyFromAmong(Utilities.listCases<OwnerType> ())
 
         let searchVisibilityRequired =
             (new Option<String>(
                 "--searchVisibility",
-                IsRequired = true,
+                Required = true,
                 Description = "Enables or disables the owner appearing in searches. [default: true]",
                 Arity = ArgumentArity.ExactlyOne
             ))
-                .FromAmong(Utilities.listCases<SearchVisibility> ())
+
+        searchVisibilityRequired.AcceptOnlyFromAmong(Utilities.listCases<SearchVisibility> ())
 
         let descriptionRequired =
-            new Option<String>("--description", IsRequired = true, Description = "Description of the owner.", Arity = ArgumentArity.ExactlyOne)
+            new Option<String>("--description", Required = true, Description = "Description of the owner.", Arity = ArgumentArity.ExactlyOne)
 
-        let newName = new Option<String>("--newName", IsRequired = true, Description = "The new name of the organization.", Arity = ArgumentArity.ExactlyOne)
+        let newName = new Option<String>("--newName", Required = true, Description = "The new name of the organization.", Arity = ArgumentArity.ExactlyOne)
 
-        let force = new Option<bool>("--force", IsRequired = false, Description = "Delete even if there is data under this owner. [default: false]")
+        let force = new Option<bool>("--force", Required = false, Description = "Delete even if there is data under this owner. [default: false]")
 
         let includeDeleted =
-            new Option<bool>([| "--include-deleted"; "-d" |], IsRequired = false, Description = "Include deleted owners in the result. [default: false]")
+            new Option<bool>("--include-deleted", [| "-d" |], Required = false, Description = "Include deleted owners in the result. [default: false]")
 
         let deleteReason =
-            new Option<String>("--deleteReason", IsRequired = true, Description = "The reason for deleting the owner.", Arity = ArgumentArity.ExactlyOne)
+            new Option<String>("--deleteReason", Required = true, Description = "The reason for deleting the owner.", Arity = ArgumentArity.ExactlyOne)
 
         let doNotSwitch =
             new Option<bool>(
                 "--doNotSwitch",
-                IsRequired = false,
+                Required = false,
                 Description = "Do not switch to the new owner as the current owner.",
                 Arity = ArgumentArity.ZeroOrOne
             )
@@ -91,7 +94,7 @@ module Owner =
         let mutable guid = Guid.Empty
 
         if
-            parseResult.CommandResult.FindResultFor(option) <> null
+            parseResult.GetResult(option) <> null
             && not <| String.IsNullOrEmpty(value)
             && (Guid.TryParse(value, &guid) = false || guid = Guid.Empty)
         then
@@ -101,7 +104,7 @@ module Owner =
 
     let mustBeAValidGraceName (parseResult: ParseResult) (parameters: CommonParameters) (option: Option) (value: string) (error: OwnerError) =
         if
-            parseResult.CommandResult.FindResultFor(option) <> null
+            parseResult.GetResult(option) <> null
             && not <| Constants.GraceNameRegex.IsMatch(value)
         then
             Error(GraceError.Create (OwnerError.getErrorMessage error) (parameters.CorrelationId))
@@ -121,8 +124,8 @@ module Owner =
 
     let private ``OwnerName must not be empty`` (parseResult: ParseResult, commonParameters: CommonParameters) =
         if
-            (parseResult.HasOption(Options.ownerNameRequired)
-             || parseResult.HasOption(Options.ownerName))
+            (parseResult.CommandResult.Command.Options.Contains(Options.ownerNameRequired)
+             || parseResult.CommandResult.Command.Options.Contains(Options.ownerName))
             && not <| String.IsNullOrEmpty(commonParameters.OwnerName)
         then
             Ok(parseResult, commonParameters)
@@ -133,9 +136,9 @@ module Owner =
     let normalizeIdsAndNames<'T when 'T :> CommonParameters> (parseResult: ParseResult) (parameters: 'T) =
         // If the name was specified on the command line, but the id wasn't, then we should only send the name, and we set the id to String.Empty.
         if
-            parseResult.CommandResult.FindResultFor(Options.ownerId).IsImplicit
-            && not <| isNull (parseResult.CommandResult.FindResultFor(Options.ownerName))
-            && not <| parseResult.CommandResult.FindResultFor(Options.ownerName).IsImplicit
+            parseResult.GetResult(Options.ownerId).Implicit
+            && not <| isNull (parseResult.GetResult(Options.ownerName))
+            && not <| parseResult.GetResult(Options.ownerName).Implicit
         then
             parameters.OwnerId <- String.Empty
 
@@ -155,7 +158,7 @@ module Owner =
                 match validateIncomingParameters with
                 | Ok _ ->
                     let ownerId =
-                        if parseResult.FindResultFor(Options.ownerId).IsImplicit then
+                        if parseResult.GetResult(Options.ownerId).Implicit then
                             Guid.NewGuid().ToString()
                         else
                             createParameters.OwnerId
@@ -194,7 +197,7 @@ module Owner =
                 match result with
                 | Ok returnValue ->
                     // Update the Grace configuration file with the newly-created owner.
-                    if not <| parseResult.HasOption(Options.doNotSwitch) then
+                    if not <| parseResult.CommandResult.Command.Options.Contains(Options.doNotSwitch) then
                         let newConfig = Current()
                         newConfig.OwnerId <- Guid.Parse(returnValue.Properties[nameof (OwnerId)])
                         newConfig.OwnerName <- returnValue.Properties[nameof (OwnerName)]
@@ -574,48 +577,48 @@ module Owner =
             |> addOption Options.ownerId
             |> addOption Options.doNotSwitch
 
-        ownerCreateCommand.Handler <- Create
-        ownerCommand.AddCommand(ownerCreateCommand)
+        ownerCreateCommand.Action <- Create
+        ownerCommand.Subcommands.Add(ownerCreateCommand)
 
         let getCommand =
             new Command("get", Description = "Gets details for the owner.")
             |> addOption Options.includeDeleted
             |> addCommonOptions
 
-        getCommand.Handler <- Get
-        ownerCommand.AddCommand(getCommand)
+        getCommand.Action <- Get
+        ownerCommand.Subcommands.Add(getCommand)
 
         let setNameCommand =
             new Command("set-name", Description = "Change the name of the owner.")
             |> addOption Options.newName
             |> addCommonOptions
 
-        setNameCommand.Handler <- SetName
-        ownerCommand.AddCommand(setNameCommand)
+        setNameCommand.Action <- SetName
+        ownerCommand.Subcommands.Add(setNameCommand)
 
         let setTypeCommand =
             new Command("set-type", Description = "Change the type of the owner.")
             |> addOption Options.ownerTypeRequired
             |> addCommonOptions
 
-        setTypeCommand.Handler <- SetType
-        ownerCommand.AddCommand(setTypeCommand)
+        setTypeCommand.Action <- SetType
+        ownerCommand.Subcommands.Add(setTypeCommand)
 
         let setSearchVisibilityCommand =
             new Command("set-search-visibility", Description = "Change the search visibility of the owner.")
             |> addOption Options.searchVisibilityRequired
             |> addCommonOptions
 
-        setSearchVisibilityCommand.Handler <- SetSearchVisibility
-        ownerCommand.AddCommand(setSearchVisibilityCommand)
+        setSearchVisibilityCommand.Action <- SetSearchVisibility
+        ownerCommand.Subcommands.Add(setSearchVisibilityCommand)
 
         let setDescriptionCommand =
             new Command("set-description", Description = "Change the description of the owner.")
             |> addOption Options.descriptionRequired
             |> addCommonOptions
 
-        setDescriptionCommand.Handler <- SetDescription
-        ownerCommand.AddCommand(setDescriptionCommand)
+        setDescriptionCommand.Action <- SetDescription
+        ownerCommand.Subcommands.Add(setDescriptionCommand)
 
         let deleteCommand =
             new Command("delete", Description = "Delete the owner.")
@@ -623,14 +626,14 @@ module Owner =
             |> addOption Options.deleteReason
             |> addCommonOptions
 
-        deleteCommand.Handler <- Delete
-        ownerCommand.AddCommand(deleteCommand)
+        deleteCommand.Action <- Delete
+        ownerCommand.Subcommands.Add(deleteCommand)
 
         let undeleteCommand =
             new Command("undelete", Description = "Undelete a deleted owner.")
             |> addCommonOptions
 
-        undeleteCommand.Handler <- Undelete
-        ownerCommand.AddCommand(undeleteCommand)
+        undeleteCommand.Action <- Undelete
+        ownerCommand.Subcommands.Add(undeleteCommand)
 
         ownerCommand

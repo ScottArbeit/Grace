@@ -1,6 +1,5 @@
 namespace Grace.Server
 
-open Dapr.Actors
 open Giraffe
 open Grace.Actors
 open Grace.Actors.Constants
@@ -17,6 +16,7 @@ open Microsoft.AspNetCore.Http
 open Microsoft.Extensions.Caching.Memory
 open Microsoft.Extensions.Logging
 open NodaTime
+open Orleans
 open System
 open System.Collections.Concurrent
 open System.Collections.Generic
@@ -33,8 +33,8 @@ module Services =
 
     /// Defines the type of all server queries in Grace.
     ///
-    /// Takes an HttpContext, the MaxCount of results to return, and the ActorProxy to use for the query, and returns a Task containing the return value.
-    type QueryResult<'T, 'U when 'T :> IActor> = HttpContext -> int -> 'T -> Task<'U>
+    /// Takes an HttpContext, the MaxCount of results to return, and the GrainProxy to use for the query, and returns a Task containing the return value.
+    type QueryResult<'T, 'U when 'T :> IGrain> = HttpContext -> int -> 'T -> Task<'U>
 
     /// Gets the CorrelationId from HttpContext.Items.
     let getCorrelationId (context: HttpContext) = (context.Items[Constants.CorrelationId] :?> CorrelationId)

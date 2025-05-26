@@ -6,7 +6,8 @@
 		<PublishReadyToRun>true</PublishReadyToRun>
 		<GenerateDocumentationFile>true</GenerateDocumentationFile>
 		<AccelerateBuildsInVisualStudio>true</AccelerateBuildsInVisualStudio>
-		<WarnOn>3390;$(WarnOn)</WarnOn>
+        <SuppressNETCoreSdkPreviewMessage>true</SuppressNETCoreSdkPreviewMessage>
+        <WarnOn>3390;$(WarnOn)</WarnOn>
 		<WarningsAsErrors>FS0025</WarningsAsErrors>
 		<NoWarn>1057,3391</NoWarn>
 		<Platforms>AnyCPU</Platforms>
@@ -29,7 +30,7 @@
 	<ItemGroup>
 		<PackageReference Include="Azure.Storage.Blobs" Version="12.24.0" />
 		<PackageReference Include="Ben.Demystifier" Version="0.4.1" />
-		<PackageReference Include="Dapr.Client" Version="1.15.3" />
+		<PackageReference Include="Dapr.Client" Version="1.15.4" />
 		<PackageReference Include="Polly" Version="8.5.2" />
 	</ItemGroup>
 
@@ -38,7 +39,7 @@
 	</ItemGroup>
 
 	<ItemGroup>
-		<PackageReference Update="FSharp.Core" Version="9.0.202" />
+		<PackageReference Update="FSharp.Core" Version="9.0.300" />
 	</ItemGroup>
 
 </Project>

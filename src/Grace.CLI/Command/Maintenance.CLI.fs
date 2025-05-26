@@ -39,16 +39,16 @@ module Maintenance =
         let ownerId =
             new Option<String>(
                 "--ownerId",
-                IsRequired = false,
+                Required = false,
                 Description = "The repository's owner ID <Guid>.",
                 Arity = ArgumentArity.ZeroOrOne,
-                getDefaultValue = (fun _ -> $"{Current().OwnerId}")
+                DefaultValueFactory = (fun _ -> $"{Current().OwnerId}")
             )
 
         let ownerName =
             new Option<String>(
                 "--ownerName",
-                IsRequired = false,
+                Required = false,
                 Description = "The repository's owner name. [default: current owner]",
                 Arity = ArgumentArity.ExactlyOne
             )
@@ -56,33 +56,35 @@ module Maintenance =
         let organizationId =
             new Option<String>(
                 "--organizationId",
-                IsRequired = false,
+                Required = false,
                 Description = "The repository's organization ID <Guid>.",
                 Arity = ArgumentArity.ZeroOrOne,
-                getDefaultValue = (fun _ -> $"{Current().OrganizationId}")
+                DefaultValueFactory = (fun _ -> $"{Current().OrganizationId}")
             )
 
         let organizationName =
             new Option<String>(
                 "--organizationName",
-                IsRequired = false,
+                Required = false,
                 Description = "The repository's organization name. [default: current organization]",
                 Arity = ArgumentArity.ZeroOrOne
             )
 
         let repositoryId =
             new Option<String>(
-                [| "--repositoryId"; "-r" |],
-                IsRequired = false,
+                "--repositoryId",
+                [| "-r" |],
+                Required = false,
                 Description = "The repository's ID <Guid>.",
                 Arity = ArgumentArity.ExactlyOne,
-                getDefaultValue = (fun _ -> $"{Current().RepositoryId}")
+                DefaultValueFactory = (fun _ -> $"{Current().RepositoryId}")
             )
 
         let repositoryName =
             new Option<String>(
-                [| "--repositoryName"; "-n" |],
-                IsRequired = false,
+                "--repositoryName",
+                [| "-n" |],
+                Required = false,
                 Description = "The name of the repository. [default: current repository]",
                 Arity = ArgumentArity.ExactlyOne
             )
@@ -90,32 +92,29 @@ module Maintenance =
         let listDirectories =
             new Option<bool>(
                 "--listDirectories",
-                IsRequired = false,
+                Required = false,
                 Description = "Show a list of directories in the Grace Index. [default: true]",
-                Arity = ArgumentArity.ExactlyOne
+                Arity = ArgumentArity.ExactlyOne,
+                DefaultValueFactory = (fun _ -> true)
             )
-
-        listDirectories.SetDefaultValue(true)
 
         let listFiles =
             new Option<bool>(
                 "--listFiles",
-                IsRequired = false,
+                Required = false,
                 Description = "Show a list of files in the Grace Index. Implies --listDirectories. [default: true]",
-                Arity = ArgumentArity.ExactlyOne
+                Arity = ArgumentArity.ExactlyOne,
+                DefaultValueFactory = (fun _ -> true)
             )
-
-        listFiles.SetDefaultValue(true)
 
         let path =
             new Option<string>(
                 "path",
-                IsRequired = false,
+                Required = false,
                 Description = "The relative path to list. Wildcards ? and * are permitted. [default: *.*]",
-                Arity = ArgumentArity.ExactlyOne
+                Arity = ArgumentArity.ExactlyOne,
+                DefaultValueFactory = (fun _ -> "*.*")
             )
-
-        path.SetDefaultValue("*.*")
 
     let private Test =
         CommandHandler.Create(fun (parseResult: ParseResult) (parameters: CommonParameters) ->
@@ -1092,28 +1091,28 @@ module Maintenance =
 
         let maintenanceCommand = new Command("maintenance", Description = "Performs various maintenance tasks.")
 
-        maintenanceCommand.AddAlias("maint")
+        maintenanceCommand.Aliases.Add("maint")
 
         let updateIndexCommand =
             new Command("update-index", Description = "Recreates the local Grace index file based on the current working directory contents.")
             |> addCommonOptions
 
-        updateIndexCommand.Handler <- UpdateIndex
-        maintenanceCommand.AddCommand(updateIndexCommand)
+        updateIndexCommand.Action <- UpdateIndex
+        maintenanceCommand.Subcommands.Add(updateIndexCommand)
 
         let scanCommand =
             new Command("scan", Description = "Scans the working directory contents for changes.")
             |> addCommonOptions
 
-        scanCommand.Handler <- Scan
-        maintenanceCommand.AddCommand(scanCommand)
+        scanCommand.Action <- Scan
+        maintenanceCommand.Subcommands.Add(scanCommand)
 
         let statsCommand =
             new Command("stats", Description = "Displays statistics about the current working directory.")
             |> addCommonOptions
 
-        statsCommand.Handler <- Stats
-        maintenanceCommand.AddCommand(statsCommand)
+        statsCommand.Action <- Stats
+        maintenanceCommand.Subcommands.Add(statsCommand)
 
         let listContentsCommand =
             new Command("list-contents", Description = "List directories and files from the Grace Status file.")
@@ -1121,11 +1120,11 @@ module Maintenance =
             |> addOption Options.listDirectories
             |> addOption Options.listFiles
 
-        listContentsCommand.Handler <- ListContents
-        maintenanceCommand.AddCommand(listContentsCommand)
+        listContentsCommand.Action <- ListContents
+        maintenanceCommand.Subcommands.Add(listContentsCommand)
 
         let testCommand = new Command("test", Description = "Just a test.") |> addCommonOptions
-        testCommand.Handler <- Test
-        maintenanceCommand.AddCommand(testCommand)
+        testCommand.Action <- Test
+        maintenanceCommand.Subcommands.Add(testCommand)
 
         maintenanceCommand

@@ -1,25 +1,26 @@
 namespace Grace.Actors
 
-open Dapr.Actors
-open Dapr.Actors.Runtime
-open Grace.Actors.Commands
-open Grace.Actors.Commands.Branch
 open Grace.Actors.Constants
 open Grace.Actors.Context
-open Grace.Actors.Events.Branch
 open Grace.Actors.Extensions.ActorProxy
 open Grace.Actors.Extensions.MemoryCache
 open Grace.Actors.Interfaces
 open Grace.Actors.Services
 open Grace.Actors.Types
 open Grace.Shared
+open Grace.Shared.Commands
+open Grace.Shared.Commands.Branch
 open Grace.Shared.Constants
 open Grace.Shared.Dto.Branch
 open Grace.Shared.Dto.Reference
+open Grace.Shared.Events.Branch
 open Grace.Shared.Types
 open Grace.Shared.Utilities
 open Grace.Shared.Validation.Errors.Branch
 open Microsoft.Extensions.Logging
+open NodaTime
+open Orleans
+open Orleans.Runtime
 open System
 open System.Collections.Generic
 open System.Diagnostics
@@ -27,7 +28,6 @@ open System.Linq
 open System.Runtime.Serialization
 open System.Text
 open System.Threading.Tasks
-open NodaTime
 open System.Text.Json
 open System.Net.Http.Json
 open FSharpPlus.Data.MultiMap
@@ -41,24 +41,14 @@ module Branch =
     /// The data types stored in physical deletion reminders.
     type PhysicalDeletionReminderState = (RepositoryId * BranchId * BranchName * ParentBranchId * DeleteReason * CorrelationId)
 
-    let log = loggerFactory.CreateLogger("Branch.Actor")
-
-    type BranchActor(host: ActorHost) =
-        inherit Actor(host)
+    type BranchActor([<PersistentState(StateName.Branch, Constants.GraceActorStorage)>] state: IPersistentState<List<BranchEvent>>, log: ILogger<BranchActor>) =
+        inherit Grain()
 
         static let actorName = ActorName.Branch
-        static let eventsStateName = StateName.Branch
 
         let mutable branchDto: BranchDto = BranchDto.Default
-        let branchEvents = List<BranchEvent>()
 
-        let mutable actorStartTime = Instant.MinValue
-        let mutable logScope: IDisposable = null
         let mutable currentCommand = String.Empty
-        let mutable stateManager = Unchecked.defaultof<IActorStateManager>
-
-        /// Indicates that the actor is in an undefined state, and should be reset.
-        let mutable isDisposed = false
 
         let updateDto branchEvent correlationId currentBranchDto =
             task {
@@ -71,7 +61,7 @@ module Branch =
                             let! referenceDto =
                                 if basedOn <> ReferenceId.Empty then
                                     task {
-                                        let referenceActorProxy = Reference.CreateActorProxy basedOn correlationId
+                                        let! referenceActorProxy = Reference.CreateActorProxy basedOn repositoryId correlationId
                                         return! referenceActorProxy.Get correlationId
                                     }
                                 else
@@ -101,7 +91,7 @@ module Branch =
                         }
                     | Rebased referenceId ->
                         task {
-                            let referenceActorProxy = Reference.CreateActorProxy referenceId correlationId
+                            let! referenceActorProxy = Reference.CreateActorProxy referenceId branchDto.RepositoryId branchEvent.Metadata.CorrelationId
                             let! referenceDto = referenceActorProxy.Get branchEvent.Metadata.CorrelationId
                             return { currentBranchDto with BasedOn = referenceDto }
                         }
@@ -203,7 +193,7 @@ module Branch =
                             match basedOnLink with
                             | ReferenceLinkType.BasedOn referenceId -> referenceId
 
-                        let basedOnReferenceActorProxy = Reference.CreateActorProxy basedOnReferenceId correlationId
+                        let! basedOnReferenceActorProxy = Reference.CreateActorProxy basedOnReferenceId branchDto.RepositoryId correlationId
                         let! basedOnReferenceDto = basedOnReferenceActorProxy.Get correlationId
 
                         newBranchDto <- { newBranchDto with BasedOn = basedOnReferenceDto }
@@ -215,133 +205,25 @@ module Branch =
 
         member val private correlationId: CorrelationId = String.Empty with get, set
 
-        override this.OnActivateAsync() =
+        override this.OnActivateAsync(ct) =
             let activateStartTime = getCurrentInstant ()
-            stateManager <- this.StateManager
 
-            task {
-                let correlationId =
-                    match memoryCache.GetCorrelationIdEntry this.Id with
-                    | Some correlationId -> correlationId
-                    | None -> String.Empty
+            let correlationId =
+                match memoryCache.GetCorrelationIdEntry this.IdentityString with
+                | Some correlationId -> correlationId
+                | None -> String.Empty
 
-                try
-                    let! retrievedEvents = Storage.RetrieveState<List<BranchEvent>> stateManager eventsStateName correlationId
+            logActorActivation log this.IdentityString (getActorActivationMessage state.RecordExists)
 
-                    match retrievedEvents with
-                    | Some retrievedEvents ->
-                        // Load the branchEvents from the retrieved events.
-                        branchEvents.AddRange(retrievedEvents)
-
-                        // Apply all events to the branchDto.
-                        for branchEvent in retrievedEvents do
-                            let! updatedBranchDto = branchDto |> updateDto branchEvent correlationId
-                            branchDto <- updatedBranchDto
-
-                        let! branchDtoWithLatestReferences = updateLatestReferences branchDto correlationId
-                        branchDto <- branchDtoWithLatestReferences
-                    | None -> ()
-
-                    let message = $"Branch name: {branchDto.BranchName}; {getActorActivationMessage retrievedEvents}"
-                    logActorActivation log activateStartTime correlationId actorName this.Id message
-                with ex ->
-                    let exc = ExceptionResponse.Create ex
-                    log.LogError("{CurrentInstant} Error activating {ActorType} {ActorId}.", getCurrentInstantExtended (), this.GetType().Name, host.Id)
-                    log.LogError("{CurrentInstant} {ExceptionDetails}", getCurrentInstantExtended (), exc.ToString())
-                    logActorActivation log activateStartTime correlationId actorName this.Id "Exception occurred during activation."
-            }
-            :> Task
-
-        member private this.SetMaintenanceReminder() =
-            this.RegisterReminderAsync("MaintenanceReminder", Array.empty<byte>, TimeSpan.FromDays(7.0), TimeSpan.FromDays(7.0))
-
-        member private this.UnregisterMaintenanceReminder() = this.UnregisterReminderAsync("MaintenanceReminder")
-
-        member private this.OnFirstWrite() =
-            task {
-                //let! _ = Constants.DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> this.SetMaintenanceReminder())
-                ()
-            }
-            :> Task
-
-        override this.OnPreActorMethodAsync(context) =
-            this.correlationId <- String.Empty
-            actorStartTime <- getCurrentInstant ()
-            logScope <- log.BeginScope("Actor {actorName}", actorName)
-            currentCommand <- String.Empty
-
-            log.LogTrace(
-                "{CurrentInstant}: Started {ActorName}.{MethodName} BranchId: {Id}.",
-                getCurrentInstantExtended (),
-                actorName,
-                context.MethodName,
-                this.Id
-            )
-
-            // This checks if the actor is still active, but in an undefined state, which will _almost_ never happen.
-            // isDisposed is set when the actor is deleted, or if an error occurs where we're not sure of the state and want to reload from the database.
-            if isDisposed then
-                this.OnActivateAsync().Wait()
-                isDisposed <- false
-
-            Task.CompletedTask
-
-        override this.OnPostActorMethodAsync(context) =
-            let duration_ms = getPaddedDuration_ms actorStartTime
-
-            let threadCounts =
-                match memoryCache.GetThreadCountEntry() with
-                | Some threadCount -> threadCount
-                | None ->
-                    let threads = $"ThreadCount: {ThreadPool.ThreadCount}; PendingWorkItemCount: {ThreadPool.PendingWorkItemCount}"
-
-                    memoryCache.CreateThreadCountEntry(threads)
-                    threads
-
-            if
-                String.IsNullOrEmpty(currentCommand)
-                && not <| (context.MethodName = "ReceiveReminderAsync")
-            then
-                log.LogInformation(
-                    "{CurrentInstant}: Node: {HostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {ActorName}.{MethodName}; RepositoryId: {RepositoryId}; BranchId: {Id}; BranchName: {BranchName}; {ThreadCounts}.",
-                    getCurrentInstantExtended (),
-                    getMachineName,
-                    duration_ms,
-                    this.correlationId,
-                    actorName,
-                    context.MethodName,
-                    branchDto.RepositoryId,
-                    this.Id,
-                    branchDto.BranchName,
-                    threadCounts
-                )
-            else
-                log.LogInformation(
-                    "{CurrentInstant}: Node: {HostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {ActorName}.{MethodName}; Command: {Command}; RepositoryId: {RepositoryId}; BranchId: {Id}; BranchName: {BranchName}; ThreadCounts: {ThreadCounts}.",
-                    getCurrentInstantExtended (),
-                    getMachineName,
-                    duration_ms,
-                    this.correlationId,
-                    actorName,
-                    context.MethodName,
-                    currentCommand,
-                    branchDto.RepositoryId,
-                    this.Id,
-                    branchDto.BranchName,
-                    threadCounts
-                )
-
-            logScope.Dispose()
             Task.CompletedTask
 
         member private this.ApplyEvent branchEvent =
             task {
                 try
-                    if branchEvents |> Seq.isEmpty then do! this.OnFirstWrite()
-
                     // Update the branchDto with the event.
                     let! updatedBranchDto = branchDto |> updateDto branchEvent this.correlationId
                     branchDto <- updatedBranchDto
+                    branchEvent.Metadata.Properties[nameof (RepositoryId)] <- $"{branchDto.RepositoryId}"
 
                     match branchEvent.Event with
                     // Don't save these reference creation events, and don't send them as events; that was done by the Reference actor when the reference was created.
@@ -356,12 +238,11 @@ module Branch =
                     // Save the rest of the events.
                     | _ ->
                         // For all other events, add the event to the branchEvents list, and save it to actor state.
-                        branchEvents.Add(branchEvent)
-                        do! Storage.SaveState stateManager eventsStateName branchEvents branchEvent.Metadata.CorrelationId
+                        state.State.Add branchEvent
+                        do! state.WriteStateAsync()
 
                         // Publish the event to the rest of the world.
                         let graceEvent = Events.GraceEvent.BranchEvent branchEvent
-                        let message = serialize graceEvent
                         do! daprClient.PublishEventAsync(GracePubSubService, GraceEventStreamTopic, graceEvent)
 
                     let returnValue = GraceReturnValue.Create "Branch command succeeded." branchEvent.Metadata.CorrelationId
@@ -400,11 +281,13 @@ module Branch =
                     return Error graceError
             }
 
-        interface IGraceReminder with
+        interface IGraceReminderWithGuidKey with
             /// Schedules a Grace reminder.
             member this.ScheduleReminderAsync reminderType delay state correlationId =
                 task {
-                    let reminder = ReminderDto.Create actorName $"{this.Id}" reminderType (getFutureInstant delay) state correlationId
+                    let reminder =
+                        ReminderDto.Create actorName $"{this.IdentityString}" branchDto.RepositoryId reminderType (getFutureInstant delay) state correlationId
+
                     do! createReminder reminder
                 }
                 :> Task
@@ -423,7 +306,7 @@ module Branch =
                         this.correlationId <- correlationId
 
                         // Delete saved state for this actor.
-                        let! deletedEventsState = Storage.DeleteState stateManager eventsStateName
+                        do! state.ClearStateAsync()
 
                         log.LogInformation(
                             "{CurrentInstant}: CorrelationId: {correlationId}; Deleted physical state for branch; RepositoryId: {repositoryId}; BranchId: {branchId}; BranchName: {branchName}; ParentBranchId: {parentBranchId}; deleteReason: {deleteReason}.",
@@ -436,12 +319,7 @@ module Branch =
                             deleteReason
                         )
 
-                        // Set all values to default.
-                        branchDto <- BranchDto.Default
-                        branchEvents.Clear()
-
-                        // Mark the actor as disposed, in case someone tries to use it before Dapr GC's it.
-                        isDisposed <- true
+                        this.DeactivateOnIdle()
                         return Ok()
                     | _ ->
                         return
@@ -452,12 +330,15 @@ module Branch =
                             )
                 }
 
+        interface IHasRepositoryId with
+            member this.GetRepositoryId correlationId = branchDto.RepositoryId |> returnTask
+
         interface IBranchActor with
 
             member this.GetEvents correlationId =
                 task {
                     this.correlationId <- correlationId
-                    return branchEvents :> IReadOnlyList<BranchEvent>
+                    return state.State :> IReadOnlyList<BranchEvent>
                 }
 
             member this.Exists correlationId =
@@ -472,8 +353,8 @@ module Branch =
                 let isValid (command: BranchCommand) (metadata: EventMetadata) =
                     task {
                         if
-                            branchEvents.Exists(fun ev -> ev.Metadata.CorrelationId = metadata.CorrelationId)
-                            && (branchEvents.Count > 3)
+                            state.State.Exists(fun ev -> ev.Metadata.CorrelationId = metadata.CorrelationId)
+                            && (state.State.Count > 3)
                         then
                             return Error(GraceError.Create (BranchError.getErrorMessage DuplicateCorrelationId) metadata.CorrelationId)
                         else
@@ -491,7 +372,7 @@ module Branch =
                 let addReference repositoryId branchId directoryId sha256Hash referenceText referenceType links =
                     task {
                         let referenceId: ReferenceId = ReferenceId.NewGuid()
-                        let referenceActor = Reference.CreateActorProxy referenceId this.correlationId
+                        let! referenceActor = Reference.CreateActorProxy referenceId repositoryId this.correlationId
 
                         let referenceDto =
                             { ReferenceDto.Default with
@@ -525,7 +406,7 @@ module Branch =
                                         // Add an initial Rebase reference to this branch that points to the BasedOn reference, unless we're creating `main`.
                                         if branchName <> InitialBranchName then
                                             // We need to get the reference that we're rebasing on, so we can get the directoryId and sha256Hash.
-                                            let referenceActorProxy = Reference.CreateActorProxy basedOn this.correlationId
+                                            let! referenceActorProxy = Reference.CreateActorProxy basedOn repositoryId this.correlationId
                                             let! promotionDto = referenceActorProxy.Get this.correlationId
 
                                             match!
@@ -552,11 +433,11 @@ module Branch =
                                         metadata.Properties["BasedOn"] <- $"{referenceId}"
                                         metadata.Properties[nameof (ReferenceId)] <- $"{referenceId}"
                                         metadata.Properties[nameof (RepositoryId)] <- $"{branchDto.RepositoryId}"
-                                        metadata.Properties[nameof (BranchId)] <- $"{this.Id}"
+                                        metadata.Properties[nameof (BranchId)] <- $"{this.GetGrainId().GetGuidKey()}"
                                         metadata.Properties[nameof (BranchName)] <- $"{branchDto.BranchName}"
 
                                         // We need to get the reference that we're rebasing on, so we can get the directoryId and sha256Hash.
-                                        let referenceActorProxy = Reference.CreateActorProxy referenceId this.correlationId
+                                        let! referenceActorProxy = Reference.CreateActorProxy referenceId branchDto.RepositoryId this.correlationId
                                         let! promotionDto = referenceActorProxy.Get metadata.CorrelationId
 
                                         // Add the Rebase reference to this branch.
@@ -615,7 +496,7 @@ module Branch =
                                         | Error error -> return Error error
                                     | RemoveReference referenceId -> return Ok(ReferenceRemoved referenceId)
                                     | DeleteLogical(force, deleteReason) ->
-                                        let repositoryActorProxy = Repository.CreateActorProxy branchDto.RepositoryId metadata.CorrelationId
+                                        let! repositoryActorProxy = Repository.CreateActorProxy branchDto.RepositoryId metadata.CorrelationId
                                         let! repositoryDto = repositoryActorProxy.Get(metadata.CorrelationId)
 
                                         // Delete the references for this branch.
@@ -628,7 +509,9 @@ module Branch =
                                                 (fun reference ct ->
                                                     ValueTask(
                                                         task {
-                                                            let referenceActorProxy = Reference.CreateActorProxy reference.ReferenceId metadata.CorrelationId
+                                                            let! referenceActorProxy =
+                                                                Reference.CreateActorProxy reference.ReferenceId branchDto.RepositoryId metadata.CorrelationId
+
                                                             let metadata = EventMetadata.New metadata.CorrelationId GraceSystemUser
 
                                                             match!
@@ -659,7 +542,7 @@ module Branch =
                                              metadata.CorrelationId)
 
                                         do!
-                                            (this :> IGraceReminder).ScheduleReminderAsync
+                                            (this :> IGraceReminderWithGuidKey).ScheduleReminderAsync
                                                 ReminderTypes.PhysicalDeletion
                                                 (Duration.FromDays(float repositoryDto.LogicalDeleteDays))
                                                 (serialize reminderState)
@@ -667,7 +550,9 @@ module Branch =
 
                                         return Ok(LogicalDeleted(force, deleteReason))
                                     | DeletePhysical ->
-                                        isDisposed <- true
+                                        // Delete the state from storage, and deactivate the actor.
+                                        do! state.ClearStateAsync()
+                                        this.DeactivateOnIdle()
                                         return Ok PhysicalDeleted
                                     | Undelete -> return Ok Undeleted
                                 }
@@ -702,7 +587,7 @@ module Branch =
             member this.GetParentBranch correlationId =
                 task {
                     this.correlationId <- correlationId
-                    let branchActorProxy = Branch.CreateActorProxy branchDto.ParentBranchId correlationId
+                    let! branchActorProxy = Branch.CreateActorProxy branchDto.ParentBranchId branchDto.RepositoryId correlationId
 
                     return! branchActorProxy.Get correlationId
                 }

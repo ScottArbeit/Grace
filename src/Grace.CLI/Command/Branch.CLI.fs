@@ -58,15 +58,16 @@ module Branch =
             let mutable guid = Guid.Empty
 
             if Guid.TryParse(validate.GetValueOrDefault<String>(), &guid) = false then
-                validate.ErrorMessage <- BranchError.getErrorMessage InvalidBranchId
+                validate.AddError(BranchError.getErrorMessage InvalidBranchId)
 
         let branchId =
             new Option<String>(
-                [| "--branchId"; "-i" |],
-                IsRequired = false,
+                "--branchId",
+                [| "-i" |],
+                Required = false,
                 Description = "The branch's ID <Guid>.",
                 Arity = ArgumentArity.ExactlyOne,
-                getDefaultValue =
+                DefaultValueFactory =
                     (fun _ ->
                         if Current().BranchId = Guid.Empty then
                             $"{Guid.NewGuid()}"
@@ -76,22 +77,23 @@ module Branch =
 
         let branchName =
             new Option<String>(
-                [| "--branchName"; "-b" |],
-                IsRequired = false,
+                "--branchName",
+                [| "-b" |],
+                Required = false,
                 Description = "The name of the branch. [default: current branch]",
                 Arity = ArgumentArity.ExactlyOne
             )
 
         let branchNameRequired =
-            new Option<String>([| "--branchName"; "-b" |], IsRequired = true, Description = "The name of the branch.", Arity = ArgumentArity.ExactlyOne)
+            new Option<String>("--branchName", [| "-b" |], Required = true, Description = "The name of the branch.", Arity = ArgumentArity.ExactlyOne)
 
         let ownerId =
             new Option<String>(
                 "--ownerId",
-                IsRequired = false,
+                Required = false,
                 Description = "The repository's owner ID <Guid>.",
                 Arity = ArgumentArity.ZeroOrOne,
-                getDefaultValue =
+                DefaultValueFactory =
                     (fun _ ->
                         if Current().OwnerId = Guid.Empty then
                             $"{Guid.NewGuid()}"
@@ -102,7 +104,7 @@ module Branch =
         let ownerName =
             new Option<String>(
                 "--ownerName",
-                IsRequired = false,
+                Required = false,
                 Description = "The repository's owner name. [default: current owner]",
                 Arity = ArgumentArity.ExactlyOne
             )
@@ -110,10 +112,10 @@ module Branch =
         let organizationId =
             new Option<String>(
                 "--organizationId",
-                IsRequired = false,
+                Required = false,
                 Description = "The repository's organization ID <Guid>.",
                 Arity = ArgumentArity.ExactlyOne,
-                getDefaultValue =
+                DefaultValueFactory =
                     (fun _ ->
                         if Current().OrganizationId = Guid.Empty then
                             $"{Guid.NewGuid()}"
@@ -124,18 +126,19 @@ module Branch =
         let organizationName =
             new Option<String>(
                 "--organizationName",
-                IsRequired = false,
+                Required = false,
                 Description = "The repository's organization name. [default: current organization]",
                 Arity = ArgumentArity.ZeroOrOne
             )
 
         let repositoryId =
             new Option<String>(
-                [| "--repositoryId"; "-r" |],
-                IsRequired = false,
+                "--repositoryId",
+                [| "-r" |],
+                Required = false,
                 Description = "The repository's ID <Guid>.",
                 Arity = ArgumentArity.ExactlyOne,
-                getDefaultValue =
+                DefaultValueFactory =
                     (fun _ ->
                         if Current().RepositoryId = Guid.Empty then
                             $"{Guid.NewGuid()}"
@@ -145,101 +148,112 @@ module Branch =
 
         let repositoryName =
             new Option<String>(
-                [| "--repositoryName"; "-n" |],
-                IsRequired = false,
+                "--repositoryName",
+                [| "-n" |],
+                Required = false,
                 Description = "The name of the repository. [default: current repository]",
                 Arity = ArgumentArity.ExactlyOne
             )
 
         let parentBranchId =
-            new Option<String>([| "--parentBranchId" |], IsRequired = false, Description = "The parent branch's ID <Guid>.", Arity = ArgumentArity.ExactlyOne)
+            new Option<String>("--parentBranchId", [||], Required = false, Description = "The parent branch's ID <Guid>.", Arity = ArgumentArity.ExactlyOne)
 
         let parentBranchName =
             new Option<String>(
-                [| "--parentBranchName" |],
-                IsRequired = false,
+                "--parentBranchName",
+                [||],
+                Required = false,
                 Description = "The name of the parent branch. [default: current branch]",
                 Arity = ArgumentArity.ExactlyOne,
-                getDefaultValue = (fun _ -> $"{Current().BranchName}")
+                DefaultValueFactory = (fun _ -> $"{Current().BranchName}")
             )
 
-        let newName = new Option<String>("--newName", IsRequired = true, Description = "The new name of the branch.", Arity = ArgumentArity.ExactlyOne)
+        let newName = new Option<String>("--newName", Required = true, Description = "The new name of the branch.", Arity = ArgumentArity.ExactlyOne)
 
         let message =
             new Option<String>(
-                [| "--message"; "-m" |],
-                IsRequired = false,
+                "--message",
+                [| "-m" |],
+                Required = false,
                 Description = "The text to store with this reference.",
                 Arity = ArgumentArity.ExactlyOne
             )
 
         let messageRequired =
             new Option<String>(
-                [| "--message"; "-m" |],
-                IsRequired = true,
+                "--message",
+                [| "-m" |],
+                Required = true,
                 Description = "The text to store with this reference.",
                 Arity = ArgumentArity.ExactlyOne
             )
 
         let referenceType =
-            (new Option<String>("--referenceType", IsRequired = false, Description = "The type of reference.", Arity = ArgumentArity.ExactlyOne))
-                .FromAmong(listCases<ReferenceType> ())
+            (new Option<String>("--referenceType", Required = false, Description = "The type of reference.", Arity = ArgumentArity.ExactlyOne))
+                .AcceptOnlyFromAmong(listCases<ReferenceType> ())
 
         let doNotSwitch =
             new Option<bool>(
                 "--doNotSwitch",
-                IsRequired = false,
+                Required = false,
                 Description = "Do not switch to the new branch as the current branch.",
                 Arity = ArgumentArity.ZeroOrOne
             )
 
-        let fullSha = new Option<bool>("--fullSha", IsRequired = false, Description = "Show the full SHA-256 value in output.", Arity = ArgumentArity.ZeroOrOne)
+        let fullSha = new Option<bool>("--fullSha", Required = false, Description = "Show the full SHA-256 value in output.", Arity = ArgumentArity.ZeroOrOne)
 
         let maxCount =
-            new Option<int>("--maxCount", IsRequired = false, Description = "The maximum number of results to return.", Arity = ArgumentArity.ExactlyOne)
-
-        maxCount.SetDefaultValue(30)
+            new Option<int>(
+                "--maxCount",
+                Required = false,
+                Description = "The maximum number of results to return.",
+                Arity = ArgumentArity.ExactlyOne,
+                DefaultValueFactory = (fun _ -> 30)
+            )
 
         let referenceId =
-            new Option<String>([| "--referenceId" |], IsRequired = false, Description = "The reference ID <Guid>.", Arity = ArgumentArity.ExactlyOne)
+            new Option<String>("--referenceId", [||], Required = false, Description = "The reference ID <Guid>.", Arity = ArgumentArity.ExactlyOne)
 
         let sha256Hash =
             new Option<String>(
-                [| "--sha256Hash" |],
-                IsRequired = false,
+                "--sha256Hash",
+                [||],
+                Required = false,
                 Description = "The full or partial SHA-256 hash value of the version.",
                 Arity = ArgumentArity.ExactlyOne
             )
 
         let enabled =
-            new Option<bool>("--enabled", IsRequired = false, Description = "True to enable the feature; false to disable it.", Arity = ArgumentArity.ZeroOrOne)
+            new Option<bool>("--enabled", Required = false, Description = "True to enable the feature; false to disable it.", Arity = ArgumentArity.ZeroOrOne)
 
         let includeDeleted =
-            new Option<bool>([| "--include-deleted"; "-d" |], IsRequired = false, Description = "Include deleted branches in the result. [default: false]")
+            new Option<bool>("--include-deleted", [| "-d" |], Required = false, Description = "Include deleted branches in the result. [default: false]")
 
-        let showEvents = new Option<bool>([| "--show-events"; "-e" |], IsRequired = false, Description = "Include actor events in the result. [default: false]")
+        let showEvents = new Option<bool>("--show-events", [| "-e" |], Required = false, Description = "Include actor events in the result. [default: false]")
 
         let initialPermissions =
             new Option<ReferenceType array>(
                 "--initialPermissions",
-                IsRequired = false,
+                Required = false,
                 Description = "A list of reference types allowed in this branch.",
                 Arity = ArgumentArity.ZeroOrOne,
-                getDefaultValue = (fun _ -> [| Commit; Checkpoint; Save; Tag; External |])
+                DefaultValueFactory = (fun _ -> [| Commit; Checkpoint; Save; Tag; External |])
             )
 
         let toBranchId =
             new Option<String>(
-                [| "--toBranchId"; "-d" |],
-                IsRequired = false,
+                "--toBranchId",
+                [| "-d" |],
+                Required = false,
                 Description = "The ID of the branch to switch to <Guid>.",
                 Arity = ArgumentArity.ExactlyOne
             )
 
         let toBranchName =
             new Option<String>(
-                [| "--toBranchName"; "-c" |],
-                IsRequired = false,
+                "--toBranchName",
+                [| "-c" |],
+                Required = false,
                 Description = "The name of the branch to switch to.",
                 Arity = ArgumentArity.ExactlyOne
             )
@@ -247,26 +261,27 @@ module Branch =
         let forceRecompute =
             new Option<bool>(
                 "--forceRecompute",
-                IsRequired = false,
+                Required = false,
                 Description = "Force the re-computation of the recursive directory contents. [default: false]",
                 Arity = ArgumentArity.ZeroOrOne
             )
 
         let directoryVersionId =
             new Option<String>(
-                [| "--directoryVersionId"; "-v" |],
-                IsRequired = false,
+                "--directoryVersionId",
+                [| "-v" |],
+                Required = false,
                 Description = "The directory version ID to assign to the promotion <Guid>.",
                 Arity = ArgumentArity.ExactlyOne
             )
-    //let listDirectories = new Option<bool>("--listDirectories", IsRequired = false, Description = "Show directories when listing contents. [default: false]")
-    //let listFiles = new Option<bool>("--listFiles", IsRequired = false, Description = "Show files when listing contents. Implies --listDirectories. [default: false]")
+    //let listDirectories = new Option<bool>("--listDirectories", Required = false, Description = "Show directories when listing contents. [default: false]")
+    //let listFiles = new Option<bool>("--listFiles", Required = false, Description = "Show files when listing contents. Implies --listDirectories. [default: false]")
 
     let mustBeAValidGuid (parseResult: ParseResult) (parameters: CommonParameters) (option: Option) (value: string) (error: BranchError) =
         let mutable guid = Guid.Empty
 
         if
-            parseResult.CommandResult.FindResultFor(option) <> null
+            parseResult.GetResult(option) <> null
             && not <| String.IsNullOrEmpty(value)
             && (Guid.TryParse(value, &guid) = false || guid = Guid.Empty)
         then
@@ -276,7 +291,7 @@ module Branch =
 
     let mustBeAValidGraceName (parseResult: ParseResult) (parameters: CommonParameters) (option: Option) (value: string) (error: BranchError) =
         if
-            parseResult.CommandResult.FindResultFor(option) <> null
+            parseResult.GetResult(option) <> null
             && not <| Constants.GraceNameRegex.IsMatch(value)
         then
             Error(GraceError.Create (BranchError.getErrorMessage error) (parameters.CorrelationId))
@@ -284,10 +299,7 @@ module Branch =
             Ok(parseResult, parameters)
 
     let oneOfTheseOptionsMustBeProvided (parseResult: ParseResult) (parameters: CommonParameters) (options: Option array) (error: BranchError) =
-        match
-            options
-            |> Array.tryFind (fun opt -> not <| isNull (parseResult.CommandResult.FindResultFor(opt)))
-        with
+        match options |> Array.tryFind (fun opt -> not <| isNull (parseResult.GetResult(opt))) with
         | Some opt -> Ok(parseResult, parameters)
         | None -> Error(GraceError.Create (BranchError.getErrorMessage error) (parameters.CorrelationId))
 
@@ -342,8 +354,8 @@ module Branch =
 
     let private ``BranchName must not be empty`` (parseResult: ParseResult, commonParameters: CommonParameters) =
         if
-            (parseResult.HasOption(Options.branchNameRequired)
-             || parseResult.HasOption(Options.branchName))
+            (parseResult.CommandResult.Command.Options.Contains(Options.branchNameRequired)
+             || parseResult.CommandResult.Command.Options.Contains(Options.branchName))
             && not <| String.IsNullOrEmpty(commonParameters.BranchName)
         then
             Ok(parseResult, commonParameters)
@@ -354,33 +366,30 @@ module Branch =
     let normalizeIdsAndNames<'T when 'T :> CommonParameters> (parseResult: ParseResult) (parameters: 'T) =
         // If the name was specified on the command line, but the id wasn't, then we should only send the name, and we set the id to String.Empty.
         if
-            parseResult.CommandResult.FindResultFor(Options.ownerId).IsImplicit
-            && not <| isNull (parseResult.CommandResult.FindResultFor(Options.ownerName))
-            && not <| parseResult.CommandResult.FindResultFor(Options.ownerName).IsImplicit
+            parseResult.GetResult(Options.ownerId).Implicit
+            && not <| isNull (parseResult.GetResult(Options.ownerName))
+            && not <| parseResult.GetResult(Options.ownerName).Implicit
         then
             parameters.OwnerId <- String.Empty
 
         if
-            parseResult.CommandResult.FindResultFor(Options.organizationId).IsImplicit
-            && not
-               <| isNull (parseResult.CommandResult.FindResultFor(Options.organizationName))
-            && not
-               <| parseResult.CommandResult.FindResultFor(Options.organizationName).IsImplicit
+            parseResult.GetResult(Options.organizationId).Implicit
+            && not <| isNull (parseResult.GetResult(Options.organizationName))
+            && not <| parseResult.GetResult(Options.organizationName).Implicit
         then
             parameters.OrganizationId <- String.Empty
 
         if
-            parseResult.CommandResult.FindResultFor(Options.repositoryId).IsImplicit
-            && not <| isNull (parseResult.CommandResult.FindResultFor(Options.repositoryName))
-            && not
-               <| parseResult.CommandResult.FindResultFor(Options.repositoryName).IsImplicit
+            parseResult.GetResult(Options.repositoryId).Implicit
+            && not <| isNull (parseResult.GetResult(Options.repositoryName))
+            && not <| parseResult.GetResult(Options.repositoryName).Implicit
         then
             parameters.RepositoryId <- String.Empty
 
         if
-            parseResult.CommandResult.FindResultFor(Options.branchId).IsImplicit
-            && not <| isNull (parseResult.CommandResult.FindResultFor(Options.branchName))
-            && not <| parseResult.CommandResult.FindResultFor(Options.branchName).IsImplicit
+            parseResult.GetResult(Options.branchId).Implicit
+            && not <| isNull (parseResult.GetResult(Options.branchName))
+            && not <| parseResult.GetResult(Options.branchName).Implicit
         then
             parameters.BranchId <- String.Empty
 
@@ -445,7 +454,7 @@ module Branch =
                 match validateIncomingParameters with
                 | Ok _ ->
                     let branchId =
-                        if parseResult.FindResultFor(Options.branchId).IsImplicit then
+                        if parseResult.GetResult(Options.branchId).Implicit then
                             Guid.NewGuid().ToString()
                         else
                             createParameters.BranchId
@@ -493,7 +502,7 @@ module Branch =
                 match result with
                 | Ok returnValue ->
                     // Update the Grace configuration file with the newly-created branch.
-                    if not <| parseResult.HasOption(Options.doNotSwitch) then
+                    if not <| parseResult.CommandResult.Command.Options.Contains(Options.doNotSwitch) then
                         let newConfig = Current()
                         newConfig.BranchId <- Guid.Parse(returnValue.Properties[nameof (BranchId)])
                         newConfig.BranchName <- BranchName(returnValue.Properties[nameof (BranchName)])
@@ -609,7 +618,7 @@ module Branch =
             AnsiConsole.MarkupLine(
                 $"[{Colors.Highlighted}]{formatInstantAligned directoryVersion.CreatedAt}   {getShortSha256Hash directoryVersion.Sha256Hash}  {directoryVersion.Size, 13:N0}  /{directoryVersion.RelativePath}[/] [{Colors.Deemphasized}] {rightAlignedDirectoryVersionId}[/]"
             )
-            //if parseResult.HasOption(Options.listFiles) then
+            //if parseResult.CommandResult.Command.Options.Contains(Options.listFiles) then
             let sortedFiles = directoryVersion.Files.OrderBy(fun f -> f.RelativePath)
 
             for file in sortedFiles do
@@ -1666,14 +1675,15 @@ module Branch =
         |> ignore
 
         if parseResult |> verbose then
-            table.AddColumns([| TableColumn($"[{Colors.Deemphasized}]ReferenceId[/]") |])
-                    .AddColumns([| TableColumn($"[{Colors.Deemphasized}]Root DirectoryVersionId[/]") |])
+            table
+                .AddColumns([| TableColumn($"[{Colors.Deemphasized}]ReferenceId[/]") |])
+                .AddColumns([| TableColumn($"[{Colors.Deemphasized}]Root DirectoryVersionId[/]") |])
             |> ignore
 
         for row in sortedResults do
             //logToAnsiConsole Colors.Verbose $"{serialize row}"
             let sha256Hash =
-                if parseResult.HasOption(Options.fullSha) then
+                if parseResult.CommandResult.Command.Options.Contains(Options.fullSha) then
                     $"{row.Sha256Hash}"
                 else
                     $"{getShortSha256Hash row.Sha256Hash}"
@@ -1690,8 +1700,7 @@ module Branch =
                        ago row.CreatedAt
                        $"[{Colors.Deemphasized}]{referenceTime}[/]"
                        $"[{Colors.Deemphasized}]{row.ReferenceId}[/]"
-                       $"[{Colors.Deemphasized}]{row.DirectoryId}[/]"
-                    |]
+                       $"[{Colors.Deemphasized}]{row.DirectoryId}[/]" |]
                 )
             else
                 table.AddRow(
@@ -3057,10 +3066,13 @@ module Branch =
                         }
 
                     let basedOnMessage =
-                        if branchDto.BasedOn.ReferenceId = parentBranchDto.LatestPromotion.ReferenceId || branchDto.ParentBranchId = Constants.DefaultParentBranchId then
-                                $"[{Colors.Added}]Based on latest promotion.[/]"
-                            else
-                                $"[{Colors.Important}]Not based on latest promotion.[/]"
+                        if
+                            branchDto.BasedOn.ReferenceId = parentBranchDto.LatestPromotion.ReferenceId
+                            || branchDto.ParentBranchId = Constants.DefaultParentBranchId
+                        then
+                            $"[{Colors.Added}]Based on latest promotion.[/]"
+                        else
+                            $"[{Colors.Important}]Not based on latest promotion.[/]"
 
                     let referenceTable = (createReferenceTable parseResult lastFiveReferences).Expand()
 
@@ -3083,19 +3095,24 @@ module Branch =
                             $"[{Colors.Important}]Parent branch:[/] {parentBranchDto.BranchName} [{Colors.Deemphasized}]─ Allows {permissions parentBranchDto}[/]"
 
                     let commitReferenceTable =
-                        let sortedReferences = [| latestCommit; latestCheckpoint |] |> Array.sortByDescending (fun r -> r.CreatedAt)
+                        let sortedReferences =
+                            [| latestCommit; latestCheckpoint |]
+                            |> Array.sortByDescending (fun r -> r.CreatedAt)
+
                         (createReferenceTable parseResult sortedReferences).Expand()
 
                     let outerTable = Table(Border = TableBorder.None, ShowHeaders = false).AddColumns(column1)
 
                     let branchTable = Table(ShowHeaders = false, Border = TableBorder.None, Expand = true)
+
                     branchTable
                         .AddColumn(column1)
                         .AddRow(basedOnMessage)
                         .AddEmptyRow()
                         .AddRow($"[{Colors.Important}] Most recent references:[/]")
                         .AddRow(Padder(referenceTable).Padding(1, 0, 0, 0))
-                        .AddEmptyRow() |> ignore
+                        .AddEmptyRow()
+                    |> ignore
 
                     if branchDto.CheckpointEnabled || branchDto.CommitEnabled then
                         branchTable
@@ -3109,7 +3126,7 @@ module Branch =
                     outerTable.AddRow(branchPanel).AddEmptyRow() |> ignore
 
                     if branchDto.ParentBranchId <> Constants.DefaultParentBranchId then
-                        let getParentBranchReferencesParameters = 
+                        let getParentBranchReferencesParameters =
                             GetReferencesParameters(
                                 BranchId = $"{branchDto.ParentBranchId}",
                                 OwnerId = parameters.OwnerId,
@@ -3129,6 +3146,7 @@ module Branch =
                             let parentBranchReferencesTable = (createReferenceTable parseResult parentBranchReferences).Expand()
 
                             let parentBranchTable = Table(ShowHeaders = false, Border = TableBorder.None, Expand = true)
+
                             parentBranchTable
                                 .AddColumn(column1)
                                 .AddEmptyRow()
@@ -3141,8 +3159,7 @@ module Branch =
                             parentBranchPanel.Border <- BoxBorder.Double
                             outerTable.AddRow(parentBranchPanel) |> ignore
 
-                        | Error error ->
-                            logToAnsiConsole Colors.Error (Markup.Escape($"{error}"))
+                        | Error error -> logToAnsiConsole Colors.Error (Markup.Escape($"{error}"))
                     else
                         outerTable.AddRow($"[{Colors.Important}]Parent branch[/]: None") |> ignore
 
@@ -3267,7 +3284,7 @@ module Branch =
         // Create main command and aliases, if any.`
         let branchCommand = new Command("branch", Description = "Create, change, or delete branch-level information.")
 
-        branchCommand.AddAlias("br")
+        branchCommand.Aliases.Add("br")
 
         // Add subcommands.
         let branchCreateCommand =
@@ -3285,8 +3302,8 @@ module Branch =
             |> addOption Options.initialPermissions
             |> addOption Options.doNotSwitch
 
-        branchCreateCommand.Handler <- Create
-        branchCommand.AddCommand(branchCreateCommand)
+        branchCreateCommand.Action <- Create
+        branchCommand.Subcommands.Add(branchCreateCommand)
 
         let switchCommand =
             new Command(
@@ -3300,71 +3317,71 @@ module Branch =
             |> addOption Options.referenceId
             |> addCommonOptions
 
-        switchCommand.AddAlias("download")
-        switchCommand.Handler <- Switch
-        branchCommand.AddCommand(switchCommand)
+        switchCommand.Aliases.Add("download")
+        switchCommand.Action <- Switch
+        branchCommand.Subcommands.Add(switchCommand)
 
         let statusCommand =
             new Command("status", Description = "Displays status information about the current repository and branch.")
             |> addCommonOptions
 
-        statusCommand.Handler <- Status
-        branchCommand.AddCommand(statusCommand)
+        statusCommand.Action <- Status
+        branchCommand.Subcommands.Add(statusCommand)
 
         let promoteCommand =
             new Command("promote", Description = "Promotes a commit into the parent branch.")
             |> addOption Options.message
             |> addCommonOptions
 
-        promoteCommand.Handler <- Promote
-        branchCommand.AddCommand(promoteCommand)
+        promoteCommand.Action <- Promote
+        branchCommand.Subcommands.Add(promoteCommand)
 
         let commitCommand =
             new Command("commit", Description = "Create a commit.")
             |> addOption Options.messageRequired
             |> addCommonOptions
 
-        commitCommand.Handler <- Commit
-        branchCommand.AddCommand(commitCommand)
+        commitCommand.Action <- Commit
+        branchCommand.Subcommands.Add(commitCommand)
 
         let checkpointCommand =
             new Command("checkpoint", Description = "Create a checkpoint.")
             |> addOption Options.message
             |> addCommonOptions
 
-        checkpointCommand.Handler <- Checkpoint
-        branchCommand.AddCommand(checkpointCommand)
+        checkpointCommand.Action <- Checkpoint
+        branchCommand.Subcommands.Add(checkpointCommand)
 
         let saveCommand =
             new Command("save", Description = "Create a save.")
             |> addOption Options.message
             |> addCommonOptions
 
-        saveCommand.Handler <- Save
-        branchCommand.AddCommand(saveCommand)
+        saveCommand.Action <- Save
+        branchCommand.Subcommands.Add(saveCommand)
 
         let tagCommand =
             new Command("tag", Description = "Create a tag.")
             |> addOption Options.messageRequired
             |> addCommonOptions
 
-        tagCommand.Handler <- Tag
-        branchCommand.AddCommand(tagCommand)
+        tagCommand.Action <- Tag
+        branchCommand.Subcommands.Add(tagCommand)
 
         let createExternalCommand =
             new Command("create-external", Description = "Create an external reference.")
             |> addOption Options.messageRequired
             |> addCommonOptions
 
-        createExternalCommand.Handler <- CreateExternal
-        branchCommand.AddCommand(createExternalCommand)
+        createExternalCommand.Action <- CreateExternal
+        branchCommand.Subcommands.Add(createExternalCommand)
 
         let rebaseCommand =
             new Command("rebase", Description = "Rebase this branch on a promotion from the parent branch.")
             |> addCommonOptions
 
-        rebaseCommand.Handler <- Rebase
-        branchCommand.AddCommand(rebaseCommand)
+        rebaseCommand.Action <- Rebase
+        branchCommand.Subcommands.Add(rebaseCommand)
 
         let listContentsCommand =
             new Command("list-contents", Description = "List directories and files in the current branch.")
@@ -3373,8 +3390,8 @@ module Branch =
             |> addOption Options.forceRecompute
             |> addCommonOptions
 
-        listContentsCommand.Handler <- ListContents
-        branchCommand.AddCommand(listContentsCommand)
+        listContentsCommand.Action <- ListContents
+        branchCommand.Subcommands.Add(listContentsCommand)
 
         let getRecursiveSizeCommand =
             new Command("get-recursive-size", Description = "Get the recursive size of the current branch.")
@@ -3382,80 +3399,80 @@ module Branch =
             |> addOption Options.sha256Hash
             |> addCommonOptions
 
-        getRecursiveSizeCommand.Handler <- GetRecursiveSize
-        branchCommand.AddCommand(getRecursiveSizeCommand)
+        getRecursiveSizeCommand.Action <- GetRecursiveSize
+        branchCommand.Subcommands.Add(getRecursiveSizeCommand)
 
         let enableAssignCommand =
             new Command("enable-assign", Description = "Enable or disable assigning promotions on this branch.")
             |> addOption Options.enabled
             |> addCommonOptions
 
-        enableAssignCommand.Handler <- EnableAssign
-        branchCommand.AddCommand(enableAssignCommand)
+        enableAssignCommand.Action <- EnableAssign
+        branchCommand.Subcommands.Add(enableAssignCommand)
 
         let enablePromotionCommand =
             new Command("enable-promotion", Description = "Enable or disable promotions on this branch.")
             |> addOption Options.enabled
             |> addCommonOptions
 
-        enablePromotionCommand.Handler <- EnablePromotion
-        branchCommand.AddCommand(enablePromotionCommand)
+        enablePromotionCommand.Action <- EnablePromotion
+        branchCommand.Subcommands.Add(enablePromotionCommand)
 
         let enableCommitCommand =
             new Command("enable-commit", Description = "Enable or disable commits on this branch.")
             |> addOption Options.enabled
             |> addCommonOptions
 
-        enableCommitCommand.Handler <- EnableCommit
-        branchCommand.AddCommand(enableCommitCommand)
+        enableCommitCommand.Action <- EnableCommit
+        branchCommand.Subcommands.Add(enableCommitCommand)
 
         let enableCheckpointsCommand =
             new Command("enable-checkpoints", Description = "Enable or disable checkpoints on this branch.")
             |> addOption Options.enabled
             |> addCommonOptions
 
-        enableCheckpointsCommand.Handler <- EnableCheckpoint
-        branchCommand.AddCommand(enableCheckpointsCommand)
+        enableCheckpointsCommand.Action <- EnableCheckpoint
+        branchCommand.Subcommands.Add(enableCheckpointsCommand)
 
         let enableSaveCommand =
             new Command("enable-save", Description = "Enable or disable saves on this branch.")
             |> addOption Options.enabled
             |> addCommonOptions
 
-        enableSaveCommand.Handler <- EnableSave
-        branchCommand.AddCommand(enableSaveCommand)
+        enableSaveCommand.Action <- EnableSave
+        branchCommand.Subcommands.Add(enableSaveCommand)
 
         let enableTagCommand =
             new Command("enable-tag", Description = "Enable or disable tags on this branch.")
             |> addOption Options.enabled
             |> addCommonOptions
 
-        enableTagCommand.Handler <- EnableTag
-        branchCommand.AddCommand(enableTagCommand)
+        enableTagCommand.Action <- EnableTag
+        branchCommand.Subcommands.Add(enableTagCommand)
 
         let enableExternalCommand =
             new Command("enable-external", Description = "Enable or disable external references on this branch.")
             |> addOption Options.enabled
             |> addCommonOptions
 
-        enableExternalCommand.Handler <- EnableExternal
-        branchCommand.AddCommand(enableExternalCommand)
+        enableExternalCommand.Action <- EnableExternal
+        branchCommand.Subcommands.Add(enableExternalCommand)
 
         let enableAutoRebaseCommand =
             new Command("enable-auto-rebase", Description = "Enable or disable auto-rebase on this branch.")
             |> addOption Options.enabled
             |> addCommonOptions
 
-        enableAutoRebaseCommand.Handler <- EnableAutoRebase
-        branchCommand.AddCommand(enableAutoRebaseCommand)
+        enableAutoRebaseCommand.Action <- EnableAutoRebase
+        branchCommand.Subcommands.Add(enableAutoRebaseCommand)
 
         let setNameCommand =
             new Command("set-name", Description = "Change the name of the branch.")
             |> addOption Options.newName
             |> addCommonOptions
 
-        setNameCommand.Handler <- SetName
-        branchCommand.AddCommand(setNameCommand)
+        setNameCommand.Action <- SetName
+        branchCommand.Subcommands.Add(setNameCommand)
 
         let getCommand =
             new Command("get", Description = "Gets details for the branch.")
@@ -3463,8 +3480,8 @@ module Branch =
             |> addOption Options.showEvents
             |> addCommonOptions
 
-        getCommand.Handler <- Get
-        branchCommand.AddCommand(getCommand)
+        getCommand.Action <- Get
+        branchCommand.Subcommands.Add(getCommand)
 
         let getReferencesCommand =
             new Command("get-references", Description = "Retrieves a list of the most recent references from the branch.")
@@ -3472,8 +3489,8 @@ module Branch =
             |> addOption Options.maxCount
             |> addOption Options.fullSha
 
-        getReferencesCommand.Handler <- GetReferences
-        branchCommand.AddCommand(getReferencesCommand)
+        getReferencesCommand.Action <- GetReferences
+        branchCommand.Subcommands.Add(getReferencesCommand)
 
         let getPromotionsCommand =
             new Command("get-promotions", Description = "Retrieves a list of the most recent promotions from the branch.")
@@ -3481,8 +3498,8 @@ module Branch =
             |> addOption Options.maxCount
             |> addOption Options.fullSha
 
-        getPromotionsCommand.Handler <- GetPromotions
-        branchCommand.AddCommand(getPromotionsCommand)
+        getPromotionsCommand.Action <- GetPromotions
+        branchCommand.Subcommands.Add(getPromotionsCommand)
 
         let getCommitsCommand =
             new Command("get-commits", Description = "Retrieves a list of the most recent commits from the branch.")
@@ -3490,8 +3507,8 @@ module Branch =
             |> addOption Options.maxCount
             |> addOption Options.fullSha
 
-        getCommitsCommand.Handler <- GetCommits
-        branchCommand.AddCommand(getCommitsCommand)
+        getCommitsCommand.Action <- GetCommits
+        branchCommand.Subcommands.Add(getCommitsCommand)
 
         let getCheckpointsCommand =
             new Command("get-checkpoints", Description = "Retrieves a list of the most recent checkpoints from the branch.")
@@ -3499,8 +3516,8 @@ module Branch =
             |> addOption Options.maxCount
             |> addOption Options.fullSha
 
-        getCheckpointsCommand.Handler <- GetCheckpoints
-        branchCommand.AddCommand(getCheckpointsCommand)
+        getCheckpointsCommand.Action <- GetCheckpoints
+        branchCommand.Subcommands.Add(getCheckpointsCommand)
 
         let getSavesCommand =
             new Command("get-saves", Description = "Retrieves a list of the most recent saves from the branch.")
@@ -3508,8 +3525,8 @@ module Branch =
             |> addOption Options.maxCount
             |> addOption Options.fullSha
 
-        getSavesCommand.Handler <- GetSaves
-        branchCommand.AddCommand(getSavesCommand)
+        getSavesCommand.Action <- GetSaves
+        branchCommand.Subcommands.Add(getSavesCommand)
 
         let getTagsCommand =
             new Command("get-tags", Description = "Retrieves a list of the most recent tags from the branch.")
@@ -3517,8 +3534,8 @@ module Branch =
             |> addOption Options.maxCount
             |> addOption Options.fullSha
 
-        getTagsCommand.Handler <- GetTags
-        branchCommand.AddCommand(getTagsCommand)
+        getTagsCommand.Action <- GetTags
+        branchCommand.Subcommands.Add(getTagsCommand)
 
         let getExternalsCommand =
             new Command("get-externals", Description = "Retrieves a list of the most recent external references from the branch.")
@@ -3526,13 +3543,13 @@ module Branch =
             |> addOption Options.maxCount
             |> addOption Options.fullSha
 
-        getExternalsCommand.Handler <- GetExternals
-        branchCommand.AddCommand(getExternalsCommand)
+        getExternalsCommand.Action <- GetExternals
+        branchCommand.Subcommands.Add(getExternalsCommand)
 
         let deleteCommand = new Command("delete", Description = "Delete the branch.") |> addCommonOptions
 
-        deleteCommand.Handler <- Delete
-        branchCommand.AddCommand(deleteCommand)
+        deleteCommand.Action <- Delete
+        branchCommand.Subcommands.Add(deleteCommand)
 
         let assignCommand =
             new Command("assign", Description = "Assign a promotion to this branch.")
@@ -3541,11 +3558,11 @@ module Branch =
             |> addOption Options.message
             |> addCommonOptions
 
-        assignCommand.Handler <- Assign
-        branchCommand.AddCommand(assignCommand)
+        assignCommand.Action <- Assign
+        branchCommand.Subcommands.Add(assignCommand)
 
         //let undeleteCommand = new Command("undelete", Description = "Undelete a deleted owner.") |> addCommonOptions
-        //undeleteCommand.Handler <- Undelete
-        //branchCommand.AddCommand(undeleteCommand)
+        //undeleteCommand.Action <- Undelete
+        //branchCommand.Subcommands.Add(undeleteCommand)
 
         branchCommand

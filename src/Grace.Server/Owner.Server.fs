@@ -1,9 +1,6 @@
 namespace Grace.Server
 
-open Dapr.Actors
-open Dapr.Actors.Client
 open Giraffe
-open Grace.Actors.Commands.Owner
 open Grace.Actors.Constants
 open Grace.Actors.Extensions.ActorProxy
 open Grace.Actors.Interfaces
@@ -12,6 +9,7 @@ open Grace.Server.ApplicationContext
 open Grace.Server.Services
 open Grace.Server.Validations
 open Grace.Shared
+open Grace.Shared.Commands.Owner
 open Grace.Shared.Extensions
 open Grace.Shared.Parameters.Owner
 open Grace.Shared.Validation.Common
@@ -37,8 +35,6 @@ module Owner =
 
     let activitySource = new ActivitySource("Owner")
 
-    let actorProxyFactory = ApplicationContext.actorProxyFactory
-
     /// Generic processor for all Owner commands.
     let processCommand<'T when 'T :> OwnerParameters> (context: HttpContext) (validations: Validations<'T>) (command: 'T -> ValueTask<OwnerCommand>) =
         task {
@@ -57,11 +53,29 @@ module Owner =
 
                 let handleCommand (ownerId: string) cmd =
                     task {
+                        let t = cmd.GetType()
+
+                        let isSupported =
+                            not <| (isNull t.Namespace)
+                            && t.Namespace.StartsWith("Grace", StringComparison.InvariantCulture)
+
+                        logToConsole
+                            $"In Owner.Server.processCommand: handleCommand: t.Namespace: {t.Namespace}; t.FullName: {t.FullName}; isSupported (for JSON serialization): {isSupported}."
+
                         let ownerGuid = Guid.Parse(ownerId)
                         let actorProxy = Owner.CreateActorProxy ownerGuid (getCorrelationId context)
+                        logToConsole $"In Owner.Server.handleCommand: context.Items: {serialize context.Items}."
 
                         match! actorProxy.Handle cmd (createMetadata context) with
                         | Ok graceReturnValue ->
+                            logToConsole $"In Owner.Server.processCommand: graceReturnValue.ReturnValue: {graceReturnValue.ReturnValue}."
+                            logToConsole $"In Owner.Server.processCommand: graceReturnValue.CorrelationId: {graceReturnValue.CorrelationId}."
+                            logToConsole $"In Owner.Server.processCommand: graceReturnValue.EventTime: {graceReturnValue.EventTime}."
+                            logToConsole $"In Owner.Server.processCommand: graceReturnValue.Properties: {serialize graceReturnValue.Properties}."
+
+                            logToConsole
+                                $"In Owner.Server.processCommand: parameterDictionary: {serialize parameterDictionary}; graceIds: {serialize graceIds}; commandName: {commandName}; path: {context.Request.Path}."
+
                             graceReturnValue
                                 .enhance(parameterDictionary)
                                 .enhance(nameof (OwnerId), graceIds.OwnerId)
@@ -99,6 +113,10 @@ module Owner =
 
                 if validationsPassed then
                     let! cmd = command parameters
+
+                    logToConsole
+                        $"In Owner.Server.processCommand: cmd: {serialize cmd}; AssemblyQualifiedName: {cmd.GetType().AssemblyQualifiedName}; Assembly.Location: {command.GetType().Assembly.Location}; parameters: {serialize parameters}."
+
                     let! result = handleCommand graceIds.OwnerId cmd
 
                     log.LogInformation(
@@ -129,7 +147,7 @@ module Owner =
             with ex ->
                 log.LogError(
                     ex,
-                    "{CurrentInstant}: Exception in Organization.Server.processCommand. CorrelationId: {correlationId}.",
+                    "{CurrentInstant}: Exception in Owner.Server.processCommand. CorrelationId: {correlationId}.",
                     getCurrentInstantExtended (),
                     (getCorrelationId context)
                 )
@@ -348,7 +366,7 @@ module Owner =
 
                     let! result = processQuery context parameters validations 1 query
 
-                    let duration_ms = getPaddedDuration_ms startTime
+                    let duration_ms = getDurationRightAligned_ms startTime
 
                     log.LogInformation(
                         "{CurrentInstant}: Node: {HostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {path}; OwnerId: {ownerId}.",
@@ -362,7 +380,7 @@ module Owner =
 
                     return result
                 with ex ->
-                    let duration_ms = getPaddedDuration_ms startTime
+                    let duration_ms = getDurationRightAligned_ms startTime
 
                     log.LogError(
                         ex,

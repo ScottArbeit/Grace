@@ -39,6 +39,9 @@ module Constants =
         let GlobalLock = "GlobalLockActor"
 
         [<Literal>]
+        let GrainRepository = "GrainRepository"
+
+        [<Literal>]
         let Organization = "OrganizationActor"
 
         [<Literal>]

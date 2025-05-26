@@ -1,9 +1,7 @@
-﻿namespace Grace.Actors
+namespace Grace.Actors
 
-open Dapr.Actors
 open Grace.Actors.Interfaces
 open Grace.Actors.Constants
-open Grace.Actors.Storage
 open Grace.Shared
 open Grace.Shared.Types
 open System

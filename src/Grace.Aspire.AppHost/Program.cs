@@ -54,11 +54,11 @@ internal class Program
             builder.AddConnectionString("cosmosdb", "COSMOS_CONNECTION_STRING");
 
             // Add the parent Dapr resource.
-            builder.AddDapr(options =>
-            {
-                options.DaprPath = config["DAPR_PATH"];
-                options.EnableTelemetry = true;
-            });
+            //builder.AddDapr(options =>
+            //{
+            //    options.DaprPath = config["DAPR_PATH"];
+            //    options.EnableTelemetry = true;
+            //});
 
             // This checks if we're publishing to deploy to a cloud provider, or running Grace locally.
             // We want to configure different services in each context.

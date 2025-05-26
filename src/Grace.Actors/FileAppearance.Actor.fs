@@ -1,7 +1,5 @@
 namespace Grace.Actors
 
-open Dapr.Actors
-open Dapr.Actors.Runtime
 open Grace.Actors.Constants
 open Grace.Actors.Context
 open Grace.Actors.Extensions.ActorProxy
@@ -13,6 +11,8 @@ open Grace.Shared.Utilities
 open Grace.Shared
 open Microsoft.Extensions.Logging
 open NodaTime
+open Orleans
+open Orleans.Runtime
 open System
 open System.Collections.Generic
 open System.Threading.Tasks
@@ -20,26 +20,14 @@ open System.Threading.Tasks
 module FileAppearance =
 
     let actorName = ActorName.FileAppearance
-    let log = loggerFactory.CreateLogger("FileAppearance.Actor")
-
-    type Appearance = { Root: DirectoryVersionId; Parent: DirectoryVersionId; Created: Instant }
-
-    type AppearancesList = SortedSet<Appearance>
+    //let log = loggerFactory.CreateLogger("FileAppearance.Actor")
 
     type FileAppearanceDto() =
-        member val public Appearances: AppearancesList = AppearancesList() with get, set
+        member val public Appearances = SortedSet<Appearance>() with get, set
 
-    type IFileAppearanceActor =
-        inherit IActor
-        abstract member Add: appearance: Appearance -> Task
-        abstract member Remove: appearance: Appearance -> Task
-        abstract member Contains: appearance: Appearance -> Task<bool>
-        abstract member Appearances: unit -> Task<AppearancesList>
+    type FileAppearanceActor([<PersistentState(StateName.FileAppearance, Constants.GraceActorStorage)>] state: IPersistentState<SortedSet<Appearance>>, log: ILogger<FileAppearanceActor>) =
+        inherit Grain()
 
-    type FileAppearanceActor(host: ActorHost) =
-        inherit Actor(host)
-
-        let mutable stateManager = Unchecked.defaultof<IActorStateManager>
         let mutable correlationId = String.Empty
 
         let dtoStateName = StateName.FileAppearance
@@ -47,63 +35,36 @@ module FileAppearance =
 
         member val private correlationId: CorrelationId = String.Empty with get, set
 
-        override this.OnActivateAsync() =
-            stateManager <- this.StateManager
+        override this.OnActivateAsync(ct) =
+            logActorActivation log this.IdentityString (getActorActivationMessage state.RecordExists)
 
-            task {
-                let! fileAppearanceDtoFromStorage =
-                    task {
-                        match! (Storage.RetrieveState<FileAppearanceDto> stateManager dtoStateName correlationId) with
-                        | Some dto -> return dto
-                        | None -> return FileAppearanceDto()
-                    }
-
-                dto <- fileAppearanceDtoFromStorage
-            }
-            :> Task
-
-        interface IGraceReminder with
-            /// Schedules a Grace reminder.
-            member this.ScheduleReminderAsync reminderType delay state correlationId =
-                task {
-                    let reminder = ReminderDto.Create actorName $"{this.Id}" reminderType (getFutureInstant delay) state correlationId
-                    do! createReminder reminder
-                }
-                :> Task
-
-            /// Receives a Grace reminder.
-            member this.ReceiveReminderAsync(reminder: ReminderDto) : Task<Result<unit, GraceError>> =
-                this.correlationId <- reminder.CorrelationId
-                logToConsole $"Received a reminder: {reminder}."
-                Ok() |> returnTask
+            Task.CompletedTask
 
         interface IFileAppearanceActor with
-
-            member this.Add(appearance) =
+            member this.Add appearance correlationId =
                 task {
                     let wasAdded = dto.Appearances.Add(appearance)
 
                     if wasAdded then
-                        let! _ = stateManager.SetStateAsync<FileAppearanceDto>(dtoStateName, dto)
-                        ()
+                        do! state.WriteStateAsync()
                 }
                 :> Task
 
-            member this.Remove(appearance) =
+            member this.Remove appearance correlationId =
                 task {
                     let wasRemoved = dto.Appearances.Remove(appearance)
 
                     if wasRemoved then
                         if dto.Appearances |> Seq.isEmpty then
                             // TODO: Delete the file from storage
-                            do! stateManager.RemoveStateAsync(dtoStateName)
+                            do! state.ClearStateAsync()
                         else
-                            do! stateManager.SetStateAsync<FileAppearanceDto>(dtoStateName, dto)
+                            do! state.WriteStateAsync()
 
                         ()
                 }
                 :> Task
 
-            member this.Contains(appearance) = Task.FromResult(dto.Appearances.Contains(appearance))
+            member this.Contains appearance correlationId = Task.FromResult(dto.Appearances.Contains(appearance))
 
-            member this.Appearances() = Task.FromResult(dto.Appearances)
+            member this.Appearances correlationId = Task.FromResult(dto.Appearances)

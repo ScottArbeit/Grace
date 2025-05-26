@@ -1,12 +1,14 @@
-﻿namespace Grace.Shared.Parameters
+namespace Grace.Shared.Parameters
 
 open Grace.Shared.Parameters.Common
 open Grace.Shared.Types
 open System
+open Orleans
 
 module Owner =
 
     /// Common parameters for endpoints in the /owner path.
+    [<GenerateSerializer>]
     type OwnerParameters() =
         inherit CommonParameters()
         /// The Id of the owner.
@@ -15,6 +17,7 @@ module Owner =
         member val public OwnerName: string = String.Empty with get, set
 
     /// Parameters for the /owner/create endpoint.
+    [<GenerateSerializer>]
     type CreateOwnerParameters() =
         inherit OwnerParameters()
 

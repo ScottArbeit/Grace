@@ -129,7 +129,7 @@ module Utilities =
     ///
     /// If the duration is less than 7 characters, it is padded with spaces.
     /// If the duration is more than 7 characters, nothing is truncated.
-    let getPaddedDuration_ms (time: Instant) =
+    let getDurationRightAligned_ms (time: Instant) =
         let milliseconds = $"{getCurrentInstant().Minus(time).TotalMilliseconds:F3}"
         let result = (String.replicate (Math.Max(7 - milliseconds.Length, 0)) " ") + milliseconds // Right-align, 7 characters.
         //logToConsole $"milliseconds: {milliseconds}; Math.Max(7 - milliseconds.Length, 0): {Math.Max(7 - milliseconds.Length, 0)}; result: |{result}|"

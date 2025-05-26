@@ -1,30 +1,33 @@
 namespace Grace.Actors
 
-open Dapr.Actors.Client
+open Azure.Storage.Blobs
 open Grace.Actors.Types
+open Grace.Shared
 open Grace.Shared.Types
 open Microsoft.Azure.Cosmos
 open Microsoft.Extensions.Caching.Memory
 open Microsoft.Extensions.ObjectPool
 open Microsoft.Extensions.Logging
+open Orleans
 open System
 open System.Text
 open System.Collections.Concurrent
 open System.Collections.Generic
+open Azure.Storage.Blobs.Models
 
 module Context =
-
-    /// Actor proxy factory instance
-    let mutable internal actorProxyFactory: IActorProxyFactory = null
-
-    /// Setter for actor proxy factory
-    let setActorProxyFactory proxyFactory = actorProxyFactory <- proxyFactory
 
     /// Actor state storage provider instance
     let mutable internal actorStateStorageProvider: ActorStateStorageProvider = ActorStateStorageProvider.Unknown
 
     /// Setter for actor state storage provider
     let setActorStateStorageProvider storageProvider = actorStateStorageProvider <- storageProvider
+
+    /// Orleans client instance for the application.
+    let mutable internal orleansClient: IGrainFactory = null
+    
+    /// Sets the Orleans client for the application.
+    let setGrainFactory (client: IGrainFactory) = orleansClient <- client
 
     /// Cosmos client instance
     let mutable internal cosmosClient: CosmosClient = null
@@ -58,3 +61,15 @@ module Context =
 
     let mutable internal timings = ConcurrentDictionary<CorrelationId, List<Timing>>()
     let setTimings (timing: ConcurrentDictionary<CorrelationId, List<Timing>>) = timings <- timing
+
+    /// Azure Blob Storage client
+    let blobServiceClient = BlobServiceClient(Environment.GetEnvironmentVariable Constants.EnvironmentVariables.AzureStorageConnectionString)
+
+    /// Diff cache container client
+    let diffCacheContainerClient = blobServiceClient.GetBlobContainerClient(Environment.GetEnvironmentVariable Constants.EnvironmentVariables.DiffContainerName)
+
+    /// Recursive DirectoryVersion cache container client
+    let directoryVersionContainerClient = blobServiceClient.GetBlobContainerClient(Environment.GetEnvironmentVariable Constants.EnvironmentVariables.DirectoryVersionContainerName)
+
+    /// Diff cache container client
+    let zipFileContainerClient = blobServiceClient.GetBlobContainerClient(Environment.GetEnvironmentVariable Constants.EnvironmentVariables.ZipFileContainerName)

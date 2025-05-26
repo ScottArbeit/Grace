@@ -1,12 +1,12 @@
 namespace Grace.Actors
 
-open Dapr.Actors
-open Dapr.Actors.Runtime
+open Orleans
+open Orleans.Runtime
 open Grace.Actors
 open Grace.Actors.Constants
 open Grace.Actors.Extensions.ActorProxy
 open Grace.Actors.Extensions.MemoryCache
-open Grace.Actors.Context
+open Grace.Actors.Interfaces
 open Grace.Actors.Services
 open Grace.Actors.Types
 open Grace.Shared
@@ -18,88 +18,42 @@ open NodaTime
 open System
 open System.Collections.Concurrent
 open System.Threading.Tasks
-open Interfaces
 
 module Reminder =
 
-    type ReminderActor(host: ActorHost) =
-        inherit Actor(host)
+    /// Orleans implementation of the ReminderActor.
+    type ReminderActor(
+        [<PersistentState(StateName.Reminder, Constants.GraceActorStorage)>] reminderState: IPersistentState<ReminderDto>,
+        log: ILogger<ReminderActor>
+    ) =
+        inherit Grain()
 
         static let actorName = ActorName.Reminder
-        static let dtoStateName = StateName.Reminder
-
-        let mutable actorStartTime = Instant.MinValue
-        let mutable logScope: IDisposable = null
-        let mutable stateManager: IActorStateManager = null
-        let log = loggerFactory.CreateLogger("Reminder.Actor")
-
-        let mutable reminderDto = ReminderDto.Default
+        let mutable reminderDto = reminderState.State
 
         member val private correlationId: CorrelationId = String.Empty with get, set
 
-        override this.OnActivateAsync() =
-            let activateStartTime = getCurrentInstant ()
-            stateManager <- this.StateManager
-
-            let correlationId =
-                match memoryCache.GetCorrelationIdEntry this.Id with
-                | Some correlationId -> correlationId
-                | None -> String.Empty
-
-            task {
-                try
-                    let! retrievedDto = Storage.RetrieveState<ReminderDto> stateManager dtoStateName correlationId
-
-                    match retrievedDto with
-                    | Some retrievedDto -> reminderDto <- retrievedDto
-                    | None -> reminderDto <- ReminderDto.Default
-
-                    logActorActivation log activateStartTime correlationId actorName this.Id (getActorActivationMessage retrievedDto)
-                with ex ->
-                    let exc = ExceptionResponse.Create ex
-                    log.LogError("{CurrentInstant} Error activating {ActorType} {ActorId}.", getCurrentInstantExtended (), this.GetType().Name, host.Id)
-                    log.LogError("{CurrentInstant} {ExceptionDetails}", getCurrentInstantExtended (), exc.ToString())
-                    logActorActivation log activateStartTime correlationId actorName this.Id "Exception occurred during activation."
-            }
-            :> Task
-
-        override this.OnPreActorMethodAsync(context) =
-            actorStartTime <- getCurrentInstant ()
-            logScope <- log.BeginScope("Actor {actorName}", actorName)
-            log.LogTrace("{CurrentInstant}: Started {ActorName}.{MethodName} Id: {Id}.", getCurrentInstantExtended (), actorName, context.MethodName, this.Id)
-            Task.CompletedTask
-
-        override this.OnPostActorMethodAsync(context) =
-            let duration_ms = getPaddedDuration_ms actorStartTime
-
-            log.LogInformation(
-                "{CurrentInstant}: Node: {HostName}; Duration: {duration_ms}ms; CorrelationId: {CorrelationId}; Finished {ActorName}.{MethodName}. Actor {ActorName}||{ActorId}.",
-                getCurrentInstantExtended (),
-                getMachineName,
-                duration_ms,
-                this.correlationId,
-                actorName,
-                context.MethodName,
-                reminderDto.ActorName,
-                reminderDto.ActorId
-            )
-
+        override this.OnActivateAsync(ct) =
+            logActorActivation log this.IdentityString (getActorActivationMessage reminderState.RecordExists)
+            
             Task.CompletedTask
 
         interface IReminderActor with
-
             member this.Create (reminder: ReminderDto) (correlationId: CorrelationId) =
                 task {
                     try
-                        reminderDto <- reminder
-                        this.correlationId <- correlationId
-                        do! Storage.SaveState stateManager dtoStateName reminderDto correlationId
+                        reminderState.State <- reminder
+                        do! reminderState.WriteStateAsync()
 
                         log.LogTrace(
                             "{CurrentInstant}: Node: {HostName}; CorrelationId: {CorrelationId}; Created reminder {ReminderId}. Actor {ActorName}||{ActorId}.",
                             getCurrentInstantExtended (),
                             getMachineName,
                             correlationId,
+                            reminderDto.ReminderId,
+                            reminderDto.ReminderId,
+                            reminderDto.ReminderId,
+                            reminderDto.ReminderId,
                             reminderDto.ReminderId,
                             reminderDto.ActorName,
                             reminderDto.ActorId
@@ -126,9 +80,9 @@ module Reminder =
                 task {
                     try
                         this.correlationId <- correlationId
-                        let! deleted = Storage.DeleteState stateManager dtoStateName
+                        do! reminderState.ClearStateAsync()
 
-                        if deleted then
+                        if not reminderState.RecordExists then
                             log.LogInformation(
                                 "{CurrentInstant}: Node: {HostName}; CorrelationId: {CorrelationId}; Deleted reminder {ReminderId}. Actor {ActorName}||{ActorId}.",
                                 getCurrentInstantExtended (),
@@ -192,20 +146,20 @@ module Reminder =
                             let organizationActorProxy = Organization.CreateActorProxy (Guid.Parse(reminderDto.ActorId)) correlationId
                             return! organizationActorProxy.ReceiveReminderAsync reminderDto
                         | ActorName.Repository ->
-                            let repositoryActorProxy = Repository.CreateActorProxy (Guid.Parse(reminderDto.ActorId)) correlationId
+                            let! repositoryActorProxy = Repository.CreateActorProxy (Guid.Parse(reminderDto.ActorId)) correlationId
                             return! repositoryActorProxy.ReceiveReminderAsync reminderDto
                         | ActorName.Branch ->
-                            let branchActorProxy = Branch.CreateActorProxy (Guid.Parse(reminderDto.ActorId)) correlationId
+                            let! branchActorProxy = Branch.CreateActorProxy (Guid.Parse(reminderDto.ActorId)) reminderDto.RepositoryId correlationId
                             return! branchActorProxy.ReceiveReminderAsync reminderDto
                         | ActorName.DirectoryVersion ->
-                            let directoryVersionActorProxy = DirectoryVersion.CreateActorProxy (Guid.Parse(reminderDto.ActorId)) correlationId
+                            let! directoryVersionActorProxy = DirectoryVersion.CreateActorProxy (Guid.Parse(reminderDto.ActorId)) reminderDto.RepositoryId correlationId
                             return! directoryVersionActorProxy.ReceiveReminderAsync reminderDto
                         | ActorName.Diff ->
                             let directoryIds = reminderDto.ActorId.Split("*")
-                            let diffActorProxy = Diff.CreateActorProxy (DirectoryVersionId directoryIds[0]) (DirectoryVersionId directoryIds[1]) correlationId
+                            let! diffActorProxy = Diff.CreateActorProxy (DirectoryVersionId directoryIds[0]) (DirectoryVersionId directoryIds[1]) reminderDto.RepositoryId correlationId
                             return! diffActorProxy.ReceiveReminderAsync reminderDto
                         | ActorName.Reference ->
-                            let referenceActorProxy = Reference.CreateActorProxy (Guid.Parse(reminderDto.ActorId)) correlationId
+                            let! referenceActorProxy = Reference.CreateActorProxy (Guid.Parse(reminderDto.ActorId)) reminderDto.RepositoryId correlationId
                             return! referenceActorProxy.ReceiveReminderAsync reminderDto
                         | _ -> return Ok()
                     with ex ->

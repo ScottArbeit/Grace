@@ -1,9 +1,6 @@
 namespace Grace.Server
 
-open Dapr.Actors
-open Dapr.Actors.Client
 open Giraffe
-open Grace.Actors.Commands.Organization
 open Grace.Actors.Constants
 open Grace.Actors.Extensions.ActorProxy
 open Grace.Actors.Interfaces
@@ -11,6 +8,7 @@ open Grace.Actors.Services
 open Grace.Server.Services
 open Grace.Server.Validations
 open Grace.Shared
+open Grace.Shared.Commands.Organization
 open Grace.Shared.Extensions
 open Grace.Shared.Parameters.Organization
 open Grace.Shared.Utilities
@@ -370,7 +368,7 @@ module Organization =
                     let! parameters = context |> parse<GetOrganizationParameters>
                     let! result = processQuery context parameters validations 1 query
 
-                    let duration_ms = getPaddedDuration_ms startTime
+                    let duration_ms = getDurationRightAligned_ms startTime
 
                     log.LogInformation(
                         "{CurrentInstant}: Node: {HostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {path}; OwnerId: {ownerId}; OrganizationId: {organizationId}.",
@@ -385,7 +383,7 @@ module Organization =
 
                     return result
                 with ex ->
-                    let duration_ms = getPaddedDuration_ms startTime
+                    let duration_ms = getDurationRightAligned_ms startTime
 
                     let graceError =
                         (GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId context))

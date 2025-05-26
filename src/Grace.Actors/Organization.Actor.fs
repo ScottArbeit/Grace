@@ -1,25 +1,25 @@
 namespace Grace.Actors
 
-open Dapr.Actors
-open Dapr.Actors.Runtime
-open Grace.Actors.Commands.Organization
 open Grace.Actors.Constants
 open Grace.Actors.Context
-open Grace.Actors.Events.Organization
 open Grace.Actors.Extensions.ActorProxy
 open Grace.Actors.Extensions.MemoryCache
 open Grace.Actors.Interfaces
 open Grace.Actors.Services
 open Grace.Actors.Types
 open Grace.Shared
+open Grace.Shared.Commands.Organization
 open Grace.Shared.Constants
 open Grace.Shared.Dto.Organization
 open Grace.Shared.Dto.Repository
+open Grace.Shared.Events.Organization
 open Grace.Shared.Types
 open Grace.Shared.Utilities
 open Grace.Shared.Validation.Errors.Organization
 open Microsoft.Extensions.Logging
 open NodaTime
+open Orleans
+open Orleans.Runtime
 open System
 open System.Collections.Concurrent
 open System.Collections.Generic
@@ -33,26 +33,14 @@ module Organization =
     /// The data types stored in physical deletion reminders.
     type PhysicalDeletionReminderState = (DeleteReason * CorrelationId)
 
-    let GetActorId (organizationId: OrganizationId) = ActorId($"{organizationId}")
     let log = loggerFactory.CreateLogger("Organization.Actor")
 
-    type OrganizationActor(host: ActorHost) =
-        inherit Actor(host)
+    type OrganizationActor([<PersistentState(StateName.Organization, Constants.GraceActorStorage)>] state: IPersistentState<List<OrganizationEvent>>) =
+        inherit Grain()
 
         static let actorName = ActorName.Organization
-        static let dtoStateName = StateName.OrganizationDto
-        static let eventsStateName = StateName.Organization
-
-        let mutable actorStartTime = Instant.MinValue
-        let mutable logScope: IDisposable = null
-        let mutable currentCommand = String.Empty
-        let mutable stateManager = Unchecked.defaultof<IActorStateManager>
 
         let mutable organizationDto = OrganizationDto.Default
-        let mutable organizationEvents: List<OrganizationEvent> = null
-
-        /// Indicates that the actor is in an undefined state, and should be reset.
-        let mutable isDisposed = false
 
         let updateDto organizationEvent currentOrganizationDto =
             let newOrganizationDto =
@@ -75,130 +63,24 @@ module Organization =
 
         member val private correlationId: CorrelationId = String.Empty with get, set
 
-        override this.OnActivateAsync() =
-            let activateStartTime = getCurrentInstant ()
-            stateManager <- this.StateManager
-
-            let correlationId =
-                match memoryCache.GetCorrelationIdEntry this.Id with
-                | Some correlationId -> correlationId
-                | None -> String.Empty
-
-            task {
-                try
-                    let! retrievedDto = Storage.RetrieveState<OrganizationDto> stateManager dtoStateName correlationId
-
-                    match retrievedDto with
-                    | Some retrievedDto -> organizationDto <- retrievedDto
-                    | None -> organizationDto <- OrganizationDto.Default
-
-                    logActorActivation log activateStartTime correlationId actorName this.Id (getActorActivationMessage retrievedDto)
-                with ex ->
-                    let exc = ExceptionResponse.Create ex
-                    log.LogError("{CurrentInstant} Error activating {ActorType} {ActorId}.", getCurrentInstantExtended (), this.GetType().Name, host.Id)
-                    log.LogError("{CurrentInstant} {ExceptionDetails}", getCurrentInstantExtended (), exc.ToString())
-                    logActorActivation log activateStartTime correlationId actorName this.Id "Exception occurred during activation."
-            }
-            :> Task
-
-        member private this.SetMaintenanceReminder() =
-            this.RegisterReminderAsync(ReminderType.Maintenance, Array.empty<byte>, TimeSpan.FromDays(7.0), TimeSpan.FromDays(7.0))
-
-        member private this.UnregisterMaintenanceReminder() = this.UnregisterReminderAsync(ReminderType.Maintenance)
-
-        member private this.OnFirstWrite() =
-            task {
-                //let! _ = DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> this.SetMaintenanceReminder())
-                ()
-            }
-
-        override this.OnPreActorMethodAsync(context) =
-            actorStartTime <- getCurrentInstant ()
-            this.correlationId <- String.Empty
-            logScope <- log.BeginScope("Actor {actorName}", actorName)
-            currentCommand <- String.Empty
-
-            log.LogTrace(
-                "{CurrentInstant}: Started {ActorName}.{MethodName} OrganizationId: {Id}.",
-                getCurrentInstantExtended (),
-                actorName,
-                context.MethodName,
-                this.Id
-            )
-
-            // This checks if the actor is still active, but in an undefined state, which will _almost_ never happen.
-            // isDisposed is set when the actor is deleted, or if an error occurs where we're not sure of the state and want to reload from the database.
-            if isDisposed then
-                this.OnActivateAsync().Wait()
-                isDisposed <- false
-
+        override this.OnActivateAsync(ct) =
+            logActorActivation log this.IdentityString (getActorActivationMessage state.RecordExists)
+            organizationDto <- Seq.fold (fun organizationDto event -> updateDto event organizationDto) organizationDto state.State
             Task.CompletedTask
-
-        override this.OnPostActorMethodAsync(context) =
-            let duration_ms = getPaddedDuration_ms actorStartTime
-
-            if String.IsNullOrEmpty(currentCommand) then
-                log.LogInformation(
-                    "{CurrentInstant}: Node: {HostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {ActorName}.{MethodName}; OrganizationId: {Id}.",
-                    getCurrentInstantExtended (),
-                    getMachineName,
-                    duration_ms,
-                    this.correlationId,
-                    actorName,
-                    context.MethodName,
-                    this.Id
-                )
-            else
-                log.LogInformation(
-                    "{CurrentInstant}: Node: {HostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {ActorName}.{MethodName}; Command: {Command}; OrganizationId: {Id}.",
-                    getCurrentInstantExtended (),
-                    getMachineName,
-                    duration_ms,
-                    this.correlationId,
-                    actorName,
-                    context.MethodName,
-                    currentCommand,
-                    this.Id
-                )
-
-            logScope.Dispose()
-            Task.CompletedTask
-
-        // This is essentially an object-oriented implementation of the Lazy<T> pattern. I was having issues with Lazy<T>,
-        //   and after a solid day wrestling with it, I dropped it and did this. Works a treat.
-        member private this.OrganizationEvents() =
-            task {
-                if organizationEvents = null then
-                    let! retrievedEvents = Storage.RetrieveState<List<OrganizationEvent>> stateManager eventsStateName this.correlationId
-
-                    organizationEvents <-
-                        match retrievedEvents with
-                        | Some retrievedEvents -> retrievedEvents
-                        | None -> List<OrganizationEvent>()
-
-                return organizationEvents
-            }
 
         member private this.ApplyEvent organizationEvent =
             task {
                 try
-                    let! organizationEvents = this.OrganizationEvents()
+                    state.State.Add(organizationEvent)
 
-                    if organizationEvents |> Seq.isEmpty then do! this.OnFirstWrite()
-
-                    organizationEvents.Add(organizationEvent)
-
-                    do! DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> stateManager.SetStateAsync(eventsStateName, organizationEvents))
-
-                    // Publish the event to the rest of the world.
-                    let graceEvent = Events.GraceEvent.OrganizationEvent organizationEvent
-                    let message = serialize graceEvent
-                    do! daprClient.PublishEventAsync(GracePubSubService, GraceEventStreamTopic, graceEvent)
+                    do! state.WriteStateAsync()
 
                     // Update the Dto based on the current event.
                     organizationDto <- organizationDto |> updateDto organizationEvent
 
-                    do! DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> stateManager.SetStateAsync(dtoStateName, organizationDto))
+                    // Publish the event to the rest of the world.
+                    let graceEvent = Events.GraceEvent.OrganizationEvent organizationEvent
+                    do! daprClient.PublishEventAsync(GracePubSubService, GraceEventStreamTopic, graceEvent)
 
                     let returnValue =
                         (GraceReturnValue.Create "Organization command succeeded." organizationEvent.Metadata.CorrelationId)
@@ -240,7 +122,7 @@ module Organization =
                             ValueTask(
                                 task {
                                     if repository.DeletedAt |> Option.isNone then
-                                        let repositoryActor = Repository.CreateActorProxy repository.RepositoryId metadata.CorrelationId
+                                        let! repositoryActor = Repository.CreateActorProxy repository.RepositoryId metadata.CorrelationId
 
                                         let! result =
                                             repositoryActor.Handle
@@ -268,11 +150,11 @@ module Organization =
                 | Some error -> return Error error
             }
 
-        interface IGraceReminder with
+        interface IGraceReminderWithGuidKey with
             /// Schedules a Grace reminder.
             member this.ScheduleReminderAsync reminderType delay state correlationId =
                 task {
-                    let reminder = ReminderDto.Create actorName $"{this.Id}" reminderType (getFutureInstant delay) state correlationId
+                    let reminder = ReminderDto.Create actorName $"{this.IdentityString}" Guid.Empty reminderType (getFutureInstant delay) state correlationId
                     do! createReminder reminder
                 }
                 :> Task
@@ -288,19 +170,7 @@ module Organization =
                         let (deleteReason, correlationId) = deserialize<PhysicalDeletionReminderState> reminder.State
                         this.correlationId <- correlationId
 
-                        log.LogInformation(
-                            "Received PhysicalDeletion reminder for organization; OrganizationId: {organizationId}; OrganizationName: {organizationName}; OwnerId: {ownerId}.",
-                            organizationDto.OrganizationId,
-                            organizationDto.OrganizationName,
-                            organizationDto.OwnerId
-                        )
-
-                        // Physically delete the actor state.
-                        let! deletedDtoState = stateManager.TryRemoveStateAsync(dtoStateName)
-                        let! deletedEventsState = stateManager.TryRemoveStateAsync(eventsStateName)
-
-                        // Mark the actor as disposed, in case someone tries to use it before Dapr GC's it.
-                        isDisposed <- true
+                        do! state.ClearStateAsync()
 
                         log.LogInformation(
                             "{CurrentInstant}: CorrelationId: {correlationId}; Deleted physical state for organization; OrganizationId: {organizationId}; OrganizationName: {organizationName}; OwnerId: {ownerId}; deleteReason: {deleteReason}.",
@@ -312,9 +182,8 @@ module Organization =
                             deleteReason
                         )
 
-                        // Set all values to default.
-                        organizationDto <- OrganizationDto.Default
-
+                        // Deactivate the actor after the PhysicalDeletion reminder is processed.
+                        this.DeactivateOnIdle()
                         return Ok()
                     | _ ->
                         return
@@ -361,9 +230,7 @@ module Organization =
             member this.Handle (command: OrganizationCommand) metadata =
                 let isValid (command: OrganizationCommand) (metadata: EventMetadata) =
                     task {
-                        let! organizationEvents = this.OrganizationEvents()
-
-                        if organizationEvents.Exists(fun ev -> ev.Metadata.CorrelationId = metadata.CorrelationId) then
+                        if state.State.Exists(fun ev -> ev.Metadata.CorrelationId = metadata.CorrelationId) then
                             return Error(GraceError.Create (OrganizationError.getErrorMessage DuplicateCorrelationId) metadata.CorrelationId)
                         else
                             match command with
@@ -415,7 +282,7 @@ module Organization =
                                                 let (reminderState: PhysicalDeletionReminderState) = (deleteReason, metadata.CorrelationId)
 
                                                 do!
-                                                    (this :> IGraceReminder).ScheduleReminderAsync
+                                                    (this :> IGraceReminderWithGuidKey).ScheduleReminderAsync
                                                         ReminderTypes.PhysicalDeletion
                                                         DefaultPhysicalDeletionReminderDuration
                                                         (serialize reminderState)
@@ -424,7 +291,12 @@ module Organization =
                                                 return Ok(LogicalDeleted(force, deleteReason))
                                             | Error error -> return Error error
                                     | OrganizationCommand.DeletePhysical ->
-                                        isDisposed <- true
+                                        // Delete saved state for this actor.
+                                        do! state.ClearStateAsync()
+
+                                        // Deactivate the actor after the PhysicalDeletion is processed.
+                                        this.DeactivateOnIdle()
+                                    
                                         return Ok OrganizationEventType.PhysicalDeleted
                                     | OrganizationCommand.Undelete -> return Ok OrganizationEventType.Undeleted
                                 }
@@ -438,7 +310,7 @@ module Organization =
 
                 task {
                     this.correlationId <- metadata.CorrelationId
-                    currentCommand <- getDiscriminatedUnionCaseName command
+                    RequestContext.Set(Constants.CurrentCommandProperty, getDiscriminatedUnionCaseName command)
 
                     match! isValid command metadata with
                     | Ok command -> return! processCommand command metadata

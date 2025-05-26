@@ -4,7 +4,6 @@ open Azure.Core
 open Azure.Storage.Blobs
 open Azure.Storage.Blobs.Models
 open Azure.Storage.Sas
-open Dapr.Actors.Client
 open Giraffe
 open Grace.Actors
 open Grace.Actors.Constants
@@ -64,7 +63,7 @@ module Storage =
 
                 try
                     let! parameters = context.BindJsonAsync<GetDownloadUriParameters>()
-                    let repositoryActor = Repository.CreateActorProxy (RepositoryId.Parse(parameters.RepositoryId)) correlationId
+                    let! repositoryActor = Repository.CreateActorProxy (RepositoryId.Parse(parameters.RepositoryId)) correlationId
                     let! repositoryDto = repositoryActor.Get correlationId
 
                     let! downloadUri = getUriWithReadSharedAccessSignatureForFileVersion repositoryDto parameters.FileVersion correlationId
@@ -86,7 +85,7 @@ module Storage =
 
                 try
                     let! parameters = context.BindJsonAsync<GetUploadUriParameters>()
-                    let repositoryActor = Repository.CreateActorProxy (RepositoryId.Parse(graceIds.RepositoryId)) correlationId
+                    let! repositoryActor = Repository.CreateActorProxy (RepositoryId.Parse(graceIds.RepositoryId)) correlationId
                     let! repositoryDto = repositoryActor.Get correlationId
 
                     for fileVersion in parameters.FileVersions do
@@ -128,7 +127,7 @@ module Storage =
                     |> ignore
 
                     if parameters.FileVersions.Length > 0 then
-                        let repositoryActor = Repository.CreateActorProxy (RepositoryId.Parse(graceIds.RepositoryId)) correlationId
+                        let! repositoryActor = Repository.CreateActorProxy (RepositoryId.Parse(graceIds.RepositoryId)) correlationId
                         let! repositoryDto = repositoryActor.Get correlationId
 
                         let uploadMetadata = ConcurrentQueue<UploadMetadata>()

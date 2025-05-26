@@ -3,8 +3,6 @@ namespace Grace.Server
 open Azure.Storage
 open Azure.Storage.Blobs
 open CosmosJsonSerializer
-open Dapr.Client
-open Dapr.Actors.Client
 open Grace.Actors.Constants
 open Grace.Actors.Context
 open Grace.Actors.Types
@@ -18,6 +16,8 @@ open Microsoft.Extensions.DependencyInjection
 open Microsoft.Extensions.Logging
 open Microsoft.Extensions.ObjectPool
 open NodaTime
+open Orleans
+open Orleans.Runtime
 open System
 open System.Collections.Concurrent
 open System.Collections.Generic
@@ -40,8 +40,9 @@ module ApplicationContext =
     /// Global dictionary of timing information for each request.
     let timings = ConcurrentDictionary<CorrelationId, List<Timing>>()
 
-    /// Dapr actor proxy factory instance
-    let mutable actorProxyFactory: IActorProxyFactory = null
+    /// Orleans client instance for the application.
+    let mutable grainFactory: IGrainFactory = null
+    //let orleansClient = ServiceCollection().FirstOrDefault(fun service -> service.ServiceType = typeof<IGrainFactory>).ImplementationInstance :?> IGrainFactory
 
     /// Dapr actor state storage provider instance
     let mutable actorStateStorageProvider: ActorStateStorageProvider = ActorStateStorageProvider.Unknown
@@ -69,10 +70,10 @@ module ApplicationContext =
         configuration <- config
     //configuration.AsEnumerable() |> Seq.iter (fun kvp -> logToConsole $"{kvp.Key}: {kvp.Value}")
 
-    /// Sets the ActorProxyFactory for the application.
-    let setActorProxyFactory proxyFactory =
-        actorProxyFactory <- proxyFactory
-        setActorProxyFactory proxyFactory
+    /// Sets the Orleans client (IGrainFactory instance) for the application.
+    let setGrainFactory client =
+        grainFactory <- client
+        setGrainFactory grainFactory
 
     /// Sets the ActorStateStorageProvider for the application.
     let setActorStateStorageProvider actorStateStorage =
@@ -97,13 +98,6 @@ module ApplicationContext =
         $"{Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.DaprServerUri)}:{Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.DaprGrpcPort)}"
 
     logToConsole $"daprHttpEndpoint: {daprHttpEndpoint}; daprGrpcEndpoint: {daprGrpcEndpoint}"
-
-    let daprClient =
-        DaprClientBuilder()
-            .UseJsonSerializationOptions(Constants.JsonSerializerOptions)
-            .UseHttpEndpoint(daprHttpEndpoint)
-            .UseGrpcEndpoint(daprGrpcEndpoint)
-            .Build()
 
     let mutable sharedKeyCredential: StorageSharedKeyCredential = null
     let mutable grpcPortListener: TcpListener = null
@@ -193,7 +187,7 @@ module ApplicationContext =
             let database = databaseResponse.Database
 
             // Get a reference to the CosmosDB container.
-            let containerProperties = ContainerProperties(Id = cosmosContainerName, PartitionKeyPath = "/partitionKey", DefaultTimeToLive = 3600)
+            let containerProperties = ContainerProperties(Id = cosmosContainerName, PartitionKeyPath = "/PartitionKey", DefaultTimeToLive = 3600)
 
             let! containerResponse = database.CreateContainerIfNotExistsAsync(containerProperties)
             cosmosContainer <- containerResponse.Container

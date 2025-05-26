@@ -6,6 +6,7 @@
 		<LangVersion>preview</LangVersion>
 		<NoWarn>1057,3391</NoWarn>
 		<AccelerateBuildsInVisualStudio>true</AccelerateBuildsInVisualStudio>
+        <SuppressNETCoreSdkPreviewMessage>true</SuppressNETCoreSdkPreviewMessage>
 		<OtherFlags>--test:GraphBasedChecking</OtherFlags>
 		<OtherFlags>--test:ParallelOptimization</OtherFlags>
 		<OtherFlags>--test:ParallelIlxGen</OtherFlags>
@@ -25,7 +26,7 @@
 	</ItemGroup>
 
 	<ItemGroup>
-		<PackageReference Update="FSharp.Core" Version="9.0.202" />
+		<PackageReference Update="FSharp.Core" Version="9.0.300" />
 	</ItemGroup>
 
 </Project>

@@ -298,7 +298,7 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
                                             repositoryName
                                             correlationId
                                     with
-                                    | Some resolvedRepositoryId -> graceIds <- { graceIds with RepositoryId = resolvedRepositoryId; HasRepository = true }
+                                    | Some resolvedRepositoryId -> graceIds <- { graceIds with RepositoryId = $"{resolvedRepositoryId}"; HasRepository = true }
                                     | None ->
                                         badRequest <-
                                             if not <| String.IsNullOrEmpty(repositoryId) then
@@ -351,7 +351,7 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
                     // Reset the Body to the beginning so that it can be read again later in the pipeline.
                     context.Request.Body.Seek(0L, IO.SeekOrigin.Begin) |> ignore
 
-                let duration_ms = getPaddedDuration_ms startTime
+                let duration_ms = getDurationRightAligned_ms startTime
 
                 if Option.isSome badRequest then
                     let error = badRequest.Value

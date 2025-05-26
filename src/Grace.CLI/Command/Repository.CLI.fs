@@ -43,10 +43,10 @@ module Repository =
         let ownerId =
             new Option<String>(
                 "--ownerId",
-                IsRequired = false,
+                Required = false,
                 Description = "The repository's owner ID <Guid>.",
                 Arity = ArgumentArity.ZeroOrOne,
-                getDefaultValue =
+                DefaultValueFactory =
                     (fun _ ->
                         if Current().OwnerId = Guid.Empty then
                             $"{Guid.NewGuid()}"
@@ -57,7 +57,7 @@ module Repository =
         let ownerName =
             new Option<String>(
                 "--ownerName",
-                IsRequired = false,
+                Required = false,
                 Description = "The repository's owner name. [default: current owner]",
                 Arity = ArgumentArity.ExactlyOne
             )
@@ -65,10 +65,10 @@ module Repository =
         let organizationId =
             new Option<String>(
                 "--organizationId",
-                IsRequired = false,
+                Required = false,
                 Description = "The repository's organization ID <Guid>.",
                 Arity = ArgumentArity.ZeroOrOne,
-                getDefaultValue =
+                DefaultValueFactory =
                     (fun _ ->
                         if Current().OrganizationId = Guid.Empty then
                             $"{Guid.NewGuid()}"
@@ -79,18 +79,19 @@ module Repository =
         let organizationName =
             new Option<String>(
                 "--organizationName",
-                IsRequired = false,
+                Required = false,
                 Description = "The repository's organization name. [default: current organization]",
                 Arity = ArgumentArity.ZeroOrOne
             )
 
         let repositoryId =
             new Option<String>(
-                [| "--repositoryId"; "-r" |],
-                IsRequired = false,
+                "--repositoryId",
+                [| "-r" |],
+                Required = false,
                 Description = "The repository's ID <Guid>.",
                 Arity = ArgumentArity.ExactlyOne,
-                getDefaultValue =
+                DefaultValueFactory =
                     (fun _ ->
                         if Current().RepositoryId = Guid.Empty then
                             $"{Guid.NewGuid()}"
@@ -100,30 +101,31 @@ module Repository =
 
         let repositoryName =
             new Option<String>(
-                [| "--repositoryName"; "-n" |],
-                IsRequired = false,
+                "--repositoryName",
+                [| "-n" |],
+                Required = false,
                 Description = "The name of the repository. [default: current repository]",
                 Arity = ArgumentArity.ExactlyOne
             )
 
         let requiredRepositoryName =
-            new Option<String>([| "--repositoryName"; "-n" |], IsRequired = true, Description = "The name of the repository.", Arity = ArgumentArity.ExactlyOne)
+            new Option<String>("--repositoryName", [| "-n" |], Required = true, Description = "The name of the repository.", Arity = ArgumentArity.ExactlyOne)
 
         let description =
-            new Option<String>("--description", IsRequired = false, Description = "The description of the repository.", Arity = ArgumentArity.ExactlyOne)
+            new Option<String>("--description", Required = false, Description = "The description of the repository.", Arity = ArgumentArity.ExactlyOne)
 
         let visibility =
-            (new Option<RepositoryType>("--visibility", IsRequired = true, Description = "The visibility of the repository.", Arity = ArgumentArity.ExactlyOne))
-                .FromAmong(listCases<RepositoryType> ())
+            (new Option<RepositoryType>("--visibility", Required = true, Description = "The visibility of the repository.", Arity = ArgumentArity.ExactlyOne))
 
-        let status =
-            (new Option<String>("--status", IsRequired = true, Description = "The status of the repository.", Arity = ArgumentArity.ExactlyOne))
-                .FromAmong(listCases<RepositoryStatus> ())
+        visibility.AcceptOnlyFromAmong(listCases<RepositoryType> ())
+
+        let status = (new Option<String>("--status", Required = true, Description = "The status of the repository.", Arity = ArgumentArity.ExactlyOne))
+        status.AcceptOnlyFromAmong(listCases<RepositoryStatus> ())
 
         let recordSaves =
             new Option<bool>(
                 "--recordSaves",
-                IsRequired = true,
+                Required = true,
                 Description = "True to record all saves; false to turn it off.",
                 Arity = ArgumentArity.ExactlyOne
             )
@@ -131,19 +133,20 @@ module Repository =
         let defaultServerApiVersion =
             (new Option<String>(
                 "--defaultServerApiVersion",
-                IsRequired = true,
+                Required = true,
                 Description = "The default version of the server API that clients should use when accessing this repository.",
                 Arity = ArgumentArity.ExactlyOne
             ))
-                .FromAmong(listCases<Constants.ServerApiVersions> ())
+
+        defaultServerApiVersion.AcceptOnlyFromAmong(listCases<Constants.ServerApiVersions> ())
 
         let saveDays =
-            new Option<single>("--saveDays", IsRequired = true, Description = "How many days to keep saves. [default: 7.0]", Arity = ArgumentArity.ExactlyOne)
+            new Option<single>("--saveDays", Required = true, Description = "How many days to keep saves. [default: 7.0]", Arity = ArgumentArity.ExactlyOne)
 
         let checkpointDays =
             new Option<single>(
                 "--checkpointDays",
-                IsRequired = true,
+                Required = true,
                 Description = "How many days to keep checkpoints. [default: 365.0]",
                 Arity = ArgumentArity.ExactlyOne
             )
@@ -151,7 +154,7 @@ module Repository =
         let diffCacheDays =
             new Option<single>(
                 "--diffCacheDays",
-                IsRequired = true,
+                Required = true,
                 Description = "How many days to keep diff results cached in the database. [default: 3.0]",
                 Arity = ArgumentArity.ExactlyOne
             )
@@ -159,7 +162,7 @@ module Repository =
         let directoryVersionCacheDays =
             new Option<single>(
                 "--directoryVersionCacheDays",
-                IsRequired = true,
+                Required = true,
                 Description = "How many days to keep recursive directory version contents cached. [default: 3.0]",
                 Arity = ArgumentArity.ExactlyOne
             )
@@ -167,20 +170,20 @@ module Repository =
         let logicalDeleteDays =
             new Option<single>(
                 "--logicalDeleteDays",
-                IsRequired = true,
+                Required = true,
                 Description = "How many days to keep deleted branches before permanently deleting them. [default: 30.0]",
                 Arity = ArgumentArity.ExactlyOne
             )
 
-        let newName = new Option<String>("--newName", IsRequired = true, Description = "The new name for the repository.", Arity = ArgumentArity.ExactlyOne)
+        let newName = new Option<String>("--newName", Required = true, Description = "The new name for the repository.", Arity = ArgumentArity.ExactlyOne)
 
         let deleteReason =
-            new Option<String>("--deleteReason", IsRequired = true, Description = "The reason for deleting the repository.", Arity = ArgumentArity.ExactlyOne)
+            new Option<String>("--deleteReason", Required = true, Description = "The reason for deleting the repository.", Arity = ArgumentArity.ExactlyOne)
 
         let graceConfig =
             new Option<String>(
                 "--graceConfig",
-                IsRequired = false,
+                Required = false,
                 Description = "The path of a Grace config file that you'd like to use instead of the default graceconfig.json.",
                 Arity = ArgumentArity.ExactlyOne
             )
@@ -188,7 +191,7 @@ module Repository =
         let force =
             new Option<bool>(
                 "--force",
-                IsRequired = false,
+                Required = false,
                 Description = "Deletes repository even if there are links to other repositories.",
                 Arity = ArgumentArity.ExactlyOne
             )
@@ -196,7 +199,7 @@ module Repository =
         let doNotSwitch =
             new Option<bool>(
                 "--doNotSwitch",
-                IsRequired = false,
+                Required = false,
                 Description = "Do not switch to the new repository as the current repository.",
                 Arity = ArgumentArity.ZeroOrOne
             )
@@ -204,19 +207,24 @@ module Repository =
         let directory =
             new Option<String>(
                 "--directory",
-                IsRequired = false,
+                Required = false,
                 Description = "The directory to use when initializing the repository. [default: current directory]",
                 Arity = ArgumentArity.ExactlyOne
             )
 
-        let includeDeleted = new Option<bool>([| "--include-deleted"; "-d" |], IsRequired = false, Description = "Include deleted branches in the result.")
-
-        includeDeleted.SetDefaultValue(false)
+        let includeDeleted =
+            new Option<bool>(
+                "--include-deleted",
+                [| "-d" |],
+                Required = false,
+                Description = "Include deleted branches in the result.",
+                DefaultValueFactory = (fun _ -> false)
+            )
 
         let anonymousAccess =
             new Option<bool>(
                 "--anonymousAccess",
-                IsRequired = true,
+                Required = true,
                 Description = "Enable or disable anonymous access for the repository.",
                 Arity = ArgumentArity.ExactlyOne
             )
@@ -224,7 +232,7 @@ module Repository =
         let allowsLargeFiles =
             new Option<bool>(
                 "--allowsLargeFiles",
-                IsRequired = true,
+                Required = true,
                 Description = "Enable or disable large file support for the repository.",
                 Arity = ArgumentArity.ExactlyOne
             )
@@ -233,7 +241,7 @@ module Repository =
         let mutable guid = Guid.Empty
 
         if
-            parseResult.CommandResult.FindResultFor(option) <> null
+            parseResult.GetResult(option) <> null
             && not <| String.IsNullOrEmpty(value)
             && (Guid.TryParse(value, &guid) = false || guid = Guid.Empty)
         then
@@ -243,7 +251,7 @@ module Repository =
 
     let mustBeAValidGraceName (parseResult: ParseResult) (parameters: CommonParameters) (option: Option) (value: string) (error: RepositoryError) =
         if
-            parseResult.CommandResult.FindResultFor(option) <> null
+            parseResult.GetResult(option) <> null
             && not <| Constants.GraceNameRegex.IsMatch(value)
         then
             Error(GraceError.Create (RepositoryError.getErrorMessage error) (parameters.CorrelationId))
@@ -279,9 +287,9 @@ module Repository =
 
     let ``Either RepositoryId or RepositoryName must be specified`` (parseResult: ParseResult, parameters: CommonParameters) =
         if
-            parseResult.HasOption(Options.repositoryId)
-            || parseResult.HasOption(Options.repositoryName)
-            || parseResult.HasOption(Options.requiredRepositoryName)
+            parseResult.CommandResult.Command.Options.Contains(Options.repositoryId)
+            || parseResult.CommandResult.Command.Options.Contains(Options.repositoryName)
+            || parseResult.CommandResult.Command.Options.Contains(Options.requiredRepositoryName)
         then
             Ok(parseResult, parameters)
         else
@@ -291,26 +299,23 @@ module Repository =
     let normalizeIdsAndNames<'T when 'T :> CommonParameters> (parseResult: ParseResult) (parameters: 'T) =
         // If the name was specified on the command line, but the id wasn't, then we should only send the name, and we set the id to String.Empty.
         if
-            parseResult.CommandResult.FindResultFor(Options.ownerId).IsImplicit
-            && not <| isNull (parseResult.CommandResult.FindResultFor(Options.ownerName))
-            && not <| parseResult.CommandResult.FindResultFor(Options.ownerName).IsImplicit
+            parseResult.GetResult(Options.ownerId).Implicit
+            && not <| isNull (parseResult.GetResult(Options.ownerName))
+            && not <| parseResult.GetResult(Options.ownerName).Implicit
         then
             parameters.OwnerId <- String.Empty
 
         if
-            parseResult.CommandResult.FindResultFor(Options.organizationId).IsImplicit
-            && not
-               <| isNull (parseResult.CommandResult.FindResultFor(Options.organizationName))
-            && not
-               <| parseResult.CommandResult.FindResultFor(Options.organizationName).IsImplicit
+            parseResult.GetResult(Options.organizationId).Implicit
+            && not <| isNull (parseResult.GetResult(Options.organizationName))
+            && not <| parseResult.GetResult(Options.organizationName).Implicit
         then
             parameters.OrganizationId <- String.Empty
 
         if
-            parseResult.CommandResult.FindResultFor(Options.repositoryId).IsImplicit
-            && not <| isNull (parseResult.CommandResult.FindResultFor(Options.repositoryName))
-            && not
-               <| parseResult.CommandResult.FindResultFor(Options.repositoryName).IsImplicit
+            parseResult.GetResult(Options.repositoryId).Implicit
+            && not <| isNull (parseResult.GetResult(Options.repositoryName))
+            && not <| parseResult.GetResult(Options.repositoryName).Implicit
         then
             parameters.RepositoryId <- String.Empty
 
@@ -363,11 +368,11 @@ module Repository =
 
                 match validateIncomingParameters with
                 | Ok _ ->
-                    let optionResult = parseResult.FindResultFor(Options.repositoryId)
+                    let optionResult = parseResult.GetResult(Options.repositoryId)
 
                     let repositoryId =
                         if
-                            ((not <| isNull (optionResult)) && optionResult.IsImplicit)
+                            ((not <| isNull (optionResult)) && optionResult.Implicit)
                             || isNull (optionResult)
                         then
                             Guid.NewGuid().ToString()
@@ -430,7 +435,7 @@ module Repository =
                 match result with
                 | Ok returnValue ->
                     // Update the Grace configuration file with the newly-created repository.
-                    if not <| parseResult.HasOption(Options.doNotSwitch) then
+                    if not <| parseResult.CommandResult.Command.Options.Contains(Options.doNotSwitch) then
                         let newConfig = Current()
                         newConfig.RepositoryId <- Guid.Parse(returnValue.Properties[nameof (RepositoryId)])
                         newConfig.RepositoryName <- RepositoryName(returnValue.Properties[nameof (RepositoryName)])
@@ -453,7 +458,7 @@ module Repository =
     /// Validates that the directory exists. Placed here so it can use InitParameters.
     let ``Directory must be a valid path`` (parseResult: ParseResult, parameters: InitParameters) =
         if
-            parseResult.HasOption(Options.directory)
+            parseResult.CommandResult.Command.Options.Contains(Options.directory)
             && not <| Directory.Exists(parameters.Directory)
         then
             Error(GraceError.Create (RepositoryError.getErrorMessage InvalidDirectory) (parameters.CorrelationId))
@@ -1887,7 +1892,7 @@ module Repository =
         // Create main command and aliases, if any.
         let repositoryCommand = new Command("repository", Description = "Creates, changes, and deletes repository-level information.")
 
-        repositoryCommand.AddAlias("repo")
+        repositoryCommand.Aliases.Add("repo")
 
         // Add subcommands.
         let repositoryCreateCommand =
@@ -1896,15 +1901,15 @@ module Repository =
             |> addCommonOptionsExceptForRepositoryInfo
             |> addOption Options.doNotSwitch
 
-        repositoryCreateCommand.Handler <- Create
-        repositoryCommand.AddCommand(repositoryCreateCommand)
+        repositoryCreateCommand.Action <- Create
+        repositoryCommand.Subcommands.Add(repositoryCreateCommand)
 
         let repositoryGetCommand =
             new Command("get", Description = "Gets information about a repository.")
             |> addCommonOptions
 
-        repositoryGetCommand.Handler <- Get
-        repositoryCommand.AddCommand(repositoryGetCommand)
+        repositoryGetCommand.Action <- Get
+        repositoryCommand.Subcommands.Add(repositoryGetCommand)
 
         let repositoryInitCommand =
             new Command("init", Description = "Initializes a new repository with the contents of a directory.")
@@ -1912,100 +1917,100 @@ module Repository =
             |> addOption Options.graceConfig
             |> addCommonOptions
 
-        repositoryInitCommand.Handler <- Init
-        repositoryCommand.AddCommand(repositoryInitCommand)
+        repositoryInitCommand.Action <- Init
+        repositoryCommand.Subcommands.Add(repositoryInitCommand)
 
         //let repositoryDownloadCommand = new Command("download", Description = "Downloads the current version of the repository.") |> addOption Options.requiredRepositoryName |> addOption Options.graceConfig |> addCommonOptionsExceptForRepositoryInfo
-        //repositoryInitCommand.Handler <- Init
-        //repositoryCommand.AddCommand(repositoryInitCommand)
+        //repositoryInitCommand.Action <- Init
+        //repositoryCommand.Subcommands.Add(repositoryInitCommand)
 
         let getBranchesCommand =
             new Command("get-branches", Description = "Gets a list of branches in the repository.")
             |> addOption Options.includeDeleted
             |> addCommonOptions
 
-        getBranchesCommand.Handler <- GetBranches
-        repositoryCommand.AddCommand(getBranchesCommand)
+        getBranchesCommand.Action <- GetBranches
+        repositoryCommand.Subcommands.Add(getBranchesCommand)
 
         let setVisibilityCommand =
             new Command("set-visibility", Description = "Sets the visibility of the repository.")
             |> addOption Options.visibility
             |> addCommonOptions
 
-        setVisibilityCommand.Handler <- SetVisibility
-        repositoryCommand.AddCommand(setVisibilityCommand)
+        setVisibilityCommand.Action <- SetVisibility
+        repositoryCommand.Subcommands.Add(setVisibilityCommand)
 
         let setStatusCommand =
             new Command("set-status", Description = "Sets the status of the repository.")
             |> addOption Options.status
             |> addCommonOptions
 
-        setStatusCommand.Handler <- SetStatus
-        repositoryCommand.AddCommand(setStatusCommand)
+        setStatusCommand.Action <- SetStatus
+        repositoryCommand.Subcommands.Add(setStatusCommand)
 
         let setAnonymousAccessCommand =
             new Command("set-anonymous-access", Description = "Sets the anonymous access status of the repository.")
             |> addOption Options.anonymousAccess
             |> addCommonOptions
 
-        setAnonymousAccessCommand.Handler <- SetAnonymousAccess
-        repositoryCommand.AddCommand(setAnonymousAccessCommand)
+        setAnonymousAccessCommand.Action <- SetAnonymousAccess
+        repositoryCommand.Subcommands.Add(setAnonymousAccessCommand)
 
         let setAllowsLargeFilesCommand =
             new Command("set-allows-large-files", Description = "Sets the large files status of the repository.")
             |> addOption Options.allowsLargeFiles
             |> addCommonOptions
 
-        setAllowsLargeFilesCommand.Handler <- SetAllowsLargeFiles
-        repositoryCommand.AddCommand(setAllowsLargeFilesCommand)
+        setAllowsLargeFilesCommand.Action <- SetAllowsLargeFiles
+        repositoryCommand.Subcommands.Add(setAllowsLargeFilesCommand)
 
         let setRecordSavesCommand =
             new Command("set-recordsaves", Description = "Sets whether the repository defaults to recording every save.")
             |> addOption Options.recordSaves
             |> addCommonOptions
 
-        setRecordSavesCommand.Handler <- SetRecordSaves
-        repositoryCommand.AddCommand(setRecordSavesCommand)
+        setRecordSavesCommand.Action <- SetRecordSaves
+        repositoryCommand.Subcommands.Add(setRecordSavesCommand)
 
         let setDefaultServerApiVersionCommand =
             new Command("set-defaultserverapiversion", Description = "Sets the default server API version for clients to use when accessing this repository.")
             |> addOption Options.defaultServerApiVersion
             |> addCommonOptions
 
-        setDefaultServerApiVersionCommand.Handler <- SetDefaultServerApiVersion
-        repositoryCommand.AddCommand(setDefaultServerApiVersionCommand)
+        setDefaultServerApiVersionCommand.Action <- SetDefaultServerApiVersion
+        repositoryCommand.Subcommands.Add(setDefaultServerApiVersionCommand)
 
         let setSaveDaysCommand =
             new Command("set-savedays", Description = "Sets the number of days to keep saves in the repository.")
             |> addOption Options.saveDays
             |> addCommonOptions
 
-        setSaveDaysCommand.Handler <- SetSaveDays
-        repositoryCommand.AddCommand(setSaveDaysCommand)
+        setSaveDaysCommand.Action <- SetSaveDays
+        repositoryCommand.Subcommands.Add(setSaveDaysCommand)
 
         let setCheckpointDaysCommand =
             new Command("set-checkpointdays", Description = "Sets the number of days to keep checkpoints in the repository.")
             |> addOption Options.checkpointDays
             |> addCommonOptions
 
-        setCheckpointDaysCommand.Handler <- SetCheckpointDays
-        repositoryCommand.AddCommand(setCheckpointDaysCommand)
+        setCheckpointDaysCommand.Action <- SetCheckpointDays
+        repositoryCommand.Subcommands.Add(setCheckpointDaysCommand)
 
         let setDiffCacheDaysCommand =
             new Command("set-diffcachedays", Description = "Sets the number of days to keep diff results cached in the repository.")
             |> addOption Options.diffCacheDays
             |> addCommonOptions
 
-        setDiffCacheDaysCommand.Handler <- SetDiffCacheDays
-        repositoryCommand.AddCommand(setDiffCacheDaysCommand)
+        setDiffCacheDaysCommand.Action <- SetDiffCacheDays
+        repositoryCommand.Subcommands.Add(setDiffCacheDaysCommand)
 
         let setDirectoryVersionCacheDaysCommand =
             new Command("set-directoryversioncachedays", Description = "Sets how long to keep recursive directory version contents cached in the repository.")
             |> addOption Options.directoryVersionCacheDays
             |> addCommonOptions
 
-        setDirectoryVersionCacheDaysCommand.Handler <- SetDirectoryVersionCacheDays
-        repositoryCommand.AddCommand(setDirectoryVersionCacheDaysCommand)
+        setDirectoryVersionCacheDaysCommand.Action <- SetDirectoryVersionCacheDays
+        repositoryCommand.Subcommands.Add(setDirectoryVersionCacheDaysCommand)
 
         let setLogicalDeleteDaysCommand =
             new Command(
@@ -2015,24 +2020,24 @@ module Repository =
             |> addOption Options.logicalDeleteDays
             |> addCommonOptions
 
-        setLogicalDeleteDaysCommand.Handler <- SetLogicalDeleteDays
-        repositoryCommand.AddCommand(setLogicalDeleteDaysCommand)
+        setLogicalDeleteDaysCommand.Action <- SetLogicalDeleteDays
+        repositoryCommand.Subcommands.Add(setLogicalDeleteDaysCommand)
 
         let setNameCommand =
             new Command("set-name", Description = "Sets the name of the repository.")
             |> addOption Options.newName
             |> addCommonOptions
 
-        setNameCommand.Handler <- SetName
-        repositoryCommand.AddCommand(setNameCommand)
+        setNameCommand.Action <- SetName
+        repositoryCommand.Subcommands.Add(setNameCommand)
 
         let setDescriptionCommand =
             new Command("set-description", Description = "Sets the description of the repository.")
             |> addOption Options.description
             |> addCommonOptions
 
-        setDescriptionCommand.Handler <- SetDescription
-        repositoryCommand.AddCommand(setDescriptionCommand)
+        setDescriptionCommand.Action <- SetDescription
+        repositoryCommand.Subcommands.Add(setDescriptionCommand)
 
         let deleteCommand =
             new Command("delete", Description = "Deletes a repository.")
@@ -2040,14 +2045,14 @@ module Repository =
             |> addOption Options.force
             |> addCommonOptions
 
-        deleteCommand.Handler <- Delete
-        repositoryCommand.AddCommand(deleteCommand)
+        deleteCommand.Action <- Delete
+        repositoryCommand.Subcommands.Add(deleteCommand)
 
         let undeleteCommand =
             new Command("undelete", Description = "Undeletes the repository.")
             |> addCommonOptions
 
-        undeleteCommand.Handler <- Undelete
-        repositoryCommand.AddCommand(undeleteCommand)
+        undeleteCommand.Action <- Undelete
+        repositoryCommand.Subcommands.Add(undeleteCommand)
 
         repositoryCommand

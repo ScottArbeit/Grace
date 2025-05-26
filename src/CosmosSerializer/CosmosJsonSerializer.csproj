@@ -7,11 +7,12 @@
 		<Nullable>enable</Nullable>
 		<NoWarn>1057,3391</NoWarn>
 		<PublishReadyToRun>true</PublishReadyToRun>
+        <SuppressNETCoreSdkPreviewMessage>true</SuppressNETCoreSdkPreviewMessage>
 	</PropertyGroup>
 	<ItemGroup>
-		<PackageReference Include="Azure.Core" Version="1.45.0" />
+		<PackageReference Include="Azure.Core" Version="1.46.1" />
 		<PackageReference Include="Ben.Demystifier" Version="0.4.1" />
-		<PackageReference Include="Microsoft.Azure.Cosmos" Version="3.48.1" />
+		<PackageReference Include="Microsoft.Azure.Cosmos" Version="3.51.0" />
         <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
 	</ItemGroup>
 

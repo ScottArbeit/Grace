@@ -34,7 +34,7 @@ module Common =
 
     /// Adds an option (i.e. parameter) to a command, so you can do cool stuff like `|> addOption Options.someOption |> addOption Options.anotherOption`.
     let addOption (option: Option) (command: Command) =
-        command.AddOption(option)
+        command.Options.Add(option)
         command
 
     let public Language = CultureInfo.CurrentCulture.TwoLetterISOLanguageName
@@ -45,24 +45,33 @@ module Common =
     module Options =
         let correlationId =
             new Option<String>(
-                [| "--correlationId"; "-c" |],
-                IsRequired = false,
+                "--correlationId",
+                [| "-c" |],
+                Required = false,
                 Description = "CorrelationId for end-to-end tracking <String>.",
-                Arity = ArgumentArity.ExactlyOne
+                Arity = ArgumentArity.ExactlyOne,
+                Recursive = true,
+                DefaultValueFactory = (fun _ -> generateCorrelationId ())
             )
 
-        correlationId.SetDefaultValue(generateCorrelationId ())
-
         let output =
-            (new Option<String>([| "--output"; "-o" |], IsRequired = false, Description = "The style of output.", Arity = ArgumentArity.ExactlyOne))
-                .FromAmong(listCases<OutputFormat> ())
+            (new Option<String>(
+                "--output",
+                [| "-o" |],
+                Required = false,
+                Description = "The style of output.",
+                Arity = ArgumentArity.ExactlyOne,
+                Recursive = true,
+                DefaultValueFactory = (fun _ -> "Normal")
+            ))
 
-        output.SetDefaultValue("Normal")
+        output.AcceptOnlyFromAmong(listCases<OutputFormat> ())
 
     /// Checks if the output format from the command line is a specific format.
     let isOutputFormat (outputFormat: OutputFormat) (parseResult: ParseResult) =
-        if parseResult.HasOption(Options.output) then
-            let format = parseResult.FindResultFor(Options.output).GetValueOrDefault<String>()
+        if parseResult.CommandResult.Command.Options.Contains(Options.output) then
+            //let format = parseResult.FindResultFor(Options.output).GetValueOrDefault<String>()
+            let format = parseResult.GetValue<string>(Options.output)
 
             String.Equals(format, getDiscriminatedUnionCaseName (outputFormat), StringComparison.CurrentCultureIgnoreCase)
         else if outputFormat = OutputFormat.Normal then
@@ -97,7 +106,7 @@ module Common =
     let emptyTask = ProgressTask(0, "Empty progress task", 0.0, autoStart = false)
 
     /// Gets the correlationId parameter from the command line.
-    let getCorrelationId (parseResult: ParseResult) = parseResult.FindResultFor(Options.correlationId).GetValueOrDefault<String>()
+    let getCorrelationId (parseResult: ParseResult) = parseResult.GetValue(Options.correlationId)
 
     /// Rewrites "[" to "[[" and "]" to "]]".
     let escapeBrackets s = s.ToString().Replace("[", "[[").Replace("]", "]]")
@@ -116,7 +125,7 @@ module Common =
     /// Prints output to the console, depending on the output format.
     let renderOutput (parseResult: ParseResult) (result: GraceResult<'T>) =
         let outputFormat =
-            discriminatedUnionFromString<OutputFormat>(parseResult.FindResultFor(Options.output).GetValueOrDefault<String>())
+            discriminatedUnionFromString<OutputFormat>(parseResult.GetValue(Options.output))
                 .Value
 
         match result with

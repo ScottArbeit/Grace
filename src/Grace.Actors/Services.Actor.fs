@@ -3,14 +3,11 @@ namespace Grace.Actors
 open Azure.Storage
 open Azure.Storage.Blobs
 open Azure.Storage.Sas
-open Dapr.Actors
-open Dapr.Actors.Client
 open Dapr.Client
 open Grace.Actors.Constants
 open Grace.Actors.Context
 open Grace.Actors.Extensions.ActorProxy
 open Grace.Actors.Extensions.MemoryCache
-open Grace.Actors.Events
 open Grace.Actors.Interfaces
 open Grace.Actors.Timing
 open Grace.Actors.Types
@@ -20,6 +17,7 @@ open Grace.Shared.Dto.Branch
 open Grace.Shared.Dto.Organization
 open Grace.Shared.Dto.Reference
 open Grace.Shared.Dto.Repository
+open Grace.Shared.Events
 open Grace.Shared.Types
 open Grace.Shared.Utilities
 open Microsoft.Azure.Cosmos
@@ -27,6 +25,7 @@ open Microsoft.Azure.Cosmos.Linq
 open Microsoft.Extensions.Caching.Memory
 open Microsoft.Extensions.Logging
 open NodaTime
+open Orleans.Runtime
 open System
 open System.Collections.Concurrent
 open System.Collections.Generic
@@ -468,7 +467,7 @@ module Services =
                                     memoryCache.CreateOrganizationNameEntry organizationName organizationGuid
                                     memoryCache.CreateOrganizationIdEntry organizationGuid MemoryCache.ExistsValue
 
-                                    do! organizationNameActorProxy.SetOrganizationId organizationId correlationId
+                                    do! organizationNameActorProxy.SetOrganizationId organizationGuid correlationId
                                     return Some organizationId
                             else
                                 return None
@@ -480,7 +479,7 @@ module Services =
         task {
             // Call the Repository actor to check if the repository is deleted.
             let repositoryGuid = Guid.Parse(repositoryId)
-            let repositoryActorProxy = Repository.CreateActorProxy repositoryGuid correlationId
+            let! repositoryActorProxy = Repository.CreateActorProxy repositoryGuid correlationId
 
             let! isDeleted = repositoryActorProxy.IsDeleted correlationId
 
@@ -497,14 +496,14 @@ module Services =
         task {
             // Call the Repository actor to check if the repository exists.
             let repositoryGuid = Guid.Parse(repositoryId)
-            let repositoryActorProxy = Repository.CreateActorProxy repositoryGuid correlationId
+            let! repositoryActorProxy = Repository.CreateActorProxy repositoryGuid correlationId
 
             let! exists = repositoryActorProxy.Exists correlationId
 
             if exists then
                 // Add this RepositoryId to the MemoryCache.
                 memoryCache.CreateRepositoryIdEntry repositoryGuid MemoryCache.ExistsValue
-                return Some repositoryId
+                return Some repositoryGuid
             else
                 return None
         }
@@ -529,7 +528,7 @@ module Services =
                 match memoryCache.GetRepositoryIdEntry repositoryGuid with
                 | Some value ->
                     match value with
-                    | MemoryCache.ExistsValue -> return Some repositoryId
+                    | MemoryCache.ExistsValue -> return Some repositoryGuid
                     | MemoryCache.DoesNotExistValue -> return None
                     | _ -> return! repositoryExists repositoryId correlationId
                 | None -> return! repositoryExists repositoryId correlationId
@@ -545,7 +544,7 @@ module Services =
                     else
                         // We have already checked and the repository exists.
                         memoryCache.CreateRepositoryIdEntry repositoryGuid MemoryCache.ExistsValue
-                        return Some $"{repositoryGuid}"
+                        return Some repositoryGuid
                 | None ->
                     // Check if we have an active RepositoryName actor with a cached result.
                     let ownerGuid = Guid.Parse(ownerId)
@@ -554,9 +553,8 @@ module Services =
 
                     match! repositoryNameActorProxy.GetRepositoryId correlationId with
                     | Some repositoryId ->
-                        repositoryGuid <- Guid.Parse(repositoryId)
-                        memoryCache.CreateRepositoryNameEntry repositoryName repositoryGuid
-                        memoryCache.CreateRepositoryIdEntry repositoryGuid MemoryCache.ExistsValue
+                        memoryCache.CreateRepositoryNameEntry repositoryName repositoryId
+                        memoryCache.CreateRepositoryIdEntry repositoryId MemoryCache.ExistsValue
                         return Some repositoryId
                     | None ->
                         // We have to call into Actor storage to get the RepositoryId.
@@ -577,17 +575,17 @@ module Services =
                             if iterator.HasMoreResults then
                                 let! currentResultSet = iterator.ReadNextAsync()
 
-                                let repositoryId = currentResultSet.FirstOrDefault({ repositoryId = String.Empty }).repositoryId
+                                let repositoryIdString = currentResultSet.FirstOrDefault({ repositoryId = String.Empty }).repositoryId
 
-                                if String.IsNullOrEmpty(repositoryId) then
+                                if String.IsNullOrEmpty(repositoryIdString) then
                                     // We didn't find the RepositoryId, so add this RepositoryName to the MemoryCache and indicate that we have already checked.
                                     memoryCache.CreateRepositoryNameEntry repositoryName MemoryCache.EntityDoesNotExistGuid
                                     return None
                                 else
                                     // Add this RepositoryName and RepositoryId to the MemoryCache.
-                                    repositoryGuid <- Guid.Parse(repositoryId)
-                                    memoryCache.CreateRepositoryNameEntry repositoryName repositoryGuid
-                                    memoryCache.CreateRepositoryIdEntry repositoryGuid MemoryCache.ExistsValue
+                                    let repositoryId = Guid.Parse(repositoryIdString)
+                                    memoryCache.CreateRepositoryNameEntry repositoryName repositoryId
+                                    memoryCache.CreateRepositoryIdEntry repositoryId MemoryCache.ExistsValue
 
                                     // Set the RepositoryId in the RepositoryName actor.
                                     do! repositoryNameActorProxy.SetRepositoryId repositoryId correlationId
@@ -598,10 +596,10 @@ module Services =
         }
 
     /// Checks whether a branch has been deleted by querying the actor, and updates the MemoryCache with the result.
-    let branchIsDeleted (branchId: string) correlationId =
+    let branchIsDeleted (branchId: string) repositoryId correlationId =
         task {
             let branchGuid = Guid.Parse(branchId)
-            let branchActorProxy = Branch.CreateActorProxy branchGuid correlationId
+            let! branchActorProxy = Branch.CreateActorProxy branchGuid repositoryId correlationId
 
             let! isDeleted = branchActorProxy.IsDeleted correlationId
 
@@ -614,11 +612,11 @@ module Services =
         }
 
     /// Checks whether a branch exists by querying the actor, and updates the MemoryCache with the result.
-    let branchExists (branchId: string) correlationId =
+    let branchExists (branchId: string) repositoryId correlationId =
         task {
             // Call the Branch actor to check if the branch exists.
             let branchGuid = Guid.Parse(branchId)
-            let branchActorProxy = Branch.CreateActorProxy branchGuid correlationId
+            let! branchActorProxy = Branch.CreateActorProxy branchGuid repositoryId correlationId
             let! exists = branchActorProxy.Exists correlationId
 
             if exists then
@@ -633,6 +631,7 @@ module Services =
     let resolveBranchId (repositoryId: string) branchId branchName (correlationId: CorrelationId) =
         task {
             let mutable branchGuid = Guid.Empty
+            let repositoryGuid = Guid.Parse(repositoryId)
 
             if not <| String.IsNullOrEmpty(branchId) && Guid.TryParse(branchId, &branchGuid) then
                 match memoryCache.GetBranchIdEntry branchGuid with
@@ -640,8 +639,8 @@ module Services =
                     match value with
                     | MemoryCache.ExistsValue -> return Some branchId
                     | MemoryCache.DoesNotExistValue -> return None
-                    | _ -> return! branchExists branchId correlationId
-                | None -> return! branchExists branchId correlationId
+                    | _ -> return! branchExists branchId repositoryGuid correlationId
+                | None -> return! branchExists branchId repositoryGuid correlationId
             elif String.IsNullOrEmpty(branchName) then
                 // We don't have a BranchId or BranchName, so we can't resolve the BranchId.
                 return None
@@ -657,7 +656,6 @@ module Services =
                         return Some $"{branchGuid}"
                 | None ->
                     // Check if we have an active BranchName actor with a cached result.
-                    let repositoryGuid = Guid.Parse(repositoryId)
                     let branchNameActorProxy = BranchName.CreateActorProxy repositoryGuid branchName correlationId
 
                     match! branchNameActorProxy.GetBranchId correlationId with
@@ -983,7 +981,7 @@ module Services =
                                 (fun branchId ct ->
                                     ValueTask(
                                         task {
-                                            let branchActorProxy = Branch.CreateActorProxy branchId correlationId
+                                            let! branchActorProxy = Branch.CreateActorProxy branchId repositoryId correlationId
                                             let! branchDto = branchActorProxy.Get correlationId
                                             branches.Add(branchDto)
                                         }
@@ -1599,7 +1597,7 @@ module Services =
     /// Gets a Root DirectoryVersion by searching using a Sha256Hash value.
     let getRootDirectoryByReferenceId (repositoryId: RepositoryId) (referenceId: ReferenceId) correlationId =
         task {
-            let referenceActorProxy = Reference.CreateActorProxy referenceId correlationId
+            let! referenceActorProxy = Reference.CreateActorProxy referenceId repositoryId correlationId
 
             let! referenceDto = referenceActorProxy.Get correlationId
 
@@ -1795,30 +1793,48 @@ module Services =
             return branchDtos
         }
 
-    /// Gets a message that says whether an actor's state was retrieved from the database.
-    let getActorActivationMessage retrievedItem =
-        match retrievedItem with
-        | Some item -> "Retrieved from database"
-        | None -> "Not found in database"
-
-    /// Logs the activation of an actor.
-    let logActorActivation (log: ILogger) activateStartTime (correlationId: string) (actorName: string) (actorId: ActorId) (message: string) =
-        log.LogInformation(
-            "{CurrentInstant}: Node: {HostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Activated {ActorType} {ActorId}. {message}.",
-            getCurrentInstantExtended (),
-            getMachineName,
-            (getPaddedDuration_ms activateStartTime),
-            correlationId,
-            actorName,
-            actorId,
-            message
-        )
-
     /// Creates a new reminder actor instance.
     let createReminder (reminder: ReminderDto) =
         task {
             let reminderActorProxy = Reminder.CreateActorProxy reminder.ReminderId reminder.CorrelationId
-
             do! reminderActorProxy.Create reminder reminder.CorrelationId
         }
         :> Task
+
+    /// Gets the CorrelationId from an Orleans grain's RequestContext.
+    let getCorrelationId () =
+        match RequestContext.Get(Constants.CorrelationId) with
+        | :? string as s -> s
+        | _ -> String.Empty
+
+    /// Gets the ActorName from an Orleans grain's RequestContext.
+    let getActorName () =
+        match RequestContext.Get(Constants.ActorNameProperty) with
+        | :? string as s -> s
+        | _ -> String.Empty
+
+    /// Gets the CurrentCommand from an Orleans grain's RequestContext.
+    let getCurrentCommand () =
+        match RequestContext.Get(Constants.CurrentCommandProperty) with
+        | :? string as s -> s
+        | _ -> String.Empty
+
+    let getRepositoryId () =
+        match RequestContext.Get(nameof (RepositoryId)) with
+        | :? RepositoryId as repositoryId -> repositoryId
+        | _ -> Guid.Empty
+
+    /// Gets a message that says whether an actor's state was retrieved from the database.
+    let getActorActivationMessage recordExists = if recordExists then "Retrieved from database" else "Not found in database"
+
+    /// Logs the activation of an actor.
+    let logActorActivation (log: ILogger) (grainIdentity: string) (message: string) =
+        log.LogInformation(
+            "{CurrentInstant}: Node: {HostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Activated {GrainIdentity}. {message}.",
+            getCurrentInstantExtended (),
+            getMachineName,
+            (getDurationRightAligned_ms (getCurrentInstant ())),
+            getCorrelationId (),
+            grainIdentity,
+            message
+        )

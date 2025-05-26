@@ -2,7 +2,8 @@
 	<PropertyGroup>
 		<AccelerateBuildsInVisualStudio>true</AccelerateBuildsInVisualStudio>
 		<ProduceReferenceAssembly>true</ProduceReferenceAssembly>
-		<!--<RuntimeIdentifier>linux-x64</RuntimeIdentifier>-->
+		<SuppressNETCoreSdkPreviewMessage>true</SuppressNETCoreSdkPreviewMessage>
+		<NoWarn>$(NoWarn);NETSDK1057</NoWarn>
 		<PublishProfile>DefaultContainer</PublishProfile>
 		<OtherFlags>$(OtherFlags) --test:GraphBasedChecking</OtherFlags>
 	</PropertyGroup>

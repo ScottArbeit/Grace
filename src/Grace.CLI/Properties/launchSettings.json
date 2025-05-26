@@ -21,8 +21,8 @@
     },
     "grace owner create": {
       "commandName": "Project",
-      "commandLineArgs": "owner create --output Verbose --ownerName Owner9FED --ownerId f37d3fcd-5f76-4187-942d-890f21656ebe",
-      "workingDirectory": "D:\\Source\\GraceDemo\\Ryan"
+      "commandLineArgs": "owner create --output Verbose --ownerName Owner43 --ownerId f37d6fcd-5f76-4187-942d-890f21656ebe",
+      "workingDirectory": "E:\\GraceDemo\\User01"
     },
     "grace refs -b main": {
       "commandName": "Project",

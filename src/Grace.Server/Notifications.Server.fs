@@ -1,17 +1,16 @@
 namespace Grace.Server
 
 open Dapr
-open Dapr.Actors.Client
 open Giraffe
 open Grace.Actors
 open Grace.Actors.Constants
-open Grace.Actors.Events
 open Grace.Actors.Extensions.ActorProxy
-open Grace.Actors.Interfaces
 open Grace.Actors.Services
+open Grace.Server.Services
 open Grace.Shared
 open Grace.Shared.Constants
 open Grace.Shared.Dto
+open Grace.Shared.Events
 open Grace.Shared.Types
 open Grace.Shared.Utilities
 open Microsoft.AspNetCore.Http
@@ -21,13 +20,8 @@ open System
 open System.Net.Http
 open System.Text.Json
 open System.Threading.Tasks
-open Dapr.Actors
-open Services
-open Microsoft.AspNetCore.Http.Features
 
 module Notifications =
-
-    let actorProxyFactory = ApplicationContext.actorProxyFactory
 
     type IGraceClientConnection =
         abstract member RegisterParentBranch: BranchId -> BranchId -> Task
@@ -114,17 +108,17 @@ module Notifications =
             :> Task
 
     /// Gets the ReferenceDto for the given ReferenceId.
-    let getReferenceDto referenceId correlationId =
+    let getReferenceDto referenceId repositoryId correlationId =
         task {
-            let referenceActorProxy = Reference.CreateActorProxy referenceId correlationId
+            let! referenceActorProxy = Reference.CreateActorProxy referenceId repositoryId correlationId
 
             return! referenceActorProxy.Get correlationId
         }
 
     /// Gets the BranchDto for the given BranchId.
-    let getBranchDto branchId correlationId =
+    let getBranchDto branchId repositoryId correlationId =
         task {
-            let branchActorProxy = Branch.CreateActorProxy branchId correlationId
+            let! branchActorProxy = Branch.CreateActorProxy branchId repositoryId correlationId
 
             return! branchActorProxy.Get correlationId
         }
@@ -139,9 +133,9 @@ module Notifications =
                 let! graceEvent = context.BindJsonAsync<GraceEvent>()
                 //logToConsole $"{serialize graceEvent}"
 
-                let diffTwoDirectoryVersions directoryVersionId1 directoryVersionId2 correlationId =
+                let diffTwoDirectoryVersions directoryVersionId1 directoryVersionId2 repositoryId correlationId =
                     task {
-                        let diffActorProxy = Diff.CreateActorProxy directoryVersionId1 directoryVersionId2 correlationId
+                        let! diffActorProxy = Diff.CreateActorProxy directoryVersionId1 directoryVersionId2 repositoryId correlationId
 
                         let! x = diffActorProxy.Compute correlationId
                         ()
@@ -150,6 +144,7 @@ module Notifications =
                 match graceEvent with
                 | BranchEvent branchEvent ->
                     let correlationId = branchEvent.Metadata.CorrelationId
+                    let repositoryId = Guid.Parse(branchEvent.Metadata.Properties[nameof (RepositoryId)])
 
                     log.LogInformation(
                         "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; Received BranchEvent notification.",
@@ -160,7 +155,7 @@ module Notifications =
 
                     match branchEvent.Event with
                     | Branch.Promoted(referenceDto, directoryVersionId, sha256Hash, referenceText) ->
-                        let! branchDto = getBranchDto referenceDto.BranchId correlationId
+                        let! branchDto = getBranchDto referenceDto.BranchId repositoryId correlationId
 
                         do!
                             hubContext.Clients
@@ -171,11 +166,16 @@ module Notifications =
                         let! latestTwoPromotions = getPromotions referenceDto.BranchId 2 (getCorrelationId context)
 
                         if latestTwoPromotions.Count = 2 then
-                            do! diffTwoDirectoryVersions latestTwoPromotions[0].DirectoryId latestTwoPromotions[1].DirectoryId correlationId
+                            do!
+                                diffTwoDirectoryVersions
+                                    latestTwoPromotions[0].DirectoryId
+                                    latestTwoPromotions[1].DirectoryId
+                                    branchDto.RepositoryId
+                                    correlationId
 
                     | Branch.Committed(referenceDto, directoryVersionId, sha256Hash, referenceText) ->
-                        let! branchDto = getBranchDto referenceDto.BranchId correlationId
-                        let! parentBranchDto = getBranchDto branchDto.ParentBranchId correlationId
+                        let! branchDto = getBranchDto referenceDto.BranchId repositoryId correlationId
+                        let! parentBranchDto = getBranchDto branchDto.ParentBranchId repositoryId correlationId
 
                         do!
                             hubContext.Clients
@@ -186,15 +186,16 @@ module Notifications =
                         let! latestTwoCommits = getCommits referenceDto.BranchId 2 (getCorrelationId context)
 
                         if latestTwoCommits.Count = 2 then
-                            do! diffTwoDirectoryVersions latestTwoCommits[0].DirectoryId latestTwoCommits[1].DirectoryId correlationId
+                            do! diffTwoDirectoryVersions latestTwoCommits[0].DirectoryId latestTwoCommits[1].DirectoryId branchDto.RepositoryId correlationId
 
                         // Create the diff between the commit and the parent branch's most recent promotion.
                         match! getLatestPromotion branchDto.ParentBranchId with
-                        | Some latestPromotion -> do! diffTwoDirectoryVersions referenceDto.DirectoryId latestPromotion.DirectoryId correlationId
+                        | Some latestPromotion ->
+                            do! diffTwoDirectoryVersions referenceDto.DirectoryId latestPromotion.DirectoryId branchDto.RepositoryId correlationId
                         | None -> ()
                     | Branch.Checkpointed(referenceDto, directoryVersionId, sha256Hash, referenceText) ->
-                        let! branchDto = getBranchDto referenceDto.BranchId correlationId
-                        let! parentBranchDto = getBranchDto branchDto.ParentBranchId correlationId
+                        let! branchDto = getBranchDto referenceDto.BranchId repositoryId correlationId
+                        let! parentBranchDto = getBranchDto branchDto.ParentBranchId repositoryId correlationId
 
                         do!
                             hubContext.Clients
@@ -205,16 +206,17 @@ module Notifications =
                         let! checkpoints = getCheckpoints branchDto.BranchId 2 (getCorrelationId context)
 
                         if checkpoints.Count = 2 then
-                            do! diffTwoDirectoryVersions checkpoints[0].DirectoryId checkpoints[1].DirectoryId correlationId
+                            do! diffTwoDirectoryVersions checkpoints[0].DirectoryId checkpoints[1].DirectoryId branchDto.RepositoryId correlationId
 
                         // Create a diff between the checkpoint and the most recent commit.
                         match! getLatestCommit branchDto.BranchId with
-                        | Some latestCommit -> do! diffTwoDirectoryVersions referenceDto.DirectoryId latestCommit.DirectoryId correlationId
+                        | Some latestCommit ->
+                            do! diffTwoDirectoryVersions referenceDto.DirectoryId latestCommit.DirectoryId branchDto.RepositoryId correlationId
                         | None -> ()
 
                     | Branch.Saved(referenceDto, directoryVersionId, sha256Hash, referenceText) ->
-                        let! branchDto = getBranchDto referenceDto.BranchId correlationId
-                        let! parentBranchDto = getBranchDto branchDto.ParentBranchId correlationId
+                        let! branchDto = getBranchDto referenceDto.BranchId repositoryId correlationId
+                        let! parentBranchDto = getBranchDto branchDto.ParentBranchId repositoryId correlationId
 
                         do!
                             hubContext.Clients
@@ -225,7 +227,7 @@ module Notifications =
                         let! latestTwoSaves = getSaves referenceDto.BranchId 2 (getCorrelationId context)
 
                         if latestTwoSaves.Count = 2 then
-                            do! diffTwoDirectoryVersions latestTwoSaves[0].DirectoryId latestTwoSaves[1].DirectoryId correlationId
+                            do! diffTwoDirectoryVersions latestTwoSaves[0].DirectoryId latestTwoSaves[1].DirectoryId branchDto.RepositoryId correlationId
 
                         // Create the diff between the new save and the most recent commit.
                         let mutable latestCommit = Reference.ReferenceDto.Default
@@ -233,7 +235,7 @@ module Notifications =
                         match! getLatestCommit branchDto.BranchId with
                         | Some latest ->
                             latestCommit <- latest
-                            do! diffTwoDirectoryVersions latestCommit.DirectoryId referenceDto.DirectoryId correlationId
+                            do! diffTwoDirectoryVersions latestCommit.DirectoryId referenceDto.DirectoryId branchDto.RepositoryId correlationId
                         | None -> ()
 
                         // Create the diff between the new save and the most recent checkpoint,
@@ -241,7 +243,7 @@ module Notifications =
                         match! getLatestCheckpoint branchDto.BranchId with
                         | Some latestCheckpoint ->
                             if latestCheckpoint.CreatedAt > latestCommit.CreatedAt then
-                                do! diffTwoDirectoryVersions latestCheckpoint.DirectoryId referenceDto.DirectoryId correlationId
+                                do! diffTwoDirectoryVersions latestCheckpoint.DirectoryId referenceDto.DirectoryId branchDto.RepositoryId correlationId
                         | None -> ()
                     | Branch.Tagged(referenceId, directoryVersionId, sha256Hash, referenceText) -> ()
                     | _ -> ()
@@ -286,7 +288,7 @@ module Notifications =
                     | Reference.Created(referenceDto) ->
                         // If the reference is a commit, we're going to pre-compute the directory version contents .zip file.
                         if referenceDto.ReferenceType = ReferenceType.Commit then
-                            let directoryVersionActorProxy = DirectoryVersion.CreateActorProxy referenceDto.DirectoryId correlationId
+                            let! directoryVersionActorProxy = DirectoryVersion.CreateActorProxy referenceDto.DirectoryId referenceDto.RepositoryId correlationId
                             let! zipFileUri = directoryVersionActorProxy.GetZipFileUri correlationId
                             ()
                     | _ -> ()

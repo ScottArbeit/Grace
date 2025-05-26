@@ -32,10 +32,10 @@ module Organization =
         let ownerId =
             new Option<String>(
                 "--ownerId",
-                IsRequired = false,
+                Required = false,
                 Description = "The organization's owner ID <Guid>.",
                 Arity = ArgumentArity.ExactlyOne,
-                getDefaultValue =
+                DefaultValueFactory =
                     (fun _ ->
                         if Current().OwnerId = Guid.Empty then
                             $"{Guid.NewGuid()}"
@@ -46,7 +46,7 @@ module Organization =
         let ownerName =
             new Option<String>(
                 "--ownerName",
-                IsRequired = false,
+                Required = false,
                 Description = "The organization's owner name. [default: current owner]",
                 Arity = ArgumentArity.ExactlyOne
             )
@@ -54,10 +54,10 @@ module Organization =
         let organizationId =
             new Option<String>(
                 "--organizationId",
-                IsRequired = false,
+                Required = false,
                 Description = "The organization ID <Guid>.",
                 Arity = ArgumentArity.ExactlyOne,
-                getDefaultValue =
+                DefaultValueFactory =
                     (fun _ ->
                         if Current().OrganizationId = Guid.Empty then
                             $"{Guid.NewGuid()}"
@@ -68,57 +68,59 @@ module Organization =
         let organizationName =
             new Option<String>(
                 "--organizationName",
-                IsRequired = false,
+                Required = false,
                 Description = "The name of the organization. [default: current organization]",
                 Arity = ArgumentArity.ExactlyOne
             )
 
         let organizationNameRequired =
-            new Option<String>("--organizationName", IsRequired = true, Description = "The name of the organization.", Arity = ArgumentArity.ExactlyOne)
+            new Option<String>("--organizationName", Required = true, Description = "The name of the organization.", Arity = ArgumentArity.ExactlyOne)
 
         let organizationType =
             (new Option<String>(
                 "--organizationType",
-                IsRequired = true,
+                Required = true,
                 Description = "The type of the organization. [default: Public]",
                 Arity = ArgumentArity.ExactlyOne
             ))
-                .FromAmong(listCases<OrganizationType> ())
+
+        organizationType.AcceptOnlyFromAmong(listCases<OrganizationType> ())
 
         let searchVisibility =
             (new Option<String>(
                 "--searchVisibility",
-                IsRequired = true,
+                Required = true,
                 Description = "Enables or disables the organization appearing in searches. [default: Visible]",
                 Arity = ArgumentArity.ExactlyOne
             ))
-                .FromAmong(listCases<SearchVisibility> ())
 
-        let description = new Option<String>("--description", IsRequired = true, Description = "Description of the owner.", Arity = ArgumentArity.ExactlyOne)
+        searchVisibility.AcceptOnlyFromAmong(listCases<SearchVisibility> ())
 
-        let newName = new Option<String>("--newName", IsRequired = true, Description = "The new name of the organization.", Arity = ArgumentArity.ExactlyOne)
+        let description = new Option<String>("--description", Required = true, Description = "Description of the owner.", Arity = ArgumentArity.ExactlyOne)
 
-        let force = new Option<bool>("--force", IsRequired = false, Description = "Delete even if there is data under this organization. [default: false]")
+        let newName = new Option<String>("--newName", Required = true, Description = "The new name of the organization.", Arity = ArgumentArity.ExactlyOne)
+
+        let force = new Option<bool>("--force", Required = false, Description = "Delete even if there is data under this organization. [default: false]")
 
         let includeDeleted =
-            new Option<bool>([| "--include-deleted"; "-d" |], IsRequired = false, Description = "Include deleted organizations in the result. [default: false]")
+            new Option<bool>("--include-deleted", [| "-d" |], Required = false, Description = "Include deleted organizations in the result. [default: false]")
 
         let deleteReason =
-            new Option<String>("--deleteReason", IsRequired = true, Description = "The reason for deleting the organization.", Arity = ArgumentArity.ExactlyOne)
+            new Option<String>("--deleteReason", Required = true, Description = "The reason for deleting the organization.", Arity = ArgumentArity.ExactlyOne)
 
         let doNotSwitch =
             new Option<bool>(
                 "--doNotSwitch",
-                IsRequired = false,
+                Required = false,
                 Description = "Do not switch to the new organization as the current organization.",
                 Arity = ArgumentArity.ZeroOrOne
             )
 
-    let mustBeAValidGuid (parseResult: ParseResult) (parameters: CommonParameters) (option: Option) (value: string) (error: OrganizationError) =
+    let mustBeAValidGuid (parseResult: ParseResult) (parameters: CommonParameters) (option: Option<'T>) (value: string) (error: OrganizationError) =
         let mutable guid = Guid.Empty
 
         if
-            parseResult.CommandResult.FindResultFor(option) <> null
+            parseResult.CommandResult.GetValue<'T>(option) <> null
             && not <| String.IsNullOrEmpty(value)
             && (Guid.TryParse(value, &guid) = false || guid = Guid.Empty)
         then
@@ -126,9 +128,9 @@ module Organization =
         else
             Ok(parseResult, parameters)
 
-    let mustBeAValidGraceName (parseResult: ParseResult) (parameters: CommonParameters) (option: Option) (value: string) (error: OrganizationError) =
+    let mustBeAValidGraceName (parseResult: ParseResult) (parameters: CommonParameters) (option: Option<'T>) (value: string) (error: OrganizationError) =
         if
-            parseResult.CommandResult.FindResultFor(option) <> null
+            parseResult.CommandResult.GetValue<'T>(option) <> null
             && not <| Constants.GraceNameRegex.IsMatch(value)
         then
             Error(GraceError.Create (OrganizationError.getErrorMessage error) (parameters.CorrelationId))
@@ -156,8 +158,8 @@ module Organization =
 
     let ``OrganizationName must not be empty`` (parseResult: ParseResult, parameters: CommonParameters) =
         if
-            (parseResult.HasOption(Options.organizationNameRequired)
-             || parseResult.HasOption(Options.organizationName))
+            (parseResult.CommandResult.Command.Options.Contains(Options.organizationNameRequired)
+             || parseResult.CommandResult.Command.Options.Contains(Options.organizationName))
             && not <| String.IsNullOrEmpty(parameters.OrganizationName)
         then
             Ok(parseResult, parameters)
@@ -166,8 +168,8 @@ module Organization =
 
     let ``Either OwnerId or OwnerName must be provided`` (parseResult: ParseResult, parameters: CommonParameters) =
         if
-            (parseResult.HasOption(Options.ownerId)
-             || parseResult.HasOption(Options.ownerName))
+            (parseResult.CommandResult.Command.Options.Contains(Options.ownerId)
+             || parseResult.CommandResult.Command.Options.Contains(Options.ownerName))
         then
             Ok(parseResult, parameters)
         else
@@ -177,18 +179,16 @@ module Organization =
     let normalizeIdsAndNames<'T when 'T :> CommonParameters> (parseResult: ParseResult) (parameters: 'T) =
         // If the name was specified on the command line, but the id wasn't, then we should only send the name, and we set the id to String.Empty.
         if
-            parseResult.CommandResult.FindResultFor(Options.ownerId).IsImplicit
-            && not <| isNull (parseResult.CommandResult.FindResultFor(Options.ownerName))
-            && not <| parseResult.CommandResult.FindResultFor(Options.ownerName).IsImplicit
+            parseResult.GetResult(Options.ownerId).Implicit
+            && not <| isNull (parseResult.GetResult(Options.ownerName))
+            && not <| parseResult.GetResult(Options.ownerName).Implicit
         then
             parameters.OwnerId <- String.Empty
 
         if
-            parseResult.CommandResult.FindResultFor(Options.organizationId).IsImplicit
-            && not
-               <| isNull (parseResult.CommandResult.FindResultFor(Options.organizationName))
-            && not
-               <| parseResult.CommandResult.FindResultFor(Options.organizationName).IsImplicit
+            parseResult.GetResult(Options.organizationId).Implicit
+            && not <| isNull (parseResult.GetResult(Options.organizationName))
+            && not <| parseResult.GetResult(Options.organizationName).Implicit
         then
             parameters.OrganizationId <- String.Empty
 
@@ -208,7 +208,7 @@ module Organization =
                 match validateIncomingParameters with
                 | Ok _ ->
                     let organizationId =
-                        if parseResult.FindResultFor(Options.organizationId).IsImplicit then
+                        if parseResult.GetResult(Options.organizationId).Implicit then
                             Guid.NewGuid().ToString()
                         else
                             createParameters.OrganizationId
@@ -249,7 +249,7 @@ module Organization =
                 match result with
                 | Ok returnValue ->
                     // Update the Grace configuration file with the newly-created organization.
-                    if not <| parseResult.HasOption(Options.doNotSwitch) then
+                    if not <| parseResult.CommandResult.Command.Options.Contains(Options.doNotSwitch) then
                         let newConfig = Current()
                         newConfig.OrganizationId <- Guid.Parse(returnValue.Properties[nameof (OrganizationId)])
                         newConfig.OrganizationName <- returnValue.Properties[nameof (OrganizationName)]
@@ -639,7 +639,7 @@ module Organization =
         // Create main command and aliases, if any.
         let organizationCommand = new Command("organization", Description = "Create, change, or delete organization-level information.")
 
-        organizationCommand.AddAlias("org")
+        organizationCommand.Aliases.Add("org")
 
         // Add subcommands.
         let organizationCreateCommand =
@@ -648,48 +648,48 @@ module Organization =
             |> addCommonOptionsWithoutOrganizationName
             |> addOption Options.doNotSwitch
 
-        organizationCreateCommand.Handler <- Create
-        organizationCommand.AddCommand(organizationCreateCommand)
+        organizationCreateCommand.Action <- Create
+        organizationCommand.Subcommands.Add(organizationCreateCommand)
 
         let getCommand =
             new Command("get", Description = "Gets details for the organization.")
             |> addOption Options.includeDeleted
             |> addCommonOptions
 
-        getCommand.Handler <- Get
-        organizationCommand.AddCommand(getCommand)
+        getCommand.Action <- Get
+        organizationCommand.Subcommands.Add(getCommand)
 
         let setNameCommand =
             new Command("set-name", Description = "Change the name of the organization.")
             |> addOption Options.newName
             |> addCommonOptions
 
-        setNameCommand.Handler <- SetName
-        organizationCommand.AddCommand(setNameCommand)
+        setNameCommand.Action <- SetName
+        organizationCommand.Subcommands.Add(setNameCommand)
 
         let setTypeCommand =
             new Command("set-type", Description = "Change the type of the organization.")
             |> addOption Options.organizationType
             |> addCommonOptions
 
-        setTypeCommand.Handler <- SetType
-        organizationCommand.AddCommand(setTypeCommand)
+        setTypeCommand.Action <- SetType
+        organizationCommand.Subcommands.Add(setTypeCommand)
 
         let setSearchVisibilityCommand =
             new Command("set-search-visibility", Description = "Change the search visibility of the organization.")
             |> addOption Options.searchVisibility
             |> addCommonOptions
 
-        setSearchVisibilityCommand.Handler <- SetSearchVisibility
-        organizationCommand.AddCommand(setSearchVisibilityCommand)
+        setSearchVisibilityCommand.Action <- SetSearchVisibility
+        organizationCommand.Subcommands.Add(setSearchVisibilityCommand)
 
         let setDescriptionCommand =
             new Command("set-description", Description = "Change the description of the organization.")
             |> addOption Options.description
             |> addCommonOptions
 
-        setDescriptionCommand.Handler <- SetDescription
-        organizationCommand.AddCommand(setDescriptionCommand)
+        setDescriptionCommand.Action <- SetDescription
+        organizationCommand.Subcommands.Add(setDescriptionCommand)
 
         let deleteCommand =
             new Command("delete", Description = "Delete the organization.")
@@ -697,14 +697,14 @@ module Organization =
             |> addOption Options.deleteReason
             |> addCommonOptions
 
-        deleteCommand.Handler <- Delete
-        organizationCommand.AddCommand(deleteCommand)
+        deleteCommand.Action <- Delete
+        organizationCommand.Subcommands.Add(deleteCommand)
 
         let undeleteCommand =
             new Command("undelete", Description = "Undeletes the organization.")
             |> addCommonOptions
 
-        undeleteCommand.Handler <- Undelete
-        organizationCommand.AddCommand(undeleteCommand)
+        undeleteCommand.Action <- Undelete
+        organizationCommand.Subcommands.Add(undeleteCommand)
 
         organizationCommand

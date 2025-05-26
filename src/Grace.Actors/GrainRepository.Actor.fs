@@ -14,11 +14,11 @@ open Orleans.Runtime
 open System
 open System.Threading.Tasks
 
-module RepositoryName =
+module GrainRepository =
 
-    let log = loggerFactory.CreateLogger("RepositoryName.Actor")
+    let log = loggerFactory.CreateLogger("GrainRepository.Actor")
 
-    type RepositoryNameActor() =
+    type GrainRepositoryActor() =
         inherit Grain()
 
         static let actorName = ActorName.RepositoryName
@@ -27,11 +27,11 @@ module RepositoryName =
 
         member val private correlationId: CorrelationId = String.Empty with get, set
 
-        override this.OnActivateAsync(ct) =
-            logActorActivation log this.IdentityString "In-memory only"
-            Task.CompletedTask
+        //override this.OnActivateAsync(ct) =
+        //    logActorActivation log this.IdentityString "In-memory only"
+        //    Task.CompletedTask
 
-        interface IRepositoryNameActor with
+        interface IGrainRepositoryActor with
             member this.GetRepositoryId correlationId =
                 this.correlationId <- correlationId
                 cachedRepositoryId |> returnTask
@@ -39,5 +39,4 @@ module RepositoryName =
             member this.SetRepositoryId (repositoryId: RepositoryId) correlationId =
                 this.correlationId <- correlationId
                 cachedRepositoryId <- Some repositoryId
-
                 Task.CompletedTask

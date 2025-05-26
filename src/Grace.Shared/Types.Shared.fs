@@ -3,6 +3,7 @@ namespace Grace.Shared
 open DiffPlex.DiffBuilder.Model
 open Grace.Shared.Utilities
 open NodaTime
+open Orleans
 open System
 open System.Collections.Concurrent
 open System.Collections.Generic
@@ -20,19 +21,46 @@ open MessagePack
 module Types =
 
     // Domain nouns
+    /// The Id of the branch.
     type BranchId = Guid
+
+    /// The name of the branch.
     type BranchName = string
+
+    /// The name of the storage container used by Grace.
     type ContainerName = string
+
+    /// The CorrelationId used during a Grace operation.
     type CorrelationId = string
+
+    /// The reason given for deleting a branch or reference.
     type DeleteReason = string
+
+    /// The Id of the directory version.
     type DirectoryVersionId = Guid
+
+    /// The file path of a file in a repository.
     type FilePath = string
+
+    /// An entry in the .graceignore file.
     type GraceIgnoreEntry = string
+
+    /// The Id of the organization.
     type OrganizationId = Guid
+
+    /// The name of the organization.
     type OrganizationName = string
+
+    /// The Id of the owner of the repository.
     type OwnerId = Guid
+
+    /// The name of the owner of the repository.
     type OwnerName = string
+
+    /// The Id of the parent branch.
     type ParentBranchId = BranchId
+
+    /// The Id of the reference.
     type ReferenceId = Guid
 
     /// The text of the reference, generally submitted as the -m parameter in `grace save/checkpoint/commit/etc.`.
@@ -53,15 +81,23 @@ module Types =
     /// the full file path is "C:\Source\Grace\src\Grace.Shared\Types.Shared.fs",
     /// and the relative path is "src\Grace.Shared\Types.Shared.fs".
     type RelativePath = string
+
+    /// A SHA-256 hash value.
     type Sha256Hash = string
+
     type StorageAccountName = string
     type StorageConnectionString = string
     type StorageContainerName = string
+
+    /// A Uri for a file in object storage that has a shared access signature (SAS) token.
     type UriWithSharedAccessSignature = Uri
+
     type UserId = string
+
+    /// The result of a single validation check.
     type ValidationResult<'T> = ValueTask<Result<unit, 'T>>
 
-    [<KnownType("GetKnownTypes")>]
+    [<KnownType("GetKnownTypes"); GenerateSerializer>]
     type LineEndings =
         | CrLf
         | Cr
@@ -69,7 +105,7 @@ module Types =
 
         static member GetKnownTypes() = GetKnownTypes<LineEndings>()
 
-    [<KnownType("GetKnownTypes")>]
+    [<KnownType("GetKnownTypes"); GenerateSerializer>]
     type ObjectStorageProvider =
         | AWSS3
         | AzureBlobStorage
@@ -79,7 +115,7 @@ module Types =
         static member GetKnownTypes() = GetKnownTypes<ObjectStorageProvider>()
 
     /// Indicates what database is being used for Actor state storage.
-    [<KnownType("GetKnownTypes")>]
+    [<KnownType("GetKnownTypes"); GenerateSerializer>]
     type ActorStateStorageProvider =
         | AzureCosmosDb
         | MongoDB
@@ -87,7 +123,7 @@ module Types =
         // etc.
         static member GetKnownTypes() = GetKnownTypes<ActorStateStorageProvider>()
 
-    [<KnownType("GetKnownTypes")>]
+    [<KnownType("GetKnownTypes"); GenerateSerializer>]
     type OwnerType =
         | Public
         | Private
@@ -96,7 +132,7 @@ module Types =
 
         static member GetKnownTypes() = GetKnownTypes<OwnerType>()
 
-    [<KnownType("GetKnownTypes")>]
+    [<KnownType("GetKnownTypes"); GenerateSerializer>]
     type OrganizationType =
         | Public
         | Private
@@ -105,7 +141,7 @@ module Types =
 
         static member GetKnownTypes() = GetKnownTypes<OrganizationType>()
 
-    [<KnownType("GetKnownTypes")>]
+    [<KnownType("GetKnownTypes"); GenerateSerializer>]
     type SearchVisibility =
         | Visible
         | NotVisible
@@ -115,7 +151,7 @@ module Types =
         static member GetKnownTypes() = GetKnownTypes<SearchVisibility>()
 
     /// Defines the different types of references that can exist in a branch.
-    [<KnownType("GetKnownTypes")>]
+    [<KnownType("GetKnownTypes"); GenerateSerializer>]
     type ReferenceType =
         | Promotion
         | Commit
@@ -134,6 +170,7 @@ module Types =
     // Records
 
     /// EventMetadata is included in the recording of every event that occurs in Grace.
+    [<GenerateSerializer>]
     type EventMetadata =
         { Timestamp: Instant
           CorrelationId: CorrelationId
@@ -149,6 +186,7 @@ module Types =
     ///
     /// It is the server-side representation of the LocalFileVersion type, used for the local object cache.
     [<CLIMutable>]
+    [<GenerateSerializer>]
     type FileVersion =
         { Class: string
           //RepositoryId: RepositoryId
@@ -190,7 +228,7 @@ module Types =
     /// A LocalFileVersion represents a version of a file in a repository with unique contents, and therefore with a unique SHA-256 hash. It is immutable.
     ///
     /// It is the local representation of the FileVersion type, used on the server.
-    and [<KnownType("GetKnownTypes"); CLIMutable; MessagePackObject>] LocalFileVersion =
+    and [<CLIMutable; MessagePackObject>] LocalFileVersion =
         { [<Key(0)>]
           Class: string
           //[<Key(1)>]
@@ -209,8 +247,6 @@ module Types =
           UploadedToObjectStorage: bool
           [<Key(8)>]
           LastWriteTimeUtc: DateTime }
-
-        static member GetKnownTypes() = GetKnownTypes<LocalFileVersion>()
 
         static member Create
             //(repositoryId: RepositoryId)
@@ -247,7 +283,7 @@ module Types =
     /// A DirectoryVersion represents a version of a directory in a repository with unique contents, and therefore with a unique SHA-256 hash.
     ///
     /// It is the server-side representation of the LocalDirectoryVersion type. LocalDirectoryVersion is used for the local object cache.
-    [<KnownType("GetKnownTypes")>]
+    [<GenerateSerializer>]
     type DirectoryVersion =
         { Class: string
           DirectoryVersionId: DirectoryVersionId
@@ -305,7 +341,7 @@ module Types =
     /// A LocalDirectoryVersion represents a version of a directory in a repository with unique contents, and therefore with a unique SHA-256 hash.
     ///
     /// It is the local representation of the DirectoryVersion type. DirectoryVersion is used on the server.
-    and [<KnownType("GetKnownTypes"); CLIMutable; MessagePackObject>] LocalDirectoryVersion =
+    and [<CLIMutable; MessagePackObject>] LocalDirectoryVersion =
         { [<Key(0)>]
           Class: string
           [<Key(1)>]
@@ -326,8 +362,6 @@ module Types =
           CreatedAt: Instant
           [<Key(9)>]
           LastWriteTimeUtc: DateTime }
-
-        static member GetKnownTypes() = GetKnownTypes<LocalDirectoryVersion>()
 
         static member Default =
             { Class = "LocalDirectoryVersion"
@@ -375,7 +409,7 @@ module Types =
                 this.Size
 
     /// Specifies whether a specific entry in a directory is a DirectoryVersion or a FileVersion.
-    and [<KnownType("GetKnownTypes")>] DirectoryEntry =
+    and [<KnownType("GetKnownTypes"); GenerateSerializer>] DirectoryEntry =
         | Directory of DirectoryVersion
         | File of FileVersion
 
@@ -388,7 +422,7 @@ module Types =
             | DirectoryEntry.File f -> LocalFile(f.ToLocalFileVersion lastWriteTimeUtc)
 
     /// Specifies whether a specific entry in a local directory is a LocalDirectoryVersion or a LocalFileVersion.
-    and [<KnownType("GetKnownTypes")>] LocalDirectoryEntry =
+    and [<KnownType("GetKnownTypes"); GenerateSerializer>] LocalDirectoryEntry =
         | LocalDirectory of LocalDirectoryVersion
         | LocalFile of LocalFileVersion
 
@@ -401,7 +435,7 @@ module Types =
             | LocalFile f -> DirectoryEntry.File f.ToFileVersion
 
     /// Specifies whether a repository is public or private.
-    [<KnownType("GetKnownTypes")>]
+    [<KnownType("GetKnownTypes"); GenerateSerializer>]
     type RepositoryType =
         | Private
         | Public
@@ -409,7 +443,7 @@ module Types =
         static member GetKnownTypes() = GetKnownTypes<RepositoryType>()
 
     /// Specifies the current operational status of a repository.
-    [<KnownType("GetKnownTypes")>]
+    [<KnownType("GetKnownTypes"); GenerateSerializer>]
     type RepositoryStatus =
         | Active
         | Suspended
@@ -422,7 +456,7 @@ module Types =
     // type Validations<'T, 'U> = 'T -> Result<bool, 'U> list
 
     /// Defines the specific permissions that can be granted to a user or group on a directory.
-    [<KnownType("GetKnownTypes")>]
+    [<KnownType("GetKnownTypes"); GenerateSerializer>]
     type DirectoryPermission =
         | FullControl
         | Modify
@@ -434,7 +468,7 @@ module Types =
         static member GetKnownTypes() = GetKnownTypes<DirectoryPermission>()
 
     /// Defines the kinds of links that can exist between references.
-    [<KnownType("GetKnownTypes")>]
+    [<KnownType("GetKnownTypes"); GenerateSerializer>]
     type ReferenceLinkType =
         | BasedOn of ReferenceId
 
@@ -443,13 +477,13 @@ module Types =
     /// Defines the permissions granted to a group defined by a claim.
     ///
     /// This is combined with a RelativePath to define a PathPermission.
-    [<KnownType("GetKnownTypes")>]
+    [<GenerateSerializer>]
     type ClaimPermission = { Claim: string; DirectoryPermission: DirectoryPermission }
 
     /// Defines a set of claims and their permissions that should be applied to a relative path in the repository.
     ///
     /// NOTE: This type is being used only at the directory level for now, but I intend to implement it at the file level as well.
-    [<KnownType("GetKnownTypes")>]
+    [<GenerateSerializer>]
     type PathPermission = { Path: RelativePath; Permissions: List<ClaimPermission> }
 
     /// Cleans up extra backslashes (escape characters) and converts \r\n to Environment.NewLine.
@@ -460,6 +494,7 @@ module Types =
             .Replace(@"\r\n", Environment.NewLine)
 
     /// The primary type used in Grace to represent successful results.
+    [<GenerateSerializer>]
     type GraceReturnValue<'T> =
         { ReturnValue: 'T
           EventTime: Instant
@@ -473,11 +508,11 @@ module Types =
 
         //    result
 
-        static member Create<'T> (returnValue: 'T) (correlationId: string) =
-            { ReturnValue = returnValue; EventTime = getCurrentInstant (); CorrelationId = correlationId; Properties = new Dictionary<String, String>() }
-
         static member CreateWithMetadata<'T> (returnValue: 'T) (correlationId: string) (properties: Dictionary<String, String>) =
             { ReturnValue = returnValue; EventTime = getCurrentInstant (); CorrelationId = correlationId; Properties = properties }
+
+        static member Create<'T> (returnValue: 'T) (correlationId: string) =
+            GraceReturnValue.CreateWithMetadata returnValue correlationId (Dictionary<String, String>())
 
         /// Adds a key-value pair to GraceReturnValue's Properties dictionary.
         member this.enhance(key, value) =
@@ -489,7 +524,7 @@ module Types =
             this
 
         member this.enhance(dict: Dictionary<string, string>) =
-            dict |> Seq.iter (fun kvp -> this.Properties[kvp.Key] <- kvp.Value )
+            dict |> Seq.iter (fun kvp -> this.Properties[kvp.Key] <- kvp.Value)
             this
 
         override this.ToString() =
@@ -503,6 +538,7 @@ module Types =
             serialize output
 
     /// The primary type used in Grace to represent error results.
+    [<GenerateSerializer>]
     type GraceError =
         { Error: string
           EventTime: Instant
@@ -528,7 +564,7 @@ module Types =
             this
 
         member this.enhance(dict: Dictionary<string, string>) =
-            dict |> Seq.iter (fun kvp -> this.Properties[kvp.Key] <- kvp.Value )
+            dict |> Seq.iter (fun kvp -> this.Properties[kvp.Key] <- kvp.Value)
             this
 
         override this.ToString() =
@@ -546,10 +582,11 @@ module Types =
                 stringBuilderPool.Return(sb)
 
     /// The primary type used to represent Grace operations results.
+    [<GenerateSerializer>]
     type GraceResult<'T> = Result<GraceReturnValue<'T>, GraceError>
 
     /// Specifies whether a file system entry is a directory or a file.
-    [<KnownType("GetKnownTypes")>]
+    [<KnownType("GetKnownTypes"); GenerateSerializer>]
     type FileSystemEntryType =
         | Directory
         | File
@@ -559,7 +596,7 @@ module Types =
         override this.ToString() = Utilities.getDiscriminatedUnionFullName this
 
     /// Specifies whether a change detected in a diff is an add, change, or delete.
-    [<KnownType("GetKnownTypes")>]
+    [<KnownType("GetKnownTypes"); GenerateSerializer>]
     type DifferenceType =
         | Add
         | Change
@@ -570,6 +607,7 @@ module Types =
         override this.ToString() = Utilities.getDiscriminatedUnionFullName this
 
     /// A file system difference is a change detected (at a file level) in a diff. It specifies the type of change (add, change, or delete), the type of file system entry (directory or file), and the relative path of the entry.
+    [<GenerateSerializer>]
     type FileSystemDifference =
         { DifferenceType: DifferenceType
           FileSystemEntryType: FileSystemEntryType
@@ -578,9 +616,11 @@ module Types =
         static member Create differenceType fileSystemEntryType relativePath =
             { DifferenceType = differenceType; FileSystemEntryType = fileSystemEntryType; RelativePath = relativePath }
 
+    [<GenerateSerializer>]
     type UploadMetadata = { BlobUriWithSasToken: Uri; Sha256Hash: Sha256Hash }
 
     /// GraceIndex is Grace's representation of the contents of the local working directory (in GraceStatus), or of the object cache (in GraceObjectCache).
+    [<GenerateSerializer>]
     type GraceIndex = ConcurrentDictionary<DirectoryVersionId, LocalDirectoryVersion>
 
     /// GraceStatus is a snapshot of the status that `grace watch` holds about the repository and branch while running.
@@ -618,6 +658,7 @@ module Types =
         static member Default = { Index = GraceIndex() }
 
     /// Holds the results of a diff between two versions of a file.
+    [<GenerateSerializer>]
     type FileDiff =
         { RelativePath: RelativePath
           FileSha1: Sha256Hash
@@ -650,7 +691,7 @@ module Types =
               SideBySideOld = sideBySideOld
               SideBySideNew = sideBySideNew }
 
-    [<KnownType("GetKnownTypes")>]
+    [<KnownType("GetKnownTypes"); GenerateSerializer>]
     type PromotionType =
         | SingleStep
         | Complex
@@ -685,7 +726,7 @@ module Types =
         override this.ToString() = serialize this
 
     /// Defines the different types of reminders used in Grace.
-    [<KnownType("GetKnownTypes")>]
+    [<KnownType("GetKnownTypes"); GenerateSerializer>]
     type ReminderTypes =
         /// Maintenance reminders are used to remind the actor to perform maintenance on itself.
         | Maintenance
@@ -701,8 +742,11 @@ module Types =
         override this.ToString() = Utilities.getDiscriminatedUnionFullName this
 
     /// Defines the different statuses of a .zip file.
-    [<KnownType("GetKnownTypes")>]
+    [<KnownType("GetKnownTypes"); GenerateSerializer>]
     type ZipFileStatus =
         | NotCreated
         | Creating
         | Exists
+
+    [<GenerateSerializer>]
+    type Appearance = { Root: DirectoryVersionId; Parent: DirectoryVersionId; Created: Instant }

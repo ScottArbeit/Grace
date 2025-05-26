@@ -582,6 +582,6 @@ module Watch =
         // Create main command and aliases, if any.
         let watchCommand = new Command("watch", Description = "Watches your repo for changes, and uploads new versions of your files.")
 
-        watchCommand.AddAlias("w")
-        watchCommand.Handler <- OnWatch
+        watchCommand.Aliases.Add("w")
+        watchCommand.Action <- OnWatch
         watchCommand

@@ -54,16 +54,16 @@ module DirectoryVersion =
         let ownerId =
             new Option<String>(
                 "--ownerId",
-                IsRequired = false,
+                Required = false,
                 Description = "The repository's owner ID <Guid>.",
                 Arity = ArgumentArity.ZeroOrOne,
-                getDefaultValue = (fun _ -> $"{Current().OwnerId}")
+                DefaultValueFactory = (fun _ -> $"{Current().OwnerId}")
             )
 
         let ownerName =
             new Option<String>(
                 "--ownerName",
-                IsRequired = false,
+                Required = false,
                 Description = "The repository's owner name. [default: current owner]",
                 Arity = ArgumentArity.ExactlyOne
             )
@@ -71,57 +71,65 @@ module DirectoryVersion =
         let organizationId =
             new Option<String>(
                 "--organizationId",
-                IsRequired = false,
+                Required = false,
                 Description = "The repository's organization ID <Guid>.",
                 Arity = ArgumentArity.ExactlyOne,
-                getDefaultValue = (fun _ -> $"{Current().OrganizationId}")
+                DefaultValueFactory = (fun _ -> $"{Current().OrganizationId}")
             )
 
         let organizationName =
             new Option<String>(
                 "--organizationName",
-                IsRequired = false,
+                Required = false,
                 Description = "The repository's organization name. [default: current organization]",
                 Arity = ArgumentArity.ZeroOrOne
             )
 
         let repositoryId =
             new Option<String>(
-                [| "--repositoryId"; "-r" |],
-                IsRequired = false,
+                "--repositoryId",
+                [| "-r" |],
+                Required = false,
                 Description = "The repository's ID <Guid>.",
                 Arity = ArgumentArity.ExactlyOne,
-                getDefaultValue = (fun _ -> $"{Current().RepositoryId}")
+                DefaultValueFactory = (fun _ -> $"{Current().RepositoryId}")
             )
 
         let repositoryName =
             new Option<String>(
-                [| "--repositoryName"; "-n" |],
-                IsRequired = false,
+                "--repositoryName",
+                [| "-n" |],
+                Required = false,
                 Description = "The name of the repository. [default: current repository]",
                 Arity = ArgumentArity.ExactlyOne
             )
 
         let maxCount =
-            new Option<int>("--maxCount", IsRequired = false, Description = "The maximum number of results to return.", Arity = ArgumentArity.ExactlyOne)
-
-        maxCount.SetDefaultValue(30)
+            new Option<int>(
+                "--maxCount",
+                Required = false,
+                Description = "The maximum number of results to return.",
+                Arity = ArgumentArity.ExactlyOne,
+                DefaultValueFactory = (fun _ -> 30)
+            )
 
         let sha256Hash =
             new Option<String>(
-                [| "--sha256Hash" |],
-                IsRequired = false,
+                "--sha256Hash",
+                [||],
+                Required = false,
                 Description = "The full or partial SHA-256 hash value of the version.",
                 Arity = ArgumentArity.ExactlyOne
             )
 
         let includeDeleted =
-            new Option<bool>([| "--include-deleted"; "-d" |], IsRequired = false, Description = "Include deleted branches in the result. [default: false]")
+            new Option<bool>("--include-deleted", [| "-d" |], Required = false, Description = "Include deleted branches in the result. [default: false]")
 
         let directoryVersionIdRequired =
             new Option<String>(
-                [| "--directoryVersionId"; "-v" |],
-                IsRequired = true,
+                "--directoryVersionId",
+                [| "-v" |],
+                Required = true,
                 Description = "The DirectoryVersionId to act on <Guid>.",
                 Arity = ArgumentArity.ExactlyOne
             )
@@ -130,7 +138,7 @@ module DirectoryVersion =
         let mutable guid = Guid.Empty
 
         if
-            parseResult.CommandResult.FindResultFor(option) <> null
+            parseResult.GetResult(option) <> null
             && not <| String.IsNullOrEmpty(value)
             && (Guid.TryParse(value, &guid) = false || guid = Guid.Empty)
         then
@@ -140,7 +148,7 @@ module DirectoryVersion =
 
     let mustBeAValidGraceName (parseResult: ParseResult) (parameters: CommonParameters) (option: Option) (value: string) (error: DirectoryVersionError) =
         if
-            parseResult.CommandResult.FindResultFor(option) <> null
+            parseResult.GetResult(option) <> null
             && not <| Constants.GraceNameRegex.IsMatch(value)
         then
             Error(GraceError.Create (DirectoryVersionError.getErrorMessage error) (parameters.CorrelationId))
@@ -148,10 +156,7 @@ module DirectoryVersion =
             Ok(parseResult, parameters)
 
     let oneOfTheseOptionsMustBeProvided (parseResult: ParseResult) (parameters: CommonParameters) (options: Option array) (error: DirectoryVersionError) =
-        match
-            options
-            |> Array.tryFind (fun opt -> not <| isNull (parseResult.CommandResult.FindResultFor(opt)))
-        with
+        match options |> Array.tryFind (fun opt -> not <| isNull (parseResult.GetResult(opt))) with
         | Some opt -> Ok(parseResult, parameters)
         | None -> Error(GraceError.Create (DirectoryVersionError.getErrorMessage error) (parameters.CorrelationId))
 
@@ -203,26 +208,23 @@ module DirectoryVersion =
     let normalizeIdsAndNames<'T when 'T :> CommonParameters> (parseResult: ParseResult) (parameters: 'T) =
         // If the name was specified on the command line, but the id wasn't, then we should only send the name, and we set the id to String.Empty.
         if
-            parseResult.CommandResult.FindResultFor(Options.ownerId).IsImplicit
-            && not <| isNull (parseResult.CommandResult.FindResultFor(Options.ownerName))
-            && not <| parseResult.CommandResult.FindResultFor(Options.ownerName).IsImplicit
+            parseResult.GetResult(Options.ownerId).Implicit
+            && not <| isNull (parseResult.GetResult(Options.ownerName))
+            && not <| parseResult.GetResult(Options.ownerName).Implicit
         then
             parameters.OwnerId <- String.Empty
 
         if
-            parseResult.CommandResult.FindResultFor(Options.organizationId).IsImplicit
-            && not
-               <| isNull (parseResult.CommandResult.FindResultFor(Options.organizationName))
-            && not
-               <| parseResult.CommandResult.FindResultFor(Options.organizationName).IsImplicit
+            parseResult.GetResult(Options.organizationId).Implicit
+            && not <| isNull (parseResult.GetResult(Options.organizationName))
+            && not <| parseResult.GetResult(Options.organizationName).Implicit
         then
             parameters.OrganizationId <- String.Empty
 
         if
-            parseResult.CommandResult.FindResultFor(Options.repositoryId).IsImplicit
-            && not <| isNull (parseResult.CommandResult.FindResultFor(Options.repositoryName))
-            && not
-               <| parseResult.CommandResult.FindResultFor(Options.repositoryName).IsImplicit
+            parseResult.GetResult(Options.repositoryId).Implicit
+            && not <| isNull (parseResult.GetResult(Options.repositoryName))
+            && not <| parseResult.GetResult(Options.repositoryName).Implicit
         then
             parameters.RepositoryId <- String.Empty
 
@@ -332,15 +334,15 @@ module DirectoryVersion =
         // Create main command and aliases, if any.`
         let directoryVersionCommand = new Command("directory-version", Description = "Work with directory versions in a repository.")
 
-        directoryVersionCommand.AddAlias("dv")
-        directoryVersionCommand.AddAlias("ver")
+        directoryVersionCommand.Aliases.Add("dv")
+        directoryVersionCommand.Aliases.Add("ver")
 
         let getZipFileCommand =
             new Command("get-zip-file", Description = "Gets the .zip file for a specific directory version.")
             |> addOption Options.sha256Hash
             |> addCommonOptions
 
-        getZipFileCommand.Handler <- GetZipFile
-        directoryVersionCommand.AddCommand(getZipFileCommand)
+        getZipFileCommand.Action <- GetZipFile
+        directoryVersionCommand.Subcommands.Add(getZipFileCommand)
 
         directoryVersionCommand

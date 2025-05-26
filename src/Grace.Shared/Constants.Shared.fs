@@ -43,6 +43,7 @@ module Constants =
     /// The universal JSON serialization options for Grace.
     let public JsonSerializerOptions = JsonSerializerOptions()
     JsonSerializerOptions.Converters.Add(JsonFSharpConverter(jsonFSharpOptions))
+    JsonSerializerOptions.Converters.Add(JsonStringEnumConverter(JsonNamingPolicy.CamelCase))
     JsonSerializerOptions.AllowTrailingCommas <- true
     JsonSerializerOptions.DefaultBufferSize <- 64 * 1024
     JsonSerializerOptions.DefaultIgnoreCondition <- JsonIgnoreCondition.WhenWritingDefault // JsonSerializerOptions.IgnoreNullValues is deprecated. This is the new way to say it.
@@ -87,13 +88,17 @@ module Constants =
     [<Literal>]
     let GraceSystemUser = "gracesystem"
 
-    /// The name of the Dapr service for Grace object storage.
-    [<Literal>]
-    let GraceObjectStorage = "graceobjectstorage"
-
-    /// The name of the Dapr service for Actor storage. This should be a document database.
+    /// The name of the storage service for Actor storage. This should be a document database.
     [<Literal>]
     let GraceActorStorage = "actorstorage"
+
+    /// The name of the storage service for in-memory actors.
+    [<Literal>]
+    let GraceInMemoryStorage = "in-memory"
+
+    /// The name of the service for Grace object storage.
+    [<Literal>]
+    let GraceObjectStorage = "graceobjectstorage"
 
     /// The name of the Dapr service for Grace event pub/sub.
     [<Literal>]
@@ -212,9 +217,40 @@ module Constants =
         [<Literal>]
         let DaprGrpcPort = "DAPR_GRPC_PORT"
 
+        /// The name of the container in object storage that holds memoized RecursiveDirectoryVersions.
+        [<Literal>]
+        let DirectoryVersionContainerName = "directoryversion_container"
+
+        /// The name of the container in object storage that holds cached Diff contents.
+        [<Literal>]
+        let DiffContainerName = "diff_container"
+
+        /// The name of the container in object storage that holds memoized RecursiveDirectoryVersions.
+        [<Literal>]
+        let ZipFileContainerName = "zipfile_container"
+
         /// The environment variable that contains the maximum number of reminders that each Grace instance should retrieve from the database and publish for processing.
         [<Literal>]
         let GraceReminderBatchSize = "gracereminderbatchsize"
+
+        /// The environment variable that contains the name of the Orleans cluster to use.
+        [<Literal>]
+        let OrleansClusterId = "orleans_cluster_id"
+
+        /// The environment variable that contains the name of the Orleans service to use.
+        [<Literal>]
+        let OrleansServiceId = "orleans_service_id"
+
+        /// The environment variable that contains the Redis host name.
+        [<Literal>]
+        let RedisHost = "redis_host"
+
+        /// The environment variable that contains the Redis port number.
+        [<Literal>]
+        let RedisPort = "redis_port"
+
+        [<Literal>]
+        let UseLocalHostClustering = "use_orleans_localhost_configuration"
 
     /// The default CacheControl header for object storage.
     [<Literal>]
@@ -230,6 +266,14 @@ module Constants =
     /// The key for the HttpContext metadata value that holds the CorrelationId for this transaction.
     [<Literal>]
     let CorrelationId = "correlationId"
+
+    /// The property name for the CurrentCommand being handled by a grain.
+    [<Literal>]
+    let CurrentCommandProperty = "currentCommand"
+
+    /// The property name for the ActorName being handled by a grain.
+    [<Literal>]
+    let ActorNameProperty = "actorName"
 
     /// The header name for a W3C trace.
     [<Literal>]

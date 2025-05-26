@@ -15,8 +15,8 @@ type CorrelationIdMiddleware(next: RequestDelegate) =
         // On the way in...
 #if DEBUG
         let middlewareTraceHeader = context.Request.Headers["X-MiddlewareTraceIn"]
-
         context.Request.Headers["X-MiddlewareTraceIn"] <- $"{middlewareTraceHeader}{nameof (CorrelationIdMiddleware)} --> "
+        //logToConsole $"{context.Request.Path}; Middleware Trace In: {middlewareTraceHeader}{nameof (CorrelationIdMiddleware)} --> "
 #endif
 
         let correlationId =

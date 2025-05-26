@@ -6,12 +6,12 @@ open NodaTime
 open System
 open System.Collections.Generic
 open System.Runtime.Serialization
+open Orleans
 
 module Dto =
 
     module Diff =
-        [<Serializable>]
-        [<KnownType("GetKnownTypes")>]
+        [<KnownType("GetKnownTypes"); GenerateSerializer>]
         type DiffDto =
             { Class: string
               RepositoryId: RepositoryId
@@ -37,8 +37,7 @@ module Dto =
             static member GetKnownTypes() = GetKnownTypes<DiffDto>()
 
     module Organization =
-        [<Serializable>]
-        [<KnownType("GetKnownTypes")>]
+        [<KnownType("GetKnownTypes"); GenerateSerializer>]
         type OrganizationDto =
             { Class: string
               OrganizationId: OrganizationId
@@ -68,8 +67,7 @@ module Dto =
             static member GetKnownTypes() = GetKnownTypes<OrganizationDto>()
 
     module Owner =
-        [<Serializable>]
-        [<KnownType("GetKnownTypes")>]
+        [<KnownType("GetKnownTypes"); GenerateSerializer>]
         type OwnerDto =
             { Class: string
               OwnerId: OwnerId
@@ -97,8 +95,7 @@ module Dto =
             static member GetKnownTypes() = GetKnownTypes<OwnerDto>()
 
     module Reference =
-        [<Serializable>]
-        [<KnownType("GetKnownTypes")>]
+        [<KnownType("GetKnownTypes"); GenerateSerializer>]
         type ReferenceDto =
             { Class: string
               ReferenceId: ReferenceId
@@ -132,8 +129,7 @@ module Dto =
             static member GetKnownTypes() = GetKnownTypes<ReferenceDto>()
 
     module Repository =
-        [<Serializable>]
-        [<KnownType("GetKnownTypes")>]
+        [<KnownType("GetKnownTypes"); GenerateSerializer>]
         type RepositoryDto =
             { Class: string
               RepositoryId: RepositoryId
@@ -195,8 +191,7 @@ module Dto =
     module Branch =
         open Reference
 
-        [<Serializable>]
-        [<KnownType("GetKnownTypes")>]
+        [<KnownType("GetKnownTypes"); GenerateSerializer>]
         type BranchDto =
             { Class: string
               BranchId: BranchId

@@ -35,51 +35,44 @@ module Connect =
 
     module private Options =
         let repositoryId =
-            new Option<String>([| "--repositoryId"; "-r" |], IsRequired = false, Description = "The repository's ID <Guid>.", Arity = ArgumentArity.ExactlyOne)
+            new Option<String>("--repositoryId", [| "-r" |], Required = false, Description = "The repository's ID <Guid>.", Arity = ArgumentArity.ExactlyOne)
 
         let repositoryName =
-            new Option<String>(
-                [| "--repositoryName"; "-n" |],
-                IsRequired = false,
-                Description = "The name of the repository.",
-                Arity = ArgumentArity.ExactlyOne
-            )
+            new Option<String>("--repositoryName", [| "-n" |], Required = false, Description = "The name of the repository.", Arity = ArgumentArity.ExactlyOne)
 
-        let ownerId = new Option<String>("--ownerId", IsRequired = false, Description = "The repository's owner ID <Guid>.", Arity = ArgumentArity.ExactlyOne)
+        let ownerId = new Option<String>("--ownerId", Required = false, Description = "The repository's owner ID <Guid>.", Arity = ArgumentArity.ExactlyOne)
 
-        let ownerName = new Option<String>("--ownerName", IsRequired = false, Description = "The repository's owner name.", Arity = ArgumentArity.ExactlyOne)
+        let ownerName = new Option<String>("--ownerName", Required = false, Description = "The repository's owner name.", Arity = ArgumentArity.ExactlyOne)
 
         let organizationId =
-            new Option<String>(
-                "--organizationId",
-                IsRequired = false,
-                Description = "The repository's organization ID <Guid>.",
-                Arity = ArgumentArity.ExactlyOne
-            )
+            new Option<String>("--organizationId", Required = false, Description = "The repository's organization ID <Guid>.", Arity = ArgumentArity.ExactlyOne)
 
         let organizationName =
-            new Option<String>("--organizationName", IsRequired = false, Description = "The repository's organization name.", Arity = ArgumentArity.ZeroOrOne)
+            new Option<String>("--organizationName", Required = false, Description = "The repository's organization name.", Arity = ArgumentArity.ZeroOrOne)
 
         let correlationId =
             new Option<String>(
-                [| "--correlationId"; "-c" |],
-                IsRequired = false,
+                "--correlationId",
+                [| "-c" |],
+                Required = false,
                 Description = "CorrelationId to track this command throughout Grace. [default: new Guid]",
                 Arity = ArgumentArity.ExactlyOne
             )
 
         let serverAddress =
             new Option<String>(
-                [| "--serverAddress"; "-s" |],
-                IsRequired = false,
+                "--serverAddress",
+                [| "-s" |],
+                Required = false,
                 Description = "Address of the Grace server to connect to.",
                 Arity = ArgumentArity.ExactlyOne
             )
 
         let retrieveDefaultBranch =
             new Option<bool>(
-                [| "--retrieveDefaultBranch" |],
-                IsRequired = false,
+                "--retrieveDefaultBranch",
+                [||],
+                Required = false,
                 Description = "True to retrieve the default branch after connecting; false to connect but not download any files.",
                 Arity = ArgumentArity.ExactlyOne
             )
@@ -89,7 +82,7 @@ module Connect =
         let ``RepositoryId must be a non-empty Guid`` (parseResult: ParseResult, commonParameters: CommonParameters) =
             let mutable repositoryId: Guid = Guid.Empty
 
-            if parseResult.HasOption(Options.repositoryId) then
+            if parseResult.CommandResult.Command.Options.Contains(Options.repositoryId) then
                 match
                     (Guid.isValidAndNotEmptyGuid commonParameters.RepositoryId InvalidRepositoryId)
                         .Result
@@ -100,7 +93,7 @@ module Connect =
                 Result.Ok(parseResult, commonParameters)
 
         let ``RepositoryName must be valid`` (parseResult: ParseResult, commonParameters: CommonParameters) =
-            if parseResult.HasOption(Options.repositoryName) then
+            if parseResult.CommandResult.Command.Options.Contains(Options.repositoryName) then
                 match
                     (String.isValidGraceName commonParameters.RepositoryName InvalidRepositoryName)
                         .Result
@@ -113,7 +106,7 @@ module Connect =
         let ``OwnerId must be a non-empty Guid`` (parseResult: ParseResult, commonParameters: CommonParameters) =
             let mutable ownerId: Guid = Guid.Empty
 
-            if parseResult.HasOption(Options.ownerId) then
+            if parseResult.CommandResult.Command.Options.Contains(Options.ownerId) then
                 match (Guid.isValidAndNotEmptyGuid commonParameters.OwnerId InvalidOwnerId).Result with
                 | Ok result -> Result.Ok(parseResult, commonParameters)
                 | Error error -> Result.Error error
@@ -121,7 +114,7 @@ module Connect =
                 Result.Ok(parseResult, commonParameters)
 
         let ``OwnerName must be valid`` (parseResult: ParseResult, commonParameters: CommonParameters) =
-            if parseResult.HasOption(Options.ownerName) then
+            if parseResult.CommandResult.Command.Options.Contains(Options.ownerName) then
                 match (String.isValidGraceName commonParameters.OwnerName InvalidOwnerName).Result with
                 | Ok result -> Result.Ok(parseResult, commonParameters)
                 | Error error -> Result.Error error
@@ -131,7 +124,7 @@ module Connect =
         let ``OrganizationId must be a non-empty Guid`` (parseResult: ParseResult, commonParameters: CommonParameters) =
             let mutable organizationId: Guid = Guid.Empty
 
-            if parseResult.HasOption(Options.organizationId) then
+            if parseResult.CommandResult.Command.Options.Contains(Options.organizationId) then
                 match
                     (Guid.isValidAndNotEmptyGuid commonParameters.OrganizationId InvalidOrganizationId)
                         .Result
@@ -142,7 +135,7 @@ module Connect =
                 Result.Ok(parseResult, commonParameters)
 
         let ``OrganizationName must be valid`` (parseResult: ParseResult, commonParameters: CommonParameters) =
-            if parseResult.HasOption(Options.organizationName) then
+            if parseResult.CommandResult.Command.Options.Contains(Options.organizationName) then
                 match
                     (String.isValidGraceName commonParameters.OrganizationName InvalidOrganizationName)
                         .Result
@@ -377,15 +370,15 @@ module Connect =
         // Create main command and aliases, if any.
         let connectCommand = new Command("connect", Description = "Connect to a Grace repository.")
 
-        connectCommand.AddOption(Options.repositoryId)
-        connectCommand.AddOption(Options.repositoryName)
-        connectCommand.AddOption(Options.ownerId)
-        connectCommand.AddOption(Options.ownerName)
-        connectCommand.AddOption(Options.organizationId)
-        connectCommand.AddOption(Options.organizationName)
-        connectCommand.AddOption(Options.correlationId)
-        connectCommand.AddOption(Options.serverAddress)
-        connectCommand.AddOption(Options.retrieveDefaultBranch)
+        connectCommand.Options.Add(Options.repositoryId)
+        connectCommand.Options.Add(Options.repositoryName)
+        connectCommand.Options.Add(Options.ownerId)
+        connectCommand.Options.Add(Options.ownerName)
+        connectCommand.Options.Add(Options.organizationId)
+        connectCommand.Options.Add(Options.organizationName)
+        connectCommand.Options.Add(Options.correlationId)
+        connectCommand.Options.Add(Options.serverAddress)
+        connectCommand.Options.Add(Options.retrieveDefaultBranch)
 
-        connectCommand.Handler <- Connect
+        connectCommand.Action <- Connect
         connectCommand

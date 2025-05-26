@@ -51,16 +51,16 @@ module Diff =
         let ownerId =
             new Option<string>(
                 "--ownerId",
-                IsRequired = false,
+                Required = false,
                 Description = "The repository's owner ID <Guid>.",
                 Arity = ArgumentArity.ZeroOrOne,
-                getDefaultValue = (fun _ -> $"{Current().OwnerId}")
+                DefaultValueFactory = (fun _ -> $"{Current().OwnerId}")
             )
 
         let ownerName =
             new Option<string>(
                 "--ownerName",
-                IsRequired = false,
+                Required = false,
                 Description = "The repository's owner name. [default: current owner]",
                 Arity = ArgumentArity.ExactlyOne
             )
@@ -68,93 +68,101 @@ module Diff =
         let organizationId =
             new Option<string>(
                 "--organizationId",
-                IsRequired = false,
+                Required = false,
                 Description = "The repository's organization ID <Guid>.",
                 Arity = ArgumentArity.ZeroOrOne,
-                getDefaultValue = (fun _ -> $"{Current().OrganizationId}")
+                DefaultValueFactory = (fun _ -> $"{Current().OrganizationId}")
             )
 
         let organizationName =
             new Option<string>(
                 "--organizationName",
-                IsRequired = false,
+                Required = false,
                 Description = "The repository's organization name. [default: current organization]",
                 Arity = ArgumentArity.ZeroOrOne
             )
 
         let repositoryId =
             new Option<string>(
-                [| "--repositoryId"; "-r" |],
-                IsRequired = false,
+                "--repositoryId",
+                [| "-r" |],
+                Required = false,
                 Description = "The repository's Id <Guid>.",
                 Arity = ArgumentArity.ExactlyOne,
-                getDefaultValue = (fun _ -> $"{Current().RepositoryId}")
+                DefaultValueFactory = (fun _ -> $"{Current().RepositoryId}")
             )
 
         let repositoryName =
             new Option<string>(
-                [| "--repositoryName"; "-n" |],
-                IsRequired = false,
+                "--repositoryName",
+                [| "-n" |],
+                Required = false,
                 Description = "The name of the repository. [default: current repository]",
                 Arity = ArgumentArity.ExactlyOne
             )
 
         let branchId =
             new Option<string>(
-                [| "--branchId"; "-i" |],
-                IsRequired = false,
+                "--branchId",
+                [| "-i" |],
+                Required = false,
                 Description = "The branch's ID <Guid>.",
                 Arity = ArgumentArity.ExactlyOne,
-                getDefaultValue = (fun _ -> $"{Current().BranchId}")
+                DefaultValueFactory = (fun _ -> $"{Current().BranchId}")
             )
 
         let branchName =
             new Option<string>(
-                [| "--branchName"; "-b" |],
-                IsRequired = false,
+                "--branchName",
+                [| "-b" |],
+                Required = false,
                 Description = "The name of the branch. [default: current branch]",
                 Arity = ArgumentArity.ExactlyOne
             )
 
         let directoryVersionId1 =
             new Option<string>(
-                [| "--directoryVersionId1"; "--d1" |],
-                IsRequired = true,
+                "--directoryVersionId1",
+                [| "--d1" |],
+                Required = true,
                 Description = "The first DirectoryId to compare in the diff.",
                 Arity = ArgumentArity.ExactlyOne
             )
 
         let directoryVersionId2 =
             new Option<string>(
-                [| "--directoryVersionId2"; "--d2" |],
-                IsRequired = false,
+                "--directoryVersionId2",
+                [| "--d2" |],
+                Required = false,
                 Description = "The second DirectoryId to compare in the diff.",
                 Arity = ArgumentArity.ExactlyOne
             )
 
         let sha256Hash1 =
             new Option<Sha256Hash>(
-                [| "--sha256Hash1"; "--s1" |],
-                IsRequired = true,
+                "--sha256Hash1",
+                [| "--s1" |],
+                Required = true,
                 Description = "The first partial or full SHA-256 hash to compare in the diff.",
                 Arity = ArgumentArity.ExactlyOne
             )
 
         let sha256Hash2 =
             new Option<Sha256Hash>(
-                [| "--sha256Hash2"; "--s2" |],
-                IsRequired = false,
+                "--sha256Hash2",
+                [| "--s2" |],
+                Required = false,
                 Description = "The second partial or full SHA-256 hash to compare in the diff.",
                 Arity = ArgumentArity.ExactlyOne
             )
 
-        let tag = new Option<string>("--tag", IsRequired = true, Description = "The tag to compare the current version to.", Arity = ArgumentArity.ExactlyOne)
+        let tag = new Option<string>("--tag", Required = true, Description = "The tag to compare the current version to.", Arity = ArgumentArity.ExactlyOne)
 
     let mustBeAValidGuid (parseResult: ParseResult) (parameters: CommonParameters) (option: Option) (value: string) (error: DiffError) =
         let mutable guid = Guid.Empty
 
         if
-            parseResult.CommandResult.FindResultFor(option) <> null
+            parseResult.GetResult(option) <> null
             && not <| String.IsNullOrEmpty(value)
             && (Guid.TryParse(value, &guid) = false || guid = Guid.Empty)
         then
@@ -164,7 +172,7 @@ module Diff =
 
     let mustBeAValidGraceName (parseResult: ParseResult) (parameters: CommonParameters) (option: Option) (value: string) (error: DiffError) =
         if
-            parseResult.CommandResult.FindResultFor(option) <> null
+            parseResult.GetResult(option) <> null
             && not <| Constants.GraceNameRegex.IsMatch(value)
         then
             Error(GraceError.Create (DiffError.getErrorMessage error) (parameters.CorrelationId))
@@ -212,7 +220,7 @@ module Diff =
     let private sha256Validations (parseResult, parameters) =
         let ``Sha256Hash1 must be a valid SHA-256 hash value`` (parseResult: ParseResult, (parameters: GetDiffBySha256HashParameters)) =
             if
-                parseResult.CommandResult.FindResultFor(Options.sha256Hash1) <> null
+                parseResult.GetResult(Options.sha256Hash1) <> null
                 && not <| Constants.Sha256Regex.IsMatch(parameters.Sha256Hash1)
             then
                 let properties = Dictionary<string, string>()
@@ -225,7 +233,7 @@ module Diff =
 
         let ``Sha256Hash2 must be a valid SHA-256 hash value`` (parseResult: ParseResult, (parameters: GetDiffBySha256HashParameters)) =
             if
-                parseResult.CommandResult.FindResultFor(Options.sha256Hash2) <> null
+                parseResult.GetResult(Options.sha256Hash2) <> null
                 && not <| Constants.Sha256Regex.IsMatch(parameters.Sha256Hash2)
             then
                 Error(GraceError.Create (DiffError.getErrorMessage InvalidSha256Hash) (parameters.CorrelationId))
@@ -790,32 +798,32 @@ module Diff =
             |> addCommonOptions
             |> addBranchOptions
 
-        promotionCommand.Handler <- promotionHandler
-        diffCommand.AddCommand(promotionCommand)
+        promotionCommand.Action <- promotionHandler
+        diffCommand.Subcommands.Add(promotionCommand)
 
         let commitCommand =
             new Command("commit", Description = "Displays the difference between the most recent commit and your current version.")
             |> addCommonOptions
             |> addBranchOptions
 
-        commitCommand.Handler <- commitHandler
-        diffCommand.AddCommand(commitCommand)
+        commitCommand.Action <- commitHandler
+        diffCommand.Subcommands.Add(commitCommand)
 
         let checkpointCommand =
             new Command("checkpoint", Description = "Displays the difference between the most recent checkpoint and your current version.")
             |> addCommonOptions
             |> addBranchOptions
 
-        checkpointCommand.Handler <- checkpointHandler
-        diffCommand.AddCommand(checkpointCommand)
+        checkpointCommand.Action <- checkpointHandler
+        diffCommand.Subcommands.Add(checkpointCommand)
 
         let saveCommand =
             new Command("save", Description = "Displays the difference between the most recent save and your current version.")
             |> addCommonOptions
             |> addBranchOptions
 
-        saveCommand.Handler <- saveHandler
-        diffCommand.AddCommand(saveCommand)
+        saveCommand.Action <- saveHandler
+        diffCommand.Subcommands.Add(saveCommand)
 
         let tagCommand =
             new Command("tag", Description = "Displays the difference between the specified tag and your current version.")
@@ -823,8 +831,8 @@ module Diff =
             |> addBranchOptions
             |> addOption Options.tag
 
-        tagCommand.Handler <- tagHandler
-        diffCommand.AddCommand(tagCommand)
+        tagCommand.Action <- tagHandler
+        diffCommand.Subcommands.Add(tagCommand)
 
         let directoryIdCommand =
             new Command(
@@ -836,8 +844,8 @@ module Diff =
             |> addOption Options.directoryVersionId1
             |> addOption Options.directoryVersionId2
 
-        directoryIdCommand.Handler <- DirectoryIdCommand
-        diffCommand.AddCommand(directoryIdCommand)
+        directoryIdCommand.Action <- DirectoryIdCommand
+        diffCommand.Subcommands.Add(directoryIdCommand)
 
         let shaCommand =
             new Command(
@@ -849,7 +857,7 @@ module Diff =
             |> addOption Options.sha256Hash1
             |> addOption Options.sha256Hash2
 
-        shaCommand.Handler <- shaHandler
-        diffCommand.AddCommand(shaCommand)
+        shaCommand.Action <- shaHandler
+        diffCommand.Subcommands.Add(shaCommand)
 
         diffCommand
