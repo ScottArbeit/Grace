@@ -9,9 +9,6 @@ open System
 open System.Runtime.Serialization
 open System.Runtime.CompilerServices
 
-[<assembly: InternalsVisibleTo("Grace.Orleans.CodeGen")>]
-do ()
-
 module Types =
 
     /// Defines all reminders used in Grace.

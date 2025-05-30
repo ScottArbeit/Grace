@@ -32,6 +32,7 @@ open System.Threading.Tasks
 open System.Net
 open Microsoft.Extensions.Logging
 open Grace.Actors
+open System.Runtime.CompilerServices
 
 module OrleansFsharpFix =
     // Grace.Orleans.CodeGen is the name of the C# codegen project.
@@ -50,6 +51,9 @@ module OrleansFsharpFix =
     do ()
 
 module Program =
+
+    [<InternalsVisibleTo("Host")>]
+    do ()
 
     let graceAppPort = Environment.GetEnvironmentVariable("DAPR_APP_PORT") |> int
 

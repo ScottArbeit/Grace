@@ -43,6 +43,7 @@
 		<Compile Include="Diff.Actor.fs" />
 		<Compile Include="FileAppearance.Actor.fs" />
 		<Compile Include="DirectoryAppearance.Actor.fs" />
+		<Compile Include="CodeGenAttribute.Actor.fs" />
 	</ItemGroup>
 
 	<ItemGroup>

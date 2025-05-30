@@ -6,7 +6,6 @@ open Grace.Shared.Utilities
 open NodaTime
 open System
 open System.Collections.Concurrent
-open System.Runtime.Serialization
 
 module Constants =
 
