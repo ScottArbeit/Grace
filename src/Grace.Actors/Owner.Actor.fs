@@ -14,7 +14,7 @@ open Grace.Shared.Constants
 open Grace.Shared.Dto.Organization
 open Grace.Shared.Dto.Owner
 open Grace.Shared.Events.Owner
-open Grace.Shared.Types
+open Grace.Types.Types
 open Grace.Shared.Utilities
 open Grace.Shared.Validation.Errors.Owner
 open Microsoft.Extensions.Logging
@@ -247,7 +247,7 @@ module Owner =
                     task {
                         try
                             logToConsole
-                                $"In Owner.Actor.ProcessCommand(): Command: {serialize command}; AssemblyQualifiedName: {command.GetType().AssemblyQualifiedName}; Assembly.Location: {command.GetType().Assembly.Location}; Metadata: {metadata}"
+                                $"In Owner.Actor.ProcessCommand(): command.AssemblyQualifiedName: {command.GetType().AssemblyQualifiedName}; command.Assembly.Location: {command.GetType().Assembly.Location}; Command: {serialize command}; metadata.AssemblyQualifiedName: {metadata.GetType().AssemblyQualifiedName}; metadata.Assembly.Location: {metadata.GetType().Assembly.Location}; metadata.GetType().Attributes: {metadata.GetType().Attributes}; metadata: {serialize metadata}"
 
                             let! eventResult =
                                 task {

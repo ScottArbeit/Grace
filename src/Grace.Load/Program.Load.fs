@@ -3,7 +3,7 @@ namespace Grace
 open Grace.SDK
 open Grace.Shared
 open Grace.Shared.Parameters
-open Grace.Shared.Types
+open Grace.Types.Types
 open Grace.Shared.Utilities
 open System
 open System.Collections.Concurrent

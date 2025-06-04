@@ -5,7 +5,7 @@ open Grace.Actors.Context
 open Grace.Actors.Extensions.MemoryCache
 open Grace.Actors.Interfaces
 open Grace.Actors.Services
-open Grace.Shared.Types
+open Grace.Types.Types
 open Grace.Shared.Utilities
 open Microsoft.Extensions.Logging
 open NodaTime

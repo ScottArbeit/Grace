@@ -1,6 +1,6 @@
 namespace Grace.Shared
 
-open Grace.Shared.Types
+open Grace.Types.Types
 open Grace.Shared.Utilities
 open NodaTime
 open System

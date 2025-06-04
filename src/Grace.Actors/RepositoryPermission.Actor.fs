@@ -3,7 +3,7 @@ namespace Grace.Actors
 open Grace.Actors.Interfaces
 open Grace.Actors.Constants
 open Grace.Shared
-open Grace.Shared.Types
+open Grace.Types.Types
 open System
 open System.Threading.Tasks
 

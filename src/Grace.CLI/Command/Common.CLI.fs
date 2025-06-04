@@ -4,7 +4,7 @@ open Grace.CLI.Services
 open Grace.Shared
 open Grace.Shared.Client.Configuration
 open Grace.Shared.Resources.Text
-open Grace.Shared.Types
+open Grace.Types.Types
 open Grace.Shared.Utilities
 open Spectre.Console
 open System
@@ -70,13 +70,16 @@ module Common =
     /// Checks if the output format from the command line is a specific format.
     let isOutputFormat (outputFormat: OutputFormat) (parseResult: ParseResult) =
         if parseResult.CommandResult.Command.Options.Contains(Options.output) then
+            logToConsole $"In isOutputFormat(): Found output option. {outputFormat}"
             //let format = parseResult.FindResultFor(Options.output).GetValueOrDefault<String>()
             let format = parseResult.GetValue<string>(Options.output)
 
             String.Equals(format, getDiscriminatedUnionCaseName (outputFormat), StringComparison.CurrentCultureIgnoreCase)
         else if outputFormat = OutputFormat.Normal then
+            logToConsole $"In isOutputFormat(): Did not find output option. outputFormat: Normal"
             true
         else
+            logToConsole $"In isOutputFormat(): Did not find output option. {outputFormat}"
             false
 
     /// Checks if the output format from the command line is Json.
@@ -114,7 +117,7 @@ module Common =
     /// Prints the ParseResult with markup.
     let printParseResult (parseResult: ParseResult) =
         if not <| isNull parseResult then
-            AnsiConsole.MarkupLine($"[{Colors.Verbose}]{escapeBrackets parseResult}[/]")
+            AnsiConsole.MarkupLine($"[{Colors.Verbose}]{escapeBrackets (parseResult.ToString())}[/]")
             AnsiConsole.WriteLine()
 
     /// Prints AnsiConsole markup to the console.

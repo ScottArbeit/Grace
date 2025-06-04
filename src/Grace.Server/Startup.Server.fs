@@ -11,7 +11,7 @@ open Grace.Server.Middleware
 open Grace.Server.ReminderService
 open Grace.Shared.Converters
 open Grace.Shared.Parameters
-open Grace.Shared.Types
+open Grace.Types.Types
 open Microsoft.AspNetCore.Builder
 open Microsoft.AspNetCore.Hosting
 open Microsoft.AspNetCore.Http

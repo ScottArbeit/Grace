@@ -1,9 +1,9 @@
-﻿namespace Grace.SDK
+namespace Grace.SDK
 
 open Grace.SDK.Common
 open Grace.Shared.Dto.Owner
 open Grace.Shared.Parameters.Owner
-open Grace.Shared.Types
+open Grace.Types.Types
 open System
 open System.Threading.Tasks
 

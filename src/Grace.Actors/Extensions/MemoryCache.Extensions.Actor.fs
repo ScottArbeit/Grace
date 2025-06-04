@@ -1,7 +1,7 @@
 namespace Grace.Actors.Extensions
 
 open Grace.Shared.Constants
-open Grace.Shared.Types
+open Grace.Types.Types
 open Orleans.Runtime
 open Microsoft.Extensions.Caching.Memory
 open System

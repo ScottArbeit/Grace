@@ -18,7 +18,7 @@ open Grace.Shared.Constants
 open Grace.Shared.Diff
 open Grace.Shared.Dto.Diff
 open Grace.Shared.Dto.Repository
-open Grace.Shared.Types
+open Grace.Types.Types
 open Grace.Shared.Utilities
 open Microsoft.Extensions.Logging
 open NodaTime
@@ -107,8 +107,7 @@ module Diff =
                 this.correlationId <- correlationId
                 let graceIndex = ServerGraceIndex()
 
-                let directory =
-                    orleansClient.CreateActorProxyWithCorrelationId<IDirectoryVersionActor>(directoryId, correlationId)
+                let directory = orleansClient.CreateActorProxyWithCorrelationId<IDirectoryVersionActor>(directoryId, correlationId)
 
                 let! directoryCreatedAt = directory.GetCreatedAt correlationId
                 let! directoryContents = directory.GetRecursiveDirectoryVersions false correlationId
@@ -158,7 +157,9 @@ module Diff =
             /// Sets a Grace reminder to perform a physical deletion of this actor.
             member this.ScheduleReminderAsync reminderType delay state correlationId =
                 task {
-                    let reminder = ReminderDto.Create actorName $"{this.IdentityString}" diffDto.RepositoryId reminderType (getFutureInstant delay) state correlationId
+                    let reminder =
+                        ReminderDto.Create actorName $"{this.IdentityString}" diffDto.RepositoryId reminderType (getFutureInstant delay) state correlationId
+
                     do! createReminder reminder
                 }
                 :> Task
@@ -209,7 +210,7 @@ module Diff =
                     (true |> returnTask)
                 else
                     task {
-                        let (directoryVersionId1, directoryVersionId2) = deconstructActorId($"{this.GetGrainId().Key}")
+                        let (directoryVersionId1, directoryVersionId2) = deconstructActorId ($"{this.GetGrainId().Key}")
 
                         logToConsole $"In DiffActor.Populate(); DirectoryVersionId1: {directoryVersionId1}; DirectoryVersionId2: {directoryVersionId2}"
 

@@ -13,7 +13,7 @@ open Grace.Shared.Dto.Reference
 open Grace.Shared.Parameters.Branch
 open Grace.Shared.Parameters.DirectoryVersion
 open Grace.Shared.Services
-open Grace.Shared.Types
+open Grace.Types.Types
 open Grace.Shared.Utilities
 open Grace.Shared.Validation
 open Grace.Shared.Validation.Errors.DirectoryVersion

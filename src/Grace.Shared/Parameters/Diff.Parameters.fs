@@ -1,7 +1,7 @@
-﻿namespace Grace.Shared.Parameters
+namespace Grace.Shared.Parameters
 
 open Grace.Shared.Parameters.Common
-open Grace.Shared.Types
+open Grace.Types.Types
 open System
 
 module Diff =

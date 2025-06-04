@@ -66,6 +66,7 @@
 	<ItemGroup>
 		<ProjectReference Include="..\Grace.SDK\Grace.SDK.fsproj" />
 		<ProjectReference Include="..\Grace.Shared\Grace.Shared.fsproj" />
+		<ProjectReference Include="..\Grace.Types\Grace.Types.fsproj" />
 	</ItemGroup>
 	<ItemGroup>
 		<PackageReference Update="FSharp.Core" Version="9.0.300" />

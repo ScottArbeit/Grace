@@ -14,7 +14,7 @@ open Grace.Shared.Commands.Branch
 open Grace.Shared.Commands.Repository
 open Grace.Shared.Extensions
 open Grace.Shared.Parameters.Repository
-open Grace.Shared.Types
+open Grace.Types.Types
 open Grace.Shared.Utilities
 open Grace.Shared.Validation.Common
 open Grace.Shared.Validation.Errors.Repository

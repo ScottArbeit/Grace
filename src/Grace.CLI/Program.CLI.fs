@@ -7,7 +7,8 @@ open Grace.Shared
 open Grace.Shared.Client.Configuration
 open Grace.Shared.Converters
 open Grace.Shared.Resources.Text
-open Grace.Shared.Types
+open Grace.Shared.Resources.Utilities
+open Grace.Types.Types
 open Grace.Shared.Utilities
 open Grace.Shared.Validation
 open Microsoft.Extensions.Logging
@@ -241,13 +242,12 @@ module GraceCommand =
     let main args =
         let startTime = getCurrentInstant ()
 
+        // Create a MemoryCache instance.
+        //let memoryCacheOptions = MemoryCacheOptions(TrackStatistics = false, TrackLinkedCacheEntries = false)
+        //memoryCache <- new MemoryCache(memoryCacheOptions)
+
         // Checks if we're running on a Windows system, and if so, sets the case-insensitive flag.
         let isCaseInsensitive = Environment.OSVersion.Platform <> PlatformID.Win32NT
-
-        // Create a MemoryCache instance.
-        let memoryCacheOptions = MemoryCacheOptions(TrackStatistics = false, TrackLinkedCacheEntries = false)
-
-        memoryCache <- new MemoryCache(memoryCacheOptions)
 
         (task {
             let mutable parseResult: ParseResult = null
@@ -429,8 +429,9 @@ module GraceCommand =
 
                     return returnValue
                 with ex ->
-                    logToAnsiConsole Colors.Error $"ex.Message: {ex.Message}"
-                    logToAnsiConsole Colors.Error $"{ex.StackTrace}"
+                    AnsiConsole.WriteException ex
+                    //logToAnsiConsole Colors.Error $"ex.Message: {ex.Message}"
+                    //logToAnsiConsole Colors.Error $"{ex.StackTrace}"
                     return -1
             finally
                 // If this was grace watch, delete the inter-process communication file.

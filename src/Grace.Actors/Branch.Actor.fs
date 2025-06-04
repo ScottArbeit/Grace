@@ -14,9 +14,9 @@ open Grace.Shared.Constants
 open Grace.Shared.Dto.Branch
 open Grace.Shared.Dto.Reference
 open Grace.Shared.Events.Branch
-open Grace.Shared.Types
 open Grace.Shared.Utilities
 open Grace.Shared.Validation.Errors.Branch
+open Grace.Types.Types
 open Microsoft.Extensions.Logging
 open NodaTime
 open Orleans

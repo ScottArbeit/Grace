@@ -4,7 +4,7 @@ open Azure.Data.Tables
 open Grace.Actors.Interfaces
 open Grace.Server.ApplicationContext
 open Grace.Shared.Constants
-open Grace.Shared.Types
+open Grace.Types.Types
 open Grace.Shared.Utilities
 open MessagePack
 open Microsoft.AspNetCore

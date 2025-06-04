@@ -9,7 +9,7 @@ open Grace.Shared.Dto.Organization
 open Grace.Shared.Dto.Owner
 open Grace.Shared.Dto.Reference
 open Grace.Shared.Dto.Repository
-open Grace.Shared.Types
+open Grace.Types.Types
 open Grace.Shared.Utilities
 open NodaTime
 open Orleans

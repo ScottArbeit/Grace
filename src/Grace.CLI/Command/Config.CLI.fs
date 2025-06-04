@@ -10,7 +10,7 @@ open Grace.Shared
 open Grace.Shared.Client.Configuration
 open Grace.Shared.Dto.Branch
 open Grace.Shared.Dto.Reference
-open Grace.Shared.Types
+open Grace.Types.Types
 open Grace.Shared.Utilities
 open Grace.Shared.Validation.Errors.Config
 open Spectre.Console

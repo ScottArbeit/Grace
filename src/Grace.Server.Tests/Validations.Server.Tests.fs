@@ -1,6 +1,6 @@
-﻿namespace Grace.Server.Tests
+namespace Grace.Server.Tests
 
-open Grace.Shared
+open Grace.Types
 open Grace.Shared.Utilities
 open Grace.Shared.Validation.Common
 open FsUnit
@@ -13,7 +13,9 @@ type Validations() =
 
     [<Test>]
     member this.``valid Guid returns Ok``() =
-        let result = (Guid.isValidAndNotEmptyGuid "6fddb3c1-24c2-4e2e-8f57-98d0838c0c3f" "error").Result
+        let result =
+            (Guid.isValidAndNotEmptyGuid "6fddb3c1-24c2-4e2e-8f57-98d0838c0c3f" "error")
+                .Result
 
         Assert.That(result, Is.EqualTo(Common.okResult))
 

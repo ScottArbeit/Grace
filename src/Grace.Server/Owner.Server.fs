@@ -15,7 +15,7 @@ open Grace.Shared.Parameters.Owner
 open Grace.Shared.Validation.Common
 open Grace.Shared.Validation.Utilities
 open Grace.Shared.Validation.Errors.Owner
-open Grace.Shared.Types
+open Grace.Types.Types
 open Grace.Shared.Utilities
 open Microsoft.AspNetCore.Http
 open Microsoft.Azure.Cosmos
@@ -64,9 +64,12 @@ module Owner =
 
                         let ownerGuid = Guid.Parse(ownerId)
                         let actorProxy = Owner.CreateActorProxy ownerGuid (getCorrelationId context)
-                        logToConsole $"In Owner.Server.handleCommand: context.Items: {serialize context.Items}."
+                        let metadata = createMetadata context
 
-                        match! actorProxy.Handle cmd (createMetadata context) with
+                        logToConsole
+                            $"In Owner.Server.handleCommand: context.Items: {serialize context.Items}; metadata.AssemblyQualifiedName: {metadata.GetType().AssemblyQualifiedName}; metadata.Assembly.Location: {metadata.GetType().Assembly.Location}; metadata.GetType().Attributes: {metadata.GetType().Attributes}; metadata: {serialize metadata}."
+
+                        match! actorProxy.Handle cmd metadata with
                         | Ok graceReturnValue ->
                             logToConsole $"In Owner.Server.processCommand: graceReturnValue.ReturnValue: {graceReturnValue.ReturnValue}."
                             logToConsole $"In Owner.Server.processCommand: graceReturnValue.CorrelationId: {graceReturnValue.CorrelationId}."
@@ -76,12 +79,12 @@ module Owner =
                             logToConsole
                                 $"In Owner.Server.processCommand: parameterDictionary: {serialize parameterDictionary}; graceIds: {serialize graceIds}; commandName: {commandName}; path: {context.Request.Path}."
 
-                            graceReturnValue
-                                .enhance(parameterDictionary)
-                                .enhance(nameof (OwnerId), graceIds.OwnerId)
-                                .enhance("Command", commandName)
-                                .enhance ("Path", context.Request.Path)
+                            graceReturnValue.enhance (parameterDictionary :> IReadOnlyDictionary<string, string>)
                             |> ignore
+
+                            graceReturnValue.enhance (nameof (OwnerId), graceIds.OwnerId) |> ignore
+                            graceReturnValue.enhance ("Command", commandName) |> ignore
+                            graceReturnValue.enhance ("Path", context.Request.Path) |> ignore
 
                             return! context |> result200Ok graceReturnValue
                         | Error graceError ->

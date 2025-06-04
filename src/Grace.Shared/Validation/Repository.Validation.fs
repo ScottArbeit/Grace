@@ -1,7 +1,7 @@
 namespace Grace.Shared.Validation
 
 open Grace.Shared
-open Grace.Shared.Types
+open Grace.Types.Types
 open Grace.Shared.Utilities
 open Grace.Shared.Validation.Errors.Repository
 open System

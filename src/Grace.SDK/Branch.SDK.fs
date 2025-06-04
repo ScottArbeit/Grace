@@ -5,7 +5,7 @@ open Grace.Shared.Dto.Branch
 open Grace.Shared.Dto.Diff
 open Grace.Shared.Dto.Reference
 open Grace.Shared.Parameters.Branch
-open Grace.Shared.Types
+open Grace.Types.Types
 open Grace.Shared.Utilities
 open System
 open System.Collections.Generic

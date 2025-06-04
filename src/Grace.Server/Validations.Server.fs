@@ -11,7 +11,7 @@ open Grace.Actors.Services
 open Grace.Server.ApplicationContext
 open Grace.Shared.Commands
 open Grace.Shared.Constants
-open Grace.Shared.Types
+open Grace.Types.Types
 open Grace.Shared.Utilities
 open Grace.Shared.Validation
 open Microsoft.AspNetCore.Http

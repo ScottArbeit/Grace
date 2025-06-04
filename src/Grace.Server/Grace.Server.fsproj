@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk.Web">
+<Project Sdk="Microsoft.NET.Sdk.Web">
     <PropertyGroup>
         <AssemblyInformationalVersion>0.1.0 (Build Time: $([System.DateTime]::UtcNow.ToString("u")))</AssemblyInformationalVersion>
     </PropertyGroup>
@@ -80,6 +80,7 @@
 		<None Include="web.config">
 		  <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
 		</None>
+		<ProjectReference Include="..\Grace.Types\Grace.Types.fsproj" />
 		<ProjectReference Include="..\CosmosSerializer\CosmosJsonSerializer.csproj" />
 		<ProjectReference Include="..\Grace.Actors\Grace.Actors.fsproj" />
 		<ProjectReference Include="..\Grace.Aspire.ServiceDefaults\Grace.Aspire.ServiceDefaults.csproj" />

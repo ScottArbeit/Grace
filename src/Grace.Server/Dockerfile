@@ -75,7 +75,13 @@ RUN dotnet restore "CosmosSerializer/CosmosJsonSerializer.csproj"
 COPY CosmosSerializer/ CosmosSerializer/
 RUN dotnet build "CosmosSerializer/CosmosJsonSerializer.csproj" --no-restore -c Debug /p:DebugType=full
 
+COPY ["Grace.Types/Grace.Types.fsproj", "Grace.Types/"]
 COPY ["Grace.Shared/Grace.Shared.fsproj", "Grace.Shared/"]
+RUN dotnet restore "Grace.Types/Grace.Types.fsproj"
+COPY Grace.Types/ Grace.Types/
+COPY Grace.Shared/ Grace.Shared/
+RUN dotnet build "Grace.Types/Grace.Types.fsproj" --no-restore -c Debug /p:DebugType=full
+
 RUN dotnet restore "Grace.Shared/Grace.Shared.fsproj"
 COPY Grace.Shared/ Grace.Shared/
 RUN dotnet build "Grace.Shared/Grace.Shared.fsproj" --no-restore -c Debug /p:DebugType=full

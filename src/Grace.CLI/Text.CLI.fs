@@ -1,6 +1,6 @@
 namespace Grace.CLI
 
-open Grace.Shared.Utilities
+open Grace.Shared.Resources.Utilities
 open Grace.Shared.Resources.Text
 
 module Text =

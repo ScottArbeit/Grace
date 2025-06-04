@@ -13,7 +13,7 @@ open Grace.Server.ApplicationContext
 open Grace.Server.Services
 open Grace.Shared.Dto.Repository
 open Grace.Shared.Parameters.Storage
-open Grace.Shared.Types
+open Grace.Types.Types
 open Grace.Shared.Utilities
 open Grace.Shared
 open Grace.Shared.Client.Configuration

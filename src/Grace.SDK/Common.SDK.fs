@@ -3,7 +3,7 @@ namespace Grace.SDK
 open Grace.Shared
 open Grace.Shared.Client.Configuration
 open Grace.Shared.Services
-open Grace.Shared.Types
+open Grace.Types.Types
 open Grace.Shared.Parameters.Common
 open Grace.Shared.Utilities
 open Grace.Shared.Validation
@@ -26,12 +26,12 @@ open Microsoft.Extensions.Caching.Memory
 module Common =
 
     /// Checks to make sure the .NET MemoryCache is initialized. If not, it will create one.
-    let checkMemoryCache () =
-        if isNull memoryCache then
-            let memoryCacheOptions =
-                MemoryCacheOptions(TrackStatistics = false, TrackLinkedCacheEntries = false, ExpirationScanFrequency = TimeSpan.FromSeconds(30.0))
+    //let checkMemoryCache () =
+    //    if isNull memoryCache then
+    //        let memoryCacheOptions =
+    //            MemoryCacheOptions(TrackStatistics = false, TrackLinkedCacheEntries = false, ExpirationScanFrequency = TimeSpan.FromSeconds(30.0))
 
-            memoryCache <- new MemoryCache(memoryCacheOptions)
+    //        memoryCache <- new MemoryCache(memoryCacheOptions)
 
     /// <summary>
     /// Sends GET commands to Grace Server.
@@ -44,7 +44,7 @@ module Common =
     let getServer<'T, 'U when 'T :> CommonParameters> (parameters: 'T, route: string) =
         task {
             try
-                checkMemoryCache ()
+                //checkMemoryCache ()
                 use httpClient = getHttpClient parameters.CorrelationId
                 let startTime = getCurrentInstant ()
 
@@ -86,7 +86,7 @@ module Common =
     let postServer<'T, 'U when 'T :> CommonParameters> (parameters: 'T, route: string) =
         task {
             try
-                checkMemoryCache ()
+                //checkMemoryCache ()
                 use httpClient = getHttpClient parameters.CorrelationId
                 let serverUriWithRoute = Uri($"{Current().ServerUri}/{route}")
                 let startTime = getCurrentInstant ()

@@ -1,7 +1,5 @@
 namespace Grace.Shared
 
-open Grace.Shared.Constants
-open Grace.Shared.Resources
 open Microsoft.Extensions.Caching.Memory
 open Microsoft.FSharp.NativeInterop
 open Microsoft.FSharp.Reflection
@@ -43,7 +41,8 @@ module Combinators =
     let (>=>) s1 s2 = s1 >> bind s2
 
 module Utilities =
-    let mutable memoryCache: IMemoryCache = null
+    let memoryCacheOptions = MemoryCacheOptions(TrackStatistics = false, TrackLinkedCacheEntries = false, ExpirationScanFrequency = TimeSpan.FromSeconds(30.0))
+    let memoryCache: IMemoryCache = new MemoryCache(memoryCacheOptions)
 
     /// Defines a PooledObjectPolicy specialized for the StringBuilder type.
     type StringBuilderPooledObjectPolicy() =
@@ -141,12 +140,18 @@ module Utilities =
     /// Converts both the type name and case name of a discriminated union to a string.
     ///
     /// Example: Animal.Dog -> "Animal.Dog"
-    let getDiscriminatedUnionFullName (x: 'T) = getDiscriminatedUnionFullName x
+    let getDiscriminatedUnionFullName (x: 'T) =
+        let discriminatedUnionType = typeof<'T>
+        let (case, _) = FSharpValue.GetUnionFields(x, discriminatedUnionType)
+        $"{discriminatedUnionType.Name}.{case.Name}"
 
     /// Converts just the case name of a discriminated union to a string.
     ///
     /// Example: Animal.Dog -> "Dog"
-    let getDiscriminatedUnionCaseName (x: 'T) = getDiscriminatedUnionCaseName x
+    let getDiscriminatedUnionCaseName (x: 'T) =
+        let discriminatedUnionType = typeof<'T>
+        let (case, _) = FSharpValue.GetUnionFields(x, discriminatedUnionType)
+        $"{case.Name}"
 
     /// Converts a string into the corresponding case of a discriminated union type.
     ///
@@ -190,11 +195,6 @@ module Utilities =
 
     /// Create JsonContent from the provided object, using Grace's custom JsonSerializerOptions.
     let createJsonContent<'T> item = JsonContent.Create(item, options = Constants.JsonSerializerOptions)
-
-    /// Retrieves the localized version of a system resource string.
-    ///
-    /// Note: For now, it's hardcoded to return en_US. I'll fix this when we really implement localization.
-    let getLocalizedString stringName = en_US.getString stringName
 
     /// Returns true if Grace is running on a Windows machine.
     let runningOnWindows =
@@ -310,6 +310,10 @@ module Utilities =
                 (relativeDirectoryPath.ToString())
             finally
                 stringBuilderPool.Return(sb)
+
+
+    [<Literal>]
+    let CorrelationIdAlphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz._-"
 
     /// Returns a randomly-generated, 12-character NanoId as a new CorrelationId.
     let generateCorrelationId () =
@@ -505,7 +509,7 @@ module Utilities =
 
             dictionary[$"parameter:{prop.Name}"] <- valueString
 
-        dictionary
+        dictionary :> IReadOnlyDictionary<string, string>
 
     /// This construct is equivalent to using IHttpClientFactory in the ASP.NET Dependency Injection container, for code (like this) that isn't using GenericHost.
     ///

@@ -1,7 +1,7 @@
 namespace Grace.Shared.Validation
 
-open Grace.Shared.Utilities
 open Grace.Shared.Resources.Text
+open Grace.Shared.Resources.Utilities
 open System
 
 module Errors =

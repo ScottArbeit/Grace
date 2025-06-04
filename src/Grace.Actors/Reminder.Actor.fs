@@ -11,7 +11,7 @@ open Grace.Actors.Services
 open Grace.Actors.Types
 open Grace.Shared
 open Grace.Shared.Constants
-open Grace.Shared.Types
+open Grace.Types.Types
 open Grace.Shared.Utilities
 open Microsoft.Extensions.Logging
 open NodaTime

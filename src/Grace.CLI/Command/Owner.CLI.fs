@@ -6,7 +6,7 @@ open Grace.SDK
 open Grace.Shared
 open Grace.Shared.Client.Configuration
 open Grace.Shared.Client.Theme
-open Grace.Shared.Types
+open Grace.Types.Types
 open Grace.Shared.Validation
 open Grace.Shared.Validation.Errors.Owner
 open NodaTime
@@ -151,7 +151,9 @@ module Owner =
     let private createHandler (parseResult: ParseResult) (createParameters: CreateParameters) =
         task {
             try
-                if parseResult |> verbose then printParseResult parseResult
+                if parseResult |> verbose then
+                    printParseResult parseResult
+                    logToConsole $"Just tried to print the ParseResult."
 
                 let validateIncomingParameters = CommonValidations(parseResult, createParameters)
 
@@ -250,8 +252,10 @@ module Owner =
     let private Get =
         CommandHandler.Create(fun (parseResult: ParseResult) (getParameters: GetParameters) ->
             task {
+                if parseResult |> verbose then printParseResult parseResult
+
                 let! result = getHandler parseResult (getParameters |> normalizeIdsAndNames parseResult)
-                //return result |> renderOutput parseResult
+
                 match result with
                 | Ok graceReturnValue ->
                     let jsonText = JsonText(serialize graceReturnValue.ReturnValue)

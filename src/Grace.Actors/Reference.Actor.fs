@@ -13,7 +13,7 @@ open Grace.Shared.Commands.Reference
 open Grace.Shared.Constants
 open Grace.Shared.Dto.Reference
 open Grace.Shared.Events.Reference
-open Grace.Shared.Types
+open Grace.Types.Types
 open Grace.Shared.Utilities
 open Grace.Shared.Validation.Errors.Reference
 open Microsoft.Extensions.Logging

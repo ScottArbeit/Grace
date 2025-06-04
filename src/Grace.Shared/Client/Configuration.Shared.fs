@@ -2,7 +2,7 @@ namespace Grace.Shared.Client
 
 open Grace.Shared.Client.Theme
 open Grace.Shared
-open Grace.Shared.Types
+open Grace.Types.Types
 open Grace.Shared.Utilities
 open System
 open System.Collections.Generic

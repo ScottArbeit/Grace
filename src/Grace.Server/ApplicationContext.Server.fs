@@ -7,7 +7,7 @@ open Grace.Actors.Constants
 open Grace.Actors.Context
 open Grace.Actors.Types
 open Grace.Shared
-open Grace.Shared.Types
+open Grace.Types.Types
 open Grace.Shared.Utilities
 open Microsoft.Azure.Cosmos
 open Microsoft.Extensions.Caching.Memory
@@ -198,15 +198,15 @@ module ApplicationContext =
             let memoryCacheOptions =
                 MemoryCacheOptions(TrackStatistics = false, TrackLinkedCacheEntries = false, ExpirationScanFrequency = TimeSpan.FromSeconds(30.0))
             //memoryCacheOptions.SizeLimit <- 100L * 1024L * 1024L
-            memoryCache <- new MemoryCache(memoryCacheOptions, loggerFactory)
+            //memoryCache <- new MemoryCache(memoryCacheOptions, loggerFactory)
 
             // Inject things into Grace.Shared.
-            Utilities.memoryCache <- memoryCache
+            //Utilities.memoryCache <- memoryCache
 
             // Inject things into Actor Services.
             setCosmosClient cosmosClient
             setCosmosContainer cosmosContainer
-            setMemoryCache memoryCache
+            //setMemoryCache memoryCache
             setTimings timings
 
             logToConsole "Grace Server is ready."

@@ -6,7 +6,7 @@ open Grace.Shared.Dto.Reference
 open Grace.Shared.Dto.Repository
 open Grace.Shared.Parameters.Repository
 open Grace.Shared.Utilities
-open Grace.Shared.Types
+open Grace.Types.Types
 open System
 open System.Collections.Generic
 open System.Threading.Tasks

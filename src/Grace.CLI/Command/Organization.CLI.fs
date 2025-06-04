@@ -5,7 +5,7 @@ open Grace.CLI.Common
 open Grace.SDK
 open Grace.Shared
 open Grace.Shared.Client.Configuration
-open Grace.Shared.Types
+open Grace.Types.Types
 open Grace.Shared.Utilities
 open Grace.Shared.Validation.Errors.Organization
 open NodaTime

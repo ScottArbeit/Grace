@@ -10,7 +10,7 @@ open Grace.Shared
 open Grace.Shared.Constants
 open Grace.Shared.Parameters.Common
 open Grace.Shared.Resources.Text
-open Grace.Shared.Types
+open Grace.Types.Types
 open Grace.Shared.Utilities
 open Microsoft.AspNetCore.Http
 open Microsoft.Extensions.Caching.Memory

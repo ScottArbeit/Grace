@@ -5,7 +5,7 @@ open DiffPlex.Chunkers
 open DiffPlex.DiffBuilder.Model
 open Grace.Shared
 open Grace.Shared.Dto
-open Grace.Shared.Types
+open Grace.Types.Types
 open Grace.Shared.Utilities
 open NodaTime
 open System

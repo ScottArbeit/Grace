@@ -15,7 +15,7 @@ open Grace.Shared.Commands.DirectoryVersion
 open Grace.Shared.Constants
 open Grace.Shared.Events.DirectoryVersion
 open Grace.Shared.Services
-open Grace.Shared.Types
+open Grace.Types.Types
 open Grace.Shared.Dto.Repository
 open Grace.Shared.Utilities
 open Grace.Shared.Validation.Errors.DirectoryVersion

@@ -13,7 +13,7 @@ open Grace.Shared.Commands.Branch
 open Grace.Shared.Dto.Diff
 open Grace.Shared.Extensions
 open Grace.Shared.Parameters.Branch
-open Grace.Shared.Types
+open Grace.Types.Types
 open Grace.Shared.Utilities
 open Grace.Shared.Validation.Common
 open Grace.Shared.Validation.Errors.Branch

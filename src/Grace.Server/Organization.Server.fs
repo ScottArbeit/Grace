@@ -15,7 +15,7 @@ open Grace.Shared.Utilities
 open Grace.Shared.Validation.Common
 open Grace.Shared.Validation.Errors.Organization
 open Grace.Shared.Validation.Utilities
-open Grace.Shared.Types
+open Grace.Types.Types
 open Microsoft.AspNetCore.Http
 open Microsoft.Extensions.Logging
 open System

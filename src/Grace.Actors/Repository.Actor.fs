@@ -17,7 +17,8 @@ open Grace.Shared.Dto.Branch
 open Grace.Shared.Dto.Repository
 open Grace.Shared.Events.Repository
 open Grace.Shared.Resources.Text
-open Grace.Shared.Types
+open Grace.Shared.Resources.Utilities
+open Grace.Types.Types
 open Grace.Shared.Utilities
 open Grace.Shared.Validation.Errors.Repository
 open Microsoft.Extensions.Logging

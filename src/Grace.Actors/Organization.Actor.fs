@@ -13,7 +13,7 @@ open Grace.Shared.Constants
 open Grace.Shared.Dto.Organization
 open Grace.Shared.Dto.Repository
 open Grace.Shared.Events.Organization
-open Grace.Shared.Types
+open Grace.Types.Types
 open Grace.Shared.Utilities
 open Grace.Shared.Validation.Errors.Organization
 open Microsoft.Extensions.Logging

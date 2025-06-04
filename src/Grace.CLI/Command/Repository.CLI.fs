@@ -7,7 +7,7 @@ open Grace.SDK
 open Grace.Shared
 open Grace.Shared.Dto
 open Grace.Shared.Parameters
-open Grace.Shared.Types
+open Grace.Types.Types
 open Grace.Shared.Utilities
 open Grace.Shared.Client.Configuration
 open Grace.Shared.Parameters.Repository

@@ -4,7 +4,7 @@ open Grace.SDK.Common
 open Grace.Shared.Dto
 open Grace.Shared.Parameters.DirectoryVersion
 open Grace.Shared
-open Grace.Shared.Types
+open Grace.Types
 open Grace.Shared.Utilities
 open System
 open System.Collections.Generic
@@ -28,7 +28,7 @@ type DirectoryVersion() =
 
     /// Retrieves the Uri to download the .zip file for a specific DirectoryVersion.
     static member public GetZipFile(parameters: GetZipFileParameters) =
-        postServer<GetZipFileParameters, UriWithSharedAccessSignature> (
+        postServer<GetZipFileParameters, Types.UriWithSharedAccessSignature> (
             parameters |> ensureCorrelationIdIsSet,
             $"directory/{nameof (DirectoryVersion.GetZipFile)}"
         )

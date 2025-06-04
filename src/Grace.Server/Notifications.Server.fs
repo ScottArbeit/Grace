@@ -11,7 +11,7 @@ open Grace.Shared
 open Grace.Shared.Constants
 open Grace.Shared.Dto
 open Grace.Shared.Events
-open Grace.Shared.Types
+open Grace.Types.Types
 open Grace.Shared.Utilities
 open Microsoft.AspNetCore.Http
 open Microsoft.AspNetCore.SignalR

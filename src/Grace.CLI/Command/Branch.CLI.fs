@@ -14,7 +14,7 @@ open Grace.Shared.Parameters.Branch
 open Grace.Shared.Parameters.DirectoryVersion
 open Grace.Shared.Services
 open Grace.Shared.Resources
-open Grace.Shared.Types
+open Grace.Types.Types
 open Grace.Shared.Utilities
 open Grace.Shared.Validation
 open Grace.Shared.Validation.Errors.Branch
@@ -3035,10 +3035,10 @@ module Branch =
                         finally
                             if not <| isNull sb then stringBuilderPool.Return(sb)
 
-                    let ownerLabel = getLocalizedString Text.StringResourceName.Owner
-                    let organizationLabel = getLocalizedString Text.StringResourceName.Organization
-                    let repositoryLabel = getLocalizedString Text.StringResourceName.Repository
-                    let branchLabel = getLocalizedString Text.StringResourceName.Branch
+                    let ownerLabel = Utilities.getLocalizedString Text.StringResourceName.Owner
+                    let organizationLabel = Utilities.getLocalizedString Text.StringResourceName.Organization
+                    let repositoryLabel = Utilities.getLocalizedString Text.StringResourceName.Repository
+                    let branchLabel = Utilities.getLocalizedString Text.StringResourceName.Branch
 
                     let headerLength = ownerLabel.Length + organizationLabel.Length + repositoryLabel.Length + 6
 

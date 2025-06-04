@@ -18,7 +18,7 @@ open Grace.Shared.Dto.Organization
 open Grace.Shared.Dto.Reference
 open Grace.Shared.Dto.Repository
 open Grace.Shared.Events
-open Grace.Shared.Types
+open Grace.Types.Types
 open Grace.Shared.Utilities
 open Microsoft.Azure.Cosmos
 open Microsoft.Azure.Cosmos.Linq
@@ -232,13 +232,16 @@ module Services =
                 | AzureCosmosDb ->
                     let queryDefinition =
                         QueryDefinition(
-                            """SELECT c["value"].OwnerId
-                            FROM c
-                            WHERE c["value"].Class = @stateStorageName
-                                AND STRINGEQUALS(c["value"].OwnerName, @ownerName, true)"""
+                            """SELECT s.Event.created.ownerId AS OwnerId
+                            FROM c JOIN s IN c.State
+
+                            WHERE STRINGEQUALS(s.Event.created.ownerName, @ownerName, true)
+                                  AND c.GrainType = @grainType
+                                  AND c.PartitionKey = @partitionKey"""
                         )
                             .WithParameter("@ownerName", ownerName)
-                            .WithParameter("@stateStorageName", StateName.OwnerDto)
+                            .WithParameter("@grainType", StateName.Owner)
+                            .WithParameter("@partitionKey", StateName.Owner)
 
                     let iterator = DefaultRetryPolicy.Execute(fun () -> cosmosContainer.GetItemQueryIterator<OwnerIdRecord>(queryDefinition))
                     let mutable ownerGuid = OwnerId.Empty

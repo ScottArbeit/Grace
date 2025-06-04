@@ -2,7 +2,7 @@
 //   type in the assembly, it doesn't matter - and submits them to Orleans code-generation to create serialization code for them. Weird, but it works.
 
 // This line gets everything from Grace.Shared.
-[assembly: GenerateCodeForDeclaringAssembly(typeof(Grace.Shared.Types.OwnerType))]
+[assembly: GenerateCodeForDeclaringAssembly(typeof(Grace.Types.Types.OwnerType))]
 
 // This line gets everything from Grace.Actors.
 [assembly: GenerateCodeForDeclaringAssembly(typeof(Grace.Actors.Owner.OwnerActor))]

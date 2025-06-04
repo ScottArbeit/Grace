@@ -1,6 +1,7 @@
-namespace Grace.Shared
+namespace Grace.Types
 
 open DiffPlex.DiffBuilder.Model
+open Grace.Shared.Constants
 open Grace.Shared.Utilities
 open NodaTime
 open Orleans
@@ -128,7 +129,7 @@ module Types =
         | Public
         | Private
 
-        override this.ToString() = Utilities.getDiscriminatedUnionFullName this
+        override this.ToString() = getDiscriminatedUnionFullName this
 
         static member GetKnownTypes() = GetKnownTypes<OwnerType>()
 
@@ -137,7 +138,7 @@ module Types =
         | Public
         | Private
 
-        override this.ToString() = Utilities.getDiscriminatedUnionFullName this
+        override this.ToString() = getDiscriminatedUnionFullName this
 
         static member GetKnownTypes() = GetKnownTypes<OrganizationType>()
 
@@ -146,7 +147,7 @@ module Types =
         | Visible
         | NotVisible
 
-        override this.ToString() = Utilities.getDiscriminatedUnionFullName this
+        override this.ToString() = getDiscriminatedUnionFullName this
 
         static member GetKnownTypes() = GetKnownTypes<SearchVisibility>()
 
@@ -161,16 +162,16 @@ module Types =
         | External
         | Rebase
 
-        override this.ToString() = Utilities.getDiscriminatedUnionFullName this
+        override this.ToString() = getDiscriminatedUnionFullName this
 
-        static member FromString s = Utilities.discriminatedUnionFromString<ReferenceType> s
+        static member FromString s = discriminatedUnionFromString<ReferenceType> s
 
         static member GetKnownTypes() = GetKnownTypes<ReferenceType>()
 
     // Records
 
     /// EventMetadata is included in the recording of every event that occurs in Grace.
-    [<GenerateSerializer>]
+    [<CLIMutable>]
     type EventMetadata =
         { Timestamp: Instant
           CorrelationId: CorrelationId
@@ -185,8 +186,7 @@ module Types =
     /// A FileVersion represents a version of a file in a repository with unique contents, and therefore with a unique SHA-256 hash. It is immutable.
     ///
     /// It is the server-side representation of the LocalFileVersion type, used for the local object cache.
-    [<CLIMutable>]
-    [<GenerateSerializer>]
+    [<CLIMutable; GenerateSerializer>]
     type FileVersion =
         { Class: string
           //RepositoryId: RepositoryId
@@ -305,8 +305,8 @@ module Types =
               Sha256Hash = Sha256Hash String.Empty
               Directories = List<DirectoryVersionId>()
               Files = List<FileVersion>()
-              Size = Constants.InitialDirectorySize
-              CreatedAt = Constants.DefaultTimestamp }
+              Size = InitialDirectorySize
+              CreatedAt = DefaultTimestamp }
 
         static member Create
             (directoryVersionId: DirectoryVersionId)
@@ -371,8 +371,8 @@ module Types =
               Sha256Hash = Sha256Hash String.Empty
               Directories = List<DirectoryVersionId>()
               Files = List<LocalFileVersion>()
-              Size = Constants.InitialDirectorySize
-              CreatedAt = Constants.DefaultTimestamp
+              Size = InitialDirectorySize
+              CreatedAt = DefaultTimestamp
               LastWriteTimeUtc = DateTime.UtcNow }
 
         static member Create
@@ -494,28 +494,22 @@ module Types =
             .Replace(@"\r\n", Environment.NewLine)
 
     /// The primary type used in Grace to represent successful results.
-    [<GenerateSerializer>]
     type GraceReturnValue<'T> =
         { ReturnValue: 'T
           EventTime: Instant
           CorrelationId: string
-          Properties: Dictionary<String, String> }
+          Properties: Dictionary<string, string> }
 
-        /// Adds a property to a GraceResult instance.
-        //static member enhance<'T> (key, value) (result: GraceReturnValue<'T>) =
-        //    if not <| String.IsNullOrEmpty(key) then
-        //        result.Properties[key] <- value
-
-        //    result
-
-        static member CreateWithMetadata<'T> (returnValue: 'T) (correlationId: string) (properties: Dictionary<String, String>) =
+        static member CreateWithMetadata<'T> (returnValue: 'T) (correlationId: string) (properties: Dictionary<string, string>) =
             { ReturnValue = returnValue; EventTime = getCurrentInstant (); CorrelationId = correlationId; Properties = properties }
 
         static member Create<'T> (returnValue: 'T) (correlationId: string) =
-            GraceReturnValue.CreateWithMetadata returnValue correlationId (Dictionary<String, String>())
+            GraceReturnValue.CreateWithMetadata returnValue correlationId (Dictionary<string, string>())
 
         /// Adds a key-value pair to GraceReturnValue's Properties dictionary.
         member this.enhance(key, value) =
+            logToConsole $"In GraceReturnValue.enhance: Enhancing GraceReturnValue with key: {key}, value: {value}."
+
             match String.IsNullOrEmpty(key), String.IsNullOrEmpty(value) with
             | false, false -> this.Properties[key] <- value
             | false, true -> this.Properties[key] <- String.Empty
@@ -523,8 +517,13 @@ module Types =
 
             this
 
-        member this.enhance(dict: Dictionary<string, string>) =
-            dict |> Seq.iter (fun kvp -> this.Properties[kvp.Key] <- kvp.Value)
+        /// Adds a set of key-value pairs from a Dictionary to GraceReturnValue's Properties dictionary.
+        member this.enhance(dict: IReadOnlyDictionary<string, string>) =
+            logToConsole $"In GraceReturnValue.enhance: isNull(dict): {isNull (dict)}."
+            logToConsole $"In GraceReturnValue.enhance: Enhancing GraceReturnValue with {dict.Count} properties."
+
+            dict |> Seq.iter (fun kvp -> this.enhance (kvp.Key, kvp.Value) |> ignore)
+
             this
 
         override this.ToString() =
@@ -538,7 +537,6 @@ module Types =
             serialize output
 
     /// The primary type used in Grace to represent error results.
-    [<GenerateSerializer>]
     type GraceError =
         { Error: string
           EventTime: Instant
@@ -563,7 +561,8 @@ module Types =
 
             this
 
-        member this.enhance(dict: Dictionary<string, string>) =
+        /// Adds a set of key-value pairs from a Dictionary to GraceReturnValue's Properties dictionary.
+        member this.enhance(dict: IReadOnlyDictionary<string, string>) =
             dict |> Seq.iter (fun kvp -> this.Properties[kvp.Key] <- kvp.Value)
             this
 
@@ -582,7 +581,6 @@ module Types =
                 stringBuilderPool.Return(sb)
 
     /// The primary type used to represent Grace operations results.
-    [<GenerateSerializer>]
     type GraceResult<'T> = Result<GraceReturnValue<'T>, GraceError>
 
     /// Specifies whether a file system entry is a directory or a file.
@@ -593,7 +591,7 @@ module Types =
 
         static member GetKnownTypes() = GetKnownTypes<FileSystemEntryType>()
 
-        override this.ToString() = Utilities.getDiscriminatedUnionFullName this
+        override this.ToString() = getDiscriminatedUnionFullName this
 
     /// Specifies whether a change detected in a diff is an add, change, or delete.
     [<KnownType("GetKnownTypes"); GenerateSerializer>]
@@ -604,7 +602,7 @@ module Types =
 
         static member GetKnownTypes() = GetKnownTypes<DifferenceType>()
 
-        override this.ToString() = Utilities.getDiscriminatedUnionFullName this
+        override this.ToString() = getDiscriminatedUnionFullName this
 
     /// A file system difference is a change detected (at a file level) in a diff. It specifies the type of change (add, change, or delete), the type of file system entry (directory or file), and the relative path of the entry.
     [<GenerateSerializer>]
@@ -698,7 +696,7 @@ module Types =
 
         static member GetKnownTypes() = GetKnownTypes<PromotionType>()
 
-        override this.ToString() = Utilities.getDiscriminatedUnionFullName this
+        override this.ToString() = getDiscriminatedUnionFullName this
 
     /// Holds the entity Id's involved in an API call. It's populated in ValidateIds.Middleware.fs.
     type GraceIds =
@@ -739,7 +737,7 @@ module Types =
 
         static member GetKnownTypes() = GetKnownTypes<ReminderTypes>()
 
-        override this.ToString() = Utilities.getDiscriminatedUnionFullName this
+        override this.ToString() = getDiscriminatedUnionFullName this
 
     /// Defines the different statuses of a .zip file.
     [<KnownType("GetKnownTypes"); GenerateSerializer>]
