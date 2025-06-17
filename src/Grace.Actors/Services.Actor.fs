@@ -800,18 +800,18 @@ module Services =
                 try
                     let queryDefinition =
                         QueryDefinition(
-                            """SELECT c["value"].OrganizationId FROM c WHERE c["value"].OwnerId = @ownerId AND c["value"].OrganizationName = @organizationName AND c["value"].Class = @class"""
+                            """SELECT s.Event.created.organizationId AS OrganizationId
+                                FROM c
+                                JOIN s IN c.State
+                                WHERE STRINGEQUALS(s.Event.created.organizationName, @organizationName, true)
+                                  AND STRINGEQUALS(s.Event.created.ownerId, @ownerId, true)
+                                  AND c.GrainType = @grainType
+                                  AND c.PartitionKey = @partitionKey"""
                         )
-                            .WithParameter("@ownerId", ownerId)
                             .WithParameter("@organizationName", organizationName)
-                            .WithParameter("@class", nameof (OrganizationDto))
-
-                    //logToConsole (
-                    //    queryDefinition.QueryText
-                    //        .Replace("@ownerId", $"\"{ownerId}\"")
-                    //        .Replace("@organizationName", $"\"{organizationName}\"")
-                    //        .Replace("@class", "\"OrganizationDto\"")
-                    //)
+                            .WithParameter("@ownerId",          ownerId)
+                            .WithParameter("@grainType",        StateName.Organization)
+                            .WithParameter("@partitionKey",     StateName.Organization)
 
                     let iterator = cosmosContainer.GetItemQueryIterator<OrganizationIdRecord>(queryDefinition, requestOptions = queryRequestOptions)
 
@@ -1821,6 +1821,11 @@ module Services =
         match RequestContext.Get(Constants.CurrentCommandProperty) with
         | :? string as s -> s
         | _ -> String.Empty
+
+    let getOrganizationId () =
+        match RequestContext.Get(nameof(OrganizationId)) with
+        | :? OrganizationId as organizationId -> organizationId
+        | _ -> Guid.Empty
 
     let getRepositoryId () =
         match RequestContext.Get(nameof (RepositoryId)) with
