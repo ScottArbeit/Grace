@@ -271,16 +271,19 @@ module GraceCommand =
                         if parseResult.Tokens |> Seq.isEmpty then
                             parseResult <- commandLineConfiguration.Parse(helpOptions[0])
 
-                        let tokens = parseResult.Tokens.Select(fun token -> token.Value).ToList()
+                        let tokens = parseResult.CommandResult.Tokens.Select(fun token -> token.Value).ToList()
 
                         if tokens.Count > 0 then
                             let firstToken = if isCaseInsensitive then tokens[0].ToLowerInvariant() else tokens[0]
+                            logToAnsiConsole Colors.Verbose $"First token: {firstToken}"
 
                             if aliases.ContainsKey(firstToken) then
                                 tokens.RemoveAt(0)
                                 // Reverse the full command so we insert them in the right order.
                                 for token in aliases[firstToken].Reverse() do
                                     tokens.Insert(0, token)
+
+                                logToAnsiConsole Colors.Verbose $"Replaced first token with alias: {firstToken} -> {String.Join(' ', tokens)}"
 
                                 parseResult <- commandLineConfiguration.Parse(helpOptions[0])
 

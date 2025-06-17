@@ -508,7 +508,7 @@ module Types =
 
         /// Adds a key-value pair to GraceReturnValue's Properties dictionary.
         member this.enhance(key, value) =
-            logToConsole $"In GraceReturnValue.enhance: Enhancing GraceReturnValue with key: {key}, value: {value}."
+            //logToConsole $"In GraceReturnValue.enhance: Enhancing GraceReturnValue with key: {key}, value: {value}."
 
             match String.IsNullOrEmpty(key), String.IsNullOrEmpty(value) with
             | false, false -> this.Properties[key] <- value
@@ -519,8 +519,8 @@ module Types =
 
         /// Adds a set of key-value pairs from a Dictionary to GraceReturnValue's Properties dictionary.
         member this.enhance(dict: IReadOnlyDictionary<string, string>) =
-            logToConsole $"In GraceReturnValue.enhance: isNull(dict): {isNull (dict)}."
-            logToConsole $"In GraceReturnValue.enhance: Enhancing GraceReturnValue with {dict.Count} properties."
+            // logToConsole $"In GraceReturnValue.enhance: isNull(dict): {isNull (dict)}."
+            // logToConsole $"In GraceReturnValue.enhance: Enhancing GraceReturnValue with {dict.Count} properties."
 
             dict |> Seq.iter (fun kvp -> this.enhance (kvp.Key, kvp.Value) |> ignore)
 

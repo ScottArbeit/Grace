@@ -397,7 +397,7 @@ module Validations =
                 let repositoryGuid = Guid.Parse(repositoryId)
                 let mutable branchGuid = Guid.Empty
 
-                match! resolveBranchId repositoryId branchId branchName correlationId with
+                match! resolveBranchId ownerId organizationId repositoryId branchId branchName correlationId with
                 | Some branchId ->
                     if Guid.TryParse(branchId, &branchGuid) then
                         let exists = memoryCache.Get<string>(branchGuid)
@@ -446,7 +446,7 @@ module Validations =
 
                 match! resolveRepositoryId ownerId ownerName organizationId organizationName repositoryId repositoryName correlationId with
                 | Some repositoryId ->
-                    match! resolveBranchId $"{repositoryId}" branchId branchName correlationId with
+                    match! resolveBranchId ownerId organizationId $"{repositoryId}" branchId branchName correlationId with
                     | Some branchId ->
                         let mutable allowed = new obj ()
 
@@ -489,7 +489,7 @@ module Validations =
 
                 match! resolveRepositoryId ownerId ownerName organizationId organizationName repositoryId repositoryName correlationId with
                 | Some repositoryId ->
-                    match! resolveBranchId $"{repositoryId}" branchId branchName correlationId with
+                    match! resolveBranchId ownerId organizationId $"{repositoryId}" branchId branchName correlationId with
                     | Some branchId ->
                         let mutable allowed = new obj ()
 
@@ -518,7 +518,7 @@ module Validations =
         /// Validates that the given branchName does not exist in the database.
         let branchNameDoesNotExist<'T> ownerId organizationId repositoryId branchName correlationId (error: 'T) =
             task {
-                match! resolveBranchId repositoryId String.Empty branchName correlationId with
+                match! resolveBranchId ownerId organizationId repositoryId String.Empty branchName correlationId with
                 | Some branchId -> return Error error
                 | None -> return Ok()
             }

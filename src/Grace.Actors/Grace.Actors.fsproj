@@ -51,14 +51,14 @@
 	</ItemGroup>
 
 	<ItemGroup>
-		<PackageReference Include="Azure.Storage.Blobs" Version="12.24.0" />
+		<PackageReference Include="Azure.Storage.Blobs" Version="12.24.1" />
 		<PackageReference Include="Azure.Storage.Blobs.Batch" Version="12.21.0" />
 		<PackageReference Include="Azure.Storage.Common" Version="12.23.0" />
 		<PackageReference Include="Ben.Demystifier" Version="0.4.1" />
 		<PackageReference Include="Dapr.Client" Version="1.15.4" />
 		<PackageReference Include="FSharpPlus" Version="1.7.0" />
-		<PackageReference Include="Microsoft.Azure.Cosmos" Version="3.51.0" />
-		<PackageReference Include="Microsoft.Extensions.Caching.Memory" Version="10.0.0-preview.5.25270.108" />
+		<PackageReference Include="Microsoft.Azure.Cosmos" Version="3.52.0" />
+		<PackageReference Include="Microsoft.Extensions.Caching.Memory" Version="10.0.0-preview.5.25277.114" />
 		<PackageReference Include="Microsoft.Orleans.Core" Version="9.1.2" />
 		<PackageReference Include="Microsoft.Orleans.Runtime" Version="9.1.2" />
 		<PackageReference Include="Microsoft.Orleans.Serialization.FSharp" Version="9.1.2" />

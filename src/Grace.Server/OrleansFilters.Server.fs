@@ -13,6 +13,9 @@ open Orleans.Runtime
 open System
 open System.Diagnostics
 open System.Threading.Tasks
+open Grace.Actors.Constants
+open FSharpPlus.Data
+open Orleans.Persistence.Cosmos
 
 module Orleans =
 
@@ -22,37 +25,30 @@ module Orleans =
                 ValueTask<string>(
                     task {
                         let correlationid = getCorrelationId ()
-                        let organizationId = getOrganizationId()
-                        let repositoryId = getRepositoryId ()
+                        let organizationId = $"{getOrganizationId ()}".ToLowerInvariant()
+                        let repositoryId = $"{getRepositoryId ()}".ToLowerInvariant()
 
-                        //let! repositoryId =
-                        //    match grainType with
-                        //    | "Repository" ->
-                        //        let grain = grainFactory.GetGrain<IRepositoryActor>(grainId.GetGuidKey())
-                        //        grain.AsReference<IHasRepositoryId>().GetRepositoryId correlationid
-                        //    | "Branch" ->
-                        //        let grain = grainFactory.GetGrain<IBranchActor>(grainId.GetGuidKey())
-                        //        grain.AsReference<IHasRepositoryId>().GetRepositoryId correlationid
-                        //    | "Reference" ->
-                        //        let grain = grainFactory.GetGrain<IReferenceActor>(grainId.GetGuidKey())
-                        //        grain.AsReference<IHasRepositoryId>().GetRepositoryId correlationid
-                        //    | "DirectoryVersion" ->
-                        //        let grain = grainFactory.GetGrain<IDirectoryVersionActor>(grainId.GetGuidKey())
-                        //        grain.AsReference<IHasRepositoryId>().GetRepositoryId correlationid
-                        //    | _ ->
-                        //        // For other grain types, use the grain type as the partition key.
-                        //        Guid.Empty |> returnTask
+                        let partitionKey =
+                            match grainType with
+                            | StateName.Branch -> repositoryId
+                            | StateName.Diff -> repositoryId
+                            | StateName.DirectoryAppearance -> repositoryId
+                            | StateName.DirectoryVersion -> repositoryId
+                            | StateName.FileAppearance -> repositoryId
+                            | StateName.NamedSection -> repositoryId
+                            | StateName.Organization -> StateName.Organization
+                            | StateName.Owner -> StateName.Owner
+                            | StateName.Reference -> repositoryId
+                            | StateName.Reminder -> StateName.Reminder
+                            | StateName.Repository -> organizationId
+                            | StateName.RepositoryPermission -> repositoryId
+                            | StateName.User -> StateName.User
+                            | _ -> raise (ArgumentException($"Unknown grain type in {nameof (GracePartitionKeyProvider)}: {grainType}"))
 
-                        if repositoryId = Guid.Empty then
-                            logToConsole
-                                $"GracePartitionKeyProvider: correlationId: {correlationid}; grainType: {grainType}; grainId: {grainId} - No repository found, using grain type as partition key."
+                        logToConsole
+                            $"GracePartitionKeyProvider: correlationId: {correlationid}; grainType: {grainType}; grainId: {grainId}; partitionKey: {partitionKey}."
 
-                            return grainType
-                        else
-                            logToConsole
-                                $"GracePartitionKeyProvider: correlationId: {correlationid}; grainType: {grainType}, grainId: {grainId} - Using repository ID {repositoryId} as partition key."
-
-                            return $"{repositoryId}"
+                        return partitionKey
                     }
                 )
 

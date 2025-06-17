@@ -37,7 +37,7 @@ module Branch =
 
     let processCommand<'T when 'T :> BranchParameters> (context: HttpContext) (validations: Validations<'T>) (command: 'T -> ValueTask<BranchCommand>) =
         task {
-            let startTime = getCurrentInstant()
+            let startTime = getCurrentInstant ()
             let graceIds = getGraceIds context
             let correlationId = getCorrelationId context
             let parameterDictionary = Dictionary<string, string>()
@@ -107,6 +107,7 @@ module Branch =
                     let! cmd = command parameters
                     let! result = handleCommand graceIds.BranchId cmd
                     let duration = getDurationRightAligned_ms startTime
+
                     log.LogInformation(
                         "{CurrentInstant}: Node: {HostName}; Duration: {duration}; CorrelationId: {correlationId}; Finished {path}; Status code: {statusCode}; OwnerId: {ownerId}; OrganizationId: {organizationId}; RepositoryId: {repositoryId}; BranchId: {branchId}.",
                         getCurrentInstantExtended (),
@@ -248,7 +249,15 @@ module Branch =
 
                 let command (parameters: CreateBranchParameters) =
                     task {
-                        match! (resolveBranchId parameters.RepositoryId parameters.ParentBranchId parameters.ParentBranchName parameters.CorrelationId) with
+                        match!
+                            (resolveBranchId
+                                parameters.OwnerId
+                                parameters.OrganizationId
+                                parameters.RepositoryId
+                                parameters.ParentBranchId
+                                parameters.ParentBranchName
+                                parameters.CorrelationId)
+                        with
                         | Some parentBranchId ->
                             let parentBranchGuid = Guid.Parse(parentBranchId)
                             let repositoryId = Guid.Parse(parameters.RepositoryId)
@@ -337,7 +346,8 @@ module Branch =
                 let command (parameters: AssignParameters) =
                     task {
                         if parameters.DirectoryVersionId <> Guid.Empty then
-                            let! directoryVersionActorProxy = DirectoryVersion.CreateActorProxy parameters.DirectoryVersionId repositoryId parameters.CorrelationId
+                            let! directoryVersionActorProxy =
+                                DirectoryVersion.CreateActorProxy parameters.DirectoryVersionId repositoryId parameters.CorrelationId
 
                             let! directoryVersion = directoryVersionActorProxy.Get(parameters.CorrelationId)
 
@@ -1006,7 +1016,11 @@ module Branch =
                                         ValueTask(
                                             task {
                                                 let! diffActorProxy =
-                                                    Diff.CreateActorProxy sortedRefs[i].DirectoryId sortedRefs[i + 1].DirectoryId branchDto.RepositoryId correlationId
+                                                    Diff.CreateActorProxy
+                                                        sortedRefs[i].DirectoryId
+                                                        sortedRefs[i + 1].DirectoryId
+                                                        branchDto.RepositoryId
+                                                        correlationId
 
                                                 let! diffDto = diffActorProxy.GetDiff correlationId
                                                 diffDtos.Add(diffDto)
@@ -1398,7 +1412,9 @@ module Branch =
 
                                 match latestReference with
                                 | Some latestReference ->
-                                    let! directoryActorProxy = DirectoryVersion.CreateActorProxy latestReference.DirectoryId branchDto.RepositoryId correlationId
+                                    let! directoryActorProxy =
+                                        DirectoryVersion.CreateActorProxy latestReference.DirectoryId branchDto.RepositoryId correlationId
+
                                     let! recursiveSize = directoryActorProxy.GetRecursiveSize(getCorrelationId context)
                                     return recursiveSize
                                 | None -> return Constants.InitialDirectorySize
@@ -1592,7 +1608,8 @@ module Branch =
 
                             match rootDirectoryVersion with
                             | Some rootDirectoryVersion ->
-                                let! directoryVersionActorProxy = DirectoryVersion.CreateActorProxy rootDirectoryVersion.DirectoryVersionId repositoryId correlationId
+                                let! directoryVersionActorProxy =
+                                    DirectoryVersion.CreateActorProxy rootDirectoryVersion.DirectoryVersionId repositoryId correlationId
 
                                 let! directoryVersions = directoryVersionActorProxy.GetRecursiveDirectoryVersions false correlationId
 
@@ -1624,7 +1641,15 @@ module Branch =
                         then
                             logToConsole $"In Branch.GetVersion: parameters.BranchId: {parameters.BranchId}; parameters.BranchName: {parameters.BranchName}"
 
-                            match! resolveBranchId repositoryIdString parameters.BranchId parameters.BranchName parameters.CorrelationId with
+                            match!
+                                resolveBranchId
+                                    parameters.OwnerId
+                                    parameters.OrganizationId
+                                    repositoryIdString
+                                    parameters.BranchId
+                                    parameters.BranchName
+                                    parameters.CorrelationId
+                            with
                             | Some branchId -> parameters.BranchId <- branchId
                             | None -> () // This should never happen because it would get caught in validations.
                         elif not <| String.IsNullOrEmpty(parameters.ReferenceId) then

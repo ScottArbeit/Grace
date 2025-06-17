@@ -78,16 +78,10 @@ module Constants =
         let Branch = "Branch"
 
         [<Literal>]
-        let ContainerName = "ContainerName"
-
-        [<Literal>]
         let Diff = "Diff"
 
         [<Literal>]
         let DirectoryAppearance = "DirApp"
-
-        [<Literal>]
-        let DirectoryVersionCache = "DirCache"
 
         [<Literal>]
         let DirectoryVersion = "Dir"
@@ -102,13 +96,7 @@ module Constants =
         let Organization = "Organization"
 
         [<Literal>]
-        let OrganizationDto = "OrganizationDto"
-
-        [<Literal>]
         let Owner = "Owner"
-
-        [<Literal>]
-        let OwnerDto = "OwnerDto"
 
         [<Literal>]
         let Reference = "Ref"
@@ -118,9 +106,6 @@ module Constants =
 
         [<Literal>]
         let Repository = "Repo"
-
-        [<Literal>]
-        let RepositoryDto = "RepoDto"
 
         [<Literal>]
         let RepositoryPermission = "RepoPermission"

@@ -151,16 +151,14 @@ module Owner =
     let private createHandler (parseResult: ParseResult) (createParameters: CreateParameters) =
         task {
             try
-                if parseResult |> verbose then
-                    printParseResult parseResult
-                    logToConsole $"Just tried to print the ParseResult."
+                if parseResult |> verbose then printParseResult parseResult
 
                 let validateIncomingParameters = CommonValidations(parseResult, createParameters)
 
                 match validateIncomingParameters with
                 | Ok _ ->
                     let ownerId =
-                        if parseResult.GetResult(Options.ownerId).Implicit then
+                        if parseResult.CommandResult.GetResult(Options.ownerId).Implicit then
                             Guid.NewGuid().ToString()
                         else
                             createParameters.OwnerId
@@ -199,7 +197,7 @@ module Owner =
                 match result with
                 | Ok returnValue ->
                     // Update the Grace configuration file with the newly-created owner.
-                    if not <| parseResult.CommandResult.Command.Options.Contains(Options.doNotSwitch) then
+                    if parseResult.CommandResult.GetResult(Options.doNotSwitch) = null then
                         let newConfig = Current()
                         newConfig.OwnerId <- Guid.Parse(returnValue.Properties[nameof (OwnerId)])
                         newConfig.OwnerName <- returnValue.Properties[nameof (OwnerName)]

@@ -336,7 +336,7 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
                                     graceIds <- { graceIds with BranchId = branchId; HasBranch = true }
                                 else
                                     // Resolve the BranchId based on the provided Id and Name.
-                                    match! resolveBranchId graceIds.RepositoryId branchId branchName correlationId with
+                                    match! resolveBranchId graceIds.OwnerId graceIds.OrganizationId graceIds.RepositoryId branchId branchName correlationId with
                                     | Some resolvedBranchId -> graceIds <- { graceIds with BranchId = resolvedBranchId; HasBranch = true }
                                     | None ->
                                         badRequest <-

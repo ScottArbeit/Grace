@@ -28,10 +28,10 @@
 	</ItemGroup>
 
 	<ItemGroup>
-		<PackageReference Include="Azure.Storage.Blobs" Version="12.24.0" />
+		<PackageReference Include="Azure.Storage.Blobs" Version="12.24.1" />
 		<PackageReference Include="Ben.Demystifier" Version="0.4.1" />
 		<PackageReference Include="Dapr.Client" Version="1.15.4" />
-		<PackageReference Include="Polly" Version="8.5.2" />
+		<PackageReference Include="Polly" Version="8.6.1" />
 	</ItemGroup>
 
 	<ItemGroup>

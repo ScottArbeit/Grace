@@ -80,8 +80,8 @@
     },
     "grace org create": {
       "commandName": "Project",
-      "commandLineArgs": "org create --output Verbose --ownerName Owner9FEDA --organizationName Org9FEDc --organizationId 9871826b-73f4-41a4-bf4b-dea42ea95bf1",
-      "workingDirectory": "D:\\Source\\GraceDemo\\Ryan"
+      "commandLineArgs": "org create --output Verbose --ownerName Owner1C --organizationName Org9FEDc --organizationId 9871826b-73f4-41a4-bf4b-dea42ea95bf1",
+      "workingDirectory": "E:\\GraceDemo\\User01"
     },
     "grace watch - Chris": {
       "commandName": "Project",

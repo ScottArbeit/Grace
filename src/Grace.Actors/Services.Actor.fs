@@ -232,12 +232,12 @@ module Services =
                 | AzureCosmosDb ->
                     let queryDefinition =
                         QueryDefinition(
-                            """SELECT s.Event.created.ownerId AS OwnerId
+                            """
+                            SELECT s.Event.created.ownerId AS OwnerId
                             FROM c JOIN s IN c.State
-
                             WHERE STRINGEQUALS(s.Event.created.ownerName, @ownerName, true)
-                                  AND c.GrainType = @grainType
-                                  AND c.PartitionKey = @partitionKey"""
+                                AND c.GrainType = @grainType
+                                AND c.PartitionKey = @partitionKey"""
                         )
                             .WithParameter("@ownerName", ownerName)
                             .WithParameter("@grainType", StateName.Owner)
@@ -444,11 +444,17 @@ module Services =
                         | AzureCosmosDb ->
                             let queryDefinition =
                                 QueryDefinition(
-                                    """SELECT c["value"].OrganizationId FROM c WHERE STRINGEQUALS(c["value"].OrganizationName, @organizationName, true) AND c["value"].OwnerId = @ownerId AND c["value"].Class = @class"""
+                                    """SELECT s.Event.created.organizationId AS OrganizationId
+                                    FROM c JOIN s IN c.State
+                                    WHERE STRINGEQUALS(s.Event.created.organizationName, @organizationName, true)
+                                        AND STRINGEQUALS(s.Event.created.ownerId, @ownerId, true)
+                                        AND c.GrainType = @grainType
+                                        AND c.PartitionKey = @partitionKey"""
                                 )
                                     .WithParameter("@organizationName", organizationName)
                                     .WithParameter("@ownerId", ownerId)
-                                    .WithParameter("@class", nameof (OrganizationDto))
+                                    .WithParameter("@grainType", StateName.Organization)
+                                    .WithParameter("@partitionKey", StateName.Organization)
 
                             let iterator = DefaultRetryPolicy.Execute(fun () -> cosmosContainer.GetItemQueryIterator<OrganizationIdRecord>(queryDefinition))
 
@@ -566,12 +572,19 @@ module Services =
                         | AzureCosmosDb ->
                             let queryDefinition =
                                 QueryDefinition(
-                                    """SELECT c["value"].RepositoryId FROM c WHERE STRINGEQUALS(c["value"].RepositoryName, @repositoryName) AND c["value"].OwnerId = @ownerId AND c["value"].OrganizationId = @organizationId AND c["value"].Class = @class"""
+                                    """
+                                    SELECT s.Event.created.repositoryId AS RepositoryId
+                                    FROM c JOIN s IN c.State
+                                    WHERE STRINGEQUALS(s.Event.created.repositoryName, @repositoryName, true)
+                                        AND STRINGEQUALS(s.Event.created.organizationId, @organizationId, true)
+                                        AND STRINGEQUALS(s.Event.created.ownerId, @ownerId, true)
+                                        AND c.GrainType = @grainType
+                                        AND c.PartitionKey = @partitionKey"""
                                 )
                                     .WithParameter("@repositoryName", repositoryName)
-                                    .WithParameter("@organizationId", organizationId)
                                     .WithParameter("@ownerId", ownerId)
-                                    .WithParameter("@class", nameof (RepositoryDto))
+                                    .WithParameter("@grainType", StateName.Organization)
+                                    .WithParameter("@partitionKey", StateName.Organization)
 
                             let iterator = cosmosContainer.GetItemQueryIterator<RepositoryIdRecord>(queryDefinition)
 
@@ -631,7 +644,7 @@ module Services =
         }
 
     /// Gets the BranchId by returning BranchId if provided, or searching by BranchName within the provided repository.
-    let resolveBranchId (repositoryId: string) branchId branchName (correlationId: CorrelationId) =
+    let resolveBranchId ownerId organizationId (repositoryId: string) branchId branchName (correlationId: CorrelationId) =
         task {
             let mutable branchGuid = Guid.Empty
             let repositoryGuid = Guid.Parse(repositoryId)
@@ -674,17 +687,22 @@ module Services =
                         | AzureCosmosDb ->
                             let queryDefinition =
                                 QueryDefinition(
-                                    """SELECT events.Event.created.branchId
-                            	       FROM c
-                            	       JOIN events IN c["value"]
-                            	       WHERE ENDSWITH(c.id, @stateName, true)
-                                           AND STRINGEQUALS(events.Event.created.branchName, @branchName, true)
-                                           AND STRINGEQUALS(events.Event.created.repositoryId, @repositoryId, true)
                                     """
+                                    SELECT s.Event.created.repositoryID AS RepositoryId
+                                    FROM c JOIN s IN c.State
+                                    WHERE STRINGEQUALS(events.Event.created.branchName, @branchName, true)
+                                        AND STRINGEQUALS(s.Event.created.repositoryId, @repositoryId, true)
+                                        AND STRINGEQUALS(s.Event.created.organizationId, @organizationId, true)
+                                        AND STRINGEQUALS(s.Event.created.ownerId, @ownerId, true)
+                                        AND c.GrainType = @grainType
+                                        AND c.PartitionKey = @partitionKey"""
                                 )
-                                    .WithParameter("@repositoryId", repositoryId)
                                     .WithParameter("@branchName", branchName)
-                                    .WithParameter("@stateName", StateName.Branch)
+                                    .WithParameter("@repositoryId", repositoryId)
+                                    .WithParameter("@organizationId", organizationId)
+                                    .WithParameter("@ownerId", ownerId)
+                                    .WithParameter("@grainType", StateName.Organization)
+                                    .WithParameter("@partitionKey", repositoryId.ToLowerInvariant())
 
                             let iterator = DefaultRetryPolicy.Execute(fun () -> cosmosContainer.GetItemQueryIterator<BranchIdRecord>(queryDefinition))
 
@@ -809,9 +827,9 @@ module Services =
                                   AND c.PartitionKey = @partitionKey"""
                         )
                             .WithParameter("@organizationName", organizationName)
-                            .WithParameter("@ownerId",          ownerId)
-                            .WithParameter("@grainType",        StateName.Organization)
-                            .WithParameter("@partitionKey",     StateName.Organization)
+                            .WithParameter("@ownerId", ownerId)
+                            .WithParameter("@grainType", StateName.Organization)
+                            .WithParameter("@partitionKey", StateName.Organization)
 
                     let iterator = cosmosContainer.GetItemQueryIterator<OrganizationIdRecord>(queryDefinition, requestOptions = queryRequestOptions)
 
@@ -1823,7 +1841,7 @@ module Services =
         | _ -> String.Empty
 
     let getOrganizationId () =
-        match RequestContext.Get(nameof(OrganizationId)) with
+        match RequestContext.Get(nameof (OrganizationId)) with
         | :? OrganizationId as organizationId -> organizationId
         | _ -> Guid.Empty
 

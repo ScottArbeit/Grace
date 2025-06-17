@@ -11,6 +11,7 @@ open System
 open System.CommandLine
 open System.CommandLine.Parsing
 open System.Globalization
+open System.Linq
 open System.Text.Json
 open System.Threading.Tasks
 open Spectre.Console.Rendering
@@ -69,18 +70,20 @@ module Common =
 
     /// Checks if the output format from the command line is a specific format.
     let isOutputFormat (outputFormat: OutputFormat) (parseResult: ParseResult) =
-        if parseResult.CommandResult.Command.Options.Contains(Options.output) then
-            logToConsole $"In isOutputFormat(): Found output option. {outputFormat}"
-            //let format = parseResult.FindResultFor(Options.output).GetValueOrDefault<String>()
-            let format = parseResult.GetValue<string>(Options.output)
+        let outputOption = parseResult.CommandResult.GetResult(Options.output)
 
-            String.Equals(format, getDiscriminatedUnionCaseName (outputFormat), StringComparison.CurrentCultureIgnoreCase)
-        else if outputFormat = OutputFormat.Normal then
-            logToConsole $"In isOutputFormat(): Did not find output option. outputFormat: Normal"
-            true
-        else
-            logToConsole $"In isOutputFormat(): Did not find output option. {outputFormat}"
-            false
+        match outputOption with
+        | null ->
+            // The command didn't have an output option set, which means it defaults to Normal.
+            if outputFormat = OutputFormat.Normal then true else false
+        | _ ->
+            // The command had an output option set, so we check if it matches the expected output format.
+            let formatFromCommand = parseResult.GetValue<string>(Options.output)
+
+            if outputFormat = discriminatedUnionFromString<OutputFormat>(formatFromCommand).Value then
+                true
+            else
+                false
 
     /// Checks if the output format from the command line is Json.
     let json parseResult = parseResult |> isOutputFormat Json

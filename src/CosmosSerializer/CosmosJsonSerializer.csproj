@@ -10,9 +10,9 @@
         <SuppressNETCoreSdkPreviewMessage>true</SuppressNETCoreSdkPreviewMessage>
 	</PropertyGroup>
 	<ItemGroup>
-		<PackageReference Include="Azure.Core" Version="1.46.1" />
+		<PackageReference Include="Azure.Core" Version="1.46.2" />
 		<PackageReference Include="Ben.Demystifier" Version="0.4.1" />
-		<PackageReference Include="Microsoft.Azure.Cosmos" Version="3.51.0" />
+		<PackageReference Include="Microsoft.Azure.Cosmos" Version="3.52.0" />
         <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
 	</ItemGroup>
 

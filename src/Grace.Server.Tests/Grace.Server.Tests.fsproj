@@ -26,10 +26,10 @@
 		<PackageReference Include="FSharp.Control.TaskSeq" Version="0.4.0" />
 		<PackageReference Include="FsUnit" Version="7.0.1" />
 		<PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" Version="10.0.0-preview.6.25271.5" />
-		<PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.0" />
+		<PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
 		<PackageReference Include="NUnit" Version="4.3.2" />
 		<PackageReference Include="NUnit3TestAdapter" Version="5.0.0" />
-		<PackageReference Include="NUnit.Analyzers" Version="4.7.0">
+		<PackageReference Include="NUnit.Analyzers" Version="4.9.2">
 			<PrivateAssets>all</PrivateAssets>
 			<IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
 		</PackageReference>
