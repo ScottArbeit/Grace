@@ -264,28 +264,25 @@ module GraceCommand =
                     // If we do have a config file, great! we can parse it and use it.
                     // If we don't, we're just going to print an error message and exit.
                     if configurationFileExists () then
-                        parseResult <- commandLineConfiguration.Parse(args)
-
-                        // If we have no tokens, we want to show the help text for the command,
-                        //   so we parse the command again with one of the help options to get the help text.
-                        if parseResult.Tokens |> Seq.isEmpty then
-                            parseResult <- commandLineConfiguration.Parse(helpOptions[0])
-
-                        let tokens = parseResult.CommandResult.Tokens.Select(fun token -> token.Value).ToList()
-
-                        if tokens.Count > 0 then
-                            let firstToken = if isCaseInsensitive then tokens[0].ToLowerInvariant() else tokens[0]
+                        if args.Length > 0 then
+                            let firstToken = if isCaseInsensitive then args[0].ToLowerInvariant() else args[0]
                             logToAnsiConsole Colors.Verbose $"First token: {firstToken}"
 
                             if aliases.ContainsKey(firstToken) then
-                                tokens.RemoveAt(0)
+                                let newArgs = List<string>()
+
                                 // Reverse the full command so we insert them in the right order.
                                 for token in aliases[firstToken].Reverse() do
-                                    tokens.Insert(0, token)
+                                    newArgs.Insert(0, token)
 
-                                logToAnsiConsole Colors.Verbose $"Replaced first token with alias: {firstToken} -> {String.Join(' ', tokens)}"
-
-                                parseResult <- commandLineConfiguration.Parse(helpOptions[0])
+                                logToAnsiConsole Colors.Verbose $"Replaced first token with alias: {firstToken} -> {String.Join(' ', newArgs)}"
+                                parseResult <- commandLineConfiguration.Parse(newArgs)
+                            else
+                                parseResult <- commandLineConfiguration.Parse(args)
+                        else
+                            // If we have no tokens, we want to show the help text for the command,
+                            //   so we parse the command again with one of the help options to get the help text.
+                            parseResult <- commandLineConfiguration.Parse(helpOptions[0])
 
                         // Write the ParseResult to Services as global context for the CLI.
                         Services.parseResult <- parseResult
