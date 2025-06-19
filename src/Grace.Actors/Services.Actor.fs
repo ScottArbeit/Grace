@@ -780,11 +780,31 @@ module Services =
 
                         let queryDefinition =
                             QueryDefinition(
-                                $"""SELECT TOP @maxCount c["value"] FROM c WHERE c["value"].OwnerId = @ownerId AND c["value"].Class = @class {includeDeletedClause} ORDER BY c["value"].CreatedAt DESC"""
+                                $"""SELECT TOP @maxCount c["value"]
+                                FROM c WHERE c["value"].OwnerId = @ownerId
+                                    AND c["value"].Class = @class
+                                    {includeDeletedClause}
+                                ORDER BY c["value"].CreatedAt DESC"""
                             )
                                 .WithParameter("@ownerId", ownerId)
                                 .WithParameter("@maxCount", maxCount)
                                 .WithParameter("@class", nameof (OrganizationDto))
+
+                        let queryDefinitionNew =
+                            QueryDefinition(
+                                $"""
+                                SELECT TOP @maxCount s.State
+                                FROM c JOIN s IN c.State
+                                WHERE STRINGEQUALS(s.Event.created.ownerId, @ownerId, true)
+                                    AND c.GrainType = @grainType
+                                    AND c.PartitionKey = @partitionKey
+                                    {includeDeletedClause}
+                                ORDER BY c["value"].CreatedAt DESC"""
+                            )
+                                .WithParameter("@maxCount", maxCount)
+                                .WithParameter("@ownerId", ownerId)
+                                .WithParameter("@grainType", StateName.Organization)
+                                .WithParameter("@partitionKey", StateName.Organization)
 
                         let iterator = cosmosContainer.GetItemQueryIterator<OrganizationDtoValue>(queryDefinition, requestOptions = queryRequestOptions)
 
@@ -869,7 +889,24 @@ module Services =
                             .WithParameter("@organizationId", organizationId)
                             .WithParameter("@repositoryName", repositoryName)
                             .WithParameter("@class", nameof (RepositoryDto))
-                    //logToConsole (queryDefinition.QueryText.Replace("@organizationId", $"\"{organizationId}\"").Replace("@repositoryName", $"\"{repositoryName}\""))
+
+                    let queryDefinition =
+                        QueryDefinition(
+                            """SELECT s.Event.created.repositoryId AS RepositoryId
+                                FROM c
+                                JOIN s IN c.State
+                                WHERE STRINGEQUALS(s.Event.created.repositoryName, @repositoryName, true)
+                                  AND STRINGEQUALS(s.Event.created.organizationId, @organizationId, true)
+                                  AND STRINGEQUALS(s.Event.created.ownerId, @ownerId, true)
+                                  AND c.GrainType = @grainType
+                                  AND c.PartitionKey = @partitionKey"""
+                        )
+                            .WithParameter("@repositoryName", repositoryName)
+                            .WithParameter("@organizationId", organizationId)
+                            .WithParameter("@ownerId", ownerId)
+                            .WithParameter("@grainType", StateName.Organization)
+                            .WithParameter("@partitionKey", StateName.Organization)
+
                     let iterator = cosmosContainer.GetItemQueryIterator<RepositoryIdRecord>(queryDefinition, requestOptions = queryRequestOptions)
 
                     if iterator.HasMoreResults then
@@ -892,7 +929,7 @@ module Services =
         }
 
     /// Gets a list of repositories for the specified organization.
-    let getRepositories (organizationId: OrganizationId) (maxCount: int) includeDeleted =
+    let getRepositories (ownerId: OwnerId) (organizationId: OrganizationId) (maxCount: int) includeDeleted =
         task {
             let repositories = List<RepositoryDto>()
 

@@ -220,8 +220,8 @@ module Organization =
             member this.ListRepositories correlationId =
                 task {
                     this.correlationId <- correlationId
-                    let! organizationDtos = Services.getRepositories organizationDto.OrganizationId Int32.MaxValue false
-                    let dict = organizationDtos.ToDictionary((fun repo -> repo.RepositoryId), (fun repo -> repo.RepositoryName))
+                    let! repositoryDtos = Services.getRepositories organizationDto.OwnerId organizationDto.OrganizationId Int32.MaxValue false
+                    let dict = repositoryDtos.ToDictionary((fun repo -> repo.RepositoryId), (fun repo -> repo.RepositoryName))
 
                     return dict :> IReadOnlyDictionary<RepositoryId, RepositoryName>
                 }
@@ -260,7 +260,7 @@ module Organization =
                                     | OrganizationCommand.SetDescription(description) -> return Ok(OrganizationEventType.DescriptionSet(description))
                                     | OrganizationCommand.DeleteLogical(force, deleteReason) ->
                                         // Get the list of branches that aren't already deleted.
-                                        let! repositories = getRepositories organizationDto.OrganizationId Int32.MaxValue false
+                                        let! repositories = getRepositories organizationDto.OwnerId organizationDto.OrganizationId Int32.MaxValue false
 
                                         // If the organization contains repositories, and any of them isn't already deleted, and the force flag is not set, return an error.
                                         if
