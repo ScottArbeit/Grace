@@ -1,7 +1,6 @@
 namespace Grace.SDK
 
 open Grace.SDK.Common
-open Grace.Shared.Dto
 open Grace.Shared.Parameters.DirectoryVersion
 open Grace.Shared
 open Grace.Types

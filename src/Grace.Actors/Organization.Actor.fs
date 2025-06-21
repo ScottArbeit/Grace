@@ -8,11 +8,10 @@ open Grace.Actors.Interfaces
 open Grace.Actors.Services
 open Grace.Actors.Types
 open Grace.Shared
-open Grace.Shared.Commands.Organization
 open Grace.Shared.Constants
-open Grace.Shared.Dto.Organization
-open Grace.Shared.Dto.Repository
-open Grace.Shared.Events.Organization
+open Grace.Types.Repository
+open Grace.Types.Organization
+open Grace.Types.Organization
 open Grace.Types.Types
 open Grace.Shared.Utilities
 open Grace.Shared.Validation.Errors.Organization
@@ -42,30 +41,11 @@ module Organization =
 
         let mutable organizationDto = OrganizationDto.Default
 
-        let updateDto organizationEvent currentOrganizationDto =
-            let newOrganizationDto =
-                match organizationEvent.Event with
-                | Created(organizationId, organizationName, ownerId) ->
-                    { OrganizationDto.Default with
-                        OrganizationId = organizationId
-                        OrganizationName = organizationName
-                        OwnerId = ownerId
-                        CreatedAt = organizationEvent.Metadata.Timestamp }
-                | NameSet(organizationName) -> { currentOrganizationDto with OrganizationName = organizationName }
-                | TypeSet(organizationType) -> { currentOrganizationDto with OrganizationType = organizationType }
-                | SearchVisibilitySet(searchVisibility) -> { currentOrganizationDto with SearchVisibility = searchVisibility }
-                | DescriptionSet(description) -> { currentOrganizationDto with Description = description }
-                | LogicalDeleted(_, deleteReason) -> { currentOrganizationDto with DeleteReason = deleteReason; DeletedAt = Some(getCurrentInstant ()) }
-                | PhysicalDeleted -> currentOrganizationDto // Do nothing because it's about to be deleted anyway.
-                | Undeleted -> { currentOrganizationDto with DeletedAt = None; DeleteReason = String.Empty }
-
-            { newOrganizationDto with UpdatedAt = Some organizationEvent.Metadata.Timestamp }
-
         member val private correlationId: CorrelationId = String.Empty with get, set
 
         override this.OnActivateAsync(ct) =
             logActorActivation log this.IdentityString (getActorActivationMessage state.RecordExists)
-            organizationDto <- Seq.fold (fun organizationDto event -> updateDto event organizationDto) organizationDto state.State
+            organizationDto <- Seq.fold (fun organizationDto event -> OrganizationDto.UpdateDto event organizationDto) organizationDto state.State
             Task.CompletedTask
 
         member private this.ApplyEvent organizationEvent =
@@ -76,7 +56,7 @@ module Organization =
                     do! state.WriteStateAsync()
 
                     // Update the Dto based on the current event.
-                    organizationDto <- organizationDto |> updateDto organizationEvent
+                    organizationDto <- organizationDto |> OrganizationDto.UpdateDto organizationEvent
 
                     // Publish the event to the rest of the world.
                     let graceEvent = Events.GraceEvent.OrganizationEvent organizationEvent
@@ -126,7 +106,7 @@ module Organization =
 
                                         let! result =
                                             repositoryActor.Handle
-                                                (Commands.Repository.DeleteLogical(
+                                                (RepositoryCommand.DeleteLogical(
                                                     true,
                                                     $"Cascaded from deleting organization. ownerId: {organizationDto.OwnerId}; organizationId: {organizationDto.OrganizationId}; organizationName: {organizationDto.OrganizationName}; deleteReason: {deleteReason}"
                                                 ))
@@ -296,7 +276,7 @@ module Organization =
 
                                         // Deactivate the actor after the PhysicalDeletion is processed.
                                         this.DeactivateOnIdle()
-                                    
+
                                         return Ok OrganizationEventType.PhysicalDeleted
                                     | OrganizationCommand.Undelete -> return Ok OrganizationEventType.Undeleted
                                 }

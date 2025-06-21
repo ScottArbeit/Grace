@@ -1,11 +1,11 @@
-﻿namespace Grace.Shared.Converters
+namespace Grace.Shared.Converters
 
-open Grace.Shared.Dto.Branch
+open Grace.Shared.Utilities
+open Grace.Types.Branch
 open System
 open System.Collections.Generic
 open System.Text.Json
 open System.Text.Json.Serialization
-open Grace.Shared.Utilities
 
 type BranchDtoConverter() =
     inherit JsonConverter<BranchDto>()

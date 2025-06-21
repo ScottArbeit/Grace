@@ -8,16 +8,16 @@ open Grace.SDK
 open Grace.Shared
 open Grace.Shared.Client.Configuration
 open Grace.Shared.Client.Theme
-open Grace.Shared.Dto.Branch
-open Grace.Shared.Dto.Reference
 open Grace.Shared.Parameters.Branch
 open Grace.Shared.Parameters.DirectoryVersion
 open Grace.Shared.Services
 open Grace.Shared.Resources
-open Grace.Types.Types
 open Grace.Shared.Utilities
 open Grace.Shared.Validation
 open Grace.Shared.Validation.Errors.Branch
+open Grace.Types.Branch
+open Grace.Types.Reference
+open Grace.Types.Types
 open NodaTime
 open NodaTime.TimeZones
 open Spectre.Console
@@ -3012,7 +3012,7 @@ module Branch =
                         let space = " "
                         $"{String.replicate (longestAgoLength - s.Length) space}{s}"
 
-                    let permissions (branchDto: Dto.Branch.BranchDto) =
+                    let permissions (branchDto: BranchDto) =
                         let sb = stringBuilderPool.Get()
 
                         try

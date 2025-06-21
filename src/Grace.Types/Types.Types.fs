@@ -113,6 +113,8 @@ module Types =
         | GoogleCloudStorage
         | Unknown // Not calling it None because that really belongs to Option.
 
+        static member DefaultObjectStorageProvider = ObjectStorageProvider.AzureBlobStorage
+
         static member GetKnownTypes() = GetKnownTypes<ObjectStorageProvider>()
 
     /// Indicates what database is being used for Actor state storage.

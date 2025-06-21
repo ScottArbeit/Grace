@@ -9,9 +9,9 @@ open Grace.Actors.Services
 open Grace.Server.Services
 open Grace.Server.Validations
 open Grace.Shared
-open Grace.Shared.Commands
 open Grace.Shared.Parameters.DirectoryVersion
 open Grace.Shared.Resources.Text
+open Grace.Types.DirectoryVersion
 open Grace.Types.Types
 open Grace.Shared.Utilities
 open Grace.Shared.Validation.Common
@@ -133,9 +133,10 @@ module DirectoryVersion =
 
                 let command (parameters: CreateParameters) (context: HttpContext) =
                     task {
-                        let! actorProxy = DirectoryVersion.CreateActorProxy parameters.DirectoryVersion.DirectoryVersionId repositoryId (getCorrelationId context)
+                        let! actorProxy =
+                            DirectoryVersion.CreateActorProxy parameters.DirectoryVersion.DirectoryVersionId repositoryId (getCorrelationId context)
 
-                        return! actorProxy.Handle (DirectoryVersion.Create parameters.DirectoryVersion) (Services.createMetadata context)
+                        return! actorProxy.Handle (DirectoryVersionCommand.Create parameters.DirectoryVersion) (Services.createMetadata context)
                     }
 
                 return! processCommand context validations command
@@ -206,7 +207,11 @@ module DirectoryVersion =
                 let validations (parameters: GetByDirectoryIdsParameters) =
                     [| Guid.isValidAndNotEmptyGuid $"{parameters.RepositoryId}" DirectoryVersionError.InvalidRepositoryId
                        Repository.repositoryIdExists $"{parameters.RepositoryId}" parameters.CorrelationId DirectoryVersionError.RepositoryDoesNotExist
-                       DirectoryVersion.directoryIdsExist parameters.DirectoryIds repositoryId parameters.CorrelationId DirectoryVersionError.DirectoryDoesNotExist |]
+                       DirectoryVersion.directoryIdsExist
+                           parameters.DirectoryIds
+                           repositoryId
+                           parameters.CorrelationId
+                           DirectoryVersionError.DirectoryDoesNotExist |]
 
                 let query (context: HttpContext) (maxCount: int) (actorProxy: IDirectoryVersionActor) =
                     task {
@@ -323,13 +328,14 @@ module DirectoryVersion =
                                         task {
                                             try
                                                 // Check if the directory version exists. If it doesn't, create it.
-                                                let! directoryVersionActor = DirectoryVersion.CreateActorProxy directoryVersion.DirectoryVersionId repositoryId correlationId
+                                                let! directoryVersionActor =
+                                                    DirectoryVersion.CreateActorProxy directoryVersion.DirectoryVersionId repositoryId correlationId
 
                                                 let! exists = directoryVersionActor.Exists parameters.CorrelationId
                                                 //logToConsole $"In SaveDirectoryVersions: {dv.DirectoryId} exists: {exists}"
                                                 if not <| exists then
                                                     let! createResult =
-                                                        directoryVersionActor.Handle (DirectoryVersion.Create directoryVersion) (createMetadata context)
+                                                        directoryVersionActor.Handle (DirectoryVersionCommand.Create directoryVersion) (createMetadata context)
 
                                                     results.Enqueue(createResult)
                                             with ex ->

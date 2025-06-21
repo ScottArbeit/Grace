@@ -153,7 +153,7 @@ module ApplicationContext =
 
             let storageKey = Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.AzureStorageKey)
 
-            sharedKeyCredential <- StorageSharedKeyCredential(DefaultObjectStorageAccount, storageKey)
+            sharedKeyCredential <- StorageSharedKeyCredential(Constants.DefaultObjectStorageAccount, storageKey)
 
             let cosmosDbConnectionString = Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.AzureCosmosDBConnectionString)
 

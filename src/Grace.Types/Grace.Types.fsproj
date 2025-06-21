@@ -12,9 +12,21 @@
     </PropertyGroup>
 
     <ItemGroup>
+      <EmbeddedResource Remove="Actors\**" />
+    </ItemGroup>
+
+    <ItemGroup>
         <Compile Include="..\Grace.Shared\Constants.Shared.fs" Link="Constants.Shared.fs" />
         <Compile Include="..\Grace.Shared\Utilities.Shared.fs" Link="Utilities.Shared.fs" />
         <Compile Include="Types.Types.fs" />
+        <Compile Include="Owner.Types.fs" />
+        <Compile Include="Organization.Types.fs" />
+        <Compile Include="Repository.Types.fs" />
+        <Compile Include="Reference.Types.fs" />
+        <Compile Include="Branch.Types.fs" />
+        <Compile Include="Diff.Types.fs" />
+        <Compile Include="DirectoryVersion.Types.fs" />
+        <Compile Include="Events.Types.fs" />
     </ItemGroup>
 
     <ItemGroup>

@@ -13,11 +13,12 @@ open Grace.Actors.Timing
 open Grace.Actors.Types
 open Grace.Shared
 open Grace.Shared.Constants
-open Grace.Shared.Dto.Branch
-open Grace.Shared.Dto.Organization
-open Grace.Shared.Dto.Reference
-open Grace.Shared.Dto.Repository
+open Grace.Types.Branch
+open Grace.Types.DirectoryVersion
+open Grace.Types.Reference
+open Grace.Types.Repository
 open Grace.Shared.Events
+open Grace.Types.Organization
 open Grace.Types.Types
 open Grace.Shared.Utilities
 open Microsoft.Azure.Cosmos
@@ -744,16 +745,16 @@ module Services =
         member val public branchId = BranchId.Empty with get, set
 
     type BranchEventValue() =
-        member val public event: Branch.BranchEvent =
-            { Event = Branch.BranchEventType.PhysicalDeleted; Metadata = (EventMetadata.New String.Empty String.Empty) } with get, set
+        member val public event: BranchEvent =
+            { Event = BranchEventType.PhysicalDeleted; Metadata = (EventMetadata.New String.Empty String.Empty) } with get, set
 
     type ReferenceEventValue() =
-        member val public event: Reference.ReferenceEvent =
-            { Event = Reference.ReferenceEventType.PhysicalDeleted; Metadata = (EventMetadata.New String.Empty String.Empty) } with get, set
+        member val public event: ReferenceEvent =
+            { Event = ReferenceEventType.PhysicalDeleted; Metadata = (EventMetadata.New String.Empty String.Empty) } with get, set
 
     type DirectoryVersionEventValue() =
-        member val public event: DirectoryVersion.DirectoryVersionEvent =
-            { Event = DirectoryVersion.DirectoryVersionEventType.PhysicalDeleted; Metadata = (EventMetadata.New String.Empty String.Empty) } with get, set
+        member val public event: DirectoryVersionEvent =
+            { Event = DirectoryVersionEventType.PhysicalDeleted; Metadata = (EventMetadata.New String.Empty String.Empty) } with get, set
 
     type DirectoryVersionValue() =
         member val public value = DirectoryVersion.Default with get, set
@@ -762,7 +763,7 @@ module Services =
     /// Gets a list of organizations for the specified owner.
     let getOrganizations (ownerId: OwnerId) (maxCount: int) includeDeleted =
         task {
-            let repositories = List<OrganizationDto>()
+            let organizations = List<OrganizationDto>()
 
             match actorStateStorageProvider with
             | Unknown -> ()
@@ -806,13 +807,16 @@ module Services =
                                 .WithParameter("@grainType", StateName.Organization)
                                 .WithParameter("@partitionKey", StateName.Organization)
 
-                        let iterator = cosmosContainer.GetItemQueryIterator<OrganizationDtoValue>(queryDefinition, requestOptions = queryRequestOptions)
+                        let iterator = cosmosContainer.GetItemQueryIterator<OrganizationEvent array>(queryDefinition, requestOptions = queryRequestOptions)
 
                         while iterator.HasMoreResults do
                             let! results = iterator.ReadNextAsync()
                             indexMetrics.Append($"{results.IndexMetrics}, ") |> ignore
                             requestCharge.Append($"{results.RequestCharge}, ") |> ignore
-                            repositories.AddRange(results.Resource.Select(fun v -> v.value))
+                            //let organizationDtos = results.Resource |> Array.map (fun organizationEvents ->
+                            //)
+                            let organizationDtos = Array.empty<OrganizationDto>
+                            organizations.AddRange(organizationDtos)
 
                         Activity.Current
                             .SetTag("indexMetrics", $"{indexMetrics.Remove(indexMetrics.Length - 2, 2)}")
@@ -826,7 +830,7 @@ module Services =
                     stringBuilderPool.Return(requestCharge)
             | MongoDB -> ()
 
-            return repositories
+            return organizations
         }
 
     /// Checks if the specified organization name is unique for the specified owner.
@@ -1091,7 +1095,7 @@ module Services =
                         results.Resource
                         |> Seq.iter (fun r ->
                             match r.event.Event with
-                            | Reference.ReferenceEventType.Created refDto -> references.Add(refDto)
+                            | ReferenceEventType.Created refDto -> references.Add(refDto)
                             | _ -> ())
 
                     Activity.Current
@@ -1148,7 +1152,7 @@ module Services =
                         results.Resource
                         |> Seq.iter (fun r ->
                             match r.event.Event with
-                            | Reference.ReferenceEventType.Created refDto -> references.Add(refDto)
+                            | ReferenceEventType.Created refDto -> references.Add(refDto)
                             | _ -> ())
 
                     if indexMetrics.Length >= 2 then
@@ -1301,7 +1305,7 @@ module Services =
                         results.Resource
                         |> Seq.iter (fun r ->
                             match r.event.Event with
-                            | Reference.ReferenceEventType.Created refDto -> references.Add(refDto)
+                            | ReferenceEventType.Created refDto -> references.Add(refDto)
                             | _ -> ())
 
                     if indexMetrics.Length >= 2 && requestCharge.Length >= 2 then
@@ -1357,7 +1361,7 @@ module Services =
                         if results.Count > 0 then
                             referenceDto <-
                                 match results.Resource.FirstOrDefault().event.Event with
-                                | Reference.ReferenceEventType.Created refDto -> refDto
+                                | ReferenceEventType.Created refDto -> refDto
                                 | _ -> ReferenceDto.Default
 
                     if (indexMetrics.Length >= 2) && (requestCharge.Length >= 2) then
@@ -1424,7 +1428,7 @@ module Services =
                                             if results.Count > 0 then
                                                 referenceDto <-
                                                     match results.Resource.FirstOrDefault().event.Event with
-                                                    | Reference.ReferenceEventType.Created refDto -> refDto
+                                                    | ReferenceEventType.Created refDto -> refDto
                                                     | _ -> ReferenceDto.Default
 
                                         if referenceDto.ReferenceId <> ReferenceDto.Default.ReferenceId then
@@ -1482,7 +1486,7 @@ module Services =
                         if results.Count > 0 then
                             referenceDto <-
                                 match results.Resource.FirstOrDefault().event.Event with
-                                | Reference.ReferenceEventType.Created refDto -> refDto
+                                | ReferenceEventType.Created refDto -> refDto
                                 | _ -> ReferenceDto.Default
 
                     Activity.Current
@@ -1555,7 +1559,7 @@ module Services =
                             if results.Resource.Count() > 0 then
                                 directoryVersion <-
                                     match results.Resource.FirstOrDefault().event.Event with
-                                    | DirectoryVersion.DirectoryVersionEventType.Created directoryVersion -> directoryVersion
+                                    | DirectoryVersionEventType.Created directoryVersion -> directoryVersion
                                     | _ -> DirectoryVersion.Default
 
                         Activity.Current
@@ -1619,7 +1623,7 @@ module Services =
                             if results.Resource.Count() > 0 then
                                 directoryVersion <-
                                     match results.Resource.FirstOrDefault().event.Event with
-                                    | DirectoryVersion.DirectoryVersionEventType.Created directoryVersion -> directoryVersion
+                                    | DirectoryVersionEventType.Created directoryVersion -> directoryVersion
                                     | _ -> DirectoryVersion.Default
 
                         Activity.Current
@@ -1774,7 +1778,7 @@ module Services =
                         results.Resource
                         |> Seq.iter (fun ev ->
                             match ev.event.Event with
-                            | Reference.ReferenceEventType.Created refDto -> queryResults.Add(refDto.ReferenceId, refDto)
+                            | ReferenceEventType.Created refDto -> queryResults.Add(refDto.ReferenceId, refDto)
                             | _ -> ())
 
                     // Add the results to the list in the same order as the supplied referenceIds.

@@ -14,10 +14,9 @@ open Grace.Actors.Interfaces
 open Grace.Actors.Services
 open Grace.Actors.Types
 open Grace.Shared
-open Grace.Shared.Constants
 open Grace.Shared.Diff
-open Grace.Shared.Dto.Diff
-open Grace.Shared.Dto.Repository
+open Grace.Types.Repository
+open Grace.Types.Diff
 open Grace.Types.Types
 open Grace.Shared.Utilities
 open Microsoft.Extensions.Logging

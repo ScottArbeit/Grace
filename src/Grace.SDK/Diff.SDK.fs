@@ -2,7 +2,7 @@ namespace Grace.SDK
 
 open Grace.SDK.Common
 open Grace.Shared
-open Grace.Shared.Dto.Diff
+open Grace.Types.Diff
 open Grace.Shared.Parameters.Diff
 open Grace.Types.Types
 open System

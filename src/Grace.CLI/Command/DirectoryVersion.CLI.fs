@@ -8,8 +8,8 @@ open Grace.SDK
 open Grace.Shared
 open Grace.Shared.Client.Configuration
 open Grace.Shared.Client.Theme
-open Grace.Shared.Dto.Branch
-open Grace.Shared.Dto.Reference
+open Grace.Types.Branch
+open Grace.Types.Reference
 open Grace.Shared.Parameters.Branch
 open Grace.Shared.Parameters.DirectoryVersion
 open Grace.Shared.Services

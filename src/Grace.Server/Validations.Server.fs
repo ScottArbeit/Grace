@@ -9,7 +9,6 @@ open Grace.Actors.Extensions.MemoryCache
 open Grace.Actors.Interfaces
 open Grace.Actors.Services
 open Grace.Server.ApplicationContext
-open Grace.Shared.Commands
 open Grace.Shared.Constants
 open Grace.Types.Types
 open Grace.Shared.Utilities

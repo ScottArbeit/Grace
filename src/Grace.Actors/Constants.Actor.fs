@@ -128,8 +128,6 @@ module Constants =
         [<Literal>]
         let ReminderLock = "ReminderLock"
 
-    let DefaultObjectStorageProvider = ObjectStorageProvider.AzureBlobStorage
-    let DefaultObjectStorageAccount = "gracevcsdevelopment"
     let DefaultObjectStorageContainerName = "grace-objects"
 
     /// The time to wait between logical and physical deletion of an actor's state.

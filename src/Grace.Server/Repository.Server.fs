@@ -10,10 +10,9 @@ open Grace.Actors.Services
 open Grace.Server.Services
 open Grace.Server.Validations
 open Grace.Shared
-open Grace.Shared.Commands.Branch
-open Grace.Shared.Commands.Repository
 open Grace.Shared.Extensions
 open Grace.Shared.Parameters.Repository
+open Grace.Types.Repository
 open Grace.Types.Types
 open Grace.Shared.Utilities
 open Grace.Shared.Validation.Common

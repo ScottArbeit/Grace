@@ -1,0 +1,36 @@
+namespace Grace.Types
+
+open Grace.Shared
+open Grace.Shared.Utilities
+open Grace.Types.Types
+open NodaTime
+open Orleans
+open System.Collections.Generic
+open System.Runtime.Serialization
+
+module Diff =
+
+    [<KnownType("GetKnownTypes"); GenerateSerializer>]
+    type DiffDto =
+        { Class: string
+          RepositoryId: RepositoryId
+          DirectoryVersionId1: DirectoryVersionId
+          Directory1CreatedAt: Instant
+          DirectoryVersionId2: DirectoryVersionId
+          Directory2CreatedAt: Instant
+          HasDifferences: bool
+          Differences: List<FileSystemDifference>
+          FileDiffs: List<FileDiff> }
+
+        static member Default =
+            { Class = nameof (DiffDto)
+              RepositoryId = RepositoryId.Empty
+              DirectoryVersionId1 = DirectoryVersionId.Empty
+              Directory1CreatedAt = Constants.DefaultTimestamp
+              DirectoryVersionId2 = DirectoryVersionId.Empty
+              Directory2CreatedAt = Constants.DefaultTimestamp
+              Differences = List<FileSystemDifference>()
+              HasDifferences = false
+              FileDiffs = List<FileDiff>() }
+
+        static member GetKnownTypes() = GetKnownTypes<DiffDto>()

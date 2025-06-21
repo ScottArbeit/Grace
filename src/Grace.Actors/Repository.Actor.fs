@@ -10,14 +10,13 @@ open Grace.Actors.Extensions.MemoryCache
 open Grace.Actors.Services
 open Grace.Actors.Types
 open Grace.Shared
-open Grace.Shared.Commands.Repository
 open Grace.Shared.Combinators
 open Grace.Shared.Constants
-open Grace.Shared.Dto.Branch
-open Grace.Shared.Dto.Repository
-open Grace.Shared.Events.Repository
 open Grace.Shared.Resources.Text
 open Grace.Shared.Resources.Utilities
+open Grace.Types.Branch
+open Grace.Types.DirectoryVersion
+open Grace.Types.Repository
 open Grace.Types.Types
 open Grace.Shared.Utilities
 open Grace.Shared.Validation.Errors.Repository
@@ -56,46 +55,9 @@ module Repository =
 
             repositoryDto <-
                 state.State
-                |> Seq.fold (fun repositoryDto repositoryEvent -> this.updateDto repositoryEvent repositoryDto) RepositoryDto.Default
+                |> Seq.fold (fun repositoryDto repositoryEvent -> RepositoryDto.UpdateDto repositoryEvent repositoryDto) RepositoryDto.Default
 
             Task.CompletedTask
-
-        member private this.updateDto repositoryEvent currentRepositoryDto =
-            let newRepositoryDto =
-                match repositoryEvent.Event with
-                | Created(name, repositoryId, ownerId, organizationId) ->
-                    { RepositoryDto.Default with
-                        RepositoryName = name
-                        RepositoryId = repositoryId
-                        OwnerId = ownerId
-                        OrganizationId = organizationId
-                        ObjectStorageProvider = Constants.DefaultObjectStorageProvider
-                        StorageAccountName = Constants.DefaultObjectStorageAccount
-                        StorageContainerName = $"{repositoryId}"
-                        CreatedAt = repositoryEvent.Metadata.Timestamp }
-                | Initialized -> { currentRepositoryDto with InitializedAt = Some(getCurrentInstant ()) }
-                | ObjectStorageProviderSet objectStorageProvider -> { currentRepositoryDto with ObjectStorageProvider = objectStorageProvider }
-                | StorageAccountNameSet storageAccountName -> { currentRepositoryDto with StorageAccountName = storageAccountName }
-                | StorageContainerNameSet containerName -> { currentRepositoryDto with StorageContainerName = containerName }
-                | RepositoryStatusSet repositoryStatus -> { currentRepositoryDto with RepositoryStatus = repositoryStatus }
-                | RepositoryTypeSet repositoryType -> { currentRepositoryDto with RepositoryType = repositoryType }
-                | RecordSavesSet recordSaves -> { currentRepositoryDto with RecordSaves = recordSaves }
-                | DefaultServerApiVersionSet version -> { currentRepositoryDto with DefaultServerApiVersion = version }
-                | DefaultBranchNameSet defaultBranchName -> { currentRepositoryDto with DefaultBranchName = defaultBranchName }
-                | LogicalDeleteDaysSet days -> { currentRepositoryDto with LogicalDeleteDays = days }
-                | SaveDaysSet days -> { currentRepositoryDto with SaveDays = days }
-                | CheckpointDaysSet days -> { currentRepositoryDto with CheckpointDays = days }
-                | DirectoryVersionCacheDaysSet days -> { currentRepositoryDto with DirectoryVersionCacheDays = days }
-                | DiffCacheDaysSet days -> { currentRepositoryDto with DiffCacheDays = days }
-                | NameSet repositoryName -> { currentRepositoryDto with RepositoryName = repositoryName }
-                | DescriptionSet description -> { currentRepositoryDto with Description = description }
-                | LogicalDeleted _ -> { currentRepositoryDto with DeletedAt = Some(getCurrentInstant ()) }
-                | PhysicalDeleted -> currentRepositoryDto // Do nothing because it's about to be deleted anyway.
-                | Undeleted -> { currentRepositoryDto with DeletedAt = None; DeleteReason = String.Empty }
-                | AllowsLargeFilesSet allowsLargeFiles -> { currentRepositoryDto with AllowsLargeFiles = allowsLargeFiles }
-                | AnonymousAccessSet anonymousAccess -> { currentRepositoryDto with AnonymousAccess = anonymousAccess }
-
-            { newRepositoryDto with UpdatedAt = Some repositoryEvent.Metadata.Timestamp }
 
         member private this.ApplyEvent repositoryEvent =
             task {
@@ -105,7 +67,7 @@ module Repository =
                     do! state.WriteStateAsync()
 
                     // Update the repositoryDto with the new event.
-                    repositoryDto <- repositoryDto |> this.updateDto repositoryEvent
+                    repositoryDto <- repositoryDto |> RepositoryDto.UpdateDto repositoryEvent
 
                     /// Concatenates repository errors into a single GraceError instance.
                     let processGraceError (repositoryError: RepositoryError) repositoryEvent previousGraceError =
@@ -129,7 +91,7 @@ module Repository =
                                 let initialBranchPermissions = [| ReferenceType.Promotion; ReferenceType.Tag; ReferenceType.External |]
 
                                 let createInitialBranchCommand =
-                                    Commands.Branch.BranchCommand.Create(
+                                    BranchCommand.Create(
                                         branchId,
                                         InitialBranchName,
                                         DefaultParentBranchId,
@@ -160,15 +122,13 @@ module Repository =
                                             0L
 
                                     let! directoryResult =
-                                        directoryVersionActorProxy.Handle
-                                            (Commands.DirectoryVersion.DirectoryVersionCommand.Create(emptyDirectoryVersion))
-                                            repositoryEvent.Metadata
+                                        directoryVersionActorProxy.Handle (DirectoryVersionCommand.Create(emptyDirectoryVersion)) repositoryEvent.Metadata
 
                                     logToConsole $"In Repository.Actor.handleEvent: Successfully created the empty directory version."
 
                                     let! promotionResult =
                                         branchActor.Handle
-                                            (Commands.Branch.BranchCommand.Promote(
+                                            (BranchCommand.Promote(
                                                 emptyDirectoryId,
                                                 emptySha256Hash,
                                                 (getLocalizedString StringResourceName.InitialPromotionMessage)
@@ -268,7 +228,7 @@ module Repository =
 
                                         let! result =
                                             branchActor.Handle
-                                                (Commands.Branch.DeleteLogical(
+                                                (BranchCommand.DeleteLogical(
                                                     true,
                                                     $"Cascaded from deleting repository. ownerId: {repositoryDto.OwnerId}; organizationId: {repositoryDto.OrganizationId}; repositoryId: {repositoryDto.RepositoryId}; repositoryName: {repositoryDto.RepositoryName}; deleteReason: {deleteReason}"
                                                 ))
@@ -383,7 +343,7 @@ module Repository =
                             else
                                 let revertedEvents = repositoryEvents.Take eventsToKeep
 
-                                let newRepositoryDto = revertedEvents.Aggregate(RepositoryDto.Default, (fun state evnt -> (this.updateDto evnt state)))
+                                let newRepositoryDto = revertedEvents.Aggregate(RepositoryDto.Default, (fun state evnt -> (RepositoryDto.UpdateDto evnt state)))
 
                                 match persist with
                                 | PersistAction.Save ->
@@ -412,7 +372,7 @@ module Repository =
                             else
                                 let newRepositoryDto =
                                     revertedEvents
-                                    |> Seq.fold (fun state evnt -> (this.updateDto evnt state)) RepositoryDto.Default
+                                    |> Seq.fold (fun state evnt -> (RepositoryDto.UpdateDto evnt state)) RepositoryDto.Default
 
                                 match persist with
                                 | PersistAction.Save ->

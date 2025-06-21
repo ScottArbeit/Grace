@@ -5,7 +5,6 @@ open Grace.CLI.Common
 open Grace.CLI.Services
 open Grace.SDK
 open Grace.Shared
-open Grace.Shared.Dto
 open Grace.Shared.Parameters
 open Grace.Types.Types
 open Grace.Shared.Utilities

@@ -11,12 +11,11 @@ open Grace.Actors.Interfaces
 open Grace.Actors.Services
 open Grace.Actors.Types
 open Grace.Shared
-open Grace.Shared.Commands.DirectoryVersion
 open Grace.Shared.Constants
-open Grace.Shared.Events.DirectoryVersion
 open Grace.Shared.Services
+open Grace.Types.Repository
+open Grace.Types.DirectoryVersion
 open Grace.Types.Types
-open Grace.Shared.Dto.Repository
 open Grace.Shared.Utilities
 open Grace.Shared.Validation.Errors.DirectoryVersion
 open Microsoft.Extensions.Logging
@@ -40,15 +39,6 @@ module DirectoryVersion =
     type PhysicalDeletionReminderState = DeleteReason * CorrelationId
     type DeleteCachedStateReminderState = unit
 
-    type DirectoryVersionDto =
-        { DirectoryVersion: DirectoryVersion
-          RecursiveSize: int64
-          DeletedAt: Instant option
-          DeleteReason: DeleteReason }
-
-        static member Default =
-            { DirectoryVersion = DirectoryVersion.Default; RecursiveSize = Constants.InitialDirectorySize; DeletedAt = None; DeleteReason = String.Empty }
-
     type DirectoryVersionActor
         (
             [<PersistentState(StateName.DirectoryVersion, Constants.GraceActorStorage)>] state: IPersistentState<List<DirectoryVersionEvent>>,
@@ -60,14 +50,6 @@ module DirectoryVersion =
 
         let mutable directoryVersionDto = DirectoryVersionDto.Default
         let mutable currentCommand = String.Empty
-
-        let updateDto directoryVersionEvent currentDirectoryVersionDto =
-            match directoryVersionEvent with
-            | Created directoryVersion -> { currentDirectoryVersionDto with DirectoryVersion = directoryVersion }
-            | RecursiveSizeSet recursiveSize -> { currentDirectoryVersionDto with RecursiveSize = recursiveSize }
-            | LogicalDeleted deleteReason -> { currentDirectoryVersionDto with DeletedAt = Some(getCurrentInstant ()); DeleteReason = deleteReason }
-            | PhysicalDeleted -> currentDirectoryVersionDto // Do nothing because it's about to be deleted anyway.
-            | Undeleted -> { currentDirectoryVersionDto with DeletedAt = None; DeleteReason = String.Empty }
 
         let recursiveDirectoryVersionsCacheFileName directoryVersionId = $"{directoryVersionId}.msgpack"
 
@@ -85,7 +67,7 @@ module DirectoryVersion =
             directoryVersionDto <-
                 state.State
                 |> Seq.fold
-                    (fun directoryVersionDto directoryVersionEvent -> directoryVersionDto |> updateDto directoryVersionEvent.Event)
+                    (fun directoryVersionDto directoryVersionEvent -> directoryVersionDto |> DirectoryVersionDto.UpdateDto directoryVersionEvent.Event)
                     DirectoryVersionDto.Default
 
             logActorActivation log this.IdentityString (getActorActivationMessage state.RecordExists)
@@ -230,7 +212,7 @@ module DirectoryVersion =
                     do! state.WriteStateAsync()
 
                     // Update the Dto with the event.
-                    directoryVersionDto <- directoryVersionDto |> updateDto directoryVersionEvent.Event
+                    directoryVersionDto <- directoryVersionDto |> DirectoryVersionDto.UpdateDto directoryVersionEvent.Event
 
                     logToConsole
                         $"In ApplyEvent(): directoryVersion.DirectoryVersionId: {directoryVersionDto.DirectoryVersion.DirectoryVersionId}; directoryVersion.RelativePath: {directoryVersionDto.DirectoryVersion.RelativePath}."

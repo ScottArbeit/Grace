@@ -5,6 +5,7 @@ open Grace.CLI.Common
 open Grace.SDK
 open Grace.Shared
 open Grace.Shared.Client.Configuration
+open Grace.Types.Owner
 open Grace.Types.Types
 open Grace.Shared.Validation.Common
 open Grace.Shared.Validation.Errors.Connect

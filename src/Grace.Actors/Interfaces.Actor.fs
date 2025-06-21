@@ -2,13 +2,13 @@ namespace Grace.Actors
 
 open Grace.Actors.Types
 open Grace.Shared
-open Grace.Shared.Commands
-open Grace.Shared.Dto.Branch
-open Grace.Shared.Dto.Diff
-open Grace.Shared.Dto.Organization
-open Grace.Shared.Dto.Owner
-open Grace.Shared.Dto.Reference
-open Grace.Shared.Dto.Repository
+open Grace.Types.Branch
+open Grace.Types.Diff
+open Grace.Types.DirectoryVersion
+open Grace.Types.Reference
+open Grace.Types.Repository
+open Grace.Types.Organization
+open Grace.Types.Owner
 open Grace.Types.Types
 open Grace.Shared.Utilities
 open NodaTime
@@ -97,7 +97,7 @@ module Interfaces =
         abstract member Get: correlationId: CorrelationId -> Task<BranchDto>
 
         /// Retrieves the list of events handled by this branch.
-        abstract member GetEvents: correlationId: CorrelationId -> Task<IReadOnlyList<Events.Branch.BranchEvent>>
+        abstract member GetEvents: correlationId: CorrelationId -> Task<IReadOnlyList<BranchEvent>>
 
         /// Retrieves the most recent commit from this branch.
         abstract member GetLatestCommit: correlationId: CorrelationId -> Task<ReferenceDto>
@@ -109,7 +109,7 @@ module Interfaces =
         abstract member GetParentBranch: correlationId: CorrelationId -> Task<BranchDto>
 
         /// Validates incoming commands and converts them to events that are stored in the database.
-        abstract member Handle: command: Branch.BranchCommand -> eventMetadata: EventMetadata -> Task<GraceResult<string>>
+        abstract member Handle: command: BranchCommand -> eventMetadata: EventMetadata -> Task<GraceResult<string>>
 
         /// Returns true if this branch has been deleted.
         abstract member IsDeleted: correlationId: CorrelationId -> Task<bool>
@@ -195,7 +195,7 @@ module Interfaces =
         abstract member Delete: correlationId: CorrelationId -> Task<GraceResult<string>>
 
         /// Validates incoming commands and converts them to events that are stored in the database.
-        abstract member Handle: command: DirectoryVersion.DirectoryVersionCommand -> eventMetadata: EventMetadata -> Task<GraceResult<string>>
+        abstract member Handle: command: DirectoryVersionCommand -> eventMetadata: EventMetadata -> Task<GraceResult<string>>
 
     /// Defines the operations for the FileAppearance actor.
     [<Interface>]
@@ -249,7 +249,7 @@ module Interfaces =
         abstract member ListRepositories: correlationId: CorrelationId -> Task<IReadOnlyDictionary<RepositoryId, RepositoryName>>
 
         /// Validates incoming commands and converts them to events that are stored in the database.
-        abstract member Handle: command: Organization.OrganizationCommand -> eventMetadata: EventMetadata -> Task<GraceResult<string>>
+        abstract member Handle: command: OrganizationCommand -> eventMetadata: EventMetadata -> Task<GraceResult<string>>
 
     /// Defines the operations for the OrganizationName actor.
     [<Interface>]
@@ -283,7 +283,7 @@ module Interfaces =
         abstract member ListOrganizations: correlationId: CorrelationId -> Task<IReadOnlyDictionary<OrganizationId, OrganizationName>>
 
         /// Validates incoming commands and converts them to events that are stored in the database.
-        abstract member Handle: command: Owner.OwnerCommand -> eventMetadata: EventMetadata -> Task<GraceResult<string>>
+        abstract member Handle: command: OwnerCommand -> eventMetadata: EventMetadata -> Task<GraceResult<string>>
 
     /// Defines the operations fpr the OwnerName actor.
     [<Interface>]
@@ -313,7 +313,7 @@ module Interfaces =
         abstract member GetReferenceType: correlationId: CorrelationId -> Task<ReferenceType>
 
         /// Validates incoming commands and converts them to events that are stored in the database.
-        abstract member Handle: command: Reference.ReferenceCommand -> eventMetadata: EventMetadata -> Task<GraceResult<string>>
+        abstract member Handle: command: ReferenceCommand -> eventMetadata: EventMetadata -> Task<GraceResult<string>>
 
         /// Returns true if the reference has been deleted.
         abstract member IsDeleted: correlationId: CorrelationId -> Task<bool>
@@ -358,7 +358,7 @@ module Interfaces =
         abstract member GetObjectStorageProvider: correlationId: CorrelationId -> Task<ObjectStorageProvider>
 
         /// Processes commands by checking that they're valid, and then converting them into events.
-        abstract member Handle: command: Repository.RepositoryCommand -> eventMetadata: EventMetadata -> Task<GraceResult<string>>
+        abstract member Handle: command: RepositoryCommand -> eventMetadata: EventMetadata -> Task<GraceResult<string>>
 
     /// Defines the operations for the RepositoryName actor.
     [<Interface>]

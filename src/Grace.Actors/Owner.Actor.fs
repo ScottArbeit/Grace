@@ -9,11 +9,10 @@ open Grace.Actors.Services
 open Grace.Actors.Types
 open Grace.Actors.Interfaces
 open Grace.Shared
-open Grace.Shared.Commands.Owner
 open Grace.Shared.Constants
-open Grace.Shared.Dto.Organization
-open Grace.Shared.Dto.Owner
-open Grace.Shared.Events.Owner
+open Grace.Types
+open Grace.Types.Organization
+open Grace.Types.Owner
 open Grace.Types.Types
 open Grace.Shared.Utilities
 open Grace.Shared.Validation.Errors.Owner
@@ -43,20 +42,6 @@ module Owner =
 
         let mutable ownerDto = OwnerDto.Default
 
-        let updateDto ownerEvent currentOwnerDto =
-            let newOwnerDto =
-                match ownerEvent.Event with
-                | Created(ownerId, ownerName) -> { OwnerDto.Default with OwnerId = ownerId; OwnerName = ownerName; CreatedAt = ownerEvent.Metadata.Timestamp }
-                | NameSet(ownerName) -> { currentOwnerDto with OwnerName = ownerName }
-                | TypeSet(ownerType) -> { currentOwnerDto with OwnerType = ownerType }
-                | SearchVisibilitySet(searchVisibility) -> { currentOwnerDto with SearchVisibility = searchVisibility }
-                | DescriptionSet(description) -> { currentOwnerDto with Description = description }
-                | LogicalDeleted(_, deleteReason) -> { currentOwnerDto with DeletedAt = Some(getCurrentInstant ()); DeleteReason = deleteReason }
-                | PhysicalDeleted -> currentOwnerDto // Do nothing because it's about to be deleted anyway.
-                | Undeleted -> { currentOwnerDto with DeletedAt = None; DeleteReason = String.Empty }
-
-            { newOwnerDto with UpdatedAt = Some ownerEvent.Metadata.Timestamp }
-
         member val private correlationId: CorrelationId = String.Empty with get, set
 
         override this.OnActivateAsync(ct) =
@@ -64,7 +49,7 @@ module Owner =
 
             ownerDto <-
                 state.State
-                |> Seq.fold (fun ownerDto ownerEvent -> updateDto ownerEvent ownerDto) OwnerDto.Default
+                |> Seq.fold (fun ownerDto ownerEvent -> OwnerDto.UpdateDto ownerEvent ownerDto) OwnerDto.Default
 
             Task.CompletedTask
 
@@ -76,7 +61,7 @@ module Owner =
                     do! state.WriteStateAsync()
 
                     // Update the Dto based on the current event.
-                    ownerDto <- ownerDto |> updateDto ownerEvent
+                    ownerDto <- ownerDto |> OwnerDto.UpdateDto ownerEvent
 
                     // Publish the event to the rest of the world.
                     let graceEvent = Events.GraceEvent.OwnerEvent ownerEvent
@@ -126,7 +111,7 @@ module Owner =
 
                                         let! result =
                                             organizationActor.Handle
-                                                (Commands.Organization.DeleteLogical(
+                                                (Organization.DeleteLogical(
                                                     true,
                                                     $"Cascaded from deleting owner. ownerId: {ownerDto.OwnerId}; ownerName: {ownerDto.OwnerName}; deleteReason: {deleteReason}"
                                                 ))

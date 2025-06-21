@@ -9,10 +9,8 @@ open Grace.Actors.Services
 open Grace.Actors.Timing
 open Grace.Actors.Types
 open Grace.Shared
-open Grace.Shared.Commands.Reference
 open Grace.Shared.Constants
-open Grace.Shared.Dto.Reference
-open Grace.Shared.Events.Reference
+open Grace.Types.Reference
 open Grace.Types.Types
 open Grace.Shared.Utilities
 open Grace.Shared.Validation.Errors.Reference
@@ -38,33 +36,6 @@ module Reference =
 
         let mutable referenceDto = ReferenceDto.Default
 
-        let updateDto referenceEvent currentReferenceDto =
-            let newReferenceDto =
-                match referenceEvent.Event with
-                | Created createdDto ->
-                    { currentReferenceDto with
-                        ReferenceId = createdDto.ReferenceId
-                        RepositoryId = createdDto.RepositoryId
-                        BranchId = createdDto.BranchId
-                        DirectoryId = createdDto.DirectoryId
-                        Sha256Hash = createdDto.Sha256Hash
-                        ReferenceType = createdDto.ReferenceType
-                        ReferenceText = createdDto.ReferenceText
-                        Links = createdDto.Links
-                        CreatedAt = referenceEvent.Metadata.Timestamp }
-                | LinkAdded link ->
-                    { currentReferenceDto with
-                        Links =
-                            currentReferenceDto.Links
-                            |> Array.append (Array.singleton link)
-                            |> Array.distinct }
-                | LinkRemoved link -> { currentReferenceDto with Links = currentReferenceDto.Links |> Array.except (Array.singleton link) }
-                | LogicalDeleted(force, deleteReason) -> { currentReferenceDto with DeletedAt = Some(getCurrentInstant ()); DeleteReason = deleteReason }
-                | PhysicalDeleted -> currentReferenceDto // Do nothing because it's about to be deleted anyway.
-                | Undeleted -> { currentReferenceDto with DeletedAt = None; DeleteReason = String.Empty }
-
-            { newReferenceDto with UpdatedAt = Some referenceEvent.Metadata.Timestamp }
-
         member val private correlationId: CorrelationId = String.Empty with get, set
 
         override this.OnActivateAsync(ct) =
@@ -72,7 +43,7 @@ module Reference =
 
             referenceDto <-
                 state.State
-                |> Seq.fold (fun referenceDto event -> updateDto event referenceDto) referenceDto
+                |> Seq.fold (fun referenceDto event -> ReferenceDto.UpdateDto event referenceDto) referenceDto
 
             Task.CompletedTask
 
@@ -147,7 +118,7 @@ module Reference =
                     do! state.WriteStateAsync()
 
                     // Update the referenceDto with the event.
-                    referenceDto <- referenceDto |> updateDto referenceEvent
+                    referenceDto <- referenceDto |> ReferenceDto.UpdateDto referenceEvent
 
                     // Publish the event to the rest of the world.
                     let graceEvent = Events.GraceEvent.ReferenceEvent referenceEvent

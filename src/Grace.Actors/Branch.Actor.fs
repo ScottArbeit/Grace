@@ -8,14 +8,12 @@ open Grace.Actors.Interfaces
 open Grace.Actors.Services
 open Grace.Actors.Types
 open Grace.Shared
-open Grace.Shared.Commands
-open Grace.Shared.Commands.Branch
 open Grace.Shared.Constants
-open Grace.Shared.Dto.Branch
-open Grace.Shared.Dto.Reference
-open Grace.Shared.Events.Branch
 open Grace.Shared.Utilities
 open Grace.Shared.Validation.Errors.Branch
+open Grace.Types.Reference
+open Grace.Types.Repository
+open Grace.Types.Branch
 open Grace.Types.Types
 open Microsoft.Extensions.Logging
 open NodaTime
@@ -49,91 +47,6 @@ module Branch =
         let mutable branchDto: BranchDto = BranchDto.Default
 
         let mutable currentCommand = String.Empty
-
-        let updateDto branchEvent correlationId currentBranchDto =
-            task {
-                let branchEventType = branchEvent.Event
-
-                let! newBranchDto =
-                    match branchEventType with
-                    | Created(branchId, branchName, parentBranchId, basedOn, repositoryId, initialPermissions) ->
-                        task {
-                            let! referenceDto =
-                                if basedOn <> ReferenceId.Empty then
-                                    task {
-                                        let! referenceActorProxy = Reference.CreateActorProxy basedOn repositoryId correlationId
-                                        return! referenceActorProxy.Get correlationId
-                                    }
-                                else
-                                    ReferenceDto.Default |> returnTask
-
-                            let mutable branchDto =
-                                { BranchDto.Default with
-                                    BranchId = branchId
-                                    BranchName = branchName
-                                    ParentBranchId = parentBranchId
-                                    BasedOn = referenceDto
-                                    RepositoryId = repositoryId
-                                    CreatedAt = branchEvent.Metadata.Timestamp }
-
-                            for referenceType in initialPermissions do
-                                branchDto <-
-                                    match referenceType with
-                                    | Promotion -> { branchDto with PromotionEnabled = true }
-                                    | Commit -> { branchDto with CommitEnabled = true }
-                                    | Checkpoint -> { branchDto with CheckpointEnabled = true }
-                                    | Save -> { branchDto with SaveEnabled = true }
-                                    | Tag -> { branchDto with TagEnabled = true }
-                                    | External -> { branchDto with ExternalEnabled = true }
-                                    | Rebase -> branchDto // Rebase is always allowed. (Auto-rebase is optional, but rebase itself is always allowed.)
-
-                            return branchDto
-                        }
-                    | Rebased referenceId ->
-                        task {
-                            let! referenceActorProxy = Reference.CreateActorProxy referenceId branchDto.RepositoryId branchEvent.Metadata.CorrelationId
-                            let! referenceDto = referenceActorProxy.Get branchEvent.Metadata.CorrelationId
-                            return { currentBranchDto with BasedOn = referenceDto }
-                        }
-                    | NameSet branchName -> { currentBranchDto with BranchName = branchName } |> returnTask
-                    | Assigned(referenceDto, directoryVersion, sha256Hash, referenceText) ->
-                        { currentBranchDto with LatestPromotion = referenceDto; BasedOn = referenceDto; ShouldRecomputeLatestReferences = true }
-                        |> returnTask
-                    | Promoted(referenceDto, directoryVersion, sha256Hash, referenceText) ->
-                        { currentBranchDto with LatestPromotion = referenceDto; BasedOn = referenceDto; ShouldRecomputeLatestReferences = true }
-                        |> returnTask
-                    | Committed(referenceDto, directoryVersion, sha256Hash, referenceText) ->
-                        { currentBranchDto with LatestCommit = referenceDto; ShouldRecomputeLatestReferences = true }
-                        |> returnTask
-                    | Checkpointed(referenceDto, directoryVersion, sha256Hash, referenceText) ->
-                        { currentBranchDto with LatestCheckpoint = referenceDto; ShouldRecomputeLatestReferences = true }
-                        |> returnTask
-                    | Saved(referenceDto, directoryVersion, sha256Hash, referenceText) ->
-                        { currentBranchDto with LatestSave = referenceDto; ShouldRecomputeLatestReferences = true }
-                        |> returnTask
-                    | Tagged(referenceDto, directoryVersion, sha256Hash, referenceText) ->
-                        { currentBranchDto with ShouldRecomputeLatestReferences = true } |> returnTask
-                    | ExternalCreated(referenceDto, directoryVersion, sha256Hash, referenceText) ->
-                        { currentBranchDto with ShouldRecomputeLatestReferences = true } |> returnTask
-                    | EnabledAssign enabled -> { currentBranchDto with AssignEnabled = enabled } |> returnTask
-                    | EnabledPromotion enabled -> { currentBranchDto with PromotionEnabled = enabled } |> returnTask
-                    | EnabledCommit enabled -> { currentBranchDto with CommitEnabled = enabled } |> returnTask
-                    | EnabledCheckpoint enabled -> { currentBranchDto with CheckpointEnabled = enabled } |> returnTask
-                    | EnabledSave enabled -> { currentBranchDto with SaveEnabled = enabled } |> returnTask
-                    | EnabledTag enabled -> { currentBranchDto with TagEnabled = enabled } |> returnTask
-                    | EnabledExternal enabled -> { currentBranchDto with ExternalEnabled = enabled } |> returnTask
-                    | EnabledAutoRebase enabled -> { currentBranchDto with AutoRebaseEnabled = enabled } |> returnTask
-                    | ReferenceRemoved _ -> currentBranchDto |> returnTask
-                    | LogicalDeleted(force, deleteReason) ->
-                        { currentBranchDto with DeletedAt = Some(getCurrentInstant ()); DeleteReason = deleteReason }
-                        |> returnTask
-                    | PhysicalDeleted -> currentBranchDto |> returnTask // Do nothing because it's about to be deleted anyway.
-                    | Undeleted ->
-                        { currentBranchDto with DeletedAt = None; DeleteReason = String.Empty }
-                        |> returnTask
-
-                return { newBranchDto with UpdatedAt = Some branchEvent.Metadata.Timestamp }
-            }
 
         /// Updates the branchDto with the latest reference of each type from the branch.
         let updateLatestReferences (branchDto: BranchDto) correlationId =
@@ -220,8 +133,27 @@ module Branch =
         member private this.ApplyEvent branchEvent =
             task {
                 try
+                    // If the branchEvent is Created or Rebased, we need to get the reference that the branch is based on for updating the branchDto.
+                    match branchEvent.Event with
+                    | Created(branchId, branchName, parentBranchId, basedOn, repositoryId, branchPermissions) ->
+                        let! basedOnReferenceDto =
+                            if basedOn <> ReferenceId.Empty then
+                                task {
+                                    let! referenceActorProxy = Reference.CreateActorProxy basedOn repositoryId branchEvent.Metadata.CorrelationId
+                                    return! referenceActorProxy.Get branchEvent.Metadata.CorrelationId
+                                }
+                            else
+                                ReferenceDto.Default |> returnTask
+
+                        branchEvent.Metadata.Properties["basedOnReferenceDto"] <- serialize basedOnReferenceDto
+                    | Rebased basedOn ->
+                        let! referenceActorProxy = Reference.CreateActorProxy basedOn branchDto.RepositoryId branchEvent.Metadata.CorrelationId
+                        let! basedOnReferenceDto = referenceActorProxy.Get branchEvent.Metadata.CorrelationId
+                        branchEvent.Metadata.Properties["basedOnReferenceDto"] <- serialize basedOnReferenceDto
+                    | _ -> ()
+
                     // Update the branchDto with the event.
-                    let! updatedBranchDto = branchDto |> updateDto branchEvent this.correlationId
+                    let! updatedBranchDto = branchDto |> BranchDto.UpdateDto branchEvent this.correlationId
                     branchDto <- updatedBranchDto
                     branchEvent.Metadata.Properties[nameof (RepositoryId)] <- $"{branchDto.RepositoryId}"
 
@@ -387,7 +319,7 @@ module Branch =
                                 CreatedAt = metadata.Timestamp
                                 UpdatedAt = Some metadata.Timestamp }
 
-                        let referenceCommand = Reference.ReferenceCommand.Create referenceDto
+                        let referenceCommand = ReferenceCommand.Create referenceDto
 
                         match! referenceActor.Handle referenceCommand metadata with
                         | Ok _ -> return Ok referenceDto
@@ -515,9 +447,7 @@ module Branch =
                                                             let metadata = EventMetadata.New metadata.CorrelationId GraceSystemUser
 
                                                             match!
-                                                                referenceActorProxy.Handle
-                                                                    (Reference.ReferenceCommand.DeleteLogical(true, deleteReason))
-                                                                    metadata
+                                                                referenceActorProxy.Handle (ReferenceCommand.DeleteLogical(true, deleteReason)) metadata
                                                             with
                                                             | Ok _ -> ()
                                                             | Error error ->

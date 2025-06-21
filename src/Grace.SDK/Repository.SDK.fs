@@ -1,11 +1,11 @@
 namespace Grace.SDK
 
 open Grace.SDK.Common
-open Grace.Shared.Dto.Branch
-open Grace.Shared.Dto.Reference
-open Grace.Shared.Dto.Repository
 open Grace.Shared.Parameters.Repository
 open Grace.Shared.Utilities
+open Grace.Types.Branch
+open Grace.Types.Reference
+open Grace.Types.Repository
 open Grace.Types.Types
 open System
 open System.Collections.Generic

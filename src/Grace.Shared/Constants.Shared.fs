@@ -355,6 +355,10 @@ module Constants =
     /// The default value for a timestamp during record construction. Equal to 2000-01-01T00:00:00Z.
     let DefaultTimestamp = Instant.FromDateTimeUtc(DateTime(2000, 1, 1, 0, 0, 0, DateTimeKind.Utc))
 
+    /// The default name of the account in object storage that holds Grace objects.
+    [<Literal>]
+    let DefaultObjectStorageAccount = "gracevcsdevelopment"
+
     /// Values used with Grace's MemoryCache.
     module MemoryCache =
         /// A special Guid value that means "false" or "we know there's no value here". Used in places where the cache entry value is a Guid.

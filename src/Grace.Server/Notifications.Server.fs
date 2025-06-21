@@ -9,8 +9,8 @@ open Grace.Actors.Services
 open Grace.Server.Services
 open Grace.Shared
 open Grace.Shared.Constants
-open Grace.Shared.Dto
 open Grace.Shared.Events
+open Grace.Types
 open Grace.Types.Types
 open Grace.Shared.Utilities
 open Microsoft.AspNetCore.Http

@@ -8,13 +8,13 @@ open Grace.Actors.Services
 open Grace.Server.Services
 open Grace.Server.Validations
 open Grace.Shared
-open Grace.Shared.Commands.Organization
 open Grace.Shared.Extensions
 open Grace.Shared.Parameters.Organization
 open Grace.Shared.Utilities
 open Grace.Shared.Validation.Common
 open Grace.Shared.Validation.Errors.Organization
 open Grace.Shared.Validation.Utilities
+open Grace.Types.Organization
 open Grace.Types.Types
 open Microsoft.AspNetCore.Http
 open Microsoft.Extensions.Logging
