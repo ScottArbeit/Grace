@@ -54,21 +54,21 @@ module Repository =
                 parameterDictionary.AddRange(getParametersAsDictionary parameters)
 
                 // We know these Id's from ValidateIds.Middleware, so let's set them so we never have to resolve them again.
-                parameters.OwnerId <- graceIds.OwnerId
-                parameters.OrganizationId <- graceIds.OrganizationId
-                parameters.RepositoryId <- graceIds.RepositoryId
+                parameters.OwnerId <- graceIds.OwnerIdString
+                parameters.OrganizationId <- graceIds.OrganizationIdString
+                parameters.RepositoryId <- graceIds.RepositoryIdString
 
-                let handleCommand repositoryId cmd =
+                let handleCommand organizationId repositoryId cmd =
                     task {
-                        let! actorProxy = Repository.CreateActorProxy repositoryId correlationId
+                        let actorProxy = Repository.CreateActorProxy organizationId repositoryId correlationId
 
                         match! actorProxy.Handle cmd (createMetadata context) with
                         | Ok graceReturnValue ->
                             graceReturnValue
                                 .enhance(parameterDictionary)
-                                .enhance(nameof (OwnerId), graceIds.OwnerId)
-                                .enhance(nameof (OrganizationId), graceIds.OrganizationId)
-                                .enhance(nameof (RepositoryId), graceIds.RepositoryId)
+                                .enhance(nameof (OwnerId), graceIds.OwnerIdString)
+                                .enhance(nameof (OrganizationId), graceIds.OrganizationIdString)
+                                .enhance(nameof (RepositoryId), graceIds.RepositoryIdString)
                                 .enhance("Command", commandName)
                                 .enhance ("Path", context.Request.Path)
                             |> ignore
@@ -77,9 +77,9 @@ module Repository =
                         | Error graceError ->
                             graceError
                                 .enhance(parameterDictionary)
-                                .enhance(nameof (OwnerId), graceIds.OwnerId)
-                                .enhance(nameof (OrganizationId), graceIds.OrganizationId)
-                                .enhance(nameof (RepositoryId), graceIds.RepositoryId)
+                                .enhance(nameof (OwnerId), graceIds.OwnerIdString)
+                                .enhance(nameof (OrganizationId), graceIds.OrganizationIdString)
+                                .enhance(nameof (RepositoryId), graceIds.RepositoryIdString)
                                 .enhance("Command", commandName)
                                 .enhance ("Path", context.Request.Path)
                             |> ignore
@@ -97,7 +97,7 @@ module Repository =
                     "{CurrentInstant}: ****In Repository.Server.processCommand; about to run validations: CorrelationId: {correlationId}; RepositoryId: {repositoryId}.",
                     getCurrentInstantExtended (),
                     correlationId,
-                    graceIds.RepositoryId
+                    graceIds.RepositoryIdString
                 )
 
                 let validationResults = validations parameters
@@ -108,14 +108,13 @@ module Repository =
                     "{CurrentInstant}: ****In Repository.Server.processCommand: CorrelationId: {correlationId}; RepositoryId: {repositoryId}; validationsPassed: {validationsPassed}.",
                     getCurrentInstantExtended (),
                     correlationId,
-                    graceIds.RepositoryId,
+                    graceIds.RepositoryIdString,
                     validationsPassed
                 )
 
                 if validationsPassed then
-                    let repositoryGuid = Guid.Parse(graceIds.RepositoryId)
                     let! cmd = command parameters
-                    let! result = handleCommand repositoryGuid cmd
+                    let! result = handleCommand graceIds.OrganizationId graceIds.RepositoryId cmd
 
                     log.LogInformation(
                         "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; Finished {path}; Status code: {statusCode}; OwnerId: {ownerId}; OrganizationId: {organizationId}; RepositoryId: {repositoryId}.",
@@ -124,9 +123,9 @@ module Repository =
                         correlationId,
                         context.Request.Path,
                         context.Response.StatusCode,
-                        graceIds.OwnerId,
-                        graceIds.OrganizationId,
-                        graceIds.RepositoryId
+                        graceIds.OwnerIdString,
+                        graceIds.OrganizationIdString,
+                        graceIds.RepositoryIdString
                     )
 
                     return result
@@ -138,9 +137,9 @@ module Repository =
                     let graceError =
                         (GraceError.Create errorMessage correlationId)
                             .enhance(parameterDictionary)
-                            .enhance(nameof (OwnerId), graceIds.OwnerId)
-                            .enhance(nameof (OrganizationId), graceIds.OrganizationId)
-                            .enhance(nameof (RepositoryId), graceIds.RepositoryId)
+                            .enhance(nameof (OwnerId), graceIds.OwnerIdString)
+                            .enhance(nameof (OrganizationId), graceIds.OrganizationIdString)
+                            .enhance(nameof (RepositoryId), graceIds.RepositoryIdString)
                             .enhance("Command", commandName)
                             .enhance("Path", context.Request.Path)
                             .enhance ("Error", errorMessage)
@@ -158,9 +157,9 @@ module Repository =
                 let graceError =
                     (GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (getCorrelationId context))
                         .enhance(parameterDictionary)
-                        .enhance(nameof (OwnerId), graceIds.OwnerId)
-                        .enhance(nameof (OrganizationId), graceIds.OrganizationId)
-                        .enhance(nameof (RepositoryId), graceIds.RepositoryId)
+                        .enhance(nameof (OwnerId), graceIds.OwnerIdString)
+                        .enhance(nameof (OrganizationId), graceIds.OrganizationIdString)
+                        .enhance(nameof (RepositoryId), graceIds.RepositoryIdString)
                         .enhance ("Path", context.Request.Path)
 
                 return! context |> result500ServerError graceError
@@ -185,8 +184,7 @@ module Repository =
 
                 if validationsPassed then
                     // Get the actor proxy for the repository.
-                    let repositoryGuid = Guid.Parse(graceIds.RepositoryId)
-                    let! actorProxy = Repository.CreateActorProxy repositoryGuid correlationId
+                    let actorProxy = Repository.CreateActorProxy graceIds.OrganizationId graceIds.RepositoryId correlationId
 
                     // Execute the query.
                     let! queryResult = query context maxCount actorProxy
@@ -195,9 +193,9 @@ module Repository =
                     let graceReturnValue =
                         (GraceReturnValue.Create queryResult correlationId)
                             .enhance(parameterDictionary)
-                            .enhance(nameof (OwnerId), graceIds.OwnerId)
-                            .enhance(nameof (OrganizationId), graceIds.OrganizationId)
-                            .enhance(nameof (RepositoryId), graceIds.RepositoryId)
+                            .enhance(nameof (OwnerId), graceIds.OwnerIdString)
+                            .enhance(nameof (OrganizationId), graceIds.OrganizationIdString)
+                            .enhance(nameof (RepositoryId), graceIds.RepositoryIdString)
                             .enhance ("Path", context.Request.Path)
 
                     return! context |> result200Ok graceReturnValue
@@ -207,9 +205,9 @@ module Repository =
                     let graceError =
                         (GraceError.Create (RepositoryError.getErrorMessage error) correlationId)
                             .enhance(parameterDictionary)
-                            .enhance(nameof (OwnerId), graceIds.OwnerId)
-                            .enhance(nameof (OrganizationId), graceIds.OrganizationId)
-                            .enhance(nameof (RepositoryId), graceIds.RepositoryId)
+                            .enhance(nameof (OwnerId), graceIds.OwnerIdString)
+                            .enhance(nameof (OrganizationId), graceIds.OrganizationIdString)
+                            .enhance(nameof (RepositoryId), graceIds.RepositoryIdString)
                             .enhance ("Path", context.Request.Path)
 
                     return! context |> result400BadRequest graceError
@@ -225,9 +223,9 @@ module Repository =
                 let graceError =
                     (GraceError.Create $"{ExceptionResponse.Create ex}" correlationId)
                         .enhance(parameterDictionary)
-                        .enhance(nameof (OwnerId), graceIds.OwnerId)
-                        .enhance(nameof (OrganizationId), graceIds.OrganizationId)
-                        .enhance(nameof (RepositoryId), graceIds.RepositoryId)
+                        .enhance(nameof (OwnerId), graceIds.OwnerIdString)
+                        .enhance(nameof (OrganizationId), graceIds.OrganizationIdString)
+                        .enhance(nameof (RepositoryId), graceIds.RepositoryIdString)
                         .enhance ("Path", context.Request.Path)
 
                 return! context |> result500ServerError graceError
@@ -242,7 +240,7 @@ module Repository =
 
                 //let! parameters = context |> parse<CreateParameters>
                 let validations (parameters: CreateRepositoryParameters) =
-                    [| Repository.repositoryIdDoesNotExist parameters.RepositoryId parameters.CorrelationId RepositoryIdAlreadyExists
+                    [| Repository.repositoryIdDoesNotExist graceIds.OrganizationId parameters.RepositoryId parameters.CorrelationId RepositoryIdAlreadyExists
                        Repository.repositoryNameIsUnique
                            parameters.OwnerId
                            parameters.OrganizationId
@@ -256,8 +254,8 @@ module Repository =
                             Create(
                                 RepositoryName parameters.RepositoryName,
                                 (Guid.Parse(parameters.RepositoryId)),
-                                (Guid.Parse(graceIds.OwnerId)),
-                                (Guid.Parse(graceIds.OrganizationId))
+                                (Guid.Parse(graceIds.OwnerIdString)),
+                                (Guid.Parse(graceIds.OrganizationIdString))
                             )
                     }
                     |> ValueTask<RepositoryCommand>
@@ -513,7 +511,7 @@ module Repository =
                         duration_ms,
                         (getCorrelationId context),
                         context.Request.Path,
-                        graceIds.RepositoryId
+                        graceIds.RepositoryIdString
                     )
 
                     return result
@@ -528,7 +526,7 @@ module Repository =
                         duration_ms,
                         (getCorrelationId context),
                         context.Request.Path,
-                        graceIds.RepositoryId
+                        graceIds.RepositoryIdString
                     )
 
                     return!
@@ -561,7 +559,7 @@ module Repository =
                         duration_ms,
                         (getCorrelationId context),
                         context.Request.Path,
-                        graceIds.RepositoryId
+                        graceIds.RepositoryIdString
                     )
 
                     return result
@@ -576,7 +574,7 @@ module Repository =
                         duration_ms,
                         (getCorrelationId context),
                         context.Request.Path,
-                        graceIds.RepositoryId
+                        graceIds.RepositoryIdString
                     )
 
                     return!
@@ -594,7 +592,7 @@ module Repository =
                 try
                     let validations (parameters: RepositoryParameters) = [||]
 
-                    let query (context: HttpContext) (maxCount: int) (actorProxy: IRepositoryActor) = task { return! actorProxy.Get(getCorrelationId context) }
+                    let query (context: HttpContext) (maxCount: int) (actorProxy: IRepositoryActor) = actorProxy.Get(getCorrelationId context)
 
                     let! parameters = context |> parse<RepositoryParameters>
                     let! result = processQuery context parameters validations 1 query
@@ -608,7 +606,7 @@ module Repository =
                         duration_ms,
                         (getCorrelationId context),
                         context.Request.Path,
-                        graceIds.RepositoryId
+                        graceIds.RepositoryIdString
                     )
 
                     return result
@@ -623,7 +621,7 @@ module Repository =
                         duration_ms,
                         (getCorrelationId context),
                         context.Request.Path,
-                        graceIds.RepositoryId
+                        graceIds.RepositoryIdString
                     )
 
                     return!
@@ -644,9 +642,10 @@ module Repository =
                     let query (context: HttpContext) (maxCount: int) (actorProxy: IRepositoryActor) =
                         task {
                             let graceIds = context.Items[nameof (GraceIds)] :?> GraceIds
-                            let repositoryId = Guid.Parse(graceIds.RepositoryId)
                             let includeDeleted = context.Items["IncludeDeleted"] :?> bool
-                            return! getBranches repositoryId maxCount includeDeleted (getCorrelationId context)
+
+                            return!
+                                getBranches graceIds.OwnerId graceIds.OrganizationId graceIds.RepositoryId maxCount includeDeleted (getCorrelationId context)
                         }
 
                     let! parameters = context |> parse<GetBranchesParameters>
@@ -662,7 +661,7 @@ module Repository =
                         duration_ms,
                         (getCorrelationId context),
                         context.Request.Path,
-                        graceIds.RepositoryId
+                        graceIds.RepositoryIdString
                     )
 
                     return result
@@ -677,7 +676,7 @@ module Repository =
                         duration_ms,
                         (getCorrelationId context),
                         context.Request.Path,
-                        graceIds.RepositoryId
+                        graceIds.RepositoryIdString
                     )
 
                     return!
@@ -690,7 +689,7 @@ module Repository =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let startTime = getCurrentInstant ()
-                let graceIds = context.Items[nameof (GraceIds)] :?> GraceIds
+                let graceIds = getGraceIds context
 
                 try
                     let validations (parameters: GetReferencesByReferenceIdParameters) =
@@ -703,7 +702,7 @@ module Repository =
 
                             log.LogDebug("In Repository.Server.GetReferencesByReferenceId: ReferenceIds: {referenceIds}", serialize referenceIds)
 
-                            return! getReferencesByReferenceId referenceIds maxCount (getCorrelationId context)
+                            return! getReferencesByReferenceId graceIds.RepositoryId referenceIds maxCount (getCorrelationId context)
                         }
 
                     let! parameters = context |> parse<GetReferencesByReferenceIdParameters>
@@ -719,7 +718,7 @@ module Repository =
                         duration_ms,
                         (getCorrelationId context),
                         context.Request.Path,
-                        graceIds.RepositoryId
+                        graceIds.RepositoryIdString
                     )
 
                     return result
@@ -734,7 +733,7 @@ module Repository =
                         duration_ms,
                         (getCorrelationId context),
                         context.Request.Path,
-                        graceIds.RepositoryId
+                        graceIds.RepositoryIdString
                     )
 
                     return!
@@ -756,7 +755,7 @@ module Repository =
 
                     let query (context: HttpContext) (maxCount: int) (actorProxy: IRepositoryActor) =
                         task {
-                            let repositoryId = Guid.Parse(graceIds.RepositoryId)
+                            let repositoryId = Guid.Parse(graceIds.RepositoryIdString)
                             let branchIdsFromContext = (context.Items["BranchIds"] :?> string)
 
                             let branchIds =
@@ -790,7 +789,7 @@ module Repository =
                             duration_ms,
                             (getCorrelationId context),
                             context.Request.Path,
-                            graceIds.RepositoryId
+                            graceIds.RepositoryIdString
                         )
 
                         return result
@@ -807,7 +806,7 @@ module Repository =
                         duration_ms,
                         (getCorrelationId context),
                         context.Request.Path,
-                        graceIds.RepositoryId
+                        graceIds.RepositoryIdString
                     )
 
                     return!

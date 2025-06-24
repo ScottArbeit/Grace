@@ -14,6 +14,7 @@ open Grace.Shared.Validation.Errors.Branch
 open Grace.Types.Reference
 open Grace.Types.Repository
 open Grace.Types.Branch
+open Grace.Types.Events
 open Grace.Types.Types
 open Microsoft.Extensions.Logging
 open NodaTime
@@ -76,7 +77,7 @@ module Branch =
                 let referenceTypes = enabledReferenceTypes.ToArray()
 
                 // Get the latest references.
-                let! latestReferences = getLatestReferenceByReferenceTypes referenceTypes branchDto.BranchId
+                let! latestReferences = getLatestReferenceByReferenceTypes referenceTypes branchDto.RepositoryId branchDto.BranchId
 
                 // Get the latest reference of any type.
                 let latestReference =
@@ -106,7 +107,7 @@ module Branch =
                             match basedOnLink with
                             | ReferenceLinkType.BasedOn referenceId -> referenceId
 
-                        let! basedOnReferenceActorProxy = Reference.CreateActorProxy basedOnReferenceId branchDto.RepositoryId correlationId
+                        let basedOnReferenceActorProxy = Reference.CreateActorProxy basedOnReferenceId branchDto.RepositoryId correlationId
                         let! basedOnReferenceDto = basedOnReferenceActorProxy.Get correlationId
 
                         newBranchDto <- { newBranchDto with BasedOn = basedOnReferenceDto }
@@ -121,12 +122,11 @@ module Branch =
         override this.OnActivateAsync(ct) =
             let activateStartTime = getCurrentInstant ()
 
-            let correlationId =
-                match memoryCache.GetCorrelationIdEntry this.IdentityString with
-                | Some correlationId -> correlationId
-                | None -> String.Empty
+            branchDto <-
+                state.State
+                |> Seq.fold (fun branchDto branchEvent -> branchDto |> BranchDto.UpdateDto branchEvent) BranchDto.Default
 
-            logActorActivation log this.IdentityString (getActorActivationMessage state.RecordExists)
+            logActorActivation log this.IdentityString activateStartTime (getActorActivationMessage state.RecordExists)
 
             Task.CompletedTask
 
@@ -135,11 +135,11 @@ module Branch =
                 try
                     // If the branchEvent is Created or Rebased, we need to get the reference that the branch is based on for updating the branchDto.
                     match branchEvent.Event with
-                    | Created(branchId, branchName, parentBranchId, basedOn, repositoryId, branchPermissions) ->
+                    | Created(branchId, branchName, parentBranchId, basedOn, ownerId, organizationId, repositoryId, branchPermissions) ->
                         let! basedOnReferenceDto =
                             if basedOn <> ReferenceId.Empty then
                                 task {
-                                    let! referenceActorProxy = Reference.CreateActorProxy basedOn repositoryId branchEvent.Metadata.CorrelationId
+                                    let referenceActorProxy = Reference.CreateActorProxy basedOn repositoryId branchEvent.Metadata.CorrelationId
                                     return! referenceActorProxy.Get branchEvent.Metadata.CorrelationId
                                 }
                             else
@@ -147,14 +147,13 @@ module Branch =
 
                         branchEvent.Metadata.Properties["basedOnReferenceDto"] <- serialize basedOnReferenceDto
                     | Rebased basedOn ->
-                        let! referenceActorProxy = Reference.CreateActorProxy basedOn branchDto.RepositoryId branchEvent.Metadata.CorrelationId
+                        let referenceActorProxy = Reference.CreateActorProxy basedOn branchDto.RepositoryId branchEvent.Metadata.CorrelationId
                         let! basedOnReferenceDto = referenceActorProxy.Get branchEvent.Metadata.CorrelationId
                         branchEvent.Metadata.Properties["basedOnReferenceDto"] <- serialize basedOnReferenceDto
                     | _ -> ()
 
                     // Update the branchDto with the event.
-                    let! updatedBranchDto = branchDto |> BranchDto.UpdateDto branchEvent this.correlationId
-                    branchDto <- updatedBranchDto
+                    branchDto <- branchDto |> BranchDto.UpdateDto branchEvent
                     branchEvent.Metadata.Properties[nameof (RepositoryId)] <- $"{branchDto.RepositoryId}"
 
                     match branchEvent.Event with
@@ -174,7 +173,7 @@ module Branch =
                         do! state.WriteStateAsync()
 
                         // Publish the event to the rest of the world.
-                        let graceEvent = Events.GraceEvent.BranchEvent branchEvent
+                        let graceEvent = GraceEvent.BranchEvent branchEvent
                         do! daprClient.PublishEventAsync(GracePubSubService, GraceEventStreamTopic, graceEvent)
 
                     let returnValue = GraceReturnValue.Create "Branch command succeeded." branchEvent.Metadata.CorrelationId
@@ -218,7 +217,16 @@ module Branch =
             member this.ScheduleReminderAsync reminderType delay state correlationId =
                 task {
                     let reminder =
-                        ReminderDto.Create actorName $"{this.IdentityString}" branchDto.RepositoryId reminderType (getFutureInstant delay) state correlationId
+                        ReminderDto.Create
+                            actorName
+                            $"{this.IdentityString}"
+                            branchDto.OwnerId
+                            branchDto.OrganizationId
+                            branchDto.RepositoryId
+                            reminderType
+                            (getFutureInstant delay)
+                            state
+                            correlationId
 
                     do! createReminder reminder
                 }
@@ -291,7 +299,7 @@ module Branch =
                             return Error(GraceError.Create (BranchError.getErrorMessage DuplicateCorrelationId) metadata.CorrelationId)
                         else
                             match command with
-                            | BranchCommand.Create(branchId, branchName, parentBranchId, basedOn, repositoryId, branchPermissions) ->
+                            | BranchCommand.Create(branchId, branchName, parentBranchId, basedOn, ownerId, organizationId, repositoryId, branchPermissions) ->
                                 match branchDto.UpdatedAt with
                                 | Some _ -> return Error(GraceError.Create (BranchError.getErrorMessage BranchAlreadyExists) metadata.CorrelationId)
                                 | None -> return Ok command
@@ -301,14 +309,16 @@ module Branch =
                                 | None -> return Error(GraceError.Create (BranchError.getErrorMessage BranchDoesNotExist) metadata.CorrelationId)
                     }
 
-                let addReference repositoryId branchId directoryId sha256Hash referenceText referenceType links =
+                let addReference ownerId organizationId repositoryId branchId directoryId sha256Hash referenceText referenceType links =
                     task {
                         let referenceId: ReferenceId = ReferenceId.NewGuid()
-                        let! referenceActor = Reference.CreateActorProxy referenceId repositoryId this.correlationId
+                        let referenceActor = Reference.CreateActorProxy referenceId repositoryId this.correlationId
 
                         let referenceDto =
                             { ReferenceDto.Default with
                                 ReferenceId = referenceId
+                                OwnerId = ownerId
+                                OrganizationId = organizationId
                                 RepositoryId = repositoryId
                                 BranchId = branchId
                                 DirectoryId = directoryId
@@ -326,7 +336,7 @@ module Branch =
                         | Error error -> return Error error
                     }
 
-                let addReferenceToCurrentBranch = addReference branchDto.RepositoryId branchDto.BranchId
+                let addReferenceToCurrentBranch = addReference branchDto.OwnerId branchDto.OrganizationId branchDto.RepositoryId branchDto.BranchId
 
                 let processCommand (command: BranchCommand) (metadata: EventMetadata) =
                     task {
@@ -334,15 +344,17 @@ module Branch =
                             let! event =
                                 task {
                                     match command with
-                                    | Create(branchId, branchName, parentBranchId, basedOn, repositoryId, branchPermissions) ->
+                                    | Create(branchId, branchName, parentBranchId, basedOn, ownerId, organizationId, repositoryId, branchPermissions) ->
                                         // Add an initial Rebase reference to this branch that points to the BasedOn reference, unless we're creating `main`.
                                         if branchName <> InitialBranchName then
                                             // We need to get the reference that we're rebasing on, so we can get the directoryId and sha256Hash.
-                                            let! referenceActorProxy = Reference.CreateActorProxy basedOn repositoryId this.correlationId
+                                            let referenceActorProxy = Reference.CreateActorProxy basedOn repositoryId this.correlationId
                                             let! promotionDto = referenceActorProxy.Get this.correlationId
 
                                             match!
                                                 addReference
+                                                    branchDto.OwnerId
+                                                    branchDto.OrganizationId
                                                     repositoryId
                                                     branchId
                                                     promotionDto.DirectoryId
@@ -358,9 +370,10 @@ module Branch =
                                                 logToConsole
                                                     $"In BranchActor.Handle.processCommand: Error rebasing on referenceId: {basedOn}. promotionDto: {serialize promotionDto}"
 
-                                        memoryCache.CreateBranchNameEntry $"{repositoryId}" branchName branchId
+                                        memoryCache.CreateBranchNameEntry(repositoryId, branchName, branchId)
 
-                                        return Ok(Created(branchId, branchName, parentBranchId, basedOn, repositoryId, branchPermissions))
+                                        return
+                                            Ok(Created(branchId, branchName, parentBranchId, basedOn, ownerId, organizationId, repositoryId, branchPermissions))
                                     | BranchCommand.Rebase referenceId ->
                                         metadata.Properties["BasedOn"] <- $"{referenceId}"
                                         metadata.Properties[nameof (ReferenceId)] <- $"{referenceId}"
@@ -369,7 +382,7 @@ module Branch =
                                         metadata.Properties[nameof (BranchName)] <- $"{branchDto.BranchName}"
 
                                         // We need to get the reference that we're rebasing on, so we can get the directoryId and sha256Hash.
-                                        let! referenceActorProxy = Reference.CreateActorProxy referenceId branchDto.RepositoryId this.correlationId
+                                        let referenceActorProxy = Reference.CreateActorProxy referenceId branchDto.RepositoryId this.correlationId
                                         let! promotionDto = referenceActorProxy.Get metadata.CorrelationId
 
                                         // Add the Rebase reference to this branch.
@@ -428,11 +441,13 @@ module Branch =
                                         | Error error -> return Error error
                                     | RemoveReference referenceId -> return Ok(ReferenceRemoved referenceId)
                                     | DeleteLogical(force, deleteReason) ->
-                                        let! repositoryActorProxy = Repository.CreateActorProxy branchDto.RepositoryId metadata.CorrelationId
+                                        let repositoryActorProxy =
+                                            Repository.CreateActorProxy branchDto.OrganizationId branchDto.RepositoryId metadata.CorrelationId
+
                                         let! repositoryDto = repositoryActorProxy.Get(metadata.CorrelationId)
 
                                         // Delete the references for this branch.
-                                        let! references = getReferences branchDto.BranchId Int32.MaxValue metadata.CorrelationId
+                                        let! references = getReferences branchDto.RepositoryId branchDto.BranchId Int32.MaxValue metadata.CorrelationId
 
                                         do!
                                             Parallel.ForEachAsync(
@@ -441,7 +456,7 @@ module Branch =
                                                 (fun reference ct ->
                                                     ValueTask(
                                                         task {
-                                                            let! referenceActorProxy =
+                                                            let referenceActorProxy =
                                                                 Reference.CreateActorProxy reference.ReferenceId branchDto.RepositoryId metadata.CorrelationId
 
                                                             let metadata = EventMetadata.New metadata.CorrelationId GraceSystemUser
@@ -517,7 +532,7 @@ module Branch =
             member this.GetParentBranch correlationId =
                 task {
                     this.correlationId <- correlationId
-                    let! branchActorProxy = Branch.CreateActorProxy branchDto.ParentBranchId branchDto.RepositoryId correlationId
+                    let branchActorProxy = Branch.CreateActorProxy branchDto.ParentBranchId branchDto.RepositoryId correlationId
 
                     return! branchActorProxy.Get correlationId
                 }

@@ -49,7 +49,7 @@ module Owner =
                 parameterDictionary.AddRange(getParametersAsDictionary parameters)
 
                 // We know these Id's from ValidateIds.Middleware, so let's set them so we never have to resolve them again.
-                parameters.OwnerId <- graceIds.OwnerId
+                parameters.OwnerId <- graceIds.OwnerIdString
 
                 let handleCommand (ownerId: string) cmd =
                     task {
@@ -59,15 +59,9 @@ module Owner =
                             not <| (isNull t.Namespace)
                             && t.Namespace.StartsWith("Grace", StringComparison.InvariantCulture)
 
-                        logToConsole
-                            $"In Owner.Server.processCommand: handleCommand: t.Namespace: {t.Namespace}; t.FullName: {t.FullName}; isSupported (for JSON serialization): {isSupported}."
-
                         let ownerGuid = Guid.Parse(ownerId)
                         let actorProxy = Owner.CreateActorProxy ownerGuid (getCorrelationId context)
                         let metadata = createMetadata context
-
-                        logToConsole
-                            $"In Owner.Server.handleCommand: context.Items: {serialize context.Items}; metadata.AssemblyQualifiedName: {metadata.GetType().AssemblyQualifiedName}; metadata.Assembly.Location: {metadata.GetType().Assembly.Location}; metadata.GetType().Attributes: {metadata.GetType().Attributes}; metadata: {serialize metadata}."
 
                         match! actorProxy.Handle cmd metadata with
                         | Ok graceReturnValue ->
@@ -76,13 +70,10 @@ module Owner =
                             logToConsole $"In Owner.Server.processCommand: graceReturnValue.EventTime: {graceReturnValue.EventTime}."
                             logToConsole $"In Owner.Server.processCommand: graceReturnValue.Properties: {serialize graceReturnValue.Properties}."
 
-                            logToConsole
-                                $"In Owner.Server.processCommand: parameterDictionary: {serialize parameterDictionary}; graceIds: {serialize graceIds}; commandName: {commandName}; path: {context.Request.Path}."
-
                             graceReturnValue.enhance (parameterDictionary :> IReadOnlyDictionary<string, string>)
                             |> ignore
 
-                            graceReturnValue.enhance (nameof (OwnerId), graceIds.OwnerId) |> ignore
+                            graceReturnValue.enhance (nameof (OwnerId), graceIds.OwnerIdString) |> ignore
                             graceReturnValue.enhance ("Command", commandName) |> ignore
                             graceReturnValue.enhance ("Path", context.Request.Path) |> ignore
 
@@ -90,7 +81,7 @@ module Owner =
                         | Error graceError ->
                             graceError
                                 .enhance(parameterDictionary)
-                                .enhance(nameof (OwnerId), graceIds.OwnerId)
+                                .enhance(nameof (OwnerId), graceIds.OwnerIdString)
                                 .enhance("Command", commandName)
                                 .enhance ("Path", context.Request.Path)
                             |> ignore
@@ -117,10 +108,7 @@ module Owner =
                 if validationsPassed then
                     let! cmd = command parameters
 
-                    logToConsole
-                        $"In Owner.Server.processCommand: cmd: {serialize cmd}; AssemblyQualifiedName: {cmd.GetType().AssemblyQualifiedName}; Assembly.Location: {command.GetType().Assembly.Location}; parameters: {serialize parameters}."
-
-                    let! result = handleCommand graceIds.OwnerId cmd
+                    let! result = handleCommand graceIds.OwnerIdString cmd
 
                     log.LogInformation(
                         "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; Finished {path}; Status code: {statusCode}; OwnerId: {ownerId}.",
@@ -129,7 +117,7 @@ module Owner =
                         correlationId,
                         context.Request.Path,
                         context.Response.StatusCode,
-                        graceIds.OwnerId
+                        graceIds.OwnerIdString
                     )
 
                     return result
@@ -141,7 +129,7 @@ module Owner =
                     let graceError =
                         (GraceError.Create errorMessage (getCorrelationId context))
                             .enhance(parameterDictionary)
-                            .enhance(nameof (OwnerId), graceIds.OwnerId)
+                            .enhance(nameof (OwnerId), graceIds.OwnerIdString)
                             .enhance("Command", commandName)
                             .enhance("Path", context.Request.Path)
                             .enhance ("Error", errorMessage)
@@ -158,7 +146,7 @@ module Owner =
                 let graceError =
                     (GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (getCorrelationId context))
                         .enhance(parameterDictionary)
-                        .enhance(nameof (OwnerId), graceIds.OwnerId)
+                        .enhance(nameof (OwnerId), graceIds.OwnerIdString)
                         .enhance ("Path", context.Request.Path)
 
                 return! context |> result500ServerError graceError
@@ -184,8 +172,7 @@ module Owner =
 
                 if validationsPassed then
                     // Get the actor proxy for this owner.
-                    let ownerGuid = Guid.Parse(graceIds.OwnerId)
-                    let actorProxy = Owner.CreateActorProxy ownerGuid correlationId
+                    let actorProxy = Owner.CreateActorProxy graceIds.OwnerId correlationId
 
                     // Execute the query.
                     let! queryResult = query context maxCount actorProxy
@@ -194,10 +181,9 @@ module Owner =
                     let graceReturnValue =
                         (GraceReturnValue.Create queryResult correlationId)
                             .enhance(parameterDictionary)
-                            .enhance(nameof (OwnerId), graceIds.OwnerId)
+                            .enhance(nameof (OwnerId), graceIds.OwnerIdString)
                             .enhance ("Path", context.Request.Path)
 
-                    //logToConsole $"In Owner.Server.processQuery: graceReturnValue: {graceReturnValue}"
                     return! context |> result200Ok graceReturnValue
                 else
                     let! error = validationResults |> getFirstError
@@ -205,7 +191,7 @@ module Owner =
                     let graceError =
                         (GraceError.Create (OwnerError.getErrorMessage error) correlationId)
                             .enhance(parameterDictionary)
-                            .enhance(nameof (OwnerId), graceIds.OwnerId)
+                            .enhance(nameof (OwnerId), graceIds.OwnerIdString)
                             .enhance ("Path", context.Request.Path)
 
                     return! context |> result400BadRequest graceError
@@ -213,7 +199,7 @@ module Owner =
                 let graceError =
                     (GraceError.Create $"{ExceptionResponse.Create ex}" correlationId)
                         .enhance(parameterDictionary)
-                        .enhance(nameof (OwnerId), graceIds.OwnerId)
+                        .enhance(nameof (OwnerId), graceIds.OwnerIdString)
                         .enhance ("Path", context.Request.Path)
 
                 return! context |> result500ServerError graceError
@@ -363,7 +349,7 @@ module Owner =
                 try
                     let validations (parameters: GetOwnerParameters) = [| Owner.ownerIsNotDeleted context parameters.CorrelationId OwnerIsDeleted |]
 
-                    let query (context: HttpContext) (maxCount: int) (actorProxy: IOwnerActor) = task { return! actorProxy.Get(getCorrelationId context) }
+                    let query (context: HttpContext) (maxCount: int) (actorProxy: IOwnerActor) = actorProxy.Get(getCorrelationId context)
 
                     let! parameters = context |> parse<GetOwnerParameters>
 
@@ -378,7 +364,7 @@ module Owner =
                         duration_ms,
                         (getCorrelationId context),
                         context.Request.Path,
-                        graceIds.OwnerId
+                        graceIds.OwnerIdString
                     )
 
                     return result
@@ -393,12 +379,12 @@ module Owner =
                         duration_ms,
                         (getCorrelationId context),
                         context.Request.Path,
-                        graceIds.OwnerId
+                        graceIds.OwnerIdString
                     )
 
                     let graceError =
                         (GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId context))
-                            .enhance(nameof (OwnerId), graceIds.OwnerId)
+                            .enhance(nameof (OwnerId), graceIds.OwnerIdString)
                             .enhance ("Path", context.Request.Path)
 
                     return! context |> result500ServerError graceError

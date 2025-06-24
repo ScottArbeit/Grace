@@ -18,6 +18,8 @@ module Types =
           ReminderId: ReminderId
           ActorName: string
           ActorId: string
+          OwnerId: OwnerId
+          OrganizationId: OrganizationId
           RepositoryId: RepositoryId
           ReminderType: ReminderTypes
           CreatedAt: Instant
@@ -30,6 +32,8 @@ module Types =
               ReminderId = ReminderId.Empty
               ActorName = String.Empty
               ActorId = String.Empty
+              OwnerId = OwnerId.Empty
+              OrganizationId = OrganizationId.Empty
               RepositoryId = RepositoryId.Empty
               ReminderType = ReminderTypes.Maintenance // This is the default because something has to be; there's no significance to it.
               CreatedAt = Instant.MinValue
@@ -38,11 +42,13 @@ module Types =
               State = String.Empty }
 
         /// Creates a ReminderDto.
-        static member Create actorName actorId repositoryId reminderType reminderTime state correlationId =
+        static member Create actorName actorId ownerId organizationId repositoryId reminderType reminderTime state correlationId =
             { Class = nameof (ReminderDto)
               ReminderId = ReminderId.NewGuid()
               ActorName = actorName
               ActorId = actorId
+              OwnerId = ownerId
+              OrganizationId = organizationId
               RepositoryId = repositoryId
               ReminderType = reminderType
               CreatedAt = getCurrentInstant ()

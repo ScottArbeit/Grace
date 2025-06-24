@@ -10,10 +10,43 @@ open System.Runtime.Serialization
 
 module Reference =
 
-    [<KnownType("GetKnownTypes"); GenerateSerializer>]
-    type ReferenceDto =
+    [<KnownType("GetKnownTypes")>]
+    type ReferenceCommand =
+        | Create of referenceDto: ReferenceDto
+        | AddLink of link: ReferenceLinkType
+        | RemoveLink of link: ReferenceLinkType
+        | DeleteLogical of force: bool * DeleteReason: DeleteReason
+        | DeletePhysical
+        | Undelete
+
+        static member GetKnownTypes() = GetKnownTypes<ReferenceCommand>()
+
+    /// Defines the events for the Reference actor.
+    and [<KnownType("GetKnownTypes")>] ReferenceEventType =
+        | Created of referenceDto: ReferenceDto
+        | LinkAdded of link: ReferenceLinkType
+        | LinkRemoved of link: ReferenceLinkType
+        | LogicalDeleted of force: bool * DeleteReason: DeleteReason
+        | PhysicalDeleted
+        | Undeleted
+
+        static member GetKnownTypes() = GetKnownTypes<ReferenceEventType>()
+
+    /// Record that holds the event type and metadata for a Reference event.
+    and ReferenceEvent =
+        {
+            /// The ReferenceEventType case that describes the event.
+            Event: ReferenceEventType
+            /// The EventMetadata for the event. EventMetadata includes the Timestamp, CorrelationId, Principal, and a Properties dictionary.
+            Metadata: EventMetadata
+        }
+
+    /// The ReferenceDto is a data transfer object that represents a reference in the system.
+    and ReferenceDto =
         { Class: string
           ReferenceId: ReferenceId
+          OwnerId: OwnerId
+          OrganizationId: OrganizationId
           RepositoryId: RepositoryId
           BranchId: BranchId
           DirectoryId: DirectoryVersionId
@@ -29,6 +62,8 @@ module Reference =
         static member Default =
             { Class = nameof (ReferenceDto)
               ReferenceId = ReferenceId.Empty
+              OwnerId = OwnerId.Empty
+              OrganizationId = OrganizationId.Empty
               RepositoryId = RepositoryId.Empty
               BranchId = BranchId.Empty
               DirectoryId = DirectoryVersionId.Empty
@@ -41,12 +76,15 @@ module Reference =
               DeletedAt = None
               DeleteReason = String.Empty }
 
+        /// Updates the ReferenceDto based on the ReferenceEvent.
         static member UpdateDto referenceEvent currentReferenceDto =
             let newReferenceDto =
                 match referenceEvent.Event with
                 | Created createdDto ->
                     { currentReferenceDto with
                         ReferenceId = createdDto.ReferenceId
+                        OwnerId = createdDto.OwnerId
+                        OrganizationId = createdDto.OrganizationId
                         RepositoryId = createdDto.RepositoryId
                         BranchId = createdDto.BranchId
                         DirectoryId = createdDto.DirectoryId
@@ -69,33 +107,3 @@ module Reference =
             { newReferenceDto with UpdatedAt = Some referenceEvent.Metadata.Timestamp }
 
         static member GetKnownTypes() = GetKnownTypes<ReferenceDto>()
-
-    and [<KnownType("GetKnownTypes"); GenerateSerializer>] ReferenceCommand =
-        | Create of referenceDto: ReferenceDto
-        | AddLink of link: ReferenceLinkType
-        | RemoveLink of link: ReferenceLinkType
-        | DeleteLogical of force: bool * DeleteReason: DeleteReason
-        | DeletePhysical
-        | Undelete
-
-        static member GetKnownTypes() = GetKnownTypes<ReferenceCommand>()
-
-    /// Defines the events for the Reference actor.
-    and [<KnownType("GetKnownTypes"); GenerateSerializer>] ReferenceEventType =
-        | Created of referenceDto: ReferenceDto
-        | LinkAdded of link: ReferenceLinkType
-        | LinkRemoved of link: ReferenceLinkType
-        | LogicalDeleted of force: bool * DeleteReason: DeleteReason
-        | PhysicalDeleted
-        | Undeleted
-
-        static member GetKnownTypes() = GetKnownTypes<ReferenceEventType>()
-
-    /// Record that holds the event type and metadata for a Reference event.
-    and [<GenerateSerializer>] ReferenceEvent =
-        {
-            /// The ReferenceEventType case that describes the event.
-            Event: ReferenceEventType
-            /// The EventMetadata for the event. EventMetadata includes the Timestamp, CorrelationId, Principal, and a Properties dictionary.
-            Metadata: EventMetadata
-        }

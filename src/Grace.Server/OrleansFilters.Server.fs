@@ -1,52 +1,68 @@
 namespace Grace.Server
 
+open Grace.Actors.Constants
+open Grace.Actors.Extensions.MemoryCache
 open Grace.Actors.Interfaces
 open Grace.Actors.Services
 open Grace.Actors.Types
 open Grace.Server.ApplicationContext
 open Grace.Shared
 open Grace.Shared.Utilities
+open Grace.Types.Types
 open Microsoft.Extensions.Logging
 open Orleans
 open Orleans.Hosting
+open Orleans.Persistence
 open Orleans.Runtime
 open System
 open System.Diagnostics
+open System.Linq
 open System.Threading.Tasks
-open Grace.Actors.Constants
 open FSharpPlus.Data
-open Orleans.Persistence.Cosmos
+open System.Collections.Generic
+open Grace.Shared.Parameters
 
 module Orleans =
 
     type GracePartitionKeyProvider() =
-        interface Orleans.Persistence.Cosmos.IPartitionKeyProvider with
+        interface Cosmos.IPartitionKeyProvider with
             member _.GetPartitionKey(grainType: string, grainId: GrainId) =
                 ValueTask<string>(
                     task {
-                        let correlationid = getCorrelationId ()
-                        let organizationId = $"{getOrganizationId ()}".ToLowerInvariant()
-                        let repositoryId = $"{getRepositoryId ()}".ToLowerInvariant()
+                        //logToConsole $"****GracePartitionKeyProvider: grainType: {grainType}; grainId: {grainId}."
+
+                        let orleansContext =
+                            match memoryCache.GetOrleansContextEntry(grainId) with
+                            | Some orleansContext -> orleansContext
+                            | None -> Dictionary<string, obj>()
+
+                        //orleansContext
+                        //|> Seq.iter (fun kvp -> logToConsole $"**** - {kvp.Key}: {kvp.Value}")
+
+                        let organizationId () = $"{orleansContext[nameof (OrganizationId)]}"
+                        let repositoryId () = $"{orleansContext[nameof (RepositoryId)]}"
 
                         let partitionKey =
                             match grainType with
-                            | StateName.Branch -> repositoryId
-                            | StateName.Diff -> repositoryId
-                            | StateName.DirectoryAppearance -> repositoryId
-                            | StateName.DirectoryVersion -> repositoryId
-                            | StateName.FileAppearance -> repositoryId
-                            | StateName.NamedSection -> repositoryId
+                            | StateName.Branch -> repositoryId ()
+                            | StateName.Diff -> repositoryId ()
+                            | StateName.DirectoryAppearance -> repositoryId ()
+                            | StateName.DirectoryVersion -> repositoryId ()
+                            | StateName.FileAppearance -> repositoryId ()
+                            | StateName.NamedSection -> repositoryId ()
                             | StateName.Organization -> StateName.Organization
                             | StateName.Owner -> StateName.Owner
-                            | StateName.Reference -> repositoryId
+                            | StateName.Reference -> repositoryId ()
                             | StateName.Reminder -> StateName.Reminder
-                            | StateName.Repository -> organizationId
-                            | StateName.RepositoryPermission -> repositoryId
+                            | StateName.Repository -> organizationId ()
+                            | StateName.RepositoryPermission -> repositoryId ()
                             | StateName.User -> StateName.User
                             | _ -> raise (ArgumentException($"Unknown grain type in {nameof (GracePartitionKeyProvider)}: {grainType}"))
 
-                        logToConsole
-                            $"GracePartitionKeyProvider: correlationId: {correlationid}; grainType: {grainType}; grainId: {grainId}; partitionKey: {partitionKey}."
+                        let correlationid = getCorrelationId ()
+
+                        //logToConsole
+                        //    $"****GracePartitionKeyProvider: correlationId: {correlationid}; grainType: {grainType}; grainId: {grainId}; partitionKey: {partitionKey}."
 
                         return partitionKey
                     }

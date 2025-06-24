@@ -24,8 +24,11 @@ module DirectoryAppearance =
         member val public Appearances = SortedSet<Appearance>() with get, set
         member val public RepositoryId: RepositoryId = RepositoryId.Empty with get, set
 
-    type DirectoryAppearanceActor([<PersistentState(StateName.DirectoryAppearance, Constants.GraceActorStorage)>] state: IPersistentState<SortedSet<Appearance>>,
-                                  log: ILogger<DirectoryAppearanceDto>) =
+    type DirectoryAppearanceActor
+        (
+            [<PersistentState(StateName.DirectoryAppearance, Constants.GraceActorStorage)>] state: IPersistentState<SortedSet<Appearance>>,
+            log: ILogger<DirectoryAppearanceDto>
+        ) =
         inherit Grain()
 
         let actorName = ActorName.DirectoryAppearance
@@ -44,8 +47,7 @@ module DirectoryAppearance =
                 task {
                     let wasAdded = directoryAppearanceDto.Appearances.Add(appearance)
 
-                    if wasAdded then
-                        do! state.WriteStateAsync()
+                    if wasAdded then do! state.WriteStateAsync()
                 }
                 :> Task
 
@@ -58,7 +60,10 @@ module DirectoryAppearance =
                             do! state.ClearStateAsync()
 
                             let directoryVersionGuid = this.GetGrainId().GetGuidKey()
-                            let! directoryVersionActorProxy = DirectoryVersion.CreateActorProxy directoryVersionGuid directoryAppearanceDto.RepositoryId correlationId
+
+                            let directoryVersionActorProxy =
+                                DirectoryVersion.CreateActorProxy directoryVersionGuid directoryAppearanceDto.RepositoryId correlationId
+
                             let! result = directoryVersionActorProxy.Delete(correlationId)
 
                             match result with

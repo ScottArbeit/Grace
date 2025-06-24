@@ -49,25 +49,25 @@ module Branch =
                 parameterDictionary.AddRange(getParametersAsDictionary parameters)
 
                 // We know these Id's from ValidateIds.Middleware, so let's set them so we never have to resolve them again.
-                parameters.OwnerId <- graceIds.OwnerId
-                parameters.OrganizationId <- graceIds.OrganizationId
-                parameters.RepositoryId <- graceIds.RepositoryId
-                parameters.BranchId <- graceIds.BranchId
+                parameters.OwnerId <- graceIds.OwnerIdString
+                parameters.OrganizationId <- graceIds.OrganizationIdString
+                parameters.RepositoryId <- graceIds.RepositoryIdString
+                parameters.BranchId <- graceIds.BranchIdString
 
                 let handleCommand (branchId: string) cmd =
                     task {
                         let branchGuid = Guid.Parse(branchId)
-                        let repositoryId = Guid.Parse(graceIds.RepositoryId)
-                        let! actorProxy = Branch.CreateActorProxy branchGuid repositoryId correlationId
+                        let repositoryId = Guid.Parse(graceIds.RepositoryIdString)
+                        let actorProxy = Branch.CreateActorProxy branchGuid repositoryId correlationId
 
                         match! actorProxy.Handle cmd (createMetadata context) with
                         | Ok graceReturnValue ->
                             graceReturnValue
                                 .enhance(parameterDictionary)
-                                .enhance(nameof (OwnerId), graceIds.OwnerId)
-                                .enhance(nameof (OrganizationId), graceIds.OrganizationId)
-                                .enhance(nameof (RepositoryId), graceIds.RepositoryId)
-                                .enhance(nameof (BranchId), graceIds.BranchId)
+                                .enhance(nameof (OwnerId), graceIds.OwnerIdString)
+                                .enhance(nameof (OrganizationId), graceIds.OrganizationIdString)
+                                .enhance(nameof (RepositoryId), graceIds.RepositoryIdString)
+                                .enhance(nameof (BranchId), graceIds.BranchIdString)
                                 .enhance("Command", commandName)
                                 .enhance ("Path", context.Request.Path)
                             |> ignore
@@ -76,10 +76,10 @@ module Branch =
                         | Error graceError ->
                             graceError
                                 .enhance(parameterDictionary)
-                                .enhance(nameof (OwnerId), graceIds.OwnerId)
-                                .enhance(nameof (OrganizationId), graceIds.OrganizationId)
-                                .enhance(nameof (RepositoryId), graceIds.RepositoryId)
-                                .enhance(nameof (BranchId), graceIds.BranchId)
+                                .enhance(nameof (OwnerId), graceIds.OwnerIdString)
+                                .enhance(nameof (OrganizationId), graceIds.OrganizationIdString)
+                                .enhance(nameof (RepositoryId), graceIds.RepositoryIdString)
+                                .enhance(nameof (BranchId), graceIds.BranchIdString)
                                 .enhance("Command", commandName)
                                 .enhance ("Path", context.Request.Path)
                             |> ignore
@@ -105,7 +105,7 @@ module Branch =
 
                 if validationsPassed then
                     let! cmd = command parameters
-                    let! result = handleCommand graceIds.BranchId cmd
+                    let! result = handleCommand graceIds.BranchIdString cmd
                     let duration = getDurationRightAligned_ms startTime
 
                     log.LogInformation(
@@ -116,10 +116,10 @@ module Branch =
                         correlationId,
                         context.Request.Path,
                         context.Response.StatusCode,
-                        graceIds.OwnerId,
-                        graceIds.OrganizationId,
-                        graceIds.RepositoryId,
-                        graceIds.BranchId
+                        graceIds.OwnerIdString,
+                        graceIds.OrganizationIdString,
+                        graceIds.RepositoryIdString,
+                        graceIds.BranchIdString
                     )
 
                     return result
@@ -131,10 +131,10 @@ module Branch =
                     let graceError =
                         (GraceError.Create errorMessage correlationId)
                             .enhance(parameterDictionary)
-                            .enhance(nameof (OwnerId), graceIds.OwnerId)
-                            .enhance(nameof (OrganizationId), graceIds.OrganizationId)
-                            .enhance(nameof (RepositoryId), graceIds.RepositoryId)
-                            .enhance(nameof (BranchId), graceIds.BranchId)
+                            .enhance(nameof (OwnerId), graceIds.OwnerIdString)
+                            .enhance(nameof (OrganizationId), graceIds.OrganizationIdString)
+                            .enhance(nameof (RepositoryId), graceIds.RepositoryIdString)
+                            .enhance(nameof (BranchId), graceIds.BranchIdString)
                             .enhance ("Path", context.Request.Path)
 
                     return! context |> result400BadRequest graceError
@@ -149,10 +149,10 @@ module Branch =
                 let graceError =
                     (GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" correlationId)
                         .enhance(parameterDictionary)
-                        .enhance(nameof (OwnerId), graceIds.OwnerId)
-                        .enhance(nameof (OrganizationId), graceIds.OrganizationId)
-                        .enhance(nameof (RepositoryId), graceIds.RepositoryId)
-                        .enhance(nameof (BranchId), graceIds.BranchId)
+                        .enhance(nameof (OwnerId), graceIds.OwnerIdString)
+                        .enhance(nameof (OrganizationId), graceIds.OrganizationIdString)
+                        .enhance(nameof (RepositoryId), graceIds.RepositoryIdString)
+                        .enhance(nameof (BranchId), graceIds.BranchIdString)
                         .enhance ("Path", context.Request.Path)
 
                 return! context |> result500ServerError graceError
@@ -178,9 +178,9 @@ module Branch =
 
                 if validationsPassed then
                     // Get the actor proxy for the branch.
-                    let branchGuid = Guid.Parse(graceIds.BranchId)
-                    let repositoryId = Guid.Parse(graceIds.RepositoryId)
-                    let! actorProxy = Branch.CreateActorProxy branchGuid repositoryId correlationId
+                    let branchGuid = Guid.Parse(graceIds.BranchIdString)
+                    let repositoryId = Guid.Parse(graceIds.RepositoryIdString)
+                    let actorProxy = Branch.CreateActorProxy branchGuid repositoryId correlationId
 
                     // Execute the query.
                     let! queryResult = query context maxCount actorProxy
@@ -189,10 +189,10 @@ module Branch =
                     let graceReturnValue =
                         (GraceReturnValue.Create queryResult correlationId)
                             .enhance(parameterDictionary)
-                            .enhance(nameof (OwnerId), graceIds.OwnerId)
-                            .enhance(nameof (OrganizationId), graceIds.OrganizationId)
-                            .enhance(nameof (RepositoryId), graceIds.RepositoryId)
-                            .enhance(nameof (BranchId), graceIds.BranchId)
+                            .enhance(nameof (OwnerId), graceIds.OwnerIdString)
+                            .enhance(nameof (OrganizationId), graceIds.OrganizationIdString)
+                            .enhance(nameof (RepositoryId), graceIds.RepositoryIdString)
+                            .enhance(nameof (BranchId), graceIds.BranchIdString)
                             .enhance ("Path", context.Request.Path)
 
                     return! context |> result200Ok graceReturnValue
@@ -202,10 +202,10 @@ module Branch =
                     let graceError =
                         (GraceError.Create (BranchError.getErrorMessage error) correlationId)
                             .enhance(parameterDictionary)
-                            .enhance(nameof (OwnerId), graceIds.OwnerId)
-                            .enhance(nameof (OrganizationId), graceIds.OrganizationId)
-                            .enhance(nameof (RepositoryId), graceIds.RepositoryId)
-                            .enhance(nameof (BranchId), graceIds.BranchId)
+                            .enhance(nameof (OwnerId), graceIds.OwnerIdString)
+                            .enhance(nameof (OrganizationId), graceIds.OrganizationIdString)
+                            .enhance(nameof (RepositoryId), graceIds.RepositoryIdString)
+                            .enhance(nameof (BranchId), graceIds.BranchIdString)
                             .enhance ("Path", context.Request.Path)
 
                     return! context |> result400BadRequest graceError
@@ -213,10 +213,10 @@ module Branch =
                 let graceError =
                     (GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" correlationId)
                         .enhance(parameterDictionary)
-                        .enhance(nameof (OwnerId), graceIds.OwnerId)
-                        .enhance(nameof (OrganizationId), graceIds.OrganizationId)
-                        .enhance(nameof (RepositoryId), graceIds.RepositoryId)
-                        .enhance(nameof (BranchId), graceIds.BranchId)
+                        .enhance(nameof (OwnerId), graceIds.OwnerIdString)
+                        .enhance(nameof (OrganizationId), graceIds.OrganizationIdString)
+                        .enhance(nameof (RepositoryId), graceIds.RepositoryIdString)
+                        .enhance(nameof (BranchId), graceIds.BranchIdString)
                         .enhance ("Path", context.Request.Path)
 
                 return! context |> result500ServerError graceError
@@ -240,9 +240,9 @@ module Branch =
                            parameters.CorrelationId
                            ParentBranchDoesNotExist
                        Branch.branchNameDoesNotExist
-                           parameters.OwnerId
-                           parameters.OrganizationId
-                           parameters.RepositoryId
+                           graceIds.OwnerId
+                           graceIds.OrganizationId
+                           graceIds.RepositoryId
                            parameters.BranchName
                            parameters.CorrelationId
                            BranchNameAlreadyExists |]
@@ -251,17 +251,16 @@ module Branch =
                     task {
                         match!
                             (resolveBranchId
-                                parameters.OwnerId
-                                parameters.OrganizationId
-                                parameters.RepositoryId
+                                graceIds.OwnerId
+                                graceIds.OrganizationId
+                                graceIds.RepositoryId
                                 parameters.ParentBranchId
                                 parameters.ParentBranchName
                                 parameters.CorrelationId)
                         with
                         | Some parentBranchId ->
-                            let parentBranchGuid = Guid.Parse(parentBranchId)
                             let repositoryId = Guid.Parse(parameters.RepositoryId)
-                            let! parentBranchActorProxy = Branch.CreateActorProxy parentBranchGuid repositoryId parameters.CorrelationId
+                            let parentBranchActorProxy = Branch.CreateActorProxy parentBranchId repositoryId parameters.CorrelationId
 
                             let! parentBranch = parentBranchActorProxy.Get parameters.CorrelationId
 
@@ -269,9 +268,11 @@ module Branch =
                                 Create(
                                     (Guid.Parse(parameters.BranchId)),
                                     (BranchName parameters.BranchName),
-                                    (Guid.Parse(parentBranchId)),
+                                    parentBranchId,
                                     parentBranch.BasedOn.ReferenceId,
-                                    Guid.Parse(parameters.RepositoryId),
+                                    graceIds.OwnerId,
+                                    graceIds.OrganizationId,
+                                    graceIds.RepositoryId,
                                     parameters.InitialPermissions
                                 )
                         | None ->
@@ -281,7 +282,9 @@ module Branch =
                                     (BranchName parameters.BranchName),
                                     Constants.DefaultParentBranchId,
                                     ReferenceId.Empty, // This is fucked.
-                                    Guid.Parse(parameters.RepositoryId),
+                                    graceIds.OwnerId,
+                                    graceIds.OrganizationId,
+                                    graceIds.RepositoryId,
                                     parameters.InitialPermissions
                                 )
                     }
@@ -296,17 +299,13 @@ module Branch =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let graceIds = getGraceIds context
-                let repositoryId = Guid.Parse(graceIds.RepositoryId)
 
                 let validations (parameters: RebaseParameters) =
-                    [| Branch.referenceIdExists parameters.BasedOn repositoryId parameters.CorrelationId ReferenceIdDoesNotExist
+                    [| Branch.referenceIdExists parameters.BasedOn graceIds.RepositoryId parameters.CorrelationId ReferenceIdDoesNotExist
                        Branch.branchAllowsReferenceType
-                           parameters.OwnerId
-                           parameters.OwnerName
-                           parameters.OrganizationId
-                           parameters.OrganizationName
-                           parameters.RepositoryId
-                           parameters.RepositoryName
+                           graceIds.OwnerId
+                           graceIds.OrganizationId
+                           graceIds.RepositoryId
                            parameters.BranchId
                            parameters.BranchName
                            ReferenceType.Commit
@@ -324,7 +323,7 @@ module Branch =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let graceIds = getGraceIds context
-                let repositoryId = Guid.Parse(graceIds.RepositoryId)
+                let repositoryId = Guid.Parse(graceIds.RepositoryIdString)
 
                 let validations (parameters: AssignParameters) =
                     [| String.isValidSha256Hash parameters.Sha256Hash Sha256HashIsRequired
@@ -332,12 +331,9 @@ module Branch =
                            [| parameters.DirectoryVersionId; parameters.Sha256Hash |]
                            EitherDirectoryVersionIdOrSha256HashRequired
                        Branch.branchAllowsAssign
-                           parameters.OwnerId
-                           parameters.OwnerName
-                           parameters.OrganizationId
-                           parameters.OrganizationName
-                           parameters.RepositoryId
-                           parameters.RepositoryName
+                           graceIds.OwnerId
+                           graceIds.OrganizationId
+                           graceIds.RepositoryId
                            parameters.BranchId
                            parameters.BranchName
                            parameters.CorrelationId
@@ -346,14 +342,14 @@ module Branch =
                 let command (parameters: AssignParameters) =
                     task {
                         if parameters.DirectoryVersionId <> Guid.Empty then
-                            let! directoryVersionActorProxy =
+                            let directoryVersionActorProxy =
                                 DirectoryVersion.CreateActorProxy parameters.DirectoryVersionId repositoryId parameters.CorrelationId
 
                             let! directoryVersion = directoryVersionActorProxy.Get(parameters.CorrelationId)
 
                             return Some(Assign(parameters.DirectoryVersionId, directoryVersion.Sha256Hash, ReferenceText parameters.Message))
                         elif not <| String.IsNullOrEmpty(parameters.Sha256Hash) then
-                            match! getDirectoryBySha256Hash (Guid.Parse(graceIds.RepositoryId)) parameters.Sha256Hash parameters.CorrelationId with
+                            match! getDirectoryBySha256Hash (Guid.Parse(graceIds.RepositoryIdString)) parameters.Sha256Hash parameters.CorrelationId with
                             | Some directoryVersion ->
                                 return Some(Assign(directoryVersion.DirectoryVersionId, directoryVersion.Sha256Hash, ReferenceText parameters.Message))
                             | None -> return None
@@ -380,17 +376,16 @@ module Branch =
     let Promote: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
+                let graceIds = getGraceIds context
+
                 let validations (parameters: CreateReferenceParameters) =
                     [| String.isNotEmpty parameters.Message MessageIsRequired
                        String.maxLength parameters.Message 2048 StringIsTooLong
                        String.isValidSha256Hash parameters.Sha256Hash Sha256HashIsRequired
                        Branch.branchAllowsReferenceType
-                           parameters.OwnerId
-                           parameters.OwnerName
-                           parameters.OrganizationId
-                           parameters.OrganizationName
-                           parameters.RepositoryId
-                           parameters.RepositoryName
+                           graceIds.OwnerId
+                           graceIds.OrganizationId
+                           graceIds.RepositoryId
                            parameters.BranchId
                            parameters.BranchName
                            ReferenceType.Promotion
@@ -409,17 +404,16 @@ module Branch =
     let Commit: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
+                let graceIds = getGraceIds context
+
                 let validations (parameters: CreateReferenceParameters) =
                     [| String.isNotEmpty parameters.Message MessageIsRequired
                        String.maxLength parameters.Message 2048 StringIsTooLong
                        String.isValidSha256Hash parameters.Sha256Hash Sha256HashIsRequired
                        Branch.branchAllowsReferenceType
-                           parameters.OwnerId
-                           parameters.OwnerName
-                           parameters.OrganizationId
-                           parameters.OrganizationName
-                           parameters.RepositoryId
-                           parameters.RepositoryName
+                           graceIds.OwnerId
+                           graceIds.OrganizationId
+                           graceIds.RepositoryId
                            parameters.BranchId
                            parameters.BranchName
                            ReferenceType.Commit
@@ -438,16 +432,15 @@ module Branch =
     let Checkpoint: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
+                let graceIds = getGraceIds context
+
                 let validations (parameters: CreateReferenceParameters) =
                     [| String.maxLength parameters.Message 2048 StringIsTooLong
                        String.isValidSha256Hash parameters.Sha256Hash Sha256HashIsRequired
                        Branch.branchAllowsReferenceType
-                           parameters.OwnerId
-                           parameters.OwnerName
-                           parameters.OrganizationId
-                           parameters.OrganizationName
-                           parameters.RepositoryId
-                           parameters.RepositoryName
+                           graceIds.OwnerId
+                           graceIds.OrganizationId
+                           graceIds.RepositoryId
                            parameters.BranchId
                            parameters.BranchName
                            ReferenceType.Checkpoint
@@ -466,16 +459,15 @@ module Branch =
     let Save: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
+                let graceIds = getGraceIds context
+
                 let validations (parameters: CreateReferenceParameters) =
                     [| String.maxLength parameters.Message 4096 StringIsTooLong
                        String.isValidSha256Hash parameters.Sha256Hash Sha256HashIsRequired
                        Branch.branchAllowsReferenceType
-                           parameters.OwnerId
-                           parameters.OwnerName
-                           parameters.OrganizationId
-                           parameters.OrganizationName
-                           parameters.RepositoryId
-                           parameters.RepositoryName
+                           graceIds.OwnerId
+                           graceIds.OrganizationId
+                           graceIds.RepositoryId
                            parameters.BranchId
                            parameters.BranchName
                            ReferenceType.Save
@@ -494,16 +486,15 @@ module Branch =
     let Tag: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
+                let graceIds = getGraceIds context
+
                 let validations (parameters: CreateReferenceParameters) =
                     [| String.maxLength parameters.Message 2048 StringIsTooLong
                        String.isValidSha256Hash parameters.Sha256Hash Sha256HashIsRequired
                        Branch.branchAllowsReferenceType
-                           parameters.OwnerId
-                           parameters.OwnerName
-                           parameters.OrganizationId
-                           parameters.OrganizationName
-                           parameters.RepositoryId
-                           parameters.RepositoryName
+                           graceIds.OwnerId
+                           graceIds.OrganizationId
+                           graceIds.RepositoryId
                            parameters.BranchId
                            parameters.BranchName
                            ReferenceType.Tag
@@ -522,16 +513,15 @@ module Branch =
     let CreateExternal: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
+                let graceIds = getGraceIds context
+
                 let validations (parameters: CreateReferenceParameters) =
                     [| String.maxLength parameters.Message 2048 StringIsTooLong
                        String.isValidSha256Hash parameters.Sha256Hash Sha256HashIsRequired
                        Branch.branchAllowsReferenceType
-                           parameters.OwnerId
-                           parameters.OwnerName
-                           parameters.OrganizationId
-                           parameters.OrganizationName
-                           parameters.RepositoryId
-                           parameters.RepositoryName
+                           graceIds.OwnerId
+                           graceIds.OrganizationId
+                           graceIds.RepositoryId
                            parameters.BranchId
                            parameters.BranchName
                            ReferenceType.External
@@ -665,11 +655,7 @@ module Branch =
                 try
                     let validations (parameters: GetBranchParameters) = [||]
 
-                    let query (context: HttpContext) maxCount (actorProxy: IBranchActor) =
-                        task {
-                            let! branchDto = actorProxy.Get(getCorrelationId context)
-                            return branchDto
-                        }
+                    let query (context: HttpContext) maxCount (actorProxy: IBranchActor) = actorProxy.Get(getCorrelationId context)
 
                     let! parameters = context |> parse<GetBranchParameters>
                     let! result = processQuery context parameters validations 1 query
@@ -683,7 +669,7 @@ module Branch =
                         duration_ms,
                         (getCorrelationId context),
                         context.Request.Path,
-                        graceIds.BranchId
+                        graceIds.BranchIdString
                     )
 
                     return result
@@ -698,7 +684,7 @@ module Branch =
                         duration_ms,
                         (getCorrelationId context),
                         context.Request.Path,
-                        graceIds.BranchId
+                        graceIds.BranchIdString
                     )
 
                     return!
@@ -735,7 +721,7 @@ module Branch =
                         duration_ms,
                         (getCorrelationId context),
                         context.Request.Path,
-                        graceIds.BranchId
+                        graceIds.BranchIdString
                     )
 
                     return result
@@ -750,7 +736,7 @@ module Branch =
                         duration_ms,
                         (getCorrelationId context),
                         context.Request.Path,
-                        graceIds.BranchId
+                        graceIds.BranchIdString
                     )
 
                     return!
@@ -786,7 +772,7 @@ module Branch =
                         duration_ms,
                         (getCorrelationId context),
                         context.Request.Path,
-                        graceIds.BranchId
+                        graceIds.BranchIdString
                     )
 
                     return result
@@ -801,7 +787,7 @@ module Branch =
                         duration_ms,
                         (getCorrelationId context),
                         context.Request.Path,
-                        graceIds.BranchId
+                        graceIds.BranchIdString
                     )
 
                     return!
@@ -815,7 +801,7 @@ module Branch =
             task {
                 let startTime = getCurrentInstant ()
                 let graceIds = getGraceIds context
-                let repositoryId = Guid.Parse(graceIds.RepositoryId)
+                let repositoryId = Guid.Parse(graceIds.RepositoryIdString)
 
                 try
                     let validations (parameters: GetReferenceParameters) = [||]
@@ -824,9 +810,9 @@ module Branch =
                         task {
                             let referenceGuid = Guid.Parse(context.Items["ReferenceId"] :?> string)
 
-                            let! referenceActorProxy = Reference.CreateActorProxy referenceGuid repositoryId (getCorrelationId context)
+                            let referenceActorProxy = Reference.CreateActorProxy referenceGuid repositoryId (getCorrelationId context)
 
-                            let! referenceDto = referenceActorProxy.Get(getCorrelationId context)
+                            let referenceDto = referenceActorProxy.Get(getCorrelationId context)
                             return referenceDto
                         }
 
@@ -843,7 +829,7 @@ module Branch =
                         duration_ms,
                         (getCorrelationId context),
                         context.Request.Path,
-                        graceIds.BranchId
+                        graceIds.BranchIdString
                     )
 
                     return result
@@ -858,7 +844,7 @@ module Branch =
                         duration_ms,
                         (getCorrelationId context),
                         context.Request.Path,
-                        graceIds.BranchId
+                        graceIds.BranchIdString
                     )
 
                     return!
@@ -879,7 +865,7 @@ module Branch =
                     let query (context: HttpContext) (maxCount: int) (actorProxy: IBranchActor) =
                         task {
                             let! branchDto = actorProxy.Get(getCorrelationId context)
-                            let! results = getReferences branchDto.BranchId maxCount (getCorrelationId context)
+                            let! results = getReferences branchDto.RepositoryId branchDto.BranchId maxCount (getCorrelationId context)
                             return results
                         }
 
@@ -895,7 +881,7 @@ module Branch =
                         duration_ms,
                         (getCorrelationId context),
                         context.Request.Path,
-                        graceIds.BranchId
+                        graceIds.BranchIdString
                     )
 
                     return result
@@ -910,7 +896,7 @@ module Branch =
                         duration_ms,
                         (getCorrelationId context),
                         context.Request.Path,
-                        graceIds.BranchId
+                        graceIds.BranchIdString
                     )
 
                     return!
@@ -938,7 +924,7 @@ module Branch =
                                 serialize referenceTypes
                             )
 
-                            return! getLatestReferenceByReferenceTypes referenceTypes (Guid.Parse(graceIds.BranchId))
+                            return! getLatestReferenceByReferenceTypes referenceTypes graceIds.RepositoryId graceIds.BranchId
                         }
 
                     let! parameters = context |> parse<GetLatestReferencesByReferenceTypeParameters>
@@ -954,7 +940,7 @@ module Branch =
                         duration_ms,
                         (getCorrelationId context),
                         context.Request.Path,
-                        graceIds.RepositoryId
+                        graceIds.RepositoryIdString
                     )
 
                     return result
@@ -969,7 +955,7 @@ module Branch =
                         duration_ms,
                         (getCorrelationId context),
                         context.Request.Path,
-                        graceIds.RepositoryId
+                        graceIds.RepositoryIdString
                     )
 
                     return!
@@ -1000,7 +986,8 @@ module Branch =
                                 (context.Items[nameof (ReferenceType)] :?> String)
                                 |> discriminatedUnionFromString<ReferenceType>
 
-                            let! references = getReferencesByType referenceType.Value branchDto.BranchId maxCount (getCorrelationId context)
+                            let! references =
+                                getReferencesByType referenceType.Value branchDto.RepositoryId branchDto.BranchId maxCount (getCorrelationId context)
 
                             let sortedRefs =
                                 references
@@ -1015,10 +1002,11 @@ module Branch =
                                     (fun i ct ->
                                         ValueTask(
                                             task {
-                                                let! diffActorProxy =
+                                                let diffActorProxy =
                                                     Diff.CreateActorProxy
                                                         sortedRefs[i].DirectoryId
                                                         sortedRefs[i + 1].DirectoryId
+                                                        branchDto.OrganizationId
                                                         branchDto.RepositoryId
                                                         correlationId
 
@@ -1049,7 +1037,7 @@ module Branch =
                         duration_ms,
                         correlationId,
                         context.Request.Path,
-                        graceIds.BranchId
+                        graceIds.BranchIdString
                     )
 
                     return result
@@ -1064,7 +1052,7 @@ module Branch =
                         duration_ms,
                         correlationId,
                         context.Request.Path,
-                        graceIds.BranchId
+                        graceIds.BranchIdString
                     )
 
                     return!
@@ -1085,7 +1073,7 @@ module Branch =
                     let query (context: HttpContext) maxCount (actorProxy: IBranchActor) =
                         task {
                             let! branchDto = actorProxy.Get(getCorrelationId context)
-                            let! results = getPromotions branchDto.BranchId maxCount (getCorrelationId context)
+                            let! results = getPromotions branchDto.RepositoryId branchDto.BranchId maxCount (getCorrelationId context)
                             return results
                         }
 
@@ -1101,7 +1089,7 @@ module Branch =
                         duration_ms,
                         (getCorrelationId context),
                         context.Request.Path,
-                        graceIds.BranchId
+                        graceIds.BranchIdString
                     )
 
                     return result
@@ -1116,7 +1104,7 @@ module Branch =
                         duration_ms,
                         (getCorrelationId context),
                         context.Request.Path,
-                        graceIds.BranchId
+                        graceIds.BranchIdString
                     )
 
                     return!
@@ -1137,7 +1125,7 @@ module Branch =
                     let query (context: HttpContext) maxCount (actorProxy: IBranchActor) =
                         task {
                             let! branchDto = actorProxy.Get(getCorrelationId context)
-                            let! results = getCommits branchDto.BranchId maxCount (getCorrelationId context)
+                            let! results = getCommits branchDto.RepositoryId branchDto.BranchId maxCount (getCorrelationId context)
                             return results
                         }
 
@@ -1153,7 +1141,7 @@ module Branch =
                         duration_ms,
                         (getCorrelationId context),
                         context.Request.Path,
-                        graceIds.BranchId
+                        graceIds.BranchIdString
                     )
 
                     return result
@@ -1168,7 +1156,7 @@ module Branch =
                         duration_ms,
                         (getCorrelationId context),
                         context.Request.Path,
-                        graceIds.BranchId
+                        graceIds.BranchIdString
                     )
 
                     return!
@@ -1189,7 +1177,7 @@ module Branch =
                     let query (context: HttpContext) maxCount (actorProxy: IBranchActor) =
                         task {
                             let! branchDto = actorProxy.Get(getCorrelationId context)
-                            let! results = getCheckpoints branchDto.BranchId maxCount (getCorrelationId context)
+                            let! results = getCheckpoints branchDto.RepositoryId branchDto.BranchId maxCount (getCorrelationId context)
                             return results
                         }
 
@@ -1205,7 +1193,7 @@ module Branch =
                         duration_ms,
                         (getCorrelationId context),
                         context.Request.Path,
-                        graceIds.BranchId
+                        graceIds.BranchIdString
                     )
 
                     return result
@@ -1220,7 +1208,7 @@ module Branch =
                         duration_ms,
                         (getCorrelationId context),
                         context.Request.Path,
-                        graceIds.BranchId
+                        graceIds.BranchIdString
                     )
 
                     return!
@@ -1242,7 +1230,7 @@ module Branch =
                     let query (context: HttpContext) maxCount (actorProxy: IBranchActor) =
                         task {
                             let! branchDto = actorProxy.Get(getCorrelationId context)
-                            let! results = getSaves branchDto.BranchId maxCount (getCorrelationId context)
+                            let! results = getSaves branchDto.RepositoryId branchDto.BranchId maxCount (getCorrelationId context)
                             return results
                         }
 
@@ -1258,7 +1246,7 @@ module Branch =
                         duration_ms,
                         (getCorrelationId context),
                         context.Request.Path,
-                        graceIds.BranchId
+                        graceIds.BranchIdString
                     )
 
                     return result
@@ -1273,7 +1261,7 @@ module Branch =
                         duration_ms,
                         (getCorrelationId context),
                         context.Request.Path,
-                        graceIds.BranchId
+                        graceIds.BranchIdString
                     )
 
                     return!
@@ -1294,7 +1282,7 @@ module Branch =
                     let query (context: HttpContext) maxCount (actorProxy: IBranchActor) =
                         task {
                             let! branchDto = actorProxy.Get(getCorrelationId context)
-                            let! results = getTags branchDto.BranchId maxCount (getCorrelationId context)
+                            let! results = getTags branchDto.RepositoryId branchDto.BranchId maxCount (getCorrelationId context)
                             return results
                         }
 
@@ -1310,7 +1298,7 @@ module Branch =
                         duration_ms,
                         (getCorrelationId context),
                         context.Request.Path,
-                        graceIds.BranchId
+                        graceIds.BranchIdString
                     )
 
                     return result
@@ -1325,7 +1313,7 @@ module Branch =
                         duration_ms,
                         (getCorrelationId context),
                         context.Request.Path,
-                        graceIds.BranchId
+                        graceIds.BranchIdString
                     )
 
                     return!
@@ -1346,7 +1334,7 @@ module Branch =
                     let query (context: HttpContext) maxCount (actorProxy: IBranchActor) =
                         task {
                             let! branchDto = actorProxy.Get(getCorrelationId context)
-                            let! results = getExternals branchDto.BranchId maxCount (getCorrelationId context)
+                            let! results = getExternals branchDto.RepositoryId branchDto.BranchId maxCount (getCorrelationId context)
                             return results
                         }
 
@@ -1362,7 +1350,7 @@ module Branch =
                         duration_ms,
                         (getCorrelationId context),
                         context.Request.Path,
-                        graceIds.BranchId
+                        graceIds.BranchIdString
                     )
 
                     return result
@@ -1377,7 +1365,7 @@ module Branch =
                         duration_ms,
                         (getCorrelationId context),
                         context.Request.Path,
-                        graceIds.BranchId
+                        graceIds.BranchIdString
                     )
 
                     return!
@@ -1391,7 +1379,7 @@ module Branch =
                 let startTime = getCurrentInstant ()
                 let graceIds = getGraceIds context
                 let correlationId = getCorrelationId context
-                let repositoryId = Guid.Parse(graceIds.RepositoryId)
+                let repositoryId = graceIds.RepositoryId
 
                 try
                     let validations (parameters: ListContentsParameters) =
@@ -1408,12 +1396,11 @@ module Branch =
                             then
                                 // If we don't have a referenceId or sha256Hash, we'll get the contents of the most recent reference in the branch.
                                 let! branchDto = actorProxy.Get correlationId
-                                let! latestReference = getLatestReference branchDto.BranchId
+                                let! latestReference = getLatestReference branchDto.RepositoryId branchDto.BranchId
 
                                 match latestReference with
                                 | Some latestReference ->
-                                    let! directoryActorProxy =
-                                        DirectoryVersion.CreateActorProxy latestReference.DirectoryId branchDto.RepositoryId correlationId
+                                    let directoryActorProxy = DirectoryVersion.CreateActorProxy latestReference.DirectoryId branchDto.RepositoryId correlationId
 
                                     let! recursiveSize = directoryActorProxy.GetRecursiveSize(getCorrelationId context)
                                     return recursiveSize
@@ -1421,21 +1408,19 @@ module Branch =
                             elif not <| String.IsNullOrEmpty(listContentsParameters.ReferenceId) then
                                 // We have a ReferenceId, so we'll get the DirectoryVersion from that reference.
                                 let referenceGuid = Guid.Parse(listContentsParameters.ReferenceId)
-                                let! referenceActorProxy = Reference.CreateActorProxy referenceGuid repositoryId correlationId
+                                let referenceActorProxy = Reference.CreateActorProxy referenceGuid repositoryId correlationId
 
                                 let! referenceDto = referenceActorProxy.Get correlationId
 
-                                let! directoryActorProxy = DirectoryVersion.CreateActorProxy referenceDto.DirectoryId repositoryId correlationId
+                                let directoryActorProxy = DirectoryVersion.CreateActorProxy referenceDto.DirectoryId repositoryId correlationId
 
                                 let! recursiveSize = directoryActorProxy.GetRecursiveSize correlationId
                                 return recursiveSize
                             else
                                 // By process of elimination, we have a Sha256Hash, so we'll retrieve the DirectoryVersion using that..
-                                match!
-                                    Services.getDirectoryBySha256Hash (Guid.Parse(graceIds.RepositoryId)) listContentsParameters.Sha256Hash correlationId
-                                with
+                                match! Services.getDirectoryBySha256Hash graceIds.RepositoryId listContentsParameters.Sha256Hash correlationId with
                                 | Some directoryVersion ->
-                                    let! directoryActorProxy = DirectoryVersion.CreateActorProxy directoryVersion.DirectoryVersionId repositoryId correlationId
+                                    let directoryActorProxy = DirectoryVersion.CreateActorProxy directoryVersion.DirectoryVersionId repositoryId correlationId
 
                                     let! recursiveSize = directoryActorProxy.GetRecursiveSize correlationId
                                     return recursiveSize
@@ -1455,7 +1440,7 @@ module Branch =
                         duration_ms,
                         correlationId,
                         context.Request.Path,
-                        graceIds.BranchId
+                        graceIds.BranchIdString
                     )
 
                     return result
@@ -1470,7 +1455,7 @@ module Branch =
                         duration_ms,
                         correlationId,
                         context.Request.Path,
-                        graceIds.BranchId
+                        graceIds.BranchIdString
                     )
 
                     return!
@@ -1484,7 +1469,7 @@ module Branch =
                 let startTime = getCurrentInstant ()
                 let graceIds = getGraceIds context
                 let correlationId = getCorrelationId context
-                let repositoryId = Guid.Parse(graceIds.RepositoryId)
+                let repositoryId = Guid.Parse(graceIds.RepositoryIdString)
 
                 try
                     let validations (parameters: ListContentsParameters) =
@@ -1501,11 +1486,11 @@ module Branch =
                             then
                                 // If we don't have a referenceId or sha256Hash, we'll get the contents of the most recent reference in the branch.
                                 let! branchDto = actorProxy.Get correlationId
-                                let! latestReference = getLatestReference branchDto.BranchId
+                                let! latestReference = getLatestReference branchDto.RepositoryId branchDto.BranchId
 
                                 match latestReference with
                                 | Some latestReference ->
-                                    let! directoryActorProxy = DirectoryVersion.CreateActorProxy latestReference.DirectoryId repositoryId correlationId
+                                    let directoryActorProxy = DirectoryVersion.CreateActorProxy latestReference.DirectoryId graceIds.RepositoryId correlationId
 
                                     let! contents = directoryActorProxy.GetRecursiveDirectoryVersions listContentsParameters.ForceRecompute correlationId
 
@@ -1515,20 +1500,22 @@ module Branch =
                                 // We have a ReferenceId, so we'll get the DirectoryVersion from that reference.
                                 let referenceGuid = Guid.Parse(listContentsParameters.ReferenceId)
 
-                                let! referenceActorProxy = Reference.CreateActorProxy referenceGuid repositoryId correlationId
+                                let referenceActorProxy = Reference.CreateActorProxy referenceGuid repositoryId correlationId
 
                                 let! referenceDto = referenceActorProxy.Get correlationId
 
-                                let! directoryActorProxy = DirectoryVersion.CreateActorProxy referenceDto.DirectoryId repositoryId correlationId
+                                let directoryActorProxy = DirectoryVersion.CreateActorProxy referenceDto.DirectoryId repositoryId correlationId
 
                                 let! contents = directoryActorProxy.GetRecursiveDirectoryVersions listContentsParameters.ForceRecompute correlationId
 
                                 return contents
                             else
                                 // By process of elimination, we have a Sha256Hash, so we'll retrieve the DirectoryVersion using that..
-                                match! getRootDirectoryBySha256Hash (Guid.Parse(graceIds.RepositoryId)) listContentsParameters.Sha256Hash correlationId with
+                                match!
+                                    getRootDirectoryBySha256Hash (Guid.Parse(graceIds.RepositoryIdString)) listContentsParameters.Sha256Hash correlationId
+                                with
                                 | Some directoryVersion ->
-                                    let! directoryActorProxy = DirectoryVersion.CreateActorProxy directoryVersion.DirectoryVersionId repositoryId correlationId
+                                    let directoryActorProxy = DirectoryVersion.CreateActorProxy directoryVersion.DirectoryVersionId repositoryId correlationId
 
                                     let! contents = directoryActorProxy.GetRecursiveDirectoryVersions listContentsParameters.ForceRecompute correlationId
 
@@ -1549,7 +1536,7 @@ module Branch =
                         duration_ms,
                         correlationId,
                         context.Request.Path,
-                        graceIds.BranchId
+                        graceIds.BranchIdString
                     )
 
                     return result
@@ -1564,7 +1551,7 @@ module Branch =
                         duration_ms,
                         correlationId,
                         context.Request.Path,
-                        graceIds.BranchId
+                        graceIds.BranchIdString
                     )
 
                     return!
@@ -1578,7 +1565,7 @@ module Branch =
                 let startTime = getCurrentInstant ()
                 let graceIds = getGraceIds context
                 let correlationId = getCorrelationId context
-                let repositoryId = Guid.Parse(graceIds.RepositoryId)
+                let repositoryId = Guid.Parse(graceIds.RepositoryIdString)
 
                 try
                     let validations (parameters: GetBranchVersionParameters) =
@@ -1599,7 +1586,7 @@ module Branch =
                                         return! getRootDirectoryByReferenceId repositoryId (Guid.Parse(parameters.ReferenceId)) correlationId
                                     else
                                         let! branchDto = actorProxy.Get(getCorrelationId context)
-                                        let! latestReference = getLatestReference branchDto.BranchId
+                                        let! latestReference = getLatestReference branchDto.RepositoryId branchDto.BranchId
 
                                         match latestReference with
                                         | Some referenceDto -> return! getRootDirectoryBySha256Hash repositoryId referenceDto.Sha256Hash correlationId
@@ -1608,7 +1595,7 @@ module Branch =
 
                             match rootDirectoryVersion with
                             | Some rootDirectoryVersion ->
-                                let! directoryVersionActorProxy =
+                                let directoryVersionActorProxy =
                                     DirectoryVersion.CreateActorProxy rootDirectoryVersion.DirectoryVersionId repositoryId correlationId
 
                                 let! directoryVersions = directoryVersionActorProxy.GetRecursiveDirectoryVersions false correlationId
@@ -1621,14 +1608,7 @@ module Branch =
                     let! parameters = context |> parse<GetBranchVersionParameters>
 
                     let! repositoryId =
-                        resolveRepositoryId
-                            parameters.OwnerId
-                            parameters.OwnerName
-                            parameters.OrganizationId
-                            parameters.OrganizationName
-                            parameters.RepositoryId
-                            parameters.RepositoryName
-                            parameters.CorrelationId
+                        resolveRepositoryId graceIds.OwnerId graceIds.OrganizationId parameters.RepositoryId parameters.RepositoryName parameters.CorrelationId
 
                     match repositoryId with
                     | Some repositoryId ->
@@ -1645,17 +1625,17 @@ module Branch =
                                 resolveBranchId
                                     parameters.OwnerId
                                     parameters.OrganizationId
-                                    repositoryIdString
+                                    repositoryId
                                     parameters.BranchId
                                     parameters.BranchName
                                     parameters.CorrelationId
                             with
-                            | Some branchId -> parameters.BranchId <- branchId
+                            | Some branchId -> parameters.BranchId <- $"{branchId}"
                             | None -> () // This should never happen because it would get caught in validations.
                         elif not <| String.IsNullOrEmpty(parameters.ReferenceId) then
                             logToConsole $"In Branch.GetVersion: parameters.ReferenceId: {parameters.ReferenceId}"
                             let referenceGuid = Guid.Parse(parameters.ReferenceId)
-                            let! referenceActorProxy = Reference.CreateActorProxy referenceGuid repositoryId correlationId
+                            let referenceActorProxy = Reference.CreateActorProxy referenceGuid repositoryId correlationId
 
                             let! referenceDto = referenceActorProxy.Get(getCorrelationId context)
                             logToConsole $"referenceDto.ReferenceId: {referenceDto.ReferenceId}"
@@ -1663,7 +1643,7 @@ module Branch =
                         elif not <| String.IsNullOrEmpty(parameters.Sha256Hash) then
                             logToConsole $"In Branch.GetVersion: parameters.Sha256Hash: {parameters.Sha256Hash}"
 
-                            match! getReferenceBySha256Hash (BranchId.Parse(graceIds.BranchId)) parameters.Sha256Hash with
+                            match! getReferenceBySha256Hash graceIds.RepositoryId graceIds.BranchId parameters.Sha256Hash with
                             | Some referenceDto ->
                                 logToConsole $"referenceDto.ReferenceId: {referenceDto.ReferenceId}"
                                 parameters.BranchId <- $"{referenceDto.BranchId}"
@@ -1689,7 +1669,7 @@ module Branch =
                         duration_ms,
                         correlationId,
                         context.Request.Path,
-                        graceIds.BranchId
+                        graceIds.BranchIdString
                     )
 
                     return!

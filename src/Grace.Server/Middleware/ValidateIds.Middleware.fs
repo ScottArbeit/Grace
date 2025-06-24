@@ -172,48 +172,38 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
                             // Cache the property list for this request body type.
                             propertyLookup.TryAdd(requestBodyType, entityProperties) |> ignore
 
-                        // let sb = StringBuilder()
-                        // properties |> Array.iter (fun p -> sb.Append($"{p.Name}; ") |> ignore)
-                        // logToConsole $"Path: {context.Request.Path}; Properties: {sb.ToString()}."
-
-                        log.LogDebug(
-                            "{CurrentInstant}: requestBodyType: {requestBodyType}; Request body: {requestBody}",
-                            getCurrentInstantExtended (),
-                            requestBodyType.Name,
-                            serialize requestBody
-                        )
-
                         // Get Owner information.
                         if entityProperties.OwnerId.IsSome && entityProperties.OwnerName.IsSome then
                             // Get the values from the request body.
-                            let ownerId = entityProperties.OwnerId.Value.GetValue(requestBody) :?> string
+                            let ownerIdString = entityProperties.OwnerId.Value.GetValue(requestBody) :?> string
                             let ownerName = entityProperties.OwnerName.Value.GetValue(requestBody) :?> string
 
                             let validations =
                                 if path.Equals("/owner/create", StringComparison.InvariantCultureIgnoreCase) then
-                                    [| Common.String.isNotEmpty ownerId OwnerIdIsRequired
-                                       Common.Guid.isValidAndNotEmptyGuid ownerId InvalidOwnerId
+                                    [| Common.String.isNotEmpty ownerIdString OwnerIdIsRequired
+                                       Common.Guid.isValidAndNotEmptyGuid ownerIdString InvalidOwnerId
                                        Common.String.isNotEmpty ownerName OwnerNameIsRequired
                                        Common.String.isValidGraceName ownerName InvalidOwnerName
-                                       Common.Input.eitherIdOrNameMustBeProvided ownerId ownerName EitherOwnerIdOrOwnerNameRequired |]
+                                       Common.Input.eitherIdOrNameMustBeProvided ownerIdString ownerName EitherOwnerIdOrOwnerNameRequired |]
                                 else
-                                    [| Common.Guid.isValidAndNotEmptyGuid ownerId InvalidOwnerId
+                                    [| Common.Guid.isValidAndNotEmptyGuid ownerIdString InvalidOwnerId
                                        Common.String.isValidGraceName ownerName InvalidOwnerName
-                                       Common.Input.eitherIdOrNameMustBeProvided ownerId ownerName EitherOwnerIdOrOwnerNameRequired |]
+                                       Common.Input.eitherIdOrNameMustBeProvided ownerIdString ownerName EitherOwnerIdOrOwnerNameRequired |]
 
                             match! getFirstError validations with
                             | Some error -> badRequest <- Some(GraceError.Create (OwnerError.getErrorMessage error) correlationId)
                             | None ->
                                 if path.Equals("/owner/create", StringComparison.InvariantCultureIgnoreCase) then
                                     // If we're creating a new Owner, we don't need to resolve the Id.
-                                    graceIds <- { graceIds with OwnerId = ownerId; HasOwner = true }
+                                    graceIds <- { graceIds with OwnerId = Guid.Parse(ownerIdString); OwnerIdString = ownerIdString; HasOwner = true }
                                 else
                                     // Resolve the OwnerId based on the provided Id and Name.
-                                    match! resolveOwnerId ownerId ownerName correlationId with
-                                    | Some resolvedOwnerId -> graceIds <- { graceIds with OwnerId = resolvedOwnerId; HasOwner = true }
+                                    match! resolveOwnerId ownerIdString ownerName correlationId with
+                                    | Some resolvedOwnerId ->
+                                        graceIds <- { graceIds with OwnerId = Guid.Parse(resolvedOwnerId); OwnerIdString = resolvedOwnerId; HasOwner = true }
                                     | None ->
                                         badRequest <-
-                                            if not <| String.IsNullOrEmpty(ownerId) then
+                                            if not <| String.IsNullOrEmpty(ownerIdString) then
                                                 Some(GraceError.Create (OwnerError.getErrorMessage OwnerIdDoesNotExist) correlationId)
                                             else
                                                 Some(GraceError.Create (OwnerError.getErrorMessage OwnerDoesNotExist) correlationId)
@@ -225,35 +215,49 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
                             && entityProperties.OrganizationName.IsSome
                         then
                             // Get the values from the request body.
-                            let organizationId = entityProperties.OrganizationId.Value.GetValue(requestBody) :?> string
+                            let organizationIdString = entityProperties.OrganizationId.Value.GetValue(requestBody) :?> string
                             let organizationName = entityProperties.OrganizationName.Value.GetValue(requestBody) :?> string
 
                             let validations =
                                 if path.Equals("/organization/create", StringComparison.InvariantCultureIgnoreCase) then
-                                    [| Common.String.isNotEmpty organizationId OrganizationIdIsRequired
-                                       Common.Guid.isValidAndNotEmptyGuid organizationId InvalidOrganizationId
+                                    [| Common.String.isNotEmpty organizationIdString OrganizationIdIsRequired
+                                       Common.Guid.isValidAndNotEmptyGuid organizationIdString InvalidOrganizationId
                                        Common.String.isNotEmpty organizationName OrganizationNameIsRequired
                                        Common.String.isValidGraceName organizationName InvalidOrganizationName
-                                       Common.Input.eitherIdOrNameMustBeProvided organizationId organizationName EitherOrganizationIdOrOrganizationNameRequired |]
+                                       Common.Input.eitherIdOrNameMustBeProvided
+                                           organizationIdString
+                                           organizationName
+                                           EitherOrganizationIdOrOrganizationNameRequired |]
                                 else
-                                    [| Common.Guid.isValidAndNotEmptyGuid organizationId InvalidOrganizationId
+                                    [| Common.Guid.isValidAndNotEmptyGuid organizationIdString InvalidOrganizationId
                                        Common.String.isValidGraceName organizationName InvalidOrganizationName
-                                       Common.Input.eitherIdOrNameMustBeProvided organizationId organizationName EitherOrganizationIdOrOrganizationNameRequired |]
+                                       Common.Input.eitherIdOrNameMustBeProvided
+                                           organizationIdString
+                                           organizationName
+                                           EitherOrganizationIdOrOrganizationNameRequired |]
 
                             match! getFirstError validations with
                             | Some error -> badRequest <- Some(GraceError.Create (OrganizationError.getErrorMessage error) correlationId)
                             | None ->
                                 if path.Equals("/organization/create", StringComparison.InvariantCultureIgnoreCase) then
                                     // If we're creating a new Organization, we don't need to resolve the Id.
-                                    graceIds <- { graceIds with OrganizationId = organizationId; HasOrganization = true }
+                                    graceIds <-
+                                        { graceIds with
+                                            OrganizationId = Guid.Parse(organizationIdString)
+                                            OrganizationIdString = organizationIdString
+                                            HasOrganization = true }
                                 else
                                     // Resolve the OrganizationId based on the provided Id and Name.
-                                    match! resolveOrganizationId graceIds.OwnerId String.Empty organizationId organizationName correlationId with
+                                    match! resolveOrganizationId graceIds.OwnerId organizationIdString organizationName correlationId with
                                     | Some resolvedOrganizationId ->
-                                        graceIds <- { graceIds with OrganizationId = resolvedOrganizationId; HasOrganization = true }
+                                        graceIds <-
+                                            { graceIds with
+                                                OrganizationId = Guid.Parse(resolvedOrganizationId)
+                                                OrganizationIdString = resolvedOrganizationId
+                                                HasOrganization = true }
                                     | None ->
                                         badRequest <-
-                                            if not <| String.IsNullOrEmpty(organizationId) then
+                                            if not <| String.IsNullOrEmpty(organizationIdString) then
                                                 Some(GraceError.Create (OrganizationError.getErrorMessage OrganizationIdDoesNotExist) correlationId)
                                             else
                                                 Some(GraceError.Create (OrganizationError.getErrorMessage OrganizationDoesNotExist) correlationId)
@@ -265,43 +269,43 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
                             && entityProperties.RepositoryName.IsSome
                         then
                             // Get the values from the request body.
-                            let repositoryId = entityProperties.RepositoryId.Value.GetValue(requestBody) :?> string
+                            let repositoryIdString = entityProperties.RepositoryId.Value.GetValue(requestBody) :?> string
                             let repositoryName = entityProperties.RepositoryName.Value.GetValue(requestBody) :?> string
 
                             let validations =
                                 if path.Equals("/repository/create", StringComparison.InvariantCultureIgnoreCase) then
-                                    [| Common.String.isNotEmpty repositoryId RepositoryError.RepositoryIdIsRequired
-                                       Common.Guid.isValidAndNotEmptyGuid repositoryId RepositoryError.InvalidRepositoryId
+                                    [| Common.String.isNotEmpty repositoryIdString RepositoryError.RepositoryIdIsRequired
+                                       Common.Guid.isValidAndNotEmptyGuid repositoryIdString RepositoryError.InvalidRepositoryId
                                        Common.String.isNotEmpty repositoryName RepositoryError.RepositoryNameIsRequired
                                        Common.String.isValidGraceName repositoryName RepositoryError.InvalidRepositoryName
-                                       Common.Input.eitherIdOrNameMustBeProvided repositoryId repositoryName EitherRepositoryIdOrRepositoryNameRequired |]
+                                       Common.Input.eitherIdOrNameMustBeProvided repositoryIdString repositoryName EitherRepositoryIdOrRepositoryNameRequired |]
                                 else
-                                    [| Common.Guid.isValidAndNotEmptyGuid repositoryId RepositoryError.InvalidRepositoryId
+                                    [| Common.Guid.isValidAndNotEmptyGuid repositoryIdString RepositoryError.InvalidRepositoryId
                                        Common.String.isValidGraceName repositoryName RepositoryError.InvalidRepositoryName
-                                       Common.Input.eitherIdOrNameMustBeProvided repositoryId repositoryName EitherRepositoryIdOrRepositoryNameRequired |]
+                                       Common.Input.eitherIdOrNameMustBeProvided repositoryIdString repositoryName EitherRepositoryIdOrRepositoryNameRequired |]
 
                             match! getFirstError validations with
                             | Some error -> badRequest <- Some(GraceError.Create (RepositoryError.getErrorMessage error) correlationId)
                             | None ->
                                 if path.Equals("/repository/create", StringComparison.InvariantCultureIgnoreCase) then
                                     // If we're creating a new Repository, we don't need to resolve the Id.
-                                    graceIds <- { graceIds with RepositoryId = repositoryId; HasRepository = true }
+                                    graceIds <-
+                                        { graceIds with
+                                            RepositoryId = Guid.Parse(repositoryIdString)
+                                            RepositoryIdString = repositoryIdString
+                                            HasRepository = true }
                                 else
                                     // Resolve the RepositoryId based on the provided Id and Name.
-                                    match!
-                                        resolveRepositoryId
-                                            graceIds.OwnerId
-                                            String.Empty
-                                            graceIds.OrganizationId
-                                            String.Empty
-                                            repositoryId
-                                            repositoryName
-                                            correlationId
-                                    with
-                                    | Some resolvedRepositoryId -> graceIds <- { graceIds with RepositoryId = $"{resolvedRepositoryId}"; HasRepository = true }
+                                    match! resolveRepositoryId graceIds.OwnerId graceIds.OrganizationId repositoryIdString repositoryName correlationId with
+                                    | Some resolvedRepositoryId ->
+                                        graceIds <-
+                                            { graceIds with
+                                                RepositoryId = resolvedRepositoryId
+                                                RepositoryIdString = $"{resolvedRepositoryId}"
+                                                HasRepository = true }
                                     | None ->
                                         badRequest <-
-                                            if not <| String.IsNullOrEmpty(repositoryId) then
+                                            if not <| String.IsNullOrEmpty(repositoryIdString) then
                                                 Some(GraceError.Create (RepositoryError.getErrorMessage RepositoryIdDoesNotExist) correlationId)
                                             else
                                                 Some(GraceError.Create (RepositoryError.getErrorMessage RepositoryDoesNotExist) correlationId)
@@ -313,34 +317,37 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
                             && entityProperties.BranchName.IsSome
                         then
                             // Get the values from the request body.
-                            let branchId = entityProperties.BranchId.Value.GetValue(requestBody) :?> string
+                            let branchIdString = entityProperties.BranchId.Value.GetValue(requestBody) :?> string
                             let branchName = entityProperties.BranchName.Value.GetValue(requestBody) :?> string
 
                             let validations =
                                 if path.Equals("/branch/create", StringComparison.InvariantCultureIgnoreCase) then
-                                    [| Common.String.isNotEmpty branchId BranchIdIsRequired
-                                       Common.Guid.isValidAndNotEmptyGuid branchId InvalidBranchId
+                                    [| Common.String.isNotEmpty branchIdString BranchIdIsRequired
+                                       Common.Guid.isValidAndNotEmptyGuid branchIdString InvalidBranchId
                                        Common.String.isNotEmpty branchName BranchNameIsRequired
                                        Common.String.isValidGraceName branchName InvalidBranchName
-                                       Common.Input.eitherIdOrNameMustBeProvided branchId branchName EitherBranchIdOrBranchNameRequired |]
+                                       Common.Input.eitherIdOrNameMustBeProvided branchIdString branchName EitherBranchIdOrBranchNameRequired |]
                                 else
-                                    [| Common.Guid.isValidAndNotEmptyGuid branchId InvalidBranchId
+                                    [| Common.Guid.isValidAndNotEmptyGuid branchIdString InvalidBranchId
                                        Common.String.isValidGraceName branchName InvalidBranchName
-                                       Common.Input.eitherIdOrNameMustBeProvided branchId branchName EitherBranchIdOrBranchNameRequired |]
+                                       Common.Input.eitherIdOrNameMustBeProvided branchIdString branchName EitherBranchIdOrBranchNameRequired |]
 
                             match! getFirstError validations with
                             | Some error -> badRequest <- Some(GraceError.Create (BranchError.getErrorMessage error) correlationId)
                             | None ->
                                 if path.Equals("/branch/create", StringComparison.InvariantCultureIgnoreCase) then
                                     // If we're creating a new Branch, we don't need to resolve the Id.
-                                    graceIds <- { graceIds with BranchId = branchId; HasBranch = true }
+                                    graceIds <- { graceIds with BranchId = Guid.Parse(branchIdString); BranchIdString = branchIdString; HasBranch = true }
                                 else
                                     // Resolve the BranchId based on the provided Id and Name.
-                                    match! resolveBranchId graceIds.OwnerId graceIds.OrganizationId graceIds.RepositoryId branchId branchName correlationId with
-                                    | Some resolvedBranchId -> graceIds <- { graceIds with BranchId = resolvedBranchId; HasBranch = true }
+                                    match!
+                                        resolveBranchId graceIds.OwnerId graceIds.OrganizationId graceIds.RepositoryId branchIdString branchName correlationId
+                                    with
+                                    | Some resolvedBranchId ->
+                                        graceIds <- { graceIds with BranchId = resolvedBranchId; BranchIdString = $"{resolvedBranchId}"; HasBranch = true }
                                     | None ->
                                         badRequest <-
-                                            if not <| String.IsNullOrEmpty(branchId) then
+                                            if not <| String.IsNullOrEmpty(branchIdString) then
                                                 Some(GraceError.Create (BranchError.getErrorMessage BranchIdDoesNotExist) correlationId)
                                             else
                                                 Some(GraceError.Create (BranchError.getErrorMessage BranchDoesNotExist) correlationId)
@@ -367,9 +374,6 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
                         duration_ms
                     )
 
-                    if path.Contains("SetDescription") then
-                        logToConsole $"********In ValidateIds.Middleware.fs: {serialize error}"
-
                     let! _ = (context |> result400BadRequest error)
                     ()
                 else
@@ -381,10 +385,10 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
                             duration_ms,
                             correlationId,
                             path,
-                            graceIds.OwnerId,
-                            graceIds.OrganizationId,
-                            graceIds.RepositoryId,
-                            graceIds.BranchId
+                            graceIds.OwnerIdString,
+                            graceIds.OrganizationIdString,
+                            graceIds.RepositoryIdString,
+                            graceIds.BranchIdString
                         )
                     elif graceIds.HasRepository then
                         log.LogInformation(
@@ -394,9 +398,9 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
                             duration_ms,
                             correlationId,
                             path,
-                            graceIds.OwnerId,
-                            graceIds.OrganizationId,
-                            graceIds.RepositoryId
+                            graceIds.OwnerIdString,
+                            graceIds.OrganizationIdString,
+                            graceIds.RepositoryIdString
                         )
                     elif graceIds.HasOrganization then
                         log.LogInformation(
@@ -406,8 +410,8 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
                             duration_ms,
                             correlationId,
                             path,
-                            graceIds.OwnerId,
-                            graceIds.OrganizationId
+                            graceIds.OwnerIdString,
+                            graceIds.OrganizationIdString
                         )
                     elif graceIds.HasOwner then
                         log.LogInformation(
@@ -417,7 +421,7 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
                             duration_ms,
                             correlationId,
                             path,
-                            graceIds.OwnerId
+                            graceIds.OwnerIdString
                         )
 
                     // -----------------------------------------------------------------------------------------------------

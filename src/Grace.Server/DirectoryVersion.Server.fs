@@ -85,17 +85,17 @@ module DirectoryVersion =
 
                 if validationsPassed then
                     let directoryVersionGuid = Guid.Parse(parameters.DirectoryVersionId)
-                    let! actorProxy = DirectoryVersion.CreateActorProxy directoryVersionGuid repositoryId correlationId
+                    let actorProxy = DirectoryVersion.CreateActorProxy directoryVersionGuid repositoryId correlationId
 
                     let! queryResult = query context maxCount actorProxy
 
                     let graceReturnValue = GraceReturnValue.Create queryResult correlationId
 
                     let graceIds = getGraceIds context
-                    graceReturnValue.Properties[nameof (OwnerId)] <- graceIds.OwnerId
-                    graceReturnValue.Properties[nameof (OrganizationId)] <- graceIds.OrganizationId
-                    graceReturnValue.Properties[nameof (RepositoryId)] <- graceIds.RepositoryId
-                    graceReturnValue.Properties[nameof (BranchId)] <- graceIds.BranchId
+                    graceReturnValue.Properties[nameof (OwnerId)] <- graceIds.OwnerIdString
+                    graceReturnValue.Properties[nameof (OrganizationId)] <- graceIds.OrganizationIdString
+                    graceReturnValue.Properties[nameof (RepositoryId)] <- graceIds.RepositoryIdString
+                    graceReturnValue.Properties[nameof (BranchId)] <- graceIds.BranchIdString
 
                     return! context |> result200Ok graceReturnValue
                 else
@@ -116,7 +116,7 @@ module DirectoryVersion =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let graceIds = getGraceIds context
-                let repositoryId = Guid.Parse(graceIds.RepositoryId)
+                let repositoryId = Guid.Parse(graceIds.RepositoryIdString)
 
                 let validations (parameters: CreateParameters) =
                     [| String.isNotEmpty $"{parameters.DirectoryVersion.DirectoryVersionId}" DirectoryVersionError.InvalidDirectoryVersionId
@@ -127,13 +127,14 @@ module DirectoryVersion =
                        String.isNotEmpty $"{parameters.DirectoryVersion.Sha256Hash}" DirectoryVersionError.Sha256HashIsRequired
                        String.isValidSha256Hash $"{parameters.DirectoryVersion.Sha256Hash}" DirectoryVersionError.InvalidSha256Hash
                        Repository.repositoryIdExists
+                           graceIds.OrganizationId
                            $"{parameters.DirectoryVersion.RepositoryId}"
                            parameters.CorrelationId
                            DirectoryVersionError.RepositoryDoesNotExist |]
 
                 let command (parameters: CreateParameters) (context: HttpContext) =
                     task {
-                        let! actorProxy =
+                        let actorProxy =
                             DirectoryVersion.CreateActorProxy parameters.DirectoryVersion.DirectoryVersionId repositoryId (getCorrelationId context)
 
                         return! actorProxy.Handle (DirectoryVersionCommand.Create parameters.DirectoryVersion) (Services.createMetadata context)
@@ -147,12 +148,16 @@ module DirectoryVersion =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let graceIds = getGraceIds context
-                let repositoryId = Guid.Parse(graceIds.RepositoryId)
+                let repositoryId = Guid.Parse(graceIds.RepositoryIdString)
 
                 let validations (parameters: GetParameters) =
                     [| Guid.isValidAndNotEmptyGuid $"{parameters.RepositoryId}" DirectoryVersionError.InvalidRepositoryId
                        Guid.isValidAndNotEmptyGuid $"{parameters.DirectoryVersionId}" DirectoryVersionError.InvalidDirectoryVersionId
-                       Repository.repositoryIdExists $"{parameters.RepositoryId}" parameters.CorrelationId DirectoryVersionError.RepositoryDoesNotExist
+                       Repository.repositoryIdExists
+                           graceIds.OrganizationId
+                           $"{parameters.RepositoryId}"
+                           parameters.CorrelationId
+                           DirectoryVersionError.RepositoryDoesNotExist
                        DirectoryVersion.directoryIdExists
                            (Guid.Parse(parameters.DirectoryVersionId))
                            repositoryId
@@ -174,12 +179,16 @@ module DirectoryVersion =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let graceIds = getGraceIds context
-                let repositoryId = Guid.Parse(graceIds.RepositoryId)
+                let repositoryId = Guid.Parse(graceIds.RepositoryIdString)
 
                 let validations (parameters: GetParameters) =
                     [| Guid.isValidAndNotEmptyGuid $"{parameters.RepositoryId}" DirectoryVersionError.InvalidRepositoryId
                        Guid.isValidAndNotEmptyGuid $"{parameters.DirectoryVersionId}" DirectoryVersionError.InvalidDirectoryVersionId
-                       Repository.repositoryIdExists $"{parameters.RepositoryId}" parameters.CorrelationId DirectoryVersionError.RepositoryDoesNotExist
+                       Repository.repositoryIdExists
+                           graceIds.OrganizationId
+                           $"{parameters.RepositoryId}"
+                           parameters.CorrelationId
+                           DirectoryVersionError.RepositoryDoesNotExist
                        DirectoryVersion.directoryIdExists
                            (Guid.Parse(parameters.DirectoryVersionId))
                            repositoryId
@@ -202,11 +211,15 @@ module DirectoryVersion =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let graceIds = getGraceIds context
-                let repositoryId = Guid.Parse(graceIds.RepositoryId)
+                let repositoryId = Guid.Parse(graceIds.RepositoryIdString)
 
                 let validations (parameters: GetByDirectoryIdsParameters) =
                     [| Guid.isValidAndNotEmptyGuid $"{parameters.RepositoryId}" DirectoryVersionError.InvalidRepositoryId
-                       Repository.repositoryIdExists $"{parameters.RepositoryId}" parameters.CorrelationId DirectoryVersionError.RepositoryDoesNotExist
+                       Repository.repositoryIdExists
+                           graceIds.OrganizationId
+                           $"{parameters.RepositoryId}"
+                           parameters.CorrelationId
+                           DirectoryVersionError.RepositoryDoesNotExist
                        DirectoryVersion.directoryIdsExist
                            parameters.DirectoryIds
                            repositoryId
@@ -220,7 +233,7 @@ module DirectoryVersion =
                         let directoryIds = context.Items[nameof (GetByDirectoryIdsParameters)] :?> List<DirectoryVersionId>
 
                         for directoryId in directoryIds do
-                            let! actorProxy = DirectoryVersion.CreateActorProxy directoryId repositoryId (getCorrelationId context)
+                            let actorProxy = DirectoryVersion.CreateActorProxy directoryId repositoryId (getCorrelationId context)
 
                             let! directoryVersion = actorProxy.Get(getCorrelationId context)
                             directoryVersions.Add(directoryVersion)
@@ -237,11 +250,17 @@ module DirectoryVersion =
     let GetBySha256Hash: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
+                let graceIds = getGraceIds context
+
                 let validations (parameters: GetBySha256HashParameters) =
                     [| Guid.isValidAndNotEmptyGuid $"{parameters.DirectoryVersionId}" DirectoryVersionError.InvalidDirectoryVersionId
                        Guid.isValidAndNotEmptyGuid $"{parameters.RepositoryId}" DirectoryVersionError.InvalidRepositoryId
                        String.isNotEmpty parameters.Sha256Hash DirectoryVersionError.Sha256HashIsRequired
-                       Repository.repositoryIdExists $"{parameters.RepositoryId}" parameters.CorrelationId DirectoryVersionError.RepositoryDoesNotExist |]
+                       Repository.repositoryIdExists
+                           graceIds.OrganizationId
+                           $"{parameters.RepositoryId}"
+                           parameters.CorrelationId
+                           DirectoryVersionError.RepositoryDoesNotExist |]
 
                 let query (context: HttpContext) (maxCount: int) (actorProxy: IDirectoryVersionActor) =
                     task {
@@ -262,12 +281,16 @@ module DirectoryVersion =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let graceIds = getGraceIds context
-                let repositoryId = Guid.Parse(graceIds.RepositoryId)
+                let repositoryId = Guid.Parse(graceIds.RepositoryIdString)
 
                 let validations (parameters: GetZipFileParameters) =
                     [| Guid.isValidAndNotEmptyGuid $"{parameters.RepositoryId}" DirectoryVersionError.InvalidRepositoryId
                        Guid.isValidAndNotEmptyGuid $"{parameters.DirectoryVersionId}" DirectoryVersionError.InvalidDirectoryVersionId
-                       Repository.repositoryIdExists $"{parameters.RepositoryId}" parameters.CorrelationId DirectoryVersionError.RepositoryDoesNotExist
+                       Repository.repositoryIdExists
+                           graceIds.OrganizationId
+                           $"{parameters.RepositoryId}"
+                           parameters.CorrelationId
+                           DirectoryVersionError.RepositoryDoesNotExist
                        DirectoryVersion.directoryIdExists
                            (Guid.Parse(parameters.DirectoryVersionId))
                            repositoryId
@@ -291,7 +314,7 @@ module DirectoryVersion =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let graceIds = getGraceIds context
-                let repositoryId = Guid.Parse(graceIds.RepositoryId)
+                let repositoryId = Guid.Parse(graceIds.RepositoryIdString)
 
                 let validations (parameters: SaveDirectoryVersionsParameters) =
                     let mutable allValidations: ValueTask<Result<unit, DirectoryVersionError>> array = Array.Empty()
@@ -306,6 +329,7 @@ module DirectoryVersion =
                                String.isValidSha256Hash $"{directoryVersion.Sha256Hash}" DirectoryVersionError.InvalidSha256Hash
                                String.isNotEmpty $"{directoryVersion.RelativePath}" DirectoryVersionError.RelativePathMustNotBeEmpty
                                Repository.repositoryIdExists
+                                   graceIds.OrganizationId
                                    $"{directoryVersion.RepositoryId}"
                                    parameters.CorrelationId
                                    DirectoryVersionError.RepositoryDoesNotExist |]
@@ -328,7 +352,7 @@ module DirectoryVersion =
                                         task {
                                             try
                                                 // Check if the directory version exists. If it doesn't, create it.
-                                                let! directoryVersionActor =
+                                                let directoryVersionActor =
                                                     DirectoryVersion.CreateActorProxy directoryVersion.DirectoryVersionId repositoryId correlationId
 
                                                 let! exists = directoryVersionActor.Exists parameters.CorrelationId

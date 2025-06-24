@@ -11,7 +11,7 @@ open System.Runtime.Serialization
 
 module DirectoryVersion =
 
-    [<KnownType("GetKnownTypes"); GenerateSerializer>]
+    [<KnownType("GetKnownTypes")>]
     type DirectoryVersionCommand =
         | Create of directoryVersion: DirectoryVersion
         | SetRecursiveSize of recursizeSize: int64
@@ -22,7 +22,7 @@ module DirectoryVersion =
         static member GetKnownTypes() = GetKnownTypes<DirectoryVersionCommand>()
 
     /// Defines the events for the DirectoryVersion actor.
-    [<KnownType("GetKnownTypes"); GenerateSerializer>]
+    [<KnownType("GetKnownTypes")>]
     type DirectoryVersionEventType =
         | Created of directoryVersion: DirectoryVersion
         | RecursiveSizeSet of recursiveSize: int64
@@ -31,7 +31,6 @@ module DirectoryVersion =
         | Undeleted
 
     /// Record that holds the event type and metadata for a DirectoryVersion event.
-    [<GenerateSerializer>]
     type DirectoryVersionEvent =
         {
             /// The DirectoryVersionEventType case that describes the event.
@@ -40,7 +39,7 @@ module DirectoryVersion =
             Metadata: EventMetadata
         }
 
-    [<GenerateSerializer>]
+    /// The DirectoryVersionDto is a data transfer object that represents a directory version in the system.
     type DirectoryVersionDto =
         { DirectoryVersion: DirectoryVersion
           RecursiveSize: int64
@@ -48,7 +47,9 @@ module DirectoryVersion =
           DeleteReason: DeleteReason }
 
         static member UpdateDto directoryVersionEvent currentDirectoryVersionDto =
-            match directoryVersionEvent with
+            let directoryVersionEventType = directoryVersionEvent.Event
+
+            match directoryVersionEventType with
             | Created directoryVersion -> { currentDirectoryVersionDto with DirectoryVersion = directoryVersion }
             | RecursiveSizeSet recursiveSize -> { currentDirectoryVersionDto with RecursiveSize = recursiveSize }
             | LogicalDeleted deleteReason -> { currentDirectoryVersionDto with DeletedAt = Some(getCurrentInstant ()); DeleteReason = deleteReason }

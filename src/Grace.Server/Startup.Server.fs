@@ -528,8 +528,8 @@ module Application =
                 .AddHostedService<ReminderService>()
                 .AddHttpLogging()
                 .AddOrleans(fun siloBuilder ->
-                    siloBuilder.Services.AddSerializer(fun serializerBuilder ->
-                        serializerBuilder.AddNodaTimeSerializers() |> ignore) |> ignore)
+                    siloBuilder.Services.AddSerializer(fun serializerBuilder -> serializerBuilder.AddNodaTimeSerializers() |> ignore)
+                    |> ignore)
             |> ignore
 
             // Get a GrainFactory instance from Orleans.
@@ -613,19 +613,28 @@ module Application =
             let containers = blobServiceClient.GetBlobContainers()
 
             let directoryVersionContainerName = Environment.GetEnvironmentVariable Constants.EnvironmentVariables.DirectoryVersionContainerName
+
             if not <| containers.Any(fun c -> c.Name = directoryVersionContainerName) then
                 logToConsole $"Creating blob container: {directoryVersionContainerName}."
-                blobServiceClient.CreateBlobContainer(directoryVersionContainerName, PublicAccessType.None) |> ignore
+
+                blobServiceClient.CreateBlobContainer(directoryVersionContainerName, PublicAccessType.None)
+                |> ignore
 
             let diffContainerName = Environment.GetEnvironmentVariable Constants.EnvironmentVariables.DiffContainerName
+
             if not <| containers.Any(fun c -> c.Name = diffContainerName) then
                 logToConsole $"Creating blob container: {diffContainerName}."
-                blobServiceClient.CreateBlobContainer(diffContainerName, PublicAccessType.None) |> ignore
+
+                blobServiceClient.CreateBlobContainer(diffContainerName, PublicAccessType.None)
+                |> ignore
 
             let zipFileContainerName = Environment.GetEnvironmentVariable Constants.EnvironmentVariables.ZipFileContainerName
+
             if not <| containers.Any(fun c -> c.Name = zipFileContainerName) then
                 logToConsole $"Creating blob container: {zipFileContainerName}."
-                blobServiceClient.CreateBlobContainer(zipFileContainerName, PublicAccessType.None) |> ignore
+
+                blobServiceClient.CreateBlobContainer(zipFileContainerName, PublicAccessType.None)
+                |> ignore
 
             if env.IsDevelopment() then
                 app //.UseSwagger()
@@ -657,7 +666,8 @@ module Application =
                     endpointBuilder.MapPrometheusScrapingEndpoint() |> ignore
 
                     // Add SignalR hub endpoints
-                    endpointBuilder.MapHub<Notifications.NotificationHub>("/notifications") |> ignore)
+                    endpointBuilder.MapHub<Notifications.NotificationHub>("/notifications")
+                    |> ignore)
 
                 // If we get here, we didn't find a route.
                 .UseGiraffe(notFoundHandler)

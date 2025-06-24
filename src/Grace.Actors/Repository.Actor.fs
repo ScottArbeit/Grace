@@ -17,6 +17,7 @@ open Grace.Shared.Resources.Utilities
 open Grace.Types.Branch
 open Grace.Types.DirectoryVersion
 open Grace.Types.Repository
+open Grace.Types.Events
 open Grace.Types.Types
 open Grace.Shared.Utilities
 open Grace.Shared.Validation.Errors.Repository
@@ -51,11 +52,13 @@ module Repository =
         member val private correlationId: CorrelationId = String.Empty with get, set
 
         override this.OnActivateAsync(ct) =
-            logActorActivation log this.IdentityString (getActorActivationMessage state.RecordExists)
+            let activateStartTime = getCurrentInstant ()
+
+            logActorActivation log this.IdentityString activateStartTime (getActorActivationMessage state.RecordExists)
 
             repositoryDto <-
                 state.State
-                |> Seq.fold (fun repositoryDto repositoryEvent -> RepositoryDto.UpdateDto repositoryEvent repositoryDto) RepositoryDto.Default
+                |> Seq.fold (fun repositoryDto repositoryEvent -> repositoryDto |> RepositoryDto.UpdateDto repositoryEvent) RepositoryDto.Default
 
             Task.CompletedTask
 
@@ -85,7 +88,7 @@ module Repository =
                             | Created(name, repositoryId, ownerId, organizationId) ->
                                 // Create the default branch.
                                 let branchId = (Guid.NewGuid())
-                                let! branchActor = Branch.CreateActorProxy branchId repositoryDto.RepositoryId this.correlationId
+                                let branchActor = Branch.CreateActorProxy branchId repositoryDto.RepositoryId this.correlationId
 
                                 // Only allow promotions and tags on the initial branch.
                                 let initialBranchPermissions = [| ReferenceType.Promotion; ReferenceType.Tag; ReferenceType.External |]
@@ -96,6 +99,8 @@ module Repository =
                                         InitialBranchName,
                                         DefaultParentBranchId,
                                         ReferenceId.Empty,
+                                        ownerId,
+                                        organizationId,
                                         repositoryId,
                                         initialBranchPermissions
                                     )
@@ -108,12 +113,14 @@ module Repository =
 
                                     let emptySha256Hash = computeSha256ForDirectory RootDirectoryPath (List<LocalDirectoryVersion>()) (List<LocalFileVersion>())
 
-                                    let! directoryVersionActorProxy =
+                                    let directoryVersionActorProxy =
                                         DirectoryVersion.CreateActorProxy emptyDirectoryId repositoryDto.RepositoryId this.correlationId
 
                                     let emptyDirectoryVersion =
                                         DirectoryVersion.Create
                                             emptyDirectoryId
+                                            repositoryDto.OwnerId
+                                            repositoryDto.OrganizationId
                                             repositoryDto.RepositoryId
                                             RootDirectoryPath
                                             emptySha256Hash
@@ -167,7 +174,7 @@ module Repository =
                     match! handleEvent with
                     | Ok(branchId, referenceId) ->
                         // Publish the event to the rest of the world.
-                        let graceEvent = Events.GraceEvent.RepositoryEvent repositoryEvent
+                        let graceEvent = GraceEvent.RepositoryEvent repositoryEvent
                         let message = serialize graceEvent
                         do! daprClient.PublishEventAsync(GracePubSubService, GraceEventStreamTopic, graceEvent)
 
@@ -224,7 +231,7 @@ module Repository =
                             ValueTask(
                                 task {
                                     if branch.DeletedAt |> Option.isNone then
-                                        let! branchActor = Branch.CreateActorProxy branch.BranchId branch.RepositoryId this.correlationId
+                                        let branchActor = Branch.CreateActorProxy branch.BranchId branch.RepositoryId this.correlationId
 
                                         let! result =
                                             branchActor.Handle
@@ -263,6 +270,8 @@ module Repository =
                         ReminderDto.Create
                             actorName
                             $"{this.IdentityString}"
+                            repositoryDto.OwnerId
+                            repositoryDto.OrganizationId
                             repositoryDto.RepositoryId
                             reminderType
                             (getFutureInstant delay)
@@ -459,7 +468,14 @@ module Repository =
                                     | SetDescription description -> return DescriptionSet description
                                     | DeleteLogical(force, deleteReason) ->
                                         // Get the list of branches that aren't already deleted.
-                                        let! branches = getBranches repositoryDto.RepositoryId Int32.MaxValue false metadata.CorrelationId
+                                        let! branches =
+                                            getBranches
+                                                repositoryDto.OwnerId
+                                                repositoryDto.OrganizationId
+                                                repositoryDto.RepositoryId
+                                                Int32.MaxValue
+                                                false
+                                                metadata.CorrelationId
 
                                         // If any branches are not already deleted, and we're not forcing the deletion, then throw an exception.
                                         if

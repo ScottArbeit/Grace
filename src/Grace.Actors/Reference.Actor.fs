@@ -10,10 +10,11 @@ open Grace.Actors.Timing
 open Grace.Actors.Types
 open Grace.Shared
 open Grace.Shared.Constants
-open Grace.Types.Reference
-open Grace.Types.Types
 open Grace.Shared.Utilities
 open Grace.Shared.Validation.Errors.Reference
+open Grace.Types.Events
+open Grace.Types.Reference
+open Grace.Types.Types
 open Microsoft.Extensions.Logging
 open NodaTime
 open Orleans
@@ -39,7 +40,9 @@ module Reference =
         member val private correlationId: CorrelationId = String.Empty with get, set
 
         override this.OnActivateAsync(ct) =
-            logActorActivation log this.IdentityString (getActorActivationMessage state.RecordExists)
+            let activateStartTime = getCurrentInstant ()
+
+            logActorActivation log this.IdentityString activateStartTime (getActorActivationMessage state.RecordExists)
 
             referenceDto <-
                 state.State
@@ -55,6 +58,8 @@ module Reference =
                         ReminderDto.Create
                             actorName
                             $"{this.IdentityString}"
+                            referenceDto.OwnerId
+                            referenceDto.OrganizationId
                             referenceDto.RepositoryId
                             reminderType
                             (getFutureInstant delay)
@@ -79,7 +84,7 @@ module Reference =
                         this.correlationId <- correlationId
 
                         // Mark the branch as needing to update its latest references.
-                        let! branchActorProxy = Branch.CreateActorProxy branchId repositoryId correlationId
+                        let branchActorProxy = Branch.CreateActorProxy branchId repositoryId correlationId
                         do! branchActorProxy.MarkForRecompute correlationId
 
                         // Delete saved state for this actor.
@@ -121,7 +126,7 @@ module Reference =
                     referenceDto <- referenceDto |> ReferenceDto.UpdateDto referenceEvent
 
                     // Publish the event to the rest of the world.
-                    let graceEvent = Events.GraceEvent.ReferenceEvent referenceEvent
+                    let graceEvent = GraceEvent.ReferenceEvent referenceEvent
                     do! daprClient.PublishEventAsync(GracePubSubService, GraceEventStreamTopic, graceEvent)
 
                     // If this is a Save or Checkpoint reference, schedule a physical deletion based on the default delays from the repository.
@@ -131,7 +136,7 @@ module Reference =
                             match referenceDto.ReferenceType with
                             | ReferenceType.Save ->
                                 task {
-                                    let! repositoryActorProxy = Repository.CreateActorProxy referenceDto.RepositoryId correlationId
+                                    let repositoryActorProxy = Repository.CreateActorProxy referenceDto.OrganizationId referenceDto.RepositoryId correlationId
                                     let! repositoryDto = repositoryActorProxy.Get correlationId
 
                                     let reminderState: PhysicalDeletionReminderState =
@@ -151,7 +156,7 @@ module Reference =
                                 }
                             | ReferenceType.Checkpoint ->
                                 task {
-                                    let! repositoryActorProxy = Repository.CreateActorProxy referenceDto.RepositoryId correlationId
+                                    let repositoryActorProxy = Repository.CreateActorProxy referenceDto.OrganizationId referenceDto.RepositoryId correlationId
                                     let! repositoryDto = repositoryActorProxy.Get correlationId
 
                                     let reminderState: PhysicalDeletionReminderState =
@@ -247,7 +252,9 @@ module Reference =
                                 | AddLink link -> return LinkAdded link
                                 | RemoveLink link -> return LinkRemoved link
                                 | DeleteLogical(force, deleteReason) ->
-                                    let! repositoryActorProxy = Repository.CreateActorProxy referenceDto.RepositoryId this.correlationId
+                                    let repositoryActorProxy =
+                                        Repository.CreateActorProxy referenceDto.OrganizationId referenceDto.RepositoryId this.correlationId
+
                                     let! repositoryDto = repositoryActorProxy.Get this.correlationId
 
                                     let reminderState: PhysicalDeletionReminderState =

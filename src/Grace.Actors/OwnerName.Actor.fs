@@ -26,7 +26,9 @@ module OwnerName =
         member val private correlationId: CorrelationId = String.Empty with get, set
 
         override this.OnActivateAsync(ct) =
-            logActorActivation log this.IdentityString "In-memory only"
+            let activateStartTime = getCurrentInstant ()
+
+            logActorActivation log this.IdentityString activateStartTime "In-memory only"
 
             Task.CompletedTask
 

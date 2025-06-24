@@ -12,13 +12,15 @@ open System.Runtime.Serialization
 
 module Branch =
 
-    [<KnownType("GetKnownTypes"); GenerateSerializer>]
+    [<KnownType("GetKnownTypes")>]
     type BranchCommand =
         | Create of
             branchId: BranchId *
             branchName: BranchName *
             parentBranchId: BranchId *
             basedOn: ReferenceId *
+            ownerId: OwnerId *
+            organizationId: OrganizationId *
             repositoryId: RepositoryId *
             initialPermissions: ReferenceType[]
         | Rebase of basedOn: ReferenceId
@@ -46,13 +48,15 @@ module Branch =
         static member GetKnownTypes() = GetKnownTypes<BranchCommand>()
 
     /// Defines the events for the Branch actor.
-    [<KnownType("GetKnownTypes"); GenerateSerializer>]
+    [<KnownType("GetKnownTypes")>]
     type BranchEventType =
         | Created of
             branchId: BranchId *
             branchName: BranchName *
             parentBranchId: BranchId *
             basedOn: ReferenceId *
+            ownerId: OwnerId *
+            organizationId: OrganizationId *
             repositoryId: RepositoryId *
             initialPermissions: ReferenceType[]
         | Rebased of basedOn: ReferenceId
@@ -80,7 +84,6 @@ module Branch =
         static member GetKnownTypes() = GetKnownTypes<BranchEventType>()
 
     /// Record that holds the event type and metadata for a Branch event.
-    [<GenerateSerializer>]
     type BranchEvent =
         {
             /// The BranchEventType case that describes the event.
@@ -89,14 +92,16 @@ module Branch =
             Metadata: EventMetadata
         }
 
-    [<KnownType("GetKnownTypes"); GenerateSerializer>]
+    /// The BranchDto is a data transfer object that represents a branch in the system.
     type BranchDto =
         { Class: string
           BranchId: BranchId
           BranchName: BranchName
           ParentBranchId: BranchId
-          BasedOn: ReferenceDto
+          OwnerId: OwnerId
+          OrganizationId: OrganizationId
           RepositoryId: RepositoryId
+          BasedOn: ReferenceDto
           UserId: UserId
           AssignEnabled: bool
           PromotionEnabled: bool
@@ -122,8 +127,10 @@ module Branch =
               BranchId = BranchId.Empty
               BranchName = BranchName "root"
               ParentBranchId = Constants.DefaultParentBranchId
-              BasedOn = ReferenceDto.Default
+              OwnerId = OwnerId.Empty
+              OrganizationId = OrganizationId.Empty
               RepositoryId = RepositoryId.Empty
+              BasedOn = ReferenceDto.Default
               UserId = UserId String.Empty
               AssignEnabled = false
               PromotionEnabled = false
@@ -144,77 +151,71 @@ module Branch =
               DeletedAt = None
               DeleteReason = String.Empty }
 
-        static member UpdateDto branchEvent correlationId currentBranchDto =
-            task {
-                let branchEventType = branchEvent.Event
+        static member UpdateDto branchEvent currentBranchDto =
+            let branchEventType = branchEvent.Event
 
-                let! newBranchDto =
-                    match branchEventType with
-                    | Created(branchId, branchName, parentBranchId, basedOn, repositoryId, initialPermissions) ->
-                        let basedOnReferenceDto = deserialize<ReferenceDto> branchEvent.Metadata.Properties["basedOnReferenceDto"]
+            let newBranchDto =
+                match branchEventType with
+                | Created(branchId, branchName, parentBranchId, basedOn, ownerId, organizationId, repositoryId, initialPermissions) ->
+                    let basedOnReferenceDto = deserialize<ReferenceDto> branchEvent.Metadata.Properties["basedOnReferenceDto"]
 
-                        let mutable branchDto =
-                            { BranchDto.Default with
-                                BranchId = branchId
-                                BranchName = branchName
-                                ParentBranchId = parentBranchId
-                                BasedOn = basedOnReferenceDto
-                                RepositoryId = repositoryId
-                                CreatedAt = branchEvent.Metadata.Timestamp }
+                    let mutable branchDto =
+                        { BranchDto.Default with
+                            BranchId = branchId
+                            BranchName = branchName
+                            ParentBranchId = parentBranchId
+                            BasedOn = basedOnReferenceDto
+                            OwnerId = ownerId
+                            OrganizationId = organizationId
+                            RepositoryId = repositoryId
+                            CreatedAt = branchEvent.Metadata.Timestamp }
 
-                        for referenceType in initialPermissions do
-                            branchDto <-
-                                match referenceType with
-                                | ReferenceType.Promotion -> { branchDto with PromotionEnabled = true }
-                                | ReferenceType.Commit -> { branchDto with CommitEnabled = true }
-                                | ReferenceType.Checkpoint -> { branchDto with CheckpointEnabled = true }
-                                | ReferenceType.Save -> { branchDto with SaveEnabled = true }
-                                | ReferenceType.Tag -> { branchDto with TagEnabled = true }
-                                | ReferenceType.External -> { branchDto with ExternalEnabled = true }
-                                | ReferenceType.Rebase -> branchDto // Rebase is always allowed. (Auto-rebase is optional, but rebase itself is always allowed.)
+                    for referenceType in initialPermissions do
+                        branchDto <-
+                            match referenceType with
+                            | ReferenceType.Promotion -> { branchDto with PromotionEnabled = true }
+                            | ReferenceType.Commit -> { branchDto with CommitEnabled = true }
+                            | ReferenceType.Checkpoint -> { branchDto with CheckpointEnabled = true }
+                            | ReferenceType.Save -> { branchDto with SaveEnabled = true }
+                            | ReferenceType.Tag -> { branchDto with TagEnabled = true }
+                            | ReferenceType.External -> { branchDto with ExternalEnabled = true }
+                            | ReferenceType.Rebase -> branchDto // Rebase is always allowed. (Auto-rebase is optional, but rebase itself is always allowed.)
 
-                        branchDto |> returnTask
-                    | Rebased referenceId ->
-                        let basedOnReferenceDto = deserialize<ReferenceDto> branchEvent.Metadata.Properties["basedOnReferenceDto"]
-                        { currentBranchDto with BasedOn = basedOnReferenceDto } |> returnTask
-                    | NameSet branchName -> { currentBranchDto with BranchName = branchName } |> returnTask
-                    | Assigned(referenceDto, directoryVersion, sha256Hash, referenceText) ->
-                        { currentBranchDto with LatestPromotion = referenceDto; BasedOn = referenceDto; ShouldRecomputeLatestReferences = true }
-                        |> returnTask
-                    | Promoted(referenceDto, directoryVersion, sha256Hash, referenceText) ->
-                        { currentBranchDto with LatestPromotion = referenceDto; BasedOn = referenceDto; ShouldRecomputeLatestReferences = true }
-                        |> returnTask
-                    | Committed(referenceDto, directoryVersion, sha256Hash, referenceText) ->
-                        { currentBranchDto with LatestCommit = referenceDto; ShouldRecomputeLatestReferences = true }
-                        |> returnTask
-                    | Checkpointed(referenceDto, directoryVersion, sha256Hash, referenceText) ->
-                        { currentBranchDto with LatestCheckpoint = referenceDto; ShouldRecomputeLatestReferences = true }
-                        |> returnTask
-                    | Saved(referenceDto, directoryVersion, sha256Hash, referenceText) ->
-                        { currentBranchDto with LatestSave = referenceDto; ShouldRecomputeLatestReferences = true }
-                        |> returnTask
-                    | Tagged(referenceDto, directoryVersion, sha256Hash, referenceText) ->
-                        { currentBranchDto with ShouldRecomputeLatestReferences = true } |> returnTask
-                    | ExternalCreated(referenceDto, directoryVersion, sha256Hash, referenceText) ->
-                        { currentBranchDto with ShouldRecomputeLatestReferences = true } |> returnTask
-                    | EnabledAssign enabled -> { currentBranchDto with AssignEnabled = enabled } |> returnTask
-                    | EnabledPromotion enabled -> { currentBranchDto with PromotionEnabled = enabled } |> returnTask
-                    | EnabledCommit enabled -> { currentBranchDto with CommitEnabled = enabled } |> returnTask
-                    | EnabledCheckpoint enabled -> { currentBranchDto with CheckpointEnabled = enabled } |> returnTask
-                    | EnabledSave enabled -> { currentBranchDto with SaveEnabled = enabled } |> returnTask
-                    | EnabledTag enabled -> { currentBranchDto with TagEnabled = enabled } |> returnTask
-                    | EnabledExternal enabled -> { currentBranchDto with ExternalEnabled = enabled } |> returnTask
-                    | EnabledAutoRebase enabled -> { currentBranchDto with AutoRebaseEnabled = enabled } |> returnTask
-                    | ReferenceRemoved _ -> currentBranchDto |> returnTask
-                    | LogicalDeleted(force, deleteReason) ->
-                        { currentBranchDto with DeletedAt = Some(getCurrentInstant ()); DeleteReason = deleteReason }
-                        |> returnTask
-                    | PhysicalDeleted -> currentBranchDto |> returnTask // Do nothing because it's about to be deleted anyway.
-                    | Undeleted ->
-                        { currentBranchDto with DeletedAt = None; DeleteReason = String.Empty }
-                        |> returnTask
+                    branchDto
+                | Rebased referenceId ->
+                    let basedOnReferenceDto = deserialize<ReferenceDto> branchEvent.Metadata.Properties["basedOnReferenceDto"]
+                    { currentBranchDto with BasedOn = basedOnReferenceDto }
+                | NameSet branchName -> { currentBranchDto with BranchName = branchName }
+                | Assigned(referenceDto, directoryVersion, sha256Hash, referenceText) ->
+                    { currentBranchDto with LatestPromotion = referenceDto; BasedOn = referenceDto; ShouldRecomputeLatestReferences = true }
 
-                return { newBranchDto with UpdatedAt = Some branchEvent.Metadata.Timestamp }
-            }
+                | Promoted(referenceDto, directoryVersion, sha256Hash, referenceText) ->
+                    { currentBranchDto with LatestPromotion = referenceDto; BasedOn = referenceDto; ShouldRecomputeLatestReferences = true }
 
-        static member GetKnownTypes() = GetKnownTypes<BranchDto>()
+                | Committed(referenceDto, directoryVersion, sha256Hash, referenceText) ->
+                    { currentBranchDto with LatestCommit = referenceDto; ShouldRecomputeLatestReferences = true }
+
+                | Checkpointed(referenceDto, directoryVersion, sha256Hash, referenceText) ->
+                    { currentBranchDto with LatestCheckpoint = referenceDto; ShouldRecomputeLatestReferences = true }
+
+                | Saved(referenceDto, directoryVersion, sha256Hash, referenceText) ->
+                    { currentBranchDto with LatestSave = referenceDto; ShouldRecomputeLatestReferences = true }
+
+                | Tagged(referenceDto, directoryVersion, sha256Hash, referenceText) -> { currentBranchDto with ShouldRecomputeLatestReferences = true }
+                | ExternalCreated(referenceDto, directoryVersion, sha256Hash, referenceText) -> { currentBranchDto with ShouldRecomputeLatestReferences = true }
+                | EnabledAssign enabled -> { currentBranchDto with AssignEnabled = enabled }
+                | EnabledPromotion enabled -> { currentBranchDto with PromotionEnabled = enabled }
+                | EnabledCommit enabled -> { currentBranchDto with CommitEnabled = enabled }
+                | EnabledCheckpoint enabled -> { currentBranchDto with CheckpointEnabled = enabled }
+                | EnabledSave enabled -> { currentBranchDto with SaveEnabled = enabled }
+                | EnabledTag enabled -> { currentBranchDto with TagEnabled = enabled }
+                | EnabledExternal enabled -> { currentBranchDto with ExternalEnabled = enabled }
+                | EnabledAutoRebase enabled -> { currentBranchDto with AutoRebaseEnabled = enabled }
+                | ReferenceRemoved _ -> currentBranchDto
+                | LogicalDeleted(force, deleteReason) -> { currentBranchDto with DeletedAt = Some(getCurrentInstant ()); DeleteReason = deleteReason }
+
+                | PhysicalDeleted -> currentBranchDto // Do nothing because it's about to be deleted anyway.
+                | Undeleted -> { currentBranchDto with DeletedAt = None; DeleteReason = String.Empty }
+
+
+            { newBranchDto with UpdatedAt = Some branchEvent.Metadata.Timestamp }

@@ -289,6 +289,8 @@ module Types =
     type DirectoryVersion =
         { Class: string
           DirectoryVersionId: DirectoryVersionId
+          OwnerId: OwnerId
+          OrganizationId: OrganizationId
           RepositoryId: RepositoryId
           RelativePath: RelativePath
           Sha256Hash: Sha256Hash
@@ -301,8 +303,10 @@ module Types =
 
         static member Default =
             { Class = nameof (DirectoryVersion)
-              DirectoryVersionId = Guid.Empty
-              RepositoryId = Guid.Empty
+              DirectoryVersionId = DirectoryVersionId.Empty
+              OwnerId = OwnerId.Empty
+              OrganizationId = OrganizationId.Empty
+              RepositoryId = RepositoryId.Empty
               RelativePath = RelativePath String.Empty
               Sha256Hash = Sha256Hash String.Empty
               Directories = List<DirectoryVersionId>()
@@ -312,6 +316,8 @@ module Types =
 
         static member Create
             (directoryVersionId: DirectoryVersionId)
+            (ownerId: OwnerId)
+            (organizationId: OrganizationId)
             (repositoryId: RepositoryId)
             (relativePath: RelativePath)
             (sha256Hash: Sha256Hash)
@@ -321,6 +327,8 @@ module Types =
             =
             { Class = nameof (DirectoryVersion)
               DirectoryVersionId = directoryVersionId
+              OwnerId = ownerId
+              OrganizationId = organizationId
               RepositoryId = repositoryId
               RelativePath = relativePath
               Sha256Hash = sha256Hash
@@ -332,6 +340,8 @@ module Types =
         member this.ToLocalDirectoryVersion lastWriteTimeUtc =
             LocalDirectoryVersion.Create
                 this.DirectoryVersionId
+                this.OwnerId
+                this.OrganizationId
                 this.RepositoryId
                 this.RelativePath
                 this.Sha256Hash
@@ -348,27 +358,33 @@ module Types =
           Class: string
           [<Key(1)>]
           DirectoryVersionId: DirectoryVersionId
+          [<Key(1)>]
+          OwnerId: OwnerId
           [<Key(2)>]
-          RepositoryId: RepositoryId
+          OrganizationId: OrganizationId
           [<Key(3)>]
-          RelativePath: RelativePath
+          RepositoryId: RepositoryId
           [<Key(4)>]
-          Sha256Hash: Sha256Hash
+          RelativePath: RelativePath
           [<Key(5)>]
-          Directories: List<DirectoryVersionId>
+          Sha256Hash: Sha256Hash
           [<Key(6)>]
-          Files: List<LocalFileVersion>
+          Directories: List<DirectoryVersionId>
           [<Key(7)>]
-          Size: int64
+          Files: List<LocalFileVersion>
           [<Key(8)>]
-          CreatedAt: Instant
+          Size: int64
           [<Key(9)>]
+          CreatedAt: Instant
+          [<Key(10)>]
           LastWriteTimeUtc: DateTime }
 
         static member Default =
             { Class = "LocalDirectoryVersion"
-              RepositoryId = Guid.Empty
-              DirectoryVersionId = Guid.Empty
+              OwnerId = OwnerId.Empty
+              OrganizationId = OrganizationId.Empty
+              RepositoryId = RepositoryId.Empty
+              DirectoryVersionId = DirectoryVersionId.Empty
               RelativePath = RelativePath String.Empty
               Sha256Hash = Sha256Hash String.Empty
               Directories = List<DirectoryVersionId>()
@@ -379,6 +395,8 @@ module Types =
 
         static member Create
             (directoryVersionId: DirectoryVersionId)
+            (ownerId: OwnerId)
+            (organizationId: OrganizationId)
             (repositoryId: RepositoryId)
             (relativePath: RelativePath)
             (sha256Hash: Sha256Hash)
@@ -389,6 +407,8 @@ module Types =
             =
             { Class = "LocalDirectoryVersion"
               DirectoryVersionId = directoryVersionId
+              OwnerId = ownerId
+              OrganizationId = organizationId
               RepositoryId = repositoryId
               RelativePath = relativePath
               Sha256Hash = sha256Hash
@@ -403,6 +423,8 @@ module Types =
         member this.ToDirectoryVersion =
             DirectoryVersion.Create
                 this.DirectoryVersionId
+                this.OwnerId
+                this.OrganizationId
                 this.RepositoryId
                 this.RelativePath
                 this.Sha256Hash
@@ -702,10 +724,14 @@ module Types =
 
     /// Holds the entity Id's involved in an API call. It's populated in ValidateIds.Middleware.fs.
     type GraceIds =
-        { OwnerId: string
-          OrganizationId: string
-          RepositoryId: string
-          BranchId: string
+        { OwnerId: OwnerId
+          OwnerIdString: string
+          OrganizationId: OrganizationId
+          OrganizationIdString: string
+          RepositoryId: RepositoryId
+          RepositoryIdString: string
+          BranchId: BranchId
+          BranchIdString: string
           CorrelationId: string
           HasOwner: bool
           HasOrganization: bool
@@ -713,10 +739,14 @@ module Types =
           HasBranch: bool }
 
         static member Default =
-            { OwnerId = String.Empty
-              OrganizationId = String.Empty
-              RepositoryId = String.Empty
-              BranchId = String.Empty
+            { OwnerId = OwnerId.Empty
+              OwnerIdString = String.Empty
+              OrganizationId = OrganizationId.Empty
+              OrganizationIdString = String.Empty
+              RepositoryId = RepositoryId.Empty
+              RepositoryIdString = String.Empty
+              BranchId = BranchId.Empty
+              BranchIdString = String.Empty
               CorrelationId = String.Empty
               HasOwner = false
               HasOrganization = false

@@ -25,7 +25,11 @@ module FileAppearance =
     type FileAppearanceDto() =
         member val public Appearances = SortedSet<Appearance>() with get, set
 
-    type FileAppearanceActor([<PersistentState(StateName.FileAppearance, Constants.GraceActorStorage)>] state: IPersistentState<SortedSet<Appearance>>, log: ILogger<FileAppearanceActor>) =
+    type FileAppearanceActor
+        (
+            [<PersistentState(StateName.FileAppearance, Constants.GraceActorStorage)>] state: IPersistentState<SortedSet<Appearance>>,
+            log: ILogger<FileAppearanceActor>
+        ) =
         inherit Grain()
 
         let mutable correlationId = String.Empty
@@ -36,7 +40,9 @@ module FileAppearance =
         member val private correlationId: CorrelationId = String.Empty with get, set
 
         override this.OnActivateAsync(ct) =
-            logActorActivation log this.IdentityString (getActorActivationMessage state.RecordExists)
+            let activateStartTime = getCurrentInstant ()
+
+            logActorActivation log this.IdentityString activateStartTime (getActorActivationMessage state.RecordExists)
 
             Task.CompletedTask
 
@@ -45,8 +51,7 @@ module FileAppearance =
                 task {
                     let wasAdded = dto.Appearances.Add(appearance)
 
-                    if wasAdded then
-                        do! state.WriteStateAsync()
+                    if wasAdded then do! state.WriteStateAsync()
                 }
                 :> Task
 

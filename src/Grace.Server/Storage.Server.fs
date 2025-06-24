@@ -60,10 +60,11 @@ module Storage =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let correlationId = (getCorrelationId context)
+                let graceIds = getGraceIds context
 
                 try
                     let! parameters = context.BindJsonAsync<GetDownloadUriParameters>()
-                    let! repositoryActor = Repository.CreateActorProxy (RepositoryId.Parse(parameters.RepositoryId)) correlationId
+                    let repositoryActor = Repository.CreateActorProxy graceIds.OrganizationId graceIds.RepositoryId correlationId
                     let! repositoryDto = repositoryActor.Get correlationId
 
                     let! downloadUri = getUriWithReadSharedAccessSignatureForFileVersion repositoryDto parameters.FileVersion correlationId
@@ -85,7 +86,7 @@ module Storage =
 
                 try
                     let! parameters = context.BindJsonAsync<GetUploadUriParameters>()
-                    let! repositoryActor = Repository.CreateActorProxy (RepositoryId.Parse(graceIds.RepositoryId)) correlationId
+                    let repositoryActor = Repository.CreateActorProxy graceIds.OrganizationId graceIds.RepositoryId correlationId
                     let! repositoryDto = repositoryActor.Get correlationId
 
                     for fileVersion in parameters.FileVersions do
@@ -127,7 +128,7 @@ module Storage =
                     |> ignore
 
                     if parameters.FileVersions.Length > 0 then
-                        let! repositoryActor = Repository.CreateActorProxy (RepositoryId.Parse(graceIds.RepositoryId)) correlationId
+                        let repositoryActor = Repository.CreateActorProxy graceIds.OrganizationId graceIds.RepositoryId correlationId
                         let! repositoryDto = repositoryActor.Get correlationId
 
                         let uploadMetadata = ConcurrentQueue<UploadMetadata>()

@@ -12,7 +12,7 @@ open System.Runtime.Serialization
 module Owner =
 
     /// Defines the commands for the Owner actor.
-    [<KnownType("GetKnownTypes"); GenerateSerializer>]
+    [<KnownType("GetKnownTypes")>]
     type OwnerCommand =
         | Create of ownerId: OwnerId * ownerName: OwnerName
         | SetName of ownerName: OwnerName
@@ -26,7 +26,7 @@ module Owner =
         static member GetKnownTypes() = GetKnownTypes<OwnerCommand>()
 
     /// Defines the events for the Owner actor.
-    [<KnownType("GetKnownTypes"); GenerateSerializer>]
+    [<KnownType("GetKnownTypes")>]
     type OwnerEventType =
         | Created of ownerId: OwnerId * ownerName: OwnerName
         | NameSet of ownerName: OwnerName
@@ -40,7 +40,6 @@ module Owner =
         static member GetKnownTypes() = GetKnownTypes<OwnerEventType>()
 
     /// Record that holds the event type and metadata for an Owner event.
-    [<GenerateSerializer>]
     type OwnerEvent =
         {
             /// The OwnerEventType case that describes the event.
@@ -50,7 +49,6 @@ module Owner =
         }
 
     /// The OwnerDto is a data transfer object that represents an owner in the system.
-    [<KnownType("GetKnownTypes"); GenerateSerializer>]
     type OwnerDto =
         { Class: string
           OwnerId: OwnerId
@@ -76,6 +74,7 @@ module Owner =
               DeletedAt = None
               DeleteReason = String.Empty }
 
+        /// Updates the OwnerDto based on the OwnerEvent received.
         static member UpdateDto ownerEvent currentOwnerDto =
             let newOwnerDto =
                 match ownerEvent.Event with
@@ -89,5 +88,3 @@ module Owner =
                 | Undeleted -> { currentOwnerDto with DeletedAt = None; DeleteReason = String.Empty }
 
             { newOwnerDto with UpdatedAt = Some ownerEvent.Metadata.Timestamp }
-
-        static member GetKnownTypes() = GetKnownTypes<OwnerDto>()

@@ -45,11 +45,13 @@ module Owner =
         member val private correlationId: CorrelationId = String.Empty with get, set
 
         override this.OnActivateAsync(ct) =
-            logActorActivation log this.IdentityString (getActorActivationMessage state.RecordExists)
+            let activateStartTime = getCurrentInstant ()
 
             ownerDto <-
                 state.State
                 |> Seq.fold (fun ownerDto ownerEvent -> OwnerDto.UpdateDto ownerEvent ownerDto) OwnerDto.Default
+
+            logActorActivation log this.IdentityString activateStartTime (getActorActivationMessage state.RecordExists)
 
             Task.CompletedTask
 
@@ -93,7 +95,7 @@ module Owner =
             }
 
         /// Sends a DeleteLogical command to each organization provided.
-        member private this.LogicalDeleteOrganizations(organizations: List<OrganizationDto>, metadata: EventMetadata, deleteReason: DeleteReason) =
+        member private this.LogicalDeleteOrganizations(organizations: OrganizationDto array, metadata: EventMetadata, deleteReason: DeleteReason) =
             // Loop through the orgs, sending a DeleteLogical command to each. If any of them fail, return the first error.
             task {
                 let results = ConcurrentQueue<GraceResult<string>>()
@@ -139,7 +141,18 @@ module Owner =
             /// Schedules a Grace reminder.
             member this.ScheduleReminderAsync reminderType delay state correlationId =
                 task {
-                    let reminder = ReminderDto.Create actorName $"{this.IdentityString}" Guid.Empty reminderType (getFutureInstant delay) state correlationId
+                    let reminder =
+                        ReminderDto.Create
+                            actorName
+                            $"{this.IdentityString}"
+                            ownerDto.OwnerId
+                            Guid.Empty
+                            Guid.Empty
+                            reminderType
+                            (getFutureInstant delay)
+                            state
+                            correlationId
+
                     do! createReminder reminder
                 }
                 :> Task
@@ -260,7 +273,7 @@ module Owner =
                                         // If the owner contains active organizations, and the force flag is not set, return an error.
                                         if
                                             not <| force
-                                            && organizations.Count > 0
+                                            && organizations.Length > 0
                                             && organizations.Any(fun organization -> organization.DeletedAt |> Option.isNone)
                                         then
                                             return

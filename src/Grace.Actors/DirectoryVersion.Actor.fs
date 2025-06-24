@@ -13,11 +13,12 @@ open Grace.Actors.Types
 open Grace.Shared
 open Grace.Shared.Constants
 open Grace.Shared.Services
+open Grace.Shared.Utilities
+open Grace.Shared.Validation.Errors.DirectoryVersion
+open Grace.Types.Events
 open Grace.Types.Repository
 open Grace.Types.DirectoryVersion
 open Grace.Types.Types
-open Grace.Shared.Utilities
-open Grace.Shared.Validation.Errors.DirectoryVersion
 open Microsoft.Extensions.Logging
 open NodaTime
 open Orleans
@@ -58,19 +59,14 @@ module DirectoryVersion =
         override this.OnActivateAsync(ct) =
             let activateStartTime = getCurrentInstant ()
 
-            let correlationId =
-                match memoryCache.GetCorrelationIdEntry this.IdentityString with
-                | Some correlationId -> correlationId
-                | None -> String.Empty
-
             // Apply the events to build the current Dto.
             directoryVersionDto <-
                 state.State
                 |> Seq.fold
-                    (fun directoryVersionDto directoryVersionEvent -> directoryVersionDto |> DirectoryVersionDto.UpdateDto directoryVersionEvent.Event)
+                    (fun directoryVersionDto directoryVersionEvent -> directoryVersionDto |> DirectoryVersionDto.UpdateDto directoryVersionEvent)
                     DirectoryVersionDto.Default
 
-            logActorActivation log this.IdentityString (getActorActivationMessage state.RecordExists)
+            logActorActivation log this.IdentityString activateStartTime (getActorActivationMessage state.RecordExists)
 
             Task.CompletedTask
 
@@ -82,6 +78,8 @@ module DirectoryVersion =
                         ReminderDto.Create
                             actorName
                             $"{this.IdentityString}"
+                            directoryVersionDto.DirectoryVersion.OwnerId
+                            directoryVersionDto.DirectoryVersion.OrganizationId
                             directoryVersionDto.DirectoryVersion.RepositoryId
                             reminderType
                             (getFutureInstant delay)
@@ -143,7 +141,7 @@ module DirectoryVersion =
                             this.correlationId <- correlationId
 
                             let directoryVersion = directoryVersionDto.DirectoryVersion
-                            let! repositoryActorProxy = Repository.CreateActorProxy directoryVersion.RepositoryId correlationId
+                            let repositoryActorProxy = Repository.CreateActorProxy directoryVersion.OrganizationId directoryVersion.RepositoryId correlationId
                             let! repositoryDto = repositoryActorProxy.Get correlationId
 
                             // Delete cached directory version contents for this actor.
@@ -212,14 +210,14 @@ module DirectoryVersion =
                     do! state.WriteStateAsync()
 
                     // Update the Dto with the event.
-                    directoryVersionDto <- directoryVersionDto |> DirectoryVersionDto.UpdateDto directoryVersionEvent.Event
+                    directoryVersionDto <- directoryVersionDto |> DirectoryVersionDto.UpdateDto directoryVersionEvent
 
                     logToConsole
                         $"In ApplyEvent(): directoryVersion.DirectoryVersionId: {directoryVersionDto.DirectoryVersion.DirectoryVersionId}; directoryVersion.RelativePath: {directoryVersionDto.DirectoryVersion.RelativePath}."
 
 
                     // Publish the event to the rest of the world.
-                    let graceEvent = Events.GraceEvent.DirectoryVersionEvent directoryVersionEvent
+                    let graceEvent = GraceEvent.DirectoryVersionEvent directoryVersionEvent
                     do! daprClient.PublishEventAsync(GracePubSubService, GraceEventStreamTopic, graceEvent)
 
                     let returnValue = GraceReturnValue.Create "Directory version command succeeded." directoryVersionEvent.Metadata.CorrelationId
@@ -349,7 +347,7 @@ module DirectoryVersion =
                                         ValueTask(
                                             task {
                                                 try
-                                                    let! subdirectoryActor =
+                                                    let subdirectoryActor =
                                                         DirectoryVersion.CreateActorProxy
                                                             directoryId
                                                             directoryVersionDto.DirectoryVersion.RepositoryId
@@ -386,7 +384,12 @@ module DirectoryVersion =
                             //compressedStream.Flush()
                             //memoryStream.Position <- 0
                             //let! uploadResponse = blobClient.UploadAsync(memoryStream, overwrite = true)
-                            let! repositoryActorProxy = Repository.CreateActorProxy directoryVersionDto.DirectoryVersion.RepositoryId correlationId
+                            let repositoryActorProxy =
+                                Repository.CreateActorProxy
+                                    directoryVersionDto.DirectoryVersion.OrganizationId
+                                    directoryVersionDto.DirectoryVersion.RepositoryId
+                                    correlationId
+
                             let! repositoryDto = repositoryActorProxy.Get correlationId
 
                             let tags = Dictionary<string, string>()
@@ -446,7 +449,7 @@ module DirectoryVersion =
                             if
                                 state.State.Any(fun e ->
                                     match e.Event with
-                                    | Created _ -> true
+                                    | DirectoryVersionEventType.Created _ -> true
                                     | _ -> false)
                             then
                                 return
@@ -474,8 +477,11 @@ module DirectoryVersion =
                                     | Create directoryVersion -> return Ok(Created directoryVersion)
                                     | SetRecursiveSize recursiveSize -> return Ok(RecursiveSizeSet recursiveSize)
                                     | DeleteLogical deleteReason ->
-                                        let! repositoryActorProxy =
-                                            Repository.CreateActorProxy directoryVersionDto.DirectoryVersion.RepositoryId metadata.CorrelationId
+                                        let repositoryActorProxy =
+                                            Repository.CreateActorProxy
+                                                directoryVersionDto.DirectoryVersion.OrganizationId
+                                                directoryVersionDto.DirectoryVersion.RepositoryId
+                                                metadata.CorrelationId
 
                                         let! repositoryDto = repositoryActorProxy.Get metadata.CorrelationId
 
@@ -563,7 +569,7 @@ module DirectoryVersion =
                                         ValueTask(
                                             task {
                                                 // Call the subdirectory actor to get the .zip file URI, which will create the .zip file if it doesn't already exist.
-                                                let! subdirectoryActorProxy =
+                                                let subdirectoryActorProxy =
                                                     DirectoryVersion.CreateActorProxy
                                                         subdirectoryVersionId
                                                         directoryVersionDto.DirectoryVersion.RepositoryId
@@ -624,7 +630,7 @@ module DirectoryVersion =
                     }
 
                 task {
-                    let! repositoryActorProxy = Repository.CreateActorProxy directoryVersion.RepositoryId correlationId
+                    let repositoryActorProxy = Repository.CreateActorProxy directoryVersion.OrganizationId directoryVersion.RepositoryId correlationId
                     let! repositoryDto = repositoryActorProxy.Get correlationId
 
                     let blobName = $"{GraceDirectoryVersionStorageFolderName}/{directoryVersion.DirectoryVersionId}.zip"

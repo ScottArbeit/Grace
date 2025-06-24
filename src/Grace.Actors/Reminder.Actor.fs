@@ -22,10 +22,8 @@ open System.Threading.Tasks
 module Reminder =
 
     /// Orleans implementation of the ReminderActor.
-    type ReminderActor(
-        [<PersistentState(StateName.Reminder, Constants.GraceActorStorage)>] reminderState: IPersistentState<ReminderDto>,
-        log: ILogger<ReminderActor>
-    ) =
+    type ReminderActor
+        ([<PersistentState(StateName.Reminder, Constants.GraceActorStorage)>] reminderState: IPersistentState<ReminderDto>, log: ILogger<ReminderActor>) =
         inherit Grain()
 
         static let actorName = ActorName.Reminder
@@ -34,8 +32,10 @@ module Reminder =
         member val private correlationId: CorrelationId = String.Empty with get, set
 
         override this.OnActivateAsync(ct) =
-            logActorActivation log this.IdentityString (getActorActivationMessage reminderState.RecordExists)
-            
+            let activateStartTime = getCurrentInstant ()
+
+            logActorActivation log this.IdentityString activateStartTime (getActorActivationMessage reminderState.RecordExists)
+
             Task.CompletedTask
 
         interface IReminderActor with
@@ -146,20 +146,30 @@ module Reminder =
                             let organizationActorProxy = Organization.CreateActorProxy (Guid.Parse(reminderDto.ActorId)) correlationId
                             return! organizationActorProxy.ReceiveReminderAsync reminderDto
                         | ActorName.Repository ->
-                            let! repositoryActorProxy = Repository.CreateActorProxy (Guid.Parse(reminderDto.ActorId)) correlationId
+                            let repositoryActorProxy = Repository.CreateActorProxy reminderDto.OrganizationId (Guid.Parse(reminderDto.ActorId)) correlationId
                             return! repositoryActorProxy.ReceiveReminderAsync reminderDto
                         | ActorName.Branch ->
-                            let! branchActorProxy = Branch.CreateActorProxy (Guid.Parse(reminderDto.ActorId)) reminderDto.RepositoryId correlationId
+                            let branchActorProxy = Branch.CreateActorProxy (Guid.Parse(reminderDto.ActorId)) reminderDto.RepositoryId correlationId
                             return! branchActorProxy.ReceiveReminderAsync reminderDto
                         | ActorName.DirectoryVersion ->
-                            let! directoryVersionActorProxy = DirectoryVersion.CreateActorProxy (Guid.Parse(reminderDto.ActorId)) reminderDto.RepositoryId correlationId
+                            let directoryVersionActorProxy =
+                                DirectoryVersion.CreateActorProxy (Guid.Parse(reminderDto.ActorId)) reminderDto.RepositoryId correlationId
+
                             return! directoryVersionActorProxy.ReceiveReminderAsync reminderDto
                         | ActorName.Diff ->
                             let directoryIds = reminderDto.ActorId.Split("*")
-                            let! diffActorProxy = Diff.CreateActorProxy (DirectoryVersionId directoryIds[0]) (DirectoryVersionId directoryIds[1]) reminderDto.RepositoryId correlationId
+
+                            let diffActorProxy =
+                                Diff.CreateActorProxy
+                                    (DirectoryVersionId directoryIds[0])
+                                    (DirectoryVersionId directoryIds[1])
+                                    reminderDto.OrganizationId
+                                    reminderDto.RepositoryId
+                                    correlationId
+
                             return! diffActorProxy.ReceiveReminderAsync reminderDto
                         | ActorName.Reference ->
-                            let! referenceActorProxy = Reference.CreateActorProxy (Guid.Parse(reminderDto.ActorId)) reminderDto.RepositoryId correlationId
+                            let referenceActorProxy = Reference.CreateActorProxy (Guid.Parse(reminderDto.ActorId)) reminderDto.RepositoryId correlationId
                             return! referenceActorProxy.ReceiveReminderAsync reminderDto
                         | _ -> return Ok()
                     with ex ->

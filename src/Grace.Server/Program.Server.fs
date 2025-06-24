@@ -82,7 +82,8 @@ module Program =
                             options.DatabaseName <- Environment.GetEnvironmentVariable EnvironmentVariables.CosmosDatabaseName
                             options.IsResourceCreationEnabled <- true
                             options.ClientOptions.ApplicationName <- EnvironmentVariables.DaprAppId
-                            options.ClientOptions.UseSystemTextJsonSerializerWithOptions <- JsonSerializerOptions)
+                            options.ClientOptions.UseSystemTextJsonSerializerWithOptions <- JsonSerializerOptions),
+                        typeof<GracePartitionKeyProvider>
                     )
                     .AddAzureBlobGrainStorage(
                         GraceObjectStorage,

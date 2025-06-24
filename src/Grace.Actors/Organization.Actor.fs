@@ -9,11 +9,11 @@ open Grace.Actors.Services
 open Grace.Actors.Types
 open Grace.Shared
 open Grace.Shared.Constants
+open Grace.Shared.Utilities
+open Grace.Types.Events
 open Grace.Types.Repository
 open Grace.Types.Organization
-open Grace.Types.Organization
 open Grace.Types.Types
-open Grace.Shared.Utilities
 open Grace.Shared.Validation.Errors.Organization
 open Microsoft.Extensions.Logging
 open NodaTime
@@ -44,8 +44,14 @@ module Organization =
         member val private correlationId: CorrelationId = String.Empty with get, set
 
         override this.OnActivateAsync(ct) =
-            logActorActivation log this.IdentityString (getActorActivationMessage state.RecordExists)
-            organizationDto <- Seq.fold (fun organizationDto event -> OrganizationDto.UpdateDto event organizationDto) organizationDto state.State
+            let activateStartTime = getCurrentInstant ()
+
+            logActorActivation log this.IdentityString activateStartTime (getActorActivationMessage state.RecordExists)
+
+            organizationDto <-
+                state.State
+                |> Seq.fold (fun organizationDto event -> OrganizationDto.UpdateDto event organizationDto) organizationDto
+
             Task.CompletedTask
 
         member private this.ApplyEvent organizationEvent =
@@ -59,7 +65,7 @@ module Organization =
                     organizationDto <- organizationDto |> OrganizationDto.UpdateDto organizationEvent
 
                     // Publish the event to the rest of the world.
-                    let graceEvent = Events.GraceEvent.OrganizationEvent organizationEvent
+                    let graceEvent = OrganizationEvent organizationEvent
                     do! daprClient.PublishEventAsync(GracePubSubService, GraceEventStreamTopic, graceEvent)
 
                     let returnValue =
@@ -89,7 +95,7 @@ module Organization =
             }
 
         /// Deletes all of the repositories provided, by sending a DeleteLogical command to each one.
-        member private this.LogicalDeleteRepositories(repositories: List<RepositoryDto>, metadata: EventMetadata, deleteReason: DeleteReason) =
+        member private this.LogicalDeleteRepositories(repositories: RepositoryDto array, metadata: EventMetadata, deleteReason: DeleteReason) =
             task {
                 let results = ConcurrentQueue<GraceResult<string>>()
 
@@ -102,7 +108,8 @@ module Organization =
                             ValueTask(
                                 task {
                                     if repository.DeletedAt |> Option.isNone then
-                                        let! repositoryActor = Repository.CreateActorProxy repository.RepositoryId metadata.CorrelationId
+                                        let repositoryActor =
+                                            Repository.CreateActorProxy repository.OrganizationId repository.RepositoryId metadata.CorrelationId
 
                                         let! result =
                                             repositoryActor.Handle
@@ -134,7 +141,18 @@ module Organization =
             /// Schedules a Grace reminder.
             member this.ScheduleReminderAsync reminderType delay state correlationId =
                 task {
-                    let reminder = ReminderDto.Create actorName $"{this.IdentityString}" Guid.Empty reminderType (getFutureInstant delay) state correlationId
+                    let reminder =
+                        ReminderDto.Create
+                            actorName
+                            $"{this.IdentityString}"
+                            organizationDto.OwnerId
+                            organizationDto.OrganizationId
+                            Guid.Empty
+                            reminderType
+                            (getFutureInstant delay)
+                            state
+                            correlationId
+
                     do! createReminder reminder
                 }
                 :> Task
@@ -245,7 +263,7 @@ module Organization =
                                         // If the organization contains repositories, and any of them isn't already deleted, and the force flag is not set, return an error.
                                         if
                                             not <| force
-                                            && repositories.Count > 0
+                                            && repositories.Length > 0
                                             && repositories.Any(fun repository -> repository.DeletedAt |> Option.isNone)
                                         then
                                             return

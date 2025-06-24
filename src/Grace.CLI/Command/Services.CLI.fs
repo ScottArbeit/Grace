@@ -503,6 +503,8 @@ module Services =
                                         let subdirectoryVersion =
                                             LocalDirectoryVersion.Create
                                                 (Guid.NewGuid())
+                                                (Current().OwnerId)
+                                                (Current().OrganizationId)
                                                 (Current().RepositoryId)
                                                 (RelativePath(normalizeFilePath subdirectoryRelativePath))
                                                 sha256Hash
@@ -610,6 +612,8 @@ module Services =
 
                     LocalDirectoryVersion.Create
                         (Guid.NewGuid())
+                        (Current().OwnerId)
+                        (Current().OrganizationId)
                         (Current().RepositoryId)
                         (RelativePath(normalizeFilePath Constants.RootDirectoryPath))
                         (Sha256Hash rootSha256Hash)
@@ -816,6 +820,8 @@ module Services =
         let newDirectoryVersion =
             LocalDirectoryVersion.Create
                 (Guid.NewGuid())
+                previousDirectoryVersion.OwnerId
+                previousDirectoryVersion.OrganizationId
                 previousDirectoryVersion.RepositoryId
                 previousDirectoryVersion.RelativePath
                 newSha256Hash
@@ -893,6 +899,8 @@ module Services =
                         let localDirectoryVersion =
                             LocalDirectoryVersion.Create
                                 (Guid.NewGuid())
+                                previousRootDirectoryVersion.OwnerId
+                                previousRootDirectoryVersion.OrganizationId
                                 previousRootDirectoryVersion.RepositoryId
                                 difference.RelativePath
                                 sha256Hash

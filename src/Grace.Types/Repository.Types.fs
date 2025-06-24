@@ -11,7 +11,7 @@ open System.Runtime.Serialization
 
 module Repository =
 
-    [<KnownType("GetKnownTypes"); GenerateSerializer>]
+    [<KnownType("GetKnownTypes")>]
     type RepositoryCommand =
         | Create of repositoryName: RepositoryName * repositoryId: RepositoryId * ownerId: OwnerId * organizationId: OrganizationId
         | Initialize
@@ -39,7 +39,7 @@ module Repository =
         static member GetKnownTypes() = GetKnownTypes<RepositoryCommand>()
 
     /// Defines the events for the Repository actor.
-    [<KnownType("GetKnownTypes"); GenerateSerializer>]
+    [<KnownType("GetKnownTypes")>]
     type RepositoryEventType =
         | Created of repositoryName: RepositoryName * repositoryId: RepositoryId * ownerId: OwnerId * organizationId: OrganizationId
         | Initialized
@@ -67,7 +67,6 @@ module Repository =
         static member GetKnownTypes() = GetKnownTypes<RepositoryEventType>()
 
     /// Record that holds the event type and metadata for a Repository event.
-    [<GenerateSerializer>]
     type RepositoryEvent =
         {
             /// The RepositoryEventType case that describes the event.
@@ -76,7 +75,7 @@ module Repository =
             Metadata: EventMetadata
         }
 
-    [<KnownType("GetKnownTypes"); GenerateSerializer>]
+    /// The RepositoryDto is a data transfer object that represents a repository in the system.
     type RepositoryDto =
         { Class: string
           RepositoryId: RepositoryId
@@ -133,6 +132,7 @@ module Repository =
               DeletedAt = None
               DeleteReason = String.Empty }
 
+        /// Updates a RepositoryDto based on the provided RepositoryEvent.
         static member UpdateDto repositoryEvent currentRepositoryDto =
             let newRepositoryDto =
                 match repositoryEvent.Event with
@@ -169,5 +169,3 @@ module Repository =
                 | AnonymousAccessSet anonymousAccess -> { currentRepositoryDto with AnonymousAccess = anonymousAccess }
 
             { newRepositoryDto with UpdatedAt = Some repositoryEvent.Metadata.Timestamp }
-
-        static member GetKnownTypes() = GetKnownTypes<RepositoryDto>()

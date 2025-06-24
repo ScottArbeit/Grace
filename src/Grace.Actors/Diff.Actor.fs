@@ -142,7 +142,8 @@ module Diff =
             }
 
         override this.OnActivateAsync(ct) =
-            logActorActivation log this.IdentityString (getActorActivationMessage state.RecordExists)
+            let activateStartTime = getCurrentInstant ()
+            logActorActivation log this.IdentityString activateStartTime (getActorActivationMessage state.RecordExists)
 
             Task.CompletedTask
 
@@ -157,7 +158,16 @@ module Diff =
             member this.ScheduleReminderAsync reminderType delay state correlationId =
                 task {
                     let reminder =
-                        ReminderDto.Create actorName $"{this.IdentityString}" diffDto.RepositoryId reminderType (getFutureInstant delay) state correlationId
+                        ReminderDto.Create
+                            actorName
+                            $"{this.IdentityString}"
+                            diffDto.OwnerId
+                            diffDto.OrganizationId
+                            diffDto.RepositoryId
+                            reminderType
+                            (getFutureInstant delay)
+                            state
+                            correlationId
 
                     do! createReminder reminder
                 }
@@ -231,7 +241,8 @@ module Diff =
 
                             //logToConsole $"In Actor.Populate(); got differences."
 
-                            let! repositoryActorProxy = Repository.CreateActorProxy repositoryId1 correlationId
+                            let organizationId = RequestContext.Get(nameof (OrganizationId)) :?> OrganizationId
+                            let repositoryActorProxy = Repository.CreateActorProxy organizationId repositoryId1 correlationId
                             let! repositoryDto = repositoryActorProxy.Get correlationId
 
                             /// Gets a Stream for a given RelativePath.

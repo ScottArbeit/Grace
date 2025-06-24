@@ -91,15 +91,15 @@ module Validations =
         let ownerIsDeleted<'T> context correlationId (error: 'T) =
             task {
                 let graceIds = getGraceIds context
-                let ownerGuid = Guid.Parse(graceIds.OwnerId)
+                let ownerGuid = Guid.Parse(graceIds.OwnerIdString)
 
                 match memoryCache.GetDeletedOwnerIdEntry ownerGuid with
                 | Some value ->
                     match value with
                     | MemoryCache.DoesNotExistValue -> return Ok()
                     | MemoryCache.ExistsValue -> return Error error
-                    | _ -> return! ownerIsDeleted graceIds.OwnerId correlationId |> optionToResult error
-                | None -> return! ownerIsDeleted graceIds.OwnerId correlationId |> optionToResult error
+                    | _ -> return! ownerIsDeleted graceIds.OwnerIdString correlationId |> optionToResult error
+                | None -> return! ownerIsDeleted graceIds.OwnerIdString correlationId |> optionToResult error
             }
             |> ValidationResult
 
@@ -172,7 +172,7 @@ module Validations =
                 if not <| String.IsNullOrEmpty(organizationName) then
                     let graceIds = getGraceIds context
 
-                    match! organizationNameIsUnique graceIds.OwnerId organizationName correlationId with
+                    match! organizationNameIsUnique graceIds.OwnerIdString organizationName correlationId with
                     | Ok isUnique ->
                         //logToConsole
                         //    $"In organizationNameIsUnique: correlationId: {correlationId}; ownerId: {ownerId}; ownerName: {ownerName}; organizationName: {organizationName}; isUnique: {isUnique}"
@@ -225,7 +225,7 @@ module Validations =
         let organizationIsDeleted<'T> context correlationId (error: 'T) =
             task {
                 let graceIds = getGraceIds context
-                let organizationGuid = Guid.Parse(graceIds.OrganizationId)
+                let organizationGuid = Guid.Parse(graceIds.OrganizationIdString)
 
                 match memoryCache.GetDeletedOrganizationIdEntry organizationGuid with
                 | Some value ->
@@ -234,11 +234,11 @@ module Validations =
                     | MemoryCache.ExistsValue -> return Error error
                     | _ ->
                         return!
-                            organizationIsDeleted graceIds.OrganizationId correlationId
+                            organizationIsDeleted graceIds.OrganizationIdString correlationId
                             |> optionToResult error
                 | None ->
                     return!
-                        organizationIsDeleted graceIds.OrganizationId correlationId
+                        organizationIsDeleted graceIds.OrganizationIdString correlationId
                         |> optionToResult error
             }
             |> ValidationResult
@@ -255,7 +255,7 @@ module Validations =
     module Repository =
 
         /// Validates that the given RepositoryId exists in the database.
-        let repositoryIdExists<'T> (repositoryId: string) correlationId (error: 'T) =
+        let repositoryIdExists<'T> (organizationId: OrganizationId) (repositoryId: string) correlationId (error: 'T) =
             task {
                 let mutable repositoryGuid = Guid.Empty
 
@@ -268,18 +268,24 @@ module Validations =
                         match value with
                         | MemoryCache.ExistsValue -> return Ok()
                         | MemoryCache.DoesNotExistValue -> return Error error
-                        | _ -> return! repositoryExists repositoryId correlationId |> optionToResult error
-                    | None -> return! repositoryExists repositoryId correlationId |> optionToResult error
+                        | _ ->
+                            return!
+                                repositoryExists organizationId repositoryId correlationId
+                                |> optionToResult error
+                    | None ->
+                        return!
+                            repositoryExists organizationId repositoryId correlationId
+                            |> optionToResult error
                 else
                     return Ok()
             }
             |> ValidationResult
 
         /// Validates that the given repositoryId does not already exist in the database.
-        let repositoryIdDoesNotExist<'T> (repositoryId: string) correlationId (error: 'T) =
+        let repositoryIdDoesNotExist<'T> (organizationId: OrganizationId) (repositoryId: string) correlationId (error: 'T) =
             task {
                 if not <| String.IsNullOrEmpty(repositoryId) then
-                    match! repositoryIdExists repositoryId correlationId error with
+                    match! repositoryIdExists organizationId repositoryId correlationId error with
                     | Ok _ -> return Error error
                     | Error _ -> return Ok()
                 else
@@ -290,7 +296,7 @@ module Validations =
         /// Validates that the repository exists.
         let repositoryExists<'T> ownerId ownerName organizationId organizationName repositoryId repositoryName correlationId (error: 'T) =
             task {
-                match! resolveRepositoryId ownerId ownerName organizationId organizationName repositoryId repositoryName correlationId with
+                match! resolveRepositoryId ownerId organizationId repositoryId repositoryName correlationId with
                 | Some repositoryId ->
                     let exists = memoryCache.Get<string>(repositoryId)
 
@@ -298,7 +304,7 @@ module Validations =
                     | MemoryCache.ExistsValue -> return Ok()
                     | MemoryCache.DoesNotExistValue -> return Error error
                     | _ ->
-                        let! repositoryActorProxy = Repository.CreateActorProxy repositoryId correlationId
+                        let repositoryActorProxy = Repository.CreateActorProxy organizationId repositoryId correlationId
 
                         let! exists = repositoryActorProxy.Exists correlationId
 
@@ -321,15 +327,21 @@ module Validations =
         let repositoryIsDeleted<'T> context correlationId (error: 'T) =
             task {
                 let graceIds = getGraceIds context
-                let repositoryGuid = Guid.Parse(graceIds.RepositoryId)
+                let repositoryGuid = Guid.Parse(graceIds.RepositoryIdString)
 
                 match memoryCache.GetDeletedRepositoryIdEntry repositoryGuid with
                 | Some value ->
                     match value with
                     | MemoryCache.DoesNotExistValue -> return Ok()
                     | MemoryCache.ExistsValue -> return Error error
-                    | _ -> return! repositoryIsDeleted graceIds.OwnerId correlationId |> optionToResult error
-                | None -> return! repositoryIsDeleted graceIds.OwnerId correlationId |> optionToResult error
+                    | _ ->
+                        return!
+                            repositoryIsDeleted graceIds.OrganizationId graceIds.RepositoryIdString correlationId
+                            |> optionToResult error
+                | None ->
+                    return!
+                        repositoryIsDeleted graceIds.OrganizationId graceIds.RepositoryIdString correlationId
+                        |> optionToResult error
             }
             |> ValidationResult
 
@@ -368,8 +380,8 @@ module Validations =
                         match value with
                         | MemoryCache.ExistsValue -> return Ok()
                         | MemoryCache.DoesNotExistValue -> return Error error
-                        | _ -> return! branchExists branchId repositoryId correlationId |> optionToResult error
-                    | None -> return! branchExists branchId repositoryId correlationId |> optionToResult error
+                        | _ -> return! branchExists branchGuid repositoryId correlationId |> optionToResult error
+                    | None -> return! branchExists branchGuid repositoryId correlationId |> optionToResult error
                 else
                     return Ok()
             }
@@ -381,7 +393,7 @@ module Validations =
                 let mutable branchGuid = Guid.Empty
 
                 if (not <| String.IsNullOrEmpty(branchId)) && Guid.TryParse(branchId, &branchGuid) then
-                    let! branchActorProxy = Branch.CreateActorProxy branchGuid repositoryId correlationId
+                    let branchActorProxy = Branch.CreateActorProxy branchGuid repositoryId correlationId
 
                     let! exists = branchActorProxy.Exists correlationId
                     if exists then return Error error else return Ok()
@@ -391,125 +403,101 @@ module Validations =
             |> ValidationResult
 
         /// Validates that the branch exists in the database.
-        let branchExists<'T> ownerId organizationId (repositoryId: string) branchId branchName correlationId (error: 'T) =
+        let branchExists<'T> ownerId organizationId repositoryId branchId branchName correlationId (error: 'T) =
             task {
-                let repositoryGuid = Guid.Parse(repositoryId)
-                let mutable branchGuid = Guid.Empty
-
                 match! resolveBranchId ownerId organizationId repositoryId branchId branchName correlationId with
                 | Some branchId ->
-                    if Guid.TryParse(branchId, &branchGuid) then
-                        let exists = memoryCache.Get<string>(branchGuid)
+                    let exists = memoryCache.Get<string>(branchId)
 
-                        match exists with
-                        | MemoryCache.ExistsValue -> return Ok()
-                        | MemoryCache.DoesNotExistValue -> return Error error
-                        | _ ->
-                            let! branchActorProxy = Branch.CreateActorProxy branchGuid repositoryGuid correlationId
+                    match exists with
+                    | MemoryCache.ExistsValue -> return Ok()
+                    | MemoryCache.DoesNotExistValue -> return Error error
+                    | _ ->
+                        let branchActorProxy = Branch.CreateActorProxy branchId repositoryId correlationId
 
-                            let! exists = branchActorProxy.Exists correlationId
+                        let! exists = branchActorProxy.Exists correlationId
 
-                            if exists then
-                                use newCacheEntry =
-                                    memoryCache.CreateEntry(
-                                        branchGuid,
-                                        Value = MemoryCache.ExistsValue,
-                                        AbsoluteExpirationRelativeToNow = MemoryCache.DefaultExpirationTime
-                                    )
+                        if exists then
+                            use newCacheEntry =
+                                memoryCache.CreateEntry(
+                                    branchId,
+                                    Value = MemoryCache.ExistsValue,
+                                    AbsoluteExpirationRelativeToNow = MemoryCache.DefaultExpirationTime
+                                )
 
-                                return Ok()
-                            else
-                                return Error error
-                    else
-                        return Error error
+                            return Ok()
+                        else
+                            return Error error
                 | None -> return Error error
             }
             |> ValidationResult
 
         /// Validates that a branch allows a specific reference type.
-        let branchAllowsReferenceType<'T>
-            ownerId
-            ownerName
-            organizationId
-            organizationName
-            repositoryId
-            repositoryName
-            branchId
-            branchName
-            (referenceType: ReferenceType)
-            correlationId
-            (error: 'T)
-            =
+        let branchAllowsReferenceType<'T> ownerId organizationId repositoryId branchId branchName (referenceType: ReferenceType) correlationId (error: 'T) =
             task {
                 let mutable guid = Guid.Empty
 
-                match! resolveRepositoryId ownerId ownerName organizationId organizationName repositoryId repositoryName correlationId with
-                | Some repositoryId ->
-                    match! resolveBranchId ownerId organizationId $"{repositoryId}" branchId branchName correlationId with
-                    | Some branchId ->
-                        let mutable allowed = new obj ()
+                match! resolveBranchId ownerId organizationId repositoryId branchId branchName correlationId with
+                | Some branchId ->
+                    let mutable allowed = new obj ()
 
-                        if memoryCache.TryGetValue($"{branchId}{referenceType}Allowed", &allowed) then
-                            let allowed = allowed :?> bool
-                            if allowed then return Ok() else return Error error
-                        else
-                            let! branchActorProxy = Branch.CreateActorProxy (Guid.Parse(branchId)) repositoryId correlationId
+                    if memoryCache.TryGetValue($"{branchId}{referenceType}Allowed", &allowed) then
+                        let allowed = allowed :?> bool
+                        if allowed then return Ok() else return Error error
+                    else
+                        let branchActorProxy = Branch.CreateActorProxy branchId repositoryId correlationId
 
-                            let! branchDto = branchActorProxy.Get correlationId
+                        let! branchDto = branchActorProxy.Get correlationId
 
-                            let allowed =
-                                match referenceType with
-                                | Promotion -> if branchDto.PromotionEnabled then true else false
-                                | Commit -> if branchDto.CommitEnabled then true else false
-                                | Checkpoint -> if branchDto.CheckpointEnabled then true else false
-                                | Save -> if branchDto.SaveEnabled then true else false
-                                | Tag -> if branchDto.TagEnabled then true else false
-                                | External -> if branchDto.ExternalEnabled then true else false
-                                | Rebase -> true // Rebase is always allowed.
+                        let allowed =
+                            match referenceType with
+                            | Promotion -> if branchDto.PromotionEnabled then true else false
+                            | Commit -> if branchDto.CommitEnabled then true else false
+                            | Checkpoint -> if branchDto.CheckpointEnabled then true else false
+                            | Save -> if branchDto.SaveEnabled then true else false
+                            | Tag -> if branchDto.TagEnabled then true else false
+                            | External -> if branchDto.ExternalEnabled then true else false
+                            | Rebase -> true // Rebase is always allowed.
 
-                            use newCacheEntry =
-                                memoryCache.CreateEntry(
-                                    $"{branchId}{referenceType}Allowed",
-                                    Value = allowed,
-                                    AbsoluteExpirationRelativeToNow = MemoryCache.DefaultExpirationTime
-                                )
+                        use newCacheEntry =
+                            memoryCache.CreateEntry(
+                                $"{branchId}{referenceType}Allowed",
+                                Value = allowed,
+                                AbsoluteExpirationRelativeToNow = MemoryCache.DefaultExpirationTime
+                            )
 
-                            if allowed then return Ok() else return Error error
-                    | None -> return Error error
+                        if allowed then return Ok() else return Error error
                 | None -> return Error error
             }
             |> ValidationResult
 
 
         /// Validates that a branch allows assign to create promotion references.
-        let branchAllowsAssign<'T> ownerId ownerName organizationId organizationName repositoryId repositoryName branchId branchName correlationId (error: 'T) =
+        let branchAllowsAssign<'T> ownerId organizationId repositoryId branchId branchName correlationId (error: 'T) =
             task {
                 let mutable guid = Guid.Empty
 
-                match! resolveRepositoryId ownerId ownerName organizationId organizationName repositoryId repositoryName correlationId with
-                | Some repositoryId ->
-                    match! resolveBranchId ownerId organizationId $"{repositoryId}" branchId branchName correlationId with
-                    | Some branchId ->
-                        let mutable allowed = new obj ()
+                match! resolveBranchId ownerId organizationId repositoryId branchId branchName correlationId with
+                | Some branchId ->
+                    let mutable allowed = new obj ()
 
-                        if memoryCache.TryGetValue($"{branchId}AssignAllowed", &allowed) then
-                            let allowed = allowed :?> bool
-                            if allowed then return Ok() else return Error error
-                        else
-                            let! branchActorProxy = Branch.CreateActorProxy (Guid.Parse(branchId)) repositoryId correlationId
+                    if memoryCache.TryGetValue($"{branchId}AssignAllowed", &allowed) then
+                        let allowed = allowed :?> bool
+                        if allowed then return Ok() else return Error error
+                    else
+                        let branchActorProxy = Branch.CreateActorProxy branchId repositoryId correlationId
 
-                            let! branchDto = branchActorProxy.Get correlationId
-                            let allowed = branchDto.AssignEnabled
+                        let! branchDto = branchActorProxy.Get correlationId
+                        let allowed = branchDto.AssignEnabled
 
-                            use newCacheEntry =
-                                memoryCache.CreateEntry(
-                                    $"{branchId}AssignAllowed",
-                                    Value = allowed,
-                                    AbsoluteExpirationRelativeToNow = MemoryCache.DefaultExpirationTime
-                                )
+                        use newCacheEntry =
+                            memoryCache.CreateEntry(
+                                $"{branchId}AssignAllowed",
+                                Value = allowed,
+                                AbsoluteExpirationRelativeToNow = MemoryCache.DefaultExpirationTime
+                            )
 
-                            if allowed then return Ok() else return Error error
-                    | None -> return Error error
+                        if allowed then return Ok() else return Error error
                 | None -> return Error error
             }
             |> ValidationResult
@@ -527,7 +515,7 @@ module Validations =
         let referenceIdExists<'T> (referenceId: ReferenceId) repositoryId correlationId (error: 'T) =
             task {
                 if not <| (referenceId = Guid.Empty) then
-                    let! referenceActorProxy = Reference.CreateActorProxy referenceId repositoryId correlationId
+                    let referenceActorProxy = Reference.CreateActorProxy referenceId repositoryId correlationId
 
                     let! exists = referenceActorProxy.Exists correlationId
                     if exists then return Ok() else return Error error
@@ -546,7 +534,7 @@ module Validations =
                 | MemoryCache.ExistsValue -> return Ok()
                 | MemoryCache.DoesNotExistValue -> return Error error
                 | _ ->
-                    let! directoryVersionActorProxy = DirectoryVersion.CreateActorProxy directoryId repositoryId correlationId
+                    let directoryVersionActorProxy = DirectoryVersion.CreateActorProxy directoryId repositoryId correlationId
 
                     let! exists = directoryVersionActorProxy.Exists correlationId
 
@@ -572,7 +560,7 @@ module Validations =
 
                 while directoryIdStack.Count > 0 && allExist do
                     let directoryId = directoryIdStack.Dequeue()
-                    let! directoryVersionActorProxy = DirectoryVersion.CreateActorProxy directoryId repositoryId correlationId
+                    let directoryVersionActorProxy = DirectoryVersion.CreateActorProxy directoryId repositoryId correlationId
 
                     let! exists = directoryVersionActorProxy.Exists correlationId
                     allExist <- exists

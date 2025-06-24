@@ -10,9 +10,11 @@ open System.Runtime.Serialization
 
 module Diff =
 
-    [<KnownType("GetKnownTypes"); GenerateSerializer>]
+    /// Represents a Diff between two DirectoryVersions in a repository.
     type DiffDto =
         { Class: string
+          OwnerId: OwnerId
+          OrganizationId: OrganizationId
           RepositoryId: RepositoryId
           DirectoryVersionId1: DirectoryVersionId
           Directory1CreatedAt: Instant
@@ -24,6 +26,8 @@ module Diff =
 
         static member Default =
             { Class = nameof (DiffDto)
+              OwnerId = OwnerId.Empty
+              OrganizationId = OrganizationId.Empty
               RepositoryId = RepositoryId.Empty
               DirectoryVersionId1 = DirectoryVersionId.Empty
               Directory1CreatedAt = Constants.DefaultTimestamp
@@ -32,5 +36,3 @@ module Diff =
               Differences = List<FileSystemDifference>()
               HasDifferences = false
               FileDiffs = List<FileDiff>() }
-
-        static member GetKnownTypes() = GetKnownTypes<DiffDto>()

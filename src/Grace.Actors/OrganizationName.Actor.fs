@@ -26,11 +26,12 @@ module OrganizationName =
         member val private correlationId: CorrelationId = String.Empty with get, set
 
         override this.OnActivateAsync(ct) =
+            let activateStartTime = getCurrentInstant ()
             //let idSections = this.GetGrainId().Key.ToString().Split('|')
             //let organizationName = idSections[0]
             //let ownerId = idSections[1]
 
-            logActorActivation log this.IdentityString "In-memory only"
+            logActorActivation log this.IdentityString activateStartTime "In-memory only"
 
             Task.CompletedTask
 
