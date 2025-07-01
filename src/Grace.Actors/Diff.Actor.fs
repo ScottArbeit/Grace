@@ -15,6 +15,7 @@ open Grace.Actors.Services
 open Grace.Actors.Types
 open Grace.Shared
 open Grace.Shared.Diff
+open Grace.Types.Reminder
 open Grace.Types.Repository
 open Grace.Types.Diff
 open Grace.Types.Types
@@ -33,9 +34,6 @@ open System.IO.Compression
 open System.Threading.Tasks
 
 module Diff =
-
-    /// The data types stored in physical deletion reminders.
-    type DeleteCachedStateReminderState = DeleteReason * CorrelationId
 
     type DiffActor([<PersistentState(StateName.Diff, Constants.GraceObjectStorage)>] state: IPersistentState<DiffDto>, log: ILogger<DiffActor>) =
         inherit Grain()
@@ -181,9 +179,9 @@ module Diff =
                     match reminder.ReminderType with
                     | ReminderTypes.DeleteCachedState ->
                         // Get values from state.
-                        let (deleteReason, correlationId) = deserialize<DeleteCachedStateReminderState> reminder.State
+                        let deleteCachedStateReminderState = reminder.State :?> DeleteCachedStateReminderState
 
-                        this.correlationId <- correlationId
+                        this.correlationId <- deleteCachedStateReminderState.CorrelationId
 
                         // Delete saved state for this actor.
                         do! state.ClearStateAsync()
@@ -192,11 +190,11 @@ module Diff =
                             "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; Deleted cache for diff; RepositoryId: {RepositoryId}; DirectoryVersionId1: {DirectoryVersionId1}; DirectoryVersionId2: {DirectoryVersionId2}; deleteReason: {deleteReason}.",
                             getCurrentInstantExtended (),
                             getMachineName,
-                            correlationId,
+                            deleteCachedStateReminderState.CorrelationId,
                             diffDto.RepositoryId,
                             diffDto.DirectoryVersionId1,
                             diffDto.DirectoryVersionId2,
-                            deleteReason
+                            deleteCachedStateReminderState.DeleteReason
                         )
 
                         this.DeactivateOnIdle()
@@ -343,13 +341,14 @@ module Diff =
                             state.State <- diffDto
                             do! state.WriteStateAsync()
 
-                            let (reminderState: DeleteCachedStateReminderState) = (getDiscriminatedUnionCaseName ReminderTypes.DeleteCachedState, correlationId)
+                            let (deleteCachedStateReminderState: DeleteCachedStateReminderState) =
+                                { DeleteReason = getDiscriminatedUnionCaseName ReminderTypes.DeleteCachedState; CorrelationId = correlationId }
 
                             do!
                                 (this :> IDiffActor).ScheduleReminderAsync
                                     ReminderTypes.DeleteCachedState
                                     (Duration.FromDays(float repositoryDto.DiffCacheDays))
-                                    (serialize reminderState)
+                                    deleteCachedStateReminderState
                                     correlationId
 
                             return true

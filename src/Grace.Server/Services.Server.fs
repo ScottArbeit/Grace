@@ -89,9 +89,7 @@ module Services =
                 //log.LogDebug("{CurrentInstant}: In returnResult: StatusCode: {statusCode}; result: {result}", getCurrentInstantExtended(), statusCode, serialize result)
                 return! context.WriteJsonAsync(result) // .WriteJsonAsync() uses Grace's JsonSerializerOptions.
             with ex ->
-                let exceptionResponse = Utilities.ExceptionResponse.Create ex
-
-                return! context.WriteJsonAsync(GraceError.Create (serialize exceptionResponse) (getCorrelationId context))
+                return! context.WriteJsonAsync(GraceError.CreateWithException ex String.Empty (getCorrelationId context))
         }
 
     /// Adds common attributes to the current OpenTelemetry activity, and returns a 404 Not found status.

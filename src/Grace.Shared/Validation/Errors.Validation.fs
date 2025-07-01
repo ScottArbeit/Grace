@@ -26,6 +26,7 @@ module Errors =
             | EitherRepositoryIdOrRepositoryNameIsRequired
             | EitherToBranchIdOrToBranchNameIsRequired
             | ExternalIsDisabled
+            | FailedToAddReference
             | FailedToRetrieveBranch
             | FailedWhileApplyingEvent
             | IndexFileNotFound
@@ -77,6 +78,7 @@ module Errors =
                 | EitherRepositoryIdOrRepositoryNameIsRequired -> getLocalizedString StringResourceName.EitherRepositoryIdOrRepositoryNameIsRequired
                 | EitherToBranchIdOrToBranchNameIsRequired -> getLocalizedString StringResourceName.EitherToBranchIdOrToBranchNameIsRequired
                 | ExternalIsDisabled -> getLocalizedString StringResourceName.ExternalIsDisabled
+                | FailedToAddReference -> getLocalizedString StringResourceName.FailedToAddReference
                 | FailedToRetrieveBranch -> getLocalizedString StringResourceName.FailedToRetrieveBranch
                 | FailedWhileApplyingEvent -> getLocalizedString StringResourceName.FailedWhileApplyingEvent
                 | IndexFileNotFound -> getLocalizedString StringResourceName.IndexFileNotFound

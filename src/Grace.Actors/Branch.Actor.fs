@@ -12,6 +12,7 @@ open Grace.Shared.Constants
 open Grace.Shared.Utilities
 open Grace.Shared.Validation.Errors.Branch
 open Grace.Types.Reference
+open Grace.Types.Reminder
 open Grace.Types.Repository
 open Grace.Types.Branch
 open Grace.Types.Events
@@ -33,12 +34,6 @@ open FSharpPlus.Data.MultiMap
 open System.Threading
 
 module Branch =
-
-    // Branch should support logical deletes with physical deletes set using a Dapr Timer based on a repository-level setting.
-    // Branch Deletion should enumerate and delete each reference in the branch.
-
-    /// The data types stored in physical deletion reminders.
-    type PhysicalDeletionReminderState = (RepositoryId * BranchId * BranchName * ParentBranchId * DeleteReason * CorrelationId)
 
     type BranchActor([<PersistentState(StateName.Branch, Constants.GraceActorStorage)>] state: IPersistentState<List<BranchEvent>>, log: ILogger<BranchActor>) =
         inherit Grain()
@@ -99,7 +94,7 @@ module Branch =
                     | Rebase ->
                         let basedOnLink =
                             kvp.Value.Links
-                            |> Array.find (fun link ->
+                            |> Seq.find (fun link ->
                                 match link with
                                 | ReferenceLinkType.BasedOn _ -> true)
 
@@ -192,11 +187,9 @@ module Branch =
 
                     return Ok returnValue
                 with ex ->
-                    let exceptionResponse = ExceptionResponse.Create ex
-                    let graceError = GraceError.Create (BranchError.getErrorMessage FailedWhileApplyingEvent) branchEvent.Metadata.CorrelationId
+                    let graceError = GraceError.CreateWithException ex (BranchError.getErrorMessage FailedWhileApplyingEvent) branchEvent.Metadata.CorrelationId
 
                     graceError
-                        .enhance("Exception details", exceptionResponse.``exception`` + exceptionResponse.innerException)
                         .enhance(nameof (RepositoryId), $"{branchDto.RepositoryId}")
                         .enhance(nameof (BranchId), $"{branchDto.BranchId}")
                         .enhance(nameof (BranchName), $"{branchDto.BranchName}")
@@ -240,10 +233,9 @@ module Branch =
                     match reminder.ReminderType with
                     | ReminderTypes.PhysicalDeletion ->
                         // Get values from state.
-                        let (repositoryId, branchId, branchName, parentBranchId, deleteReason, correlationId) =
-                            deserialize<PhysicalDeletionReminderState> reminder.State
+                        let physicalDeletionReminderState = reminder.State :?> PhysicalDeletionReminderState
 
-                        this.correlationId <- correlationId
+                        this.correlationId <- physicalDeletionReminderState.CorrelationId
 
                         // Delete saved state for this actor.
                         do! state.ClearStateAsync()
@@ -251,12 +243,12 @@ module Branch =
                         log.LogInformation(
                             "{CurrentInstant}: CorrelationId: {correlationId}; Deleted physical state for branch; RepositoryId: {repositoryId}; BranchId: {branchId}; BranchName: {branchName}; ParentBranchId: {parentBranchId}; deleteReason: {deleteReason}.",
                             getCurrentInstantExtended (),
-                            correlationId,
-                            repositoryId,
-                            branchId,
-                            branchName,
-                            parentBranchId,
-                            deleteReason
+                            physicalDeletionReminderState.CorrelationId,
+                            physicalDeletionReminderState.RepositoryId,
+                            physicalDeletionReminderState.BranchId,
+                            physicalDeletionReminderState.BranchName,
+                            physicalDeletionReminderState.ParentBranchId,
+                            physicalDeletionReminderState.DeleteReason
                         )
 
                         this.DeactivateOnIdle()
@@ -314,26 +306,21 @@ module Branch =
                         let referenceId: ReferenceId = ReferenceId.NewGuid()
                         let referenceActor = Reference.CreateActorProxy referenceId repositoryId this.correlationId
 
-                        let referenceDto =
-                            { ReferenceDto.Default with
-                                ReferenceId = referenceId
-                                OwnerId = ownerId
-                                OrganizationId = organizationId
-                                RepositoryId = repositoryId
-                                BranchId = branchId
-                                DirectoryId = directoryId
-                                Sha256Hash = sha256Hash
-                                ReferenceText = referenceText
-                                ReferenceType = referenceType
-                                Links = links
-                                CreatedAt = metadata.Timestamp
-                                UpdatedAt = Some metadata.Timestamp }
+                        let referenceCommand =
+                            ReferenceCommand.Create(
+                                referenceId,
+                                ownerId,
+                                organizationId,
+                                repositoryId,
+                                branchId,
+                                directoryId,
+                                sha256Hash,
+                                referenceType,
+                                referenceText,
+                                links
+                            )
 
-                        let referenceCommand = ReferenceCommand.Create referenceDto
-
-                        match! referenceActor.Handle referenceCommand metadata with
-                        | Ok _ -> return Ok referenceDto
-                        | Error error -> return Error error
+                        return! referenceActor.Handle referenceCommand metadata
                     }
 
                 let addReferenceToCurrentBranch = addReference branchDto.OwnerId branchDto.OrganizationId branchDto.RepositoryId branchDto.BranchId
@@ -341,6 +328,9 @@ module Branch =
                 let processCommand (command: BranchCommand) (metadata: EventMetadata) =
                     task {
                         try
+                            logToConsole
+                                $"In BranchActor.Handle.processCommand: command: {getDiscriminatedUnionFullName command}; metadata: {serialize metadata}."
+
                             let! event =
                                 task {
                                     match command with
@@ -361,9 +351,9 @@ module Branch =
                                                     promotionDto.Sha256Hash
                                                     promotionDto.ReferenceText
                                                     ReferenceType.Rebase
-                                                    [| ReferenceLinkType.BasedOn promotionDto.ReferenceId |]
+                                                    [ ReferenceLinkType.BasedOn promotionDto.ReferenceId ]
                                             with
-                                            | Ok rebaseReferenceDto ->
+                                            | Ok _ ->
                                                 //logToConsole $"In BranchActor.Handle.processCommand: rebaseReferenceDto: {rebaseReferenceDto}."
                                                 ()
                                             | Error error ->
@@ -392,7 +382,7 @@ module Branch =
                                                 promotionDto.Sha256Hash
                                                 promotionDto.ReferenceText
                                                 ReferenceType.Rebase
-                                                [| ReferenceLinkType.BasedOn promotionDto.ReferenceId |]
+                                                [ ReferenceLinkType.BasedOn promotionDto.ReferenceId ]
                                         with
                                         | Ok rebaseReferenceDto ->
                                             //logToConsole $"In BranchActor.Handle.processCommand: rebaseReferenceDto: {rebaseReferenceDto}."
@@ -412,32 +402,32 @@ module Branch =
                                     | EnableExternal enabled -> return Ok(EnabledExternal enabled)
                                     | EnableAutoRebase enabled -> return Ok(EnabledAutoRebase enabled)
                                     | BranchCommand.Assign(directoryVersionId, sha256Hash, referenceText) ->
-                                        match! addReferenceToCurrentBranch directoryVersionId sha256Hash referenceText ReferenceType.Promotion Array.empty with
-                                        | Ok referenceDto -> return Ok(Assigned(referenceDto, directoryVersionId, sha256Hash, referenceText))
+                                        match! addReferenceToCurrentBranch directoryVersionId sha256Hash referenceText ReferenceType.Promotion List.empty with
+                                        | Ok returnValue -> return Ok(Assigned(returnValue.ReturnValue, directoryVersionId, sha256Hash, referenceText))
                                         | Error error -> return Error error
                                     | BranchCommand.Promote(directoryVersionId, sha256Hash, referenceText) ->
-                                        match! addReferenceToCurrentBranch directoryVersionId sha256Hash referenceText ReferenceType.Promotion Array.empty with
-                                        | Ok referenceDto -> return Ok(Promoted(referenceDto, directoryVersionId, sha256Hash, referenceText))
+                                        match! addReferenceToCurrentBranch directoryVersionId sha256Hash referenceText ReferenceType.Promotion List.empty with
+                                        | Ok returnValue -> return Ok(Promoted(returnValue.ReturnValue, directoryVersionId, sha256Hash, referenceText))
                                         | Error error -> return Error error
                                     | BranchCommand.Commit(directoryVersionId, sha256Hash, referenceText) ->
-                                        match! addReferenceToCurrentBranch directoryVersionId sha256Hash referenceText ReferenceType.Commit Array.empty with
-                                        | Ok referenceDto -> return Ok(Committed(referenceDto, directoryVersionId, sha256Hash, referenceText))
+                                        match! addReferenceToCurrentBranch directoryVersionId sha256Hash referenceText ReferenceType.Commit List.empty with
+                                        | Ok returnValue -> return Ok(Committed(returnValue.ReturnValue, directoryVersionId, sha256Hash, referenceText))
                                         | Error error -> return Error error
                                     | BranchCommand.Checkpoint(directoryVersionId, sha256Hash, referenceText) ->
-                                        match! addReferenceToCurrentBranch directoryVersionId sha256Hash referenceText ReferenceType.Checkpoint Array.empty with
-                                        | Ok referenceDto -> return Ok(Checkpointed(referenceDto, directoryVersionId, sha256Hash, referenceText))
+                                        match! addReferenceToCurrentBranch directoryVersionId sha256Hash referenceText ReferenceType.Checkpoint List.empty with
+                                        | Ok returnValue -> return Ok(Checkpointed(returnValue.ReturnValue, directoryVersionId, sha256Hash, referenceText))
                                         | Error error -> return Error error
                                     | BranchCommand.Save(directoryVersionId, sha256Hash, referenceText) ->
-                                        match! addReferenceToCurrentBranch directoryVersionId sha256Hash referenceText ReferenceType.Save Array.empty with
-                                        | Ok referenceDto -> return Ok(Saved(referenceDto, directoryVersionId, sha256Hash, referenceText))
+                                        match! addReferenceToCurrentBranch directoryVersionId sha256Hash referenceText ReferenceType.Save List.empty with
+                                        | Ok returnValue -> return Ok(Saved(returnValue.ReturnValue, directoryVersionId, sha256Hash, referenceText))
                                         | Error error -> return Error error
                                     | BranchCommand.Tag(directoryVersionId, sha256Hash, referenceText) ->
-                                        match! addReferenceToCurrentBranch directoryVersionId sha256Hash referenceText ReferenceType.Tag Array.empty with
-                                        | Ok referenceDto -> return Ok(Tagged(referenceDto, directoryVersionId, sha256Hash, referenceText))
+                                        match! addReferenceToCurrentBranch directoryVersionId sha256Hash referenceText ReferenceType.Tag List.empty with
+                                        | Ok returnValue -> return Ok(Tagged(returnValue.ReturnValue, directoryVersionId, sha256Hash, referenceText))
                                         | Error error -> return Error error
                                     | BranchCommand.CreateExternal(directoryVersionId, sha256Hash, referenceText) ->
-                                        match! addReferenceToCurrentBranch directoryVersionId sha256Hash referenceText ReferenceType.External Array.empty with
-                                        | Ok referenceDto -> return Ok(ExternalCreated(referenceDto, directoryVersionId, sha256Hash, referenceText))
+                                        match! addReferenceToCurrentBranch directoryVersionId sha256Hash referenceText ReferenceType.External List.empty with
+                                        | Ok returnValue -> return Ok(ExternalCreated(returnValue.ReturnValue, directoryVersionId, sha256Hash, referenceText))
                                         | Error error -> return Error error
                                     | RemoveReference referenceId -> return Ok(ReferenceRemoved referenceId)
                                     | DeleteLogical(force, deleteReason) ->
@@ -478,19 +468,19 @@ module Branch =
                                                     ))
                                             )
 
-                                        let (reminderState: PhysicalDeletionReminderState) =
-                                            (branchDto.RepositoryId,
-                                             branchDto.BranchId,
-                                             branchDto.BranchName,
-                                             branchDto.ParentBranchId,
-                                             deleteReason,
-                                             metadata.CorrelationId)
+                                        let (physicalDeletionReminderState: PhysicalDeletionReminderState) =
+                                            { RepositoryId = branchDto.RepositoryId
+                                              BranchId = branchDto.BranchId
+                                              BranchName = branchDto.BranchName
+                                              ParentBranchId = branchDto.ParentBranchId
+                                              DeleteReason = deleteReason
+                                              CorrelationId = metadata.CorrelationId }
 
                                         do!
                                             (this :> IGraceReminderWithGuidKey).ScheduleReminderAsync
                                                 ReminderTypes.PhysicalDeletion
                                                 (Duration.FromDays(float repositoryDto.LogicalDeleteDays))
-                                                (serialize reminderState)
+                                                physicalDeletionReminderState
                                                 metadata.CorrelationId
 
                                         return Ok(LogicalDeleted(force, deleteReason))
@@ -506,7 +496,14 @@ module Branch =
                             | Ok event -> return! this.ApplyEvent { Event = event; Metadata = metadata }
                             | Error error -> return Error error
                         with ex ->
-                            return Error(GraceError.Create $"{ExceptionResponse.Create ex}" metadata.CorrelationId)
+                            log.LogError(
+                                ex,
+                                "{CurrentInstant}: In Branch.Actor.Handle.processCommand: Error processing command {Command}.",
+                                getCurrentInstantExtended (),
+                                getDiscriminatedUnionFullName command
+                            )
+
+                            return Error(GraceError.CreateWithException ex String.Empty metadata.CorrelationId)
                     }
 
                 task {

@@ -54,11 +54,12 @@ module Branch =
                 parameters.RepositoryId <- graceIds.RepositoryIdString
                 parameters.BranchId <- graceIds.BranchIdString
 
-                let handleCommand (branchId: string) cmd =
+                let handleCommand cmd =
                     task {
-                        let branchGuid = Guid.Parse(branchId)
-                        let repositoryId = Guid.Parse(graceIds.RepositoryIdString)
-                        let actorProxy = Branch.CreateActorProxy branchGuid repositoryId correlationId
+                        let actorProxy = Branch.CreateActorProxy graceIds.BranchId graceIds.RepositoryId correlationId
+
+                        logToConsole
+                            $"In Branch.Server.processCommand: command: {commandName}; OwnerId: {graceIds.OwnerIdString}; OrganizationId: {graceIds.OrganizationIdString}; RepositoryId: {graceIds.RepositoryIdString}; BranchId: {graceIds.BranchIdString}."
 
                         match! actorProxy.Handle cmd (createMetadata context) with
                         | Ok graceReturnValue ->
@@ -84,12 +85,6 @@ module Branch =
                                 .enhance ("Path", context.Request.Path)
                             |> ignore
 
-                            log.LogError(
-                                "{CurrentInstant}: In Branch.Server.handleCommand: error from actorProxy.Handle: {error}",
-                                getCurrentInstantExtended (),
-                                (graceError.ToString())
-                            )
-
                             return! context |> result400BadRequest graceError
                     }
 
@@ -105,7 +100,7 @@ module Branch =
 
                 if validationsPassed then
                     let! cmd = command parameters
-                    let! result = handleCommand graceIds.BranchIdString cmd
+                    let! result = handleCommand cmd
                     let duration = getDurationRightAligned_ms startTime
 
                     log.LogInformation(
@@ -141,13 +136,13 @@ module Branch =
             with ex ->
                 log.LogError(
                     ex,
-                    "{CurrentInstant}: Exception in Organization.Server.processCommand. CorrelationId: {correlationId}.",
+                    "{CurrentInstant}: Exception in Branch.Server.processCommand. CorrelationId: {correlationId}.",
                     getCurrentInstantExtended (),
                     (getCorrelationId context)
                 )
 
                 let graceError =
-                    (GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" correlationId)
+                    (GraceError.CreateWithException ex String.Empty correlationId)
                         .enhance(parameterDictionary)
                         .enhance(nameof (OwnerId), graceIds.OwnerIdString)
                         .enhance(nameof (OrganizationId), graceIds.OrganizationIdString)
@@ -211,7 +206,7 @@ module Branch =
                     return! context |> result400BadRequest graceError
             with ex ->
                 let graceError =
-                    (GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" correlationId)
+                    (GraceError.CreateWithException ex String.Empty correlationId)
                         .enhance(parameterDictionary)
                         .enhance(nameof (OwnerId), graceIds.OwnerIdString)
                         .enhance(nameof (OrganizationId), graceIds.OrganizationIdString)
@@ -266,7 +261,7 @@ module Branch =
 
                             return
                                 Create(
-                                    (Guid.Parse(parameters.BranchId)),
+                                    graceIds.BranchId,
                                     (BranchName parameters.BranchName),
                                     parentBranchId,
                                     parentBranch.BasedOn.ReferenceId,
@@ -278,7 +273,7 @@ module Branch =
                         | None ->
                             return
                                 Create(
-                                    (Guid.Parse(parameters.BranchId)),
+                                    graceIds.BranchId,
                                     (BranchName parameters.BranchName),
                                     Constants.DefaultParentBranchId,
                                     ReferenceId.Empty, // This is fucked.
@@ -689,7 +684,7 @@ module Branch =
 
                     return!
                         context
-                        |> result500ServerError (GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId context))
+                        |> result500ServerError (GraceError.CreateWithException ex String.Empty (getCorrelationId context))
             }
 
     /// Gets the events handled by this branch.
@@ -741,7 +736,7 @@ module Branch =
 
                     return!
                         context
-                        |> result500ServerError (GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId context))
+                        |> result500ServerError (GraceError.CreateWithException ex String.Empty (getCorrelationId context))
             }
 
     /// Gets details about the parent branch of the provided branch.
@@ -792,7 +787,7 @@ module Branch =
 
                     return!
                         context
-                        |> result500ServerError (GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId context))
+                        |> result500ServerError (GraceError.CreateWithException ex String.Empty (getCorrelationId context))
             }
 
     /// Gets details about the reference with the provided ReferenceId.
@@ -849,7 +844,7 @@ module Branch =
 
                     return!
                         context
-                        |> result500ServerError (GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId context))
+                        |> result500ServerError (GraceError.CreateWithException ex String.Empty (getCorrelationId context))
             }
 
     /// Gets details about multiple references in one API call.
@@ -901,7 +896,7 @@ module Branch =
 
                     return!
                         context
-                        |> result500ServerError (GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId context))
+                        |> result500ServerError (GraceError.CreateWithException ex String.Empty (getCorrelationId context))
             }
 
     /// Gets a list of references, given a list of reference IDs.
@@ -960,7 +955,7 @@ module Branch =
 
                     return!
                         context
-                        |> result500ServerError (GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId context))
+                        |> result500ServerError (GraceError.CreateWithException ex String.Empty (getCorrelationId context))
             }
 
     /// Retrieves the diffs between references in a branch by ReferenceType.
@@ -1057,7 +1052,7 @@ module Branch =
 
                     return!
                         context
-                        |> result500ServerError (GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId context))
+                        |> result500ServerError (GraceError.CreateWithException ex String.Empty (getCorrelationId context))
             }
 
     /// Gets the promotions in a branch.
@@ -1109,7 +1104,7 @@ module Branch =
 
                     return!
                         context
-                        |> result500ServerError (GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId context))
+                        |> result500ServerError (GraceError.CreateWithException ex String.Empty (getCorrelationId context))
             }
 
     /// Gets the commits in a branch.
@@ -1161,7 +1156,7 @@ module Branch =
 
                     return!
                         context
-                        |> result500ServerError (GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId context))
+                        |> result500ServerError (GraceError.CreateWithException ex String.Empty (getCorrelationId context))
             }
 
     /// Gets the checkpoints in a branch.
@@ -1213,7 +1208,7 @@ module Branch =
 
                     return!
                         context
-                        |> result500ServerError (GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId context))
+                        |> result500ServerError (GraceError.CreateWithException ex String.Empty (getCorrelationId context))
             }
 
     /// Gets the saves in a branch.
@@ -1266,7 +1261,7 @@ module Branch =
 
                     return!
                         context
-                        |> result500ServerError (GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId context))
+                        |> result500ServerError (GraceError.CreateWithException ex String.Empty (getCorrelationId context))
             }
 
     /// Gets the tags in a branch.
@@ -1318,7 +1313,7 @@ module Branch =
 
                     return!
                         context
-                        |> result500ServerError (GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId context))
+                        |> result500ServerError (GraceError.CreateWithException ex String.Empty (getCorrelationId context))
             }
 
     /// Gets the external references in a branch.
@@ -1370,7 +1365,7 @@ module Branch =
 
                     return!
                         context
-                        |> result500ServerError (GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId context))
+                        |> result500ServerError (GraceError.CreateWithException ex String.Empty (getCorrelationId context))
             }
 
     let GetRecursiveSize: HttpHandler =
@@ -1460,7 +1455,7 @@ module Branch =
 
                     return!
                         context
-                        |> result500ServerError (GraceError.Create $"{ExceptionResponse.Create ex}" correlationId)
+                        |> result500ServerError (GraceError.CreateWithException ex String.Empty correlationId)
             }
 
     let ListContents: HttpHandler =
@@ -1556,7 +1551,7 @@ module Branch =
 
                     return!
                         context
-                        |> result500ServerError (GraceError.Create $"{ExceptionResponse.Create ex}" correlationId)
+                        |> result500ServerError (GraceError.CreateWithException ex String.Empty correlationId)
             }
 
     let GetVersion: HttpHandler =
@@ -1674,5 +1669,5 @@ module Branch =
 
                     return!
                         context
-                        |> result500ServerError (GraceError.Create $"{ExceptionResponse.Create ex}" correlationId)
+                        |> result500ServerError (GraceError.CreateWithException ex String.Empty correlationId)
             }

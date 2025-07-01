@@ -45,6 +45,7 @@ module Text =
         | FailedCreatingInitialBranch
         | FailedRebasingInitialBranch
         | FailedCreatingInitialPromotion
+        | FailedToAddReference
         | FailedToGetUploadUrls
         | FailedToRetrieveBranch
         | FailedUploadingFilesToObjectStorage

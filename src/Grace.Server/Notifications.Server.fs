@@ -329,12 +329,24 @@ module Notifications =
                     )
 
                     match referenceEvent.Event with
-                    | Reference.Created(referenceDto) ->
+                    | Reference.Created(referenceId,
+                                        ownerId,
+                                        organizationId,
+                                        repositoryId,
+                                        branchId,
+                                        directoryId,
+                                        sha256Hash,
+                                        referenceType,
+                                        referenceText,
+                                        links) ->
                         // If the reference is a commit, we're going to pre-compute the directory version contents .zip file.
-                        if referenceDto.ReferenceType = ReferenceType.Commit then
-                            let directoryVersionActorProxy = DirectoryVersion.CreateActorProxy referenceDto.DirectoryId referenceDto.RepositoryId correlationId
-                            let! zipFileUri = directoryVersionActorProxy.GetZipFileUri correlationId
-                            ()
+                        if referenceType = ReferenceType.Commit then
+                            let directoryVersionActorProxy = DirectoryVersion.CreateActorProxy directoryId repositoryId correlationId
+                            let! exists = directoryVersionActorProxy.Exists correlationId
+
+                            if exists then
+                                let! zipFileUri = directoryVersionActorProxy.GetZipFileUri correlationId
+                                ()
                     | _ -> ()
                 | RepositoryEvent repositoryEvent ->
                     let correlationId = repositoryEvent.Metadata.CorrelationId

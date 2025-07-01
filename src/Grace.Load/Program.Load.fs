@@ -5,6 +5,7 @@ open Grace.Shared
 open Grace.Shared.Parameters
 open Grace.Types.Types
 open Grace.Shared.Utilities
+open Spectre.Console
 open System
 open System.Collections.Concurrent
 open System.Collections.Generic
@@ -18,13 +19,16 @@ module Load =
 
     let numberOfRepositories = 10
     let numberOfBranches = 100
-    let numberOfEvents = 5000
+    let numberOfEvents = 50000
 
     let showResult<'T> (r: GraceResult<'T>) =
         match r with
         | Ok result -> () //logToConsole (sprintf "%s - CorrelationId: %s" (result.Properties["EventType"]) result.CorrelationId)
-        | Error error -> logToConsole $"{error}"
-
+        | Error error ->
+            if error.Exception <> ExceptionObject.Default then
+                AnsiConsole.MarkupLine($"[Red]Error: {Markup.Escape(serialize error.Exception)}[/]")
+            else
+                AnsiConsole.MarkupLine($"[Red]Error: {Markup.Escape(error.Error)}[/]")
 
     let parallelOptions = ParallelOptions(MaxDegreeOfParallelism = Environment.ProcessorCount * 8)
 
@@ -110,6 +114,7 @@ module Load =
                                             OrganizationId = $"{organizationId}",
                                             RepositoryId = $"{repositoryId}",
                                             RepositoryName = repositoryName,
+                                            ObjectStorageProvider = ObjectStorageProvider.DefaultObjectStorageProvider,
                                             CorrelationId = generateCorrelationId ()
                                         )
                                     )

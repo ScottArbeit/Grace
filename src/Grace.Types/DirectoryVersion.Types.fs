@@ -11,6 +11,9 @@ open System.Runtime.Serialization
 
 module DirectoryVersion =
 
+    /// The state held in the database when creating a physical deletion reminder for a DirectoryVersion.
+    type PhysicalDeletionReminderState = { DeleteReason: DeleteReason; CorrelationId: CorrelationId }
+
     [<KnownType("GetKnownTypes")>]
     type DirectoryVersionCommand =
         | Create of directoryVersion: DirectoryVersion

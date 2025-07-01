@@ -20,6 +20,7 @@ module Repository =
     /// Parameters for the /repository/create endpoint.
     type CreateRepositoryParameters() =
         inherit RepositoryParameters()
+        member val public ObjectStorageProvider = ObjectStorageProvider.DefaultObjectStorageProvider with get, set
 
     /// Parameters for the /repository/get endpoint.
     type GetRepositoryParameters() =

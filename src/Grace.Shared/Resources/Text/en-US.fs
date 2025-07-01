@@ -51,6 +51,7 @@ module en_US =
         | FailedCreatingInitialBranch -> "A server error occurred while attempting to create the initial branch."
         | FailedCreatingInitialPromotion -> "A server error occurred while attempting to create the initial promotion."
         | FailedRebasingInitialBranch -> "A server error occurred while attempting to rebase the initial branch."
+        | FailedToAddReference -> "A server error occurred while attempting to add the reference."
         | FailedToGetUploadUrls -> "A server error occurred while retrieving the URLs to upload new files to object storage."
         | FailedToRetrieveBranch -> "A server error occurred while retrieving the branch information."
         | FailedUploadingFilesToObjectStorage -> "One or more files could not be uploaded to object storage."

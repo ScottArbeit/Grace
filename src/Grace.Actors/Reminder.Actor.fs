@@ -11,6 +11,7 @@ open Grace.Actors.Services
 open Grace.Actors.Types
 open Grace.Shared
 open Grace.Shared.Constants
+open Grace.Types.Reminder
 open Grace.Types.Types
 open Grace.Shared.Utilities
 open Microsoft.Extensions.Logging
@@ -23,11 +24,10 @@ module Reminder =
 
     /// Orleans implementation of the ReminderActor.
     type ReminderActor
-        ([<PersistentState(StateName.Reminder, Constants.GraceActorStorage)>] reminderState: IPersistentState<ReminderDto>, log: ILogger<ReminderActor>) =
+        ([<PersistentState(StateName.Reminder, Constants.GraceActorStorage)>] reminderState: IPersistentState<ReminderWrapper>, log: ILogger<ReminderActor>) =
         inherit Grain()
 
         static let actorName = ActorName.Reminder
-        let mutable reminderDto = reminderState.State
 
         member val private correlationId: CorrelationId = String.Empty with get, set
 
@@ -42,34 +42,30 @@ module Reminder =
             member this.Create (reminder: ReminderDto) (correlationId: CorrelationId) =
                 task {
                     try
-                        reminderState.State <- reminder
+                        reminderState.State.Reminder <- reminder
                         do! reminderState.WriteStateAsync()
 
                         log.LogTrace(
                             "{CurrentInstant}: Node: {HostName}; CorrelationId: {CorrelationId}; Created reminder {ReminderId}. Actor {ActorName}||{ActorId}.",
                             getCurrentInstantExtended (),
                             getMachineName,
-                            correlationId,
-                            reminderDto.ReminderId,
-                            reminderDto.ReminderId,
-                            reminderDto.ReminderId,
-                            reminderDto.ReminderId,
-                            reminderDto.ReminderId,
-                            reminderDto.ActorName,
-                            reminderDto.ActorId
+                            reminder.CorrelationId,
+                            reminder.ReminderId,
+                            reminder.ActorName,
+                            reminder.ActorId
                         )
 
                         return ()
                     with ex ->
                         log.LogError(
-                            "{CurrentInstant}: Node: {HostName}; CorrelationId: {CorrelationId}; Error creating reminder {ReminderId}. Actor {ActorName}||{ActorId}. {ExceptionDetails}",
+                            ex,
+                            "{CurrentInstant}: Node: {HostName}; CorrelationId: {CorrelationId}; Error creating reminder {ReminderId}. Actor {ActorName}||{ActorId}.",
                             getCurrentInstantExtended (),
                             getMachineName,
                             correlationId,
-                            reminderDto.ReminderId,
-                            reminderDto.ActorName,
-                            reminderDto.ActorId,
-                            ExceptionResponse.Create ex
+                            reminder.ReminderId,
+                            reminder.ActorName,
+                            reminder.ActorId
                         )
 
                         return ()
@@ -78,6 +74,8 @@ module Reminder =
 
             member this.Delete(correlationId: CorrelationId) =
                 task {
+                    let reminderDto = reminderState.State.Reminder
+
                     try
                         this.correlationId <- correlationId
                         do! reminderState.ClearStateAsync()
@@ -103,7 +101,6 @@ module Reminder =
                                 reminderDto.ActorId
                             )
 
-                        reminderDto <- ReminderDto.Default
                         return ()
                     with ex ->
                         log.LogError(
@@ -124,17 +121,19 @@ module Reminder =
             member this.Exists(correlationId: CorrelationId) : Task<bool> =
                 this.correlationId <- correlationId
 
-                if reminderDto.ReminderTime = Instant.MinValue then
+                if reminderState.State.Reminder.ReminderTime = Instant.MinValue then
                     false |> returnTask
                 else
                     true |> returnTask
 
             member this.Get(correlationId: CorrelationId) =
                 this.correlationId <- correlationId
-                reminderDto |> returnTask
+                reminderState.State.Reminder |> returnTask
 
             member this.Remind(correlationId: CorrelationId) : Task<Result<unit, GraceError>> =
                 task {
+                    let reminderDto = reminderState.State.Reminder
+
                     try
                         this.correlationId <- correlationId
 

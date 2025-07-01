@@ -19,7 +19,6 @@ open System.Threading.Tasks
 
 module DirectoryAppearance =
 
-    [<GenerateSerializer>]
     type DirectoryAppearanceDto() =
         member val public Appearances = SortedSet<Appearance>() with get, set
         member val public RepositoryId: RepositoryId = RepositoryId.Empty with get, set

@@ -10,6 +10,9 @@ open System.Runtime.Serialization
 
 module Diff =
 
+    /// The state held in the database when creating a physical deletion reminder for a cached state.
+    type DeleteCachedStateReminderState = { DeleteReason: DeleteReason; CorrelationId: CorrelationId }
+
     /// Represents a Diff between two DirectoryVersions in a repository.
     type DiffDto =
         { Class: string

@@ -16,6 +16,7 @@ open Grace.Shared.Constants
 open Grace.Types.Branch
 open Grace.Types.DirectoryVersion
 open Grace.Types.Reference
+open Grace.Types.Reminder
 open Grace.Types.Repository
 open Grace.Types.Organization
 open Grace.Types.Owner
@@ -835,7 +836,6 @@ module Services =
                                     AND c.GrainType = @grainType
                                     AND c.PartitionKey = @partitionKey
                                     {includeDeletedEntitiesClause includeDeleted}
-                                ORDER BY c["value"].CreatedAt DESC
                                 """
                             )
                                 .WithParameter("@maxCount", maxCount)
@@ -1247,11 +1247,11 @@ module Services =
 
                             references.Add(referenceDto))
 
-                    if indexMetrics.Length >= 2 then
-                        Activity.Current
-                            .SetTag("indexMetrics", $"{indexMetrics.Remove(indexMetrics.Length - 2, 2)}")
-                            .SetTag("requestCharge", $"{requestCharge.Remove(requestCharge.Length - 2, 2)}")
-                        |> ignore
+                //if indexMetrics.Length >= 2 && requestCharge.Length >= 2 then
+                //    Activity.Current
+                //        .SetTag("indexMetrics", $"{indexMetrics.Remove(indexMetrics.Length - 2, 2)}")
+                //        .SetTag("requestCharge", $"{requestCharge.Remove(requestCharge.Length - 2, 2)}")
+                //    |> ignore
                 finally
                     stringBuilderPool.Return(indexMetrics)
                     stringBuilderPool.Return(requestCharge)
@@ -1274,7 +1274,7 @@ module Services =
 
             try
                 // (MaxDegreeOfParallelism = 3) runs at 700 RU's, so it fits under the free 1,000 RU limit for CosmosDB, without getting throttled.
-                let parallelOptions = ParallelOptions(MaxDegreeOfParallelism = 2)
+                let parallelOptions = ParallelOptions(MaxDegreeOfParallelism = 10)
 
                 let itemRequestOptions =
                     ItemRequestOptions(AddRequestHeaders = fun headers -> headers.Add(Constants.CorrelationIdHeaderKey, "deleteAllFromCosmosDBThatMatch"))
@@ -1339,7 +1339,7 @@ module Services =
     let deleteAllFromCosmosDb () =
         task {
 #if DEBUG
-            let queryDefinition = QueryDefinition("""SELECT c.id, c.partitionKey FROM c ORDER BY c.partitionKey""")
+            let queryDefinition = QueryDefinition("""SELECT c.id, c.PartitionKey FROM c ORDER BY c.PartitionKey""")
             return! deleteAllFromCosmosDBThatMatch queryDefinition
 #else
             return List<string>([ "Not implemented" ])
@@ -1446,12 +1446,11 @@ module Services =
                             """
                             SELECT TOP 1 c.State
                             FROM c
-                                JOIN s IN c.State
-                            WHERE STRINGEQUALS(s.Event.created.BranchId, @branchId, true)
-                                AND STRINGEQUALS(s.Event.created.RepositoryId, @repositoryId, true)
+                            WHERE STRINGEQUALS(c.State.Event.created.BranchId, @branchId, true)
+                                AND STRINGEQUALS(c.State.Event.created.RepositoryId, @repositoryId, true)
                                 AND c.GrainType = @grainType
                                 AND c.PartitionKey = @repositoryId
-                            ORDER BY s.Event.created.CreatedAt DESC
+                            ORDER BY c.State.Event.created.CreatedAt DESC
                             """
                         )
                             .WithParameter("@branchId", branchId)
@@ -1500,8 +1499,9 @@ module Services =
                 let requestCharge = stringBuilderPool.Get()
 
                 try
-                    // CosmosDB SQL doesn't have a UNION clause. That means that the only way to get the latest reference for each ReferenceType is to do separate queries for each ReferenceType that gets passed in.
-                    // It's annoying, but at least let's do it in parallel.
+                    // CosmosDB SQL doesn't have a UNION clause. That means that the only way to get the latest reference
+                    //   for each ReferenceType is to do separate queries for each ReferenceType that gets passed in.
+                    //   It's annoying, but at least let's do it in parallel.
 
                     do!
                         Parallel.ForEachAsync(
@@ -1510,21 +1510,17 @@ module Services =
                             (fun referenceType ct ->
                                 ValueTask(
                                     task {
-                                        let references = List<ReferenceDto>()
-
                                         let queryDefinition =
                                             QueryDefinition(
-                                                //"""SELECT TOP 1 c["value"] FROM c WHERE c["value"].BranchId = @branchId AND c["value"].Class = @class AND STRINGEQUALS(c["value"].ReferenceType, @referenceType, true) ORDER BY c["value"].CreatedAt DESC"""
                                                 """
                                                 SELECT TOP 1 c.State
                                                 FROM c
-                                                    JOIN s IN c.State
-                                                WHERE STRINGEQUALS(s.Event.created.BranchId, @branchId, true)
-                                                    AND STRINGEQUALS(s.Event.created.RepositoryId, @repositoryId, true)
-                                                    AND STRINGEQUALS(s.Event.created.ReferenceType, @referenceType, true)
+                                                WHERE STRINGEQUALS(c.State.Event.created.BranchId, @branchId, true)
+                                                    AND STRINGEQUALS(c.State.Event.created.RepositoryId, @repositoryId, true)
+                                                    AND STRINGEQUALS(c.State.Event.created.ReferenceType, @referenceType, true)
                                                     AND c.GrainType = @grainType
                                                     AND c.PartitionKey = @partitionKey
-                                                ORDER BY s.Event.created.CreatedAt DESC
+                                                ORDER BY c.State.Event.created.CreatedAt DESC
                                                 """
                                             )
                                                 .WithParameter("@branchId", branchId)
@@ -1533,13 +1529,15 @@ module Services =
                                                 .WithParameter("@grainType", StateName.Reference)
                                                 .WithParameter("@partitionKey", repositoryId)
 
+                                        //logToConsole $"In getLatestReferenceByReferenceTypes(): QueryDefinition:{Environment.NewLine}{printQueryDefinition queryDefinition}."
+
                                         let iterator =
                                             cosmosContainer.GetItemQueryIterator<ReferenceEventValue>(queryDefinition, requestOptions = queryRequestOptions)
 
                                         while iterator.HasMoreResults do
                                             let! results = iterator.ReadNextAsync()
-                                            indexMetrics.Append($"{results.IndexMetrics}, ") |> ignore
-                                            requestCharge.Append($"{results.RequestCharge}, ") |> ignore
+                                            //indexMetrics.Append($"{results.IndexMetrics}, ") |> ignore
+                                            //requestCharge.Append($"{results.RequestCharge}, ") |> ignore
                                             let eventsForAllReferences = results.Resource
 
                                             eventsForAllReferences
@@ -1555,10 +1553,13 @@ module Services =
                                 ))
                         )
 
-                    Activity.Current
-                        .SetTag("indexMetrics", $"{indexMetrics.Remove(indexMetrics.Length - 2, 2)}")
-                        .SetTag("requestCharge", $"{requestCharge.Remove(requestCharge.Length - 2, 2)}")
-                    |> ignore
+                //Activity.Current
+                //    .SetTag("indexMetrics", $"{indexMetrics.Remove(indexMetrics.Length - 2, 2)}")
+                //    .SetTag("requestCharge", $"{requestCharge.Remove(requestCharge.Length - 2, 2)}")
+                //Activity.Current
+                //    .SetTag("indexMetrics", $"{indexMetrics}")
+                //    .SetTag("requestCharge", $"{requestCharge}")
+                //|> ignore
                 finally
                     stringBuilderPool.Return(indexMetrics)
                     stringBuilderPool.Return(requestCharge)
@@ -1582,13 +1583,12 @@ module Services =
                             """
                             SELECT TOP 1 c.State
                             FROM c
-                                JOIN s IN c.State
-                            WHERE STRINGEQUALS(s.Event.created.BranchId, @branchId, true)
-                                AND STRINGEQUALS(s.Event.created.RepositoryId, @repositoryId, true)
-                                AND STRINGEQUALS(s.Event.created.ReferenceType, @referenceType, true)
+                            WHERE STRINGEQUALS(c.State.Event.created.BranchId, @branchId, true)
+                                AND STRINGEQUALS(c.State.Event.created.RepositoryId, @repositoryId, true)
+                                AND STRINGEQUALS(c.State.Event.created.ReferenceType, @referenceType, true)
                                 AND c.GrainType = @grainType
                                 AND c.PartitionKey = @partitionKey
-                            ORDER BY s.Event.created.CreatedAt DESC
+                            ORDER BY c.State.Event.created.CreatedAt DESC
                             """
                         )
                             .WithParameter("@branchId", branchId)
@@ -2026,10 +2026,11 @@ module Services =
         }
 
     /// Creates a new reminder actor instance.
-    let createReminder (reminder: ReminderDto) =
+    let createReminder (reminderDto: ReminderDto) =
         task {
-            let reminderActorProxy = Reminder.CreateActorProxy reminder.ReminderId reminder.CorrelationId
-            do! reminderActorProxy.Create reminder reminder.CorrelationId
+            let reminderActorProxy = Reminder.CreateActorProxy reminderDto.ReminderId reminderDto.CorrelationId
+            do! reminderActorProxy.Create reminderDto reminderDto.CorrelationId
+            logToConsole $"**** Created reminder actor {reminderDto.ReminderId} for actor {reminderDto.ActorName}||{reminderDto.ActorId}."
         }
         :> Task
 

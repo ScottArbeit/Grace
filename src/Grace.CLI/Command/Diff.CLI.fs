@@ -227,7 +227,7 @@ module Diff =
                 properties.Add("repositoryId", $"{parameters.RepositoryId}")
                 properties.Add("sha256Hash1", parameters.Sha256Hash1)
 
-                Error(GraceError.CreateWithMetadata (DiffError.getErrorMessage InvalidSha256Hash) (parameters.CorrelationId) properties)
+                Error(GraceError.CreateWithMetadata null (DiffError.getErrorMessage InvalidSha256Hash) (parameters.CorrelationId) properties)
             else
                 Ok(parseResult, parameters)
 

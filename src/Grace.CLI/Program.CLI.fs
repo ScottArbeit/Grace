@@ -266,7 +266,6 @@ module GraceCommand =
                     if configurationFileExists () then
                         if args.Length > 0 then
                             let firstToken = if isCaseInsensitive then args[0].ToLowerInvariant() else args[0]
-                            logToAnsiConsole Colors.Verbose $"First token: {firstToken}"
 
                             if aliases.ContainsKey(firstToken) then
                                 let newArgs = List<string>()
@@ -275,7 +274,6 @@ module GraceCommand =
                                 for token in aliases[firstToken].Reverse() do
                                     newArgs.Insert(0, token)
 
-                                logToAnsiConsole Colors.Verbose $"Replaced first token with alias: {firstToken} -> {String.Join(' ', newArgs)}"
                                 parseResult <- commandLineConfiguration.Parse(newArgs)
                             else
                                 parseResult <- commandLineConfiguration.Parse(args)

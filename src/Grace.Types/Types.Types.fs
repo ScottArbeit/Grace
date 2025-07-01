@@ -517,6 +517,24 @@ module Types =
             .Replace("\\\\", @"\")
             .Replace(@"\r\n", Environment.NewLine)
 
+    /// A serializable view of a .NET Exception
+    type ExceptionObject =
+        { Message: string
+          StackTrace: string
+          InnerException: ExceptionObject option }
+
+        static member Default = { Message = String.Empty; StackTrace = String.Empty; InnerException = None }
+
+        /// Creates an ExceptionObject from a .NET Exception.
+        static member Create(ex: Exception) =
+            { Message = ex.Message
+              StackTrace = if String.IsNullOrEmpty ex.StackTrace then String.Empty else ex.StackTrace
+              InnerException =
+                if ex.InnerException <> null then
+                    Some(ExceptionObject.Create(ex.InnerException))
+                else
+                    None }
+
     /// The primary type used in Grace to represent successful results.
     type GraceReturnValue<'T> =
         { ReturnValue: 'T
@@ -562,19 +580,35 @@ module Types =
 
     /// The primary type used in Grace to represent error results.
     type GraceError =
-        { Error: string
+        { Exception: ExceptionObject
+          Error: string
           EventTime: Instant
           CorrelationId: string
           Properties: Dictionary<String, String> }
 
         static member Default =
-            { Error = "Empty error message"; EventTime = getCurrentInstant (); CorrelationId = String.Empty; Properties = new Dictionary<String, String>() }
+            { Exception = ExceptionObject.Default
+              Error = "Empty error message"
+              EventTime = getCurrentInstant ()
+              CorrelationId = String.Empty
+              Properties = new Dictionary<String, String>() }
 
         static member Create (error: string) (correlationId: string) =
-            { Error = error; EventTime = getCurrentInstant (); CorrelationId = correlationId; Properties = new Dictionary<String, String>() }
+            { Exception = ExceptionObject.Default
+              Error = error
+              EventTime = getCurrentInstant ()
+              CorrelationId = correlationId
+              Properties = new Dictionary<String, String>() }
 
-        static member CreateWithMetadata (error: string) (correlationId: string) (properties: Dictionary<String, String>) =
-            { Error = error; EventTime = getCurrentInstant (); CorrelationId = correlationId; Properties = properties }
+        static member CreateWithException (ex: Exception) (error: string) (correlationId: string) =
+            { Exception = ExceptionObject.Create(ex)
+              Error = error
+              EventTime = getCurrentInstant ()
+              CorrelationId = correlationId
+              Properties = new Dictionary<String, String>() }
+
+        static member CreateWithMetadata (ex: Exception) (error: string) (correlationId: string) (properties: Dictionary<String, String>) =
+            { Exception = ExceptionObject.Create(ex); Error = error; EventTime = getCurrentInstant (); CorrelationId = correlationId; Properties = properties }
 
         /// Adds a key-value pair to GraceError's Properties dictionary.
         member this.enhance(key, value) =
@@ -600,7 +634,13 @@ module Types =
 
                 if sb.Length >= 2 then sb.Remove(sb.Length - 2, 2) |> ignore
 
-                $"Error: {this.Error}{Environment.NewLine}EventTime: {formatInstantExtended this.EventTime}{Environment.NewLine}CorrelationId: {this.CorrelationId}{Environment.NewLine}Properties:{Environment.NewLine}{errorText.ToString()}{Environment.NewLine}"
+                let message =
+                    if this.Exception <> ExceptionObject.Default then
+                        (serialize this.Exception)
+                    else
+                        this.Error
+
+                $"Error: {message}{Environment.NewLine}EventTime: {formatInstantExtended this.EventTime}{Environment.NewLine}CorrelationId: {this.CorrelationId}{Environment.NewLine}Properties:{Environment.NewLine}{errorText.ToString()}{Environment.NewLine}"
             finally
                 stringBuilderPool.Return(sb)
 

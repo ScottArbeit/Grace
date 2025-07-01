@@ -47,6 +47,7 @@ module Constants =
     JsonSerializerOptions.AllowTrailingCommas <- true
     JsonSerializerOptions.DefaultBufferSize <- 64 * 1024
     JsonSerializerOptions.DefaultIgnoreCondition <- JsonIgnoreCondition.WhenWritingDefault // JsonSerializerOptions.IgnoreNullValues is deprecated. This is the new way to say it.
+    JsonSerializerOptions.IncludeFields <- true // Include fields in serialization. This is important for F# records and discriminated unions.
     JsonSerializerOptions.IndentSize <- 2
     JsonSerializerOptions.MaxDepth <- 64 // Default is 64, and I'm assuming this setting would need to change if there were a directory depth greater than 64 in a repo.
     JsonSerializerOptions.NumberHandling <- JsonNumberHandling.AllowReadingFromString

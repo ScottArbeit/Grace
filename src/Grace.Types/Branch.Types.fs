@@ -9,9 +9,20 @@ open NodaTime
 open Orleans
 open System
 open System.Runtime.Serialization
+open System.Collections
 
 module Branch =
 
+    /// The state held in the database when creating a physical deletion reminder for a branch.
+    type PhysicalDeletionReminderState =
+        { RepositoryId: RepositoryId
+          BranchId: BranchId
+          BranchName: BranchName
+          ParentBranchId: ParentBranchId
+          DeleteReason: DeleteReason
+          CorrelationId: CorrelationId }
+
+    /// Defines the commands for the Branch actor.
     [<KnownType("GetKnownTypes")>]
     type BranchCommand =
         | Create of
@@ -22,7 +33,7 @@ module Branch =
             ownerId: OwnerId *
             organizationId: OrganizationId *
             repositoryId: RepositoryId *
-            initialPermissions: ReferenceType[]
+            initialPermissions: ReferenceType seq
         | Rebase of basedOn: ReferenceId
         | SetName of newName: BranchName
         | Assign of directoryVersionId: DirectoryVersionId * sha256Hash: Sha256Hash * referenceText: ReferenceText
@@ -58,7 +69,7 @@ module Branch =
             ownerId: OwnerId *
             organizationId: OrganizationId *
             repositoryId: RepositoryId *
-            initialPermissions: ReferenceType[]
+            initialPermissions: ReferenceType seq
         | Rebased of basedOn: ReferenceId
         | NameSet of newName: BranchName
         | Assigned of referenceDto: ReferenceDto * directoryVersionId: DirectoryVersionId * sha256Hash: Sha256Hash * referenceText: ReferenceText

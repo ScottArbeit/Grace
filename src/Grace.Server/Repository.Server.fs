@@ -254,8 +254,9 @@ module Repository =
                             Create(
                                 RepositoryName parameters.RepositoryName,
                                 (Guid.Parse(parameters.RepositoryId)),
-                                (Guid.Parse(graceIds.OwnerIdString)),
-                                (Guid.Parse(graceIds.OrganizationIdString))
+                                graceIds.OwnerId,
+                                graceIds.OrganizationId,
+                                parameters.ObjectStorageProvider
                             )
                     }
                     |> ValueTask<RepositoryCommand>

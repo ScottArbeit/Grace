@@ -26,6 +26,7 @@
         <Compile Include="Branch.Types.fs" />
         <Compile Include="Diff.Types.fs" />
         <Compile Include="DirectoryVersion.Types.fs" />
+        <Compile Include="Reminder.Types.fs" />
         <Compile Include="Events.Types.fs" />
     </ItemGroup>
 

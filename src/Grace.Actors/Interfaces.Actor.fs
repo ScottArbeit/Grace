@@ -6,6 +6,7 @@ open Grace.Types.Branch
 open Grace.Types.Diff
 open Grace.Types.DirectoryVersion
 open Grace.Types.Reference
+open Grace.Types.Reminder
 open Grace.Types.Repository
 open Grace.Types.Organization
 open Grace.Types.Owner
@@ -74,7 +75,7 @@ module Interfaces =
         /// Receives a reminder and processes it asynchronously.
         abstract member ReceiveReminderAsync: reminder: ReminderDto -> Task<Result<unit, GraceError>>
         /// Schedules a reminder to be sent to the actor after a specified delay.
-        abstract member ScheduleReminderAsync: reminderType: ReminderTypes -> delay: Duration -> state: string -> correlationId: CorrelationId -> Task
+        abstract member ScheduleReminderAsync: reminderType: ReminderTypes -> delay: Duration -> state: obj -> correlationId: CorrelationId -> Task
 
     /// Defines the operations that an actor must implement to handle Grace reminders.
     [<Interface>]
@@ -83,7 +84,7 @@ module Interfaces =
         /// Receives a reminder and processes it asynchronously.
         abstract member ReceiveReminderAsync: reminder: ReminderDto -> Task<Result<unit, GraceError>>
         /// Schedules a reminder to be sent to the actor after a specified delay.
-        abstract member ScheduleReminderAsync: reminderType: ReminderTypes -> delay: Duration -> state: string -> correlationId: CorrelationId -> Task
+        abstract member ScheduleReminderAsync: reminderType: ReminderTypes -> delay: Duration -> state: obj -> correlationId: CorrelationId -> Task
 
     /// Defines the operations for the Branch actor.
     [<Interface>]
@@ -313,7 +314,7 @@ module Interfaces =
         abstract member GetReferenceType: correlationId: CorrelationId -> Task<ReferenceType>
 
         /// Validates incoming commands and converts them to events that are stored in the database.
-        abstract member Handle: command: ReferenceCommand -> eventMetadata: EventMetadata -> Task<GraceResult<string>>
+        abstract member Handle: command: ReferenceCommand -> eventMetadata: EventMetadata -> Task<GraceResult<ReferenceDto>>
 
         /// Returns true if the reference has been deleted.
         abstract member IsDeleted: correlationId: CorrelationId -> Task<bool>

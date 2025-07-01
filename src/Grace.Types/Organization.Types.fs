@@ -11,6 +11,9 @@ open System.Runtime.Serialization
 /// Defines commands, events, and types for Organizations.
 module Organization =
 
+    /// The state held in the database when creating a physical deletion reminder for an organization.
+    type PhysicalDeletionReminderState = { DeleteReason: DeleteReason; CorrelationId: CorrelationId }
+
     /// Defines the commands for the Organization actor.
     [<KnownType("GetKnownTypes")>]
     type OrganizationCommand =

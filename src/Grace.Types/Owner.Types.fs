@@ -11,6 +11,9 @@ open System.Runtime.Serialization
 /// Defines commands, events, and types for the Owner actor.
 module Owner =
 
+    /// The state held in the database when creating a physical deletion reminder for an owner.
+    type PhysicalDeletionReminderState = { DeleteReason: DeleteReason; CorrelationId: CorrelationId }
+
     /// Defines the commands for the Owner actor.
     [<KnownType("GetKnownTypes")>]
     type OwnerCommand =

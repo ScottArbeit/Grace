@@ -11,6 +11,7 @@ open Grace.Shared
 open Grace.Shared.Constants
 open Grace.Shared.Utilities
 open Grace.Types.Events
+open Grace.Types.Reminder
 open Grace.Types.Repository
 open Grace.Types.Organization
 open Grace.Types.Types
@@ -28,9 +29,6 @@ open System.Text.Json
 open System.Threading.Tasks
 
 module Organization =
-
-    /// The data types stored in physical deletion reminders.
-    type PhysicalDeletionReminderState = (DeleteReason * CorrelationId)
 
     let log = loggerFactory.CreateLogger("Organization.Actor")
 
@@ -165,19 +163,19 @@ module Organization =
                     match reminder.ReminderType with
                     | ReminderTypes.PhysicalDeletion ->
                         // Get values from state.
-                        let (deleteReason, correlationId) = deserialize<PhysicalDeletionReminderState> reminder.State
-                        this.correlationId <- correlationId
+                        let physicalDeletionReminderState = reminder.State :?> PhysicalDeletionReminderState
+                        this.correlationId <- physicalDeletionReminderState.CorrelationId
 
                         do! state.ClearStateAsync()
 
                         log.LogInformation(
                             "{CurrentInstant}: CorrelationId: {correlationId}; Deleted physical state for organization; OrganizationId: {organizationId}; OrganizationName: {organizationName}; OwnerId: {ownerId}; deleteReason: {deleteReason}.",
                             getCurrentInstantExtended (),
-                            correlationId,
+                            physicalDeletionReminderState.CorrelationId,
                             organizationDto.OrganizationId,
                             organizationDto.OrganizationName,
                             organizationDto.OwnerId,
-                            deleteReason
+                            physicalDeletionReminderState.DeleteReason
                         )
 
                         // Deactivate the actor after the PhysicalDeletion reminder is processed.
@@ -269,6 +267,7 @@ module Organization =
                                             return
                                                 Error(
                                                     GraceError.CreateWithMetadata
+                                                        null
                                                         (OrganizationError.getErrorMessage OrganizationContainsRepositories)
                                                         metadata.CorrelationId
                                                         metadata.Properties
@@ -277,13 +276,14 @@ module Organization =
                                             // Delete the repositories.
                                             match! this.LogicalDeleteRepositories(repositories, metadata, deleteReason) with
                                             | Ok _ ->
-                                                let (reminderState: PhysicalDeletionReminderState) = (deleteReason, metadata.CorrelationId)
+                                                let (physicalDeletionReminderState: PhysicalDeletionReminderState) =
+                                                    { DeleteReason = deleteReason; CorrelationId = metadata.CorrelationId }
 
                                                 do!
                                                     (this :> IGraceReminderWithGuidKey).ScheduleReminderAsync
                                                         ReminderTypes.PhysicalDeletion
                                                         DefaultPhysicalDeletionReminderDuration
-                                                        (serialize reminderState)
+                                                        physicalDeletionReminderState
                                                         metadata.CorrelationId
 
                                                 return Ok(LogicalDeleted(force, deleteReason))
@@ -303,7 +303,7 @@ module Organization =
                             | Ok event -> return! this.ApplyEvent { Event = event; Metadata = metadata }
                             | Error error -> return Error error
                         with ex ->
-                            return Error(GraceError.CreateWithMetadata $"{ExceptionResponse.Create ex}" metadata.CorrelationId metadata.Properties)
+                            return Error(GraceError.CreateWithMetadata ex String.Empty metadata.CorrelationId metadata.Properties)
                     }
 
                 task {

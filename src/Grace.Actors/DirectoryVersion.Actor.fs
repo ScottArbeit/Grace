@@ -16,6 +16,7 @@ open Grace.Shared.Services
 open Grace.Shared.Utilities
 open Grace.Shared.Validation.Errors.DirectoryVersion
 open Grace.Types.Events
+open Grace.Types.Reminder
 open Grace.Types.Repository
 open Grace.Types.DirectoryVersion
 open Grace.Types.Types
@@ -35,10 +36,6 @@ open System.Reflection.Metadata
 open MessagePack
 
 module DirectoryVersion =
-
-    /// The data types stored in physical deletion reminders.
-    type PhysicalDeletionReminderState = DeleteReason * CorrelationId
-    type DeleteCachedStateReminderState = unit
 
     type DirectoryVersionActor
         (
@@ -98,84 +95,88 @@ module DirectoryVersion =
                     match reminder.ReminderType with
                     | ReminderTypes.DeleteCachedState ->
                         // Get values from state.
-                        if not <| String.IsNullOrEmpty reminder.State then
-                            let (deleteReason, correlationId) = deserialize<PhysicalDeletionReminderState> reminder.State
+                        let physicalDeletionReminderState = reminder.State :?> PhysicalDeletionReminderState
 
-                            this.correlationId <- correlationId
+                        this.correlationId <- physicalDeletionReminderState.CorrelationId
 
-                            // Delete cached state for this actor.
-                            let directoryVersionBlobClient =
-                                directoryVersionContainerClient.GetBlobClient(
-                                    recursiveDirectoryVersionsCacheFileName directoryVersionDto.DirectoryVersion.DirectoryVersionId
-                                )
+                        // Delete cached state for this actor.
+                        let directoryVersionBlobClient =
+                            directoryVersionContainerClient.GetBlobClient(
+                                recursiveDirectoryVersionsCacheFileName directoryVersionDto.DirectoryVersion.DirectoryVersionId
+                            )
 
-                            let! deleted = directoryVersionBlobClient.DeleteIfExistsAsync()
+                        let! deleted = directoryVersionBlobClient.DeleteIfExistsAsync()
 
-                            if deleted.HasValue && deleted.Value then
-                                log.LogInformation(
-                                    "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; Deleted cached state for directory version; RepositoryId: {RepositoryId}; DirectoryVersionId: {DirectoryVersionId}; deleteReason: {deleteReason}.",
-                                    getCurrentInstantExtended (),
-                                    getMachineName,
-                                    correlationId,
-                                    directoryVersionDto.DirectoryVersion.RepositoryId,
-                                    directoryVersionDto.DirectoryVersion.DirectoryVersionId,
-                                    deleteReason
-                                )
-                            else
-                                log.LogWarning(
-                                    "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; Failed to delete cached state for directory version (it may have already been deleted); RepositoryId: {RepositoryId}; DirectoryVersionId: {DirectoryVersionId}; deleteReason: {deleteReason}.",
-                                    getCurrentInstantExtended (),
-                                    getMachineName,
-                                    correlationId,
-                                    directoryVersionDto.DirectoryVersion.RepositoryId,
-                                    directoryVersionDto.DirectoryVersion.DirectoryVersionId,
-                                    deleteReason
-                                )
+                        if deleted.HasValue && deleted.Value then
+                            log.LogInformation(
+                                "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; Deleted cached state for directory version; RepositoryId: {RepositoryId}; DirectoryVersionId: {DirectoryVersionId}; deleteReason: {deleteReason}.",
+                                getCurrentInstantExtended (),
+                                getMachineName,
+                                physicalDeletionReminderState.CorrelationId,
+                                directoryVersionDto.DirectoryVersion.RepositoryId,
+                                directoryVersionDto.DirectoryVersion.DirectoryVersionId,
+                                physicalDeletionReminderState.DeleteReason
+                            )
+                        else
+                            log.LogWarning(
+                                "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; Failed to delete cached state for directory version (it may have already been deleted); RepositoryId: {RepositoryId}; DirectoryVersionId: {DirectoryVersionId}; deleteReason: {deleteReason}.",
+                                getCurrentInstantExtended (),
+                                getMachineName,
+                                physicalDeletionReminderState.CorrelationId,
+                                directoryVersionDto.DirectoryVersion.RepositoryId,
+                                directoryVersionDto.DirectoryVersion.DirectoryVersionId,
+                                physicalDeletionReminderState.DeleteReason
+                            )
 
                         return Ok()
                     | ReminderTypes.DeleteZipFile ->
                         // Get values from state.
-                        if not <| String.IsNullOrEmpty reminder.State then
-                            let (deleteReason, correlationId) = deserialize<PhysicalDeletionReminderState> reminder.State
+                        let physicalDeletionReminderState = reminder.State :?> PhysicalDeletionReminderState
 
-                            this.correlationId <- correlationId
+                        this.correlationId <- physicalDeletionReminderState.CorrelationId
 
-                            let directoryVersion = directoryVersionDto.DirectoryVersion
-                            let repositoryActorProxy = Repository.CreateActorProxy directoryVersion.OrganizationId directoryVersion.RepositoryId correlationId
-                            let! repositoryDto = repositoryActorProxy.Get correlationId
+                        let directoryVersion = directoryVersionDto.DirectoryVersion
 
-                            // Delete cached directory version contents for this actor.
-                            let zipFileBlobClient = zipFileContainerClient.GetBlobClient $"{directoryVersion.DirectoryVersionId}.zip"
+                        let repositoryActorProxy =
+                            Repository.CreateActorProxy
+                                directoryVersion.OrganizationId
+                                directoryVersion.RepositoryId
+                                physicalDeletionReminderState.CorrelationId
 
-                            let! deleted = zipFileBlobClient.DeleteIfExistsAsync()
+                        let! repositoryDto = repositoryActorProxy.Get physicalDeletionReminderState.CorrelationId
 
-                            if deleted.HasValue && deleted.Value then
-                                log.LogInformation(
-                                    "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; Deleted cache for directory version; RepositoryId: {RepositoryId}; DirectoryVersionId: {DirectoryVersionId}; deleteReason: {deleteReason}.",
-                                    getCurrentInstantExtended (),
-                                    getMachineName,
-                                    correlationId,
-                                    directoryVersionDto.DirectoryVersion.RepositoryId,
-                                    directoryVersionDto.DirectoryVersion.DirectoryVersionId,
-                                    deleteReason
-                                )
-                            else
-                                log.LogWarning(
-                                    "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; Failed to delete cache for directory version (it may have already been deleted); RepositoryId: {RepositoryId}; DirectoryVersionId: {DirectoryVersionId}; deleteReason: {deleteReason}.",
-                                    getCurrentInstantExtended (),
-                                    getMachineName,
-                                    correlationId,
-                                    directoryVersionDto.DirectoryVersion.RepositoryId,
-                                    directoryVersionDto.DirectoryVersion.DirectoryVersionId,
-                                    deleteReason
-                                )
+                        // Delete cached directory version contents for this actor.
+                        let zipFileBlobClient = zipFileContainerClient.GetBlobClient $"{directoryVersion.DirectoryVersionId}.zip"
+
+                        let! deleted = zipFileBlobClient.DeleteIfExistsAsync()
+
+                        if deleted.HasValue && deleted.Value then
+                            log.LogInformation(
+                                "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; Deleted cache for directory version; RepositoryId: {RepositoryId}; DirectoryVersionId: {DirectoryVersionId}; deleteReason: {deleteReason}.",
+                                getCurrentInstantExtended (),
+                                getMachineName,
+                                physicalDeletionReminderState.CorrelationId,
+                                directoryVersionDto.DirectoryVersion.RepositoryId,
+                                directoryVersionDto.DirectoryVersion.DirectoryVersionId,
+                                physicalDeletionReminderState.DeleteReason
+                            )
+                        else
+                            log.LogWarning(
+                                "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; Failed to delete cache for directory version (it may have already been deleted); RepositoryId: {RepositoryId}; DirectoryVersionId: {DirectoryVersionId}; deleteReason: {deleteReason}.",
+                                getCurrentInstantExtended (),
+                                getMachineName,
+                                physicalDeletionReminderState.CorrelationId,
+                                directoryVersionDto.DirectoryVersion.RepositoryId,
+                                directoryVersionDto.DirectoryVersion.DirectoryVersionId,
+                                physicalDeletionReminderState.DeleteReason
+                            )
 
                         return Ok()
                     | ReminderTypes.PhysicalDeletion ->
                         // Get values from state.
-                        let (deleteReason, correlationId) = deserialize<PhysicalDeletionReminderState> reminder.State
+                        let physicalDeletionReminderState = reminder.State :?> PhysicalDeletionReminderState
 
-                        this.correlationId <- correlationId
+                        this.correlationId <- physicalDeletionReminderState.CorrelationId
 
                         // Delete saved state for this actor.
                         do! state.ClearStateAsync()
@@ -184,10 +185,10 @@ module DirectoryVersion =
                             "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; Deleted state for directory version; RepositoryId: {RepositoryId}; DirectoryVersionId: {DirectoryVersionId}; deleteReason: {deleteReason}.",
                             getCurrentInstantExtended (),
                             getMachineName,
-                            correlationId,
+                            physicalDeletionReminderState.CorrelationId,
                             directoryVersionDto.DirectoryVersion.RepositoryId,
                             directoryVersionDto.DirectoryVersion.DirectoryVersionId,
-                            deleteReason
+                            physicalDeletionReminderState.DeleteReason
                         )
 
                         this.DeactivateOnIdle()
@@ -485,13 +486,14 @@ module DirectoryVersion =
 
                                         let! repositoryDto = repositoryActorProxy.Get metadata.CorrelationId
 
-                                        let (reminderState: PhysicalDeletionReminderState) = (deleteReason, metadata.CorrelationId)
+                                        let physicalDeletionReminderState =
+                                            { DeleteReason = getDiscriminatedUnionCaseName deleteReason; CorrelationId = metadata.CorrelationId }
 
                                         do!
                                             (this :> IGraceReminderWithGuidKey).ScheduleReminderAsync
                                                 ReminderTypes.PhysicalDeletion
                                                 (Duration.FromDays(float repositoryDto.LogicalDeleteDays))
-                                                (serialize reminderState)
+                                                physicalDeletionReminderState
                                                 metadata.CorrelationId
 
                                         return Ok(LogicalDeleted deleteReason)
@@ -506,7 +508,7 @@ module DirectoryVersion =
                             | Ok event -> return! this.ApplyEvent { Event = event; Metadata = metadata }
                             | Error error -> return Error error
                         with ex ->
-                            return Error(GraceError.CreateWithMetadata $"{ExceptionResponse.Create ex}" metadata.CorrelationId metadata.Properties)
+                            return Error(GraceError.CreateWithMetadata ex String.Empty metadata.CorrelationId metadata.Properties)
                     }
 
                 task {
@@ -630,6 +632,7 @@ module DirectoryVersion =
                     }
 
                 task {
+                    logToConsole $"In GetZipFileUri: directoryVersion: {serialize directoryVersion}."
                     let repositoryActorProxy = Repository.CreateActorProxy directoryVersion.OrganizationId directoryVersion.RepositoryId correlationId
                     let! repositoryDto = repositoryActorProxy.Get correlationId
 

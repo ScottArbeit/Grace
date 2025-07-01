@@ -11,9 +11,17 @@ open System.Runtime.Serialization
 
 module Repository =
 
+    /// The state held in the database when creating a physical deletion reminder for a repository.
+    type PhysicalDeletionReminderState = { DeleteReason: DeleteReason; CorrelationId: CorrelationId }
+
     [<KnownType("GetKnownTypes")>]
     type RepositoryCommand =
-        | Create of repositoryName: RepositoryName * repositoryId: RepositoryId * ownerId: OwnerId * organizationId: OrganizationId
+        | Create of
+            repositoryName: RepositoryName *
+            repositoryId: RepositoryId *
+            ownerId: OwnerId *
+            organizationId: OrganizationId *
+            objectStorageProvider: ObjectStorageProvider
         | Initialize
         | SetObjectStorageProvider of objectStorageProvider: ObjectStorageProvider
         | SetStorageAccountName of storageAccountName: StorageAccountName
@@ -41,7 +49,12 @@ module Repository =
     /// Defines the events for the Repository actor.
     [<KnownType("GetKnownTypes")>]
     type RepositoryEventType =
-        | Created of repositoryName: RepositoryName * repositoryId: RepositoryId * ownerId: OwnerId * organizationId: OrganizationId
+        | Created of
+            repositoryName: RepositoryName *
+            repositoryId: RepositoryId *
+            ownerId: OwnerId *
+            organizationId: OrganizationId *
+            objectStorageProvider: ObjectStorageProvider
         | Initialized
         | ObjectStorageProviderSet of objectStorageProvider: ObjectStorageProvider
         | StorageAccountNameSet of storageAccountName: StorageAccountName
@@ -136,13 +149,13 @@ module Repository =
         static member UpdateDto repositoryEvent currentRepositoryDto =
             let newRepositoryDto =
                 match repositoryEvent.Event with
-                | Created(name, repositoryId, ownerId, organizationId) ->
+                | Created(name, repositoryId, ownerId, organizationId, objectStorageProvider) ->
                     { RepositoryDto.Default with
                         RepositoryName = name
                         RepositoryId = repositoryId
                         OwnerId = ownerId
                         OrganizationId = organizationId
-                        ObjectStorageProvider = ObjectStorageProvider.DefaultObjectStorageProvider
+                        ObjectStorageProvider = objectStorageProvider
                         StorageAccountName = DefaultObjectStorageAccount
                         StorageContainerName = $"{repositoryId}"
                         CreatedAt = repositoryEvent.Metadata.Timestamp }

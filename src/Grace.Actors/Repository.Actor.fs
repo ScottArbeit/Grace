@@ -16,6 +16,7 @@ open Grace.Shared.Resources.Text
 open Grace.Shared.Resources.Utilities
 open Grace.Types.Branch
 open Grace.Types.DirectoryVersion
+open Grace.Types.Reminder
 open Grace.Types.Repository
 open Grace.Types.Events
 open Grace.Types.Types
@@ -37,9 +38,6 @@ open Grace.Shared.Services
 open Dapr.Client.Autogen.Grpc.v1
 
 module Repository =
-
-    /// The data types stored in physical deletion reminders.
-    type PhysicalDeletionReminderState = (DeleteReason * CorrelationId)
 
     let log = loggerFactory.CreateLogger("Repository.Actor")
 
@@ -85,7 +83,7 @@ module Repository =
                     let handleEvent =
                         task {
                             match repositoryEvent.Event with
-                            | Created(name, repositoryId, ownerId, organizationId) ->
+                            | Created(name, repositoryId, ownerId, organizationId, objectStorageProvider) ->
                                 // Create the default branch.
                                 let branchId = (Guid.NewGuid())
                                 let branchActor = Branch.CreateActorProxy branchId repositoryDto.RepositoryId this.correlationId
@@ -288,20 +286,20 @@ module Repository =
                     match reminder.ReminderType with
                     | ReminderTypes.PhysicalDeletion ->
                         // Get values from state.
-                        let (deleteReason, correlationId) = deserialize<PhysicalDeletionReminderState> reminder.State
-                        this.correlationId <- correlationId
+                        let physicalDeletionReminderState = reminder.State :?> PhysicalDeletionReminderState
+                        this.correlationId <- physicalDeletionReminderState.CorrelationId
 
                         do! state.ClearStateAsync()
 
                         log.LogInformation(
                             "{CurrentInstant}: CorrelationId: {correlationId}; Deleted physical state for repository; RepositoryId: {}; RepositoryName: {}; OrganizationId: {organizationId}; OwnerId: {ownerId}; deleteReason: {deleteReason}.",
                             getCurrentInstantExtended (),
-                            correlationId,
+                            physicalDeletionReminderState.CorrelationId,
                             repositoryDto.RepositoryId,
                             repositoryDto.RepositoryName,
                             repositoryDto.OrganizationId,
                             repositoryDto.OwnerId,
-                            deleteReason
+                            physicalDeletionReminderState.DeleteReason
                         )
 
                         this.DeactivateOnIdle()
@@ -430,7 +428,7 @@ module Repository =
                             return Error(GraceError.Create (RepositoryError.getErrorMessage DuplicateCorrelationId) metadata.CorrelationId)
                         else
                             match command with
-                            | RepositoryCommand.Create(_, _, _, _) ->
+                            | RepositoryCommand.Create(_, _, _, _, _) ->
                                 match repositoryDto.UpdatedAt with
                                 | Some _ -> return Error(GraceError.Create (RepositoryError.getErrorMessage RepositoryIdAlreadyExists) metadata.CorrelationId)
                                 | None -> return Ok command
@@ -446,8 +444,8 @@ module Repository =
                             let! event =
                                 task {
                                     match command with
-                                    | Create(repositoryName, repositoryId, ownerId, organizationId) ->
-                                        return Created(repositoryName, repositoryId, ownerId, organizationId)
+                                    | Create(repositoryName, repositoryId, ownerId, organizationId, objectStorageProvider) ->
+                                        return Created(repositoryName, repositoryId, ownerId, organizationId, objectStorageProvider)
                                     | Initialize -> return Initialized
                                     | SetObjectStorageProvider objectStorageProvider -> return ObjectStorageProviderSet objectStorageProvider
                                     | SetStorageAccountName storageAccountName -> return StorageAccountNameSet storageAccountName
@@ -488,13 +486,13 @@ module Repository =
                                             // We have --force specified, so delete the branches that aren't already deleted.
                                             match! this.LogicalDeleteBranches(branches, metadata, deleteReason) with
                                             | Ok _ ->
-                                                let (reminderState: PhysicalDeletionReminderState) = (deleteReason, metadata.CorrelationId)
+                                                let physicalDeletionReminderState = { DeleteReason = deleteReason; CorrelationId = metadata.CorrelationId }
 
                                                 do!
                                                     (this :> IGraceReminderWithGuidKey).ScheduleReminderAsync
                                                         ReminderTypes.PhysicalDeletion
                                                         (Duration.FromDays(float repositoryDto.LogicalDeleteDays))
-                                                        (serialize reminderState)
+                                                        physicalDeletionReminderState
                                                         metadata.CorrelationId
 
                                                 ()
