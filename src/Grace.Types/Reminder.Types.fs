@@ -24,7 +24,7 @@ module Reminder =
           State: obj }
 
         static member Default =
-            { Class = nameof (ReminderDto)
+            { Class = nameof ReminderDto
               ReminderId = ReminderId.Empty
               ActorName = String.Empty
               ActorId = String.Empty
@@ -39,7 +39,7 @@ module Reminder =
 
         /// Creates a ReminderDto.
         static member Create actorName actorId ownerId organizationId repositoryId reminderType reminderTime state correlationId =
-            { Class = nameof (ReminderDto)
+            { Class = nameof ReminderDto
               ReminderId = ReminderId.NewGuid()
               ActorName = actorName
               ActorId = actorId

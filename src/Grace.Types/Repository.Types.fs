@@ -118,7 +118,7 @@ module Repository =
           DeleteReason: DeleteReason }
 
         static member Default =
-            { Class = nameof (RepositoryDto)
+            { Class = nameof RepositoryDto
               RepositoryId = Guid.Empty
               OwnerId = OwnerId.Empty
               OrganizationId = OrganizationId.Empty

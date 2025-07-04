@@ -28,7 +28,7 @@ module Diff =
           FileDiffs: List<FileDiff> }
 
         static member Default =
-            { Class = nameof (DiffDto)
+            { Class = nameof DiffDto
               OwnerId = OwnerId.Empty
               OrganizationId = OrganizationId.Empty
               RepositoryId = RepositoryId.Empty

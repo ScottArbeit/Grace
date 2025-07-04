@@ -134,7 +134,7 @@ module Branch =
           DeleteReason: DeleteReason }
 
         static member Default =
-            { Class = nameof (BranchDto)
+            { Class = nameof BranchDto
               BranchId = BranchId.Empty
               BranchName = BranchName "root"
               ParentBranchId = Constants.DefaultParentBranchId
@@ -168,7 +168,7 @@ module Branch =
             let newBranchDto =
                 match branchEventType with
                 | Created(branchId, branchName, parentBranchId, basedOn, ownerId, organizationId, repositoryId, initialPermissions) ->
-                    let basedOnReferenceDto = deserialize<ReferenceDto> branchEvent.Metadata.Properties["basedOnReferenceDto"]
+                    let basedOnReferenceDto = branchEvent.Metadata.Properties["basedOnReferenceDto"] :?> ReferenceDto
 
                     let mutable branchDto =
                         { BranchDto.Default with
@@ -194,7 +194,7 @@ module Branch =
 
                     branchDto
                 | Rebased referenceId ->
-                    let basedOnReferenceDto = deserialize<ReferenceDto> branchEvent.Metadata.Properties["basedOnReferenceDto"]
+                    let basedOnReferenceDto = deserialize<ReferenceDto> (branchEvent.Metadata.Properties["basedOnReferenceDto"] :?> string)
                     { currentBranchDto with BasedOn = basedOnReferenceDto }
                 | NameSet branchName -> { currentBranchDto with BranchName = branchName }
                 | Assigned(referenceDto, directoryVersion, sha256Hash, referenceText) ->

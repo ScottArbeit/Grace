@@ -213,9 +213,8 @@ module DirectoryVersion =
                     // Update the Dto with the event.
                     directoryVersionDto <- directoryVersionDto |> DirectoryVersionDto.UpdateDto directoryVersionEvent
 
-                    logToConsole
-                        $"In ApplyEvent(): directoryVersion.DirectoryVersionId: {directoryVersionDto.DirectoryVersion.DirectoryVersionId}; directoryVersion.RelativePath: {directoryVersionDto.DirectoryVersion.RelativePath}."
-
+                    //logToConsole
+                    //    $"In ApplyEvent(): directoryVersion.DirectoryVersionId: {directoryVersionDto.DirectoryVersion.DirectoryVersionId}; directoryVersion.RelativePath: {directoryVersionDto.DirectoryVersion.RelativePath}."
 
                     // Publish the event to the rest of the world.
                     let graceEvent = GraceEvent.DirectoryVersionEvent directoryVersionEvent
@@ -224,25 +223,25 @@ module DirectoryVersion =
                     let returnValue = GraceReturnValue.Create "Directory version command succeeded." directoryVersionEvent.Metadata.CorrelationId
 
                     returnValue
-                        .enhance(nameof (RepositoryId), $"{directoryVersionDto.DirectoryVersion.RepositoryId}")
-                        .enhance(nameof (DirectoryVersionId), $"{directoryVersionDto.DirectoryVersion.DirectoryVersionId}")
-                        .enhance(nameof (Sha256Hash), $"{directoryVersionDto.DirectoryVersion.Sha256Hash}")
-                        .enhance (nameof (DirectoryVersionEventType), $"{getDiscriminatedUnionFullName directoryVersionEvent.Event}")
+                        .enhance(nameof RepositoryId, directoryVersionDto.DirectoryVersion.RepositoryId)
+                        .enhance(nameof DirectoryVersionId, directoryVersionDto.DirectoryVersion.DirectoryVersionId)
+                        .enhance(nameof Sha256Hash, directoryVersionDto.DirectoryVersion.Sha256Hash)
+                        .enhance (nameof DirectoryVersionEventType, getDiscriminatedUnionFullName directoryVersionEvent.Event)
                     |> ignore
 
                     return Ok returnValue
                 with ex ->
-                    let exceptionResponse = ExceptionResponse.Create ex
-
                     let graceError =
-                        GraceError.Create (DirectoryVersionError.getErrorMessage FailedWhileApplyingEvent) directoryVersionEvent.Metadata.CorrelationId
+                        GraceError.CreateWithException
+                            ex
+                            (DirectoryVersionError.getErrorMessage FailedWhileApplyingEvent)
+                            directoryVersionEvent.Metadata.CorrelationId
 
                     graceError
-                        .enhance("Exception details", exceptionResponse.``exception`` + exceptionResponse.innerException)
-                        .enhance(nameof (RepositoryId), $"{directoryVersionDto.DirectoryVersion.RepositoryId}")
-                        .enhance(nameof (DirectoryVersionId), $"{directoryVersionDto.DirectoryVersion.DirectoryVersionId}")
-                        .enhance(nameof (Sha256Hash), $"{directoryVersionDto.DirectoryVersion.Sha256Hash}")
-                        .enhance (nameof (DirectoryVersionEventType), $"{getDiscriminatedUnionFullName directoryVersionEvent.Event}")
+                        .enhance(nameof RepositoryId, directoryVersionDto.DirectoryVersion.RepositoryId)
+                        .enhance(nameof DirectoryVersionId, directoryVersionDto.DirectoryVersion.DirectoryVersionId)
+                        .enhance(nameof Sha256Hash, directoryVersionDto.DirectoryVersion.Sha256Hash)
+                        .enhance (nameof DirectoryVersionEventType, getDiscriminatedUnionFullName directoryVersionEvent.Event)
                     |> ignore
 
                     return Error graceError
@@ -394,12 +393,12 @@ module DirectoryVersion =
                             let! repositoryDto = repositoryActorProxy.Get correlationId
 
                             let tags = Dictionary<string, string>()
-                            tags.Add(nameof (DirectoryVersionId), $"{directoryVersionDto.DirectoryVersion.DirectoryVersionId}")
-                            tags.Add(nameof (RepositoryId), $"{directoryVersionDto.DirectoryVersion.RepositoryId}")
-                            tags.Add(nameof (RelativePath), $"{directoryVersionDto.DirectoryVersion.RelativePath}")
-                            tags.Add(nameof (Sha256Hash), $"{directoryVersionDto.DirectoryVersion.Sha256Hash}")
-                            tags.Add(nameof (OwnerId), $"{repositoryDto.OwnerId}")
-                            tags.Add(nameof (OrganizationId), $"{repositoryDto.OrganizationId}")
+                            tags.Add(nameof DirectoryVersionId, $"{directoryVersionDto.DirectoryVersion.DirectoryVersionId}")
+                            tags.Add(nameof RepositoryId, $"{directoryVersionDto.DirectoryVersion.RepositoryId}")
+                            tags.Add(nameof RelativePath, $"{directoryVersionDto.DirectoryVersion.RelativePath}")
+                            tags.Add(nameof Sha256Hash, $"{directoryVersionDto.DirectoryVersion.Sha256Hash}")
+                            tags.Add(nameof OwnerId, $"{repositoryDto.OwnerId}")
+                            tags.Add(nameof OrganizationId, $"{repositoryDto.OrganizationId}")
 
                             // Write the JSON using MessagePack serialization for efficiency.
                             use! blobStream = directoryVersionBlobClient.OpenWriteAsync(overwrite = true)

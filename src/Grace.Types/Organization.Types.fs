@@ -65,7 +65,7 @@ module Organization =
           DeleteReason: DeleteReason }
 
         static member Default =
-            { Class = nameof (OrganizationDto)
+            { Class = nameof OrganizationDto
               OrganizationId = OrganizationId.Empty
               OrganizationName = String.Empty
               OwnerId = OwnerId.Empty

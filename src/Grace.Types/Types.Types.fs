@@ -178,12 +178,12 @@ module Types =
         { Timestamp: Instant
           CorrelationId: CorrelationId
           Principal: string
-          Properties: Dictionary<string, string> }
+          Properties: Dictionary<string, obj> }
 
         override this.ToString() = serialize this
 
         static member New correlationId principal =
-            { Timestamp = getCurrentInstant (); CorrelationId = correlationId; Principal = principal; Properties = Dictionary<string, string>() }
+            { Timestamp = getCurrentInstant (); CorrelationId = correlationId; Principal = principal; Properties = Dictionary<string, obj>() }
 
     /// A FileVersion represents a version of a file in a repository with unique contents, and therefore with a unique SHA-256 hash. It is immutable.
     ///
@@ -302,7 +302,7 @@ module Types =
         static member GetKnownTypes() = GetKnownTypes<DirectoryVersion>()
 
         static member Default =
-            { Class = nameof (DirectoryVersion)
+            { Class = nameof DirectoryVersion
               DirectoryVersionId = DirectoryVersionId.Empty
               OwnerId = OwnerId.Empty
               OrganizationId = OrganizationId.Empty
@@ -325,7 +325,7 @@ module Types =
             (files: List<FileVersion>)
             (size: int64)
             =
-            { Class = nameof (DirectoryVersion)
+            { Class = nameof DirectoryVersion
               DirectoryVersionId = directoryVersionId
               OwnerId = ownerId
               OrganizationId = organizationId
@@ -523,6 +523,9 @@ module Types =
           StackTrace: string
           InnerException: ExceptionObject option }
 
+        /// Checks if the ExceptionObject is set to the default value.
+        member this.IsDefault() = this = ExceptionObject.Default
+
         static member Default = { Message = String.Empty; StackTrace = String.Empty; InnerException = None }
 
         /// Creates an ExceptionObject from a .NET Exception.
@@ -540,27 +543,27 @@ module Types =
         { ReturnValue: 'T
           EventTime: Instant
           CorrelationId: string
-          Properties: Dictionary<string, string> }
+          Properties: Dictionary<string, obj> }
 
-        static member CreateWithMetadata<'T> (returnValue: 'T) (correlationId: string) (properties: Dictionary<string, string>) =
+        static member CreateWithMetadata<'T> (returnValue: 'T) (correlationId: string) (properties: Dictionary<string, obj>) =
             { ReturnValue = returnValue; EventTime = getCurrentInstant (); CorrelationId = correlationId; Properties = properties }
 
         static member Create<'T> (returnValue: 'T) (correlationId: string) =
-            GraceReturnValue.CreateWithMetadata returnValue correlationId (Dictionary<string, string>())
+            GraceReturnValue.CreateWithMetadata returnValue correlationId (Dictionary<string, obj>())
 
         /// Adds a key-value pair to GraceReturnValue's Properties dictionary.
-        member this.enhance(key, value) =
+        member this.enhance((key: string), (value: obj)) =
             //logToConsole $"In GraceReturnValue.enhance: Enhancing GraceReturnValue with key: {key}, value: {value}."
 
-            match String.IsNullOrEmpty(key), String.IsNullOrEmpty(value) with
+            match String.IsNullOrEmpty(key), isNull (value) with
             | false, false -> this.Properties[key] <- value
-            | false, true -> this.Properties[key] <- String.Empty
+            | false, true -> this.Properties[key] <- null
             | true, _ -> ()
 
             this
 
         /// Adds a set of key-value pairs from a Dictionary to GraceReturnValue's Properties dictionary.
-        member this.enhance(dict: IReadOnlyDictionary<string, string>) =
+        member this.enhance(dict: IReadOnlyDictionary<string, obj>) =
             // logToConsole $"In GraceReturnValue.enhance: isNull(dict): {isNull (dict)}."
             // logToConsole $"In GraceReturnValue.enhance: Enhancing GraceReturnValue with {dict.Count} properties."
 
@@ -584,43 +587,43 @@ module Types =
           Error: string
           EventTime: Instant
           CorrelationId: string
-          Properties: Dictionary<String, String> }
+          Properties: Dictionary<string, obj> }
 
         static member Default =
             { Exception = ExceptionObject.Default
               Error = "Empty error message"
               EventTime = getCurrentInstant ()
               CorrelationId = String.Empty
-              Properties = new Dictionary<String, String>() }
+              Properties = new Dictionary<string, obj>() }
 
         static member Create (error: string) (correlationId: string) =
             { Exception = ExceptionObject.Default
               Error = error
               EventTime = getCurrentInstant ()
               CorrelationId = correlationId
-              Properties = new Dictionary<String, String>() }
+              Properties = new Dictionary<string, obj>() }
 
         static member CreateWithException (ex: Exception) (error: string) (correlationId: string) =
             { Exception = ExceptionObject.Create(ex)
               Error = error
               EventTime = getCurrentInstant ()
               CorrelationId = correlationId
-              Properties = new Dictionary<String, String>() }
+              Properties = new Dictionary<string, obj>() }
 
-        static member CreateWithMetadata (ex: Exception) (error: string) (correlationId: string) (properties: Dictionary<String, String>) =
+        static member CreateWithMetadata (ex: Exception) (error: string) (correlationId: string) (properties: Dictionary<string, obj>) =
             { Exception = ExceptionObject.Create(ex); Error = error; EventTime = getCurrentInstant (); CorrelationId = correlationId; Properties = properties }
 
         /// Adds a key-value pair to GraceError's Properties dictionary.
-        member this.enhance(key, value) =
-            match String.IsNullOrEmpty(key), String.IsNullOrEmpty(value) with
+        member this.enhance(key: string, value: obj) =
+            match String.IsNullOrEmpty(key), isNull (value) with
             | false, false -> this.Properties[key] <- value
-            | false, true -> this.Properties[key] <- String.Empty
+            | false, true -> this.Properties[key] <- null
             | true, _ -> ()
 
             this
 
-        /// Adds a set of key-value pairs from a Dictionary to GraceReturnValue's Properties dictionary.
-        member this.enhance(dict: IReadOnlyDictionary<string, string>) =
+        /// Adds a set of key-value pairs from a Dictionary to GraceError's Properties dictionary.
+        member this.enhance(dict: IReadOnlyDictionary<string, obj>) =
             dict |> Seq.iter (fun kvp -> this.Properties[kvp.Key] <- kvp.Value)
             this
 
@@ -634,11 +637,7 @@ module Types =
 
                 if sb.Length >= 2 then sb.Remove(sb.Length - 2, 2) |> ignore
 
-                let message =
-                    if this.Exception <> ExceptionObject.Default then
-                        (serialize this.Exception)
-                    else
-                        this.Error
+                let message = if this.Exception.IsDefault() then this.Error else (serialize this.Exception)
 
                 $"Error: {message}{Environment.NewLine}EventTime: {formatInstantExtended this.EventTime}{Environment.NewLine}CorrelationId: {this.CorrelationId}{Environment.NewLine}Properties:{Environment.NewLine}{errorText.ToString()}{Environment.NewLine}"
             finally

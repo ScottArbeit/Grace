@@ -71,9 +71,9 @@ module Owner =
                     logToConsole $"In Owner.Actor.ApplyEvent(): GraceReturnValue: {returnValue}"
 
                     returnValue
-                        .enhance(nameof (OwnerId), $"{ownerDto.OwnerId}")
-                        .enhance(nameof (OwnerName), $"{ownerDto.OwnerName}")
-                        .enhance (nameof (OwnerEventType), $"{getDiscriminatedUnionFullName ownerEvent.Event}")
+                        .enhance(nameof OwnerId, ownerDto.OwnerId)
+                        .enhance(nameof OwnerName, ownerDto.OwnerName)
+                        .enhance (nameof OwnerEventType, getDiscriminatedUnionFullName ownerEvent.Event)
                     |> ignore
 
                     return Ok returnValue
@@ -84,9 +84,9 @@ module Owner =
 
                     graceError
                         .enhance("Exception details", exceptionResponse.``exception`` + exceptionResponse.innerException)
-                        .enhance(nameof (OwnerId), $"{ownerDto.OwnerId}")
-                        .enhance(nameof (OwnerName), $"{ownerDto.OwnerName}")
-                        .enhance (nameof (OwnerEventType), $"{getDiscriminatedUnionFullName ownerEvent.Event}")
+                        .enhance(nameof OwnerId, ownerDto.OwnerId)
+                        .enhance(nameof OwnerName, ownerDto.OwnerName)
+                        .enhance (nameof OwnerEventType, getDiscriminatedUnionFullName ownerEvent.Event)
                     |> ignore
 
                     return Error graceError

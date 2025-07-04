@@ -436,10 +436,10 @@ module Repository =
                     // Update the Grace configuration file with the newly-created repository.
                     if parseResult.CommandResult.GetResult(Options.doNotSwitch) = null then
                         let newConfig = Current()
-                        newConfig.RepositoryId <- Guid.Parse(returnValue.Properties[nameof (RepositoryId)])
-                        newConfig.RepositoryName <- RepositoryName(returnValue.Properties[nameof (RepositoryName)])
-                        newConfig.BranchId <- Guid.Parse(returnValue.Properties[nameof (BranchId)])
-                        newConfig.BranchName <- BranchName(returnValue.Properties[nameof (BranchName)])
+                        newConfig.RepositoryId <- Guid.Parse($"{returnValue.Properties[nameof RepositoryId]}")
+                        newConfig.RepositoryName <- $"{returnValue.Properties[nameof RepositoryName]}"
+                        newConfig.BranchId <- Guid.Parse($"{returnValue.Properties[nameof BranchId]}")
+                        newConfig.BranchName <- $"{returnValue.Properties[nameof BranchName]}"
                         newConfig.DefaultBranchName <- "main"
                         newConfig.ObjectStorageProvider <- ObjectStorageProvider.AzureBlobStorage
                         updateConfiguration newConfig

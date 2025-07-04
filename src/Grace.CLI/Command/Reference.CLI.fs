@@ -1015,7 +1015,7 @@ module Reference =
                                                             | Ok returnValue ->
                                                                 logToAnsiConsole Colors.Verbose $"Succeeded doing promotion."
 
-                                                                let promotionReferenceId = returnValue.Properties["ReferenceId"]
+                                                                let promotionReferenceId = Guid.Parse(returnValue.Properties["ReferenceId"] :?> string)
 
                                                                 let rebaseParameters =
                                                                     Parameters.Branch.RebaseParameters(
@@ -1025,7 +1025,7 @@ module Reference =
                                                                         OwnerName = parameters.OwnerName,
                                                                         OrganizationId = parameters.OrganizationId,
                                                                         OrganizationName = parameters.OrganizationName,
-                                                                        BasedOn = (Guid.Parse(promotionReferenceId))
+                                                                        BasedOn = promotionReferenceId
                                                                     )
 
                                                                 let! rebaseResult = Branch.Rebase(rebaseParameters)

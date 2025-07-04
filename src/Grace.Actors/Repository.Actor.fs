@@ -145,12 +145,13 @@ module Repository =
                                     match directoryResult, promotionResult with
                                     | (Ok directoryVersionGraceReturnValue, Ok promotionGraceReturnValue) ->
                                         logToConsole $"In Repository.Actor.handleEvent: Successfully created the initial promotion."
-                                        logToConsole $"promotionGraceReturnValue.Properties:"
 
-                                        promotionGraceReturnValue.Properties
-                                        |> Seq.iter (fun kv -> logToConsole $"  {kv.Key}: {kv.Value}")
+                                        //logToConsole $"promotionGraceReturnValue.Properties:"
+
+                                        //promotionGraceReturnValue.Properties
+                                        //|> Seq.iter (fun kv -> logToConsole $"  {kv.Key}: {kv.Value}")
                                         // Set current, empty directory as the based-on reference.
-                                        let referenceId = Guid.Parse(promotionGraceReturnValue.Properties[nameof (ReferenceId)])
+                                        let referenceId = Guid.Parse($"{promotionGraceReturnValue.Properties[nameof ReferenceId]}")
 
                                         //logToConsole $"In Repository.Actor.handleEvent: Before trying to rebase the initial branch."
                                         //let! rebaseResult = branchActor.Handle (Commands.Branch.BranchCommand.Rebase(referenceId)) repositoryEvent.Metadata
@@ -179,21 +180,21 @@ module Repository =
                         let returnValue = GraceReturnValue.Create $"Repository command succeeded." repositoryEvent.Metadata.CorrelationId
 
                         returnValue
-                            .enhance(nameof (OwnerId), $"{repositoryDto.OwnerId}")
-                            .enhance(nameof (OrganizationId), $"{repositoryDto.OrganizationId}")
-                            .enhance(nameof (RepositoryId), $"{repositoryDto.RepositoryId}")
-                            .enhance(nameof (RepositoryName), $"{repositoryDto.RepositoryName}")
-                            .enhance (nameof (RepositoryEventType), $"{getDiscriminatedUnionFullName repositoryEvent.Event}")
+                            .enhance(nameof OwnerId, repositoryDto.OwnerId)
+                            .enhance(nameof OrganizationId, repositoryDto.OrganizationId)
+                            .enhance(nameof RepositoryId, repositoryDto.RepositoryId)
+                            .enhance(nameof RepositoryName, repositoryDto.RepositoryName)
+                            .enhance (nameof RepositoryEventType, getDiscriminatedUnionFullName repositoryEvent.Event)
                         |> ignore
 
                         if branchId <> BranchId.Empty then
                             returnValue
-                                .enhance(nameof (BranchId), $"{branchId}")
-                                .enhance(nameof (BranchName), $"{Constants.InitialBranchName}")
-                                .enhance (nameof (ReferenceId), $"{referenceId}")
+                                .enhance(nameof BranchId, branchId)
+                                .enhance(nameof BranchName, Constants.InitialBranchName)
+                                .enhance (nameof ReferenceId, referenceId)
                             |> ignore
 
-                        returnValue.Properties.Add("EventType", $"{getDiscriminatedUnionFullName repositoryEvent.Event}")
+                        returnValue.Properties.Add("EventType", getDiscriminatedUnionFullName repositoryEvent.Event)
 
                         return Ok returnValue
                     | Error graceError -> return Error graceError
@@ -205,11 +206,11 @@ module Repository =
 
                     graceError
                         .enhance("Exception details", exceptionResponse.``exception`` + exceptionResponse.innerException)
-                        .enhance(nameof (OwnerId), $"{repositoryDto.OwnerId}")
-                        .enhance(nameof (OrganizationId), $"{repositoryDto.OrganizationId}")
-                        .enhance(nameof (RepositoryId), $"{repositoryDto.RepositoryId}")
-                        .enhance(nameof (RepositoryName), $"{repositoryDto.RepositoryName}")
-                        .enhance (nameof (RepositoryEventType), $"{getDiscriminatedUnionFullName repositoryEvent.Event}")
+                        .enhance(nameof OwnerId, repositoryDto.OwnerId)
+                        .enhance(nameof OrganizationId, repositoryDto.OrganizationId)
+                        .enhance(nameof RepositoryId, repositoryDto.RepositoryId)
+                        .enhance(nameof RepositoryName, repositoryDto.RepositoryName)
+                        .enhance (nameof RepositoryEventType, getDiscriminatedUnionFullName repositoryEvent.Event)
                     |> ignore
 
                     return Error graceError

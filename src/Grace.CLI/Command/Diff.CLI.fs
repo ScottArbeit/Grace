@@ -223,9 +223,10 @@ module Diff =
                 parseResult.GetResult(Options.sha256Hash1) <> null
                 && not <| Constants.Sha256Regex.IsMatch(parameters.Sha256Hash1)
             then
-                let properties = Dictionary<string, string>()
-                properties.Add("repositoryId", $"{parameters.RepositoryId}")
+                let properties = Dictionary<string, obj>()
+                properties.Add("repositoryId", parameters.RepositoryId)
                 properties.Add("sha256Hash1", parameters.Sha256Hash1)
+                properties.Add("sha256Hash2", parameters.Sha256Hash2)
 
                 Error(GraceError.CreateWithMetadata null (DiffError.getErrorMessage InvalidSha256Hash) (parameters.CorrelationId) properties)
             else
@@ -236,6 +237,11 @@ module Diff =
                 parseResult.GetResult(Options.sha256Hash2) <> null
                 && not <| Constants.Sha256Regex.IsMatch(parameters.Sha256Hash2)
             then
+                let properties = Dictionary<string, obj>()
+                properties.Add("repositoryId", parameters.RepositoryId)
+                properties.Add("sha256Hash1", parameters.Sha256Hash1)
+                properties.Add("sha256Hash2", parameters.Sha256Hash2)
+
                 Error(GraceError.Create (DiffError.getErrorMessage InvalidSha256Hash) (parameters.CorrelationId))
             else
                 Ok(parseResult, parameters)

@@ -68,10 +68,10 @@ module Organization =
 
                     let returnValue =
                         (GraceReturnValue.Create "Organization command succeeded." organizationEvent.Metadata.CorrelationId)
-                            .enhance(nameof (OwnerId), $"{organizationDto.OwnerId}")
-                            .enhance(nameof (OrganizationId), $"{organizationDto.OrganizationId}")
-                            .enhance(nameof (OrganizationName), $"{organizationDto.OrganizationName}")
-                            .enhance (nameof (OrganizationEventType), $"{getDiscriminatedUnionFullName organizationEvent.Event}")
+                            .enhance(nameof OwnerId, organizationDto.OwnerId)
+                            .enhance(nameof OrganizationId, organizationDto.OrganizationId)
+                            .enhance(nameof OrganizationName, organizationDto.OrganizationName)
+                            .enhance (nameof OrganizationEventType, getDiscriminatedUnionFullName organizationEvent.Event)
 
                     return Ok returnValue
                 with ex ->
@@ -84,9 +84,9 @@ module Organization =
 
                     graceError
                         .enhance("Exception details", exceptionResponse.``exception`` + exceptionResponse.innerException)
-                        .enhance(nameof (OrganizationId), $"{organizationDto.OrganizationId}")
-                        .enhance(nameof (OrganizationName), $"{organizationDto.OrganizationName}")
-                        .enhance (nameof (OrganizationEventType), $"{getDiscriminatedUnionFullName organizationEvent.Event}")
+                        .enhance(nameof OrganizationId, organizationDto.OrganizationId)
+                        .enhance(nameof OrganizationName, organizationDto.OrganizationName)
+                        .enhance (nameof OrganizationEventType, getDiscriminatedUnionFullName organizationEvent.Event)
                     |> ignore
 
                     return Error graceError

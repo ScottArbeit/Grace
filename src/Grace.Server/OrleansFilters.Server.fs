@@ -39,8 +39,8 @@ module Orleans =
                         //orleansContext
                         //|> Seq.iter (fun kvp -> logToConsole $"**** - {kvp.Key}: {kvp.Value}")
 
-                        let organizationId () = $"{orleansContext[nameof (OrganizationId)]}"
-                        let repositoryId () = $"{orleansContext[nameof (RepositoryId)]}"
+                        let organizationId () = $"{orleansContext[nameof OrganizationId]}"
+                        let repositoryId () = $"{orleansContext[nameof RepositoryId]}"
 
                         let partitionKey =
                             match grainType with
@@ -57,7 +57,7 @@ module Orleans =
                             | StateName.Repository -> organizationId ()
                             | StateName.RepositoryPermission -> repositoryId ()
                             | StateName.User -> StateName.User
-                            | _ -> raise (ArgumentException($"Unknown grain type in {nameof (GracePartitionKeyProvider)}: {grainType}"))
+                            | _ -> raise (ArgumentException($"Unknown grain type in {nameof GracePartitionKeyProvider}: {grainType}"))
 
                         let correlationid = getCorrelationId ()
 

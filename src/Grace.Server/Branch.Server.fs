@@ -40,7 +40,7 @@ module Branch =
             let startTime = getCurrentInstant ()
             let graceIds = getGraceIds context
             let correlationId = getCorrelationId context
-            let parameterDictionary = Dictionary<string, string>()
+            let parameterDictionary = Dictionary<string, obj>()
 
             try
                 let commandName = context.Items["Command"] :?> string
@@ -65,24 +65,24 @@ module Branch =
                         | Ok graceReturnValue ->
                             graceReturnValue
                                 .enhance(parameterDictionary)
-                                .enhance(nameof (OwnerId), graceIds.OwnerIdString)
-                                .enhance(nameof (OrganizationId), graceIds.OrganizationIdString)
-                                .enhance(nameof (RepositoryId), graceIds.RepositoryIdString)
-                                .enhance(nameof (BranchId), graceIds.BranchIdString)
+                                .enhance(nameof OwnerId, graceIds.OwnerId)
+                                .enhance(nameof OrganizationId, graceIds.OrganizationId)
+                                .enhance(nameof RepositoryId, graceIds.RepositoryId)
+                                .enhance(nameof BranchId, graceIds.BranchId)
                                 .enhance("Command", commandName)
-                                .enhance ("Path", context.Request.Path)
+                                .enhance ("Path", context.Request.Path.Value)
                             |> ignore
 
                             return! context |> result200Ok graceReturnValue
                         | Error graceError ->
                             graceError
                                 .enhance(parameterDictionary)
-                                .enhance(nameof (OwnerId), graceIds.OwnerIdString)
-                                .enhance(nameof (OrganizationId), graceIds.OrganizationIdString)
-                                .enhance(nameof (RepositoryId), graceIds.RepositoryIdString)
-                                .enhance(nameof (BranchId), graceIds.BranchIdString)
+                                .enhance(nameof OwnerId, graceIds.OwnerId)
+                                .enhance(nameof OrganizationId, graceIds.OrganizationId)
+                                .enhance(nameof RepositoryId, graceIds.RepositoryId)
+                                .enhance(nameof BranchId, graceIds.BranchId)
                                 .enhance("Command", commandName)
-                                .enhance ("Path", context.Request.Path)
+                                .enhance ("Path", context.Request.Path.Value)
                             |> ignore
 
                             return! context |> result400BadRequest graceError
@@ -126,11 +126,11 @@ module Branch =
                     let graceError =
                         (GraceError.Create errorMessage correlationId)
                             .enhance(parameterDictionary)
-                            .enhance(nameof (OwnerId), graceIds.OwnerIdString)
-                            .enhance(nameof (OrganizationId), graceIds.OrganizationIdString)
-                            .enhance(nameof (RepositoryId), graceIds.RepositoryIdString)
-                            .enhance(nameof (BranchId), graceIds.BranchIdString)
-                            .enhance ("Path", context.Request.Path)
+                            .enhance(nameof OwnerId, graceIds.OwnerId)
+                            .enhance(nameof OrganizationId, graceIds.OrganizationId)
+                            .enhance(nameof RepositoryId, graceIds.RepositoryId)
+                            .enhance(nameof BranchId, graceIds.BranchId)
+                            .enhance ("Path", context.Request.Path.Value)
 
                     return! context |> result400BadRequest graceError
             with ex ->
@@ -144,11 +144,11 @@ module Branch =
                 let graceError =
                     (GraceError.CreateWithException ex String.Empty correlationId)
                         .enhance(parameterDictionary)
-                        .enhance(nameof (OwnerId), graceIds.OwnerIdString)
-                        .enhance(nameof (OrganizationId), graceIds.OrganizationIdString)
-                        .enhance(nameof (RepositoryId), graceIds.RepositoryIdString)
-                        .enhance(nameof (BranchId), graceIds.BranchIdString)
-                        .enhance ("Path", context.Request.Path)
+                        .enhance(nameof OwnerId, graceIds.OwnerId)
+                        .enhance(nameof OrganizationId, graceIds.OrganizationId)
+                        .enhance(nameof RepositoryId, graceIds.RepositoryId)
+                        .enhance(nameof BranchId, graceIds.BranchId)
+                        .enhance ("Path", context.Request.Path.Value)
 
                 return! context |> result500ServerError graceError
         }
@@ -184,11 +184,11 @@ module Branch =
                     let graceReturnValue =
                         (GraceReturnValue.Create queryResult correlationId)
                             .enhance(parameterDictionary)
-                            .enhance(nameof (OwnerId), graceIds.OwnerIdString)
-                            .enhance(nameof (OrganizationId), graceIds.OrganizationIdString)
-                            .enhance(nameof (RepositoryId), graceIds.RepositoryIdString)
-                            .enhance(nameof (BranchId), graceIds.BranchIdString)
-                            .enhance ("Path", context.Request.Path)
+                            .enhance(nameof OwnerId, graceIds.OwnerId)
+                            .enhance(nameof OrganizationId, graceIds.OrganizationId)
+                            .enhance(nameof RepositoryId, graceIds.RepositoryId)
+                            .enhance(nameof BranchId, graceIds.BranchId)
+                            .enhance ("Path", context.Request.Path.Value)
 
                     return! context |> result200Ok graceReturnValue
                 else
@@ -197,22 +197,22 @@ module Branch =
                     let graceError =
                         (GraceError.Create (BranchError.getErrorMessage error) correlationId)
                             .enhance(parameterDictionary)
-                            .enhance(nameof (OwnerId), graceIds.OwnerIdString)
-                            .enhance(nameof (OrganizationId), graceIds.OrganizationIdString)
-                            .enhance(nameof (RepositoryId), graceIds.RepositoryIdString)
-                            .enhance(nameof (BranchId), graceIds.BranchIdString)
-                            .enhance ("Path", context.Request.Path)
+                            .enhance(nameof OwnerId, graceIds.OwnerId)
+                            .enhance(nameof OrganizationId, graceIds.OrganizationId)
+                            .enhance(nameof RepositoryId, graceIds.RepositoryId)
+                            .enhance(nameof BranchId, graceIds.BranchId)
+                            .enhance ("Path", context.Request.Path.Value)
 
                     return! context |> result400BadRequest graceError
             with ex ->
                 let graceError =
                     (GraceError.CreateWithException ex String.Empty correlationId)
                         .enhance(parameterDictionary)
-                        .enhance(nameof (OwnerId), graceIds.OwnerIdString)
-                        .enhance(nameof (OrganizationId), graceIds.OrganizationIdString)
-                        .enhance(nameof (RepositoryId), graceIds.RepositoryIdString)
-                        .enhance(nameof (BranchId), graceIds.BranchIdString)
-                        .enhance ("Path", context.Request.Path)
+                        .enhance(nameof OwnerId, graceIds.OwnerId)
+                        .enhance(nameof OrganizationId, graceIds.OrganizationId)
+                        .enhance(nameof RepositoryId, graceIds.RepositoryId)
+                        .enhance(nameof BranchId, graceIds.BranchId)
+                        .enhance ("Path", context.Request.Path.Value)
 
                 return! context |> result500ServerError graceError
         }
@@ -285,7 +285,7 @@ module Branch =
                     }
                     |> ValueTask<BranchCommand>
 
-                context.Items.Add("Command", nameof (Create))
+                context.Items.Add("Command", nameof Create)
                 return! processCommand context validations command
             }
 
@@ -309,7 +309,7 @@ module Branch =
 
                 let command (parameters: RebaseParameters) = BranchCommand.Rebase parameters.BasedOn |> returnValueTask
 
-                context.Items.Add("Command", nameof (Rebase))
+                context.Items.Add("Command", nameof Rebase)
                 return! processCommand context validations command
             }
 
@@ -353,7 +353,7 @@ module Branch =
                     }
 
                 let! parameters = context |> parse<AssignParameters>
-                context.Items.Add("Command", nameof (Assign))
+                context.Items.Add("Command", nameof Assign)
                 context.Items["AssignParameters"] <- parameters
                 context.Request.Body.Seek(0L, IO.SeekOrigin.Begin) |> ignore
 
@@ -391,7 +391,7 @@ module Branch =
                     Promote(parameters.DirectoryVersionId, parameters.Sha256Hash, ReferenceText parameters.Message)
                     |> returnValueTask
 
-                context.Items.Add("Command", nameof (Promote))
+                context.Items.Add("Command", nameof Promote)
                 return! processCommand context validations command
             }
 
@@ -419,7 +419,7 @@ module Branch =
                     BranchCommand.Commit(parameters.DirectoryVersionId, parameters.Sha256Hash, ReferenceText parameters.Message)
                     |> returnValueTask
 
-                context.Items.Add("Command", nameof (Commit))
+                context.Items.Add("Command", nameof Commit)
                 return! processCommand context validations command
             }
 
@@ -446,7 +446,7 @@ module Branch =
                     BranchCommand.Checkpoint(parameters.DirectoryVersionId, parameters.Sha256Hash, ReferenceText parameters.Message)
                     |> returnValueTask
 
-                context.Items.Add("Command", nameof (Checkpoint))
+                context.Items.Add("Command", nameof Checkpoint)
                 return! processCommand context validations command
             }
 
@@ -473,7 +473,7 @@ module Branch =
                     BranchCommand.Save(parameters.DirectoryVersionId, parameters.Sha256Hash, ReferenceText parameters.Message)
                     |> returnValueTask
 
-                context.Items.Add("Command", nameof (Save))
+                context.Items.Add("Command", nameof Save)
                 return! processCommand context validations command
             }
 
@@ -500,7 +500,7 @@ module Branch =
                     BranchCommand.Tag(parameters.DirectoryVersionId, parameters.Sha256Hash, ReferenceText parameters.Message)
                     |> returnValueTask
 
-                context.Items.Add("Command", nameof (Tag))
+                context.Items.Add("Command", nameof Tag)
                 return! processCommand context validations command
             }
 
@@ -527,7 +527,7 @@ module Branch =
                     BranchCommand.CreateExternal(parameters.DirectoryVersionId, parameters.Sha256Hash, ReferenceText parameters.Message)
                     |> returnValueTask
 
-                context.Items.Add("Command", nameof (CreateExternal))
+                context.Items.Add("Command", nameof CreateExternal)
                 return! processCommand context validations command
             }
 
@@ -540,7 +540,7 @@ module Branch =
 
                 let command (parameters: EnableFeatureParameters) = EnableAssign(parameters.Enabled) |> returnValueTask
 
-                context.Items.Add("Command", nameof (EnableAssign))
+                context.Items.Add("Command", nameof EnableAssign)
                 return! processCommand context validations command
             }
 
@@ -552,7 +552,7 @@ module Branch =
 
                 let command (parameters: EnableFeatureParameters) = EnablePromotion(parameters.Enabled) |> returnValueTask
 
-                context.Items.Add("Command", nameof (EnablePromotion))
+                context.Items.Add("Command", nameof EnablePromotion)
                 return! processCommand context validations command
             }
 
@@ -564,7 +564,7 @@ module Branch =
 
                 let command (parameters: EnableFeatureParameters) = EnableCommit(parameters.Enabled) |> returnValueTask
 
-                context.Items.Add("Command", nameof (EnableCommit))
+                context.Items.Add("Command", nameof EnableCommit)
                 return! processCommand context validations command
             }
 
@@ -576,7 +576,7 @@ module Branch =
 
                 let command (parameters: EnableFeatureParameters) = EnableCheckpoint(parameters.Enabled) |> returnValueTask
 
-                context.Items.Add("Command", nameof (EnableCheckpoint))
+                context.Items.Add("Command", nameof EnableCheckpoint)
                 return! processCommand context validations command
             }
 
@@ -588,7 +588,7 @@ module Branch =
 
                 let command (parameters: EnableFeatureParameters) = EnableSave(parameters.Enabled) |> returnValueTask
 
-                context.Items.Add("Command", nameof (EnableSave))
+                context.Items.Add("Command", nameof EnableSave)
                 return! processCommand context validations command
             }
 
@@ -600,7 +600,7 @@ module Branch =
 
                 let command (parameters: EnableFeatureParameters) = EnableTag(parameters.Enabled) |> returnValueTask
 
-                context.Items.Add("Command", nameof (EnableTag))
+                context.Items.Add("Command", nameof EnableTag)
                 return! processCommand context validations command
             }
 
@@ -612,7 +612,7 @@ module Branch =
 
                 let command (parameters: EnableFeatureParameters) = EnableExternal(parameters.Enabled) |> returnValueTask
 
-                context.Items.Add("Command", nameof (EnableExternal))
+                context.Items.Add("Command", nameof EnableExternal)
                 return! processCommand context validations command
             }
 
@@ -624,7 +624,7 @@ module Branch =
 
                 let command (parameters: EnableFeatureParameters) = EnableAutoRebase(parameters.Enabled) |> returnValueTask
 
-                context.Items.Add("Command", nameof (EnableAutoRebase))
+                context.Items.Add("Command", nameof EnableAutoRebase)
                 return! processCommand context validations command
             }
 
@@ -636,7 +636,7 @@ module Branch =
 
                 let command (parameters: DeleteBranchParameters) = DeleteLogical(parameters.Force, parameters.DeleteReason) |> returnValueTask
 
-                context.Items.Add("Command", nameof (DeleteLogical))
+                context.Items.Add("Command", nameof DeleteLogical)
                 return! processCommand context validations command
             }
 
@@ -978,7 +978,7 @@ module Branch =
                             let! branchDto = actorProxy.Get correlationId
 
                             let referenceType =
-                                (context.Items[nameof (ReferenceType)] :?> String)
+                                (context.Items[nameof ReferenceType] :?> String)
                                 |> discriminatedUnionFromString<ReferenceType>
 
                             let! references =
@@ -1020,7 +1020,7 @@ module Branch =
                         }
 
                     let! parameters = context |> parse<GetDiffsForReferenceTypeParameters>
-                    context.Items.Add(nameof (ReferenceType), parameters.ReferenceType)
+                    context.Items.Add(nameof ReferenceType, parameters.ReferenceType)
                     let! result = processQuery context parameters validations (parameters.MaxCount) query
 
                     let duration_ms = getDurationRightAligned_ms startTime

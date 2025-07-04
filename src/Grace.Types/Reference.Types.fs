@@ -91,7 +91,7 @@ module Reference =
           DeleteReason: DeleteReason }
 
         static member Default =
-            { Class = nameof (ReferenceDto)
+            { Class = nameof ReferenceDto
               ReferenceId = ReferenceId.Empty
               OwnerId = OwnerId.Empty
               OrganizationId = OrganizationId.Empty

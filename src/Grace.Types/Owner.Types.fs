@@ -66,7 +66,7 @@ module Owner =
 
         /// Default instance of OwnerDto with empty or default values.
         static member Default =
-            { Class = nameof (OwnerDto)
+            { Class = nameof OwnerDto
               OwnerId = OwnerId.Empty
               OwnerName = String.Empty
               OwnerType = OwnerType.Public

@@ -53,7 +53,7 @@ type Owner() =
             let! response = Client.PostAsync("/owner/setType", createJsonContent parameters)
             response.EnsureSuccessStatusCode() |> ignore
             let! returnValue = deserializeContent<GraceReturnValue<string>> response
-            Assert.That(returnValue.Properties[nameof (OwnerId)], Is.EqualTo(ownerId))
+            Assert.That(returnValue.Properties[nameof OwnerId], Is.EqualTo(ownerId))
         }
 
     [<Test>]
@@ -66,7 +66,7 @@ type Owner() =
             let! response = Client.PostAsync("/owner/setType", createJsonContent parameters)
             response.EnsureSuccessStatusCode() |> ignore
             let! returnValue = deserializeContent<GraceReturnValue<string>> response
-            Assert.That(returnValue.Properties[nameof (OwnerId)], Is.EqualTo(ownerId))
+            Assert.That(returnValue.Properties[nameof OwnerId], Is.EqualTo(ownerId))
         }
 
     [<Test>]
@@ -163,7 +163,7 @@ type Owner() =
             let! response = Client.PostAsync("/owner/setSearchVisibility", createJsonContent parameters)
             response.EnsureSuccessStatusCode() |> ignore
             let! returnValue = deserializeContent<GraceReturnValue<string>> response
-            Assert.That(returnValue.Properties[nameof (OwnerId)], Is.EqualTo(ownerId))
+            Assert.That(returnValue.Properties[nameof OwnerId], Is.EqualTo(ownerId))
         }
 
     [<Test>]
@@ -176,7 +176,7 @@ type Owner() =
             let! response = Client.PostAsync("/owner/setSearchVisibility", createJsonContent parameters)
             response.EnsureSuccessStatusCode() |> ignore
             let! returnValue = deserializeContent<GraceReturnValue<string>> response
-            Assert.That(returnValue.Properties[nameof (OwnerId)], Is.EqualTo(ownerId))
+            Assert.That(returnValue.Properties[nameof OwnerId], Is.EqualTo(ownerId))
         }
 
     [<Test>]
@@ -242,7 +242,7 @@ type Owner() =
             let! response = Client.PostAsync("/owner/setName", createJsonContent parameters)
             response.EnsureSuccessStatusCode() |> ignore
             let! returnValue = deserializeContent<GraceReturnValue<string>> response
-            Assert.That(returnValue.Properties[nameof (OwnerId)], Is.EqualTo(ownerId))
+            Assert.That(returnValue.Properties[nameof OwnerId], Is.EqualTo(ownerId))
         }
 
     [<Test>]

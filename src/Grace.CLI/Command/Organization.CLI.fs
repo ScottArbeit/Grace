@@ -251,8 +251,8 @@ module Organization =
                     // Update the Grace configuration file with the newly-created organization.
                     if parseResult.CommandResult.GetResult(Options.doNotSwitch) = null then
                         let newConfig = Current()
-                        newConfig.OrganizationId <- Guid.Parse(returnValue.Properties[nameof (OrganizationId)])
-                        newConfig.OrganizationName <- returnValue.Properties[nameof (OrganizationName)]
+                        newConfig.OrganizationId <- Guid.Parse($"{returnValue.Properties[nameof OrganizationId]}")
+                        newConfig.OrganizationName <- $"{returnValue.Properties[nameof OrganizationName]}"
                         updateConfiguration newConfig
                 | Error _ -> ()
 

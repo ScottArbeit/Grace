@@ -153,27 +153,27 @@ module Services =
                     key,
                     fun cacheEntry ->
                         task {
-                            // This can and should last in cache for longer than Grace's default expiration time.
-                            // StorageAccountNames and container names are stable.
-                            // However, we don't want to clog up memoryCache for too long with each client.
-                            // Not sure what the right balance is, but 10 minutes seems reasonable.
-                            cacheEntry.AbsoluteExpiration <- DateTimeOffset.UtcNow.Add(TimeSpan.FromMinutes(10.0))
-
                             let blobContainerClient = BlobContainerClient(azureStorageConnectionString, containerName)
                             let ownerActorProxy = Owner.CreateActorProxy repositoryDto.OwnerId CorrelationId.Empty
                             let! ownerDto = ownerActorProxy.Get correlationId
                             let organizationActorProxy = Organization.CreateActorProxy repositoryDto.OrganizationId CorrelationId.Empty
                             let! organizationDto = organizationActorProxy.Get correlationId
                             let metadata = Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) :> IDictionary<string, string>
-                            metadata[nameof (OwnerId)] <- $"{repositoryDto.OwnerId}"
-                            metadata[nameof (OwnerName)] <- $"{ownerDto.OwnerName}"
-                            metadata[nameof (OrganizationId)] <- $"{repositoryDto.OrganizationId}"
-                            metadata[nameof (OrganizationName)] <- $"{organizationDto.OrganizationName}"
-                            metadata[nameof (RepositoryId)] <- $"{repositoryDto.RepositoryId}"
-                            metadata[nameof (RepositoryName)] <- $"{repositoryDto.RepositoryName}"
+                            metadata[nameof OwnerId] <- $"{repositoryDto.OwnerId}"
+                            metadata[nameof OwnerName] <- $"{ownerDto.OwnerName}"
+                            metadata[nameof OrganizationId] <- $"{repositoryDto.OrganizationId}"
+                            metadata[nameof OrganizationName] <- $"{organizationDto.OrganizationName}"
+                            metadata[nameof RepositoryId] <- $"{repositoryDto.RepositoryId}"
+                            metadata[nameof RepositoryName] <- $"{repositoryDto.RepositoryName}"
 
                             let! azureResponse =
                                 blobContainerClient.CreateIfNotExistsAsync(publicAccessType = Models.PublicAccessType.None, metadata = metadata)
+
+                            // This cacheEntry can (and should) last for longer than Grace's default expiration time.
+                            // StorageAccountNames and container names are stable.
+                            // However, we don't want to clog up memoryCache for too long with each client.
+                            // Aiming for a good balance, so keeping it for 10 minutes seems reasonable.
+                            cacheEntry.AbsoluteExpiration <- DateTimeOffset.UtcNow.Add(TimeSpan.FromMinutes(10.0))
 
                             return blobContainerClient
                         }
@@ -1262,7 +1262,10 @@ module Services =
 
     type DocumentIdentifier() =
         member val id = String.Empty with get, set
-        member val partitionKey = String.Empty with get, set
+        member val PartitionKey = String.Empty with get, set
+
+    type PartitionKeyIdentifier() =
+        member val PartitionKey = String.Empty with get, set
 
     /// Deletes all documents from CosmosDb.
     ///
@@ -1274,7 +1277,7 @@ module Services =
 
             try
                 // (MaxDegreeOfParallelism = 3) runs at 700 RU's, so it fits under the free 1,000 RU limit for CosmosDB, without getting throttled.
-                let parallelOptions = ParallelOptions(MaxDegreeOfParallelism = 10)
+                let parallelOptions = ParallelOptions(MaxDegreeOfParallelism = 4)
 
                 let itemRequestOptions =
                     ItemRequestOptions(AddRequestHeaders = fun headers -> headers.Add(Constants.CorrelationIdHeaderKey, "deleteAllFromCosmosDBThatMatch"))
@@ -1286,14 +1289,14 @@ module Services =
                 logToConsole
                     $"cosmosContainer.Id: {cosmosContainer.Id}; cosmosContainer.Database.Id: {cosmosContainer.Database.Id}; cosmosContainer.Database.Client.Endpoint: {cosmosContainer.Database.Client.Endpoint}."
 
-                let iterator = cosmosContainer.GetItemQueryIterator<DocumentIdentifier>(queryDefinition, requestOptions = queryRequestOptions)
+                let iterator = cosmosContainer.GetItemQueryIterator<PartitionKeyIdentifier>(queryDefinition, requestOptions = queryRequestOptions)
 
                 while iterator.HasMoreResults do
                     let batchStartTime = getCurrentInstant ()
                     let! batchResults = iterator.ReadNextAsync()
                     let mutable totalRequestCharge = 0L
 
-                    logToConsole $"In Services.deleteAllFromCosmosDB(): Current batch size: {batchResults.Resource.Count()}."
+                    //logToConsole $"In Services.deleteAllFromCosmosDB(): Current batch size: {batchResults.Resource.Count()}."
 
                     do!
                         Parallel.ForEachAsync(
@@ -1302,27 +1305,39 @@ module Services =
                             (fun document ct ->
                                 ValueTask(
                                     task {
-                                        let! deleteResponse =
-                                            cosmosContainer.DeleteItemAsync(document.id, PartitionKey(document.partitionKey), itemRequestOptions)
+                                        //let! deleteResponse =
+                                        //    cosmosContainer.DeleteItemAsync(document.id, PartitionKey(document.PartitionKey), itemRequestOptions)
 
-                                        // Multiplying by 1000 because Interlocked.Add() expects an int64; we'll divide by 1000 when logging.
-                                        totalRequestCharge <- Interlocked.Add(&totalRequestCharge, int64 (deleteResponse.RequestCharge * 1000.0))
+                                        //// Multiplying by 1000 because Interlocked.Add() expects an int64; we'll divide by 1000 when logging.
+                                        //totalRequestCharge <- Interlocked.Add(&totalRequestCharge, int64 (deleteResponse.RequestCharge * 1000.0))
 
-                                        if deleteResponse.StatusCode <> HttpStatusCode.NoContent then
-                                            failed.Add(document.id)
-                                            logToConsole $"Failed to delete id {document.id}."
+                                        //if deleteResponse.StatusCode <> HttpStatusCode.NoContent then
+                                        //    failed.Add(document.id)
+                                        //    logToConsole $"Failed to delete id {document.id}."
+
+                                        use! deleteResponse =
+                                            cosmosContainer.DeleteAllItemsByPartitionKeyStreamAsync(PartitionKey(document.PartitionKey), itemRequestOptions)
+
+                                        if deleteResponse.IsSuccessStatusCode then
+                                            logToConsole $"Request succeeded to delete all items with PartitionKey = {document.PartitionKey}."
+                                        else
+                                            failed.Add(document.PartitionKey)
+
+                                            logToConsole
+                                                $"Failed to delete PartitionKey {document.PartitionKey}. StatusCode: {deleteResponse.StatusCode}; Error: {deleteResponse.ErrorMessage}."
+
                                     }
                                 ))
                         )
 
-                    let duration_s = getCurrentInstant().Minus(batchStartTime).TotalSeconds
-                    let overall_duration_s = getCurrentInstant().Minus(overallStartTime).TotalSeconds
-                    let rps = float (batchResults.Resource.Count()) / duration_s
-                    totalRecordsDeleted <- totalRecordsDeleted + batchResults.Resource.Count()
-                    let overallRps = float totalRecordsDeleted / overall_duration_s
+                //let duration_s = getCurrentInstant().Minus(batchStartTime).TotalSeconds
+                //let overall_duration_s = getCurrentInstant().Minus(overallStartTime).TotalSeconds
+                //let rps = float (batchResults.Resource.Count()) / duration_s
+                //totalRecordsDeleted <- totalRecordsDeleted + batchResults.Resource.Count()
+                //let overallRps = float totalRecordsDeleted / overall_duration_s
 
-                    logToConsole
-                        $"In Services.deleteAllFromCosmosDBThatMatch(): batch duration (s): {duration_s:F3}; batch requests/second: {rps:F3}; failed.Count: {failed.Count}; totalRequestCharge: {float totalRequestCharge / 1000.0:F2}; totalRecordsDeleted: {totalRecordsDeleted}; overall duration (m): {overall_duration_s / 60.0:F3}; overall requests/second: {overallRps:F3}."
+                //logToConsole
+                //    $"In Services.deleteAllFromCosmosDBThatMatch(): batch duration (s): {duration_s:F3}; batch requests/second: {rps:F3}; failed.Count: {failed.Count}; totalRequestCharge: {float totalRequestCharge / 1000.0:F2}; totalRecordsDeleted: {totalRecordsDeleted}; overall duration (m): {overall_duration_s / 60.0:F3}; overall requests/second: {overallRps:F3}."
 
                 return failed
             with ex ->
@@ -1339,7 +1354,8 @@ module Services =
     let deleteAllFromCosmosDb () =
         task {
 #if DEBUG
-            let queryDefinition = QueryDefinition("""SELECT c.id, c.PartitionKey FROM c ORDER BY c.PartitionKey""")
+            //let queryDefinition = QueryDefinition("""SELECT c.id, c.PartitionKey FROM c ORDER BY c.PartitionKey""")
+            let queryDefinition = QueryDefinition("""SELECT DISTINCT c.PartitionKey FROM c ORDER BY c.PartitionKey""")
             return! deleteAllFromCosmosDBThatMatch queryDefinition
 #else
             return List<string>([ "Not implemented" ])
@@ -1352,7 +1368,7 @@ module Services =
     let deleteAllRemindersFromCosmosDb () =
         task {
 #if DEBUG
-            let queryDefinition = QueryDefinition("""SELECT c.id, c.partitionKey FROM c WHERE ENDSWITH(c.id, "||Rmd") ORDER BY c.partitionKey""")
+            let queryDefinition = QueryDefinition("""SELECT c.id, c.PartitionKey FROM c WHERE c.GrainType = "Rmd" ORDER BY c.PartitionKey""")
             return! deleteAllFromCosmosDBThatMatch queryDefinition
 #else
             return List<string>([ "Not implemented" ])
@@ -2030,7 +2046,6 @@ module Services =
         task {
             let reminderActorProxy = Reminder.CreateActorProxy reminderDto.ReminderId reminderDto.CorrelationId
             do! reminderActorProxy.Create reminderDto reminderDto.CorrelationId
-            logToConsole $"**** Created reminder actor {reminderDto.ReminderId} for actor {reminderDto.ActorName}||{reminderDto.ActorId}."
         }
         :> Task
 
@@ -2054,13 +2069,13 @@ module Services =
 
     /// Gets the OrganizationId from an Orleans grain's RequestContext.
     let getOrganizationId () =
-        match RequestContext.Get(nameof (OrganizationId)) with
+        match RequestContext.Get(nameof OrganizationId) with
         | :? OrganizationId as organizationId -> organizationId
         | _ -> Guid.Empty
 
     /// Gets the RepositoryId from an Orleans grain's RequestContext.
     let getRepositoryId () =
-        match RequestContext.Get(nameof (RepositoryId)) with
+        match RequestContext.Get(nameof RepositoryId) with
         | :? RepositoryId as repositoryId -> repositoryId
         | _ -> Guid.Empty
 

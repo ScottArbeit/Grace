@@ -180,12 +180,12 @@ module Reference =
 
                     let graceReturnValue =
                         (GraceReturnValue.Create referenceDto correlationId)
-                            .enhance(nameof (RepositoryId), $"{referenceDto.RepositoryId}")
-                            .enhance(nameof (BranchId), $"{referenceDto.BranchId}")
-                            .enhance(nameof (ReferenceId), $"{referenceDto.ReferenceId}")
-                            .enhance(nameof (DirectoryVersionId), $"{referenceDto.DirectoryId}")
-                            .enhance(nameof (ReferenceType), $"{getDiscriminatedUnionCaseName referenceDto.ReferenceType}")
-                            .enhance (nameof (ReferenceEventType), $"{getDiscriminatedUnionFullName referenceEvent.Event}")
+                            .enhance(nameof RepositoryId, referenceDto.RepositoryId)
+                            .enhance(nameof BranchId, referenceDto.BranchId)
+                            .enhance(nameof ReferenceId, referenceDto.ReferenceId)
+                            .enhance(nameof DirectoryVersionId, referenceDto.DirectoryId)
+                            .enhance(nameof ReferenceType, getDiscriminatedUnionCaseName referenceDto.ReferenceType)
+                            .enhance (nameof ReferenceEventType, getDiscriminatedUnionFullName referenceEvent.Event)
 
                     return Ok graceReturnValue
                 with ex ->
@@ -203,12 +203,12 @@ module Reference =
 
                     let graceError =
                         (GraceError.CreateWithException ex (ReferenceError.getErrorMessage FailedWhileApplyingEvent) correlationId)
-                            .enhance(nameof (RepositoryId), $"{referenceDto.RepositoryId}")
-                            .enhance(nameof (BranchId), $"{referenceDto.BranchId}")
-                            .enhance(nameof (ReferenceId), $"{referenceDto.ReferenceId}")
-                            .enhance(nameof (DirectoryVersionId), $"{referenceDto.DirectoryId}")
-                            .enhance(nameof (ReferenceType), $"{getDiscriminatedUnionCaseName referenceDto.ReferenceType}")
-                            .enhance (nameof (ReferenceEventType), $"{getDiscriminatedUnionFullName referenceEvent.Event}")
+                            .enhance(nameof RepositoryId, referenceDto.RepositoryId)
+                            .enhance(nameof BranchId, referenceDto.BranchId)
+                            .enhance(nameof ReferenceId, referenceDto.ReferenceId)
+                            .enhance(nameof DirectoryVersionId, referenceDto.DirectoryId)
+                            .enhance(nameof ReferenceType, getDiscriminatedUnionCaseName referenceDto.ReferenceType)
+                            .enhance (nameof ReferenceEventType, getDiscriminatedUnionFullName referenceEvent.Event)
 
                     return Error graceError
             }

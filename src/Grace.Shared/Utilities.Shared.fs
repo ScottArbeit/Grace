@@ -361,7 +361,7 @@ module Utilities =
     /// NOTE: This is different from Encoding.UTF8.GetBytes(), which interprets the string as UTF-8 characters.
     let stringAsByteArray (s: ReadOnlySpan<char>) =
         if s.Length % 2 <> 0 then
-            raise (ArgumentException("The hexadecimal string must have an even number of digits.", nameof (s)))
+            raise (ArgumentException("The hexadecimal string must have an even number of digits.", nameof s))
 
         let byteArrayLength = int32 (s.Length / 2)
         let bytes = Array.zeroCreate byteArrayLength
@@ -496,20 +496,14 @@ module Utilities =
             properties <- typeof<'T>.GetProperties(BindingFlags.Instance ||| BindingFlags.Public)
             propertyLookupByType.TryAdd(typeof<'T>, properties) |> ignore
 
-        let dictionary = Dictionary<string, string>()
+        let dictionary = Dictionary<string, obj>()
 
         for prop in properties do
             let value = prop.GetValue(obj)
 
-            let valueString =
-                match value with
-                | null -> "null"
-                | :? string as s -> s
-                | _ -> value.ToString()
+            dictionary[$"parameter:{prop.Name}"] <- value
 
-            dictionary[$"parameter:{prop.Name}"] <- valueString
-
-        dictionary :> IReadOnlyDictionary<string, string>
+        dictionary :> IReadOnlyDictionary<string, obj>
 
     /// This construct is equivalent to using IHttpClientFactory in the ASP.NET Dependency Injection container, for code (like this) that isn't using GenericHost.
     ///

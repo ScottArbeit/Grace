@@ -15,7 +15,7 @@ type FakeMiddleware(next: RequestDelegate) =
 
     let pooledObjectPolicy = StringBuilderPooledObjectPolicy()
     let stringBuilderPool = ObjectPool.Create<StringBuilder>(pooledObjectPolicy)
-    let log = ApplicationContext.loggerFactory.CreateLogger(nameof (FakeMiddleware))
+    let log = ApplicationContext.loggerFactory.CreateLogger(nameof FakeMiddleware)
 
     member this.Invoke(context: HttpContext) =
 
@@ -24,7 +24,7 @@ type FakeMiddleware(next: RequestDelegate) =
 #if DEBUG
         let middlewareTraceHeader = context.Request.Headers["X-MiddlewareTraceIn"]
 
-        context.Request.Headers["X-MiddlewareTraceIn"] <- $"{middlewareTraceHeader}{nameof (FakeMiddleware)} --> "
+        context.Request.Headers["X-MiddlewareTraceIn"] <- $"{middlewareTraceHeader}{nameof FakeMiddleware} --> "
 #endif
 
         let path = context.Request.Path.ToString()
@@ -39,6 +39,6 @@ type FakeMiddleware(next: RequestDelegate) =
 #if DEBUG
         let middlewareTraceOutHeader = context.Request.Headers["X-MiddlewareTraceOut"]
 
-        context.Request.Headers["X-MiddlewareTraceOut"] <- $"{middlewareTraceOutHeader}{nameof (FakeMiddleware)} --> "
+        context.Request.Headers["X-MiddlewareTraceOut"] <- $"{middlewareTraceOutHeader}{nameof FakeMiddleware} --> "
 #endif
         nextTask

@@ -438,10 +438,13 @@ module Load =
             logToConsole $"Transactions/sec: {float numberOfEvents / (mainProcessingTime - setupTime).TotalSeconds}"
             logToConsole "Starting tear down."
 
-            // Tear down
-            let deleteParallelOptions = ParallelOptions(MaxDegreeOfParallelism = 8)
+            // Tear down; delete branches and repositories, then delete organization and owner.
+
+            // Setting MaxDegreeOfParallelism to 4 to avoid 429 Too Many Requests errors.
+            let deleteParallelOptions = ParallelOptions(MaxDegreeOfParallelism = 4)
             let mutable deleteCount = 0
 
+            // Delete branches.
             do!
                 Parallel.ForEachAsync(
                     ids.Values,
@@ -474,6 +477,7 @@ module Load =
 
             deleteCount <- 0
 
+            // Delete repositories.
             do!
                 Parallel.ForEachAsync(
                     ids.Values
@@ -509,6 +513,7 @@ module Load =
 
             logToConsole $"Deleted {deleteCount} of {numberOfRepositories} repositories."
 
+            // Delete organization.
             let! r =
                 Organization.Delete(
                     Organization.DeleteOrganizationParameters(
@@ -521,11 +526,13 @@ module Load =
 
             showResult r
 
+            // Delete owner.
             let! r =
                 Owner.Delete(Owner.DeleteOwnerParameters(OwnerId = $"{ownerId}", DeleteReason = "performance test", CorrelationId = generateCorrelationId ()))
 
             showResult r
 
+            // Wrap up.
             let endTime = getCurrentInstant ()
             logToConsole "Tear down complete."
 

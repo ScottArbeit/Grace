@@ -41,8 +41,8 @@ module Services =
 
     /// Gets the GraceIds record from HttpContext.Items.
     let getGraceIds (context: HttpContext) =
-        if context.Items.ContainsKey(nameof (GraceIds)) then
-            context.Items[nameof (GraceIds)] :?> GraceIds
+        if context.Items.ContainsKey(nameof GraceIds) then
+            context.Items[nameof GraceIds] :?> GraceIds
         else
             GraceIds.Default
 
@@ -51,7 +51,7 @@ module Services =
         { Timestamp = getCurrentInstant ()
           CorrelationId = context.Items[Constants.CorrelationId].ToString()
           Principal = context.User.Identity.Name
-          Properties = new Dictionary<string, string>() }
+          Properties = new Dictionary<string, obj>() }
 
     /// Parses the incoming request body into the specified type.
     let parse<'T when 'T :> CommonParameters> (context: HttpContext) =

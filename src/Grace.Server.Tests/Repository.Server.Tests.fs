@@ -188,7 +188,7 @@ type Repository() =
             let! response = Client.PostAsync("/repository/setStatus", createJsonContent parameters)
             response.EnsureSuccessStatusCode() |> ignore
             let! returnValue = deserializeContent<GraceReturnValue<string>> response
-            Assert.That(returnValue.Properties[nameof (OwnerId)], Is.EqualTo(ownerId))
+            Assert.That(returnValue.Properties[nameof OwnerId], Is.EqualTo(ownerId))
         }
 
     [<Test>]

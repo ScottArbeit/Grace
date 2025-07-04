@@ -239,7 +239,7 @@ module Diff =
 
                             //logToConsole $"In Actor.Populate(); got differences."
 
-                            let organizationId = RequestContext.Get(nameof (OrganizationId)) :?> OrganizationId
+                            let organizationId = RequestContext.Get(nameof OrganizationId) :?> OrganizationId
                             let repositoryActorProxy = Repository.CreateActorProxy organizationId repositoryId1 correlationId
                             let! repositoryDto = repositoryActorProxy.Get correlationId
 

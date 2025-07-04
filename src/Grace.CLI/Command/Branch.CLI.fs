@@ -504,8 +504,8 @@ module Branch =
                     // Update the Grace configuration file with the newly-created branch.
                     if parseResult.CommandResult.GetResult(Options.doNotSwitch) = null then
                         let newConfig = Current()
-                        newConfig.BranchId <- Guid.Parse(returnValue.Properties[nameof (BranchId)])
-                        newConfig.BranchName <- BranchName(returnValue.Properties[nameof (BranchName)])
+                        newConfig.BranchId <- Guid.Parse($"{returnValue.Properties[nameof BranchId]}")
+                        newConfig.BranchName <- $"{returnValue.Properties[nameof BranchName]}"
                         updateConfiguration newConfig
                 | Error _ -> ()
 
@@ -1206,7 +1206,7 @@ module Branch =
                                                             | Ok returnValue ->
                                                                 logToAnsiConsole Colors.Verbose $"Succeeded doing promotion."
 
-                                                                let promotionReferenceId = returnValue.Properties["ReferenceId"]
+                                                                let promotionReferenceId = Guid.Parse(returnValue.Properties["ReferenceId"] :?> string)
 
                                                                 let rebaseParameters =
                                                                     Parameters.Branch.RebaseParameters(
@@ -1216,7 +1216,7 @@ module Branch =
                                                                         OwnerName = parameters.OwnerName,
                                                                         OrganizationId = parameters.OrganizationId,
                                                                         OrganizationName = parameters.OrganizationName,
-                                                                        BasedOn = (Guid.Parse(promotionReferenceId))
+                                                                        BasedOn = promotionReferenceId
                                                                     )
 
                                                                 let! rebaseResult = Branch.Rebase(rebaseParameters)

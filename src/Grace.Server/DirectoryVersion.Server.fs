@@ -58,12 +58,12 @@ module DirectoryVersion =
 
                     let graceError = GraceError.Create (DirectoryVersionError.getErrorMessage error) (getCorrelationId context)
 
-                    graceError.Properties.Add("Path", context.Request.Path)
+                    graceError.Properties.Add("Path", context.Request.Path.Value)
                     return! context |> result400BadRequest graceError
             with ex ->
                 let graceError = GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (getCorrelationId context)
 
-                graceError.Properties.Add("Path", context.Request.Path)
+                graceError.Properties.Add("Path", context.Request.Path.Value)
                 return! context |> result500ServerError graceError
         }
 
@@ -92,10 +92,10 @@ module DirectoryVersion =
                     let graceReturnValue = GraceReturnValue.Create queryResult correlationId
 
                     let graceIds = getGraceIds context
-                    graceReturnValue.Properties[nameof (OwnerId)] <- graceIds.OwnerIdString
-                    graceReturnValue.Properties[nameof (OrganizationId)] <- graceIds.OrganizationIdString
-                    graceReturnValue.Properties[nameof (RepositoryId)] <- graceIds.RepositoryIdString
-                    graceReturnValue.Properties[nameof (BranchId)] <- graceIds.BranchIdString
+                    graceReturnValue.Properties[nameof OwnerId] <- graceIds.OwnerId
+                    graceReturnValue.Properties[nameof OrganizationId] <- graceIds.OrganizationId
+                    graceReturnValue.Properties[nameof RepositoryId] <- graceIds.RepositoryId
+                    graceReturnValue.Properties[nameof BranchId] <- graceIds.BranchId
 
                     return! context |> result200Ok graceReturnValue
                 else
@@ -103,7 +103,7 @@ module DirectoryVersion =
 
                     let graceError = GraceError.Create (DirectoryVersionError.getErrorMessage error) correlationId
 
-                    graceError.Properties.Add("Path", context.Request.Path)
+                    graceError.Properties.Add("Path", context.Request.Path.Value)
                     return! context |> result400BadRequest graceError
             with ex ->
                 return!
@@ -230,7 +230,7 @@ module DirectoryVersion =
                     task {
                         let directoryVersions = List<DirectoryVersion>()
 
-                        let directoryIds = context.Items[nameof (GetByDirectoryIdsParameters)] :?> List<DirectoryVersionId>
+                        let directoryIds = context.Items[nameof GetByDirectoryIdsParameters] :?> List<DirectoryVersionId>
 
                         for directoryId in directoryIds do
                             let actorProxy = DirectoryVersion.CreateActorProxy directoryId repositoryId (getCorrelationId context)
@@ -242,7 +242,7 @@ module DirectoryVersion =
                     }
 
                 let! parameters = context |> parse<GetByDirectoryIdsParameters>
-                context.Items[nameof (GetByDirectoryIdsParameters)] <- parameters.DirectoryIds
+                context.Items[nameof GetByDirectoryIdsParameters] <- parameters.DirectoryIds
                 return! processQuery context parameters validations 1 query
             }
 
@@ -264,7 +264,7 @@ module DirectoryVersion =
 
                 let query (context: HttpContext) (maxCount: int) (actorProxy: IDirectoryVersionActor) =
                     task {
-                        let parameters = context.Items[nameof (GetBySha256HashParameters)] :?> GetBySha256HashParameters
+                        let parameters = context.Items[nameof GetBySha256HashParameters] :?> GetBySha256HashParameters
 
                         match! getDirectoryBySha256Hash (Guid.Parse(parameters.RepositoryId)) (Sha256Hash parameters.Sha256Hash) (getCorrelationId context) with
                         | Some directoryVersion -> return directoryVersion
@@ -272,7 +272,7 @@ module DirectoryVersion =
                     }
 
                 let! parameters = context |> parse<GetBySha256HashParameters>
-                context.Items[nameof (GetBySha256HashParameters)] <- parameters
+                context.Items[nameof GetBySha256HashParameters] <- parameters
                 return! processQuery context parameters validations 1 query
             }
 
@@ -305,7 +305,7 @@ module DirectoryVersion =
                     }
 
                 let! parameters = context |> parse<GetZipFileParameters>
-                context.Items[nameof (GetZipFileParameters)] <- parameters
+                context.Items[nameof GetZipFileParameters] <- parameters
                 return! processQuery context parameters validations 1 query
             }
 

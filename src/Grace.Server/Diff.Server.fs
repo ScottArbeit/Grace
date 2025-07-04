@@ -66,7 +66,7 @@ module Diff =
     //            else
     //                let! error = validationResults |> getFirstError
     //                let graceError = GraceError.Create (RepositoryError.getErrorMessage error) (getCorrelationId context)
-    //                graceError.Properties.Add("Path", context.Request.Path)
+    //                graceError.Properties.Add("Path", context.Request.Path.Value)
     //                return! context |> result400BadRequest graceError
     //        with ex ->
     //            return! context |> result500ServerError (GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (getCorrelationId context))
@@ -115,7 +115,7 @@ module Diff =
 
                     let graceError = GraceError.Create (DiffError.getErrorMessage error) (getCorrelationId context)
 
-                    graceError.Properties.Add("Path", context.Request.Path)
+                    graceError.Properties.Add("Path", context.Request.Path.Value)
                     graceError.Properties.Add($"DirectoryVersionId1", $"{parameters.DirectoryVersionId1}")
                     graceError.Properties.Add($"DirectoryVersionId2", $"{parameters.DirectoryVersionId2}")
                     return! context |> result400BadRequest graceError

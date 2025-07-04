@@ -64,7 +64,7 @@ module ReminderService =
                     let queryDefinition =
                         QueryDefinition(queryText)
                             .WithParameter("@maxCount", reminderBatchSize)
-                            .WithParameter("@class", nameof (ReminderDto))
+                            .WithParameter("@class", nameof ReminderDto)
 
                     use iterator = ApplicationContext.cosmosContainer.GetItemQueryIterator<ReminderValue>(queryDefinition)
 

@@ -41,7 +41,7 @@ module ActorProxy =
             let grain = orleansClient.CreateActorProxyWithCorrelationId<IBranchActor>(branchId, correlationId)
             let orleansContext = Dictionary<string, obj>()
             orleansContext.Add(Constants.ActorNameProperty, ActorName.Branch)
-            orleansContext.Add(nameof (RepositoryId), repositoryId)
+            orleansContext.Add(nameof RepositoryId, repositoryId)
             memoryCache.CreateOrleansContextEntry(grain.GetGrainId(), orleansContext)
             grain
 
@@ -52,7 +52,7 @@ module ActorProxy =
             let grain = orleansClient.CreateActorProxyWithCorrelationId<IBranchNameActor>($"{repositoryId}|{branchName}", correlationId)
             let orleansContext = Dictionary<string, obj>()
             orleansContext.Add(Constants.ActorNameProperty, ActorName.BranchName)
-            orleansContext.Add(nameof (RepositoryId), repositoryId)
+            orleansContext.Add(nameof RepositoryId, repositoryId)
             memoryCache.CreateOrleansContextEntry(grain.GetGrainId(), orleansContext)
             grain
 
@@ -76,8 +76,8 @@ module ActorProxy =
             let grain = orleansClient.CreateActorProxyWithCorrelationId<IDiffActor>((GetPrimaryKey directoryVersionId1 directoryVersionId2), correlationId)
             let orleansContext = Dictionary<string, obj>()
             orleansContext.Add(Constants.ActorNameProperty, ActorName.Diff)
-            orleansContext.Add(nameof (OrganizationId), organizationId)
-            orleansContext.Add(nameof (RepositoryId), repositoryId)
+            orleansContext.Add(nameof OrganizationId, organizationId)
+            orleansContext.Add(nameof RepositoryId, repositoryId)
             memoryCache.CreateOrleansContextEntry(grain.GetGrainId(), orleansContext)
             grain
 
@@ -88,7 +88,7 @@ module ActorProxy =
             let grain = orleansClient.CreateActorProxyWithCorrelationId<IDirectoryVersionActor>(directoryVersionId, correlationId)
             let orleansContext = Dictionary<string, obj>()
             orleansContext.Add(Constants.ActorNameProperty, ActorName.DirectoryVersion)
-            orleansContext.Add(nameof (RepositoryId), repositoryId)
+            orleansContext.Add(nameof RepositoryId, repositoryId)
             memoryCache.CreateOrleansContextEntry(grain.GetGrainId(), orleansContext)
             grain
 
@@ -99,7 +99,7 @@ module ActorProxy =
             let grain = orleansClient.CreateActorProxyWithCorrelationId<IDirectoryAppearanceActor>(directoryVersionId, correlationId)
             let orleansContext = Dictionary<string, obj>()
             orleansContext.Add(Constants.ActorNameProperty, ActorName.DirectoryAppearance)
-            orleansContext.Add(nameof (RepositoryId), repositoryId)
+            orleansContext.Add(nameof RepositoryId, repositoryId)
             memoryCache.CreateOrleansContextEntry(grain.GetGrainId(), orleansContext)
             grain
 
@@ -110,7 +110,7 @@ module ActorProxy =
             let grain = orleansClient.CreateActorProxyWithCorrelationId<IFileAppearanceActor>(fileVersionWithRelativePath, correlationId)
             let orleansContext = Dictionary<string, obj>()
             orleansContext.Add(Constants.ActorNameProperty, ActorName.FileAppearance)
-            orleansContext.Add(nameof (RepositoryId), repositoryId)
+            orleansContext.Add(nameof RepositoryId, repositoryId)
             memoryCache.CreateOrleansContextEntry(grain.GetGrainId(), orleansContext)
             grain
 
@@ -180,7 +180,7 @@ module ActorProxy =
         let CreateActorProxy (referenceId: ReferenceId) (repositoryId: RepositoryId) correlationId =
             let grain = orleansClient.CreateActorProxyWithCorrelationId<IReferenceActor>(referenceId, correlationId)
             let orleansContext = Dictionary<string, obj>()
-            orleansContext.Add(nameof (RepositoryId), repositoryId)
+            orleansContext.Add(nameof RepositoryId, repositoryId)
             orleansContext.Add(Constants.ActorNameProperty, ActorName.Reference)
             memoryCache.CreateOrleansContextEntry(grain.GetGrainId(), orleansContext)
             grain
@@ -191,8 +191,8 @@ module ActorProxy =
         let CreateActorProxy (organizationId: OrganizationId) (repositoryId: RepositoryId) correlationId =
             let grain = orleansClient.CreateActorProxyWithCorrelationId<IRepositoryActor>(repositoryId, correlationId)
             let orleansContext = Dictionary<string, obj>()
-            orleansContext.Add(nameof (OrganizationId), organizationId)
-            orleansContext.Add(nameof (RepositoryId), repositoryId)
+            orleansContext.Add(nameof OrganizationId, organizationId)
+            orleansContext.Add(nameof RepositoryId, repositoryId)
             orleansContext.Add(Constants.ActorNameProperty, ActorName.Repository)
             memoryCache.CreateOrleansContextEntry(grain.GetGrainId(), orleansContext)
             grain
@@ -206,7 +206,7 @@ module ActorProxy =
         let CreateActorProxy (ownerId: OwnerId) (organizationId: OrganizationId) (repositoryName: RepositoryName) correlationId =
             let grain = orleansClient.CreateActorProxyWithCorrelationId<IRepositoryNameActor>($"{ownerId}|{organizationId}|{repositoryName}", correlationId)
             let orleansContext = Dictionary<string, obj>()
-            orleansContext.Add(nameof (OrganizationId), organizationId)
+            orleansContext.Add(nameof OrganizationId, organizationId)
             orleansContext.Add(Constants.ActorNameProperty, ActorName.RepositoryName)
             memoryCache.CreateOrleansContextEntry(grain.GetGrainId(), orleansContext)
             grain

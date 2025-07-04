@@ -144,7 +144,7 @@ module Notifications =
                 match graceEvent with
                 | BranchEvent branchEvent ->
                     let correlationId = branchEvent.Metadata.CorrelationId
-                    let repositoryId = Guid.Parse(branchEvent.Metadata.Properties[nameof (RepositoryId)])
+                    let repositoryId = Guid.Parse($"{branchEvent.Metadata.Properties[nameof RepositoryId]}")
 
                     log.LogInformation(
                         "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; Received BranchEvent notification.",

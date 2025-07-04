@@ -140,16 +140,16 @@ module Branch =
                             else
                                 ReferenceDto.Default |> returnTask
 
-                        branchEvent.Metadata.Properties["basedOnReferenceDto"] <- serialize basedOnReferenceDto
+                        branchEvent.Metadata.Properties["basedOnReferenceDto"] <- basedOnReferenceDto
                     | Rebased basedOn ->
                         let referenceActorProxy = Reference.CreateActorProxy basedOn branchDto.RepositoryId branchEvent.Metadata.CorrelationId
                         let! basedOnReferenceDto = referenceActorProxy.Get branchEvent.Metadata.CorrelationId
-                        branchEvent.Metadata.Properties["basedOnReferenceDto"] <- serialize basedOnReferenceDto
+                        branchEvent.Metadata.Properties["basedOnReferenceDto"] <- basedOnReferenceDto
                     | _ -> ()
 
                     // Update the branchDto with the event.
                     branchDto <- branchDto |> BranchDto.UpdateDto branchEvent
-                    branchEvent.Metadata.Properties[nameof (RepositoryId)] <- $"{branchDto.RepositoryId}"
+                    branchEvent.Metadata.Properties[nameof RepositoryId] <- branchDto.RepositoryId
 
                     match branchEvent.Event with
                     // Don't save these reference creation events, and don't send them as events; that was done by the Reference actor when the reference was created.
@@ -159,8 +159,8 @@ module Branch =
                     | Checkpointed(referenceDto, _, _, _)
                     | Saved(referenceDto, _, _, _)
                     | Tagged(referenceDto, _, _, _)
-                    | ExternalCreated(referenceDto, _, _, _) -> branchEvent.Metadata.Properties[nameof (ReferenceId)] <- $"{referenceDto.ReferenceId}"
-                    | Rebased referenceId -> branchEvent.Metadata.Properties[nameof (ReferenceId)] <- $"{referenceId}"
+                    | ExternalCreated(referenceDto, _, _, _) -> branchEvent.Metadata.Properties[nameof ReferenceId] <- referenceDto.ReferenceId
+                    | Rebased referenceId -> branchEvent.Metadata.Properties[nameof ReferenceId] <- referenceId
                     // Save the rest of the events.
                     | _ ->
                         // For all other events, add the event to the branchEvents list, and save it to actor state.
@@ -174,32 +174,32 @@ module Branch =
                     let returnValue = GraceReturnValue.Create "Branch command succeeded." branchEvent.Metadata.CorrelationId
 
                     returnValue
-                        .enhance(nameof (RepositoryId), $"{branchDto.RepositoryId}")
-                        .enhance(nameof (BranchId), $"{branchDto.BranchId}")
-                        .enhance(nameof (BranchName), $"{branchDto.BranchName}")
-                        .enhance(nameof (ParentBranchId), $"{branchDto.ParentBranchId}")
-                        .enhance (nameof (BranchEventType), $"{getDiscriminatedUnionFullName branchEvent.Event}")
+                        .enhance(nameof RepositoryId, branchDto.RepositoryId)
+                        .enhance(nameof BranchId, branchDto.BranchId)
+                        .enhance(nameof BranchName, branchDto.BranchName)
+                        .enhance(nameof ParentBranchId, branchDto.ParentBranchId)
+                        .enhance (nameof BranchEventType, getDiscriminatedUnionFullName branchEvent.Event)
                     |> ignore
 
                     // If the event has a referenceId, add it to the return properties.
-                    if branchEvent.Metadata.Properties.ContainsKey(nameof (ReferenceId)) then
-                        returnValue.Properties.Add(nameof (ReferenceId), branchEvent.Metadata.Properties[nameof (ReferenceId)])
+                    if branchEvent.Metadata.Properties.ContainsKey(nameof ReferenceId) then
+                        returnValue.Properties.Add(nameof ReferenceId, branchEvent.Metadata.Properties[nameof ReferenceId] :?> Guid)
 
                     return Ok returnValue
                 with ex ->
                     let graceError = GraceError.CreateWithException ex (BranchError.getErrorMessage FailedWhileApplyingEvent) branchEvent.Metadata.CorrelationId
 
                     graceError
-                        .enhance(nameof (RepositoryId), $"{branchDto.RepositoryId}")
-                        .enhance(nameof (BranchId), $"{branchDto.BranchId}")
-                        .enhance(nameof (BranchName), $"{branchDto.BranchName}")
-                        .enhance(nameof (ParentBranchId), $"{branchDto.ParentBranchId}")
-                        .enhance (nameof (BranchEventType), $"{getDiscriminatedUnionFullName branchEvent.Event}")
+                        .enhance(nameof RepositoryId, branchDto.RepositoryId)
+                        .enhance(nameof BranchId, branchDto.BranchId)
+                        .enhance(nameof BranchName, branchDto.BranchName)
+                        .enhance(nameof ParentBranchId, branchDto.ParentBranchId)
+                        .enhance (nameof BranchEventType, getDiscriminatedUnionFullName branchEvent.Event)
                     |> ignore
 
                     // If the event has a referenceId, add it to the return properties.
-                    if branchEvent.Metadata.Properties.ContainsKey(nameof (ReferenceId)) then
-                        graceError.enhance (nameof (ReferenceId), branchEvent.Metadata.Properties[nameof (ReferenceId)])
+                    if branchEvent.Metadata.Properties.ContainsKey(nameof ReferenceId) then
+                        graceError.enhance (nameof ReferenceId, branchEvent.Metadata.Properties[nameof ReferenceId])
                         |> ignore
 
                     return Error graceError
@@ -337,7 +337,7 @@ module Branch =
                                     | Create(branchId, branchName, parentBranchId, basedOn, ownerId, organizationId, repositoryId, branchPermissions) ->
                                         // Add an initial Rebase reference to this branch that points to the BasedOn reference, unless we're creating `main`.
                                         if branchName <> InitialBranchName then
-                                            // We need to get the reference that we're rebasing on, so we can get the directoryId and sha256Hash.
+                                            // We need to get the reference that we're rebasing on, so we can get the DirectoryId and Sha256Hash.
                                             let referenceActorProxy = Reference.CreateActorProxy basedOn repositoryId this.correlationId
                                             let! promotionDto = referenceActorProxy.Get this.correlationId
 
@@ -366,10 +366,10 @@ module Branch =
                                             Ok(Created(branchId, branchName, parentBranchId, basedOn, ownerId, organizationId, repositoryId, branchPermissions))
                                     | BranchCommand.Rebase referenceId ->
                                         metadata.Properties["BasedOn"] <- $"{referenceId}"
-                                        metadata.Properties[nameof (ReferenceId)] <- $"{referenceId}"
-                                        metadata.Properties[nameof (RepositoryId)] <- $"{branchDto.RepositoryId}"
-                                        metadata.Properties[nameof (BranchId)] <- $"{this.GetGrainId().GetGuidKey()}"
-                                        metadata.Properties[nameof (BranchName)] <- $"{branchDto.BranchName}"
+                                        metadata.Properties[nameof ReferenceId] <- $"{referenceId}"
+                                        metadata.Properties[nameof RepositoryId] <- $"{branchDto.RepositoryId}"
+                                        metadata.Properties[nameof BranchId] <- $"{this.GetGrainId().GetGuidKey()}"
+                                        metadata.Properties[nameof BranchName] <- $"{branchDto.BranchName}"
 
                                         // We need to get the reference that we're rebasing on, so we can get the directoryId and sha256Hash.
                                         let referenceActorProxy = Reference.CreateActorProxy referenceId branchDto.RepositoryId this.correlationId

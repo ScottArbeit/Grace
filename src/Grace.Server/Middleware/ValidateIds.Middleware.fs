@@ -57,7 +57,7 @@ type EntityProperties =
 /// If the Ids and/or Names aren't found, it returns 404 Not Found.
 type ValidateIdsMiddleware(next: RequestDelegate) =
 
-    let log = ApplicationContext.loggerFactory.CreateLogger($"{nameof (ValidateIdsMiddleware)}.Server")
+    let log = ApplicationContext.loggerFactory.CreateLogger($"{nameof ValidateIdsMiddleware}.Server")
 
     /// Holds the request body type for each endpoint.
     let typeLookup = ConcurrentDictionary<String, Type>()
@@ -115,7 +115,7 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
 #if DEBUG
             let middlewareTraceHeader = context.Request.Headers["X-MiddlewareTraceIn"]
 
-            context.Request.Headers["X-MiddlewareTraceIn"] <- $"{middlewareTraceHeader}{nameof (ValidateIdsMiddleware)} --> "
+            context.Request.Headers["X-MiddlewareTraceIn"] <- $"{middlewareTraceHeader}{nameof ValidateIdsMiddleware} --> "
 #endif
 
             try
@@ -160,14 +160,14 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
 
                             // Check if these entity properties exist on the request body type.
                             entityProperties <-
-                                { OwnerId = findProperty (nameof (OwnerId))
-                                  OwnerName = findProperty (nameof (OwnerName))
-                                  OrganizationId = findProperty (nameof (OrganizationId))
-                                  OrganizationName = findProperty (nameof (OrganizationName))
-                                  RepositoryId = findProperty (nameof (RepositoryId))
-                                  RepositoryName = findProperty (nameof (RepositoryName))
-                                  BranchId = findProperty (nameof (BranchId))
-                                  BranchName = findProperty (nameof (BranchName)) }
+                                { OwnerId = findProperty (nameof OwnerId)
+                                  OwnerName = findProperty (nameof OwnerName)
+                                  OrganizationId = findProperty (nameof OrganizationId)
+                                  OrganizationName = findProperty (nameof OrganizationName)
+                                  RepositoryId = findProperty (nameof RepositoryId)
+                                  RepositoryName = findProperty (nameof RepositoryName)
+                                  BranchId = findProperty (nameof BranchId)
+                                  BranchName = findProperty (nameof BranchName) }
 
                             // Cache the property list for this request body type.
                             propertyLookup.TryAdd(requestBodyType, entityProperties) |> ignore
@@ -353,7 +353,7 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
                                                 Some(GraceError.Create (BranchError.getErrorMessage BranchDoesNotExist) correlationId)
 
                     // Add the parsed Id's and Names to the HttpContext.
-                    context.Items.Add(nameof (GraceIds), graceIds)
+                    context.Items.Add(nameof GraceIds, graceIds)
 
                     // Reset the Body to the beginning so that it can be read again later in the pipeline.
                     context.Request.Body.Seek(0L, IO.SeekOrigin.Begin) |> ignore
@@ -368,7 +368,7 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
                         "{CurrentInstant}: CorrelationId: {correlationId}; {currentFunction}: Path: {path}; {message}; Duration: {duration_ms}ms.",
                         getCurrentInstantExtended (),
                         correlationId,
-                        nameof (ValidateIdsMiddleware),
+                        nameof ValidateIdsMiddleware,
                         path,
                         error.Error,
                         duration_ms
@@ -441,7 +441,7 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
 #if DEBUG
                     let middlewareTraceOutHeader = context.Request.Headers["X-MiddlewareTraceOut"]
 
-                    context.Request.Headers["X-MiddlewareTraceOut"] <- $"{middlewareTraceOutHeader}{nameof (ValidateIdsMiddleware)} --> "
+                    context.Request.Headers["X-MiddlewareTraceOut"] <- $"{middlewareTraceOutHeader}{nameof ValidateIdsMiddleware} --> "
 
                     if
                         not
@@ -463,7 +463,7 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
                     ex,
                     "{CurrentInstant}: An unhandled exception occurred in the {middlewareName} middleware.",
                     getCurrentInstantExtended (),
-                    nameof (ValidateIdsMiddleware)
+                    nameof ValidateIdsMiddleware
                 )
 
                 context.Response.StatusCode <- 500

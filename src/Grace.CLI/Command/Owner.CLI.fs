@@ -20,6 +20,7 @@ open System.CommandLine
 open Spectre.Console
 open Spectre.Console.Json
 open Grace.Shared.Utilities
+open Grace.CLI
 
 module Owner =
 
@@ -199,8 +200,8 @@ module Owner =
                     // Update the Grace configuration file with the newly-created owner.
                     if parseResult.CommandResult.GetResult(Options.doNotSwitch) = null then
                         let newConfig = Current()
-                        newConfig.OwnerId <- Guid.Parse(returnValue.Properties[nameof (OwnerId)])
-                        newConfig.OwnerName <- returnValue.Properties[nameof (OwnerName)]
+                        newConfig.OwnerId <- Guid.Parse($"{returnValue.Properties[nameof OwnerId]}")
+                        newConfig.OwnerName <- $"{returnValue.Properties[nameof OwnerName]}"
                         updateConfiguration newConfig
                 | Error _ -> ()
 
@@ -312,7 +313,7 @@ module Owner =
                         | Ok graceReturnValue ->
                             // Update the Grace configuration file with the new Owner name.
                             let newConfig = Current()
-                            newConfig.OwnerName <- graceReturnValue.Properties[setNameParameters.NewName]
+                            newConfig.OwnerName <- graceReturnValue.Properties[setNameParameters.NewName] :?> OwnerName
                             updateConfiguration newConfig
                         | Error _ -> ()
 
