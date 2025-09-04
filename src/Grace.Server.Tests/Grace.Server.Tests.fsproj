@@ -45,7 +45,7 @@
 	</ItemGroup>
 
 	<ItemGroup>
-		<PackageReference Update="FSharp.Core" Version="9.0.300" />
+		<PackageReference Update="FSharp.Core" Version="10.0.100-beta.25277.114" />
 	</ItemGroup>
 
 </Project>

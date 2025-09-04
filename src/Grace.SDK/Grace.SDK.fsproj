@@ -16,6 +16,7 @@
 		<OtherFlags>--test:ParallelIlxGen</OtherFlags>
 	</PropertyGroup>
 	<ItemGroup>
+		<None Include="instructions.md" />
 		<Compile Include="Common.SDK.fs" />
 		<Compile Include="Dapr.SDK.fs" />
 		<Compile Include="Storage.SDK.fs" />

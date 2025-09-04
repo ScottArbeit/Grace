@@ -26,6 +26,7 @@ Project("{6EC3EE1D-3C4E-46DD-8F32-0CC8E7565705}") = "Grace.Server.Tests", "Grace
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution items", "Solution items", "{40F2D935-0455-48D5-B8E1-BEC3020C4FF1}"
 	ProjectSection(SolutionItems) = preProject
+		agents.md = agents.md
 		Directory.Build.props = Directory.Build.props
 	EndProjectSection
 EndProject
