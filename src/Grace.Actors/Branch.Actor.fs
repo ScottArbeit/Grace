@@ -140,11 +140,11 @@ module Branch =
                             else
                                 ReferenceDto.Default |> returnTask
 
-                        branchEvent.Metadata.Properties["basedOnReferenceDto"] <- basedOnReferenceDto
+                        branchEvent.Metadata.Properties["basedOnReferenceDto"] <- serialize basedOnReferenceDto
                     | Rebased basedOn ->
                         let referenceActorProxy = Reference.CreateActorProxy basedOn branchDto.RepositoryId branchEvent.Metadata.CorrelationId
                         let! basedOnReferenceDto = referenceActorProxy.Get branchEvent.Metadata.CorrelationId
-                        branchEvent.Metadata.Properties["basedOnReferenceDto"] <- basedOnReferenceDto
+                        branchEvent.Metadata.Properties["basedOnReferenceDto"] <- serialize basedOnReferenceDto
                     | _ -> ()
 
                     // Update the branchDto with the event.

@@ -23,7 +23,7 @@ open Microsoft.Extensions.Configuration
 open Microsoft.Extensions.DependencyInjection
 open Microsoft.Extensions.Hosting
 open Microsoft.Extensions.Hosting.Internal
-open Microsoft.OpenApi.Models
+open Microsoft.OpenApi
 open NodaTime
 open OpenTelemetry
 open OpenTelemetry.Exporter
@@ -35,7 +35,6 @@ open Orleans
 open Orleans.Serialization
 open Orleans.Serialization.NodaTime
 open Swashbuckle.AspNetCore.Swagger
-open Swashbuckle.AspNetCore.SwaggerGen
 open System
 open System.Linq
 open System.Reflection

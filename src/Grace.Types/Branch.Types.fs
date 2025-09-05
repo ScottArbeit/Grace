@@ -168,7 +168,7 @@ module Branch =
             let newBranchDto =
                 match branchEventType with
                 | Created(branchId, branchName, parentBranchId, basedOn, ownerId, organizationId, repositoryId, initialPermissions) ->
-                    let basedOnReferenceDto = branchEvent.Metadata.Properties["basedOnReferenceDto"] :?> ReferenceDto
+                    let basedOnReferenceDto = deserialize<ReferenceDto> (branchEvent.Metadata.Properties["basedOnReferenceDto"].ToString())
 
                     let mutable branchDto =
                         { BranchDto.Default with
@@ -194,7 +194,7 @@ module Branch =
 
                     branchDto
                 | Rebased referenceId ->
-                    let basedOnReferenceDto = deserialize<ReferenceDto> (branchEvent.Metadata.Properties["basedOnReferenceDto"] :?> string)
+                    let basedOnReferenceDto = deserialize<ReferenceDto> (branchEvent.Metadata.Properties["basedOnReferenceDto"].ToString())
                     { currentBranchDto with BasedOn = basedOnReferenceDto }
                 | NameSet branchName -> { currentBranchDto with BranchName = branchName }
                 | Assigned(referenceDto, directoryVersion, sha256Hash, referenceText) ->
