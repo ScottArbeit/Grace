@@ -65,8 +65,7 @@ module Common =
                 Recursive = true,
                 DefaultValueFactory = (fun _ -> "Normal")
             ))
-
-        output.AcceptOnlyFromAmong(listCases<OutputFormat> ())
+                .AcceptOnlyFromAmong(listCases<OutputFormat> ())
 
     /// Checks if the output format from the command line is a specific format.
     let isOutputFormat (outputFormat: OutputFormat) (parseResult: ParseResult) =

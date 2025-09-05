@@ -115,11 +115,11 @@ module Repository =
 
         let visibility =
             (new Option<RepositoryType>("--visibility", Required = true, Description = "The visibility of the repository.", Arity = ArgumentArity.ExactlyOne))
+                .AcceptOnlyFromAmong(listCases<RepositoryType> ())
 
-        visibility.AcceptOnlyFromAmong(listCases<RepositoryType> ())
-
-        let status = (new Option<String>("--status", Required = true, Description = "The status of the repository.", Arity = ArgumentArity.ExactlyOne))
-        status.AcceptOnlyFromAmong(listCases<RepositoryStatus> ())
+        let status =
+            (new Option<String>("--status", Required = true, Description = "The status of the repository.", Arity = ArgumentArity.ExactlyOne))
+                .AcceptOnlyFromAmong(listCases<RepositoryStatus> ())
 
         let recordSaves =
             new Option<bool>(
@@ -136,8 +136,7 @@ module Repository =
                 Description = "The default version of the server API that clients should use when accessing this repository.",
                 Arity = ArgumentArity.ExactlyOne
             ))
-
-        defaultServerApiVersion.AcceptOnlyFromAmong(listCases<Constants.ServerApiVersions> ())
+                .AcceptOnlyFromAmong(listCases<Constants.ServerApiVersions> ())
 
         let saveDays =
             new Option<single>("--saveDays", Required = true, Description = "How many days to keep saves. [default: 7.0]", Arity = ArgumentArity.ExactlyOne)

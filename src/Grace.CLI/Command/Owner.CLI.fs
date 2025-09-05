@@ -57,8 +57,7 @@ module Owner =
 
         let ownerTypeRequired =
             (new Option<String>("--ownerType", Required = true, Description = "The type of owner. [default: Public]", Arity = ArgumentArity.ExactlyOne))
-
-        ownerTypeRequired.AcceptOnlyFromAmong(Utilities.listCases<OwnerType> ())
+                .AcceptOnlyFromAmong(Utilities.listCases<OwnerType> ())
 
         let searchVisibilityRequired =
             (new Option<String>(
@@ -67,8 +66,7 @@ module Owner =
                 Description = "Enables or disables the owner appearing in searches. [default: true]",
                 Arity = ArgumentArity.ExactlyOne
             ))
-
-        searchVisibilityRequired.AcceptOnlyFromAmong(Utilities.listCases<SearchVisibility> ())
+                .AcceptOnlyFromAmong(Utilities.listCases<SearchVisibility> ())
 
         let descriptionRequired =
             new Option<String>("--description", Required = true, Description = "Description of the owner.", Arity = ArgumentArity.ExactlyOne)

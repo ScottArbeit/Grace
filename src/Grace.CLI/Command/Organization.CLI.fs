@@ -83,8 +83,7 @@ module Organization =
                 Description = "The type of the organization. [default: Public]",
                 Arity = ArgumentArity.ExactlyOne
             ))
-
-        organizationType.AcceptOnlyFromAmong(listCases<OrganizationType> ())
+                .AcceptOnlyFromAmong(listCases<OrganizationType> ())
 
         let searchVisibility =
             (new Option<String>(
@@ -93,8 +92,7 @@ module Organization =
                 Description = "Enables or disables the organization appearing in searches. [default: Visible]",
                 Arity = ArgumentArity.ExactlyOne
             ))
-
-        searchVisibility.AcceptOnlyFromAmong(listCases<SearchVisibility> ())
+                .AcceptOnlyFromAmong(listCases<SearchVisibility> ())
 
         let description = new Option<String>("--description", Required = true, Description = "Description of the owner.", Arity = ArgumentArity.ExactlyOne)
 

@@ -166,8 +166,9 @@ module Reference =
                 Arity = ArgumentArity.ExactlyOne
             )
 
-        let referenceType = (new Option<String>("--referenceType", Required = false, Description = "The type of reference.", Arity = ArgumentArity.ExactlyOne))
-        referenceType.AcceptOnlyFromAmong(listCases<ReferenceType> ())
+        let referenceType =
+            (new Option<String>("--referenceType", Required = false, Description = "The type of reference.", Arity = ArgumentArity.ExactlyOne))
+                .AcceptOnlyFromAmong(listCases<ReferenceType> ())
 
         let fullSha = new Option<bool>("--fullSha", Required = false, Description = "Show the full SHA-256 value in output.", Arity = ArgumentArity.ZeroOrOne)
 

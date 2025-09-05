@@ -21,6 +21,7 @@
 		<OtherFlags>--test:ParallelIlxGen</OtherFlags>
 	</PropertyGroup>
 	<ItemGroup>
+		<None Include="instructions.md" />
 		<Compile Include="Log.CLI.fs" />
 		<Compile Include="Text.CLI.fs" />
 		<Compile Include="Command\Services.CLI.fs" />
@@ -43,11 +44,11 @@
 		<PackageReference Include="MessagePack" Version="3.1.4" />
 		<PackageReference Include="MessagePack.Annotations" Version="3.1.4" />
 		<PackageReference Include="MessagePack.FSharpExtensions" Version="4.0.0" />
-		<PackageReference Include="MessagePack.NodaTime" Version="3.4.3" />
-		<PackageReference Include="Microsoft.AspNetCore.SignalR.Client" Version="10.0.0-preview.6.25271.5" />
-		<PackageReference Include="Microsoft.AspNetCore.SignalR.Protocols.Json" Version="10.0.0-preview.6.25271.5" />
-		<PackageReference Include="Microsoft.Extensions.Logging.Configuration" Version="10.0.0-preview.5.25277.114" />
-		<PackageReference Include="Microsoft.Extensions.Logging.Console" Version="10.0.0-preview.5.25277.114" />
+		<PackageReference Include="MessagePack.NodaTime" Version="3.4.4" />
+		<PackageReference Include="Microsoft.AspNetCore.SignalR.Client" Version="10.0.0-preview.7.25380.108" />
+		<PackageReference Include="Microsoft.AspNetCore.SignalR.Protocols.Json" Version="10.0.0-preview.7.25380.108" />
+		<PackageReference Include="Microsoft.Extensions.Logging.Configuration" Version="10.0.0-preview.7.25380.108" />
+		<PackageReference Include="Microsoft.Extensions.Logging.Console" Version="10.0.0-preview.7.25380.108" />
 		<PackageReference Include="NodaTime" Version="3.2.2" />
 		<PackageReference Include="NodaTime.Serialization.SystemTextJson" Version="1.3.0" />
 		<PackageReference Include="OpenTelemetry" Version="1.12.0" />
@@ -55,13 +56,13 @@
 		<PackageReference Include="OpenTelemetry.Exporter.Console" Version="1.12.0" />
 		<PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.12.0" />
 		<PackageReference Include="OpenTelemetry.Exporter.Zipkin" Version="1.12.0" />
-		<PackageReference Include="Polly" Version="8.6.1" />
-		<PackageReference Include="Spectre.Console" Version="0.50.1-preview.0.20" />
-		<PackageReference Include="Spectre.Console.ImageSharp" Version="0.50.0" />
-		<PackageReference Include="Spectre.Console.Json" Version="0.50.1-preview.0.20" />
-		<PackageReference Include="System.CommandLine" Version="2.0.0-beta5.25259.101" />
+		<PackageReference Include="Polly" Version="8.6.3" />
+		<PackageReference Include="Spectre.Console" Version="0.50.1-preview.0.26" />
+		<PackageReference Include="Spectre.Console.ImageSharp" Version="0.50.1-preview.0.26" />
+		<PackageReference Include="Spectre.Console.Json" Version="0.50.1-preview.0.26" />
+		<PackageReference Include="System.CommandLine" Version="2.0.0-beta7.25380.108" />
 		<PackageReference Include="System.CommandLine.Hosting" Version="0.4.0-alpha.25259.101" />
-		<PackageReference Include="System.Reactive" Version="6.0.1" />
+		<PackageReference Include="System.Reactive" Version="6.0.2" />
 	</ItemGroup>
 	<ItemGroup>
 		<ProjectReference Include="..\Grace.SDK\Grace.SDK.fsproj" />
@@ -69,6 +70,6 @@
 		<ProjectReference Include="..\Grace.Types\Grace.Types.fsproj" />
 	</ItemGroup>
 	<ItemGroup>
-		<PackageReference Update="FSharp.Core" Version="9.0.300" />
+		<PackageReference Update="FSharp.Core" Version="10.0.100-preview7.25380.108" />
 	</ItemGroup>
 </Project>
