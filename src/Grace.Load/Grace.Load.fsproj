@@ -18,8 +18,8 @@
 
 	<ItemGroup>
 	  <PackageReference Include="Ben.Demystifier" Version="0.4.1" />
-	  <PackageReference Include="Spectre.Console" Version="0.50.1-preview.0.20" />
-	  <PackageReference Include="Spectre.Console.Json" Version="0.50.1-preview.0.20" />
+	  <PackageReference Include="Spectre.Console" Version="0.50.1-preview.0.26" />
+	  <PackageReference Include="Spectre.Console.Json" Version="0.50.1-preview.0.26" />
 	</ItemGroup>
 
 	<ItemGroup>
@@ -28,7 +28,7 @@
 	</ItemGroup>
 
 	<ItemGroup>
-		<PackageReference Update="FSharp.Core" Version="9.0.300" />
+		<PackageReference Update="FSharp.Core" Version="10.0.100-preview7.25451.107" />
 	</ItemGroup>
 
 </Project>

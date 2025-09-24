@@ -64,7 +64,10 @@ module Organization =
 
                     // Publish the event to the rest of the world.
                     let graceEvent = OrganizationEvent organizationEvent
-                    do! daprClient.PublishEventAsync(GracePubSubService, GraceEventStreamTopic, graceEvent)
+
+                    let streamProvider = this.GetStreamProvider GraceEventStreamProvider
+                    let stream = streamProvider.GetStream<GraceEvent>(StreamId.Create(Constants.GraceEventStreamTopic, organizationDto.OrganizationId))
+                    do! stream.OnNextAsync(graceEvent)
 
                     let returnValue =
                         (GraceReturnValue.Create "Organization command succeeded." organizationEvent.Metadata.CorrelationId)

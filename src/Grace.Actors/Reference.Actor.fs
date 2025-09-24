@@ -127,7 +127,10 @@ module Reference =
 
                     // Publish the event to the rest of the world.
                     let graceEvent = GraceEvent.ReferenceEvent referenceEvent
-                    do! daprClient.PublishEventAsync(GracePubSubService, GraceEventStreamTopic, graceEvent)
+
+                    let streamProvider = this.GetStreamProvider GraceEventStreamProvider
+                    let stream = streamProvider.GetStream<GraceEvent>(StreamId.Create(GraceEventStreamTopic, referenceDto.ReferenceId))
+                    do! stream.OnNextAsync(graceEvent)
 
                     // If this is a Save or Checkpoint reference, schedule a physical deletion based on the default delays from the repository.
                     match referenceEvent.Event with

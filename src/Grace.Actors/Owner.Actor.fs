@@ -21,6 +21,7 @@ open Microsoft.Extensions.Logging
 open NodaTime
 open Orleans
 open Orleans.Runtime
+open Orleans.Streaming
 open System
 open System.Collections.Concurrent
 open System.Collections.Generic
@@ -65,7 +66,10 @@ module Owner =
 
                     // Publish the event to the rest of the world.
                     let graceEvent = Events.GraceEvent.OwnerEvent ownerEvent
-                    do! daprClient.PublishEventAsync(GracePubSubService, GraceEventStreamTopic, graceEvent)
+
+                    let streamProvider = this.GetStreamProvider GraceEventStreamProvider
+                    let stream = streamProvider.GetStream<Events.GraceEvent>(StreamId.Create(Constants.GraceEventStreamTopic, ownerDto.OwnerId))
+                    do! stream.OnNextAsync(graceEvent)
 
                     let returnValue = GraceReturnValue.Create "Owner command succeeded." ownerEvent.Metadata.CorrelationId
                     logToConsole $"In Owner.Actor.ApplyEvent(): GraceReturnValue: {returnValue}"

@@ -12,6 +12,7 @@
 /.vscode/
 **/[Cc]omponents
 **/dapr
+**/*Azurite*
 
 # Secrets file to configure Orleans persistence
 Orleans.secrets.fs

@@ -1,6 +1,7 @@
 namespace Grace.Server
 
 open Azure.Data.Tables
+open Azure.Storage.Queues
 open Grace.Actors.Interfaces
 open Grace.Server.ApplicationContext
 open Grace.Shared.Constants
@@ -33,6 +34,7 @@ open System.Net
 open Microsoft.Extensions.Logging
 open Grace.Actors
 open System.Runtime.CompilerServices
+open Microsoft.AspNetCore.Builder
 
 module OrleansFsharpFix =
     // Grace.Orleans.CodeGen is the name of the C# codegen project.
@@ -58,8 +60,10 @@ module Program =
     let graceAppPort = Environment.GetEnvironmentVariable("DAPR_APP_PORT") |> int
 
     let createHostBuilder (args: string[]) : IHostBuilder =
-        Host
-            .CreateDefaultBuilder(args)
+        let builder = WebApplication.CreateBuilder(args)
+        let azureStorageConnectionString = Environment.GetEnvironmentVariable EnvironmentVariables.AzureStorageConnectionString
+
+        builder.Host
             .UseContentRoot(Directory.GetCurrentDirectory())
             .UseOrleans(fun siloBuilder ->
                 siloBuilder
@@ -72,7 +76,7 @@ module Program =
                         options.CollectionAge <- TimeSpan.FromMinutes(15.0)
                         options.ClassSpecificCollectionAge[$"{(typeof<GrainRepository.GrainRepositoryActor>).FullName}"] <- TimeSpan.FromMinutes(5.0))
                     .UseAzureStorageClustering(fun (options: AzureStorageClusteringOptions) ->
-                        let tableServiceClient = TableServiceClient(Environment.GetEnvironmentVariable EnvironmentVariables.AzureStorageConnectionString)
+                        let tableServiceClient = TableServiceClient(azureStorageConnectionString)
                         options.TableServiceClient <- tableServiceClient)
                     .AddCosmosGrainStorage(
                         GraceActorStorage,
@@ -91,6 +95,17 @@ module Program =
                             options.BlobServiceClient <- Context.blobServiceClient
                             options.ContainerName <- Environment.GetEnvironmentVariable EnvironmentVariables.DiffContainerName)
                     )
+                    .AddAzureQueueStreams(
+                        GraceEventStreamProvider,
+                        fun (siloAzureQueueStreamConfigurator: SiloAzureQueueStreamConfigurator) ->
+                            siloAzureQueueStreamConfigurator.ConfigureAzureQueue(fun optionsBuilder ->
+                                optionsBuilder.Configure(fun azureQueueOptions ->
+                                    azureQueueOptions.MessageVisibilityTimeout <- TimeSpan.FromMinutes(5.0)
+                                    azureQueueOptions.QueueNames <- List<string>([ GraceEventStreamTopic ])
+                                    azureQueueOptions.QueueServiceClient <- QueueServiceClient(azureStorageConnectionString, QueueClientOptions()))
+                                |> ignore)
+                    )
+
                 |> ignore
 
                 siloBuilder.AddMemoryGrainStorage(GraceInMemoryStorage) |> ignore

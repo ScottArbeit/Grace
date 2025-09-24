@@ -35,7 +35,6 @@ open System.Text.Json
 open System.Threading.Tasks
 open System.Runtime.Serialization
 open Grace.Shared.Services
-open Dapr.Client.Autogen.Grpc.v1
 
 module Repository =
 
@@ -174,8 +173,10 @@ module Repository =
                     | Ok(branchId, referenceId) ->
                         // Publish the event to the rest of the world.
                         let graceEvent = GraceEvent.RepositoryEvent repositoryEvent
-                        let message = serialize graceEvent
-                        do! daprClient.PublishEventAsync(GracePubSubService, GraceEventStreamTopic, graceEvent)
+
+                        let streamProvider = this.GetStreamProvider GraceEventStreamProvider
+                        let stream = streamProvider.GetStream<GraceEvent>(StreamId.Create(Constants.GraceEventStreamTopic, repositoryDto.RepositoryId))
+                        do! stream.OnNextAsync(graceEvent)
 
                         let returnValue = GraceReturnValue.Create $"Repository command succeeded." repositoryEvent.Metadata.CorrelationId
 

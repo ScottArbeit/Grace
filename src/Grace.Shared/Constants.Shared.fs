@@ -105,6 +105,10 @@ module Constants =
     [<Literal>]
     let GracePubSubService = "graceevents"
 
+    /// The name of the Orleans stream provider to publish to.
+    [<Literal>]
+    let GraceEventStreamProvider = "graceeventstreamprovider"
+
     /// The name of the event topic to publish to.
     [<Literal>]
     let GraceEventStreamTopic = "graceeventstream"

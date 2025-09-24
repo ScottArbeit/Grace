@@ -13,9 +13,9 @@
     </PropertyGroup>
 
 	<ItemGroup>
-		<PackageReference Include="Microsoft.Orleans.Sdk" Version="9.1.2" />
-		<PackageReference Include="Microsoft.Orleans.Serialization.FSharp" Version="9.1.2" />
-		<PackageReference Include="Microsoft.Orleans.Serialization.SystemTextJson" Version="9.1.2" />
+		<PackageReference Include="Microsoft.Orleans.Sdk" Version="9.2.1" />
+		<PackageReference Include="Microsoft.Orleans.Serialization.FSharp" Version="9.2.1" />
+		<PackageReference Include="Microsoft.Orleans.Serialization.SystemTextJson" Version="9.2.1" />
 	</ItemGroup>
 
 	<ItemGroup>

@@ -3,7 +3,6 @@ namespace Grace.Actors
 open Azure.Storage
 open Azure.Storage.Blobs
 open Azure.Storage.Sas
-open Dapr.Client
 open Grace.Actors.Constants
 open Grace.Actors.Context
 open Grace.Actors.Extensions.ActorProxy
@@ -92,20 +91,20 @@ module Services =
     let containerClients = new ConcurrentDictionary<string, BlobContainerClient>()
 
     /// Dapr HTTP endpoint retrieved from environment variables
-    let daprHttpEndpoint =
-        $"{Environment.GetEnvironmentVariable(EnvironmentVariables.DaprServerUri)}:{Environment.GetEnvironmentVariable(EnvironmentVariables.DaprHttpPort)}"
+    //let daprHttpEndpoint =
+    //    $"{Environment.GetEnvironmentVariable(EnvironmentVariables.DaprServerUri)}:{Environment.GetEnvironmentVariable(EnvironmentVariables.DaprHttpPort)}"
 
     /// Dapr gRPC endpoint retrieved from environment variables
-    let daprGrpcEndpoint =
-        $"{Environment.GetEnvironmentVariable(EnvironmentVariables.DaprServerUri)}:{Environment.GetEnvironmentVariable(EnvironmentVariables.DaprGrpcPort)}"
+    //let daprGrpcEndpoint =
+    //    $"{Environment.GetEnvironmentVariable(EnvironmentVariables.DaprServerUri)}:{Environment.GetEnvironmentVariable(EnvironmentVariables.DaprGrpcPort)}"
 
     /// Dapr client instance
-    let daprClient =
-        DaprClientBuilder()
-            .UseJsonSerializationOptions(JsonSerializerOptions)
-            .UseHttpEndpoint(daprHttpEndpoint)
-            .UseGrpcEndpoint(daprGrpcEndpoint)
-            .Build()
+    //let daprClient =
+    //    DaprClientBuilder()
+    //        .UseJsonSerializationOptions(JsonSerializerOptions)
+    //        .UseHttpEndpoint(daprHttpEndpoint)
+    //        .UseGrpcEndpoint(daprGrpcEndpoint)
+    //        .Build()
 
     /// Azure Storage connection string retrieved from environment variables
     let private azureStorageConnectionString = Environment.GetEnvironmentVariable(EnvironmentVariables.AzureStorageConnectionString)

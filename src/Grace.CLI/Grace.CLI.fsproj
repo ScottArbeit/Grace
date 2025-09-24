@@ -70,6 +70,6 @@
 		<ProjectReference Include="..\Grace.Types\Grace.Types.fsproj" />
 	</ItemGroup>
 	<ItemGroup>
-		<PackageReference Update="FSharp.Core" Version="10.0.100-preview7.25380.108" />
+		<PackageReference Update="FSharp.Core" Version="10.0.100-preview7.25451.107" />
 	</ItemGroup>
 </Project>

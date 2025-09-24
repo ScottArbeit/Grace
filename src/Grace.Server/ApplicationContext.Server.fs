@@ -91,14 +91,6 @@ module ApplicationContext =
 
     let graceServerAppId = Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.DaprAppId)
 
-    let daprHttpEndpoint =
-        $"{Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.DaprServerUri)}:{Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.DaprHttpPort)}"
-
-    let daprGrpcEndpoint =
-        $"{Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.DaprServerUri)}:{Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.DaprGrpcPort)}"
-
-    logToConsole $"daprHttpEndpoint: {daprHttpEndpoint}; daprGrpcEndpoint: {daprGrpcEndpoint}"
-
     let mutable sharedKeyCredential: StorageSharedKeyCredential = null
     let mutable grpcPortListener: TcpListener = null
     let secondsToWaitForDaprToBeReady = 30.0

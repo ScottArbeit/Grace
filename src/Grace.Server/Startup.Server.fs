@@ -206,10 +206,7 @@ module Application =
 
                           route "/saveDirectoryVersions" DirectoryVersion.SaveDirectoryVersions
                           |> addMetadata typeof<DirectoryVersion.SaveDirectoryVersionsParameters> ] ]
-              subRoute
-                  "/notifications"
-                  [ GET []
-                    POST [ route "/receiveGraceEventStream" Notifications.ReceiveGraceEventStream ] ]
+              subRoute "/notifications" [ GET [] ]
               subRoute
                   "/organization"
                   [ POST
@@ -643,23 +640,20 @@ module Application =
 
             app
                 //.UseMiddleware<FakeMiddleware>()
-                .UseCloudEvents()
+                .UseMiddleware<HttpSecurityHeadersMiddleware>()
                 .UseW3CLogging()
-                .UseAuthentication()
-                .UseStatusCodePages()
+                .UseMiddleware<CorrelationIdMiddleware>()
+                .UseMiddleware<LogRequestHeadersMiddleware>()
                 .UseStaticFiles()
                 .UseRouting()
-                .UseMiddleware<CorrelationIdMiddleware>()
+                .UseAuthentication()
+                .UseAuthorization()
+                .UseStatusCodePages()
                 //.UseMiddleware<TimingMiddleware>()
-                .UseMiddleware<LogRequestHeadersMiddleware>()
-                .UseMiddleware<HttpSecurityHeadersMiddleware>()
                 .UseMiddleware<ValidateIdsMiddleware>()
                 .UseEndpoints(fun endpointBuilder ->
                     // Add Giraffe (Web API) endpoints
                     endpointBuilder.MapGiraffeEndpoints(endpoints)
-
-                    // Add Dapr pub/sub endpoints
-                    endpointBuilder.MapSubscribeHandler() |> ignore
 
                     // Add Prometheus scraping endpoint
                     endpointBuilder.MapPrometheusScrapingEndpoint() |> ignore

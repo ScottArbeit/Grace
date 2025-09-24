@@ -218,7 +218,15 @@ module DirectoryVersion =
 
                     // Publish the event to the rest of the world.
                     let graceEvent = GraceEvent.DirectoryVersionEvent directoryVersionEvent
-                    do! daprClient.PublishEventAsync(GracePubSubService, GraceEventStreamTopic, graceEvent)
+
+                    let streamProvider = this.GetStreamProvider GraceEventStreamProvider
+
+                    let stream =
+                        streamProvider.GetStream<GraceEvent>(
+                            StreamId.Create(Constants.GraceEventStreamTopic, directoryVersionDto.DirectoryVersion.DirectoryVersionId)
+                        )
+
+                    do! stream.OnNextAsync(graceEvent)
 
                     let returnValue = GraceReturnValue.Create "Directory version command succeeded." directoryVersionEvent.Metadata.CorrelationId
 
