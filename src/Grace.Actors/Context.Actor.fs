@@ -18,7 +18,7 @@ open Azure.Storage.Blobs.Models
 module Context =
 
     /// Actor state storage provider instance
-    let mutable internal actorStateStorageProvider: ActorStateStorageProvider = ActorStateStorageProvider.Unknown
+    let mutable internal actorStateStorageProvider = ActorStateStorageProvider.Unknown
 
     /// Setter for actor state storage provider
     let setActorStateStorageProvider storageProvider = actorStateStorageProvider <- storageProvider
@@ -63,7 +63,8 @@ module Context =
     let setTimings (timing: ConcurrentDictionary<CorrelationId, List<Timing>>) = timings <- timing
 
     /// Azure Blob Storage client
-    let blobServiceClient = BlobServiceClient(Environment.GetEnvironmentVariable Constants.EnvironmentVariables.AzureStorageConnectionString)
+    let azureStorageConnectionString = Environment.GetEnvironmentVariable Constants.EnvironmentVariables.AzureStorageConnectionString
+    let blobServiceClient = BlobServiceClient(azureStorageConnectionString)
 
     /// Diff cache container client
     let diffCacheContainerClient = blobServiceClient.GetBlobContainerClient(Environment.GetEnvironmentVariable Constants.EnvironmentVariables.DiffContainerName)

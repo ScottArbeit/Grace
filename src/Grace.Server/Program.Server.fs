@@ -2,6 +2,8 @@ namespace Grace.Server
 
 open Azure.Data.Tables
 open Azure.Storage.Queues
+open CosmosJsonSerializer
+open dotenv.net
 open Grace.Actors.Interfaces
 open Grace.Server.ApplicationContext
 open Grace.Shared.Constants
@@ -35,6 +37,8 @@ open Microsoft.Extensions.Logging
 open Grace.Actors
 open System.Runtime.CompilerServices
 open Microsoft.AspNetCore.Builder
+open System.Diagnostics
+open Microsoft.Azure.Cosmos
 
 module OrleansFsharpFix =
     // Grace.Orleans.CodeGen is the name of the C# codegen project.
@@ -57,13 +61,28 @@ module Program =
     [<InternalsVisibleTo("Host")>]
     do ()
 
-    let graceAppPort = Environment.GetEnvironmentVariable("DAPR_APP_PORT") |> int
+    // Load environment variables from .env file, if it exists.
+    let envPaths =
+        [| ".env"
+           Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".env") // during debug
+           Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", ".env") // during debug
+           Path.Combine(Directory.GetCurrentDirectory(), ".env") |]
+
+    for path in envPaths do
+        logToConsole $"Checking for .env file at {path}."
+
+        if File.Exists(path) then
+            logToConsole $"Loading environment variables from {path}."
+            DotEnv.Load(DotEnvOptions(envFilePaths = [| path |], ignoreExceptions = true))
 
     let createHostBuilder (args: string[]) : IHostBuilder =
-        let builder = WebApplication.CreateBuilder(args)
+        //let builder = WebApplication.CreateBuilder(args)
+        let builder = Host.CreateDefaultBuilder(args)
+        let graceAppPort = Environment.GetEnvironmentVariable "GRACE_APP_PORT" |> int
         let azureStorageConnectionString = Environment.GetEnvironmentVariable EnvironmentVariables.AzureStorageConnectionString
+        let azureCosmosDBConnectionString = Environment.GetEnvironmentVariable EnvironmentVariables.AzureCosmosDBConnectionString
 
-        builder.Host
+        builder
             .UseContentRoot(Directory.GetCurrentDirectory())
             .UseOrleans(fun siloBuilder ->
                 siloBuilder
@@ -81,12 +100,14 @@ module Program =
                     .AddCosmosGrainStorage(
                         GraceActorStorage,
                         (fun (options: CosmosGrainStorageOptions) ->
-                            options.ConfigureCosmosClient(Environment.GetEnvironmentVariable EnvironmentVariables.AzureCosmosDBConnectionString)
+                            options.ConfigureCosmosClient(azureCosmosDBConnectionString)
                             options.ContainerName <- Environment.GetEnvironmentVariable EnvironmentVariables.CosmosContainerName
                             options.DatabaseName <- Environment.GetEnvironmentVariable EnvironmentVariables.CosmosDatabaseName
                             options.IsResourceCreationEnabled <- true
-                            options.ClientOptions.ApplicationName <- EnvironmentVariables.DaprAppId
-                            options.ClientOptions.UseSystemTextJsonSerializerWithOptions <- JsonSerializerOptions),
+                            options.ClientOptions.ApplicationName <- "Grace.Server"
+                            options.ClientOptions.EnableContentResponseOnWrite <- true
+                            options.ClientOptions.LimitToEndpoint <- false
+                            options.ClientOptions.Serializer <- new CosmosJsonSerializer(JsonSerializerOptions)),
                         typeof<GracePartitionKeyProvider>
                     )
                     .AddAzureBlobGrainStorage(
@@ -104,6 +125,12 @@ module Program =
                                     azureQueueOptions.QueueNames <- List<string>([ GraceEventStreamTopic ])
                                     azureQueueOptions.QueueServiceClient <- QueueServiceClient(azureStorageConnectionString, QueueClientOptions()))
                                 |> ignore)
+                    )
+                    .AddAzureBlobGrainStorage(
+                        GraceEventStreamProvider,
+                        (fun (options: AzureBlobStorageOptions) ->
+                            options.BlobServiceClient <- Context.blobServiceClient
+                            options.ContainerName <- GraceEventStreamProvider)
                     )
 
                 |> ignore
@@ -127,7 +154,7 @@ module Program =
                 webBuilder
                     .UseStartup<Application.Startup>()
                     .UseKestrel(fun kestrelServerOptions ->
-                        kestrelServerOptions.Listen(IPAddress.Any, graceAppPort)
+                        //kestrelServerOptions.Listen(IPAddress.Any, graceAppPort)
                         //kestrelServerOptions.Limits.MaxConcurrentConnections <- 1000
                         //kestrelServerOptions.Limits.MaxConcurrentUpgradedConnections <- 1000
                         //kestrelServerOptions.Listen(IPAddress.Any, 5001, (fun listenOptions -> listenOptions.UseHttps("/etc/certificates/gracedevcert.pfx", "GraceDevCert") |> ignore))

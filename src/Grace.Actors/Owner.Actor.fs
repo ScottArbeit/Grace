@@ -59,6 +59,8 @@ module Owner =
                 try
                     state.State.Add(ownerEvent)
 
+                    //logToConsole $"In Owner.Actor.ApplyEvent(): Writing state. ownerEvent: {serialize ownerEvent}; state: {serialize state}."
+
                     do! state.WriteStateAsync()
 
                     // Update the Dto based on the current event.
@@ -84,6 +86,7 @@ module Owner =
                 with ex ->
                     let exceptionResponse = ExceptionResponse.Create ex
                     log.LogError(ex, "Exception in Owner.Actor: event: {event}", (serialize ownerEvent))
+                    log.LogError("Exception details: {exception}", serialize exceptionResponse)
                     let graceError = GraceError.Create (OwnerError.getErrorMessage OwnerError.FailedWhileApplyingEvent) ownerEvent.Metadata.CorrelationId
 
                     graceError
@@ -314,7 +317,7 @@ module Owner =
 
                             match eventResult with
                             | Ok event ->
-                                logToConsole $"In Owner.Actor.Handle(): GraceEvent: {serialize event}; Metadata: {serialize metadata}"
+                                //logToConsole $"In Owner.Actor.Handle(): GraceEvent: {serialize event}; Metadata: {serialize metadata}"
                                 return! this.ApplyEvent { Event = event; Metadata = metadata }
                             | Error error -> return Error error
                         with ex ->

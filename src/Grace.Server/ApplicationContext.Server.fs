@@ -30,6 +30,9 @@ open System.Reflection
 open System.Text
 open System.Threading
 open System.Threading.Tasks
+open System.Diagnostics
+open Microsoft.AspNetCore.Hosting
+open Orleans.Serialization
 
 module ApplicationContext =
 
@@ -89,8 +92,6 @@ module ApplicationContext =
     /// Holds information about each Azure Storage Account used by the application.
     type StorageAccount = { StorageAccountName: string; StorageAccountConnectionString: string }
 
-    let graceServerAppId = Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.DaprAppId)
-
     let mutable sharedKeyCredential: StorageSharedKeyCredential = null
     let mutable grpcPortListener: TcpListener = null
     let secondsToWaitForDaprToBeReady = 30.0
@@ -100,6 +101,7 @@ module ApplicationContext =
     /// Sets multiple values for the application. In functional programming, a global construct like this is used instead of dependency injection.
     let Set =
         task {
+            (*
             let mutable isReady = false
 
             // Wait for the Dapr gRPC port to be ready.
@@ -142,6 +144,7 @@ module ApplicationContext =
             else
                 logToConsole $"Could not parse gRPC port {grpcPortString} as a port number. Exiting."
                 Environment.Exit(-1)
+            *)
 
             let storageKey = Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.AzureStorageKey)
 
@@ -156,9 +159,9 @@ module ApplicationContext =
             // Get a reference to the CosmosDB database.
             let cosmosClientOptions =
                 CosmosClientOptions(
-                    ApplicationName = graceServerAppId,
-                    EnableContentResponseOnWrite = false,
-                    LimitToEndpoint = true,
+                    ApplicationName = "Grace.Server",
+                    EnableContentResponseOnWrite = true,
+                    LimitToEndpoint = false,
                     Serializer = new CosmosJsonSerializer(Constants.JsonSerializerOptions)
                 )
 

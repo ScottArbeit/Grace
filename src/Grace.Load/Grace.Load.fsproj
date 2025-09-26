@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
 	<PropertyGroup>
 		<OutputType>Exe</OutputType>
@@ -18,8 +18,8 @@
 
 	<ItemGroup>
 	  <PackageReference Include="Ben.Demystifier" Version="0.4.1" />
-	  <PackageReference Include="Spectre.Console" Version="0.50.1-preview.0.26" />
-	  <PackageReference Include="Spectre.Console.Json" Version="0.50.1-preview.0.26" />
+	  <PackageReference Include="Spectre.Console" Version="0.51.1" />
+	  <PackageReference Include="Spectre.Console.Json" Version="0.51.1" />
 	</ItemGroup>
 
 	<ItemGroup>

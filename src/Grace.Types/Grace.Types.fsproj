@@ -33,7 +33,7 @@
 
     <ItemGroup>
         <PackageReference Include="Ben.Demystifier" Version="0.4.1" />
-        <PackageReference Include="DiffPlex" Version="1.8.0" />
+        <PackageReference Include="DiffPlex" Version="1.9.0" />
         <PackageReference Include="FSharp.Control.TaskSeq" Version="0.4.0" />
         <PackageReference Include="FSharp.SystemTextJson" Version="1.4.36" />
         <PackageReference Include="FSharpPlus" Version="1.7.0" />
@@ -41,8 +41,8 @@
         <PackageReference Include="MessagePack.Annotations" Version="3.1.4" />
         <PackageReference Include="MessagePack.FSharpExtensions" Version="4.0.0" />
         <PackageReference Include="MessagePack.NodaTime" Version="3.4.4" />
-        <PackageReference Include="Microsoft.Extensions.Caching.Memory" Version="10.0.0-preview.5.25277.114" />
-        <PackageReference Include="Microsoft.Extensions.ObjectPool" Version="10.0.0-preview.6.25271.5" />
+        <PackageReference Include="Microsoft.Extensions.Caching.Memory" Version="10.0.0-rc.1.25451.107" />
+        <PackageReference Include="Microsoft.Extensions.ObjectPool" Version="10.0.0-rc.1.25451.107" />
         <PackageReference Include="MimeTypeMapOfficial" Version="1.0.17" />
         <PackageReference Include="MimeTypes" Version="2.5.2" />
         <PackageReference Include="Nanoid" Version="3.1.0" />

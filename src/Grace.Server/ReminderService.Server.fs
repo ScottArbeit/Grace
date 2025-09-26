@@ -109,12 +109,13 @@ module ReminderService =
 
                     let! reminders = retrieveReminders cancellationToken
 
-                    log.LogInformation(
-                        "{CurrentInstant}: Node: {HostName}; In ReminderService.ProcessReminders. Processing {reminderCount} reminder(s).",
-                        getCurrentInstantExtended (),
-                        getMachineName,
-                        reminders.Count
-                    )
+                    if reminders.Count > 0 then
+                        log.LogInformation(
+                            "{CurrentInstant}: Node: {HostName}; In ReminderService.ProcessReminders. Processing {reminderCount} reminder(s).",
+                            getCurrentInstantExtended (),
+                            getMachineName,
+                            reminders.Count
+                        )
 
                     do!
                         Parallel.ForEachAsync(

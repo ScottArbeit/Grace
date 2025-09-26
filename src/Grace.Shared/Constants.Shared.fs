@@ -202,25 +202,13 @@ module Constants =
         [<Literal>]
         let CosmosDatabaseName = "cosmosdatabasename"
 
-        /// The environment variable that contains the Dapr application ID.
-        [<Literal>]
-        let DaprAppId = "DAPR_APP_ID"
-
         /// The environment variable that contains the Dapr server Uri. The Uri should not include a port number.
         [<Literal>]
-        let DaprServerUri = "DAPR_SERVER_URI"
+        let GraceServerUri = "GRACE_SERVER_URI"
 
         /// The environment variable that contains the application's port.
         [<Literal>]
-        let DaprAppPort = "DAPR_APP_PORT"
-
-        /// The environment variable that contains the Dapr HTTP port.
-        [<Literal>]
-        let DaprHttpPort = "DAPR_HTTP_PORT"
-
-        /// The environment variable that contains the Dapr gRPC port.
-        [<Literal>]
-        let DaprGrpcPort = "DAPR_GRPC_PORT"
+        let GraceAppPort = "GRACE_APP_PORT"
 
         /// The name of the container in object storage that holds memoized RecursiveDirectoryVersions.
         [<Literal>]
