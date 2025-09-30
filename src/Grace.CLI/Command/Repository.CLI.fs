@@ -366,7 +366,7 @@ module Repository =
 
                 match validateIncomingParameters with
                 | Ok _ ->
-                    let optionResult = parseResult.CommandResult.GetResult(Options.repositoryId)
+                    let optionResult = parseResult.GetResult(Options.repositoryId)
 
                     let repositoryId =
                         if
@@ -433,7 +433,7 @@ module Repository =
                 match result with
                 | Ok returnValue ->
                     // Update the Grace configuration file with the newly-created repository.
-                    if parseResult.CommandResult.GetResult(Options.doNotSwitch) = null then
+                    if not <| parseResult.GetValue(Options.doNotSwitch) then
                         let newConfig = Current()
                         newConfig.RepositoryId <- Guid.Parse($"{returnValue.Properties[nameof RepositoryId]}")
                         newConfig.RepositoryName <- $"{returnValue.Properties[nameof RepositoryName]}"

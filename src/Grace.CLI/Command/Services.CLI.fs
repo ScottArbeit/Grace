@@ -35,12 +35,16 @@ open MessagePack
 open System.Threading
 open Grace.Shared.Parameters
 open Grace.Shared.Parameters.Storage
+open System.Runtime.Intrinsics.Arm
 
 module Services =
 
+    let mutable lockObject = new Lock()
+
     /// Utility method to write to the console using color.
     let logToAnsiConsole (color: string) message =
-        AnsiConsole.MarkupLine $"[{color}]{getCurrentInstantExtended ()} {Environment.CurrentManagedThreadId:X2} {Markup.Escape(message)}[/]"
+        lock lockObject (fun () ->
+            AnsiConsole.MarkupLine $"[{color}]{getCurrentInstantExtended ()} {Environment.CurrentManagedThreadId:X2} {Markup.Escape(message)}[/]")
 
     /// A cache of paths that we've already decided to ignore or not.
     let private shouldIgnoreCache = ConcurrentDictionary<FilePath, bool>()
@@ -210,24 +214,31 @@ module Services =
     let createLocalFileVersion (fileInfo: FileInfo) =
         task {
             if fileInfo.Exists then
-                let relativePath = Path.GetRelativePath(Current().RootDirectory, fileInfo.FullName)
+                try
+                    let relativePath = Path.GetRelativePath(Current().RootDirectory, fileInfo.FullName)
 
-                use stream = fileInfo.Open(fileStreamOptionsRead)
-                let! isBinary = isBinaryFile stream
-                stream.Position <- 0
-                let! shaValue = computeSha256ForFile stream relativePath
-                //logToConsole $"fileRelativePath: {fileRelativePath}; Sha256Hash: {shaValue}."
-                return
-                    Some(
+                    use stream = fileInfo.Open(fileStreamOptionsRead)
+
+                    let! isBinary = isBinaryFile stream
+
+                    stream.Position <- 0
+                    let! sha256Hash = computeSha256ForFile stream relativePath
+
+                    let returnValue =
                         LocalFileVersion.Create
-                            (RelativePath(normalizeFilePath relativePath))
-                            (Sha256Hash shaValue)
+                            relativePath
+                            sha256Hash
                             isBinary
                             fileInfo.Length
                             (Instant.FromDateTimeUtc(fileInfo.LastWriteTimeUtc))
                             true
                             fileInfo.LastWriteTimeUtc
-                    )
+
+                    return Some returnValue
+                with ex ->
+                    logToAnsiConsole Colors.Error $"Exception in createLocalFileVersion for file {fileInfo.FullName}:"
+                    logToAnsiConsole Colors.Error $"{ExceptionResponse.Create ex}"
+                    return None
             else
                 return None
         }
@@ -323,7 +334,8 @@ module Services =
             Directory.CreateDirectory(Path.GetDirectoryName(Current().GraceStatusFile))
             |> ignore // No-op if the directory already exists
 
-            do! serializeMessagePack (Current().GraceStatusFile) graceStatus
+            let graceStatusFilePath = Current().GraceStatusFile
+            do! serializeMessagePack graceStatusFilePath graceStatus
         }
 
     /// Retrieves the Grace object cache file and returns it as a GraceIndex instance.
@@ -437,201 +449,227 @@ module Services =
         (parseResult: ParseResult)
         =
 
+        /// Gets a list of subdirectories and files from a specific directory
         let getDirectoryContents (previousDirectoryVersions: Dictionary<RelativePath, LocalDirectoryVersion>) (directoryInfo: DirectoryInfo) =
             task {
-                let files = ConcurrentQueue<LocalFileVersion>()
-                let directories = ConcurrentQueue<LocalDirectoryVersion>()
+                try
+                    let files = ConcurrentQueue<LocalFileVersion>()
+                    let directories = ConcurrentQueue<LocalDirectoryVersion>()
 
-                // Create LocalFileVersion instances for each file in this directory.
-                do!
-                    Parallel.ForEachAsync(
-                        directoryInfo.GetFiles().Where(fun f -> not <| shouldIgnoreFile f.FullName),
-                        Constants.ParallelOptions,
-                        (fun fileInfo continuationToken ->
-                            ValueTask(
-                                task {
-                                    match! createLocalFileVersion fileInfo with
-                                    | Some fileVersion -> files.Enqueue(fileVersion)
-                                    | None -> ()
-                                }
-                            ))
-                    )
+                    // Create LocalFileVersion instances for each file in this directory.
+                    let mutable i = 0
 
-                // Create or reuse existing LocalDirectoryVersion instances for each subdirectory in this directory.
-                let defaultDirectoryVersion = KeyValuePair(String.Empty, LocalDirectoryVersion.Default)
+                    //do!
+                    //    Parallel.ForEachAsync(
+                    //        directoryInfo.GetFiles().Where(fun f -> not <| shouldIgnoreFile f.FullName),
+                    //        Constants.ParallelOptions,
+                    //        (fun fileInfo continuationToken ->
+                    //            ValueTask(
+                    //                task {
+                    //                    try
+                    //                        Interlocked.Increment(&i) |> ignore
 
-                do!
-                    Parallel.ForEachAsync(
-                        directoryInfo
-                            .GetDirectories()
-                            .Where(fun d -> shouldNotIgnoreDirectory d.FullName),
-                        Constants.ParallelOptions,
-                        (fun subdirectoryInfo continuationToken ->
-                            ValueTask(
-                                task {
-                                    let subdirectoryRelativePath = Path.GetRelativePath(Current().RootDirectory, subdirectoryInfo.FullName)
+                    //                        if parseResult |> isOutputFormat "Verbose" then
+                    //                            logToAnsiConsole
+                    //                                Colors.Verbose
+                    //                                $"In getDirectoryContents (Parallel.ForEachAsync) {i}: Current file: {fileInfo}; fileInfo.Length: {fileInfo.Length}."
 
-                                    let! (subdirectoryVersions: List<LocalDirectoryVersion>, filesInSubdirectory: List<LocalFileVersion>, sha256Hash) =
-                                        collectDirectoriesAndFiles subdirectoryRelativePath previousDirectoryVersions newGraceStatus parseResult
+                    //                        match! createLocalFileVersion fileInfo with
+                    //                        | Some fileVersion ->
+                    //                            files.Enqueue(fileVersion)
 
-                                    // Check if we already have a LocalDirectoryVersion for this subdirectory.
-                                    let existingSubdirectoryVersion =
-                                        previousDirectoryVersions
-                                            .FirstOrDefault(
-                                                (fun existingDirectoryVersion -> existingDirectoryVersion.Key = normalizeFilePath subdirectoryRelativePath),
-                                                defaultValue = defaultDirectoryVersion
-                                            )
-                                            .Value
+                    //                            if parseResult |> isOutputFormat "Verbose" then
+                    //                                logToAnsiConsole
+                    //                                    Colors.Verbose
+                    //                                    $"In getDirectoryContents (Parallel.ForEachAsync) {i}: Enqueued {fileInfo}."
+                    //                        | None -> ()
+                    //                    with ex ->
+                    //                        logToAnsiConsole Colors.Error $"Exception in getDirectoryContents (Parallel.ForEachAsync) {i}:"
+                    //                        logToAnsiConsole Colors.Error $"{ExceptionResponse.Create ex}"
+                    //                }
+                    //            ))
+                    //    )
 
-                                    // Check if we already have this exact SHA-256 hash for this relative path; if so, keep the existing SubdirectoryVersion and its Guid.
-                                    // If the DirectoryId is Guid.Empty (from LocalDirectoryVersion.Default), or the Sha256Hash doesn't match, create a new LocalDirectoryVersion reflecting the changes.
-                                    if
-                                        existingSubdirectoryVersion.DirectoryVersionId = Guid.Empty
-                                        || existingSubdirectoryVersion.Sha256Hash <> sha256Hash
-                                    then
-                                        if parseResult |> isOutputFormat "Verbose" then
-                                            logToAnsiConsole
-                                                Colors.Verbose
-                                                $"In collectDirectoriesAndFiles: Processing {subdirectoryRelativePath};  Creating new subdirectoryVersion."
+                    for fileInfo in directoryInfo.GetFiles().Where(fun f -> not <| shouldIgnoreFile f.FullName) do
+                        try
+                            Interlocked.Increment(&i) |> ignore
 
-                                        let directoryIds =
-                                            subdirectoryVersions
-                                                .OrderBy(fun d -> d.RelativePath)
-                                                .Select(fun d -> d.DirectoryVersionId)
-                                                .ToList()
+                            match! createLocalFileVersion fileInfo with
+                            | Some fileVersion -> files.Enqueue(fileVersion)
 
-                                        let subdirectoryVersion =
-                                            LocalDirectoryVersion.Create
-                                                (Guid.NewGuid())
-                                                (Current().OwnerId)
-                                                (Current().OrganizationId)
-                                                (Current().RepositoryId)
-                                                (RelativePath(normalizeFilePath subdirectoryRelativePath))
-                                                sha256Hash
-                                                directoryIds
-                                                filesInSubdirectory
-                                                (getLocalDirectorySize filesInSubdirectory)
-                                                subdirectoryInfo.LastWriteTimeUtc
-                                        //processedThings.Enqueue($"New      {subdirectoryVersion.RelativePath}")
-                                        newGraceStatus.Index.TryAdd(subdirectoryVersion.DirectoryVersionId, subdirectoryVersion)
-                                        |> ignore
+                            | None -> ()
+                        with ex ->
+                            logToAnsiConsole Colors.Error $"Exception in getDirectoryContents (Parallel.ForEachAsync) {i}:"
+                            logToAnsiConsole Colors.Error $"{ExceptionResponse.Create ex}"
 
-                                        Interlocked.Increment(&newDirectoryVersionCount) |> ignore
+                    // Create or reuse existing LocalDirectoryVersion instances for each subdirectory in this directory.
+                    let defaultDirectoryVersion = KeyValuePair(String.Empty, LocalDirectoryVersion.Default)
 
-                                        if parseResult |> isOutputFormat "Verbose" then
-                                            logToAnsiConsole
-                                                Colors.Important
-                                                $"Created new DirectoryVersion: RelativePath: {normalizeFilePath subdirectoryRelativePath}; existing SHA256Hash: {existingSubdirectoryVersion.Sha256Hash}; new SHA256Hash: {sha256Hash}."
+                    do!
+                        Parallel.ForEachAsync(
+                            directoryInfo
+                                .GetDirectories()
+                                .Where(fun d -> shouldNotIgnoreDirectory d.FullName),
+                            Constants.ParallelOptions,
+                            (fun subdirectoryInfo continuationToken ->
+                                ValueTask(
+                                    task {
+                                        try
 
-                                        directories.Enqueue(subdirectoryVersion)
-                                    else
-                                        if parseResult |> isOutputFormat "Verbose" then
-                                            logToAnsiConsole
-                                                Colors.Verbose
-                                                $"In collectDirectoriesAndFiles: Processing {subdirectoryRelativePath};  Existing subdirectoryVersion: {existingSubdirectoryVersion.DirectoryVersionId}."
-                                        //processedThings.Enqueue($"Existing {existingSubdirectoryVersion.RelativePath}")
-                                        newGraceStatus.Index.TryAdd(existingSubdirectoryVersion.DirectoryVersionId, existingSubdirectoryVersion)
-                                        |> ignore
+                                            let subdirectoryRelativePath = Path.GetRelativePath(Current().RootDirectory, subdirectoryInfo.FullName)
 
-                                        Interlocked.Increment(&existingDirectoryVersionCount) |> ignore
 
-                                        directories.Enqueue(existingSubdirectoryVersion)
-                                }
-                            ))
-                    )
+                                            let! (subdirectoryVersions: List<LocalDirectoryVersion>, filesInSubdirectory: List<LocalFileVersion>, sha256Hash) =
+                                                collectDirectoriesAndFiles subdirectoryRelativePath previousDirectoryVersions newGraceStatus parseResult
 
-                return (directories.OrderBy(fun d -> d.RelativePath).ToList(), files.OrderBy(fun d -> d.RelativePath).ToList())
+                                            // Check if we already have a LocalDirectoryVersion for this subdirectory.
+                                            let existingSubdirectoryVersion =
+                                                previousDirectoryVersions
+                                                    .FirstOrDefault(
+                                                        (fun existingDirectoryVersion ->
+                                                            existingDirectoryVersion.Key = normalizeFilePath subdirectoryRelativePath),
+                                                        defaultValue = defaultDirectoryVersion
+                                                    )
+                                                    .Value
+
+                                            // Check if we already have this exact SHA-256 hash for this relative path; if so, keep the existing SubdirectoryVersion and its Guid.
+                                            // If the DirectoryId is Guid.Empty (from LocalDirectoryVersion.Default), or the Sha256Hash doesn't match, create a new LocalDirectoryVersion reflecting the changes.
+                                            if
+                                                existingSubdirectoryVersion.DirectoryVersionId = Guid.Empty
+                                                || existingSubdirectoryVersion.Sha256Hash <> sha256Hash
+                                            then
+                                                let directoryIds =
+                                                    subdirectoryVersions
+                                                        .OrderBy(fun d -> d.RelativePath)
+                                                        .Select(fun d -> d.DirectoryVersionId)
+                                                        .ToList()
+
+                                                let subdirectoryVersion =
+                                                    LocalDirectoryVersion.Create
+                                                        (Guid.NewGuid())
+                                                        (Current().OwnerId)
+                                                        (Current().OrganizationId)
+                                                        (Current().RepositoryId)
+                                                        (RelativePath(normalizeFilePath subdirectoryRelativePath))
+                                                        sha256Hash
+                                                        directoryIds
+                                                        filesInSubdirectory
+                                                        (getLocalDirectorySize filesInSubdirectory)
+                                                        subdirectoryInfo.LastWriteTimeUtc
+                                                //processedThings.Enqueue($"New      {subdirectoryVersion.RelativePath}")
+                                                newGraceStatus.Index.TryAdd(subdirectoryVersion.DirectoryVersionId, subdirectoryVersion)
+                                                |> ignore
+
+                                                Interlocked.Increment(&newDirectoryVersionCount) |> ignore
+
+                                                directories.Enqueue(subdirectoryVersion)
+                                            else
+                                                //processedThings.Enqueue($"Existing {existingSubdirectoryVersion.RelativePath}")
+                                                newGraceStatus.Index.TryAdd(existingSubdirectoryVersion.DirectoryVersionId, existingSubdirectoryVersion)
+                                                |> ignore
+
+                                                Interlocked.Increment(&existingDirectoryVersionCount) |> ignore
+
+                                                directories.Enqueue(existingSubdirectoryVersion)
+                                        with ex ->
+                                            logToAnsiConsole Colors.Error $"Exception in getDirectoryContents: {ExceptionResponse.Create ex}"
+                                    }
+                                ))
+                        )
+
+                    return (directories.OrderBy(fun d -> d.RelativePath).ToList(), files.OrderBy(fun d -> d.RelativePath).ToList())
+                with ex ->
+                    logToAnsiConsole Colors.Error $"Exception in getDirectoryContents:"
+                    logToAnsiConsole Colors.Error $"{ExceptionResponse.Create ex}"
+                    return (List<LocalDirectoryVersion>(), List<LocalFileVersion>())
             }
 
         task {
-            let directoryInfo = DirectoryInfo(Path.Combine(Current().RootDirectory, relativeDirectoryPath))
+            try
+                let directoryInfo = DirectoryInfo(Path.Combine(Current().RootDirectory, relativeDirectoryPath))
 
-            let! (directories, files) = getDirectoryContents previousDirectoryVersions directoryInfo
-            //for file in files do processedThings.Enqueue(file.RelativePath)
-            if parseResult |> isOutputFormat "Verbose" then
-                logToAnsiConsole
-                    Colors.Verbose
-                    $"In collectDirectoriesAndFiles: Processing {relativeDirectoryPath}: {files.Count} files, {directories.Count} directories."
+                let! (directories, files) = getDirectoryContents previousDirectoryVersions directoryInfo
+                //for file in files do processedThings.Enqueue(file.RelativePath)
 
-            let sha256Hash = computeSha256ForDirectory relativeDirectoryPath directories files
+                let sha256Hash = computeSha256ForDirectory relativeDirectoryPath directories files
 
-            if parseResult |> isOutputFormat "Verbose" then
-                logToAnsiConsole
-                    Colors.Verbose
-                    $"In collectDirectoriesAndFiles: newDirectoryVersionCount: {newDirectoryVersionCount}; existingDirectoryVersionCount: {existingDirectoryVersionCount}."
-
-            return (directories, files, sha256Hash)
+                return (directories, files, sha256Hash)
+            with ex ->
+                logToAnsiConsole Colors.Error $"Exception in collectDirectoriesAndFiles: {ExceptionResponse.Create ex}"
+                return (List<LocalDirectoryVersion>(), List<LocalFileVersion>(), Sha256Hash.Empty)
         }
 
     /// Creates the Grace index file by scanning the repository's working directory.
     let createNewGraceStatusFile (previousGraceStatus: GraceStatus) (parseResult: ParseResult) =
         task {
-            // Start with a new GraceStatus instance.
-            let newGraceStatus = GraceStatus.Default
-            let rootDirectoryInfo = DirectoryInfo(Current().RootDirectory)
+            try
+                // Start with a new GraceStatus instance.
+                let newGraceStatus = GraceStatus.Default
+                let rootDirectoryInfo = DirectoryInfo(Current().RootDirectory)
 
-            // Get the previous GraceStatus index values into a Dictionary for faster lookup.
-            let previousDirectoryVersions = Dictionary<RelativePath, LocalDirectoryVersion>()
+                // Get the previous GraceStatus index values into a Dictionary for faster lookup.
+                let previousDirectoryVersions = Dictionary<RelativePath, LocalDirectoryVersion>()
 
-            for kvp in previousGraceStatus.Index do
-                if not <| previousDirectoryVersions.TryAdd(kvp.Value.RelativePath, kvp.Value) then
-                    logToAnsiConsole Colors.Error $"createNewGraceStatusFile: Failed to add {kvp.Value.RelativePath} to previousDirectoryVersions."
+                for kvp in previousGraceStatus.Index do
+                    if not <| previousDirectoryVersions.TryAdd(kvp.Value.RelativePath, kvp.Value) then
+                        logToAnsiConsole Colors.Error $"createNewGraceStatusFile: Failed to add {kvp.Value.RelativePath} to previousDirectoryVersions."
 
-            let! (subdirectoriesInRootDirectory, filesInRootDirectory, rootSha256Hash) =
-                collectDirectoriesAndFiles Constants.RootDirectoryPath previousDirectoryVersions newGraceStatus parseResult
+                let! (subdirectoriesInRootDirectory, filesInRootDirectory, rootSha256Hash) =
+                    collectDirectoriesAndFiles Constants.RootDirectoryPath previousDirectoryVersions newGraceStatus parseResult
 
-            //let getBySha256HashParameters = GetBySha256HashParameters(RepositoryId = $"{Current().RepositoryId}", Sha256Hash = rootSha256Hash)
-            //let! directoryId = Directory.GetBySha256Hash(getBySha256HashParameters)
+                //let getBySha256HashParameters = GetBySha256HashParameters(RepositoryId = $"{Current().RepositoryId}", Sha256Hash = rootSha256Hash)
+                //let! directoryId = Directory.GetBySha256Hash(getBySha256HashParameters)
 
-            // Check for existing root directory version so we don't update the Guid if it already exists.
-            let rootDirectoryVersion =
-                let previousRootDirectoryVersion =
-                    previousDirectoryVersions
-                        .FirstOrDefault(
-                            (fun existingDirectoryVersion -> existingDirectoryVersion.Key = Constants.RootDirectoryPath),
-                            defaultValue = KeyValuePair(String.Empty, LocalDirectoryVersion.Default)
-                        )
-                        .Value
+                // Check for existing root directory version so we don't update the Guid if it already exists.
+                let rootDirectoryVersion =
+                    let previousRootDirectoryVersion =
+                        previousDirectoryVersions
+                            .FirstOrDefault(
+                                (fun existingDirectoryVersion -> existingDirectoryVersion.Key = Constants.RootDirectoryPath),
+                                defaultValue = KeyValuePair(String.Empty, LocalDirectoryVersion.Default)
+                            )
+                            .Value
 
-                if previousRootDirectoryVersion.Sha256Hash = rootSha256Hash then
-                    if parseResult |> isOutputFormat "Verbose" then
-                        logToAnsiConsole
-                            Colors.Verbose
-                            $"In createNewGraceStatusFile: Using existing rootDirectoryVersion: {previousRootDirectoryVersion.DirectoryVersionId}."
+                    if previousRootDirectoryVersion.Sha256Hash = rootSha256Hash then
+                        previousRootDirectoryVersion
+                    else
+                        let subdirectoryIds =
+                            subdirectoriesInRootDirectory
+                                .OrderBy(fun d -> d.RelativePath)
+                                .Select(fun d -> d.DirectoryVersionId)
+                                .ToList()
 
-                    previousRootDirectoryVersion
-                else
-                    if parseResult |> isOutputFormat "Verbose" then
-                        logToAnsiConsole Colors.Verbose $"In createNewGraceStatusFile: Creating new rootDirectoryVersion."
+                        LocalDirectoryVersion.Create
+                            (Guid.NewGuid())
+                            (Current().OwnerId)
+                            (Current().OrganizationId)
+                            (Current().RepositoryId)
+                            (RelativePath(normalizeFilePath Constants.RootDirectoryPath))
+                            (Sha256Hash rootSha256Hash)
+                            subdirectoryIds
+                            filesInRootDirectory
+                            (getLocalDirectorySize filesInRootDirectory)
+                            rootDirectoryInfo.LastWriteTimeUtc
 
-                    let subdirectoryIds =
-                        subdirectoriesInRootDirectory
-                            .OrderBy(fun d -> d.RelativePath)
-                            .Select(fun d -> d.DirectoryVersionId)
-                            .ToList()
+                newGraceStatus.Index.TryAdd(Guid.Parse($"{rootDirectoryVersion.DirectoryVersionId}"), rootDirectoryVersion)
+                |> ignore
 
-                    LocalDirectoryVersion.Create
-                        (Guid.NewGuid())
-                        (Current().OwnerId)
-                        (Current().OrganizationId)
-                        (Current().RepositoryId)
-                        (RelativePath(normalizeFilePath Constants.RootDirectoryPath))
-                        (Sha256Hash rootSha256Hash)
-                        subdirectoryIds
-                        filesInRootDirectory
-                        (getLocalDirectorySize filesInRootDirectory)
-                        rootDirectoryInfo.LastWriteTimeUtc
+                //let sb = StringBuilder(processedThings.Count)
+                //for dir in processedThings.OrderBy(fun d -> d) do
+                //    sb.AppendLine(dir) |> ignore
+                //do! File.WriteAllTextAsync(@$"C:\Intel\ProcessedThings{sb.Length}.txt", sb.ToString())
+                let rootDirectoryVersion = getRootDirectoryVersion newGraceStatus
 
-            newGraceStatus.Index.TryAdd(Guid.Parse($"{rootDirectoryVersion.DirectoryVersionId}"), rootDirectoryVersion)
-            |> ignore
+                if parseResult |> isOutputFormat "Verbose" then
+                    logToAnsiConsole Colors.Verbose $"Finished createNewGraceStatusFile. newGraceStatus.Index.Count: {newGraceStatus.Index.Count}."
 
-            //let sb = StringBuilder(processedThings.Count)
-            //for dir in processedThings.OrderBy(fun d -> d) do
-            //    sb.AppendLine(dir) |> ignore
-            //do! File.WriteAllTextAsync(@$"C:\Intel\ProcessedThings{sb.Length}.txt", sb.ToString())
-            let rootDirectoryVersion = getRootDirectoryVersion newGraceStatus
+                let newGraceStatus =
+                    { newGraceStatus with RootDirectoryId = rootDirectoryVersion.DirectoryVersionId; RootDirectorySha256Hash = rootDirectoryVersion.Sha256Hash }
 
-            return { newGraceStatus with RootDirectoryId = rootDirectoryVersion.DirectoryVersionId; RootDirectorySha256Hash = rootDirectoryVersion.Sha256Hash }
+                return newGraceStatus
+            with ex ->
+                logToAnsiConsole Colors.Error $"Exception in createNewGraceStatusFile: {ExceptionResponse.Create ex}"
+                return GraceStatus.Default
         }
 
     /// Adds a LocalDirectoryVersion to the local object cache.

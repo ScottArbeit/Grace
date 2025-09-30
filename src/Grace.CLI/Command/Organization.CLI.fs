@@ -206,7 +206,7 @@ module Organization =
                 match validateIncomingParameters with
                 | Ok _ ->
                     let organizationId =
-                        if parseResult.CommandResult.GetResult(Options.organizationId).Implicit then
+                        if parseResult.GetResult(Options.organizationId).Implicit then
                             Guid.NewGuid().ToString()
                         else
                             createParameters.OrganizationId
@@ -247,7 +247,7 @@ module Organization =
                 match result with
                 | Ok returnValue ->
                     // Update the Grace configuration file with the newly-created organization.
-                    if parseResult.CommandResult.GetResult(Options.doNotSwitch) = null then
+                    if not <| parseResult.GetValue(Options.doNotSwitch) then
                         let newConfig = Current()
                         newConfig.OrganizationId <- Guid.Parse($"{returnValue.Properties[nameof OrganizationId]}")
                         newConfig.OrganizationName <- $"{returnValue.Properties[nameof OrganizationName]}"

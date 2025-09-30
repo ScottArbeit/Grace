@@ -69,20 +69,24 @@ module Common =
 
     /// Checks if the output format from the command line is a specific format.
     let isOutputFormat (outputFormat: OutputFormat) (parseResult: ParseResult) =
-        let outputOption = parseResult.CommandResult.GetResult(Options.output)
+        try
+            let outputOption = parseResult.GetValue(Options.output)
 
-        match outputOption with
-        | null ->
-            // The command didn't have an output option set, which means it defaults to Normal.
-            if outputFormat = OutputFormat.Normal then true else false
-        | _ ->
-            // The command had an output option set, so we check if it matches the expected output format.
-            let formatFromCommand = parseResult.GetValue<string>(Options.output)
+            match outputOption with
+            | null ->
+                // The command didn't have an output option set, which means it defaults to Normal.
+                if outputFormat = OutputFormat.Normal then true else false
+            | _ ->
+                // The command had an output option set, so we check if it matches the expected output format.
+                let formatFromCommand = parseResult.GetValue<string>(Options.output)
 
-            if outputFormat = discriminatedUnionFromString<OutputFormat>(formatFromCommand).Value then
-                true
-            else
-                false
+                if outputFormat = discriminatedUnionFromString<OutputFormat>(formatFromCommand).Value then
+                    true
+                else
+                    false
+        with ex ->
+            logToAnsiConsole Colors.Error $"Exception in isOutputFormat: {ExceptionResponse.Create ex}"
+            false
 
     /// Checks if the output format from the command line is Json.
     let json parseResult = parseResult |> isOutputFormat Json

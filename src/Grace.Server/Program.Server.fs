@@ -63,12 +63,11 @@ module Program =
 
     // Load environment variables from .env file, if it exists.
     let envPaths =
-        [| ".env"
-           Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".env") // during debug
-           Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", ".env") // during debug
-           Path.Combine(Directory.GetCurrentDirectory(), ".env") |]
+        [| Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".env") // during debug
+           Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", ".env") |] // during debug
 
-    for path in envPaths do
+    for envPath in envPaths do
+        let path = Path.GetFullPath(envPath)
         logToConsole $"Checking for .env file at {path}."
 
         if File.Exists(path) then
@@ -76,7 +75,6 @@ module Program =
             DotEnv.Load(DotEnvOptions(envFilePaths = [| path |], ignoreExceptions = true))
 
     let createHostBuilder (args: string[]) : IHostBuilder =
-        //let builder = WebApplication.CreateBuilder(args)
         let builder = Host.CreateDefaultBuilder(args)
         let graceAppPort = Environment.GetEnvironmentVariable "GRACE_APP_PORT" |> int
         let azureStorageConnectionString = Environment.GetEnvironmentVariable EnvironmentVariables.AzureStorageConnectionString

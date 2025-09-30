@@ -121,8 +121,10 @@ module Utilities =
     /// Ensures that the Instant is printed in exactly the same number of characters, so the output is aligned.
     let formatInstantAligned (instant: Instant) = formatDateTimeAligned (instant.ToDateTimeUtc())
 
+    let mutable lockObject = new Threading.Lock()
+
     /// Logs the message to the console, with the current instant and thread ID.
-    let logToConsole message = printfn $"{getCurrentInstantExtended ()} {Environment.CurrentManagedThreadId:X2} {message}"
+    let logToConsole message = lock lockObject (fun () -> printfn $"{getCurrentInstantExtended ()} {Environment.CurrentManagedThreadId:X2} {message}")
 
     /// Gets the elapsed time since the start time, in milliseconds, right-aligned in a string of not less than 7 characters.
     ///

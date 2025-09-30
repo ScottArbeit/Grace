@@ -358,25 +358,25 @@ module Types =
           Class: string
           [<Key(1)>]
           DirectoryVersionId: DirectoryVersionId
-          [<Key(1)>]
-          OwnerId: OwnerId
           [<Key(2)>]
-          OrganizationId: OrganizationId
+          OwnerId: OwnerId
           [<Key(3)>]
-          RepositoryId: RepositoryId
+          OrganizationId: OrganizationId
           [<Key(4)>]
-          RelativePath: RelativePath
+          RepositoryId: RepositoryId
           [<Key(5)>]
-          Sha256Hash: Sha256Hash
+          RelativePath: RelativePath
           [<Key(6)>]
-          Directories: List<DirectoryVersionId>
+          Sha256Hash: Sha256Hash
           [<Key(7)>]
-          Files: List<LocalFileVersion>
+          Directories: List<DirectoryVersionId>
           [<Key(8)>]
-          Size: int64
+          Files: List<LocalFileVersion>
           [<Key(9)>]
-          CreatedAt: Instant
+          Size: int64
           [<Key(10)>]
+          CreatedAt: Instant
+          [<Key(11)>]
           LastWriteTimeUtc: DateTime }
 
         static member Default =

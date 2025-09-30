@@ -454,7 +454,7 @@ module Branch =
                 match validateIncomingParameters with
                 | Ok _ ->
                     let branchId =
-                        if parseResult.CommandResult.GetResult(Options.branchId).Implicit then
+                        if parseResult.GetResult(Options.branchId).Implicit then
                             Guid.NewGuid().ToString()
                         else
                             createParameters.BranchId
@@ -502,7 +502,7 @@ module Branch =
                 match result with
                 | Ok returnValue ->
                     // Update the Grace configuration file with the newly-created branch.
-                    if parseResult.CommandResult.GetResult(Options.doNotSwitch) = null then
+                    if not <| parseResult.GetValue(Options.doNotSwitch) then
                         let newConfig = Current()
                         newConfig.BranchId <- Guid.Parse($"{returnValue.Properties[nameof BranchId]}")
                         newConfig.BranchName <- $"{returnValue.Properties[nameof BranchName]}"

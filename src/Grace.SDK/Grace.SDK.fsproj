@@ -18,7 +18,6 @@
 	<ItemGroup>
 		<None Include="instructions.md" />
 		<Compile Include="Common.SDK.fs" />
-		<Compile Include="Dapr.SDK.fs" />
 		<Compile Include="Storage.SDK.fs" />
 		<Compile Include="Branch.SDK.fs" />
 		<Compile Include="Owner.SDK.fs" />
@@ -31,7 +30,7 @@
 	<ItemGroup>
 		<PackageReference Include="Azure.Storage.Blobs" Version="12.25.1" />
 		<PackageReference Include="Ben.Demystifier" Version="0.4.1" />
-		<PackageReference Include="Polly" Version="8.6.3" />
+		<PackageReference Include="Polly" Version="8.6.4" />
 	</ItemGroup>
 
 	<ItemGroup>

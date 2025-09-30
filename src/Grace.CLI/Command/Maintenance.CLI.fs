@@ -155,14 +155,8 @@ module Maintenance =
                                     // Compute the new Grace status file, based on the contents of the working directory.
                                     t1.StartTask()
 
-                                    if parseResult |> verbose then
-                                        logToAnsiConsole Colors.Verbose "Computing new Grace index file."
-
                                     let! graceStatus = createNewGraceStatusFile previousGraceStatus parseResult
                                     let graceStatus = previousGraceStatus
-
-                                    if parseResult |> verbose then
-                                        logToAnsiConsole Colors.Verbose "Done computing new Grace index file."
 
                                     t1.Value <- 100.0
 
@@ -520,9 +514,9 @@ module Maintenance =
             }
             :> Task)
 
-    let private UpdateIndex =
-        CommandHandler.Create(fun (parseResult: ParseResult) (parameters: CommonParameters) ->
-            task {
+    let private updateIndexHandler (parseResult: ParseResult) (parameters: CommonParameters) =
+        task {
+            try
                 if parseResult |> verbose then printParseResult parseResult
 
                 if parseResult |> hasOutput then
@@ -558,13 +552,7 @@ module Maintenance =
                                     // Compute the new Grace status file, based on the contents of the working directory.
                                     t1.StartTask()
 
-                                    if parseResult |> verbose then
-                                        logToAnsiConsole Colors.Verbose "Computing new Grace index file."
-
                                     let! graceStatus = createNewGraceStatusFile previousGraceStatus parseResult
-
-                                    if parseResult |> verbose then
-                                        logToAnsiConsole Colors.Verbose "Done computing new Grace index file."
 
                                     t1.Value <- 100.0
 
@@ -916,8 +904,16 @@ module Maintenance =
                                     AnsiConsole.MarkupLine($"[{Colors.Error}]{error.Error.EscapeMarkup()}[/]")
                     | AWSS3 -> ()
                     | GoogleCloudStorage -> ()
-            }
-            :> Task)
+            with ex ->
+                logToAnsiConsole Colors.Error $"Exception in UpdateIndex: {ExceptionResponse.Create ex}"
+        }
+
+    let private UpdateIndex =
+        CommandHandler.Create(fun (parseResult: ParseResult) (parameters: CommonParameters) ->
+            task {
+                do! updateIndexHandler parseResult parameters
+                return 0
+            })
 
     let private Scan =
         CommandHandler.Create(fun (parseResult: ParseResult) (parameters: CommonParameters) ->
