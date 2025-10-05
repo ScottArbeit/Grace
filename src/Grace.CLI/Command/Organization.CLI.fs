@@ -2,22 +2,24 @@ namespace Grace.CLI.Command
 
 open FSharpPlus
 open Grace.CLI.Common
+open Grace.CLI.Common.Validations
+open Grace.CLI.Text
 open Grace.SDK
 open Grace.Shared
 open Grace.Shared.Client.Configuration
 open Grace.Types.Types
 open Grace.Shared.Utilities
-open Grace.Shared.Validation.Errors.Organization
+open Grace.Shared.Validation.Errors
 open NodaTime
 open Spectre.Console
 open Spectre.Console.Json
 open System
 open System.Collections.Generic
 open System.CommandLine
-open System.CommandLine.NamingConventionBinder
-open System.CommandLine.Parsing
+open System.CommandLine.Invocation
 open System.Linq
 open System.Threading
+open System.Threading.Tasks
 
 module Organization =
 
@@ -30,51 +32,46 @@ module Organization =
 
     module private Options =
         let ownerId =
-            new Option<String>(
-                "--ownerId",
+            new Option<OwnerId>(
+                OptionName.OwnerId,
                 Required = false,
                 Description = "The organization's owner ID <Guid>.",
                 Arity = ArgumentArity.ExactlyOne,
-                DefaultValueFactory =
-                    (fun _ ->
-                        if Current().OwnerId = Guid.Empty then
-                            $"{Guid.NewGuid()}"
-                        else
-                            $"{Current().OwnerId}")
+                DefaultValueFactory = (fun _ -> if Current().OwnerId = Guid.Empty then Guid.NewGuid() else Current().OwnerId)
             )
 
         let ownerName =
             new Option<String>(
-                "--ownerName",
+                OptionName.OwnerName,
                 Required = false,
                 Description = "The organization's owner name. [default: current owner]",
                 Arity = ArgumentArity.ExactlyOne
             )
 
         let organizationId =
-            new Option<String>(
-                "--organizationId",
+            new Option<OrganizationId>(
+                OptionName.OrganizationId,
                 Required = false,
                 Description = "The organization ID <Guid>.",
                 Arity = ArgumentArity.ExactlyOne,
                 DefaultValueFactory =
                     (fun _ ->
                         if Current().OrganizationId = Guid.Empty then
-                            $"{Guid.NewGuid()}"
+                            Guid.NewGuid()
                         else
-                            $"{Current().OrganizationId}")
+                            Current().OrganizationId)
             )
 
         let organizationName =
             new Option<String>(
-                "--organizationName",
+                OptionName.OrganizationName,
                 Required = false,
                 Description = "The name of the organization. [default: current organization]",
                 Arity = ArgumentArity.ExactlyOne
             )
 
         let organizationNameRequired =
-            new Option<String>("--organizationName", Required = true, Description = "The name of the organization.", Arity = ArgumentArity.ExactlyOne)
+            new Option<String>(OptionName.OrganizationName, Required = true, Description = "The name of the organization.", Arity = ArgumentArity.ExactlyOne)
 
         let organizationType =
             (new Option<String>(
@@ -94,9 +91,11 @@ module Organization =
             ))
                 .AcceptOnlyFromAmong(listCases<SearchVisibility> ())
 
-        let description = new Option<String>("--description", Required = true, Description = "Description of the owner.", Arity = ArgumentArity.ExactlyOne)
+        let description =
+            new Option<String>(OptionName.Description, Required = true, Description = "Description of the organization.", Arity = ArgumentArity.ExactlyOne)
 
-        let newName = new Option<String>("--newName", Required = true, Description = "The new name of the organization.", Arity = ArgumentArity.ExactlyOne)
+        let newName =
+            new Option<String>(OptionName.NewName, Required = true, Description = "The new name of the organization.", Arity = ArgumentArity.ExactlyOne)
 
         let force = new Option<bool>("--force", Required = false, Description = "Delete even if there is data under this organization. [default: false]")
 
@@ -108,50 +107,34 @@ module Organization =
 
         let doNotSwitch =
             new Option<bool>(
-                "--doNotSwitch",
+                OptionName.DoNotSwitch,
                 Required = false,
-                Description = "Do not switch to the new organization as the current organization.",
+                Description =
+                    "Do not switch your current organization to the new organization after it is created. By default, the new organization becomes the current organization.",
                 Arity = ArgumentArity.ZeroOrOne
             )
 
-    let mustBeAValidGuid (parseResult: ParseResult) (parameters: CommonParameters) (option: Option<'T>) (value: string) (error: OrganizationError) =
-        let mutable guid = Guid.Empty
+    let private CommonValidations (parseResult) =
+        let ``OwnerName must be a valid Grace name`` (parseResult: ParseResult) =
+            if parseResult.GetResult(Options.ownerName) <> null then
+                mustBeAValidGraceName parseResult Options.ownerName InvalidOwnerName
+            else
+                Ok(parseResult)
 
-        if
-            parseResult.CommandResult.GetValue<'T>(option) <> null
-            && not <| String.IsNullOrEmpty(value)
-            && (Guid.TryParse(value, &guid) = false || guid = Guid.Empty)
-        then
-            Error(GraceError.Create (OrganizationError.getErrorMessage error) (parameters.CorrelationId))
-        else
-            Ok(parseResult, parameters)
+        let ``OrganizationName must be a valid Grace name`` (parseResult: ParseResult) =
+            if parseResult.GetResult(Options.organizationName) <> null then
+                mustBeAValidGraceName parseResult Options.organizationName InvalidOrganizationName
+            else
+                Ok(parseResult)
 
-    let mustBeAValidGraceName (parseResult: ParseResult) (parameters: CommonParameters) (option: Option<'T>) (value: string) (error: OrganizationError) =
-        if
-            parseResult.CommandResult.GetValue<'T>(option) <> null
-            && not <| Constants.GraceNameRegex.IsMatch(value)
-        then
-            Error(GraceError.Create (OrganizationError.getErrorMessage error) (parameters.CorrelationId))
-        else
-            Ok(parseResult, parameters)
+        let ``RepositoryName must be a valid Grace name`` (parseResult: ParseResult) =
+            if parseResult.GetResult(Options.newName) <> null then
+                mustBeAValidGraceName parseResult Options.newName InvalidOrganizationName
+            else
+                Ok(parseResult)
 
-    let private CommonValidations (parseResult, parameters) =
-        let ``OwnerId must be a Guid`` (parseResult: ParseResult, parameters: CommonParameters) =
-            mustBeAValidGuid parseResult parameters Options.ownerId parameters.OwnerId InvalidOwnerId
-
-        let ``OwnerName must be a valid Grace name`` (parseResult: ParseResult, parameters: CommonParameters) =
-            mustBeAValidGraceName parseResult parameters Options.ownerName parameters.OwnerName InvalidOwnerName
-
-        let ``OrganizationId must be a Guid`` (parseResult: ParseResult, parameters: CommonParameters) =
-            mustBeAValidGuid parseResult parameters Options.organizationId parameters.OrganizationId InvalidOrganizationId
-
-        let ``OrganizationName must be a valid Grace name`` (parseResult: ParseResult, parameters: CommonParameters) =
-            mustBeAValidGraceName parseResult parameters Options.organizationName parameters.OrganizationName InvalidOrganizationName
-
-        (parseResult, parameters)
-        |> ``OwnerId must be a Guid``
-        >>= ``OwnerName must be a valid Grace name``
-        >>= ``OrganizationId must be a Guid``
+        (parseResult)
+        |> ``OwnerName must be a valid Grace name``
         >>= ``OrganizationName must be a valid Grace name``
 
     let ``OrganizationName must not be empty`` (parseResult: ParseResult, parameters: CommonParameters) =
@@ -171,7 +154,7 @@ module Organization =
         then
             Ok(parseResult, parameters)
         else
-            Error(GraceError.Create (OrganizationError.getErrorMessage EitherOwnerIdOrOwnerNameRequired) (parameters.CorrelationId))
+            Error(GraceError.Create (getErrorMessage OrganizationError.EitherOwnerIdOrOwnerNameRequired) (parameters.CorrelationId))
 
     /// Adjusts parameters to account for whether Id's or Name's were specified by the user, or should be taken from default values.
     let normalizeIdsAndNames<'T when 'T :> CommonParameters> (parseResult: ParseResult) (parameters: 'T) =
@@ -240,7 +223,8 @@ module Organization =
         }
 
     let private Create =
-        CommandHandler.Create(fun (parseResult: ParseResult) (createParameters: CreateParameters) ->
+        CommandLineAction.Create(fun (parseResult: ParseResult) (createParameters: CreateParameters) ->
+            //CommandHandler.Create(fun (parseResult: ParseResult) (createParameters: CreateParameters) ->
             task {
                 let! result = createHandler parseResult createParameters
 
@@ -407,12 +391,31 @@ module Organization =
                 return Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
         }
 
-    let private SetType =
-        CommandHandler.Create(fun (parseResult: ParseResult) (setTypeParameters: TypeParameters) ->
+    type SetType() =
+        inherit AsynchronousCommandLineAction()
+
+        override this.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
-                let! result = setTypeHandler parseResult (setTypeParameters |> normalizeIdsAndNames parseResult)
-                return result |> renderOutput parseResult
-            })
+                try
+                    if parseResult |> verbose then printParseResult parseResult
+                    let ownerId = parseResult.GetValue(Options.ownerId)
+                    return 0
+                with ex ->
+                    return
+                        renderOutput
+                            parseResult
+                            (GraceResult.Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId)))
+            //let! result = setTypeHandler parseResult (setTypeParameters |> normalizeIdsAndNames parseResult)
+            //return result |> renderOutput parseResult
+
+            }
+
+    //let private SetType =
+    //    CommandHandler.Create(fun (parseResult: ParseResult) (setTypeParameters: TypeParameters) ->
+    //        task {
+    //            let! result = setTypeHandler parseResult (setTypeParameters |> normalizeIdsAndNames parseResult)
+    //            return result |> renderOutput parseResult
+    //        })
 
     // SetSearchVisibility subcommand
     type SearchVisibilityParameters() =
@@ -670,7 +673,7 @@ module Organization =
             |> addOption Options.organizationType
             |> addCommonOptions
 
-        setTypeCommand.Action <- SetType
+        setTypeCommand.Action <- new SetType()
         organizationCommand.Subcommands.Add(setTypeCommand)
 
         let setSearchVisibilityCommand =

@@ -21,7 +21,7 @@ open Grace.Types.Repository
 open Grace.Types.Events
 open Grace.Types.Types
 open Grace.Shared.Utilities
-open Grace.Shared.Validation.Errors.Repository
+open Grace.Shared.Validation.Errors
 open Microsoft.Extensions.Logging
 open NodaTime
 open Orleans
@@ -73,7 +73,7 @@ module Repository =
                     let processGraceError (repositoryError: RepositoryError) repositoryEvent previousGraceError =
                         Error(
                             GraceError.Create
-                                $"{RepositoryError.getErrorMessage repositoryError}{Environment.NewLine}{previousGraceError.Error}"
+                                $"{getErrorMessage repositoryError}{Environment.NewLine}{previousGraceError.Error}"
                                 repositoryEvent.Metadata.CorrelationId
                         )
 
@@ -202,8 +202,7 @@ module Repository =
                 with ex ->
                     let exceptionResponse = ExceptionResponse.Create ex
 
-                    let graceError =
-                        GraceError.Create (RepositoryError.getErrorMessage RepositoryError.FailedWhileApplyingEvent) repositoryEvent.Metadata.CorrelationId
+                    let graceError = GraceError.Create (getErrorMessage RepositoryError.FailedWhileApplyingEvent) repositoryEvent.Metadata.CorrelationId
 
                     graceError
                         .enhance("Exception details", exceptionResponse.``exception`` + exceptionResponse.innerException)
@@ -427,17 +426,17 @@ module Repository =
                 let isValid command (metadata: EventMetadata) =
                     task {
                         if state.State.Exists(fun ev -> ev.Metadata.CorrelationId = metadata.CorrelationId) then
-                            return Error(GraceError.Create (RepositoryError.getErrorMessage DuplicateCorrelationId) metadata.CorrelationId)
+                            return Error(GraceError.Create (getErrorMessage RepositoryError.DuplicateCorrelationId) metadata.CorrelationId)
                         else
                             match command with
                             | RepositoryCommand.Create(_, _, _, _, _) ->
                                 match repositoryDto.UpdatedAt with
-                                | Some _ -> return Error(GraceError.Create (RepositoryError.getErrorMessage RepositoryIdAlreadyExists) metadata.CorrelationId)
+                                | Some _ -> return Error(GraceError.Create (getErrorMessage RepositoryError.RepositoryIdAlreadyExists) metadata.CorrelationId)
                                 | None -> return Ok command
                             | _ ->
                                 match repositoryDto.UpdatedAt with
                                 | Some _ -> return Ok command
-                                | None -> return Error(GraceError.Create (RepositoryError.getErrorMessage RepositoryIdDoesNotExist) metadata.CorrelationId)
+                                | None -> return Error(GraceError.Create (getErrorMessage RepositoryError.RepositoryIdDoesNotExist) metadata.CorrelationId)
                     }
 
                 let processCommand command (metadata: EventMetadata) =

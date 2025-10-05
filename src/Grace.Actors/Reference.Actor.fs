@@ -11,7 +11,7 @@ open Grace.Actors.Types
 open Grace.Shared
 open Grace.Shared.Constants
 open Grace.Shared.Utilities
-open Grace.Shared.Validation.Errors.Reference
+open Grace.Shared.Validation.Errors
 open Grace.Types.Events
 open Grace.Types.Reference
 open Grace.Types.Reminder
@@ -205,7 +205,7 @@ module Reference =
                     )
 
                     let graceError =
-                        (GraceError.CreateWithException ex (ReferenceError.getErrorMessage FailedWhileApplyingEvent) correlationId)
+                        (GraceError.CreateWithException ex (getErrorMessage ReferenceError.FailedWhileApplyingEvent) correlationId)
                             .enhance(nameof RepositoryId, referenceDto.RepositoryId)
                             .enhance(nameof BranchId, referenceDto.BranchId)
                             .enhance(nameof ReferenceId, referenceDto.ReferenceId)
@@ -242,17 +242,17 @@ module Reference =
                 let isValid (command: ReferenceCommand) (metadata: EventMetadata) =
                     task {
                         if state.State.Exists(fun ev -> ev.Metadata.CorrelationId = metadata.CorrelationId) then
-                            return Error(GraceError.Create (ReferenceError.getErrorMessage DuplicateCorrelationId) metadata.CorrelationId)
+                            return Error(GraceError.Create (getErrorMessage ReferenceError.DuplicateCorrelationId) metadata.CorrelationId)
                         else
                             match command with
                             | Create(referenceId, ownerId, organizationId, repositoryId, branchId, directoryId, sha256Hash, referenceType, referenceText, links) ->
                                 match referenceDto.UpdatedAt with
-                                | Some _ -> return Error(GraceError.Create (ReferenceError.getErrorMessage ReferenceAlreadyExists) metadata.CorrelationId)
+                                | Some _ -> return Error(GraceError.Create (getErrorMessage ReferenceError.ReferenceAlreadyExists) metadata.CorrelationId)
                                 | None -> return Ok command
                             | _ ->
                                 match referenceDto.UpdatedAt with
                                 | Some _ -> return Ok command
-                                | None -> return Error(GraceError.Create (ReferenceError.getErrorMessage ReferenceIdDoesNotExist) metadata.CorrelationId)
+                                | None -> return Error(GraceError.Create (getErrorMessage ReferenceError.ReferenceIdDoesNotExist) metadata.CorrelationId)
                     }
 
                 let processCommand (command: ReferenceCommand) (metadata: EventMetadata) =

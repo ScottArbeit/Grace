@@ -15,7 +15,7 @@ open Grace.Types.Reminder
 open Grace.Types.Repository
 open Grace.Types.Organization
 open Grace.Types.Types
-open Grace.Shared.Validation.Errors.Organization
+open Grace.Shared.Validation.Errors
 open Microsoft.Extensions.Logging
 open NodaTime
 open Orleans
@@ -230,7 +230,7 @@ module Organization =
                 let isValid (command: OrganizationCommand) (metadata: EventMetadata) =
                     task {
                         if state.State.Exists(fun ev -> ev.Metadata.CorrelationId = metadata.CorrelationId) then
-                            return Error(GraceError.Create (OrganizationError.getErrorMessage DuplicateCorrelationId) metadata.CorrelationId)
+                            return Error(GraceError.Create (getErrorMessage OrganizationError.DuplicateCorrelationId) metadata.CorrelationId)
                         else
                             match command with
                             | OrganizationCommand.Create(organizationId, organizationName, ownerId) ->

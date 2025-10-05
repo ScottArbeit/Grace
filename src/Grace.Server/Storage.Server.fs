@@ -15,7 +15,7 @@ open Grace.Shared.Parameters.Storage
 open Grace.Shared.Utilities
 open Grace.Shared
 open Grace.Shared.Client.Configuration
-open Grace.Shared.Validation.Errors.Storage
+open Grace.Shared.Validation.Errors
 open Grace.Types.Repository
 open Grace.Types.Types
 open Microsoft.AspNetCore.Http
@@ -45,14 +45,14 @@ module Storage =
                 let! azureResponse = blobClient.GetPropertiesAsync()
                 let blobProperties = azureResponse.Value
                 return Ok(blobProperties.Metadata :?> IReadOnlyDictionary<string, string>)
-            | AWSS3 -> return Error(StorageError.getErrorMessage NotImplemented)
-            | GoogleCloudStorage -> return Error(StorageError.getErrorMessage NotImplemented)
+            | AWSS3 -> return Error(getErrorMessage StorageError.NotImplemented)
+            | GoogleCloudStorage -> return Error(getErrorMessage StorageError.NotImplemented)
             | ObjectStorageProvider.Unknown ->
                 logToConsole
                     $"Error: Unknown ObjectStorageProvider in getFileMetadata for repository {repositoryDto.RepositoryId} - {repositoryDto.RepositoryName}."
 
                 logToConsole (sprintf "%A" repositoryDto)
-                return Error(StorageError.getErrorMessage StorageError.UnknownObjectStorageProvider)
+                return Error(getErrorMessage StorageError.UnknownObjectStorageProvider)
         }
 
     /// Gets a download URI for the specified file version that can be used by a Grace client.
@@ -166,13 +166,13 @@ module Storage =
                     else
                         return!
                             context
-                            |> result400BadRequest (GraceError.Create (StorageError.getErrorMessage FilesMustNotBeEmpty) correlationId)
+                            |> result400BadRequest (GraceError.Create (getErrorMessage StorageError.FilesMustNotBeEmpty) correlationId)
                 with ex ->
                     logToConsole $"Exception in GetUploadMetadataForFiles: {(ExceptionResponse.Create ex)}"
 
                     return!
                         context
-                        |> result500ServerError (GraceError.Create (StorageError.getErrorMessage ObjectStorageException) correlationId)
+                        |> result500ServerError (GraceError.Create (getErrorMessage StorageError.ObjectStorageException) correlationId)
             }
 
     /// Deletes all documents from Cosmos DB. After calling, the web connection will time-out, but the method will continue to run until Cosmos DB is empty.

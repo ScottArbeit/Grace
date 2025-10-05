@@ -2,17 +2,18 @@ namespace Grace.CLI.Command
 
 open FSharpPlus
 open Grace.CLI.Common
+open Grace.CLI.Text
 open Grace.SDK
 open Grace.Shared
 open Grace.Shared.Client.Configuration
 open Grace.Shared.Client.Theme
 open Grace.Types.Types
 open Grace.Shared.Validation
-open Grace.Shared.Validation.Errors.Owner
+open Grace.Shared.Validation.Errors
 open NodaTime
 open System
 open System.Collections.Generic
-open System.CommandLine.NamingConventionBinder
+open System.CommandLine.Invocation
 open System.CommandLine.Parsing
 open System.Linq
 open System.Threading.Tasks
@@ -33,7 +34,7 @@ module Owner =
     module private Options =
         let ownerId =
             new Option<String>(
-                "--ownerId",
+                OptionName.OwnerId,
                 [||],
                 Required = false,
                 Description = "The Id of the owner <Guid>.",
@@ -48,13 +49,14 @@ module Owner =
 
         let ownerName =
             new Option<String>(
-                "--ownerName",
+                OptionName.OwnerName,
                 Required = false,
                 Description = "The name of the owner. [default: current owner]",
                 Arity = ArgumentArity.ExactlyOne
             )
 
-        let ownerNameRequired = new Option<String>("--ownerName", Required = true, Description = "The name of the owner.", Arity = ArgumentArity.ExactlyOne)
+        let ownerNameRequired =
+            new Option<String>(OptionName.OwnerName, Required = true, Description = "The name of the owner.", Arity = ArgumentArity.ExactlyOne)
 
         let ownerTypeRequired =
             (new Option<String>("--ownerType", Required = true, Description = "The type of owner. [default: Public]", Arity = ArgumentArity.ExactlyOne))
@@ -70,9 +72,10 @@ module Owner =
                 .AcceptOnlyFromAmong(Utilities.listCases<SearchVisibility> ())
 
         let descriptionRequired =
-            new Option<String>("--description", Required = true, Description = "Description of the owner.", Arity = ArgumentArity.ExactlyOne)
+            new Option<String>(OptionName.Description, Required = true, Description = "Description of the owner.", Arity = ArgumentArity.ExactlyOne)
 
-        let newName = new Option<String>("--newName", Required = true, Description = "The new name of the organization.", Arity = ArgumentArity.ExactlyOne)
+        let newName =
+            new Option<String>(OptionName.NewName, Required = true, Description = "The new name of the organization.", Arity = ArgumentArity.ExactlyOne)
 
         let force = new Option<bool>("--force", Required = false, Description = "Delete even if there is data under this owner. [default: false]")
 
@@ -84,9 +87,9 @@ module Owner =
 
         let doNotSwitch =
             new Option<bool>(
-                "--doNotSwitch",
+                OptionName.DoNotSwitch,
                 Required = false,
-                Description = "Do not switch to the new owner as the current owner.",
+                Description = "Do not switch your current owner to the new owner after it is created. By default, the new owner becomes the current owner.",
                 Arity = ArgumentArity.ZeroOrOne
             )
 
@@ -113,10 +116,10 @@ module Owner =
 
     let private CommonValidations (parseResult, commonParameters) =
         let ``OwnerId must be a Guid`` (parseResult: ParseResult, parameters: CommonParameters) =
-            mustBeAValidGuid parseResult parameters Options.ownerId parameters.OwnerId InvalidOwnerId
+            mustBeAValidGuid parseResult parameters Options.ownerId parameters.OwnerId OwnerError.InvalidOwnerId
 
         let ``OwnerName must be a valid Grace name`` (parseResult: ParseResult, parameters: CommonParameters) =
-            mustBeAValidGraceName parseResult parameters Options.ownerName parameters.OwnerName InvalidOwnerName
+            mustBeAValidGraceName parseResult parameters Options.ownerName parameters.OwnerName OwnerError.InvalidOwnerName
 
         (parseResult, commonParameters)
         |> ``OwnerId must be a Guid``

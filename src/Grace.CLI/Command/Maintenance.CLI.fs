@@ -12,7 +12,7 @@ open Spectre.Console
 open System
 open System.Collections.Concurrent
 open System.CommandLine
-open System.CommandLine.NamingConventionBinder
+open System.CommandLine.Invocation
 open System.CommandLine.Parsing
 open System.Linq
 open System.IO
@@ -38,7 +38,7 @@ module Maintenance =
     module private Options =
         let ownerId =
             new Option<String>(
-                "--ownerId",
+                OptionName.OwnerId,
                 Required = false,
                 Description = "The repository's owner ID <Guid>.",
                 Arity = ArgumentArity.ZeroOrOne,
@@ -47,7 +47,7 @@ module Maintenance =
 
         let ownerName =
             new Option<String>(
-                "--ownerName",
+                OptionName.OwnerName,
                 Required = false,
                 Description = "The repository's owner name. [default: current owner]",
                 Arity = ArgumentArity.ExactlyOne
@@ -55,7 +55,7 @@ module Maintenance =
 
         let organizationId =
             new Option<String>(
-                "--organizationId",
+                OptionName.OrganizationId,
                 Required = false,
                 Description = "The repository's organization ID <Guid>.",
                 Arity = ArgumentArity.ZeroOrOne,
@@ -64,7 +64,7 @@ module Maintenance =
 
         let organizationName =
             new Option<String>(
-                "--organizationName",
+                OptionName.OrganizationName,
                 Required = false,
                 Description = "The repository's organization name. [default: current organization]",
                 Arity = ArgumentArity.ZeroOrOne
@@ -72,7 +72,7 @@ module Maintenance =
 
         let repositoryId =
             new Option<String>(
-                "--repositoryId",
+                OptionName.RepositoryId,
                 [| "-r" |],
                 Required = false,
                 Description = "The repository's ID <Guid>.",
@@ -82,7 +82,7 @@ module Maintenance =
 
         let repositoryName =
             new Option<String>(
-                "--repositoryName",
+                OptionName.RepositoryName,
                 [| "-n" |],
                 Required = false,
                 Description = "The name of the repository. [default: current repository]",

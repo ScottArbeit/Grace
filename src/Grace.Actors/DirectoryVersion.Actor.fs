@@ -14,7 +14,7 @@ open Grace.Shared
 open Grace.Shared.Constants
 open Grace.Shared.Services
 open Grace.Shared.Utilities
-open Grace.Shared.Validation.Errors.DirectoryVersion
+open Grace.Shared.Validation.Errors
 open Grace.Types.Events
 open Grace.Types.Reminder
 open Grace.Types.Repository
@@ -242,7 +242,7 @@ module DirectoryVersion =
                     let graceError =
                         GraceError.CreateWithException
                             ex
-                            (DirectoryVersionError.getErrorMessage FailedWhileApplyingEvent)
+                            (getErrorMessage DirectoryVersionError.FailedWhileApplyingEvent)
                             directoryVersionEvent.Metadata.CorrelationId
 
                     graceError
@@ -519,12 +519,16 @@ module DirectoryVersion =
                     }
 
                 task {
-                    this.correlationId <- metadata.CorrelationId
-                    currentCommand <- getDiscriminatedUnionCaseName command
+                    try
+                        this.correlationId <- metadata.CorrelationId
+                        currentCommand <- getDiscriminatedUnionCaseName command
 
-                    match! isValid command metadata with
-                    | Ok command -> return! processCommand command metadata
-                    | Error error -> return Error error
+                        match! isValid command metadata with
+                        | Ok command -> return! processCommand command metadata
+                        | Error error -> return Error error
+                    with ex ->
+                        logToConsole $"Exception in DirectoryVersionActor.Handle(): {ExceptionResponse.Create ex}"
+                        return Error(GraceError.CreateWithException ex "Exception in DirectoryVersionActor.Handle()" metadata.CorrelationId)
                 }
 
             member this.GetRecursiveSize correlationId =

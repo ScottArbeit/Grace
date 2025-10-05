@@ -5,6 +5,7 @@ open DiffPlex.DiffBuilder.Model
 open FSharpPlus
 open Grace.CLI.Common
 open Grace.CLI.Services
+open Grace.CLI.Text
 open Grace.SDK
 open Grace.Shared
 open Grace.Shared.Client.Configuration
@@ -16,13 +17,13 @@ open Grace.Types.Branch
 open Grace.Types.Diff
 open Grace.Types.Reference
 open Grace.Types.Types
-open Grace.Shared.Validation.Errors.Diff
+open Grace.Shared.Validation.Errors
 open Spectre.Console
 open System
 open System.Collections.Concurrent
 open System.Collections.Generic
 open System.CommandLine
-open System.CommandLine.NamingConventionBinder
+open System.CommandLine.Invocation
 open System.CommandLine.Parsing
 open System.Linq
 open System.IO
@@ -50,7 +51,7 @@ module Diff =
     module private Options =
         let ownerId =
             new Option<string>(
-                "--ownerId",
+                OptionName.OwnerId,
                 Required = false,
                 Description = "The repository's owner ID <Guid>.",
                 Arity = ArgumentArity.ZeroOrOne,
@@ -59,7 +60,7 @@ module Diff =
 
         let ownerName =
             new Option<string>(
-                "--ownerName",
+                OptionName.OwnerName,
                 Required = false,
                 Description = "The repository's owner name. [default: current owner]",
                 Arity = ArgumentArity.ExactlyOne
@@ -67,7 +68,7 @@ module Diff =
 
         let organizationId =
             new Option<string>(
-                "--organizationId",
+                OptionName.OrganizationId,
                 Required = false,
                 Description = "The repository's organization ID <Guid>.",
                 Arity = ArgumentArity.ZeroOrOne,
@@ -76,7 +77,7 @@ module Diff =
 
         let organizationName =
             new Option<string>(
-                "--organizationName",
+                OptionName.OrganizationName,
                 Required = false,
                 Description = "The repository's organization name. [default: current organization]",
                 Arity = ArgumentArity.ZeroOrOne
@@ -84,7 +85,7 @@ module Diff =
 
         let repositoryId =
             new Option<string>(
-                "--repositoryId",
+                OptionName.RepositoryId,
                 [| "-r" |],
                 Required = false,
                 Description = "The repository's Id <Guid>.",
@@ -94,7 +95,7 @@ module Diff =
 
         let repositoryName =
             new Option<string>(
-                "--repositoryName",
+                OptionName.RepositoryName,
                 [| "-n" |],
                 Required = false,
                 Description = "The name of the repository. [default: current repository]",
@@ -103,7 +104,7 @@ module Diff =
 
         let branchId =
             new Option<string>(
-                "--branchId",
+                OptionName.BranchId,
                 [| "-i" |],
                 Required = false,
                 Description = "The branch's ID <Guid>.",
@@ -113,7 +114,7 @@ module Diff =
 
         let branchName =
             new Option<string>(
-                "--branchName",
+                OptionName.BranchName,
                 [| "-b" |],
                 Required = false,
                 Description = "The name of the branch. [default: current branch]",
@@ -181,22 +182,22 @@ module Diff =
 
     let private CommonValidations (parseResult, parameters) =
         let ``OwnerId must be a Guid`` (parseResult: ParseResult, parameters: CommonParameters) =
-            mustBeAValidGuid parseResult parameters Options.ownerId parameters.OwnerId InvalidOwnerId
+            mustBeAValidGuid parseResult parameters Options.ownerId parameters.OwnerId DiffError.InvalidOwnerId
 
         let ``OwnerName must be a valid Grace name`` (parseResult: ParseResult, parameters: CommonParameters) =
-            mustBeAValidGraceName parseResult parameters Options.ownerName parameters.OwnerName InvalidOwnerName
+            mustBeAValidGraceName parseResult parameters Options.ownerName parameters.OwnerName DiffError.InvalidOwnerName
 
         let ``OrganizationId must be a Guid`` (parseResult: ParseResult, parameters: CommonParameters) =
-            mustBeAValidGuid parseResult parameters Options.organizationId parameters.OrganizationId InvalidOrganizationId
+            mustBeAValidGuid parseResult parameters Options.organizationId parameters.OrganizationId DiffError.InvalidOrganizationId
 
         let ``OrganizationName must be a valid Grace name`` (parseResult: ParseResult, parameters: CommonParameters) =
-            mustBeAValidGraceName parseResult parameters Options.organizationName parameters.OrganizationName InvalidOrganizationName
+            mustBeAValidGraceName parseResult parameters Options.organizationName parameters.OrganizationName DiffError.InvalidOrganizationName
 
         let ``RepositoryId must be a Guid`` (parseResult: ParseResult, parameters: CommonParameters) =
-            mustBeAValidGuid parseResult parameters Options.repositoryId parameters.RepositoryId InvalidRepositoryId
+            mustBeAValidGuid parseResult parameters Options.repositoryId parameters.RepositoryId DiffError.InvalidRepositoryId
 
         let ``RepositoryName must be a valid Grace name`` (parseResult: ParseResult, parameters: CommonParameters) =
-            mustBeAValidGraceName parseResult parameters Options.repositoryName parameters.RepositoryName InvalidRepositoryName
+            mustBeAValidGraceName parseResult parameters Options.repositoryName parameters.RepositoryName DiffError.InvalidRepositoryName
 
         (parseResult, parameters)
         |> ``OwnerId must be a Guid``
@@ -208,10 +209,10 @@ module Diff =
 
     let private DirectoryIdValidations (parseResult, parameters) =
         let ``DirectoryVersionId1 must be a Guid`` (parseResult: ParseResult, parameters: CommonParameters) =
-            mustBeAValidGuid parseResult parameters Options.directoryVersionId1 parameters.DirectoryVersionId1 InvalidDirectoryId
+            mustBeAValidGuid parseResult parameters Options.directoryVersionId1 parameters.DirectoryVersionId1 DiffError.InvalidDirectoryVersionId
 
         let ``DirectoryVersionId2 must be a Guid`` (parseResult: ParseResult, parameters: CommonParameters) =
-            mustBeAValidGuid parseResult parameters Options.directoryVersionId2 parameters.DirectoryVersionId2 InvalidDirectoryId
+            mustBeAValidGuid parseResult parameters Options.directoryVersionId2 parameters.DirectoryVersionId2 DiffError.InvalidDirectoryVersionId
 
         (parseResult, parameters)
         |> ``DirectoryVersionId1 must be a Guid``
@@ -228,7 +229,7 @@ module Diff =
                 properties.Add("sha256Hash1", parameters.Sha256Hash1)
                 properties.Add("sha256Hash2", parameters.Sha256Hash2)
 
-                Error(GraceError.CreateWithMetadata null (DiffError.getErrorMessage InvalidSha256Hash) (parameters.CorrelationId) properties)
+                Error(GraceError.CreateWithMetadata null (getErrorMessage DiffError.InvalidSha256Hash) (parameters.CorrelationId) properties)
             else
                 Ok(parseResult, parameters)
 
@@ -242,7 +243,7 @@ module Diff =
                 properties.Add("sha256Hash1", parameters.Sha256Hash1)
                 properties.Add("sha256Hash2", parameters.Sha256Hash2)
 
-                Error(GraceError.Create (DiffError.getErrorMessage InvalidSha256Hash) (parameters.CorrelationId))
+                Error(GraceError.Create (getErrorMessage DiffError.InvalidSha256Hash) (parameters.CorrelationId))
             else
                 Ok(parseResult, parameters)
 

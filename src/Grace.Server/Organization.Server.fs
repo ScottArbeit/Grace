@@ -12,7 +12,7 @@ open Grace.Shared.Extensions
 open Grace.Shared.Parameters.Organization
 open Grace.Shared.Utilities
 open Grace.Shared.Validation.Common
-open Grace.Shared.Validation.Errors.Organization
+open Grace.Shared.Validation.Errors
 open Grace.Shared.Validation.Utilities
 open Grace.Types.Organization
 open Grace.Types.Types
@@ -238,9 +238,9 @@ module Organization =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let validations (parameters: SetOrganizationNameParameters) =
-                    [| String.isNotEmpty parameters.NewName OrganizationNameIsRequired
-                       String.isValidGraceName parameters.NewName InvalidOrganizationName
-                       Organization.organizationIsNotDeleted context parameters.CorrelationId OrganizationIsDeleted |]
+                    [| String.isNotEmpty parameters.NewName OrganizationError.OrganizationNameIsRequired
+                       String.isValidGraceName parameters.NewName OrganizationError.InvalidOrganizationName
+                       Organization.organizationIsNotDeleted context parameters.CorrelationId OrganizationError.OrganizationIsDeleted |]
 
                 let command (parameters: SetOrganizationNameParameters) = SetName(OrganizationName parameters.NewName) |> returnValueTask
 
@@ -253,8 +253,8 @@ module Organization =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let validations (parameters: SetOrganizationTypeParameters) =
-                    [| DiscriminatedUnion.isMemberOf<OrganizationType, OrganizationError> parameters.OrganizationType InvalidOrganizationType
-                       Organization.organizationIsNotDeleted context parameters.CorrelationId OrganizationIsDeleted |]
+                    [| DiscriminatedUnion.isMemberOf<OrganizationType, OrganizationError> parameters.OrganizationType OrganizationError.InvalidOrganizationType
+                       Organization.organizationIsNotDeleted context parameters.CorrelationId OrganizationError.OrganizationIsDeleted |]
 
                 let command (parameters: SetOrganizationTypeParameters) =
                     SetType(
@@ -273,8 +273,8 @@ module Organization =
             task {
                 let validations (parameters: SetOrganizationSearchVisibilityParameters) =
                     [| String.isNotEmpty parameters.SearchVisibility SearchVisibilityIsRequired
-                       DiscriminatedUnion.isMemberOf<SearchVisibility, OrganizationError> parameters.SearchVisibility InvalidSearchVisibility
-                       Organization.organizationIsNotDeleted context parameters.CorrelationId OrganizationIsDeleted |]
+                       DiscriminatedUnion.isMemberOf<SearchVisibility, OrganizationError> parameters.SearchVisibility OrganizationError.InvalidSearchVisibility
+                       Organization.organizationIsNotDeleted context parameters.CorrelationId OrganizationError.OrganizationIsDeleted |]
 
                 let command (parameters: SetOrganizationSearchVisibilityParameters) =
                     SetSearchVisibility(
@@ -292,9 +292,9 @@ module Organization =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let validations (parameters: SetOrganizationDescriptionParameters) =
-                    [| String.isNotEmpty parameters.Description DescriptionIsRequired
-                       String.maxLength parameters.Description 2048 DescriptionIsTooLong
-                       Organization.organizationIsNotDeleted context parameters.CorrelationId OrganizationIsDeleted |]
+                    [| String.isNotEmpty parameters.Description OrganizationError.DescriptionIsRequired
+                       String.maxLength parameters.Description 2048 OrganizationError.DescriptionIsTooLong
+                       Organization.organizationIsNotDeleted context parameters.CorrelationId OrganizationError.OrganizationIsDeleted |]
 
                 let command (parameters: SetOrganizationDescriptionParameters) = SetDescription(parameters.Description) |> returnValueTask
 
@@ -329,8 +329,8 @@ module Organization =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let validations (parameters: DeleteOrganizationParameters) =
-                    [| String.isNotEmpty parameters.DeleteReason DeleteReasonIsRequired
-                       Organization.organizationIsNotDeleted context parameters.CorrelationId OrganizationIsDeleted |]
+                    [| String.isNotEmpty parameters.DeleteReason OrganizationError.DeleteReasonIsRequired
+                       Organization.organizationIsNotDeleted context parameters.CorrelationId OrganizationError.OrganizationIsDeleted |]
 
                 let command (parameters: DeleteOrganizationParameters) = DeleteLogical(parameters.Force, parameters.DeleteReason) |> returnValueTask
 

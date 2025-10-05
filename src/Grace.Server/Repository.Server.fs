@@ -16,7 +16,7 @@ open Grace.Types.Repository
 open Grace.Types.Types
 open Grace.Shared.Utilities
 open Grace.Shared.Validation.Common
-open Grace.Shared.Validation.Errors.Repository
+open Grace.Shared.Validation.Errors
 open Grace.Shared.Validation
 open Grace.Shared.Validation.Utilities
 open Microsoft.AspNetCore.Http
@@ -131,7 +131,7 @@ module Repository =
                     return result
                 else
                     let! error = validationResults |> getFirstError
-                    let errorMessage = RepositoryError.getErrorMessage error
+                    let errorMessage = getErrorOptionMessage error
                     log.LogDebug("{CurrentInstant}: error: {error}", getCurrentInstantExtended (), errorMessage)
 
                     let graceError =
@@ -203,7 +203,7 @@ module Repository =
                     let! error = validationResults |> getFirstError
 
                     let graceError =
-                        (GraceError.Create (RepositoryError.getErrorMessage error) correlationId)
+                        (GraceError.Create (getErrorOptionMessage error) correlationId)
                             .enhance(parameterDictionary)
                             .enhance(nameof OwnerId, graceIds.OwnerId)
                             .enhance(nameof OrganizationId, graceIds.OrganizationId)

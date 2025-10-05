@@ -16,7 +16,7 @@ open Grace.Types.Diff
 open Grace.Types.Types
 open Grace.Shared.Utilities
 open Grace.Shared.Validation.Common
-open Grace.Shared.Validation.Errors.Branch
+open Grace.Shared.Validation.Errors
 open Grace.Shared.Validation.Utilities
 open Microsoft.AspNetCore.Http
 open Microsoft.Extensions.Logging
@@ -224,8 +224,8 @@ module Branch =
                 let graceIds = getGraceIds context
 
                 let validations (parameters: CreateBranchParameters) =
-                    [| Guid.isValidAndNotEmptyGuid parameters.ParentBranchId InvalidBranchId
-                       String.isValidGraceName parameters.ParentBranchName InvalidBranchName
+                    [| Guid.isValidAndNotEmptyGuid parameters.ParentBranchId BranchError.InvalidBranchId
+                       String.isValidGraceName parameters.ParentBranchName BranchError.InvalidBranchName
                        Branch.branchExists
                            graceIds.OwnerId
                            graceIds.OrganizationId
@@ -233,14 +233,14 @@ module Branch =
                            parameters.ParentBranchId
                            parameters.ParentBranchName
                            parameters.CorrelationId
-                           ParentBranchDoesNotExist
+                           BranchError.ParentBranchDoesNotExist
                        Branch.branchNameDoesNotExist
                            graceIds.OwnerId
                            graceIds.OrganizationId
                            graceIds.RepositoryId
                            parameters.BranchName
                            parameters.CorrelationId
-                           BranchNameAlreadyExists |]
+                           BranchError.BranchNameAlreadyExists |]
 
                 let command (parameters: CreateBranchParameters) =
                     task {
@@ -296,7 +296,7 @@ module Branch =
                 let graceIds = getGraceIds context
 
                 let validations (parameters: RebaseParameters) =
-                    [| Branch.referenceIdExists parameters.BasedOn graceIds.RepositoryId parameters.CorrelationId ReferenceIdDoesNotExist
+                    [| Branch.referenceIdExists parameters.BasedOn graceIds.RepositoryId parameters.CorrelationId BranchError.ReferenceIdDoesNotExist
                        Branch.branchAllowsReferenceType
                            graceIds.OwnerId
                            graceIds.OrganizationId
@@ -305,7 +305,7 @@ module Branch =
                            parameters.BranchName
                            ReferenceType.Commit
                            parameters.CorrelationId
-                           CommitIsDisabled |]
+                           BranchError.CommitIsDisabled |]
 
                 let command (parameters: RebaseParameters) = BranchCommand.Rebase parameters.BasedOn |> returnValueTask
 
@@ -321,10 +321,10 @@ module Branch =
                 let repositoryId = Guid.Parse(graceIds.RepositoryIdString)
 
                 let validations (parameters: AssignParameters) =
-                    [| String.isValidSha256Hash parameters.Sha256Hash Sha256HashIsRequired
+                    [| String.isValidSha256Hash parameters.Sha256Hash BranchError.Sha256HashIsRequired
                        Input.oneOfTheseValuesMustBeProvided
                            [| parameters.DirectoryVersionId; parameters.Sha256Hash |]
-                           EitherDirectoryVersionIdOrSha256HashRequired
+                           BranchError.EitherDirectoryVersionIdOrSha256HashRequired
                        Branch.branchAllowsAssign
                            graceIds.OwnerId
                            graceIds.OrganizationId
@@ -332,7 +332,7 @@ module Branch =
                            parameters.BranchId
                            parameters.BranchName
                            parameters.CorrelationId
-                           AssignIsDisabled |]
+                           BranchError.AssignIsDisabled |]
 
                 let command (parameters: AssignParameters) =
                     task {
@@ -363,7 +363,7 @@ module Branch =
                     return!
                         context
                         |> result400BadRequest (
-                            GraceError.Create (BranchError.getErrorMessage EitherDirectoryVersionIdOrSha256HashRequired) (getCorrelationId context)
+                            GraceError.Create (getErrorMessage BranchError.EitherDirectoryVersionIdOrSha256HashRequired) (getCorrelationId context)
                         )
             }
 
@@ -374,9 +374,9 @@ module Branch =
                 let graceIds = getGraceIds context
 
                 let validations (parameters: CreateReferenceParameters) =
-                    [| String.isNotEmpty parameters.Message MessageIsRequired
-                       String.maxLength parameters.Message 2048 StringIsTooLong
-                       String.isValidSha256Hash parameters.Sha256Hash Sha256HashIsRequired
+                    [| String.isNotEmpty parameters.Message BranchError.MessageIsRequired
+                       String.maxLength parameters.Message 2048 BranchError.StringIsTooLong
+                       String.isValidSha256Hash parameters.Sha256Hash BranchError.Sha256HashIsRequired
                        Branch.branchAllowsReferenceType
                            graceIds.OwnerId
                            graceIds.OrganizationId
@@ -385,7 +385,7 @@ module Branch =
                            parameters.BranchName
                            ReferenceType.Promotion
                            parameters.CorrelationId
-                           PromotionIsDisabled |]
+                           BranchError.PromotionIsDisabled |]
 
                 let command (parameters: CreateReferenceParameters) =
                     Promote(parameters.DirectoryVersionId, parameters.Sha256Hash, ReferenceText parameters.Message)
@@ -402,9 +402,9 @@ module Branch =
                 let graceIds = getGraceIds context
 
                 let validations (parameters: CreateReferenceParameters) =
-                    [| String.isNotEmpty parameters.Message MessageIsRequired
-                       String.maxLength parameters.Message 2048 StringIsTooLong
-                       String.isValidSha256Hash parameters.Sha256Hash Sha256HashIsRequired
+                    [| String.isNotEmpty parameters.Message BranchError.MessageIsRequired
+                       String.maxLength parameters.Message 2048 BranchError.StringIsTooLong
+                       String.isValidSha256Hash parameters.Sha256Hash BranchError.Sha256HashIsRequired
                        Branch.branchAllowsReferenceType
                            graceIds.OwnerId
                            graceIds.OrganizationId
@@ -413,7 +413,7 @@ module Branch =
                            parameters.BranchName
                            ReferenceType.Commit
                            parameters.CorrelationId
-                           CommitIsDisabled |]
+                           BranchError.CommitIsDisabled |]
 
                 let command (parameters: CreateReferenceParameters) =
                     BranchCommand.Commit(parameters.DirectoryVersionId, parameters.Sha256Hash, ReferenceText parameters.Message)
@@ -430,8 +430,8 @@ module Branch =
                 let graceIds = getGraceIds context
 
                 let validations (parameters: CreateReferenceParameters) =
-                    [| String.maxLength parameters.Message 2048 StringIsTooLong
-                       String.isValidSha256Hash parameters.Sha256Hash Sha256HashIsRequired
+                    [| String.maxLength parameters.Message 2048 BranchError.StringIsTooLong
+                       String.isValidSha256Hash parameters.Sha256Hash BranchError.Sha256HashIsRequired
                        Branch.branchAllowsReferenceType
                            graceIds.OwnerId
                            graceIds.OrganizationId
@@ -440,7 +440,7 @@ module Branch =
                            parameters.BranchName
                            ReferenceType.Checkpoint
                            parameters.CorrelationId
-                           CheckpointIsDisabled |]
+                           BranchError.CheckpointIsDisabled |]
 
                 let command (parameters: CreateReferenceParameters) =
                     BranchCommand.Checkpoint(parameters.DirectoryVersionId, parameters.Sha256Hash, ReferenceText parameters.Message)
@@ -457,8 +457,8 @@ module Branch =
                 let graceIds = getGraceIds context
 
                 let validations (parameters: CreateReferenceParameters) =
-                    [| String.maxLength parameters.Message 4096 StringIsTooLong
-                       String.isValidSha256Hash parameters.Sha256Hash Sha256HashIsRequired
+                    [| String.maxLength parameters.Message 4096 BranchError.StringIsTooLong
+                       String.isValidSha256Hash parameters.Sha256Hash BranchError.Sha256HashIsRequired
                        Branch.branchAllowsReferenceType
                            graceIds.OwnerId
                            graceIds.OrganizationId
@@ -467,7 +467,7 @@ module Branch =
                            parameters.BranchName
                            ReferenceType.Save
                            parameters.CorrelationId
-                           SaveIsDisabled |]
+                           BranchError.SaveIsDisabled |]
 
                 let command (parameters: CreateReferenceParameters) =
                     BranchCommand.Save(parameters.DirectoryVersionId, parameters.Sha256Hash, ReferenceText parameters.Message)
@@ -484,8 +484,8 @@ module Branch =
                 let graceIds = getGraceIds context
 
                 let validations (parameters: CreateReferenceParameters) =
-                    [| String.maxLength parameters.Message 2048 StringIsTooLong
-                       String.isValidSha256Hash parameters.Sha256Hash Sha256HashIsRequired
+                    [| String.maxLength parameters.Message 2048 BranchError.StringIsTooLong
+                       String.isValidSha256Hash parameters.Sha256Hash BranchError.Sha256HashIsRequired
                        Branch.branchAllowsReferenceType
                            graceIds.OwnerId
                            graceIds.OrganizationId
@@ -494,7 +494,7 @@ module Branch =
                            parameters.BranchName
                            ReferenceType.Tag
                            parameters.CorrelationId
-                           TagIsDisabled |]
+                           BranchError.TagIsDisabled |]
 
                 let command (parameters: CreateReferenceParameters) =
                     BranchCommand.Tag(parameters.DirectoryVersionId, parameters.Sha256Hash, ReferenceText parameters.Message)
@@ -511,8 +511,8 @@ module Branch =
                 let graceIds = getGraceIds context
 
                 let validations (parameters: CreateReferenceParameters) =
-                    [| String.maxLength parameters.Message 2048 StringIsTooLong
-                       String.isValidSha256Hash parameters.Sha256Hash Sha256HashIsRequired
+                    [| String.maxLength parameters.Message 2048 BranchError.StringIsTooLong
+                       String.isValidSha256Hash parameters.Sha256Hash BranchError.Sha256HashIsRequired
                        Branch.branchAllowsReferenceType
                            graceIds.OwnerId
                            graceIds.OrganizationId
@@ -521,7 +521,7 @@ module Branch =
                            parameters.BranchName
                            ReferenceType.External
                            parameters.CorrelationId
-                           ExternalIsDisabled |]
+                           BranchError.ExternalIsDisabled |]
 
                 let command (parameters: CreateReferenceParameters) =
                     BranchCommand.CreateExternal(parameters.DirectoryVersionId, parameters.Sha256Hash, ReferenceText parameters.Message)
@@ -855,7 +855,7 @@ module Branch =
                 let graceIds = getGraceIds context
 
                 try
-                    let validations (parameters: GetReferencesParameters) = [| Number.isPositiveOrZero parameters.MaxCount ValueMustBePositive |]
+                    let validations (parameters: GetReferencesParameters) = [| Number.isPositiveOrZero parameters.MaxCount BranchError.ValueMustBePositive |]
 
                     let query (context: HttpContext) (maxCount: int) (actorProxy: IBranchActor) =
                         task {
@@ -968,9 +968,9 @@ module Branch =
 
                 try
                     let validations (parameters: GetDiffsForReferenceTypeParameters) =
-                        [| Number.isPositiveOrZero parameters.MaxCount ValueMustBePositive
-                           String.isNotEmpty parameters.ReferenceType ReferenceTypeMustBeProvided
-                           DiscriminatedUnion.isMemberOf<ReferenceType, BranchError> parameters.ReferenceType InvalidReferenceType |]
+                        [| Number.isPositiveOrZero parameters.MaxCount BranchError.ValueMustBePositive
+                           String.isNotEmpty parameters.ReferenceType BranchError.ReferenceTypeMustBeProvided
+                           DiscriminatedUnion.isMemberOf<ReferenceType, BranchError> parameters.ReferenceType BranchError.InvalidReferenceType |]
 
                     let query (context: HttpContext) (maxCount: int) (actorProxy: IBranchActor) =
                         task {
@@ -1063,7 +1063,7 @@ module Branch =
                 let graceIds = getGraceIds context
 
                 try
-                    let validations (parameters: GetReferencesParameters) = [| Number.isPositiveOrZero parameters.MaxCount ValueMustBePositive |]
+                    let validations (parameters: GetReferencesParameters) = [| Number.isPositiveOrZero parameters.MaxCount BranchError.ValueMustBePositive |]
 
                     let query (context: HttpContext) maxCount (actorProxy: IBranchActor) =
                         task {
@@ -1115,7 +1115,7 @@ module Branch =
                 let graceIds = getGraceIds context
 
                 try
-                    let validations (parameters: GetReferencesParameters) = [| Number.isPositiveOrZero parameters.MaxCount ValueMustBePositive |]
+                    let validations (parameters: GetReferencesParameters) = [| Number.isPositiveOrZero parameters.MaxCount BranchError.ValueMustBePositive |]
 
                     let query (context: HttpContext) maxCount (actorProxy: IBranchActor) =
                         task {
@@ -1167,7 +1167,7 @@ module Branch =
                 let graceIds = getGraceIds context
 
                 try
-                    let validations (parameters: GetReferencesParameters) = [| Number.isPositiveOrZero parameters.MaxCount ValueMustBePositive |]
+                    let validations (parameters: GetReferencesParameters) = [| Number.isPositiveOrZero parameters.MaxCount BranchError.ValueMustBePositive |]
 
                     let query (context: HttpContext) maxCount (actorProxy: IBranchActor) =
                         task {
@@ -1219,7 +1219,7 @@ module Branch =
                 let graceIds = getGraceIds context
 
                 try
-                    let validations (parameters: GetReferencesParameters) = [| Number.isPositiveOrZero parameters.MaxCount ValueMustBePositive |]
+                    let validations (parameters: GetReferencesParameters) = [| Number.isPositiveOrZero parameters.MaxCount BranchError.ValueMustBePositive |]
 
 
                     let query (context: HttpContext) maxCount (actorProxy: IBranchActor) =
@@ -1272,7 +1272,7 @@ module Branch =
                 let graceIds = getGraceIds context
 
                 try
-                    let validations (parameters: GetReferencesParameters) = [| Number.isPositiveOrZero parameters.MaxCount ValueMustBePositive |]
+                    let validations (parameters: GetReferencesParameters) = [| Number.isPositiveOrZero parameters.MaxCount BranchError.ValueMustBePositive |]
 
                     let query (context: HttpContext) maxCount (actorProxy: IBranchActor) =
                         task {
@@ -1324,7 +1324,7 @@ module Branch =
                 let graceIds = getGraceIds context
 
                 try
-                    let validations (parameters: GetReferencesParameters) = [| Number.isPositiveOrZero parameters.MaxCount ValueMustBePositive |]
+                    let validations (parameters: GetReferencesParameters) = [| Number.isPositiveOrZero parameters.MaxCount BranchError.ValueMustBePositive |]
 
                     let query (context: HttpContext) maxCount (actorProxy: IBranchActor) =
                         task {
@@ -1378,8 +1378,8 @@ module Branch =
 
                 try
                     let validations (parameters: ListContentsParameters) =
-                        [| String.isEmptyOrValidSha256Hash parameters.Sha256Hash InvalidSha256Hash
-                           Guid.isValidAndNotEmptyGuid parameters.ReferenceId InvalidReferenceId |]
+                        [| String.isEmptyOrValidSha256Hash parameters.Sha256Hash BranchError.InvalidSha256Hash
+                           Guid.isValidAndNotEmptyGuid parameters.ReferenceId BranchError.InvalidReferenceId |]
 
                     let query (context: HttpContext) maxCount (actorProxy: IBranchActor) =
                         task {
@@ -1468,8 +1468,8 @@ module Branch =
 
                 try
                     let validations (parameters: ListContentsParameters) =
-                        [| String.isEmptyOrValidSha256Hash parameters.Sha256Hash InvalidSha256Hash
-                           Guid.isValidAndNotEmptyGuid parameters.ReferenceId InvalidReferenceId |]
+                        [| String.isEmptyOrValidSha256Hash parameters.Sha256Hash BranchError.InvalidSha256Hash
+                           Guid.isValidAndNotEmptyGuid parameters.ReferenceId BranchError.InvalidReferenceId |]
 
                     let query (context: HttpContext) maxCount (actorProxy: IBranchActor) =
                         task {
@@ -1564,8 +1564,8 @@ module Branch =
 
                 try
                     let validations (parameters: GetBranchVersionParameters) =
-                        [| String.isEmptyOrValidSha256Hash parameters.Sha256Hash InvalidSha256Hash
-                           Guid.isValidAndNotEmptyGuid parameters.ReferenceId InvalidReferenceId |]
+                        [| String.isEmptyOrValidSha256Hash parameters.Sha256Hash BranchError.InvalidSha256Hash
+                           Guid.isValidAndNotEmptyGuid parameters.ReferenceId BranchError.InvalidReferenceId |]
 
                     let query (context: HttpContext) maxCount (actorProxy: IBranchActor) =
                         task {

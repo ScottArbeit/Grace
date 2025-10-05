@@ -46,6 +46,7 @@ This document contains repository-wide rules, conventions, and instructions for 
      - `fantomas` (or repository-preferred formatter) on changed files.
    - Use Conventional Commits for commit messages (`feat:`, `fix:`, `chore:`, `docs:`).
    - Ensure CI passes on the target branch.
+   - `open` statements at the top of files should be ordered alphabetically.
 
 7. **Error handling and results**
    - Favor `Result<'T, 'E>` or discriminated unions to represent recoverable errors in library code.

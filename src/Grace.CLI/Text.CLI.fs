@@ -5,6 +5,19 @@ open Grace.Shared.Resources.Text
 
 module Text =
 
+    module OptionName =
+        let OwnerId = "--owner-id"
+        let OwnerName = "--owner-name"
+        let OrganizationId = "--organization-id"
+        let OrganizationName = "--organization-name"
+        let RepositoryId = "--repository-id"
+        let RepositoryName = "--repository-name"
+        let BranchId = "--branch-id"
+        let BranchName = "--branch-name"
+        let NewName = "--new-name"
+        let Description = "--description"
+        let DoNotSwitch = "--do-not-switch"
+
     /// The full list of strings that can be displayed to the user.
     type UIString =
         | CreatingNewDirectoryVersions

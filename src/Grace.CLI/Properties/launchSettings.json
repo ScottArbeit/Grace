@@ -63,11 +63,6 @@
       "commandLineArgs": "branches --output Verbose",
       "workingDirectory": "D:\\Source\\GraceDemo\\Mika"
     },
-    "grace watch - Mika": {
-      "commandName": "Project",
-      "commandLineArgs": "watch",
-      "workingDirectory": "D:\\Source\\GraceDemo\\Mika"
-    },
     "grace config write": {
       "commandName": "Project",
       "commandLineArgs": "config write",
@@ -102,6 +97,11 @@
       "commandName": "Project",
       "commandLineArgs": "status",
       "workingDirectory": "E:\\GraceDemo\\User01"
+    },
+    "grace watch": {
+      "commandName": "Project",
+      "commandLineArgs": "watch",
+      "workingDirectory": "E:\\GraceDemo\\User02"
     }
   }
 }

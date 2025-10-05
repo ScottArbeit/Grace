@@ -9,10 +9,6 @@ open Grace.Types.Types
 open Grace.Shared.Utilities
 open Grace.Shared.Validation
 open Grace.Shared.Validation.Errors
-open Grace.Shared.Validation.Errors.Branch
-open Grace.Shared.Validation.Errors.Repository
-open Grace.Shared.Validation.Errors.Organization
-open Grace.Shared.Validation.Errors.Owner
 open Grace.Shared.Validation.Utilities
 open Microsoft.AspNetCore.Http
 open Microsoft.Extensions.Caching.Memory
@@ -180,15 +176,15 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
 
                             let validations =
                                 if path.Equals("/owner/create", StringComparison.InvariantCultureIgnoreCase) then
-                                    [| Common.String.isNotEmpty ownerIdString OwnerIdIsRequired
-                                       Common.Guid.isValidAndNotEmptyGuid ownerIdString InvalidOwnerId
-                                       Common.String.isNotEmpty ownerName OwnerNameIsRequired
-                                       Common.String.isValidGraceName ownerName InvalidOwnerName
-                                       Common.Input.eitherIdOrNameMustBeProvided ownerIdString ownerName EitherOwnerIdOrOwnerNameRequired |]
+                                    [| Common.String.isNotEmpty ownerIdString OwnerError.OwnerIdIsRequired
+                                       Common.Guid.isValidAndNotEmptyGuid ownerIdString OwnerError.InvalidOwnerId
+                                       Common.String.isNotEmpty ownerName OwnerError.OwnerNameIsRequired
+                                       Common.String.isValidGraceName ownerName OwnerError.InvalidOwnerName
+                                       Common.Input.eitherIdOrNameMustBeProvided ownerIdString ownerName OwnerError.EitherOwnerIdOrOwnerNameRequired |]
                                 else
-                                    [| Common.Guid.isValidAndNotEmptyGuid ownerIdString InvalidOwnerId
-                                       Common.String.isValidGraceName ownerName InvalidOwnerName
-                                       Common.Input.eitherIdOrNameMustBeProvided ownerIdString ownerName EitherOwnerIdOrOwnerNameRequired |]
+                                    [| Common.Guid.isValidAndNotEmptyGuid ownerIdString OwnerError.InvalidOwnerId
+                                       Common.String.isValidGraceName ownerName OwnerError.InvalidOwnerName
+                                       Common.Input.eitherIdOrNameMustBeProvided ownerIdString ownerName OwnerError.EitherOwnerIdOrOwnerNameRequired |]
 
                             match! getFirstError validations with
                             | Some error -> badRequest <- Some(GraceError.Create (OwnerError.getErrorMessage error) correlationId)
@@ -204,9 +200,9 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
                                     | None ->
                                         badRequest <-
                                             if not <| String.IsNullOrEmpty(ownerIdString) then
-                                                Some(GraceError.Create (OwnerError.getErrorMessage OwnerIdDoesNotExist) correlationId)
+                                                Some(GraceError.Create (getErrorMessage OwnerError.OwnerIdDoesNotExist) correlationId)
                                             else
-                                                Some(GraceError.Create (OwnerError.getErrorMessage OwnerDoesNotExist) correlationId)
+                                                Some(GraceError.Create (getErrorMessage OwnerError.OwnerDoesNotExist) correlationId)
 
                         // Get Organization information.
                         if
@@ -220,21 +216,21 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
 
                             let validations =
                                 if path.Equals("/organization/create", StringComparison.InvariantCultureIgnoreCase) then
-                                    [| Common.String.isNotEmpty organizationIdString OrganizationIdIsRequired
-                                       Common.Guid.isValidAndNotEmptyGuid organizationIdString InvalidOrganizationId
-                                       Common.String.isNotEmpty organizationName OrganizationNameIsRequired
-                                       Common.String.isValidGraceName organizationName InvalidOrganizationName
+                                    [| Common.String.isNotEmpty organizationIdString OrganizationError.OrganizationIdIsRequired
+                                       Common.Guid.isValidAndNotEmptyGuid organizationIdString OrganizationError.InvalidOrganizationId
+                                       Common.String.isNotEmpty organizationName OrganizationError.OrganizationNameIsRequired
+                                       Common.String.isValidGraceName organizationName OrganizationError.InvalidOrganizationName
                                        Common.Input.eitherIdOrNameMustBeProvided
                                            organizationIdString
                                            organizationName
-                                           EitherOrganizationIdOrOrganizationNameRequired |]
+                                           OrganizationError.EitherOrganizationIdOrOrganizationNameRequired |]
                                 else
-                                    [| Common.Guid.isValidAndNotEmptyGuid organizationIdString InvalidOrganizationId
-                                       Common.String.isValidGraceName organizationName InvalidOrganizationName
+                                    [| Common.Guid.isValidAndNotEmptyGuid organizationIdString OrganizationError.InvalidOrganizationId
+                                       Common.String.isValidGraceName organizationName OrganizationError.InvalidOrganizationName
                                        Common.Input.eitherIdOrNameMustBeProvided
                                            organizationIdString
                                            organizationName
-                                           EitherOrganizationIdOrOrganizationNameRequired |]
+                                           OrganizationError.EitherOrganizationIdOrOrganizationNameRequired |]
 
                             match! getFirstError validations with
                             | Some error -> badRequest <- Some(GraceError.Create (OrganizationError.getErrorMessage error) correlationId)
@@ -258,9 +254,9 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
                                     | None ->
                                         badRequest <-
                                             if not <| String.IsNullOrEmpty(organizationIdString) then
-                                                Some(GraceError.Create (OrganizationError.getErrorMessage OrganizationIdDoesNotExist) correlationId)
+                                                Some(GraceError.Create (getErrorMessage OrganizationError.OrganizationIdDoesNotExist) correlationId)
                                             else
-                                                Some(GraceError.Create (OrganizationError.getErrorMessage OrganizationDoesNotExist) correlationId)
+                                                Some(GraceError.Create (getErrorMessage OrganizationError.OrganizationDoesNotExist) correlationId)
 
                         // Get repository information.
                         if
@@ -306,9 +302,9 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
                                     | None ->
                                         badRequest <-
                                             if not <| String.IsNullOrEmpty(repositoryIdString) then
-                                                Some(GraceError.Create (RepositoryError.getErrorMessage RepositoryIdDoesNotExist) correlationId)
+                                                Some(GraceError.Create (getErrorMessage RepositoryError.RepositoryIdDoesNotExist) correlationId)
                                             else
-                                                Some(GraceError.Create (RepositoryError.getErrorMessage RepositoryDoesNotExist) correlationId)
+                                                Some(GraceError.Create (getErrorMessage RepositoryError.RepositoryDoesNotExist) correlationId)
 
                         // Get branch information.
                         if
@@ -322,15 +318,15 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
 
                             let validations =
                                 if path.Equals("/branch/create", StringComparison.InvariantCultureIgnoreCase) then
-                                    [| Common.String.isNotEmpty branchIdString BranchIdIsRequired
-                                       Common.Guid.isValidAndNotEmptyGuid branchIdString InvalidBranchId
-                                       Common.String.isNotEmpty branchName BranchNameIsRequired
-                                       Common.String.isValidGraceName branchName InvalidBranchName
-                                       Common.Input.eitherIdOrNameMustBeProvided branchIdString branchName EitherBranchIdOrBranchNameRequired |]
+                                    [| Common.String.isNotEmpty branchIdString BranchError.BranchIdIsRequired
+                                       Common.Guid.isValidAndNotEmptyGuid branchIdString BranchError.InvalidBranchId
+                                       Common.String.isNotEmpty branchName BranchError.BranchNameIsRequired
+                                       Common.String.isValidGraceName branchName BranchError.InvalidBranchName
+                                       Common.Input.eitherIdOrNameMustBeProvided branchIdString branchName BranchError.EitherBranchIdOrBranchNameRequired |]
                                 else
-                                    [| Common.Guid.isValidAndNotEmptyGuid branchIdString InvalidBranchId
-                                       Common.String.isValidGraceName branchName InvalidBranchName
-                                       Common.Input.eitherIdOrNameMustBeProvided branchIdString branchName EitherBranchIdOrBranchNameRequired |]
+                                    [| Common.Guid.isValidAndNotEmptyGuid branchIdString BranchError.InvalidBranchId
+                                       Common.String.isValidGraceName branchName BranchError.InvalidBranchName
+                                       Common.Input.eitherIdOrNameMustBeProvided branchIdString branchName BranchError.EitherBranchIdOrBranchNameRequired |]
 
                             match! getFirstError validations with
                             | Some error -> badRequest <- Some(GraceError.Create (BranchError.getErrorMessage error) correlationId)
@@ -348,9 +344,9 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
                                     | None ->
                                         badRequest <-
                                             if not <| String.IsNullOrEmpty(branchIdString) then
-                                                Some(GraceError.Create (BranchError.getErrorMessage BranchIdDoesNotExist) correlationId)
+                                                Some(GraceError.Create (getErrorMessage BranchError.BranchIdDoesNotExist) correlationId)
                                             else
-                                                Some(GraceError.Create (BranchError.getErrorMessage BranchDoesNotExist) correlationId)
+                                                Some(GraceError.Create (getErrorMessage BranchError.BranchDoesNotExist) correlationId)
 
                     // Add the parsed Id's and Names to the HttpContext.
                     context.Items.Add(nameof GraceIds, graceIds)

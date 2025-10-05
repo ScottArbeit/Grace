@@ -10,13 +10,13 @@ open Grace.Actors.Types
 open Grace.Actors.Interfaces
 open Grace.Shared
 open Grace.Shared.Constants
+open Grace.Shared.Utilities
+open Grace.Shared.Validation.Errors
 open Grace.Types
 open Grace.Types.Organization
 open Grace.Types.Owner
 open Grace.Types.Reminder
 open Grace.Types.Types
-open Grace.Shared.Utilities
-open Grace.Shared.Validation.Errors.Owner
 open Microsoft.Extensions.Logging
 open NodaTime
 open Orleans
@@ -87,7 +87,7 @@ module Owner =
                     let exceptionResponse = ExceptionResponse.Create ex
                     log.LogError(ex, "Exception in Owner.Actor: event: {event}", (serialize ownerEvent))
                     log.LogError("Exception details: {exception}", serialize exceptionResponse)
-                    let graceError = GraceError.Create (OwnerError.getErrorMessage OwnerError.FailedWhileApplyingEvent) ownerEvent.Metadata.CorrelationId
+                    let graceError = GraceError.Create (getErrorMessage OwnerError.FailedWhileApplyingEvent) ownerEvent.Metadata.CorrelationId
 
                     graceError
                         .enhance("Exception details", exceptionResponse.``exception`` + exceptionResponse.innerException)
@@ -233,17 +233,17 @@ module Owner =
                 let isValid command (metadata: EventMetadata) =
                     task {
                         if state.State.Exists(fun ev -> ev.Metadata.CorrelationId = metadata.CorrelationId) then
-                            return Error(GraceError.Create (OwnerError.getErrorMessage DuplicateCorrelationId) metadata.CorrelationId)
+                            return Error(GraceError.Create (getErrorMessage OwnerError.DuplicateCorrelationId) metadata.CorrelationId)
                         else
                             match command with
                             | OwnerCommand.Create(_, _) ->
                                 match ownerDto.UpdatedAt with
-                                | Some _ -> return Error(GraceError.Create (OwnerError.getErrorMessage OwnerIdAlreadyExists) metadata.CorrelationId)
+                                | Some _ -> return Error(GraceError.Create (getErrorMessage OwnerError.OwnerIdAlreadyExists) metadata.CorrelationId)
                                 | None -> return Ok command
                             | _ ->
                                 match ownerDto.UpdatedAt with
                                 | Some _ -> return Ok command
-                                | None -> return Error(GraceError.Create (OwnerError.getErrorMessage OwnerIdDoesNotExist) metadata.CorrelationId)
+                                | None -> return Error(GraceError.Create (getErrorMessage OwnerError.OwnerIdDoesNotExist) metadata.CorrelationId)
                     }
 
                 let processCommand (command: OwnerCommand) (metadata: EventMetadata) =

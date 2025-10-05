@@ -16,7 +16,7 @@ open Grace.Shared.Services
 open Grace.Types.Types
 open Grace.Shared.Utilities
 open Grace.Shared.Validation
-open Grace.Shared.Validation.Errors.DirectoryVersion
+open Grace.Shared.Validation.Errors
 open NodaTime
 open NodaTime.TimeZones
 open Spectre.Console
@@ -25,7 +25,7 @@ open System
 open System.Collections.Concurrent
 open System.Collections.Generic
 open System.CommandLine
-open System.CommandLine.NamingConventionBinder
+open System.CommandLine.Invocation
 open System.CommandLine.Parsing
 open System.Globalization
 open System.IO
@@ -53,7 +53,7 @@ module DirectoryVersion =
     module private Options =
         let ownerId =
             new Option<String>(
-                "--ownerId",
+                OptionName.OwnerId,
                 Required = false,
                 Description = "The repository's owner ID <Guid>.",
                 Arity = ArgumentArity.ZeroOrOne,
@@ -62,7 +62,7 @@ module DirectoryVersion =
 
         let ownerName =
             new Option<String>(
-                "--ownerName",
+                OptionName.OwnerName,
                 Required = false,
                 Description = "The repository's owner name. [default: current owner]",
                 Arity = ArgumentArity.ExactlyOne
@@ -70,7 +70,7 @@ module DirectoryVersion =
 
         let organizationId =
             new Option<String>(
-                "--organizationId",
+                OptionName.OrganizationId,
                 Required = false,
                 Description = "The repository's organization ID <Guid>.",
                 Arity = ArgumentArity.ExactlyOne,
@@ -79,7 +79,7 @@ module DirectoryVersion =
 
         let organizationName =
             new Option<String>(
-                "--organizationName",
+                OptionName.OrganizationName,
                 Required = false,
                 Description = "The repository's organization name. [default: current organization]",
                 Arity = ArgumentArity.ZeroOrOne
@@ -87,7 +87,7 @@ module DirectoryVersion =
 
         let repositoryId =
             new Option<String>(
-                "--repositoryId",
+                OptionName.RepositoryId,
                 [| "-r" |],
                 Required = false,
                 Description = "The repository's ID <Guid>.",
@@ -97,7 +97,7 @@ module DirectoryVersion =
 
         let repositoryName =
             new Option<String>(
-                "--repositoryName",
+                OptionName.RepositoryName,
                 [| "-n" |],
                 Required = false,
                 Description = "The name of the repository. [default: current repository]",
@@ -162,35 +162,50 @@ module DirectoryVersion =
 
     let private CommonValidations parseResult commonParameters =
         let ``OwnerId must be a Guid`` (parseResult: ParseResult, commonParameters: CommonParameters) =
-            mustBeAValidGuid parseResult commonParameters Options.ownerId commonParameters.OwnerId InvalidOwnerId
+            mustBeAValidGuid parseResult commonParameters Options.ownerId commonParameters.OwnerId DirectoryVersionError.InvalidOwnerId
 
         let ``OwnerName must be a valid Grace name`` (parseResult: ParseResult, commonParameters: CommonParameters) =
-            mustBeAValidGraceName parseResult commonParameters Options.ownerName commonParameters.OwnerName InvalidOwnerName
+            mustBeAValidGraceName parseResult commonParameters Options.ownerName commonParameters.OwnerName DirectoryVersionError.InvalidOwnerName
 
         let ``OrganizationId must be a Guid`` (parseResult: ParseResult, commonParameters: CommonParameters) =
-            mustBeAValidGuid parseResult commonParameters Options.organizationId commonParameters.OrganizationId InvalidOrganizationId
+            mustBeAValidGuid parseResult commonParameters Options.organizationId commonParameters.OrganizationId DirectoryVersionError.InvalidOrganizationId
 
         let ``OrganizationName must be a valid Grace name`` (parseResult: ParseResult, commonParameters: CommonParameters) =
-            mustBeAValidGraceName parseResult commonParameters Options.organizationName commonParameters.OrganizationName InvalidOrganizationName
+            mustBeAValidGraceName
+                parseResult
+                commonParameters
+                Options.organizationName
+                commonParameters.OrganizationName
+                DirectoryVersionError.InvalidOrganizationName
 
         let ``RepositoryId must be a Guid`` (parseResult: ParseResult, commonParameters: CommonParameters) =
-            mustBeAValidGuid parseResult commonParameters Options.repositoryId commonParameters.RepositoryId InvalidRepositoryId
+            mustBeAValidGuid parseResult commonParameters Options.repositoryId commonParameters.RepositoryId DirectoryVersionError.InvalidRepositoryId
 
         let ``RepositoryName must be a valid Grace name`` (parseResult: ParseResult, commonParameters: CommonParameters) =
-            mustBeAValidGraceName parseResult commonParameters Options.repositoryName commonParameters.RepositoryName InvalidRepositoryName
+            mustBeAValidGraceName
+                parseResult
+                commonParameters
+                Options.repositoryName
+                commonParameters.RepositoryName
+                DirectoryVersionError.InvalidRepositoryName
 
         let ``DirectoryVersionId must be a Guid`` (parseResult: ParseResult, commonParameters: CommonParameters) =
-            mustBeAValidGuid parseResult commonParameters Options.directoryVersionIdRequired commonParameters.DirectoryVersionId InvalidDirectoryVersionId
+            mustBeAValidGuid
+                parseResult
+                commonParameters
+                Options.directoryVersionIdRequired
+                commonParameters.DirectoryVersionId
+                DirectoryVersionError.InvalidDirectoryVersionId
 
         let ``Grace index file must exist`` (parseResult: ParseResult, commonParameters: CommonParameters) =
             if not <| File.Exists(Current().GraceStatusFile) then
-                Error(GraceError.Create (DirectoryVersionError.getErrorMessage IndexFileNotFound) commonParameters.CorrelationId)
+                Error(GraceError.Create (getErrorMessage DirectoryVersionError.IndexFileNotFound) commonParameters.CorrelationId)
             else
                 Ok(parseResult, commonParameters)
 
         let ``Grace object cache file must exist`` (parseResult: ParseResult, commonParameters: CommonParameters) =
             if not <| File.Exists(Current().GraceStatusFile) then
-                Error(GraceError.Create (DirectoryVersionError.getErrorMessage ObjectCacheFileNotFound) commonParameters.CorrelationId)
+                Error(GraceError.Create (getErrorMessage DirectoryVersionError.ObjectCacheFileNotFound) commonParameters.CorrelationId)
             else
                 Ok(parseResult, commonParameters)
 

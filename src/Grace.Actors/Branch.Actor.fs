@@ -10,7 +10,7 @@ open Grace.Actors.Types
 open Grace.Shared
 open Grace.Shared.Constants
 open Grace.Shared.Utilities
-open Grace.Shared.Validation.Errors.Branch
+open Grace.Shared.Validation.Errors
 open Grace.Types.Reference
 open Grace.Types.Reminder
 open Grace.Types.Repository
@@ -189,7 +189,7 @@ module Branch =
 
                     return Ok returnValue
                 with ex ->
-                    let graceError = GraceError.CreateWithException ex (BranchError.getErrorMessage FailedWhileApplyingEvent) branchEvent.Metadata.CorrelationId
+                    let graceError = GraceError.CreateWithException ex (getErrorMessage BranchError.FailedWhileApplyingEvent) branchEvent.Metadata.CorrelationId
 
                     graceError
                         .enhance(nameof RepositoryId, branchDto.RepositoryId)
@@ -290,7 +290,7 @@ module Branch =
                             state.State.Exists(fun ev -> ev.Metadata.CorrelationId = metadata.CorrelationId)
                             && (state.State.Count > 3)
                         then
-                            return Error(GraceError.Create (BranchError.getErrorMessage DuplicateCorrelationId) metadata.CorrelationId)
+                            return Error(GraceError.Create (getErrorMessage BranchError.DuplicateCorrelationId) metadata.CorrelationId)
                         else
                             match command with
                             | BranchCommand.Create(branchId, branchName, parentBranchId, basedOn, ownerId, organizationId, repositoryId, branchPermissions) ->
@@ -300,7 +300,7 @@ module Branch =
                             | _ ->
                                 match branchDto.UpdatedAt with
                                 | Some _ -> return Ok command
-                                | None -> return Error(GraceError.Create (BranchError.getErrorMessage BranchDoesNotExist) metadata.CorrelationId)
+                                | None -> return Error(GraceError.Create (getErrorMessage BranchError.BranchDoesNotExist) metadata.CorrelationId)
                     }
 
                 let addReference ownerId organizationId repositoryId branchId directoryId sha256Hash referenceText referenceType links =

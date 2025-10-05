@@ -2,16 +2,18 @@ namespace Grace.CLI.Command
 
 open FSharpPlus
 open Grace.CLI.Common
+open Grace.CLI.Services
+open Grace.CLI.Text
 open Grace.SDK
 open Grace.Shared
 open Grace.Shared.Client.Configuration
 open Grace.Types.Owner
 open Grace.Types.Types
 open Grace.Shared.Validation.Common
-open Grace.Shared.Validation.Errors.Connect
+open Grace.Shared.Validation.Errors
 open System
 open System.Collections.Generic
-open System.CommandLine.NamingConventionBinder
+open System.CommandLine.Invocation
 open System.CommandLine.Parsing
 open System.IO
 open System.Threading.Tasks
@@ -20,7 +22,6 @@ open Spectre.Console
 open Azure.Storage.Blobs
 open Azure.Storage.Blobs.Models
 open System.IO.Compression
-open Grace.CLI.Services
 
 module Connect =
 
@@ -36,20 +37,44 @@ module Connect =
 
     module private Options =
         let repositoryId =
-            new Option<String>("--repositoryId", [| "-r" |], Required = false, Description = "The repository's ID <Guid>.", Arity = ArgumentArity.ExactlyOne)
+            new Option<String>(
+                OptionName.RepositoryId,
+                [| "-r" |],
+                Required = false,
+                Description = "The repository's ID <Guid>.",
+                Arity = ArgumentArity.ExactlyOne
+            )
 
         let repositoryName =
-            new Option<String>("--repositoryName", [| "-n" |], Required = false, Description = "The name of the repository.", Arity = ArgumentArity.ExactlyOne)
+            new Option<String>(
+                OptionName.RepositoryName,
+                [| "-n" |],
+                Required = false,
+                Description = "The name of the repository.",
+                Arity = ArgumentArity.ExactlyOne
+            )
 
-        let ownerId = new Option<String>("--ownerId", Required = false, Description = "The repository's owner ID <Guid>.", Arity = ArgumentArity.ExactlyOne)
+        let ownerId =
+            new Option<String>(OptionName.OwnerId, Required = false, Description = "The repository's owner ID <Guid>.", Arity = ArgumentArity.ExactlyOne)
 
-        let ownerName = new Option<String>("--ownerName", Required = false, Description = "The repository's owner name.", Arity = ArgumentArity.ExactlyOne)
+        let ownerName =
+            new Option<String>(OptionName.OwnerName, Required = false, Description = "The repository's owner name.", Arity = ArgumentArity.ExactlyOne)
 
         let organizationId =
-            new Option<String>("--organizationId", Required = false, Description = "The repository's organization ID <Guid>.", Arity = ArgumentArity.ExactlyOne)
+            new Option<String>(
+                OptionName.OrganizationId,
+                Required = false,
+                Description = "The repository's organization ID <Guid>.",
+                Arity = ArgumentArity.ExactlyOne
+            )
 
         let organizationName =
-            new Option<String>("--organizationName", Required = false, Description = "The repository's organization name.", Arity = ArgumentArity.ZeroOrOne)
+            new Option<String>(
+                OptionName.OrganizationName,
+                Required = false,
+                Description = "The repository's organization name.",
+                Arity = ArgumentArity.ZeroOrOne
+            )
 
         let correlationId =
             new Option<String>(

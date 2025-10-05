@@ -2,6 +2,7 @@ namespace Grace.CLI
 
 open Grace.CLI.Services
 open Grace.Shared
+open Grace.Shared.Validation.Errors
 open Grace.Shared.Client.Configuration
 open Grace.Shared.Resources.Text
 open Grace.Types.Types
@@ -67,6 +68,20 @@ module Common =
             ))
                 .AcceptOnlyFromAmong(listCases<OutputFormat> ())
 
+    /// Gets the correlationId parameter from the command line.
+    let getCorrelationId (parseResult: ParseResult) = parseResult.GetValue(Options.correlationId)
+
+    module Validations =
+        let mustBeAValidGraceName (parseResult: ParseResult) (option: Option<string>) (error: 'T) =
+            let value = parseResult.GetValue(option)
+
+            if value <> null && not <| Constants.GraceNameRegex.IsMatch(value) then
+                Error(GraceError.Create (getErrorMessage error) (parseResult |> getCorrelationId))
+            else
+                Ok(parseResult)
+
+
+
     /// Checks if the output format from the command line is a specific format.
     let isOutputFormat (outputFormat: OutputFormat) (parseResult: ParseResult) =
         try
@@ -113,9 +128,6 @@ module Common =
     let incrementProgressTaskValue showOutput (value: float) (t: ProgressTask) = if showOutput then t.Increment(value)
 
     let emptyTask = ProgressTask(0, "Empty progress task", 0.0, autoStart = false)
-
-    /// Gets the correlationId parameter from the command line.
-    let getCorrelationId (parseResult: ParseResult) = parseResult.GetValue(Options.correlationId)
 
     /// Rewrites "[" to "[[" and "]" to "]]".
     let escapeBrackets s = s.ToString().Replace("[", "[[").Replace("]", "]]")

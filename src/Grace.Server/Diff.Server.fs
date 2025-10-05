@@ -11,7 +11,7 @@ open Grace.Shared.Parameters.Diff
 open Grace.Types.Types
 open Grace.Shared.Utilities
 open Grace.Shared.Validation.Common
-open Grace.Shared.Validation.Errors.Diff
+open Grace.Shared.Validation.Errors
 open Grace.Shared.Validation.Repository
 open Grace.Shared.Validation.Utilities
 open Microsoft.AspNetCore.Http
@@ -113,7 +113,7 @@ module Diff =
                 else
                     let! error = validationResults |> getFirstError
 
-                    let graceError = GraceError.Create (DiffError.getErrorMessage error) (getCorrelationId context)
+                    let graceError = GraceError.Create (getErrorOptionMessage error) (getCorrelationId context)
 
                     graceError.Properties.Add("Path", context.Request.Path.Value)
                     graceError.Properties.Add($"DirectoryVersionId1", $"{parameters.DirectoryVersionId1}")
@@ -134,8 +134,8 @@ module Diff =
                     let repositoryId = Guid.Parse(graceIds.RepositoryIdString)
 
                     let validations (parameters: PopulateParameters) =
-                        [| Guid.isNotEmpty parameters.DirectoryVersionId1 DiffError.InvalidDirectoryId
-                           Guid.isNotEmpty parameters.DirectoryVersionId2 DiffError.InvalidDirectoryId
+                        [| Guid.isNotEmpty parameters.DirectoryVersionId1 DiffError.InvalidDirectoryVersionId
+                           Guid.isNotEmpty parameters.DirectoryVersionId2 DiffError.InvalidDirectoryVersionId
                            DirectoryVersion.directoryIdExists
                                parameters.DirectoryVersionId1
                                repositoryId
@@ -170,8 +170,8 @@ module Diff =
                     let repositoryId = Guid.Parse(graceIds.RepositoryIdString)
 
                     let validations (parameters: GetDiffParameters) =
-                        [| Guid.isNotEmpty parameters.DirectoryVersionId1 DiffError.InvalidDirectoryId
-                           Guid.isNotEmpty parameters.DirectoryVersionId2 DiffError.InvalidDirectoryId
+                        [| Guid.isNotEmpty parameters.DirectoryVersionId1 DiffError.InvalidDirectoryVersionId
+                           Guid.isNotEmpty parameters.DirectoryVersionId2 DiffError.InvalidDirectoryVersionId
                            DirectoryVersion.directoryIdExists
                                parameters.DirectoryVersionId1
                                repositoryId

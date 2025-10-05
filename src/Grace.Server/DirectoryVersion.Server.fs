@@ -15,7 +15,7 @@ open Grace.Types.DirectoryVersion
 open Grace.Types.Types
 open Grace.Shared.Utilities
 open Grace.Shared.Validation.Common
-open Grace.Shared.Validation.Errors.DirectoryVersion
+open Grace.Shared.Validation.Errors
 open Grace.Shared.Validation.Utilities
 open Microsoft.AspNetCore.Http
 open System

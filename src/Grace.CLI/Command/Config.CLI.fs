@@ -5,6 +5,7 @@ open DiffPlex.DiffBuilder.Model
 open FSharpPlus
 open Grace.CLI.Common
 open Grace.CLI.Services
+open Grace.CLI.Text
 open Grace.SDK
 open Grace.Shared
 open Grace.Shared.Client.Configuration
@@ -12,13 +13,13 @@ open Grace.Types.Branch
 open Grace.Types.Reference
 open Grace.Types.Types
 open Grace.Shared.Utilities
-open Grace.Shared.Validation.Errors.Config
+open Grace.Shared.Validation.Errors
 open Spectre.Console
 open System
 open System.Collections.Concurrent
 open System.Collections.Generic
 open System.CommandLine
-open System.CommandLine.NamingConventionBinder
+open System.CommandLine.Invocation
 open System.CommandLine.Parsing
 open System.Linq
 open System.IO
@@ -55,7 +56,7 @@ module Config =
             if Directory.Exists(parameters.Directory) then
                 Ok(parseResult, parameters)
             else
-                Error(GraceError.Create (ConfigError.getErrorMessage InvalidDirectoryPath) (parameters.CorrelationId))
+                Error(GraceError.Create (getErrorMessage ConfigError.InvalidDirectoryPath) (parameters.CorrelationId))
 
         (parseResult, parameters) |> ``Directory must be a valid path``
 

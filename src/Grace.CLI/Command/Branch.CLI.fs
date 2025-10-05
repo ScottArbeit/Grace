@@ -14,7 +14,7 @@ open Grace.Shared.Services
 open Grace.Shared.Resources
 open Grace.Shared.Utilities
 open Grace.Shared.Validation
-open Grace.Shared.Validation.Errors.Branch
+open Grace.Shared.Validation.Errors
 open Grace.Types.Branch
 open Grace.Types.Reference
 open Grace.Types.Types
@@ -27,7 +27,7 @@ open System
 open System.Collections.Concurrent
 open System.Collections.Generic
 open System.CommandLine
-open System.CommandLine.NamingConventionBinder
+open System.CommandLine.Invocation
 open System.CommandLine.Parsing
 open System.Globalization
 open System.IO
@@ -58,11 +58,11 @@ module Branch =
             let mutable guid = Guid.Empty
 
             if Guid.TryParse(validate.GetValueOrDefault<String>(), &guid) = false then
-                validate.AddError(BranchError.getErrorMessage InvalidBranchId)
+                validate.AddError(getErrorMessage BranchError.InvalidBranchId)
 
         let branchId =
             new Option<String>(
-                "--branchId",
+                OptionName.BranchId,
                 [| "-i" |],
                 Required = false,
                 Description = "The branch's ID <Guid>.",
@@ -77,7 +77,7 @@ module Branch =
 
         let branchName =
             new Option<String>(
-                "--branchName",
+                OptionName.BranchName,
                 [| "-b" |],
                 Required = false,
                 Description = "The name of the branch. [default: current branch]",
@@ -85,11 +85,11 @@ module Branch =
             )
 
         let branchNameRequired =
-            new Option<String>("--branchName", [| "-b" |], Required = true, Description = "The name of the branch.", Arity = ArgumentArity.ExactlyOne)
+            new Option<String>(OptionName.BranchName, [| "-b" |], Required = true, Description = "The name of the branch.", Arity = ArgumentArity.ExactlyOne)
 
         let ownerId =
             new Option<String>(
-                "--ownerId",
+                OptionName.OwnerId,
                 Required = false,
                 Description = "The repository's owner ID <Guid>.",
                 Arity = ArgumentArity.ZeroOrOne,
@@ -103,7 +103,7 @@ module Branch =
 
         let ownerName =
             new Option<String>(
-                "--ownerName",
+                OptionName.OwnerName,
                 Required = false,
                 Description = "The repository's owner name. [default: current owner]",
                 Arity = ArgumentArity.ExactlyOne
@@ -111,7 +111,7 @@ module Branch =
 
         let organizationId =
             new Option<String>(
-                "--organizationId",
+                OptionName.OrganizationId,
                 Required = false,
                 Description = "The repository's organization ID <Guid>.",
                 Arity = ArgumentArity.ExactlyOne,
@@ -125,7 +125,7 @@ module Branch =
 
         let organizationName =
             new Option<String>(
-                "--organizationName",
+                OptionName.OrganizationName,
                 Required = false,
                 Description = "The repository's organization name. [default: current organization]",
                 Arity = ArgumentArity.ZeroOrOne
@@ -133,7 +133,7 @@ module Branch =
 
         let repositoryId =
             new Option<String>(
-                "--repositoryId",
+                OptionName.RepositoryId,
                 [| "-r" |],
                 Required = false,
                 Description = "The repository's ID <Guid>.",
@@ -148,7 +148,7 @@ module Branch =
 
         let repositoryName =
             new Option<String>(
-                "--repositoryName",
+                OptionName.RepositoryName,
                 [| "-n" |],
                 Required = false,
                 Description = "The name of the repository. [default: current repository]",
@@ -168,7 +168,7 @@ module Branch =
                 DefaultValueFactory = (fun _ -> $"{Current().BranchName}")
             )
 
-        let newName = new Option<String>("--newName", Required = true, Description = "The new name of the branch.", Arity = ArgumentArity.ExactlyOne)
+        let newName = new Option<String>(OptionName.NewName, Required = true, Description = "The new name of the branch.", Arity = ArgumentArity.ExactlyOne)
 
         let message =
             new Option<String>(
@@ -194,9 +194,9 @@ module Branch =
 
         let doNotSwitch =
             new Option<bool>(
-                "--doNotSwitch",
+                OptionName.DoNotSwitch,
                 Required = false,
-                Description = "Do not switch to the new branch as the current branch.",
+                Description = "Do not switch your current branch to the new branch after it is created. By default, the new branch becomes the current branch.",
                 Arity = ArgumentArity.ZeroOrOne
             )
 
@@ -285,7 +285,7 @@ module Branch =
             && not <| String.IsNullOrEmpty(value)
             && (Guid.TryParse(value, &guid) = false || guid = Guid.Empty)
         then
-            Error(GraceError.Create (BranchError.getErrorMessage error) (parameters.CorrelationId))
+            Error(GraceError.Create (getErrorMessage error) (parameters.CorrelationId))
         else
             Ok(parseResult, parameters)
 
@@ -294,49 +294,49 @@ module Branch =
             parseResult.GetResult(option) <> null
             && not <| Constants.GraceNameRegex.IsMatch(value)
         then
-            Error(GraceError.Create (BranchError.getErrorMessage error) (parameters.CorrelationId))
+            Error(GraceError.Create (getErrorMessage error) (parameters.CorrelationId))
         else
             Ok(parseResult, parameters)
 
     let oneOfTheseOptionsMustBeProvided (parseResult: ParseResult) (parameters: CommonParameters) (options: Option array) (error: BranchError) =
         match options |> Array.tryFind (fun opt -> not <| isNull (parseResult.GetResult(opt))) with
         | Some opt -> Ok(parseResult, parameters)
-        | None -> Error(GraceError.Create (BranchError.getErrorMessage error) (parameters.CorrelationId))
+        | None -> Error(GraceError.Create (getErrorMessage error) (parameters.CorrelationId))
 
     let private CommonValidations parseResult commonParameters =
         let ``BranchId must be a Guid`` (parseResult: ParseResult, commonParameters: CommonParameters) =
-            mustBeAValidGuid parseResult commonParameters Options.branchId commonParameters.BranchId InvalidBranchId
+            mustBeAValidGuid parseResult commonParameters Options.branchId commonParameters.BranchId BranchError.InvalidBranchId
 
         let ``BranchName must be a valid Grace name`` (parseResult: ParseResult, commonParameters: CommonParameters) =
-            mustBeAValidGraceName parseResult commonParameters Options.branchName commonParameters.BranchName InvalidBranchName
+            mustBeAValidGraceName parseResult commonParameters Options.branchName commonParameters.BranchName BranchError.InvalidBranchName
 
         let ``OwnerId must be a Guid`` (parseResult: ParseResult, commonParameters: CommonParameters) =
-            mustBeAValidGuid parseResult commonParameters Options.ownerId commonParameters.OwnerId InvalidOwnerId
+            mustBeAValidGuid parseResult commonParameters Options.ownerId commonParameters.OwnerId BranchError.InvalidOwnerId
 
         let ``OwnerName must be a valid Grace name`` (parseResult: ParseResult, commonParameters: CommonParameters) =
-            mustBeAValidGraceName parseResult commonParameters Options.ownerName commonParameters.OwnerName InvalidOwnerName
+            mustBeAValidGraceName parseResult commonParameters Options.ownerName commonParameters.OwnerName BranchError.InvalidOwnerName
 
         let ``OrganizationId must be a Guid`` (parseResult: ParseResult, commonParameters: CommonParameters) =
-            mustBeAValidGuid parseResult commonParameters Options.organizationId commonParameters.OrganizationId InvalidOrganizationId
+            mustBeAValidGuid parseResult commonParameters Options.organizationId commonParameters.OrganizationId BranchError.InvalidOrganizationId
 
         let ``OrganizationName must be a valid Grace name`` (parseResult: ParseResult, commonParameters: CommonParameters) =
-            mustBeAValidGraceName parseResult commonParameters Options.organizationName commonParameters.OrganizationName InvalidOrganizationName
+            mustBeAValidGraceName parseResult commonParameters Options.organizationName commonParameters.OrganizationName BranchError.InvalidOrganizationName
 
         let ``RepositoryId must be a Guid`` (parseResult: ParseResult, commonParameters: CommonParameters) =
-            mustBeAValidGuid parseResult commonParameters Options.repositoryId commonParameters.RepositoryId InvalidRepositoryId
+            mustBeAValidGuid parseResult commonParameters Options.repositoryId commonParameters.RepositoryId BranchError.InvalidRepositoryId
 
         let ``RepositoryName must be a valid Grace name`` (parseResult: ParseResult, commonParameters: CommonParameters) =
-            mustBeAValidGraceName parseResult commonParameters Options.repositoryName commonParameters.RepositoryName InvalidRepositoryName
+            mustBeAValidGraceName parseResult commonParameters Options.repositoryName commonParameters.RepositoryName BranchError.InvalidRepositoryName
 
         let ``Grace index file must exist`` (parseResult: ParseResult, commonParameters: CommonParameters) =
             if not <| File.Exists(Current().GraceStatusFile) then
-                Error(GraceError.Create (BranchError.getErrorMessage IndexFileNotFound) commonParameters.CorrelationId)
+                Error(GraceError.Create (getErrorMessage BranchError.IndexFileNotFound) commonParameters.CorrelationId)
             else
                 Ok(parseResult, commonParameters)
 
         let ``Grace object cache file must exist`` (parseResult: ParseResult, commonParameters: CommonParameters) =
             if not <| File.Exists(Current().GraceStatusFile) then
-                Error(GraceError.Create (BranchError.getErrorMessage ObjectCacheFileNotFound) commonParameters.CorrelationId)
+                Error(GraceError.Create (getErrorMessage BranchError.ObjectCacheFileNotFound) commonParameters.CorrelationId)
             else
                 Ok(parseResult, commonParameters)
 
@@ -360,7 +360,7 @@ module Branch =
         then
             Ok(parseResult, commonParameters)
         else
-            Error(GraceError.Create (BranchError.getErrorMessage BranchNameIsRequired) (commonParameters.CorrelationId))
+            Error(GraceError.Create (getErrorMessage BranchError.BranchNameIsRequired) (commonParameters.CorrelationId))
 
     /// Adjusts parameters to account for whether Id's or Name's were specified by the user, or should be taken from default values.
     let normalizeIdsAndNames<'T when 'T :> CommonParameters> (parseResult: ParseResult) (parameters: 'T) =
@@ -772,7 +772,7 @@ module Branch =
                         parseResult
                         assignParameters
                         [| Options.directoryVersionId; Options.sha256Hash |]
-                        EitherDirectoryVersionIdOrSha256HashRequired
+                        BranchError.EitherDirectoryVersionIdOrSha256HashRequired
 
                 match validateIncomingParameters with
                 | Ok _ ->
@@ -1236,7 +1236,7 @@ module Branch =
                                                             return
                                                                 Error(
                                                                     GraceError.Create
-                                                                        (BranchError.getErrorMessage BranchIsNotBasedOnLatestPromotion)
+                                                                        (getErrorMessage BranchError.BranchIsNotBasedOnLatestPromotion)
                                                                         (parseResult |> getCorrelationId)
                                                                 )
                                                     | Error error ->
@@ -1246,7 +1246,7 @@ module Branch =
                                                     return
                                                         Error(
                                                             GraceError.Create
-                                                                (BranchError.getErrorMessage PromotionNotAvailableBecauseThereAreNoPromotableReferences)
+                                                                (getErrorMessage BranchError.PromotionNotAvailableBecauseThereAreNoPromotableReferences)
                                                                 (parseResult |> getCorrelationId)
                                                         )
                                             | Error error ->
@@ -1914,7 +1914,7 @@ module Branch =
                                Options.toBranchName
                                Options.sha256Hash
                                Options.referenceId |]
-                            EitherToBranchIdOrToBranchNameIsRequired
+                            BranchError.EitherToBranchIdOrToBranchNameIsRequired
 
                     match
                         CommonValidations parseResult parameters
@@ -2294,9 +2294,7 @@ module Branch =
                         else
                             return
                                 Error(
-                                    GraceError.Create
-                                        (BranchError.getErrorMessage BranchError.EitherToBranchIdOrToBranchNameIsRequired)
-                                        (parseResult |> getCorrelationId)
+                                    GraceError.Create (getErrorMessage BranchError.EitherToBranchIdOrToBranchNameIsRequired) (parseResult |> getCorrelationId)
                                 )
                     }
 

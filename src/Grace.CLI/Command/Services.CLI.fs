@@ -10,7 +10,7 @@ open Grace.Shared.Parameters.DirectoryVersion
 open Grace.Shared.Services
 open Grace.Types.Types
 open Grace.Shared.Utilities
-open Grace.Shared.Validation.Errors.Storage
+open Grace.Shared.Validation.Errors
 open NodaTime
 open NodaTime.Text
 open Spectre.Console
@@ -457,50 +457,23 @@ module Services =
                     let directories = ConcurrentQueue<LocalDirectoryVersion>()
 
                     // Create LocalFileVersion instances for each file in this directory.
-                    let mutable i = 0
-
-                    //do!
-                    //    Parallel.ForEachAsync(
-                    //        directoryInfo.GetFiles().Where(fun f -> not <| shouldIgnoreFile f.FullName),
-                    //        Constants.ParallelOptions,
-                    //        (fun fileInfo continuationToken ->
-                    //            ValueTask(
-                    //                task {
-                    //                    try
-                    //                        Interlocked.Increment(&i) |> ignore
-
-                    //                        if parseResult |> isOutputFormat "Verbose" then
-                    //                            logToAnsiConsole
-                    //                                Colors.Verbose
-                    //                                $"In getDirectoryContents (Parallel.ForEachAsync) {i}: Current file: {fileInfo}; fileInfo.Length: {fileInfo.Length}."
-
-                    //                        match! createLocalFileVersion fileInfo with
-                    //                        | Some fileVersion ->
-                    //                            files.Enqueue(fileVersion)
-
-                    //                            if parseResult |> isOutputFormat "Verbose" then
-                    //                                logToAnsiConsole
-                    //                                    Colors.Verbose
-                    //                                    $"In getDirectoryContents (Parallel.ForEachAsync) {i}: Enqueued {fileInfo}."
-                    //                        | None -> ()
-                    //                    with ex ->
-                    //                        logToAnsiConsole Colors.Error $"Exception in getDirectoryContents (Parallel.ForEachAsync) {i}:"
-                    //                        logToAnsiConsole Colors.Error $"{ExceptionResponse.Create ex}"
-                    //                }
-                    //            ))
-                    //    )
-
-                    for fileInfo in directoryInfo.GetFiles().Where(fun f -> not <| shouldIgnoreFile f.FullName) do
-                        try
-                            Interlocked.Increment(&i) |> ignore
-
-                            match! createLocalFileVersion fileInfo with
-                            | Some fileVersion -> files.Enqueue(fileVersion)
-
-                            | None -> ()
-                        with ex ->
-                            logToAnsiConsole Colors.Error $"Exception in getDirectoryContents (Parallel.ForEachAsync) {i}:"
-                            logToAnsiConsole Colors.Error $"{ExceptionResponse.Create ex}"
+                    do!
+                        Parallel.ForEachAsync(
+                            directoryInfo.GetFiles().Where(fun f -> not <| shouldIgnoreFile f.FullName),
+                            Constants.ParallelOptions,
+                            (fun fileInfo continuationToken ->
+                                ValueTask(
+                                    task {
+                                        try
+                                            match! createLocalFileVersion fileInfo with
+                                            | Some fileVersion -> files.Enqueue(fileVersion)
+                                            | None -> ()
+                                        with ex ->
+                                            logToAnsiConsole Colors.Error $"Exception in getDirectoryContents (Parallel.ForEachAsync):"
+                                            logToAnsiConsole Colors.Error $"{ExceptionResponse.Create ex}"
+                                    }
+                                ))
+                        )
 
                     // Create or reuse existing LocalDirectoryVersion instances for each subdirectory in this directory.
                     let defaultDirectoryVersion = KeyValuePair(String.Empty, LocalDirectoryVersion.Default)
@@ -765,8 +738,7 @@ module Services =
     let uploadFilesToObjectStorage (parameters: GetUploadMetadataForFilesParameters) =
         task {
             match Current().ObjectStorageProvider with
-            | ObjectStorageProvider.Unknown ->
-                return Error(GraceError.Create (StorageError.getErrorMessage StorageError.NotImplemented) parameters.CorrelationId)
+            | ObjectStorageProvider.Unknown -> return Error(GraceError.Create (getErrorMessage StorageError.NotImplemented) parameters.CorrelationId)
             | AzureBlobStorage ->
                 //logToAnsiConsole Colors.Verbose $"Uploading {fileVersions.Count()} files to object storage."
                 if parameters.FileVersions.Count() > 0 then
@@ -810,15 +782,14 @@ module Services =
                             // use Seq.fold to create a single error message from the ConcurrentQueue<GraceError>
                             let errorMessage = errors |> Seq.fold (fun acc error -> $"{acc}\n{error.Error}") ""
 
-                            let graceError =
-                                GraceError.Create (StorageError.getErrorMessage StorageError.FailedUploadingFilesToObjectStorage) parameters.CorrelationId
+                            let graceError = GraceError.Create (getErrorMessage StorageError.FailedUploadingFilesToObjectStorage) parameters.CorrelationId
 
                             return Error graceError |> enhance "Errors" errorMessage
                     | Error error -> return Error error
                 else
                     return Ok(GraceReturnValue.Create true parameters.CorrelationId)
-            | AWSS3 -> return Error(GraceError.Create (StorageError.getErrorMessage StorageError.NotImplemented) parameters.CorrelationId)
-            | GoogleCloudStorage -> return Error(GraceError.Create (StorageError.getErrorMessage StorageError.NotImplemented) parameters.CorrelationId)
+            | AWSS3 -> return Error(GraceError.Create (getErrorMessage StorageError.NotImplemented) parameters.CorrelationId)
+            | GoogleCloudStorage -> return Error(GraceError.Create (getErrorMessage StorageError.NotImplemented) parameters.CorrelationId)
         }
 
     /// Creates an updated LocalDirectoryVersion instance, with a new DirectoryId, based on changes to an existing one.
