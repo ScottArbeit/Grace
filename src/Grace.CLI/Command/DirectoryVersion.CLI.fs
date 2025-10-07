@@ -160,7 +160,7 @@ module DirectoryVersion =
         | Some opt -> Ok(parseResult, parameters)
         | None -> Error(GraceError.Create (DirectoryVersionError.getErrorMessage error) (parameters.CorrelationId))
 
-    let private CommonValidations parseResult commonParameters =
+    let private parseResult |> CommonValidations commonParameters =
         let ``OwnerId must be a Guid`` (parseResult: ParseResult, commonParameters: CommonParameters) =
             mustBeAValidGuid parseResult commonParameters Options.ownerId commonParameters.OwnerId DirectoryVersionError.InvalidOwnerId
 
@@ -285,7 +285,7 @@ module DirectoryVersion =
             try
                 if parseResult |> verbose then printParseResult parseResult
 
-                let validateIncomingParameters = CommonValidations parseResult getZipFileParameters
+                let validateIncomingParameters = parseResult |> CommonValidations
 
                 match validateIncomingParameters with
                 | Ok _ ->

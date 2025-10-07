@@ -1,6 +1,8 @@
 namespace Grace.CLI
 
+open FSharpPlus
 open Grace.CLI.Services
+open Grace.CLI.Text
 open Grace.Shared
 open Grace.Shared.Validation.Errors
 open Grace.Shared.Client.Configuration
@@ -68,19 +70,108 @@ module Common =
             ))
                 .AcceptOnlyFromAmong(listCases<OutputFormat> ())
 
-    /// Gets the correlationId parameter from the command line.
+    /// Gets the correlationId value from the command's ParseResult.
     let getCorrelationId (parseResult: ParseResult) = parseResult.GetValue(Options.correlationId)
 
     module Validations =
-        let mustBeAValidGraceName (parseResult: ParseResult) (option: Option<string>) (error: 'T) =
-            let value = parseResult.GetValue(option)
+        let mustBeAValidGraceName<'T when 'T :> IErrorDiscriminatedUnion> (parseResult: ParseResult) (optionName: string) (error: 'T) =
+            let value = parseResult.GetValue(optionName)
 
             if value <> null && not <| Constants.GraceNameRegex.IsMatch(value) then
                 Error(GraceError.Create (getErrorMessage error) (parseResult |> getCorrelationId))
             else
                 Ok(parseResult)
 
+        let ``OwnerName must be a valid Grace name`` (parseResult: ParseResult) =
+            mustBeAValidGraceName parseResult OptionName.OwnerName OwnerError.InvalidOwnerName
 
+        let ``OrganizationName must be a valid Grace name`` (parseResult: ParseResult) =
+            mustBeAValidGraceName parseResult OptionName.OrganizationName OrganizationError.InvalidOrganizationName
+
+        let ``RepositoryName must be a valid Grace name`` (parseResult: ParseResult) =
+            mustBeAValidGraceName parseResult OptionName.RepositoryName RepositoryError.InvalidRepositoryName
+
+        let ``BranchName must be a valid Grace name`` (parseResult: ParseResult) =
+            mustBeAValidGraceName parseResult OptionName.BranchName BranchError.InvalidBranchName
+
+        let ``NewName must be a valid Grace name`` (parseResult: ParseResult) =
+            mustBeAValidGraceName parseResult OptionName.NewName RepositoryError.InvalidNewName
+
+        let ``Either OwnerId or OwnerName must be provided`` (parseResult: ParseResult) =
+            // Get the command that was invoked.
+            let command = parseResult.CommandResult.Command
+
+            // Only perform this validation if the command has an OwnerId option.
+            if command.Options.Any(fun option -> option.Name = OptionName.OwnerId) then
+                let ownerId = parseResult.GetValue<Guid>(OptionName.OwnerId)
+                let ownerName = parseResult.GetValue<string>(OptionName.OwnerName)
+
+                if ownerId = Guid.Empty && String.IsNullOrWhiteSpace(ownerName) then
+                    Error(GraceError.Create (getErrorMessage OwnerError.EitherOwnerIdOrOwnerNameRequired) (parseResult |> getCorrelationId))
+                else
+                    Ok(parseResult)
+            else
+                Ok(parseResult)
+
+        let ``Either OrganizationId or OrganizationName must be provided`` (parseResult: ParseResult) =
+            // Get the command that was invoked.
+            let command = parseResult.CommandResult.Command
+            // Only perform this validation if the command has an OrganizationId option.
+            if command.Options.Any(fun option -> option.Name = OptionName.OrganizationId) then
+                let organizationId = parseResult.GetValue<Guid>(OptionName.OrganizationId)
+                let organizationName = parseResult.GetValue<string>(OptionName.OrganizationName)
+
+                if organizationId = Guid.Empty && String.IsNullOrWhiteSpace(organizationName) then
+                    Error(
+                        GraceError.Create (getErrorMessage OrganizationError.EitherOrganizationIdOrOrganizationNameRequired) (parseResult |> getCorrelationId)
+                    )
+                else
+                    Ok(parseResult)
+            else
+                Ok(parseResult)
+
+
+        let ``Either RepositoryId or RepositoryName must be provided`` (parseResult: ParseResult) =
+            // Get the command that was invoked.
+            let command = parseResult.CommandResult.Command
+            // Only perform this validation if the command has a RepositoryId option.
+            if command.Options.Any(fun option -> option.Name = OptionName.RepositoryId) then
+                let repositoryId = parseResult.GetValue<Guid>(OptionName.RepositoryId)
+                let repositoryName = parseResult.GetValue<string>(OptionName.RepositoryName)
+
+                if repositoryId = Guid.Empty && String.IsNullOrWhiteSpace(repositoryName) then
+                    Error(GraceError.Create (getErrorMessage RepositoryError.EitherRepositoryIdOrRepositoryNameRequired) (parseResult |> getCorrelationId))
+                else
+                    Ok(parseResult)
+            else
+                Ok(parseResult)
+
+        let ``Either BranchId or BranchName must be provided`` (parseResult: ParseResult) =
+            // Get the command that was invoked.
+            let command = parseResult.CommandResult.Command
+            // Only perform this validation if the command has a BranchId option.
+            if command.Options.Any(fun option -> option.Name = OptionName.BranchId) then
+                let branchId = parseResult.GetValue<Guid>(OptionName.BranchId)
+                let branchName = parseResult.GetValue<string>(OptionName.BranchName)
+
+                if branchId = Guid.Empty && String.IsNullOrWhiteSpace(branchName) then
+                    Error(GraceError.Create (getErrorMessage BranchError.EitherBranchIdOrBranchNameRequired) (parseResult |> getCorrelationId))
+                else
+                    Ok(parseResult)
+            else
+                Ok(parseResult)
+
+        let CommonValidations (parseResult: ParseResult) =
+            parseResult
+            |> ``OwnerName must be a valid Grace name``
+            >>= ``OrganizationName must be a valid Grace name``
+            >>= ``RepositoryName must be a valid Grace name``
+            >>= ``BranchName must be a valid Grace name``
+            >>= ``NewName must be a valid Grace name``
+            >>= ``Either OwnerId or OwnerName must be provided``
+            >>= ``Either OrganizationId or OrganizationName must be provided``
+            >>= ``Either RepositoryId or RepositoryName must be provided``
+            >>= ``Either BranchId or BranchName must be provided``
 
     /// Checks if the output format from the command line is a specific format.
     let isOutputFormat (outputFormat: OutputFormat) (parseResult: ParseResult) =

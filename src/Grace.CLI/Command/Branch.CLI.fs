@@ -298,49 +298,49 @@ module Branch =
         else
             Ok(parseResult, parameters)
 
-    let oneOfTheseOptionsMustBeProvided (parseResult: ParseResult) (parameters: CommonParameters) (options: Option array) (error: BranchError) =
+    let oneOfTheseOptionsMustBeProvided (parseResult: ParseResult) (options: Option array) (error: BranchError) =
         match options |> Array.tryFind (fun opt -> not <| isNull (parseResult.GetResult(opt))) with
-        | Some opt -> Ok(parseResult, parameters)
-        | None -> Error(GraceError.Create (getErrorMessage error) (parameters.CorrelationId))
+        | Some opt -> Ok(parseResult)
+        | None -> Error(GraceError.Create (getErrorMessage error) (getCorrelationId parseResult))
 
-    let private CommonValidations parseResult commonParameters =
-        let ``BranchId must be a Guid`` (parseResult: ParseResult, commonParameters: CommonParameters) =
-            mustBeAValidGuid parseResult commonParameters Options.branchId commonParameters.BranchId BranchError.InvalidBranchId
+    let private CommonValidations parseResult =
+        let ``BranchId must be a Guid`` (parseResult: ParseResult) =
+            mustBeAValidGuid parseResult Options.branchId commonParameters.BranchId BranchError.InvalidBranchId
 
-        let ``BranchName must be a valid Grace name`` (parseResult: ParseResult, commonParameters: CommonParameters) =
-            mustBeAValidGraceName parseResult commonParameters Options.branchName commonParameters.BranchName BranchError.InvalidBranchName
+        let ``BranchName must be a valid Grace name`` (parseResult: ParseResult) =
+            mustBeAValidGraceName parseResult Options.branchName commonParameters.BranchName BranchError.InvalidBranchName
 
-        let ``OwnerId must be a Guid`` (parseResult: ParseResult, commonParameters: CommonParameters) =
-            mustBeAValidGuid parseResult commonParameters Options.ownerId commonParameters.OwnerId BranchError.InvalidOwnerId
+        let ``OwnerId must be a Guid`` (parseResult: ParseResult) =
+            mustBeAValidGuid parseResult Options.ownerId commonParameters.OwnerId BranchError.InvalidOwnerId
 
-        let ``OwnerName must be a valid Grace name`` (parseResult: ParseResult, commonParameters: CommonParameters) =
-            mustBeAValidGraceName parseResult commonParameters Options.ownerName commonParameters.OwnerName BranchError.InvalidOwnerName
+        let ``OwnerName must be a valid Grace name`` (parseResult: ParseResult) =
+            mustBeAValidGraceName parseResult Options.ownerName commonParameters.OwnerName BranchError.InvalidOwnerName
 
-        let ``OrganizationId must be a Guid`` (parseResult: ParseResult, commonParameters: CommonParameters) =
-            mustBeAValidGuid parseResult commonParameters Options.organizationId commonParameters.OrganizationId BranchError.InvalidOrganizationId
+        let ``OrganizationId must be a Guid`` (parseResult: ParseResult) =
+            mustBeAValidGuid parseResult Options.organizationId commonParameters.OrganizationId BranchError.InvalidOrganizationId
 
-        let ``OrganizationName must be a valid Grace name`` (parseResult: ParseResult, commonParameters: CommonParameters) =
-            mustBeAValidGraceName parseResult commonParameters Options.organizationName commonParameters.OrganizationName BranchError.InvalidOrganizationName
+        let ``OrganizationName must be a valid Grace name`` (parseResult: ParseResult) =
+            mustBeAValidGraceName parseResult Options.organizationName commonParameters.OrganizationName BranchError.InvalidOrganizationName
 
-        let ``RepositoryId must be a Guid`` (parseResult: ParseResult, commonParameters: CommonParameters) =
-            mustBeAValidGuid parseResult commonParameters Options.repositoryId commonParameters.RepositoryId BranchError.InvalidRepositoryId
+        let ``RepositoryId must be a Guid`` (parseResult: ParseResult) =
+            mustBeAValidGuid parseResult Options.repositoryId commonParameters.RepositoryId BranchError.InvalidRepositoryId
 
-        let ``RepositoryName must be a valid Grace name`` (parseResult: ParseResult, commonParameters: CommonParameters) =
-            mustBeAValidGraceName parseResult commonParameters Options.repositoryName commonParameters.RepositoryName BranchError.InvalidRepositoryName
+        let ``RepositoryName must be a valid Grace name`` (parseResult: ParseResult) =
+            mustBeAValidGraceName parseResult Options.repositoryName commonParameters.RepositoryName BranchError.InvalidRepositoryName
 
-        let ``Grace index file must exist`` (parseResult: ParseResult, commonParameters: CommonParameters) =
+        let ``Grace index file must exist`` (parseResult: ParseResult) =
             if not <| File.Exists(Current().GraceStatusFile) then
                 Error(GraceError.Create (getErrorMessage BranchError.IndexFileNotFound) commonParameters.CorrelationId)
             else
-                Ok(parseResult, commonParameters)
+                Ok(parseResult)
 
-        let ``Grace object cache file must exist`` (parseResult: ParseResult, commonParameters: CommonParameters) =
+        let ``Grace object cache file must exist`` (parseResult: ParseResult) =
             if not <| File.Exists(Current().GraceStatusFile) then
-                Error(GraceError.Create (getErrorMessage BranchError.ObjectCacheFileNotFound) commonParameters.CorrelationId)
+                Error(GraceError.Create (getErrorMessage BranchError.ObjectCacheFileNotFound) (getCorrelationId parseResult))
             else
-                Ok(parseResult, commonParameters)
+                Ok(parseResult)
 
-        (parseResult, commonParameters)
+        (parseResult)
         |> ``BranchId must be a Guid``
         >>= ``BranchName must be a valid Grace name``
         >>= ``OwnerId must be a Guid``
@@ -352,7 +352,7 @@ module Branch =
         >>= ``Grace index file must exist``
         >>= ``Grace object cache file must exist``
 
-    let private ``BranchName must not be empty`` (parseResult: ParseResult, commonParameters: CommonParameters) =
+    let private ``BranchName must not be empty`` (parseResult: ParseResult) =
         if
             (parseResult.CommandResult.Command.Options.Contains(Options.branchNameRequired)
              || parseResult.CommandResult.Command.Options.Contains(Options.branchName))
@@ -447,9 +447,7 @@ module Branch =
             try
                 if parseResult |> verbose then printParseResult parseResult
 
-                let validateIncomingParameters =
-                    CommonValidations parseResult createParameters
-                    >>= ``BranchName must not be empty``
+                let validateIncomingParameters = parseResult |> CommonValidations >>= ``BranchName must not be empty``
 
                 match validateIncomingParameters with
                 | Ok _ ->
@@ -525,7 +523,7 @@ module Branch =
             try
                 if parseResult |> verbose then printParseResult parseResult
 
-                let validateIncomingParameters = CommonValidations parseResult getRecursiveSizeParameters
+                let validateIncomingParameters = parseResult |> CommonValidations
 
                 match validateIncomingParameters with
                 | Ok _ ->
@@ -631,7 +629,7 @@ module Branch =
             try
                 if parseResult |> verbose then printParseResult parseResult
 
-                let validateIncomingParameters = CommonValidations parseResult listContentsParameters
+                let validateIncomingParameters = parseResult |> CommonValidations
 
                 match validateIncomingParameters with
                 | Ok _ ->
@@ -717,7 +715,7 @@ module Branch =
             try
                 if parseResult |> verbose then printParseResult parseResult
 
-                let validateIncomingParameters = CommonValidations parseResult setNameParameters
+                let validateIncomingParameters = parseResult |> CommonValidations
 
                 match validateIncomingParameters with
                 | Ok _ ->
@@ -765,7 +763,7 @@ module Branch =
             try
                 if parseResult |> verbose then printParseResult parseResult
 
-                let validateIncomingParameters = CommonValidations parseResult assignParameters
+                let validateIncomingParameters = parseResult |> CommonValidations
 
                 let localValidations =
                     oneOfTheseOptionsMustBeProvided
@@ -829,7 +827,7 @@ module Branch =
             try
                 if parseResult |> verbose then printParseResult parseResult
 
-                let validateIncomingParameters = CommonValidations parseResult parameters
+                let validateIncomingParameters = parseResult |> CommonValidations
                 let repositoryId = RepositoryId.Parse(parameters.RepositoryId)
 
                 match validateIncomingParameters with
@@ -1081,7 +1079,7 @@ module Branch =
             try
                 if parseResult |> verbose then printParseResult parseResult
 
-                let validateIncomingParameters = CommonValidations parseResult parameters
+                let validateIncomingParameters = parseResult |> CommonValidations
 
                 match validateIncomingParameters with
                 | Ok _ ->
@@ -1467,7 +1465,7 @@ module Branch =
             try
                 if parseResult |> verbose then printParseResult parseResult
 
-                let validateIncomingParameters = CommonValidations parseResult parameters
+                let validateIncomingParameters = parseResult |> CommonValidations
 
                 match validateIncomingParameters with
                 | Ok _ ->
@@ -1507,7 +1505,7 @@ module Branch =
     let private getEventsHandler (parseResult: ParseResult) (parameters: GetParameters) =
         task {
             try
-                let validateIncomingParameters = CommonValidations parseResult parameters
+                let validateIncomingParameters = parseResult |> CommonValidations
 
                 match validateIncomingParameters with
                 | Ok _ ->
@@ -1589,7 +1587,7 @@ module Branch =
             try
                 if parseResult |> verbose then printParseResult parseResult
 
-                let validateIncomingParameters = CommonValidations parseResult parameters
+                let validateIncomingParameters = parseResult |> CommonValidations
 
                 match validateIncomingParameters with
                 | Ok _ ->
@@ -1904,12 +1902,9 @@ module Branch =
 
                 // Validate the incoming parameters.
                 let validateIncomingParameters (showOutput, parseResult: ParseResult, parameters: CommonParameters) =
-                    let ``Either ToBranchId or ToBranchName must be provided if no Sha256Hash or ReferenceId``
-                        (parseResult: ParseResult, commonParameters: CommonParameters)
-                        =
+                    let ``Either ToBranchId or ToBranchName must be provided if no Sha256Hash or ReferenceId`` (parseResult: ParseResult) =
                         oneOfTheseOptionsMustBeProvided
                             parseResult
-                            commonParameters
                             [| Options.toBranchId
                                Options.toBranchName
                                Options.sha256Hash
@@ -1917,7 +1912,8 @@ module Branch =
                             BranchError.EitherToBranchIdOrToBranchNameIsRequired
 
                     match
-                        CommonValidations parseResult parameters
+                        parseResult
+                        |> CommonValidations
                         >>= ``Either ToBranchId or ToBranchName must be provided if no Sha256Hash or ReferenceId``
                     with
                     | Ok result -> Ok(showOutput, parseResult, parameters) |> returnTask
@@ -3190,7 +3186,7 @@ module Branch =
             try
                 if parseResult |> verbose then printParseResult parseResult
 
-                let validateIncomingParameters = CommonValidations parseResult parameters
+                let validateIncomingParameters = parseResult |> CommonValidations
 
                 match validateIncomingParameters with
                 | Ok _ ->
@@ -3241,7 +3237,7 @@ module Branch =
     //    task {
     //        try
     //            if parseResult |> verbose then printParseResult parseResult
-    //            let validateIncomingParameters = CommonValidations parseResult undeleteParameters
+    //            let validateIncomingParameters = parseResult |> CommonValidations
     //            match validateIncomingParameters with
     //            | Ok _ ->
     //                let parameters = Parameters.Owner.UndeleteParameters(OwnerId = undeleteParameters.OwnerId, OwnerName = undeleteParameters.OwnerName, CorrelationId = undeleteParameters.CorrelationId)

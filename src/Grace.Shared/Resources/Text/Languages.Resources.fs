@@ -69,6 +69,7 @@ module Text =
         | InvalidDirectoryVersionId
         | InvalidLogicalDeleteDaysValue
         | InvalidMaxCountValue
+        | InvalidNewName
         | InvalidObjectStorageProvider
         | InvalidOrganizationId
         | InvalidOrganizationName

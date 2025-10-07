@@ -114,51 +114,10 @@ module Organization =
                 Arity = ArgumentArity.ZeroOrOne
             )
 
-    let private CommonValidations (parseResult) =
-        let ``OwnerName must be a valid Grace name`` (parseResult: ParseResult) =
-            if parseResult.GetResult(Options.ownerName) <> null then
-                mustBeAValidGraceName parseResult Options.ownerName InvalidOwnerName
-            else
-                Ok(parseResult)
-
-        let ``OrganizationName must be a valid Grace name`` (parseResult: ParseResult) =
-            if parseResult.GetResult(Options.organizationName) <> null then
-                mustBeAValidGraceName parseResult Options.organizationName InvalidOrganizationName
-            else
-                Ok(parseResult)
-
-        let ``RepositoryName must be a valid Grace name`` (parseResult: ParseResult) =
-            if parseResult.GetResult(Options.newName) <> null then
-                mustBeAValidGraceName parseResult Options.newName InvalidOrganizationName
-            else
-                Ok(parseResult)
-
-        (parseResult)
-        |> ``OwnerName must be a valid Grace name``
-        >>= ``OrganizationName must be a valid Grace name``
-
-    let ``OrganizationName must not be empty`` (parseResult: ParseResult, parameters: CommonParameters) =
-        if
-            (parseResult.CommandResult.Command.Options.Contains(Options.organizationNameRequired)
-             || parseResult.CommandResult.Command.Options.Contains(Options.organizationName))
-            && not <| String.IsNullOrEmpty(parameters.OrganizationName)
-        then
-            Ok(parseResult, parameters)
-        else
-            Error(GraceError.Create (OrganizationError.getErrorMessage OrganizationNameIsRequired) (parameters.CorrelationId))
-
-    let ``Either OwnerId or OwnerName must be provided`` (parseResult: ParseResult, parameters: CommonParameters) =
-        if
-            (parseResult.CommandResult.Command.Options.Contains(Options.ownerId)
-             || parseResult.CommandResult.Command.Options.Contains(Options.ownerName))
-        then
-            Ok(parseResult, parameters)
-        else
-            Error(GraceError.Create (getErrorMessage OrganizationError.EitherOwnerIdOrOwnerNameRequired) (parameters.CorrelationId))
-
     /// Adjusts parameters to account for whether Id's or Name's were specified by the user, or should be taken from default values.
     let normalizeIdsAndNames<'T when 'T :> CommonParameters> (parseResult: ParseResult) (parameters: 'T) =
-        // If the name was specified on the command line, but the id wasn't, then we should only send the name, and we set the id to String.Empty.
+        // If the name was specified on the command line, but the id wasn't,
+        //   then we should only send the name, and we set the id to String.Empty.
         if
             parseResult.GetResult(Options.ownerId).Implicit
             && not <| isNull (parseResult.GetResult(Options.ownerName))
@@ -184,7 +143,7 @@ module Organization =
             try
                 if parseResult |> verbose then printParseResult parseResult
 
-                let validateIncomingParameters = CommonValidations(parseResult, createParameters)
+                let validateIncomingParameters = parseResult |> CommonValidations
 
                 match validateIncomingParameters with
                 | Ok _ ->
@@ -251,7 +210,7 @@ module Organization =
             try
                 if parseResult |> verbose then printParseResult parseResult
 
-                let validateIncomingParameters = CommonValidations(parseResult, getParameters)
+                let validateIncomingParameters = parseResult |> CommonValidations
 
                 match validateIncomingParameters with
                 | Ok _ ->

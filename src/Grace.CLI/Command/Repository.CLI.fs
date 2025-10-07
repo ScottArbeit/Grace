@@ -121,7 +121,12 @@ module Repository =
             new Option<String>(OptionName.Description, Required = false, Description = "The description of the repository.", Arity = ArgumentArity.ExactlyOne)
 
         let visibility =
-            (new Option<RepositoryType>("--visibility", Required = true, Description = "The visibility of the repository.", Arity = ArgumentArity.ExactlyOne))
+            (new Option<RepositoryType>(
+                OptionName.Visibility,
+                Required = true,
+                Description = "The visibility of the repository.",
+                Arity = ArgumentArity.ExactlyOne
+            ))
                 .AcceptOnlyFromAmong(listCases<RepositoryType> ())
 
         let status =
@@ -243,64 +248,6 @@ module Repository =
                 Description = "Enable or disable large file support for the repository.",
                 Arity = ArgumentArity.ExactlyOne
             )
-
-    let mustBeAValidGuid (parseResult: ParseResult) (parameters: CommonParameters) (option: Option) (value: string) (error: RepositoryError) =
-        let mutable guid = Guid.Empty
-
-        if
-            parseResult.GetResult(option) <> null
-            && not <| String.IsNullOrEmpty(value)
-            && (Guid.TryParse(value, &guid) = false || guid = Guid.Empty)
-        then
-            Error(GraceError.Create (RepositoryError.getErrorMessage error) (parameters.CorrelationId))
-        else
-            Ok(parseResult, parameters)
-
-    let mustBeAValidGraceName (parseResult: ParseResult) (parameters: CommonParameters) (option: Option) (value: string) (error: RepositoryError) =
-        if
-            parseResult.GetResult(option) <> null
-            && not <| Constants.GraceNameRegex.IsMatch(value)
-        then
-            Error(GraceError.Create (RepositoryError.getErrorMessage error) (parameters.CorrelationId))
-        else
-            Ok(parseResult, parameters)
-
-    let private CommonValidations (parseResult, parameters) =
-
-        let ``OwnerId must be a Guid`` (parseResult: ParseResult, parameters: CommonParameters) =
-            mustBeAValidGuid parseResult parameters Options.ownerId parameters.OwnerId InvalidOwnerId
-
-        let ``OwnerName must be a valid Grace name`` (parseResult: ParseResult, parameters: CommonParameters) =
-            mustBeAValidGraceName parseResult parameters Options.ownerName parameters.OwnerName InvalidOwnerName
-
-        let ``OrganizationId must be a Guid`` (parseResult: ParseResult, parameters: CommonParameters) =
-            mustBeAValidGuid parseResult parameters Options.organizationId parameters.OrganizationId InvalidOrganizationId
-
-        let ``OrganizationName must be a valid Grace name`` (parseResult: ParseResult, parameters: CommonParameters) =
-            mustBeAValidGraceName parseResult parameters Options.organizationName parameters.OrganizationName InvalidOrganizationName
-
-        let ``RepositoryId must be a Guid`` (parseResult: ParseResult, parameters: CommonParameters) =
-            mustBeAValidGuid parseResult parameters Options.repositoryId parameters.RepositoryId InvalidRepositoryId
-
-        (parseResult, parameters)
-        |> ``OwnerId must be a Guid``
-        >>= ``OwnerName must be a valid Grace name``
-        >>= ``OrganizationId must be a Guid``
-        >>= ``OrganizationName must be a valid Grace name``
-        >>= ``RepositoryId must be a Guid``
-
-    let ``RepositoryName must be a valid Grace name`` (parseResult: ParseResult, parameters: CommonParameters) =
-        mustBeAValidGraceName parseResult parameters Options.repositoryName parameters.RepositoryName InvalidRepositoryName
-
-    let ``Either RepositoryId or RepositoryName must be specified`` (parseResult: ParseResult, parameters: CommonParameters) =
-        if
-            parseResult.CommandResult.Command.Options.Contains(Options.repositoryId)
-            || parseResult.CommandResult.Command.Options.Contains(Options.repositoryName)
-            || parseResult.CommandResult.Command.Options.Contains(Options.requiredRepositoryName)
-        then
-            Ok(parseResult, parameters)
-        else
-            Error(GraceError.Create (RepositoryError.getErrorMessage EitherRepositoryIdOrRepositoryNameRequired) (parameters.CorrelationId))
 
     /// Adjusts parameters to account for whether Id's or Name's were specified by the user, or should be taken from default values.
     let normalizeIdsAndNames<'T when 'T :> CommonParameters> (parseResult: ParseResult) (parameters: 'T) =

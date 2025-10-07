@@ -77,6 +77,8 @@ module en_US =
         | InvalidDirectoryVersionId -> "The provided DirectoryVersionId is not a valid Guid."
         | InvalidLogicalDeleteDaysValue -> "The provided value for LogicalDeleteDays is invalid."
         | InvalidMaxCountValue -> "The provided value for MaxCount is invalid."
+        | InvalidNewName ->
+            "The NewName is not a valid Grace name. A valid object name in Grace has between 2 and 64 characters, has a letter for the first character ([A-Za-z]), and letters, numbers, or - for the rest ([A-Za-z0-9\-]{1,63})."
         | InvalidObjectStorageProvider -> "The provided object storage provider is not valid."
         | InvalidOrganizationId -> "The provided OrganizationId is not a valid Guid."
         | InvalidOrganizationName ->

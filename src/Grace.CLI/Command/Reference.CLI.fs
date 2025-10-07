@@ -236,7 +236,7 @@ module Reference =
         | Some opt -> Ok(parseResult, parameters)
         | None -> Error(GraceError.Create (getErrorMessage error) (parameters.CorrelationId))
 
-    let private CommonValidations parseResult commonParameters =
+    let private parseResult |> CommonValidations commonParameters =
         let ``BranchId must be a Guid`` (parseResult: ParseResult, commonParameters: CommonParameters) =
             mustBeAValidGuid parseResult commonParameters Options.branchId commonParameters.BranchId ReferenceError.InvalidBranchId
 
@@ -371,7 +371,7 @@ module Reference =
             try
                 if parseResult |> verbose then printParseResult parseResult
 
-                let validateIncomingParameters = CommonValidations parseResult getRecursiveSizeParameters
+                let validateIncomingParameters = parseResult |> CommonValidations
 
                 match validateIncomingParameters with
                 | Ok _ ->
@@ -477,7 +477,7 @@ module Reference =
             try
                 if parseResult |> verbose then printParseResult parseResult
 
-                let validateIncomingParameters = CommonValidations parseResult listContentsParameters
+                let validateIncomingParameters = parseResult |> CommonValidations
 
                 match validateIncomingParameters with
                 | Ok _ ->
@@ -564,7 +564,7 @@ module Reference =
             try
                 if parseResult |> verbose then printParseResult parseResult
 
-                let validateIncomingParameters = CommonValidations parseResult assignParameters
+                let validateIncomingParameters = parseResult |> CommonValidations
 
                 let localValidations =
                     oneOfTheseOptionsMustBeProvided
@@ -628,7 +628,7 @@ module Reference =
             try
                 if parseResult |> verbose then printParseResult parseResult
 
-                let validateIncomingParameters = CommonValidations parseResult parameters
+                let validateIncomingParameters = parseResult |> CommonValidations
 
                 match validateIncomingParameters with
                 | Ok _ ->
@@ -881,7 +881,7 @@ module Reference =
             try
                 if parseResult |> verbose then printParseResult parseResult
 
-                let validateIncomingParameters = CommonValidations parseResult parameters
+                let validateIncomingParameters = parseResult |> CommonValidations
 
                 match validateIncomingParameters with
                 | Ok _ ->
@@ -1158,7 +1158,7 @@ module Reference =
             try
                 if parseResult |> verbose then printParseResult parseResult
 
-                let validateIncomingParameters = CommonValidations parseResult parameters
+                let validateIncomingParameters = parseResult |> CommonValidations
 
                 match validateIncomingParameters with
                 | Ok _ ->
@@ -1198,7 +1198,7 @@ module Reference =
     let private getEventsHandler (parseResult: ParseResult) (parameters: GetParameters) =
         task {
             try
-                let validateIncomingParameters = CommonValidations parseResult parameters
+                let validateIncomingParameters = parseResult |> CommonValidations
 
                 match validateIncomingParameters with
                 | Ok _ ->
@@ -1275,7 +1275,7 @@ module Reference =
             try
                 if parseResult |> verbose then printParseResult parseResult
 
-                let validateIncomingParameters = CommonValidations parseResult parameters
+                let validateIncomingParameters = parseResult |> CommonValidations
 
                 match validateIncomingParameters with
                 | Ok _ ->
