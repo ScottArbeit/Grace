@@ -162,6 +162,7 @@ module en_US =
         | Sha256HashIsRequired -> "The Sha256Hash value is required."
         | StringIsTooLong -> "The provided string is longer than allowed."
         | TagIsDisabled -> "This branch has disabled tags."
+        | TestFailed -> "The test failed."
         | UnknownObjectStorageProvider -> "The object storage provider for this repository is unknown."
         | UpdatingWorkingDirectory -> "Updating your working directory to match the new branch."
         | UploadingFiles -> "Uploading new and updated files to object storage."

@@ -2,6 +2,7 @@ namespace Grace.CLI.Command
 
 open Grace.CLI.Common
 open Grace.CLI.Services
+open Grace.CLI.Text
 open Grace.SDK
 open Grace.Shared
 open Grace.Shared.Client.Configuration
@@ -25,15 +26,6 @@ open Grace.Shared.Services
 open Grace.Shared.Parameters.Storage
 
 module Maintenance =
-
-    type CommonParameters() =
-        inherit ParameterBase()
-        member val public OwnerId = String.Empty with get, set
-        member val public OwnerName: OwnerName = String.Empty with get, set
-        member val public OrganizationId = String.Empty with get, set
-        member val public OrganizationName: OrganizationName = String.Empty with get, set
-        member val public RepositoryId = String.Empty with get, set
-        member val public RepositoryName: RepositoryName = String.Empty with get, set
 
     module private Options =
         let ownerId =
@@ -116,9 +108,12 @@ module Maintenance =
                 DefaultValueFactory = (fun _ -> "*.*")
             )
 
-    let private Test =
-        CommandHandler.Create(fun (parseResult: ParseResult) (parameters: CommonParameters) ->
+    type Test() =
+        inherit AsynchronousCommandLineAction()
+
+        override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
+                let graceIds = parseResult |> getNormalizedIdsAndNames
                 if parseResult |> verbose then printParseResult parseResult
 
                 if parseResult |> hasOutput then
@@ -253,12 +248,12 @@ module Maintenance =
                                                         task {
                                                             let getUploadMetadataForFilesParameters =
                                                                 GetUploadMetadataForFilesParameters(
-                                                                    OwnerId = parameters.OwnerId,
-                                                                    OwnerName = parameters.OwnerName,
-                                                                    OrganizationId = parameters.OrganizationId,
-                                                                    OrganizationName = parameters.OrganizationName,
-                                                                    RepositoryId = parameters.RepositoryId,
-                                                                    RepositoryName = parameters.RepositoryName,
+                                                                    OwnerId = graceIds.OwnerIdString,
+                                                                    OwnerName = graceIds.OwnerName,
+                                                                    OrganizationId = graceIds.OrganizationIdString,
+                                                                    OrganizationName = graceIds.OrganizationName,
+                                                                    RepositoryId = graceIds.RepositoryIdString,
+                                                                    RepositoryName = graceIds.RepositoryName,
                                                                     CorrelationId = getCorrelationId parseResult,
                                                                     FileVersions =
                                                                         (fileVersions |> Seq.map (fun kvp -> kvp.Value.ToFileVersion) |> Seq.toArray)
@@ -357,12 +352,12 @@ module Maintenance =
                                                     ValueTask(
                                                         task {
                                                             let saveParameters = SaveDirectoryVersionsParameters()
-                                                            saveParameters.OwnerId <- parameters.OwnerId
-                                                            saveParameters.OwnerName <- parameters.OwnerName
-                                                            saveParameters.OrganizationId <- parameters.OrganizationId
-                                                            saveParameters.OrganizationName <- parameters.OrganizationName
-                                                            saveParameters.RepositoryId <- parameters.RepositoryId
-                                                            saveParameters.RepositoryName <- parameters.RepositoryName
+                                                            saveParameters.OwnerId <- graceIds.OwnerIdString
+                                                            saveParameters.OwnerName <- graceIds.OwnerName
+                                                            saveParameters.OrganizationId <- graceIds.OrganizationIdString
+                                                            saveParameters.OrganizationName <- graceIds.OrganizationName
+                                                            saveParameters.RepositoryId <- graceIds.RepositoryIdString
+                                                            saveParameters.RepositoryName <- graceIds.RepositoryName
                                                             saveParameters.CorrelationId <- getCorrelationId parseResult
 
                                                             saveParameters.DirectoryVersions <-
@@ -454,12 +449,12 @@ module Maintenance =
                                         task {
                                             let getUploadMetadataForFilesParameters =
                                                 GetUploadMetadataForFilesParameters(
-                                                    OwnerId = parameters.OwnerId,
-                                                    OwnerName = parameters.OwnerName,
-                                                    OrganizationId = parameters.OrganizationId,
-                                                    OrganizationName = parameters.OrganizationName,
-                                                    RepositoryId = parameters.RepositoryId,
-                                                    RepositoryName = parameters.RepositoryName,
+                                                    OwnerId = graceIds.OwnerIdString,
+                                                    OwnerName = graceIds.OwnerName,
+                                                    OrganizationId = graceIds.OrganizationIdString,
+                                                    OrganizationName = graceIds.OrganizationName,
+                                                    RepositoryId = graceIds.RepositoryIdString,
+                                                    RepositoryName = graceIds.RepositoryName,
                                                     CorrelationId = getCorrelationId parseResult,
                                                     FileVersions = (fileVersions |> Seq.map (fun kvp -> kvp.Value.ToFileVersion) |> Seq.toArray)
                                                 )
@@ -511,13 +506,15 @@ module Maintenance =
                                     AnsiConsole.MarkupLine($"[{Colors.Error}]{error.Error.EscapeMarkup()}[/]")
                     | AWSS3 -> ()
                     | GoogleCloudStorage -> ()
-            }
-            :> Task)
 
-    let private updateIndexHandler (parseResult: ParseResult) (parameters: CommonParameters) =
+                return 0
+            }
+
+    let private updateIndexHandler (parseResult: ParseResult) =
         task {
             try
                 if parseResult |> verbose then printParseResult parseResult
+                let graceIds = parseResult |> getNormalizedIdsAndNames
 
                 if parseResult |> hasOutput then
                     let! graceStatus =
@@ -646,12 +643,12 @@ module Maintenance =
                                                         task {
                                                             let getUploadMetadataForFilesParameters =
                                                                 GetUploadMetadataForFilesParameters(
-                                                                    OwnerId = parameters.OwnerId,
-                                                                    OwnerName = parameters.OwnerName,
-                                                                    OrganizationId = parameters.OrganizationId,
-                                                                    OrganizationName = parameters.OrganizationName,
-                                                                    RepositoryId = parameters.RepositoryId,
-                                                                    RepositoryName = parameters.RepositoryName,
+                                                                    OwnerId = graceIds.OwnerIdString,
+                                                                    OwnerName = graceIds.OwnerName,
+                                                                    OrganizationId = graceIds.OrganizationIdString,
+                                                                    OrganizationName = graceIds.OrganizationName,
+                                                                    RepositoryId = graceIds.RepositoryIdString,
+                                                                    RepositoryName = graceIds.RepositoryName,
                                                                     CorrelationId = getCorrelationId parseResult,
                                                                     FileVersions =
                                                                         (fileVersions |> Seq.map (fun kvp -> kvp.Value.ToFileVersion) |> Seq.toArray)
@@ -750,12 +747,12 @@ module Maintenance =
                                                     ValueTask(
                                                         task {
                                                             let saveParameters = SaveDirectoryVersionsParameters()
-                                                            saveParameters.OwnerId <- parameters.OwnerId
-                                                            saveParameters.OwnerName <- parameters.OwnerName
-                                                            saveParameters.OrganizationId <- parameters.OrganizationId
-                                                            saveParameters.OrganizationName <- parameters.OrganizationName
-                                                            saveParameters.RepositoryId <- parameters.RepositoryId
-                                                            saveParameters.RepositoryName <- parameters.RepositoryName
+                                                            saveParameters.OwnerId <- graceIds.OwnerIdString
+                                                            saveParameters.OwnerName <- graceIds.OwnerName
+                                                            saveParameters.OrganizationId <- graceIds.OrganizationIdString
+                                                            saveParameters.OrganizationName <- graceIds.OrganizationName
+                                                            saveParameters.RepositoryId <- graceIds.RepositoryIdString
+                                                            saveParameters.RepositoryName <- graceIds.RepositoryName
                                                             saveParameters.CorrelationId <- getCorrelationId parseResult
 
                                                             saveParameters.DirectoryVersions <-
@@ -800,6 +797,7 @@ module Maintenance =
                     AnsiConsole.MarkupLine($"[{Colors.Highlighted}]Number of files scanned: {fileCount}; total file size: {totalFileSize:N0}.[/]")
 
                     AnsiConsole.MarkupLine $"[{Colors.Highlighted}]Root SHA-256 hash: {rootDirectoryVersion.Sha256Hash.Substring(0, 8)}[/]"
+                    return 0
                 else
                     let! previousGraceStatus = readGraceStatusFile ()
                     let! graceStatus = createNewGraceStatusFile previousGraceStatus parseResult
@@ -831,7 +829,7 @@ module Maintenance =
                         )
 
                     match Current().ObjectStorageProvider with
-                    | ObjectStorageProvider.Unknown -> ()
+                    | ObjectStorageProvider.Unknown -> return -1
                     | AzureBlobStorage ->
                         let chunkSize = 32
                         let fileVersionGroups = fileVersions.Chunk(chunkSize)
@@ -847,12 +845,12 @@ module Maintenance =
                                         task {
                                             let getUploadMetadataForFilesParameters =
                                                 GetUploadMetadataForFilesParameters(
-                                                    OwnerId = parameters.OwnerId,
-                                                    OwnerName = parameters.OwnerName,
-                                                    OrganizationId = parameters.OrganizationId,
-                                                    OrganizationName = parameters.OrganizationName,
-                                                    RepositoryId = parameters.RepositoryId,
-                                                    RepositoryName = parameters.RepositoryName,
+                                                    OwnerId = graceIds.OwnerIdString,
+                                                    OwnerName = graceIds.OwnerName,
+                                                    OrganizationId = graceIds.OrganizationIdString,
+                                                    OrganizationName = graceIds.OrganizationName,
+                                                    RepositoryId = graceIds.RepositoryIdString,
+                                                    RepositoryName = graceIds.RepositoryName,
                                                     CorrelationId = getCorrelationId parseResult,
                                                     FileVersions = (fileVersions |> Seq.map (fun kvp -> kvp.Value.ToFileVersion) |> Seq.toArray)
                                                 )
@@ -894,7 +892,7 @@ module Maintenance =
                             )
 
                         if errors |> Seq.isEmpty then
-                            ()
+                            return 0
                         else
                             AnsiConsole.MarkupLine($"{errors.Count} errors occurred.")
                             let mutable error = GraceError.Create String.Empty String.Empty
@@ -902,21 +900,27 @@ module Maintenance =
                             while not <| errors.IsEmpty do
                                 if errors.TryDequeue(&error) then
                                     AnsiConsole.MarkupLine($"[{Colors.Error}]{error.Error.EscapeMarkup()}[/]")
-                    | AWSS3 -> ()
-                    | GoogleCloudStorage -> ()
+
+                            return -1
+
+                    | AWSS3 -> return 0
+                    | GoogleCloudStorage -> return 0
+
             with ex ->
                 logToAnsiConsole Colors.Error $"Exception in UpdateIndex: {ExceptionResponse.Create ex}"
+                return -1
         }
 
-    let private UpdateIndex =
-        CommandHandler.Create(fun (parseResult: ParseResult) (parameters: CommonParameters) ->
-            task {
-                do! updateIndexHandler parseResult parameters
-                return 0
-            })
+    type UpdateIndex() =
+        inherit AsynchronousCommandLineAction()
 
-    let private Scan =
-        CommandHandler.Create(fun (parseResult: ParseResult) (parameters: CommonParameters) ->
+        override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
+            task { return! updateIndexHandler parseResult }
+
+    type Scan() =
+        inherit AsynchronousCommandLineAction()
+
+        override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
                 if parseResult |> verbose then printParseResult parseResult
 
@@ -977,43 +981,14 @@ module Maintenance =
                     for ldv in newDirectoryVersions do
                         AnsiConsole.MarkupLine
                             $"[{Colors.Important}]SHA-256: {ldv.Sha256Hash.Substring(0, 8)}; DirectoryId: {ldv.DirectoryVersionId}; RelativePath: {ldv.RelativePath}[/]"
+
+                return 0
             }
-            :> Task)
 
-    let private Stats =
-        CommandHandler.Create(fun (parseResult: ParseResult) (parameters: CommonParameters) ->
-            task {
-                if parseResult |> verbose then printParseResult parseResult
+    type Stats() =
+        inherit AsynchronousCommandLineAction()
 
-                let! graceStatus = readGraceStatusFile ()
-                let directoryCount = graceStatus.Index.Count
-
-                let fileCount =
-                    graceStatus.Index.Values
-                        .Select(fun directoryVersion -> directoryVersion.Files.Count)
-                        .Sum()
-
-                let totalFileSize = graceStatus.Index.Values.Sum(fun directoryVersion -> directoryVersion.Files.Sum(fun f -> int64 f.Size))
-
-                let rootDirectoryVersion = graceStatus.Index.Values.First(fun d -> d.RelativePath = Constants.RootDirectoryPath)
-
-                AnsiConsole.MarkupLine($"[{Colors.Important}]All values taken from the local Grace status file.[/]")
-                AnsiConsole.MarkupLine($"[{Colors.Highlighted}]Number of directories: {directoryCount}.[/]")
-
-                AnsiConsole.MarkupLine($"[{Colors.Highlighted}]Number of files: {fileCount}; total file size: {totalFileSize:N0}.[/]")
-
-                AnsiConsole.MarkupLine($"[{Colors.Highlighted}]Root SHA-256 hash: {rootDirectoryVersion.Sha256Hash.Substring(0, 8)}[/]")
-            }
-            :> Task)
-
-    type ListContentsParameters() =
-        inherit CommonParameters()
-        member val public ListDirectories = true with get, set
-        member val public ListFiles = true with get, set
-        member val public Path = String.Empty with get, set
-
-    let private ListContents =
-        CommandHandler.Create(fun (parseResult: ParseResult) (parameters: ListContentsParameters) ->
+        override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
                 if parseResult |> verbose then printParseResult parseResult
 
@@ -1036,11 +1011,43 @@ module Maintenance =
 
                 AnsiConsole.MarkupLine($"[{Colors.Highlighted}]Root SHA-256 hash: {rootDirectoryVersion.Sha256Hash.Substring(0, 8)}[/]")
 
-                if parameters.ListDirectories then
+                return 0
+            }
+
+    type ListContents() =
+        inherit AsynchronousCommandLineAction()
+
+        override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
+            task {
+                if parseResult |> verbose then printParseResult parseResult
+
+                let listDirectories = parseResult.GetValue(Options.listDirectories)
+                let listFiles = parseResult.GetValue(Options.listFiles)
+
+                let! graceStatus = readGraceStatusFile ()
+                let directoryCount = graceStatus.Index.Count
+
+                let fileCount =
+                    graceStatus.Index.Values
+                        .Select(fun directoryVersion -> directoryVersion.Files.Count)
+                        .Sum()
+
+                let totalFileSize = graceStatus.Index.Values.Sum(fun directoryVersion -> directoryVersion.Files.Sum(fun f -> int64 f.Size))
+
+                let rootDirectoryVersion = graceStatus.Index.Values.First(fun d -> d.RelativePath = Constants.RootDirectoryPath)
+
+                AnsiConsole.MarkupLine($"[{Colors.Important}]All values taken from the local Grace status file.[/]")
+                AnsiConsole.MarkupLine($"[{Colors.Highlighted}]Number of directories: {directoryCount}.[/]")
+
+                AnsiConsole.MarkupLine($"[{Colors.Highlighted}]Number of files: {fileCount}; total file size: {totalFileSize:N0}.[/]")
+
+                AnsiConsole.MarkupLine($"[{Colors.Highlighted}]Root SHA-256 hash: {rootDirectoryVersion.Sha256Hash.Substring(0, 8)}[/]")
+
+                if listDirectories then
                     let longestRelativePath = getLongestRelativePath graceStatus.Index.Values
                     let additionalSpaces = String.replicate (longestRelativePath - 2) " "
                     let additionalImportantDashes = String.replicate (longestRelativePath + 3) "-"
-                    let additionalDeemphasizedDashes = String.replicate (38) "-"
+                    let additionalDeemphasizedDashes = String.replicate 38 "-"
 
                     let sortedDirectoryVersions = graceStatus.Index.Values.OrderBy(fun dv -> dv.RelativePath)
 
@@ -1065,15 +1072,16 @@ module Maintenance =
                             $"[{Colors.Highlighted}]{formatDateTimeAligned directoryVersion.LastWriteTimeUtc}   {getShortSha256Hash directoryVersion.Sha256Hash}  {directoryVersion.Size, 13:N0}  /{directoryVersion.RelativePath}[/] [{Colors.Deemphasized}] {rightAlignedDirectoryVersionId}[/]"
                         )
 
-                        if parameters.ListFiles then
+                        if listFiles then
                             let sortedFiles = directoryVersion.Files.OrderBy(fun f -> f.RelativePath)
 
                             for file in sortedFiles do
                                 AnsiConsole.MarkupLine(
                                     $"[{Colors.Verbose}]{formatDateTimeAligned file.LastWriteTimeUtc}   {getShortSha256Hash file.Sha256Hash}  {file.Size, 13:N0}  |- {file.FileInfo.Name}[/]"
                                 ))
+
+                return 0
             }
-            :> Task)
 
     let Build =
         let addCommonOptions (command: Command) =
@@ -1093,21 +1101,21 @@ module Maintenance =
             new Command("update-index", Description = "Recreates the local Grace index file based on the current working directory contents.")
             |> addCommonOptions
 
-        updateIndexCommand.Action <- UpdateIndex
+        updateIndexCommand.Action <- new UpdateIndex()
         maintenanceCommand.Subcommands.Add(updateIndexCommand)
 
         let scanCommand =
             new Command("scan", Description = "Scans the working directory contents for changes.")
             |> addCommonOptions
 
-        scanCommand.Action <- Scan
+        scanCommand.Action <- new Scan()
         maintenanceCommand.Subcommands.Add(scanCommand)
 
         let statsCommand =
             new Command("stats", Description = "Displays statistics about the current working directory.")
             |> addCommonOptions
 
-        statsCommand.Action <- Stats
+        statsCommand.Action <- new Stats()
         maintenanceCommand.Subcommands.Add(statsCommand)
 
         let listContentsCommand =
@@ -1116,11 +1124,11 @@ module Maintenance =
             |> addOption Options.listDirectories
             |> addOption Options.listFiles
 
-        listContentsCommand.Action <- ListContents
+        listContentsCommand.Action <- new ListContents()
         maintenanceCommand.Subcommands.Add(listContentsCommand)
 
         let testCommand = new Command("test", Description = "Just a test.") |> addCommonOptions
-        testCommand.Action <- Test
+        testCommand.Action <- new Test()
         maintenanceCommand.Subcommands.Add(testCommand)
 
         maintenanceCommand

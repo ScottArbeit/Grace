@@ -2,6 +2,7 @@ namespace Grace.CLI.Command
 
 open FSharpPlus
 open Grace.CLI.Common
+open Grace.CLI.Common.Validations
 open Grace.CLI.Services
 open Grace.CLI.Text
 open Grace.SDK
@@ -30,28 +31,14 @@ open Spectre.Console.Json
 
 module Repository =
 
-    type CommonParameters() =
-        inherit ParameterBase()
-        member val public OwnerId = String.Empty with get, set
-        member val public OwnerName: OwnerName = String.Empty with get, set
-        member val public OrganizationId = String.Empty with get, set
-        member val public OrganizationName: OrganizationName = String.Empty with get, set
-        member val public RepositoryId = String.Empty with get, set
-        member val public RepositoryName: RepositoryName = String.Empty with get, set
-
     module private Options =
         let ownerId =
-            new Option<String>(
+            new Option<Guid>(
                 OptionName.OwnerId,
                 Required = false,
                 Description = "The repository's owner ID <Guid>.",
                 Arity = ArgumentArity.ZeroOrOne,
-                DefaultValueFactory =
-                    (fun _ ->
-                        if Current().OwnerId = Guid.Empty then
-                            $"{Guid.NewGuid()}"
-                        else
-                            $"{Current().OwnerId}")
+                DefaultValueFactory = (fun _ -> if Current().OwnerId = Guid.Empty then Guid.NewGuid() else Current().OwnerId)
             )
 
         let ownerName =
@@ -63,7 +50,7 @@ module Repository =
             )
 
         let organizationId =
-            new Option<String>(
+            new Option<Guid>(
                 OptionName.OrganizationId,
                 Required = false,
                 Description = "The repository's organization ID <Guid>.",
@@ -71,9 +58,9 @@ module Repository =
                 DefaultValueFactory =
                     (fun _ ->
                         if Current().OrganizationId = Guid.Empty then
-                            $"{Guid.NewGuid()}"
+                            Guid.NewGuid()
                         else
-                            $"{Current().OrganizationId}")
+                            Current().OrganizationId)
             )
 
         let organizationName =
@@ -85,7 +72,7 @@ module Repository =
             )
 
         let repositoryId =
-            new Option<String>(
+            new Option<Guid>(
                 OptionName.RepositoryId,
                 [| "-r" |],
                 Required = false,
@@ -94,9 +81,9 @@ module Repository =
                 DefaultValueFactory =
                     (fun _ ->
                         if Current().RepositoryId = Guid.Empty then
-                            $"{Guid.NewGuid()}"
+                            Guid.NewGuid()
                         else
-                            $"{Current().RepositoryId}")
+                            Current().RepositoryId)
             )
 
         let repositoryName =
@@ -249,198 +236,136 @@ module Repository =
                 Arity = ArgumentArity.ExactlyOne
             )
 
-    /// Adjusts parameters to account for whether Id's or Name's were specified by the user, or should be taken from default values.
-    let normalizeIdsAndNames<'T when 'T :> CommonParameters> (parseResult: ParseResult) (parameters: 'T) =
-        // If the name was specified on the command line, but the id wasn't, then we should only send the name, and we set the id to String.Empty.
-        if
-            parseResult.GetResult(Options.ownerId).Implicit
-            && not <| isNull (parseResult.GetResult(Options.ownerName))
-            && not <| parseResult.GetResult(Options.ownerName).Implicit
-        then
-            parameters.OwnerId <- String.Empty
-
-        if
-            parseResult.GetResult(Options.organizationId).Implicit
-            && not <| isNull (parseResult.GetResult(Options.organizationName))
-            && not <| parseResult.GetResult(Options.organizationName).Implicit
-        then
-            parameters.OrganizationId <- String.Empty
-
-        if
-            parseResult.GetResult(Options.repositoryId).Implicit
-            && not <| isNull (parseResult.GetResult(Options.repositoryName))
-            && not <| parseResult.GetResult(Options.repositoryName).Implicit
-        then
-            parameters.RepositoryId <- String.Empty
-
-        parameters
-
-    /// Populates OwnerId, OrganizationId, and RepositoryId based on the command parameters and the contents of graceconfig.json.
-    let getIds<'T when 'T :> CommonParameters> (parameters: 'T) =
-        let ownerId =
-            if
-                not <| String.IsNullOrEmpty(parameters.OwnerId)
-                || not <| String.IsNullOrEmpty(parameters.OwnerName)
-            then
-                parameters.OwnerId
-            else
-                $"{Current().OwnerId}"
-
-        let organizationId =
-            if
-                not <| String.IsNullOrEmpty(parameters.OrganizationId)
-                || not <| String.IsNullOrEmpty(parameters.OrganizationName)
-            then
-                parameters.OrganizationId
-            else
-                $"{Current().OrganizationId}"
-
-        let repositoryId =
-            if
-                not <| String.IsNullOrEmpty(parameters.RepositoryId)
-                || not <| String.IsNullOrEmpty(parameters.RepositoryName)
-            then
-                parameters.RepositoryId
-            else
-                $"{Current().RepositoryId}"
-
-        (ownerId, organizationId, repositoryId)
-
     // Create subcommand.
-    type CreateParameters() =
-        inherit CommonParameters()
+    type Create() =
+        inherit AsynchronousCommandLineAction()
 
-    let private createHandler (parseResult: ParseResult) (createParameters: CreateParameters) =
-        task {
-            try
-                //if parseResult |> verbose then printParseResult parseResult
-                if verbose parseResult then printParseResult parseResult
-
-                let validateIncomingParameters =
-                    CommonValidations(parseResult, createParameters)
-                    >>= ``Either RepositoryId or RepositoryName must be specified``
-
-                match validateIncomingParameters with
-                | Ok _ ->
-                    let optionResult = parseResult.GetResult(Options.repositoryId)
-
-                    let repositoryId =
-                        if
-                            ((not <| isNull (optionResult)) && optionResult.Implicit)
-                            || isNull (optionResult)
-                        then
-                            Guid.NewGuid().ToString()
-                        else
-                            createParameters.RepositoryId
-
-                    let ownerId =
-                        if
-                            not <| String.IsNullOrEmpty(createParameters.OwnerId)
-                            || not <| String.IsNullOrEmpty(createParameters.OwnerName)
-                        then
-                            createParameters.OwnerId
-                        else
-                            $"{Current().OwnerId}"
-
-                    let organizationId =
-                        if
-                            not <| String.IsNullOrEmpty(createParameters.OrganizationId)
-                            || not <| String.IsNullOrEmpty(createParameters.OrganizationName)
-                        then
-                            createParameters.OrganizationId
-                        else
-                            $"{Current().OrganizationId}"
-
-                    let enhancedParameters =
-                        Repository.CreateRepositoryParameters(
-                            RepositoryId = repositoryId,
-                            RepositoryName = createParameters.RepositoryName,
-                            OwnerId = ownerId,
-                            OwnerName = createParameters.OwnerName,
-                            OrganizationId = organizationId,
-                            OrganizationName = createParameters.OrganizationName,
-                            CorrelationId = createParameters.CorrelationId
-                        )
-
-                    if parseResult |> hasOutput then
-                        return!
-                            progress
-                                .Columns(progressColumns)
-                                .StartAsync(fun progressContext ->
-                                    task {
-                                        let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
-
-                                        let! result = Repository.Create(enhancedParameters)
-                                        t0.Increment(100.0)
-                                        return result
-                                    })
-                    else
-                        return! Repository.Create(enhancedParameters)
-                | Error error -> return Error error
-            with ex ->
-                return Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
-        }
-
-    let private Create =
-        CommandHandler.Create(fun (parseResult: ParseResult) (createParameters: CreateParameters) ->
+        override this.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
-                let! result = createHandler parseResult createParameters
+                try
+                    if parseResult |> verbose then printParseResult parseResult
+                    let graceIds = parseResult |> getNormalizedIdsAndNames
+                    let validateIncomingParameters = parseResult |> Grace.CLI.Common.Validations.CommonValidations
 
-                match result with
-                | Ok returnValue ->
-                    // Update the Grace configuration file with the newly-created repository.
-                    if not <| parseResult.GetValue(Options.doNotSwitch) then
-                        let newConfig = Current()
-                        newConfig.RepositoryId <- Guid.Parse($"{returnValue.Properties[nameof RepositoryId]}")
-                        newConfig.RepositoryName <- $"{returnValue.Properties[nameof RepositoryName]}"
-                        newConfig.BranchId <- Guid.Parse($"{returnValue.Properties[nameof BranchId]}")
-                        newConfig.BranchName <- $"{returnValue.Properties[nameof BranchName]}"
-                        newConfig.DefaultBranchName <- "main"
-                        newConfig.ObjectStorageProvider <- ObjectStorageProvider.AzureBlobStorage
-                        updateConfiguration newConfig
-                | Error error -> logToAnsiConsole Colors.Error (Markup.Escape($"{error}"))
+                    match validateIncomingParameters with
+                    | Ok _ ->
+                        let repositoryIdOption = parseResult.GetResult(Options.repositoryId)
 
-                return result |> renderOutput parseResult
-            })
+                        let repositoryId =
+                            if isNull repositoryIdOption || repositoryIdOption.Implicit then
+                                Guid.NewGuid().ToString()
+                            else
+                                graceIds.RepositoryIdString
+
+                        let ownerId = if graceIds.HasOwner then graceIds.OwnerIdString else $"{Current().OwnerId}"
+
+                        let organizationId =
+                            if graceIds.HasOrganization then
+                                graceIds.OrganizationIdString
+                            else
+                                $"{Current().OrganizationId}"
+
+                        let parameters =
+                            Repository.CreateRepositoryParameters(
+                                RepositoryId = repositoryId,
+                                RepositoryName = graceIds.RepositoryName,
+                                OwnerId = ownerId,
+                                OwnerName = graceIds.OwnerName,
+                                OrganizationId = organizationId,
+                                OrganizationName = graceIds.OrganizationName,
+                                CorrelationId = getCorrelationId parseResult
+                            )
+
+                        if parseResult |> hasOutput then
+                            let! result =
+                                progress
+                                    .Columns(progressColumns)
+                                    .StartAsync(fun progressContext ->
+                                        task {
+                                            let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
+
+                                            let! result = Repository.Create(parameters)
+                                            t0.Increment(100.0)
+                                            return result
+                                        })
+
+                            match result with
+                            | Ok returnValue ->
+                                if not <| parseResult.GetValue(Options.doNotSwitch) then
+                                    let newConfig = Current()
+                                    newConfig.RepositoryId <- Guid.Parse($"{returnValue.Properties[nameof RepositoryId]}")
+                                    newConfig.RepositoryName <- $"{returnValue.Properties[nameof RepositoryName]}"
+                                    newConfig.BranchId <- Guid.Parse($"{returnValue.Properties[nameof BranchId]}")
+                                    newConfig.BranchName <- $"{returnValue.Properties[nameof BranchName]}"
+                                    newConfig.DefaultBranchName <- "main"
+                                    newConfig.ObjectStorageProvider <- ObjectStorageProvider.AzureBlobStorage
+                                    updateConfiguration newConfig
+
+                                return result |> renderOutput parseResult
+                            | Error error ->
+                                logToAnsiConsole Colors.Error (Markup.Escape($"{error}"))
+                                return result |> renderOutput parseResult
+                        else
+                            let! result = Repository.Create(parameters)
+
+                            match result with
+                            | Ok returnValue ->
+                                if not <| parseResult.GetValue(Options.doNotSwitch) then
+                                    let newConfig = Current()
+                                    newConfig.RepositoryId <- Guid.Parse($"{returnValue.Properties[nameof RepositoryId]}")
+                                    newConfig.RepositoryName <- $"{returnValue.Properties[nameof RepositoryName]}"
+                                    newConfig.BranchId <- Guid.Parse($"{returnValue.Properties[nameof BranchId]}")
+                                    newConfig.BranchName <- $"{returnValue.Properties[nameof BranchName]}"
+                                    newConfig.DefaultBranchName <- "main"
+                                    newConfig.ObjectStorageProvider <- ObjectStorageProvider.AzureBlobStorage
+                                    updateConfiguration newConfig
+
+                                return result |> renderOutput parseResult
+                            | Error error ->
+                                logToAnsiConsole Colors.Error (Markup.Escape($"{error}"))
+                                return result |> renderOutput parseResult
+                    | Error error -> return Error error |> renderOutput parseResult
+
+                with ex ->
+                    return
+                        renderOutput
+                            parseResult
+                            (GraceResult.Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId)))
+            }
 
     // Init subcommand
-    type InitParameters() =
-        inherit CommonParameters()
-        member val public Directory = String.Empty with get, set
-        member val public GraceConfig = String.Empty with get, set
-
     /// Validates that the directory exists. Placed here so it can use InitParameters.
-    let ``Directory must be a valid path`` (parseResult: ParseResult, parameters: InitParameters) =
+    let ``Directory must be a valid path`` (parseResult: ParseResult) =
         if
             parseResult.CommandResult.Command.Options.Contains(Options.directory)
-            && not <| Directory.Exists(parameters.Directory)
+            && not <| Directory.Exists(parseResult.GetValue(Options.directory))
         then
-            Error(GraceError.Create (RepositoryError.getErrorMessage InvalidDirectory) (parameters.CorrelationId))
+            Error(GraceError.Create (RepositoryError.getErrorMessage InvalidDirectory) (getCorrelationId parseResult))
         else
-            Ok(parseResult, parameters)
+            Ok parseResult
 
     let private initHandler (parseResult: ParseResult) (parameters: InitParameters) =
         task {
             try
                 if parseResult |> verbose then printParseResult parseResult
 
-                let directoryIsValid = (parseResult, parameters) |> ``Directory must be a valid path``
+                let directoryIsValid = parseResult |> ``Directory must be a valid path``
 
                 match directoryIsValid with
                 | Ok _ ->
-                    let validateIncomingParameters = (parseResult, parameters) |> CommonValidations
+                    let validateIncomingParameters = parseResult |> CommonValidations
 
                     match validateIncomingParameters with
                     | Ok _ ->
-                        let (ownerId, organizationId, repositoryId) = getIds parameters
+                        let graceIds = parseResult |> getNormalizedIdsAndNames
 
                         let isEmptyParameters =
                             Repository.IsEmptyParameters(
-                                OwnerId = ownerId,
+                                OwnerId = parameters.OwnerId,
                                 OwnerName = parameters.OwnerName,
-                                OrganizationId = organizationId,
+                                OrganizationId = parameters.OrganizationId,
                                 OrganizationName = parameters.OrganizationName,
-                                RepositoryId = repositoryId,
+                                RepositoryId = parameters.RepositoryId,
                                 RepositoryName = parameters.RepositoryName,
                                 CorrelationId = parameters.CorrelationId
                             )
@@ -774,639 +699,631 @@ module Repository =
                 return Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
         }
 
-    let private Init =
-        CommandHandler.Create(fun (parseResult: ParseResult) (initParameters: InitParameters) ->
+    type Init() =
+        inherit AsynchronousCommandLineAction()
+
+        override this.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
-                let! result = initHandler parseResult initParameters
-                return result |> renderOutput parseResult
-            })
+                try
+                    if parseResult |> verbose then printParseResult parseResult
+
+                    let graceIds = parseResult |> getNormalizedIdsAndNames
+                    let validateIncomingParameters = parseResult |> Grace.CLI.Common.Validations.CommonValidations
+
+                    match validateIncomingParameters with
+                    | Ok _ ->
+                        let graceIds = parseResult |> getNormalizedIdsAndNames
+
+                        // Build the InitParameters object from the parsed values so we can reuse existing handler logic.
+                        let initParameters = InitParameters()
+                        initParameters.OwnerId <- graceIds.OwnerIdString
+                        initParameters.OwnerName <- graceIds.OwnerName
+                        initParameters.OrganizationId <- graceIds.OrganizationIdString
+                        initParameters.OrganizationName <- graceIds.OrganizationName
+                        initParameters.RepositoryId <- graceIds.RepositoryIdString
+                        initParameters.RepositoryName <- graceIds.RepositoryName
+                        initParameters.GraceConfig <- parseResult.GetValue(Options.graceConfig)
+                        initParameters.CorrelationId <- getCorrelationId parseResult
+
+                        let! result = initHandler parseResult initParameters
+                        return result |> renderOutput parseResult
+                    | Error error -> return Error error |> renderOutput parseResult
+
+                with ex ->
+                    return
+                        renderOutput
+                            parseResult
+                            (GraceResult.Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId)))
+            }
 
 
-    // Get subcommand
-    type GetParameters() =
-        inherit CommonParameters()
+    /// Repository.Get subcommand definition
+    type Get() =
+        inherit AsynchronousCommandLineAction()
 
-    let private getHandler (parseResult: ParseResult) (getParameters: GetParameters) =
-        task {
-            try
-                if parseResult |> verbose then printParseResult parseResult
-
-                let validateIncomingParameters = CommonValidations(parseResult, getParameters)
-
-                match validateIncomingParameters with
-                | Ok _ ->
-                    let parameters =
-                        Parameters.Repository.GetRepositoryParameters(
-                            OwnerId = getParameters.OwnerId,
-                            OwnerName = getParameters.OwnerName,
-                            OrganizationId = getParameters.OrganizationId,
-                            OrganizationName = getParameters.OrganizationName,
-                            RepositoryId = getParameters.RepositoryId,
-                            RepositoryName = getParameters.RepositoryName,
-                            CorrelationId = getParameters.CorrelationId
-                        )
-
-                    if parseResult |> hasOutput then
-                        return!
-                            progress
-                                .Columns(progressColumns)
-                                .StartAsync(fun progressContext ->
-                                    task {
-                                        let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
-
-                                        let! result = Repository.Get(parameters)
-                                        t0.Increment(100.0)
-                                        return result
-                                    })
-                    else
-                        return! Repository.Get(parameters)
-                | Error error -> return Error error
-            with ex ->
-                return Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
-        }
-
-    let private Get =
-        CommandHandler.Create(fun (parseResult: ParseResult) (getParameters: GetParameters) ->
+        override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
-                let! result = getHandler parseResult (getParameters |> normalizeIdsAndNames parseResult)
-                //return result |> renderOutput parseResult
-                match result with
-                | Ok graceReturnValue ->
-                    let jsonText = JsonText(serialize graceReturnValue.ReturnValue)
-                    AnsiConsole.Write(jsonText)
-                    AnsiConsole.WriteLine()
-                    return Ok graceReturnValue |> renderOutput parseResult
-                | Error graceError -> return Error graceError |> renderOutput parseResult
-            })
+                try
+                    if parseResult |> verbose then printParseResult parseResult
+                    let graceIds = parseResult |> getNormalizedIdsAndNames
+                    let validateIncomingParameters = parseResult |> Grace.CLI.Common.Validations.CommonValidations
 
-    // Get-Branches subcommand
-    type GetBranchesParameters() =
-        inherit CommonParameters()
-        member val public IncludeDeleted = false with get, set
-
-    let private getBranchesHandler (parseResult: ParseResult) (parameters: GetBranchesParameters) =
-        task {
-            try
-                if parseResult |> verbose then printParseResult parseResult
-
-                let validateIncomingParameters = CommonValidations(parseResult, parameters)
-
-                match validateIncomingParameters with
-                | Ok _ ->
-                    let normalizedParameters = parameters |> normalizeIdsAndNames parseResult
-
-                    let getBranchesParameters =
-                        Repository.GetBranchesParameters(
-                            OwnerId = normalizedParameters.OwnerId,
-                            OwnerName = normalizedParameters.OwnerName,
-                            OrganizationId = normalizedParameters.OrganizationId,
-                            OrganizationName = normalizedParameters.OrganizationName,
-                            RepositoryId = normalizedParameters.RepositoryId,
-                            RepositoryName = normalizedParameters.RepositoryName,
-                            IncludeDeleted = normalizedParameters.IncludeDeleted,
-                            CorrelationId = normalizedParameters.CorrelationId
-                        )
-
-                    if parseResult |> hasOutput then
-                        return!
-                            progress
-                                .Columns(progressColumns)
-                                .StartAsync(fun progressContext ->
-                                    task {
-                                        let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
-
-                                        let! result = Repository.GetBranches(getBranchesParameters)
-                                        t0.Increment(100.0)
-                                        return result
-                                    })
-                    else
-                        return! Repository.GetBranches(getBranchesParameters)
-                | Error error -> return Error error
-            with ex ->
-                return Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
-        }
-
-    let private GetBranches =
-        CommandHandler.Create(fun (parseResult: ParseResult) (getBranchesParameters: GetBranchesParameters) ->
-            task {
-                let! result = getBranchesHandler parseResult getBranchesParameters
-
-                match result with
-                | Ok returnValue ->
-                    let intResult = result |> renderOutput parseResult
-
-                    if parseResult |> hasOutput then
-                        let table = Table(Border = TableBorder.DoubleEdge)
-
-                        table.AddColumns(
-                            [| TableColumn($"[{Colors.Important}]Branch name[/]")
-                               TableColumn($"[{Colors.Important}]Branch Id[/]")
-                               TableColumn($"[{Colors.Important}]SHA-256 hash[/]")
-                               TableColumn($"[{Colors.Important}]Based on latest promotion[/]")
-                               TableColumn($"[{Colors.Important}]Parent branch[/]")
-                               TableColumn($"[{Colors.Important}]When[/]", Alignment = Justify.Right)
-                               TableColumn($"[{Colors.Important}]Updated at[/]") |]
-                        )
-                        |> ignore
-
-                        let allBranches = returnValue.ReturnValue
-
-                        let parents =
-                            allBranches.Select(fun branch ->
-                                {| branchId = branch.BranchId
-                                   branchName =
-                                    if branch.ParentBranchId = Constants.DefaultParentBranchId then
-                                        "root"
-                                    else
-                                        allBranches
-                                            .Where(fun br -> br.BranchId = branch.ParentBranchId)
-                                            .Select(fun br -> br.BranchName)
-                                            .First()
-                                   latestPromotion =
-                                    if branch.ParentBranchId = Constants.DefaultParentBranchId then
-                                        branch.LatestPromotion
-                                    else
-                                        allBranches
-                                            .Where(fun br -> br.BranchId = branch.ParentBranchId)
-                                            .Select(fun br -> br.LatestPromotion)
-                                            .First() |})
-
-                        let branchesWithParentNames =
-                            allBranches
-                                .Join(
-                                    parents,
-                                    (fun branch -> branch.BranchId),
-                                    (fun parent -> parent.branchId),
-                                    (fun branch parent ->
-                                        {| branchId = branch.BranchId
-                                           branchName = branch.BranchName
-                                           sha256Hash = branch.LatestReference.Sha256Hash
-                                           updatedAt = branch.UpdatedAt
-                                           ago = ago branch.CreatedAt
-                                           parentBranchName = parent.branchName
-                                           basedOnLatestPromotion = (branch.BasedOn.ReferenceId = parent.latestPromotion.ReferenceId) |})
-                                )
-                                .OrderBy(fun branch -> branch.parentBranchName, branch.branchName)
-
-                        for br in branchesWithParentNames do
-                            let updatedAt =
-                                match br.updatedAt with
-                                | Some t -> instantToLocalTime (t)
-                                | None -> String.Empty
-
-                            table.AddRow(
-                                br.branchName,
-                                $"[{Colors.Deemphasized}]{br.branchId}[/]",
-                                br.sha256Hash |> getShortSha256Hash,
-                                (if br.basedOnLatestPromotion then
-                                     $"[{Colors.Added}]Yes[/]"
-                                 else
-                                     $"[{Colors.Important}]No[/]"),
-                                br.parentBranchName,
-                                br.ago,
-                                $"[{Colors.Deemphasized}]{updatedAt}[/]"
+                    match validateIncomingParameters with
+                    | Ok _ ->
+                        let parameters =
+                            Parameters.Repository.GetRepositoryParameters(
+                                OwnerId = graceIds.OwnerIdString,
+                                OwnerName = graceIds.OwnerName,
+                                OrganizationId = graceIds.OrganizationIdString,
+                                OrganizationName = graceIds.OrganizationName,
+                                RepositoryId = graceIds.RepositoryIdString,
+                                RepositoryName = graceIds.RepositoryName,
+                                CorrelationId = getCorrelationId parseResult
                             )
-                            |> ignore
 
-                        AnsiConsole.Write(table)
+                        let! result =
+                            if parseResult |> hasOutput then
+                                progress
+                                    .Columns(progressColumns)
+                                    .StartAsync(fun progressContext ->
+                                        task {
+                                            let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
+                                            let! response = Repository.Get(parameters)
+                                            t0.Increment(100.0)
+                                            return response
+                                        })
+                            else
+                                Repository.Get(parameters)
 
-                    return intResult
-                | Error error -> return result |> renderOutput parseResult
-            })
+                        match result with
+                        | Ok graceReturnValue ->
+                            let jsonText = JsonText(serialize graceReturnValue.ReturnValue)
+                            AnsiConsole.Write(jsonText)
+                            AnsiConsole.WriteLine()
+                            return Ok graceReturnValue |> renderOutput parseResult
+                        | Error graceError -> return Error graceError |> renderOutput parseResult
+                    | Error error -> return Error error |> renderOutput parseResult
 
-    // Set-Visibility subcommand
-    type SetVisibilityParameters() =
-        inherit CommonParameters()
-        member val public Visibility: string = String.Empty with get, set
+                with ex ->
+                    return
+                        renderOutput
+                            parseResult
+                            (GraceResult.Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId)))
+            }
 
-    let private setVisibilityHandler (parseResult: ParseResult) (parameters: SetVisibilityParameters) =
-        task {
-            try
-                if parseResult |> verbose then printParseResult parseResult
+    /// Repository.GetBranches subcommand definition
+    type GetBranches() =
+        inherit AsynchronousCommandLineAction()
 
-                let validateIncomingParameters = CommonValidations(parseResult, parameters)
-
-                match validateIncomingParameters with
-                | Ok _ ->
-                    let normalizedParameters = parameters |> normalizeIdsAndNames parseResult
-
-                    let visibilityParameters =
-                        Repository.SetRepositoryVisibilityParameters(
-                            OwnerId = normalizedParameters.OwnerId,
-                            OwnerName = normalizedParameters.OwnerName,
-                            OrganizationId = normalizedParameters.OrganizationId,
-                            OrganizationName = normalizedParameters.OrganizationName,
-                            RepositoryId = normalizedParameters.RepositoryId,
-                            RepositoryName = normalizedParameters.RepositoryName,
-                            Visibility = normalizedParameters.Visibility,
-                            CorrelationId = normalizedParameters.CorrelationId
-                        )
-
-                    if parseResult |> hasOutput then
-                        return!
-                            progress
-                                .Columns(progressColumns)
-                                .StartAsync(fun progressContext ->
-                                    task {
-                                        let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
-
-                                        let! result = Repository.SetVisibility(visibilityParameters)
-                                        t0.Increment(100.0)
-                                        return result
-                                    })
-                    else
-                        return! Repository.SetVisibility(visibilityParameters)
-                | Error error -> return Error error
-            with ex ->
-                return Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
-        }
-
-    let private SetVisibility =
-        CommandHandler.Create(fun (parseResult: ParseResult) (setNameParameters: SetVisibilityParameters) ->
+        override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
-                let! result = setVisibilityHandler parseResult setNameParameters
-                return result |> renderOutput parseResult
-            })
+                try
+                    if parseResult |> verbose then printParseResult parseResult
+                    let graceIds = parseResult |> getNormalizedIdsAndNames
+                    let validateIncomingParameters = parseResult |> Grace.CLI.Common.Validations.CommonValidations
 
-    // Set-Status subcommand
-    type StatusParameters() =
-        inherit CommonParameters()
-        member val public Status: string = String.Empty with get, set
+                    match validateIncomingParameters with
+                    | Ok _ ->
+                        let parameters =
+                            Repository.GetBranchesParameters(
+                                OwnerId = graceIds.OwnerIdString,
+                                OwnerName = graceIds.OwnerName,
+                                OrganizationId = graceIds.OrganizationIdString,
+                                OrganizationName = graceIds.OrganizationName,
+                                RepositoryId = graceIds.RepositoryIdString,
+                                RepositoryName = graceIds.RepositoryName,
+                                IncludeDeleted = parseResult.GetValue(Options.includeDeleted),
+                                CorrelationId = getCorrelationId parseResult
+                            )
 
-    let private setStatusHandler (parseResult: ParseResult) (parameters: StatusParameters) =
-        task {
-            try
-                if parseResult |> verbose then printParseResult parseResult
+                        let! result =
+                            if parseResult |> hasOutput then
+                                progress
+                                    .Columns(progressColumns)
+                                    .StartAsync(fun progressContext ->
+                                        task {
+                                            let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
 
-                let validateIncomingParameters = CommonValidations(parseResult, parameters)
+                                            let! response = Repository.GetBranches(parameters)
+                                            t0.Increment(100.0)
+                                            return response
+                                        })
+                            else
+                                Repository.GetBranches(parameters)
 
-                match validateIncomingParameters with
-                | Ok _ ->
-                    let normalizedParameters = parameters |> normalizeIdsAndNames parseResult
+                        match result with
+                        | Ok returnValue ->
+                            let rendered = Ok returnValue |> renderOutput parseResult
 
-                    let statusParameters =
-                        Repository.SetRepositoryStatusParameters(
-                            OwnerId = normalizedParameters.OwnerId,
-                            OwnerName = normalizedParameters.OwnerName,
-                            OrganizationId = normalizedParameters.OrganizationId,
-                            OrganizationName = normalizedParameters.OrganizationName,
-                            RepositoryId = normalizedParameters.RepositoryId,
-                            RepositoryName = normalizedParameters.RepositoryName,
-                            Status = normalizedParameters.Status,
-                            CorrelationId = normalizedParameters.CorrelationId
-                        )
+                            if parseResult |> hasOutput then
+                                let table = Table(Border = TableBorder.DoubleEdge)
 
-                    if parseResult |> hasOutput then
-                        return!
-                            progress
-                                .Columns(progressColumns)
-                                .StartAsync(fun progressContext ->
-                                    task {
-                                        let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
+                                table.AddColumns(
+                                    [| TableColumn($"[{Colors.Important}]Branch name[/]")
+                                       TableColumn($"[{Colors.Important}]Branch Id[/]")
+                                       TableColumn($"[{Colors.Important}]SHA-256 hash[/]")
+                                       TableColumn($"[{Colors.Important}]Based on latest promotion[/]")
+                                       TableColumn($"[{Colors.Important}]Parent branch[/]")
+                                       TableColumn($"[{Colors.Important}]When[/]", Alignment = Justify.Right)
+                                       TableColumn($"[{Colors.Important}]Updated at[/]") |]
+                                )
+                                |> ignore
 
-                                        let! result = Repository.SetStatus(statusParameters)
-                                        t0.Increment(100.0)
-                                        return result
-                                    })
-                    else
-                        return! Repository.SetStatus(statusParameters)
-                | Error error -> return Error error
-            with ex ->
-                return Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
-        }
+                                let allBranches = returnValue.ReturnValue
 
-    let private SetStatus =
-        CommandHandler.Create(fun (parseResult: ParseResult) (setNameParameters: StatusParameters) ->
+                                let parents =
+                                    allBranches.Select(fun branch ->
+                                        {| branchId = branch.BranchId
+                                           branchName =
+                                            if branch.ParentBranchId = Constants.DefaultParentBranchId then
+                                                "root"
+                                            else
+                                                allBranches
+                                                    .Where(fun br -> br.BranchId = branch.ParentBranchId)
+                                                    .Select(fun br -> br.BranchName)
+                                                    .First()
+                                           latestPromotion =
+                                            if branch.ParentBranchId = Constants.DefaultParentBranchId then
+                                                branch.LatestPromotion
+                                            else
+                                                allBranches
+                                                    .Where(fun br -> br.BranchId = branch.ParentBranchId)
+                                                    .Select(fun br -> br.LatestPromotion)
+                                                    .First() |})
+
+                                let branchesWithParentNames =
+                                    allBranches
+                                        .Join(
+                                            parents,
+                                            (fun branch -> branch.BranchId),
+                                            (fun parent -> parent.branchId),
+                                            (fun branch parent ->
+                                                {| branchId = branch.BranchId
+                                                   branchName = branch.BranchName
+                                                   sha256Hash = branch.LatestReference.Sha256Hash
+                                                   updatedAt = branch.UpdatedAt
+                                                   ago = ago branch.CreatedAt
+                                                   parentBranchName = parent.branchName
+                                                   basedOnLatestPromotion = (branch.BasedOn.ReferenceId = parent.latestPromotion.ReferenceId) |})
+                                        )
+                                        .OrderBy(fun branch -> branch.parentBranchName, branch.branchName)
+
+                                for br in branchesWithParentNames do
+                                    let updatedAt =
+                                        match br.updatedAt with
+                                        | Some t -> instantToLocalTime (t)
+                                        | None -> String.Empty
+
+                                    table.AddRow(
+                                        br.branchName,
+                                        $"[{Colors.Deemphasized}]{br.branchId}[/]",
+                                        br.sha256Hash |> getShortSha256Hash,
+                                        (if br.basedOnLatestPromotion then
+                                             $"[{Colors.Added}]Yes[/]"
+                                         else
+                                             $"[{Colors.Important}]No[/]"),
+                                        br.parentBranchName,
+                                        br.ago,
+                                        $"[{Colors.Deemphasized}]{updatedAt}[/]"
+                                    )
+                                    |> ignore
+
+                                AnsiConsole.Write(table)
+
+                            return rendered
+                        | Error _ -> return result |> renderOutput parseResult
+                    | Error error -> return Error error |> renderOutput parseResult
+
+                with ex ->
+                    return
+                        renderOutput
+                            parseResult
+                            (GraceResult.Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId)))
+            }
+
+    /// Repository.SetVisibility subcommand definition
+    type SetVisibility() =
+        inherit AsynchronousCommandLineAction()
+
+        override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
-                let! result = setStatusHandler parseResult setNameParameters
-                return result |> renderOutput parseResult
-            })
+                try
+                    if parseResult |> verbose then printParseResult parseResult
+                    let graceIds = parseResult |> getNormalizedIdsAndNames
+                    let validateIncomingParameters = parseResult |> Grace.CLI.Common.Validations.CommonValidations
 
-    // Set-RecordSaves subcommand
-    type RecordSavesParameters() =
-        inherit CommonParameters()
-        member val public RecordSaves: bool = false with get, set
+                    match validateIncomingParameters with
+                    | Ok _ ->
+                        let visibilityParameters =
+                            Repository.SetRepositoryVisibilityParameters(
+                                OwnerId = graceIds.OwnerIdString,
+                                OwnerName = graceIds.OwnerName,
+                                OrganizationId = graceIds.OrganizationIdString,
+                                OrganizationName = graceIds.OrganizationName,
+                                RepositoryId = graceIds.RepositoryIdString,
+                                RepositoryName = graceIds.RepositoryName,
+                                Visibility = (parseResult.GetValue(Options.visibility)).ToString(),
+                                CorrelationId = getCorrelationId parseResult
+                            )
 
-    let private setRecordSavesHandler (parseResult: ParseResult) (parameters: RecordSavesParameters) =
-        task {
-            try
-                if parseResult |> verbose then printParseResult parseResult
+                        let! result =
+                            if parseResult |> hasOutput then
+                                progress
+                                    .Columns(progressColumns)
+                                    .StartAsync(fun progressContext ->
+                                        task {
+                                            let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
 
-                let validateIncomingParameters = CommonValidations(parseResult, parameters)
+                                            let! response = Repository.SetVisibility(visibilityParameters)
+                                            t0.Increment(100.0)
+                                            return response
+                                        })
+                            else
+                                Repository.SetVisibility(visibilityParameters)
 
-                match validateIncomingParameters with
-                | Ok _ ->
-                    let normalizedParameters = parameters |> normalizeIdsAndNames parseResult
+                        return result |> renderOutput parseResult
+                    | Error error -> return Error error |> renderOutput parseResult
 
-                    let recordSavesParameters =
-                        Repository.RecordSavesParameters(
-                            OwnerId = normalizedParameters.OwnerId,
-                            OwnerName = normalizedParameters.OwnerName,
-                            OrganizationId = normalizedParameters.OrganizationId,
-                            OrganizationName = normalizedParameters.OrganizationName,
-                            RepositoryId = normalizedParameters.RepositoryId,
-                            RepositoryName = normalizedParameters.RepositoryName,
-                            RecordSaves = normalizedParameters.RecordSaves,
-                            CorrelationId = normalizedParameters.CorrelationId
-                        )
+                with ex ->
+                    return
+                        renderOutput
+                            parseResult
+                            (GraceResult.Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId)))
+            }
 
-                    if parseResult |> hasOutput then
-                        return!
-                            progress
-                                .Columns(progressColumns)
-                                .StartAsync(fun progressContext ->
-                                    task {
-                                        let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
+    /// Repository.SetStatus subcommand definition
+    type SetStatus() =
+        inherit AsynchronousCommandLineAction()
 
-                                        let! result = Repository.SetRecordSaves(recordSavesParameters)
-                                        t0.Increment(100.0)
-                                        return result
-                                    })
-                    else
-                        return! Repository.SetRecordSaves(recordSavesParameters)
-                | Error error -> return Error error
-            with ex ->
-                return Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
-        }
-
-    let private SetRecordSaves =
-        CommandHandler.Create(fun (parseResult: ParseResult) (recordSavesParameters: RecordSavesParameters) ->
+        override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
-                let! result = setRecordSavesHandler parseResult recordSavesParameters
-                return result |> renderOutput parseResult
-            })
+                try
+                    if parseResult |> verbose then printParseResult parseResult
+                    let graceIds = parseResult |> getNormalizedIdsAndNames
+                    let validateIncomingParameters = parseResult |> Grace.CLI.Common.Validations.CommonValidations
 
-    // Set-SaveDays subcommand
-    type SaveDaysParameters() =
-        inherit CommonParameters()
-        member val public SaveDays: single = Single.MinValue with get, set
+                    match validateIncomingParameters with
+                    | Ok _ ->
+                        let parameters =
+                            Repository.SetRepositoryStatusParameters(
+                                OwnerId = graceIds.OwnerIdString,
+                                OwnerName = graceIds.OwnerName,
+                                OrganizationId = graceIds.OrganizationIdString,
+                                OrganizationName = graceIds.OrganizationName,
+                                RepositoryId = graceIds.RepositoryIdString,
+                                RepositoryName = graceIds.RepositoryName,
+                                Status = parseResult.GetValue(Options.status),
+                                CorrelationId = getCorrelationId parseResult
+                            )
 
-    let private setSaveDaysHandler (parseResult: ParseResult) (parameters: SaveDaysParameters) =
-        task {
-            try
-                if parseResult |> verbose then printParseResult parseResult
+                        let! result =
+                            if parseResult |> hasOutput then
+                                progress
+                                    .Columns(progressColumns)
+                                    .StartAsync(fun progressContext ->
+                                        task {
+                                            let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
 
-                let validateIncomingParameters = CommonValidations(parseResult, parameters)
+                                            let! response = Repository.SetStatus(parameters)
+                                            t0.Increment(100.0)
+                                            return response
+                                        })
+                            else
+                                Repository.SetStatus(parameters)
 
-                match validateIncomingParameters with
-                | Ok _ ->
-                    let normalizedParameters = parameters |> normalizeIdsAndNames parseResult
+                        return result |> renderOutput parseResult
+                    | Error error -> return Error error |> renderOutput parseResult
 
-                    let setSaveDaysParameters =
-                        Repository.SetSaveDaysParameters(
-                            OwnerId = normalizedParameters.OwnerId,
-                            OwnerName = normalizedParameters.OwnerName,
-                            OrganizationId = normalizedParameters.OrganizationId,
-                            OrganizationName = normalizedParameters.OrganizationName,
-                            RepositoryId = normalizedParameters.RepositoryId,
-                            RepositoryName = normalizedParameters.RepositoryName,
-                            CorrelationId = normalizedParameters.CorrelationId,
-                            SaveDays = normalizedParameters.SaveDays
-                        )
+                with ex ->
+                    return
+                        renderOutput
+                            parseResult
+                            (GraceResult.Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId)))
+            }
 
-                    if parseResult |> hasOutput then
-                        return!
-                            progress
-                                .Columns(progressColumns)
-                                .StartAsync(fun progressContext ->
-                                    task {
-                                        let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
+    /// Repository.SetRecordSaves subcommand definition
+    type SetRecordSaves() =
+        inherit AsynchronousCommandLineAction()
 
-                                        let! result = Repository.SetSaveDays(setSaveDaysParameters)
-                                        t0.Increment(100.0)
-                                        return result
-                                    })
-                    else
-                        return! Repository.SetSaveDays(setSaveDaysParameters)
-                | Error error -> return Error error
-            with ex ->
-                return Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
-        }
-
-    let private SetSaveDays =
-        CommandHandler.Create(fun (parseResult: ParseResult) (saveDaysParameters: SaveDaysParameters) ->
+        override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
-                let! result = setSaveDaysHandler parseResult saveDaysParameters
-                return result |> renderOutput parseResult
-            })
+                try
+                    if parseResult |> verbose then printParseResult parseResult
+                    let graceIds = parseResult |> getNormalizedIdsAndNames
+                    let validateIncomingParameters = parseResult |> Grace.CLI.Common.Validations.CommonValidations
 
-    // Set-CheckpointDays subcommand
-    type CheckpointDaysParameters() =
-        inherit CommonParameters()
-        member val public CheckpointDays: single = Single.MinValue with get, set
+                    match validateIncomingParameters with
+                    | Ok _ ->
+                        let parameters =
+                            Repository.RecordSavesParameters(
+                                OwnerId = graceIds.OwnerIdString,
+                                OwnerName = graceIds.OwnerName,
+                                OrganizationId = graceIds.OrganizationIdString,
+                                OrganizationName = graceIds.OrganizationName,
+                                RepositoryId = graceIds.RepositoryIdString,
+                                RepositoryName = graceIds.RepositoryName,
+                                RecordSaves = parseResult.GetValue(Options.recordSaves),
+                                CorrelationId = getCorrelationId parseResult
+                            )
 
-    let private setCheckpointDaysHandler (parseResult: ParseResult) (parameters: CheckpointDaysParameters) =
-        task {
-            try
-                if parseResult |> verbose then printParseResult parseResult
+                        let! result =
+                            if parseResult |> hasOutput then
+                                progress
+                                    .Columns(progressColumns)
+                                    .StartAsync(fun progressContext ->
+                                        task {
+                                            let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
 
-                let validateIncomingParameters = CommonValidations(parseResult, parameters)
+                                            let! response = Repository.SetRecordSaves(parameters)
+                                            t0.Increment(100.0)
+                                            return response
+                                        })
+                            else
+                                Repository.SetRecordSaves(parameters)
 
-                match validateIncomingParameters with
-                | Ok _ ->
-                    let normalizedParameters = parameters |> normalizeIdsAndNames parseResult
+                        return result |> renderOutput parseResult
+                    | Error error -> return Error error |> renderOutput parseResult
 
-                    let checkpointDaysParameters =
-                        Repository.SetCheckpointDaysParameters(
-                            OwnerId = normalizedParameters.OwnerId,
-                            OwnerName = normalizedParameters.OwnerName,
-                            OrganizationId = normalizedParameters.OrganizationId,
-                            OrganizationName = normalizedParameters.OrganizationName,
-                            RepositoryId = normalizedParameters.RepositoryId,
-                            RepositoryName = normalizedParameters.RepositoryName,
-                            CorrelationId = normalizedParameters.CorrelationId,
-                            CheckpointDays = normalizedParameters.CheckpointDays
-                        )
+                with ex ->
+                    return
+                        renderOutput
+                            parseResult
+                            (GraceResult.Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId)))
+            }
 
-                    if parseResult |> hasOutput then
-                        return!
-                            progress
-                                .Columns(progressColumns)
-                                .StartAsync(fun progressContext ->
-                                    task {
-                                        let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
+    /// Repository.SetSaveDays subcommand definition
+    type SetSaveDays() =
+        inherit AsynchronousCommandLineAction()
 
-                                        let! result = Repository.SetCheckpointDays(checkpointDaysParameters)
-                                        t0.Increment(100.0)
-                                        return result
-                                    })
-                    else
-                        return! Repository.SetCheckpointDays(checkpointDaysParameters)
-                | Error error -> return Error error
-            with ex ->
-                return Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
-        }
-
-    let private SetCheckpointDays =
-        CommandHandler.Create(fun (parseResult: ParseResult) (checkpointDaysParameters: CheckpointDaysParameters) ->
+        override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
-                let! result = setCheckpointDaysHandler parseResult checkpointDaysParameters
-                return result |> renderOutput parseResult
-            })
+                try
+                    if parseResult |> verbose then printParseResult parseResult
+                    let graceIds = parseResult |> getNormalizedIdsAndNames
+                    let validateIncomingParameters = parseResult |> Grace.CLI.Common.Validations.CommonValidations
 
-    type DiffCacheDaysParameters() =
-        inherit CommonParameters()
-        member val public DiffCacheDays: single = Single.MinValue with get, set
+                    match validateIncomingParameters with
+                    | Ok _ ->
+                        let parameters =
+                            Repository.SetSaveDaysParameters(
+                                OwnerId = graceIds.OwnerIdString,
+                                OwnerName = graceIds.OwnerName,
+                                OrganizationId = graceIds.OrganizationIdString,
+                                OrganizationName = graceIds.OrganizationName,
+                                RepositoryId = graceIds.RepositoryIdString,
+                                RepositoryName = graceIds.RepositoryName,
+                                CorrelationId = getCorrelationId parseResult,
+                                SaveDays = parseResult.GetValue(Options.saveDays)
+                            )
 
-    let private setDiffCacheDaysHandler (parseResult: ParseResult) (parameters: DiffCacheDaysParameters) =
-        task {
-            try
-                if parseResult |> verbose then printParseResult parseResult
+                        let! result =
+                            if parseResult |> hasOutput then
+                                progress
+                                    .Columns(progressColumns)
+                                    .StartAsync(fun progressContext ->
+                                        task {
+                                            let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
 
-                let validateIncomingParameters = CommonValidations(parseResult, parameters)
+                                            let! response = Repository.SetSaveDays(parameters)
+                                            t0.Increment(100.0)
+                                            return response
+                                        })
+                            else
+                                Repository.SetSaveDays(parameters)
 
-                match validateIncomingParameters with
-                | Ok _ ->
-                    let normalizedParameters = parameters |> normalizeIdsAndNames parseResult
+                        return result |> renderOutput parseResult
+                    | Error error -> return Error error |> renderOutput parseResult
 
-                    let diffCacheDaysParameters =
-                        Repository.SetDiffCacheDaysParameters(
-                            OwnerId = normalizedParameters.OwnerId,
-                            OwnerName = normalizedParameters.OwnerName,
-                            OrganizationId = normalizedParameters.OrganizationId,
-                            OrganizationName = normalizedParameters.OrganizationName,
-                            RepositoryId = normalizedParameters.RepositoryId,
-                            RepositoryName = normalizedParameters.RepositoryName,
-                            CorrelationId = normalizedParameters.CorrelationId,
-                            DiffCacheDays = normalizedParameters.DiffCacheDays
-                        )
+                with ex ->
+                    return
+                        renderOutput
+                            parseResult
+                            (GraceResult.Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId)))
+            }
 
-                    if parseResult |> hasOutput then
-                        return!
-                            progress
-                                .Columns(progressColumns)
-                                .StartAsync(fun progressContext ->
-                                    task {
-                                        let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
+    /// Repository.SetCheckpointDays subcommand definition
+    type SetCheckpointDays() =
+        inherit AsynchronousCommandLineAction()
 
-                                        let! result = Repository.SetDiffCacheDays(diffCacheDaysParameters)
-                                        t0.Increment(100.0)
-                                        return result
-                                    })
-                    else
-                        return! Repository.SetDiffCacheDays(diffCacheDaysParameters)
-                | Error error -> return Error error
-            with ex ->
-                return Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
-        }
-
-    let private SetDiffCacheDays =
-        CommandHandler.Create(fun (parseResult: ParseResult) (diffCacheDaysParameters: DiffCacheDaysParameters) ->
+        override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
-                let! result = setDiffCacheDaysHandler parseResult diffCacheDaysParameters
-                return result |> renderOutput parseResult
-            })
+                try
+                    if parseResult |> verbose then printParseResult parseResult
+                    let graceIds = parseResult |> getNormalizedIdsAndNames
+                    let validateIncomingParameters = parseResult |> Grace.CLI.Common.Validations.CommonValidations
 
-    type DirectoryVersionCacheDaysParameters() =
-        inherit CommonParameters()
-        member val public DirectoryVersionCacheDays: single = Single.MinValue with get, set
+                    match validateIncomingParameters with
+                    | Ok _ ->
+                        let parameters =
+                            Repository.SetCheckpointDaysParameters(
+                                OwnerId = graceIds.OwnerIdString,
+                                OwnerName = graceIds.OwnerName,
+                                OrganizationId = graceIds.OrganizationIdString,
+                                OrganizationName = graceIds.OrganizationName,
+                                RepositoryId = graceIds.RepositoryIdString,
+                                RepositoryName = graceIds.RepositoryName,
+                                CorrelationId = getCorrelationId parseResult,
+                                CheckpointDays = parseResult.GetValue(Options.checkpointDays)
+                            )
 
-    let private setDirectoryVersionCacheDaysHandler (parseResult: ParseResult) (parameters: DirectoryVersionCacheDaysParameters) =
-        task {
-            try
-                if parseResult |> verbose then printParseResult parseResult
+                        let! result =
+                            if parseResult |> hasOutput then
+                                progress
+                                    .Columns(progressColumns)
+                                    .StartAsync(fun progressContext ->
+                                        task {
+                                            let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
 
-                let validateIncomingParameters = CommonValidations(parseResult, parameters)
+                                            let! response = Repository.SetCheckpointDays(parameters)
+                                            t0.Increment(100.0)
+                                            return response
+                                        })
+                            else
+                                Repository.SetCheckpointDays(parameters)
 
-                match validateIncomingParameters with
-                | Ok _ ->
-                    let normalizedParameters = parameters |> normalizeIdsAndNames parseResult
+                        return result |> renderOutput parseResult
+                    | Error error -> return Error error |> renderOutput parseResult
 
-                    let directoryVersionCacheDaysParameters =
-                        Repository.SetDirectoryVersionCacheDaysParameters(
-                            OwnerId = normalizedParameters.OwnerId,
-                            OwnerName = normalizedParameters.OwnerName,
-                            OrganizationId = normalizedParameters.OrganizationId,
-                            OrganizationName = normalizedParameters.OrganizationName,
-                            RepositoryId = normalizedParameters.RepositoryId,
-                            RepositoryName = normalizedParameters.RepositoryName,
-                            CorrelationId = normalizedParameters.CorrelationId,
-                            DirectoryVersionCacheDays = normalizedParameters.DirectoryVersionCacheDays
-                        )
+                with ex ->
+                    return
+                        renderOutput
+                            parseResult
+                            (GraceResult.Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId)))
+            }
 
-                    if parseResult |> hasOutput then
-                        return!
-                            progress
-                                .Columns(progressColumns)
-                                .StartAsync(fun progressContext ->
-                                    task {
-                                        let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
+    /// Repository.SetDiffCacheDays subcommand definition
+    type SetDiffCacheDays() =
+        inherit AsynchronousCommandLineAction()
 
-                                        let! result = Repository.SetDirectoryVersionCacheDays(directoryVersionCacheDaysParameters)
-
-                                        t0.Increment(100.0)
-                                        return result
-                                    })
-                    else
-                        return! Repository.SetDirectoryVersionCacheDays(directoryVersionCacheDaysParameters)
-                | Error error -> return Error error
-            with ex ->
-                return Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
-        }
-
-    let private SetDirectoryVersionCacheDays =
-        CommandHandler.Create(fun (parseResult: ParseResult) (directoryVersionCacheDaysParameters: DirectoryVersionCacheDaysParameters) ->
+        override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
-                let! result = setDirectoryVersionCacheDaysHandler parseResult directoryVersionCacheDaysParameters
-                return result |> renderOutput parseResult
-            })
+                try
+                    if parseResult |> verbose then printParseResult parseResult
+                    let graceIds = parseResult |> getNormalizedIdsAndNames
+                    let validateIncomingParameters = parseResult |> Grace.CLI.Common.Validations.CommonValidations
 
-    type LogicalDeleteDaysParameters() =
-        inherit CommonParameters()
-        member val public LogicalDeleteDays: single = Single.MinValue with get, set
+                    match validateIncomingParameters with
+                    | Ok _ ->
+                        let parameters =
+                            Repository.SetDiffCacheDaysParameters(
+                                OwnerId = graceIds.OwnerIdString,
+                                OwnerName = graceIds.OwnerName,
+                                OrganizationId = graceIds.OrganizationIdString,
+                                OrganizationName = graceIds.OrganizationName,
+                                RepositoryId = graceIds.RepositoryIdString,
+                                RepositoryName = graceIds.RepositoryName,
+                                CorrelationId = getCorrelationId parseResult,
+                                DiffCacheDays = parseResult.GetValue(Options.diffCacheDays)
+                            )
 
-    let private setLogicalDeleteDaysHandler (parseResult: ParseResult) (parameters: LogicalDeleteDaysParameters) =
-        task {
-            try
-                if parseResult |> verbose then printParseResult parseResult
-                let validateIncomingParameters = CommonValidations(parseResult, parameters)
+                        let! result =
+                            if parseResult |> hasOutput then
+                                progress
+                                    .Columns(progressColumns)
+                                    .StartAsync(fun progressContext ->
+                                        task {
+                                            let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
 
-                match validateIncomingParameters with
-                | Ok _ ->
-                    let normalizedParameters = parameters |> normalizeIdsAndNames parseResult
+                                            let! response = Repository.SetDiffCacheDays(parameters)
+                                            t0.Increment(100.0)
+                                            return response
+                                        })
+                            else
+                                Repository.SetDiffCacheDays(parameters)
 
-                    let logicalDeleteDaysParameters =
-                        Repository.SetLogicalDeleteDaysParameters(
-                            OwnerId = normalizedParameters.OwnerId,
-                            OwnerName = normalizedParameters.OwnerName,
-                            OrganizationId = normalizedParameters.OrganizationId,
-                            OrganizationName = normalizedParameters.OrganizationName,
-                            RepositoryId = normalizedParameters.RepositoryId,
-                            RepositoryName = normalizedParameters.RepositoryName,
-                            CorrelationId = normalizedParameters.CorrelationId,
-                            LogicalDeleteDays = normalizedParameters.LogicalDeleteDays
-                        )
+                        return result |> renderOutput parseResult
+                    | Error error -> return Error error |> renderOutput parseResult
 
-                    if parseResult |> hasOutput then
-                        return!
-                            progress
-                                .Columns(progressColumns)
-                                .StartAsync(fun progressContext ->
-                                    task {
-                                        let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
-                                        let! result = Repository.SetLogicalDeleteDays(logicalDeleteDaysParameters)
-                                        t0.Increment(100.0)
-                                        return result
-                                    })
-                    else
-                        return! Repository.SetLogicalDeleteDays(logicalDeleteDaysParameters)
-                | Error error -> return Error error
-            with ex ->
-                return Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
-        }
+                with ex ->
+                    return
+                        renderOutput
+                            parseResult
+                            (GraceResult.Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId)))
+            }
 
-    let private SetLogicalDeleteDays =
-        CommandHandler.Create(fun (parseResult: ParseResult) (logicalDeleteDaysParameters: LogicalDeleteDaysParameters) ->
+    /// Repository.SetDirectoryVersionCacheDays subcommand definition
+    type SetDirectoryVersionCacheDays() =
+        inherit AsynchronousCommandLineAction()
+
+        override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
-                let! result = setLogicalDeleteDaysHandler parseResult logicalDeleteDaysParameters
-                return result |> renderOutput parseResult
-            })
+                try
+                    if parseResult |> verbose then printParseResult parseResult
+                    let graceIds = parseResult |> getNormalizedIdsAndNames
+                    let validateIncomingParameters = parseResult |> Grace.CLI.Common.Validations.CommonValidations
+
+                    match validateIncomingParameters with
+                    | Ok _ ->
+                        let parameters =
+                            Repository.SetDirectoryVersionCacheDaysParameters(
+                                OwnerId = graceIds.OwnerIdString,
+                                OwnerName = graceIds.OwnerName,
+                                OrganizationId = graceIds.OrganizationIdString,
+                                OrganizationName = graceIds.OrganizationName,
+                                RepositoryId = graceIds.RepositoryIdString,
+                                RepositoryName = graceIds.RepositoryName,
+                                CorrelationId = getCorrelationId parseResult,
+                                DirectoryVersionCacheDays = parseResult.GetValue(Options.directoryVersionCacheDays)
+                            )
+
+                        let! result =
+                            if parseResult |> hasOutput then
+                                progress
+                                    .Columns(progressColumns)
+                                    .StartAsync(fun progressContext ->
+                                        task {
+                                            let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
+
+                                            let! response = Repository.SetDirectoryVersionCacheDays(parameters)
+                                            t0.Increment(100.0)
+                                            return response
+                                        })
+                            else
+                                Repository.SetDirectoryVersionCacheDays(parameters)
+
+                        return result |> renderOutput parseResult
+                    | Error error -> return Error error |> renderOutput parseResult
+
+                with ex ->
+                    return
+                        renderOutput
+                            parseResult
+                            (GraceResult.Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId)))
+            }
+
+    /// Repository.SetLogicalDeleteDays subcommand definition
+    type SetLogicalDeleteDays() =
+        inherit AsynchronousCommandLineAction()
+
+        override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
+            task {
+                try
+                    if parseResult |> verbose then printParseResult parseResult
+                    let graceIds = parseResult |> getNormalizedIdsAndNames
+                    let validateIncomingParameters = parseResult |> Grace.CLI.Common.Validations.CommonValidations
+
+                    match validateIncomingParameters with
+                    | Ok _ ->
+                        let parameters =
+                            Repository.SetLogicalDeleteDaysParameters(
+                                OwnerId = graceIds.OwnerIdString,
+                                OwnerName = graceIds.OwnerName,
+                                OrganizationId = graceIds.OrganizationIdString,
+                                OrganizationName = graceIds.OrganizationName,
+                                RepositoryId = graceIds.RepositoryIdString,
+                                RepositoryName = graceIds.RepositoryName,
+                                CorrelationId = getCorrelationId parseResult,
+                                LogicalDeleteDays = parseResult.GetValue(Options.logicalDeleteDays)
+                            )
+
+                        let! result =
+                            if parseResult |> hasOutput then
+                                progress
+                                    .Columns(progressColumns)
+                                    .StartAsync(fun progressContext ->
+                                        task {
+                                            let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
+                                            let! response = Repository.SetLogicalDeleteDays(parameters)
+                                            t0.Increment(100.0)
+                                            return response
+                                        })
+                            else
+                                Repository.SetLogicalDeleteDays(parameters)
+
+                        return result |> renderOutput parseResult
+                    | Error error -> return Error error |> renderOutput parseResult
+
+                with ex ->
+                    return
+                        renderOutput
+                            parseResult
+                            (GraceResult.Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId)))
+            }
 
     // Enable promotion type subcommands
     type EnablePromotionTypeCommand = EnablePromotionTypeParameters -> Task<GraceResult<string>>
 
     type EnablePromotionParameters() =
-        inherit CommonParameters()
         member val public Enabled = false with get, set
 
     let private enablePromotionTypeHandler
@@ -1419,22 +1336,22 @@ module Repository =
             try
                 if parseResult |> verbose then printParseResult parseResult
 
-                let validateIncomingParameters = CommonValidations(parseResult, parameters)
+                let validateIncomingParameters = CommonValidations parseResult
 
                 match validateIncomingParameters with
                 | Ok _ ->
-                    let normalizedParameters = parameters |> normalizeIdsAndNames parseResult
+                    let graceIds = parseResult |> getNormalizedIdsAndNames
 
                     let enablePromotionTypeParameters =
                         EnablePromotionTypeParameters(
-                            OwnerId = normalizedParameters.OwnerId,
-                            OwnerName = normalizedParameters.OwnerName,
-                            OrganizationId = normalizedParameters.OrganizationId,
-                            OrganizationName = normalizedParameters.OrganizationName,
-                            RepositoryId = normalizedParameters.RepositoryId,
-                            RepositoryName = normalizedParameters.RepositoryName,
-                            CorrelationId = normalizedParameters.CorrelationId,
-                            Enabled = normalizedParameters.Enabled
+                            OwnerId = graceIds.OwnerIdString,
+                            OwnerName = graceIds.OwnerName,
+                            OrganizationId = graceIds.OrganizationIdString,
+                            OrganizationName = graceIds.OrganizationName,
+                            RepositoryId = graceIds.RepositoryIdString,
+                            RepositoryName = graceIds.RepositoryName,
+                            CorrelationId = graceIds.CorrelationId,
+                            Enabled = parameters.Enabled
                         )
 
                     if parseResult |> hasOutput then
@@ -1457,376 +1374,354 @@ module Repository =
         }
 
     // Set-DefaultServerApiVersion subcommand
-    type DefaultServerApiVersionParameters() =
-        inherit CommonParameters()
-        member val public DefaultServerApiVersion = String.Empty with get, set
+    /// Repository.SetDefaultServerApiVersion subcommand definition
+    type SetDefaultServerApiVersion() =
+        inherit AsynchronousCommandLineAction()
 
-    let private setDefaultServerApiVersionHandler (parseResult: ParseResult) (parameters: DefaultServerApiVersionParameters) =
-        task {
-            try
-                if parseResult |> verbose then printParseResult parseResult
-
-                let validateIncomingParameters = CommonValidations(parseResult, parameters)
-
-                match validateIncomingParameters with
-                | Ok _ ->
-                    let normalizedParameters = parameters |> normalizeIdsAndNames parseResult
-
-                    let defaultServerApiVersionParameters =
-                        Repository.SetDefaultServerApiVersionParameters(
-                            OwnerId = normalizedParameters.OwnerId,
-                            OwnerName = normalizedParameters.OwnerName,
-                            OrganizationId = normalizedParameters.OrganizationId,
-                            OrganizationName = normalizedParameters.OrganizationName,
-                            RepositoryId = normalizedParameters.RepositoryId,
-                            RepositoryName = normalizedParameters.RepositoryName,
-                            CorrelationId = normalizedParameters.CorrelationId,
-                            DefaultServerApiVersion = normalizedParameters.DefaultServerApiVersion
-                        )
-
-                    if parseResult |> hasOutput then
-                        return!
-                            progress
-                                .Columns(progressColumns)
-                                .StartAsync(fun progressContext ->
-                                    task {
-                                        let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
-
-                                        let! result = Repository.SetDefaultServerApiVersion(defaultServerApiVersionParameters)
-
-                                        t0.Increment(100.0)
-                                        return result
-                                    })
-                    else
-                        return! Repository.SetDefaultServerApiVersion(defaultServerApiVersionParameters)
-                | Error error -> return Error error
-            with ex ->
-                return Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
-        }
-
-    let private SetDefaultServerApiVersion =
-        CommandHandler.Create(fun (parseResult: ParseResult) (defaultServerApiVersionParameters: DefaultServerApiVersionParameters) ->
+        override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
-                let! result = setDefaultServerApiVersionHandler parseResult defaultServerApiVersionParameters
-                return result |> renderOutput parseResult
-            })
+                try
+                    if parseResult |> verbose then printParseResult parseResult
+                    let graceIds = parseResult |> getNormalizedIdsAndNames
+                    let validateIncomingParameters = parseResult |> Grace.CLI.Common.Validations.CommonValidations
 
-    // Rename subcommand
-    type SetNameParameters() =
-        inherit CommonParameters()
-        member val public NewName: string = String.Empty with get, set
+                    match validateIncomingParameters with
+                    | Ok _ ->
+                        let parameters =
+                            Repository.SetDefaultServerApiVersionParameters(
+                                OwnerId = graceIds.OwnerIdString,
+                                OwnerName = graceIds.OwnerName,
+                                OrganizationId = graceIds.OrganizationIdString,
+                                OrganizationName = graceIds.OrganizationName,
+                                RepositoryId = graceIds.RepositoryIdString,
+                                RepositoryName = graceIds.RepositoryName,
+                                CorrelationId = getCorrelationId parseResult,
+                                DefaultServerApiVersion = parseResult.GetValue(Options.defaultServerApiVersion)
+                            )
 
-    let private setNameHandler (parseResult: ParseResult) (parameters: SetNameParameters) =
-        task {
-            try
-                if parseResult |> verbose then printParseResult parseResult
+                        let! result =
+                            if parseResult |> hasOutput then
+                                progress
+                                    .Columns(progressColumns)
+                                    .StartAsync(fun progressContext ->
+                                        task {
+                                            let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
 
-                let validateIncomingParameters = CommonValidations(parseResult, parameters)
+                                            let! response = Repository.SetDefaultServerApiVersion(parameters)
 
-                match validateIncomingParameters with
-                | Ok _ ->
-                    let normalizedParameters = parameters |> normalizeIdsAndNames parseResult
+                                            t0.Increment(100.0)
+                                            return response
+                                        })
+                            else
+                                Repository.SetDefaultServerApiVersion(parameters)
 
-                    let setNameParameters =
-                        Repository.SetRepositoryNameParameters(
-                            OwnerId = normalizedParameters.OwnerId,
-                            OwnerName = normalizedParameters.OwnerName,
-                            OrganizationId = normalizedParameters.OrganizationId,
-                            OrganizationName = normalizedParameters.OrganizationName,
-                            RepositoryId = normalizedParameters.RepositoryId,
-                            RepositoryName = normalizedParameters.RepositoryName,
-                            CorrelationId = normalizedParameters.CorrelationId,
-                            NewName = normalizedParameters.NewName
-                        )
+                        return result |> renderOutput parseResult
+                    | Error error -> return Error error |> renderOutput parseResult
 
-                    if parseResult |> hasOutput then
-                        return!
-                            progress
-                                .Columns(progressColumns)
-                                .StartAsync(fun progressContext ->
-                                    task {
-                                        let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
+                with ex ->
+                    return
+                        renderOutput
+                            parseResult
+                            (GraceResult.Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId)))
+            }
 
-                                        let! result = Repository.SetName(setNameParameters)
-                                        t0.Increment(100.0)
-                                        return result
-                                    })
-                    else
-                        return! Repository.SetName(setNameParameters)
-                | Error error -> return Error error
-            with ex ->
-                return Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
-        }
+    /// Repository.SetName subcommand definition
+    type SetName() =
+        inherit AsynchronousCommandLineAction()
 
-    let private SetName =
-        CommandHandler.Create(fun (parseResult: ParseResult) (setNameParameters: SetNameParameters) ->
+        override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
-                let! result = setNameHandler parseResult setNameParameters
-                return result |> renderOutput parseResult
-            })
+                try
+                    if parseResult |> verbose then printParseResult parseResult
+                    let graceIds = parseResult |> getNormalizedIdsAndNames
+                    let validateIncomingParameters = parseResult |> Grace.CLI.Common.Validations.CommonValidations
 
-    // Set-Description subcommand
-    type SetDescriptionParameters() =
-        inherit CommonParameters()
-        member val public Description = String.Empty with get, set
+                    match validateIncomingParameters with
+                    | Ok _ ->
+                        let parameters =
+                            Repository.SetRepositoryNameParameters(
+                                OwnerId = graceIds.OwnerIdString,
+                                OwnerName = graceIds.OwnerName,
+                                OrganizationId = graceIds.OrganizationIdString,
+                                OrganizationName = graceIds.OrganizationName,
+                                RepositoryId = graceIds.RepositoryIdString,
+                                RepositoryName = graceIds.RepositoryName,
+                                CorrelationId = getCorrelationId parseResult,
+                                NewName = parseResult.GetValue(Options.newName)
+                            )
 
-    let private setDescriptionHandler (parseResult: ParseResult) (setDescriptionParameters: SetDescriptionParameters) =
-        task {
-            try
-                if parseResult |> verbose then printParseResult parseResult
+                        let! result =
+                            if parseResult |> hasOutput then
+                                progress
+                                    .Columns(progressColumns)
+                                    .StartAsync(fun progressContext ->
+                                        task {
+                                            let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
 
-                let validateIncomingParameters = CommonValidations(parseResult, setDescriptionParameters)
+                                            let! response = Repository.SetName(parameters)
+                                            t0.Increment(100.0)
+                                            return response
+                                        })
+                            else
+                                Repository.SetName(parameters)
 
-                match validateIncomingParameters with
-                | Ok _ ->
-                    let normalizedParameters = setDescriptionParameters |> normalizeIdsAndNames parseResult
+                        return result |> renderOutput parseResult
+                    | Error error -> return Error error |> renderOutput parseResult
 
-                    let setDescriptionParameters =
-                        Repository.SetRepositoryDescriptionParameters(
-                            OwnerId = normalizedParameters.OwnerId,
-                            OwnerName = normalizedParameters.OwnerName,
-                            OrganizationId = normalizedParameters.OrganizationId,
-                            OrganizationName = normalizedParameters.OrganizationName,
-                            RepositoryId = normalizedParameters.RepositoryId,
-                            RepositoryName = normalizedParameters.RepositoryName,
-                            CorrelationId = normalizedParameters.CorrelationId,
-                            Description = setDescriptionParameters.Description
-                        )
+                with ex ->
+                    return
+                        renderOutput
+                            parseResult
+                            (GraceResult.Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId)))
+            }
 
-                    if parseResult |> hasOutput then
-                        return!
-                            progress
-                                .Columns(progressColumns)
-                                .StartAsync(fun progressContext ->
-                                    task {
-                                        let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
+    /// Repository.SetDescription subcommand definition
+    type SetDescription() =
+        inherit AsynchronousCommandLineAction()
 
-                                        let! result = Repository.SetDescription(setDescriptionParameters)
-                                        t0.Increment(100.0)
-                                        return result
-                                    })
-                    else
-                        return! Repository.SetDescription(setDescriptionParameters)
-                | Error error -> return Error error
-            with ex ->
-                return Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
-        }
-
-    let private SetDescription =
-        CommandHandler.Create(fun (parseResult: ParseResult) (setDescriptionParameters: SetDescriptionParameters) ->
+        override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
-                let! result = setDescriptionHandler parseResult setDescriptionParameters
-                return result |> renderOutput parseResult
-            })
+                try
+                    if parseResult |> verbose then printParseResult parseResult
+                    let graceIds = parseResult |> getNormalizedIdsAndNames
+                    let validateIncomingParameters = parseResult |> Grace.CLI.Common.Validations.CommonValidations
 
-    // Delete subcommand
-    type DeleteParameters() =
-        inherit CommonParameters()
-        member val public Force: Boolean = false with get, set
-        member val public DeleteReason: DeleteReason = String.Empty with get, set
+                    match validateIncomingParameters with
+                    | Ok _ ->
+                        let parameters =
+                            Repository.SetRepositoryDescriptionParameters(
+                                OwnerId = graceIds.OwnerIdString,
+                                OwnerName = graceIds.OwnerName,
+                                OrganizationId = graceIds.OrganizationIdString,
+                                OrganizationName = graceIds.OrganizationName,
+                                RepositoryId = graceIds.RepositoryIdString,
+                                RepositoryName = graceIds.RepositoryName,
+                                CorrelationId = getCorrelationId parseResult,
+                                Description = parseResult.GetValue(Options.description)
+                            )
 
-    let private deleteHandler (parseResult: ParseResult) (parameters: DeleteParameters) =
-        task {
-            try
-                if parseResult |> verbose then printParseResult parseResult
+                        let! result =
+                            if parseResult |> hasOutput then
+                                progress
+                                    .Columns(progressColumns)
+                                    .StartAsync(fun progressContext ->
+                                        task {
+                                            let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
 
-                let validateIncomingParameters = CommonValidations(parseResult, parameters)
+                                            let! response = Repository.SetDescription(parameters)
+                                            t0.Increment(100.0)
+                                            return response
+                                        })
+                            else
+                                Repository.SetDescription(parameters)
 
-                match validateIncomingParameters with
-                | Ok _ ->
-                    let normalizedParameters = parameters |> normalizeIdsAndNames parseResult
+                        return result |> renderOutput parseResult
+                    | Error error -> return Error error |> renderOutput parseResult
 
-                    let enhancedParameters =
-                        Repository.DeleteRepositoryParameters(
-                            OwnerId = normalizedParameters.OwnerId,
-                            OwnerName = normalizedParameters.OwnerName,
-                            OrganizationId = normalizedParameters.OrganizationId,
-                            OrganizationName = normalizedParameters.OrganizationName,
-                            RepositoryId = normalizedParameters.RepositoryId,
-                            RepositoryName = normalizedParameters.RepositoryName,
-                            CorrelationId = normalizedParameters.CorrelationId,
-                            Force = normalizedParameters.Force,
-                            DeleteReason = normalizedParameters.DeleteReason
-                        )
+                with ex ->
+                    return
+                        renderOutput
+                            parseResult
+                            (GraceResult.Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId)))
+            }
 
-                    if parseResult |> hasOutput then
-                        return!
-                            progress
-                                .Columns(progressColumns)
-                                .StartAsync(fun progressContext ->
-                                    task {
-                                        let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
+    /// Repository.Delete subcommand definition
+    type Delete() =
+        inherit AsynchronousCommandLineAction()
 
-                                        let! result = Repository.Delete(enhancedParameters)
-                                        t0.Increment(100.0)
-                                        return result
-                                    })
-                    else
-                        return! Repository.Delete(enhancedParameters)
-                | Error error -> return Error error
-            with ex ->
-                return Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
-        }
-
-    let private Delete =
-        CommandHandler.Create(fun (parseResult: ParseResult) (deleteParameters: DeleteParameters) ->
+        override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
-                let! result = deleteHandler parseResult deleteParameters
-                return result |> renderOutput parseResult
-            })
+                try
+                    if parseResult |> verbose then printParseResult parseResult
+                    let graceIds = parseResult |> getNormalizedIdsAndNames
+                    let validateIncomingParameters = parseResult |> Grace.CLI.Common.Validations.CommonValidations
 
-    // Delete subcommand
-    type UndeleteParameters() =
-        inherit CommonParameters()
+                    match validateIncomingParameters with
+                    | Ok _ ->
+                        let parameters =
+                            Repository.DeleteRepositoryParameters(
+                                OwnerId = graceIds.OwnerIdString,
+                                OwnerName = graceIds.OwnerName,
+                                OrganizationId = graceIds.OrganizationIdString,
+                                OrganizationName = graceIds.OrganizationName,
+                                RepositoryId = graceIds.RepositoryIdString,
+                                RepositoryName = graceIds.RepositoryName,
+                                CorrelationId = getCorrelationId parseResult,
+                                Force = parseResult.GetValue(Options.force),
+                                DeleteReason = parseResult.GetValue(Options.deleteReason)
+                            )
 
-    let private undeleteHandler (parseResult: ParseResult) (parameters: UndeleteParameters) =
-        task {
-            try
-                if parseResult |> verbose then printParseResult parseResult
+                        let! result =
+                            if parseResult |> hasOutput then
+                                progress
+                                    .Columns(progressColumns)
+                                    .StartAsync(fun progressContext ->
+                                        task {
+                                            let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
 
-                let validateIncomingParameters = CommonValidations(parseResult, parameters)
+                                            let! response = Repository.Delete(parameters)
+                                            t0.Increment(100.0)
+                                            return response
+                                        })
+                            else
+                                Repository.Delete(parameters)
 
-                match validateIncomingParameters with
-                | Ok _ ->
-                    let normalizedParameters = parameters |> normalizeIdsAndNames parseResult
+                        return result |> renderOutput parseResult
+                    | Error error -> return Error error |> renderOutput parseResult
 
-                    let undeleteParameters =
-                        Repository.UndeleteRepositoryParameters(
-                            OwnerId = normalizedParameters.OwnerId,
-                            OwnerName = normalizedParameters.OwnerName,
-                            OrganizationId = normalizedParameters.OrganizationId,
-                            OrganizationName = normalizedParameters.OrganizationName,
-                            RepositoryId = normalizedParameters.RepositoryId,
-                            RepositoryName = normalizedParameters.RepositoryName,
-                            CorrelationId = normalizedParameters.CorrelationId
-                        )
+                with ex ->
+                    return
+                        renderOutput
+                            parseResult
+                            (GraceResult.Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId)))
+            }
 
-                    if parseResult |> hasOutput then
-                        return!
-                            progress
-                                .Columns(progressColumns)
-                                .StartAsync(fun progressContext ->
-                                    task {
-                                        let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
+    /// Repository.Undelete subcommand definition
+    type Undelete() =
+        inherit AsynchronousCommandLineAction()
 
-                                        let! result = Repository.Undelete(undeleteParameters)
-                                        t0.Increment(100.0)
-                                        return result
-                                    })
-                    else
-                        return! Repository.Undelete(undeleteParameters)
-                | Error error -> return Error error
-            with ex ->
-                return Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
-        }
-
-    let private Undelete =
-        CommandHandler.Create(fun (parseResult: ParseResult) (undeleteParameters: UndeleteParameters) ->
+        override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
-                let! result = undeleteHandler parseResult undeleteParameters
-                return result |> renderOutput parseResult
-            })
+                try
+                    if parseResult |> verbose then printParseResult parseResult
+                    let graceIds = parseResult |> getNormalizedIdsAndNames
+                    let validateIncomingParameters = parseResult |> Grace.CLI.Common.Validations.CommonValidations
 
-    // Set-AnonymousAccess subcommand
-    type SetAnonymousAccessParameters() =
-        inherit CommonParameters()
-        member val public AnonymousAccess = false with get, set
+                    match validateIncomingParameters with
+                    | Ok _ ->
+                        let parameters =
+                            Repository.UndeleteRepositoryParameters(
+                                OwnerId = graceIds.OwnerIdString,
+                                OwnerName = graceIds.OwnerName,
+                                OrganizationId = graceIds.OrganizationIdString,
+                                OrganizationName = graceIds.OrganizationName,
+                                RepositoryId = graceIds.RepositoryIdString,
+                                RepositoryName = graceIds.RepositoryName,
+                                CorrelationId = getCorrelationId parseResult
+                            )
 
-    let private setAnonymousAccessHandler (parseResult: ParseResult) (parameters: SetAnonymousAccessParameters) =
-        task {
-            try
-                if verbose parseResult then printParseResult parseResult
+                        let! result =
+                            if parseResult |> hasOutput then
+                                progress
+                                    .Columns(progressColumns)
+                                    .StartAsync(fun progressContext ->
+                                        task {
+                                            let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
 
-                let validateIncomingParameters = (parseResult, parameters) |> CommonValidations
+                                            let! response = Repository.Undelete(parameters)
+                                            t0.Increment(100.0)
+                                            return response
+                                        })
+                            else
+                                Repository.Undelete(parameters)
 
-                match validateIncomingParameters with
-                | Ok _ ->
-                    let setAccessParameters =
-                        Repository.SetAnonymousAccessParameters(
-                            OwnerId = parameters.OwnerId,
-                            OwnerName = parameters.OwnerName,
-                            OrganizationId = parameters.OrganizationId,
-                            OrganizationName = parameters.OrganizationName,
-                            RepositoryId = parameters.RepositoryId,
-                            RepositoryName = parameters.RepositoryName,
-                            AnonymousAccess = parameters.AnonymousAccess,
-                            CorrelationId = parameters.CorrelationId
-                        )
+                        return result |> renderOutput parseResult
+                    | Error error -> return Error error |> renderOutput parseResult
 
-                    if parseResult |> hasOutput then
-                        return!
-                            progress
-                                .Columns(progressColumns)
-                                .StartAsync(fun progressContext ->
-                                    task {
-                                        let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Setting anonymous access.[/]")
-                                        let! result = Repository.SetAnonymousAccess setAccessParameters
-                                        t0.Increment(100.0)
-                                        return result
-                                    })
-                    else
-                        return! Repository.SetAnonymousAccess setAccessParameters
-                | Error error -> return Error error
-            with ex ->
-                return Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
-        }
+                with ex ->
+                    return
+                        renderOutput
+                            parseResult
+                            (GraceResult.Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId)))
+            }
 
-    let private SetAnonymousAccess =
-        CommandHandler.Create(fun (parseResult: ParseResult) (setAnonymousAccessParameters: SetAnonymousAccessParameters) ->
+    /// Repository.SetAnonymousAccess subcommand definition
+    type SetAnonymousAccess() =
+        inherit AsynchronousCommandLineAction()
+
+        override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
-                let! result = setAnonymousAccessHandler parseResult setAnonymousAccessParameters
-                return result |> renderOutput parseResult
-            })
+                try
+                    if parseResult |> verbose then printParseResult parseResult
+                    let graceIds = parseResult |> getNormalizedIdsAndNames
+                    let validateIncomingParameters = parseResult |> Grace.CLI.Common.Validations.CommonValidations
 
-    // Set-AllowsLargeFiles subcommand
-    type SetAllowsLargeFilesParameters() =
-        inherit CommonParameters()
-        member val public AllowsLargeFiles = false with get, set
+                    match validateIncomingParameters with
+                    | Ok _ ->
+                        let parameters =
+                            Repository.SetAnonymousAccessParameters(
+                                OwnerId = graceIds.OwnerIdString,
+                                OwnerName = graceIds.OwnerName,
+                                OrganizationId = graceIds.OrganizationIdString,
+                                OrganizationName = graceIds.OrganizationName,
+                                RepositoryId = graceIds.RepositoryIdString,
+                                RepositoryName = graceIds.RepositoryName,
+                                AnonymousAccess = parseResult.GetValue(Options.anonymousAccess),
+                                CorrelationId = getCorrelationId parseResult
+                            )
 
-    let private setAllowsLargeFilesHandler (parseResult: ParseResult) (parameters: SetAllowsLargeFilesParameters) =
-        task {
-            try
-                if verbose parseResult then printParseResult parseResult
-                let validateIncomingParameters = (parseResult, parameters) |> CommonValidations
+                        let! result =
+                            if parseResult |> hasOutput then
+                                progress
+                                    .Columns(progressColumns)
+                                    .StartAsync(fun progressContext ->
+                                        task {
+                                            let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Setting anonymous access.[/]")
+                                            let! response = Repository.SetAnonymousAccess(parameters)
+                                            t0.Increment(100.0)
+                                            return response
+                                        })
+                            else
+                                Repository.SetAnonymousAccess(parameters)
 
-                match validateIncomingParameters with
-                | Ok _ ->
-                    let setAllowsLargeFilesParameters =
-                        Repository.SetAllowsLargeFilesParameters(
-                            OwnerId = parameters.OwnerId,
-                            OwnerName = parameters.OwnerName,
-                            OrganizationId = parameters.OrganizationId,
-                            OrganizationName = parameters.OrganizationName,
-                            RepositoryId = parameters.RepositoryId,
-                            RepositoryName = parameters.RepositoryName,
-                            AllowsLargeFiles = parameters.AllowsLargeFiles,
-                            CorrelationId = parameters.CorrelationId
-                        )
+                        return result |> renderOutput parseResult
+                    | Error error -> return Error error |> renderOutput parseResult
 
-                    if parseResult |> hasOutput then
-                        return!
-                            progress
-                                .Columns(progressColumns)
-                                .StartAsync(fun progressContext ->
-                                    task {
-                                        let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Setting allows large files.[/]")
-                                        let! result = Repository.SetAllowsLargeFiles setAllowsLargeFilesParameters
-                                        t0.Increment(100.0)
-                                        return result
-                                    })
-                    else
-                        return! Repository.SetAllowsLargeFiles setAllowsLargeFilesParameters
-                | Error error -> return Error error
-            with ex ->
-                return Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
-        }
+                with ex ->
+                    return
+                        renderOutput
+                            parseResult
+                            (GraceResult.Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId)))
+            }
 
-    let private SetAllowsLargeFiles =
-        CommandHandler.Create(fun (parseResult: ParseResult) (setAllowsLargeFilesParameters: SetAllowsLargeFilesParameters) ->
+    /// Repository.SetAllowsLargeFiles subcommand definition
+    type SetAllowsLargeFiles() =
+        inherit AsynchronousCommandLineAction()
+
+        override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
-                let! result = setAllowsLargeFilesHandler parseResult setAllowsLargeFilesParameters
-                return result |> renderOutput parseResult
-            })
+                try
+                    if parseResult |> verbose then printParseResult parseResult
+                    let graceIds = parseResult |> getNormalizedIdsAndNames
+                    let validateIncomingParameters = parseResult |> Grace.CLI.Common.Validations.CommonValidations
+
+                    match validateIncomingParameters with
+                    | Ok _ ->
+                        let parameters =
+                            Repository.SetAllowsLargeFilesParameters(
+                                OwnerId = graceIds.OwnerIdString,
+                                OwnerName = graceIds.OwnerName,
+                                OrganizationId = graceIds.OrganizationIdString,
+                                OrganizationName = graceIds.OrganizationName,
+                                RepositoryId = graceIds.RepositoryIdString,
+                                RepositoryName = graceIds.RepositoryName,
+                                AllowsLargeFiles = parseResult.GetValue(Options.allowsLargeFiles),
+                                CorrelationId = getCorrelationId parseResult
+                            )
+
+                        let! result =
+                            if parseResult |> hasOutput then
+                                progress
+                                    .Columns(progressColumns)
+                                    .StartAsync(fun progressContext ->
+                                        task {
+                                            let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Setting allows large files.[/]")
+                                            let! response = Repository.SetAllowsLargeFiles(parameters)
+                                            t0.Increment(100.0)
+                                            return response
+                                        })
+                            else
+                                Repository.SetAllowsLargeFiles(parameters)
+
+                        return result |> renderOutput parseResult
+                    | Error error -> return Error error |> renderOutput parseResult
+
+                with ex ->
+                    return
+                        renderOutput
+                            parseResult
+                            (GraceResult.Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId)))
+            }
 
     /// Builds the Repository subcommand.
     let Build =
@@ -1855,14 +1750,14 @@ module Repository =
             |> addCommonOptionsExceptForRepositoryInfo
             |> addOption Options.doNotSwitch
 
-        repositoryCreateCommand.Action <- Create
+        repositoryCreateCommand.Action <- new Create()
         repositoryCommand.Subcommands.Add(repositoryCreateCommand)
 
         let repositoryGetCommand =
             new Command("get", Description = "Gets information about a repository.")
             |> addCommonOptions
 
-        repositoryGetCommand.Action <- Get
+        repositoryGetCommand.Action <- new Get()
         repositoryCommand.Subcommands.Add(repositoryGetCommand)
 
         let repositoryInitCommand =
@@ -1871,7 +1766,7 @@ module Repository =
             |> addOption Options.graceConfig
             |> addCommonOptions
 
-        repositoryInitCommand.Action <- Init
+        repositoryInitCommand.Action <- new Init()
         repositoryCommand.Subcommands.Add(repositoryInitCommand)
 
         //let repositoryDownloadCommand = new Command("download", Description = "Downloads the current version of the repository.") |> addOption Options.requiredRepositoryName |> addOption Options.graceConfig |> addCommonOptionsExceptForRepositoryInfo
@@ -1883,7 +1778,7 @@ module Repository =
             |> addOption Options.includeDeleted
             |> addCommonOptions
 
-        getBranchesCommand.Action <- GetBranches
+        getBranchesCommand.Action <- new GetBranches()
         repositoryCommand.Subcommands.Add(getBranchesCommand)
 
         let setVisibilityCommand =
@@ -1891,7 +1786,7 @@ module Repository =
             |> addOption Options.visibility
             |> addCommonOptions
 
-        setVisibilityCommand.Action <- SetVisibility
+        setVisibilityCommand.Action <- new SetVisibility()
         repositoryCommand.Subcommands.Add(setVisibilityCommand)
 
         let setStatusCommand =
@@ -1899,7 +1794,7 @@ module Repository =
             |> addOption Options.status
             |> addCommonOptions
 
-        setStatusCommand.Action <- SetStatus
+        setStatusCommand.Action <- new SetStatus()
         repositoryCommand.Subcommands.Add(setStatusCommand)
 
         let setAnonymousAccessCommand =
@@ -1907,7 +1802,7 @@ module Repository =
             |> addOption Options.anonymousAccess
             |> addCommonOptions
 
-        setAnonymousAccessCommand.Action <- SetAnonymousAccess
+        setAnonymousAccessCommand.Action <- new SetAnonymousAccess()
         repositoryCommand.Subcommands.Add(setAnonymousAccessCommand)
 
         let setAllowsLargeFilesCommand =
@@ -1915,7 +1810,7 @@ module Repository =
             |> addOption Options.allowsLargeFiles
             |> addCommonOptions
 
-        setAllowsLargeFilesCommand.Action <- SetAllowsLargeFiles
+        setAllowsLargeFilesCommand.Action <- new SetAllowsLargeFiles()
         repositoryCommand.Subcommands.Add(setAllowsLargeFilesCommand)
 
         let setRecordSavesCommand =
@@ -1923,7 +1818,7 @@ module Repository =
             |> addOption Options.recordSaves
             |> addCommonOptions
 
-        setRecordSavesCommand.Action <- SetRecordSaves
+        setRecordSavesCommand.Action <- new SetRecordSaves()
         repositoryCommand.Subcommands.Add(setRecordSavesCommand)
 
         let setDefaultServerApiVersionCommand =
@@ -1931,7 +1826,7 @@ module Repository =
             |> addOption Options.defaultServerApiVersion
             |> addCommonOptions
 
-        setDefaultServerApiVersionCommand.Action <- SetDefaultServerApiVersion
+        setDefaultServerApiVersionCommand.Action <- new SetDefaultServerApiVersion()
         repositoryCommand.Subcommands.Add(setDefaultServerApiVersionCommand)
 
         let setSaveDaysCommand =
@@ -1939,7 +1834,7 @@ module Repository =
             |> addOption Options.saveDays
             |> addCommonOptions
 
-        setSaveDaysCommand.Action <- SetSaveDays
+        setSaveDaysCommand.Action <- new SetSaveDays()
         repositoryCommand.Subcommands.Add(setSaveDaysCommand)
 
         let setCheckpointDaysCommand =
@@ -1947,7 +1842,7 @@ module Repository =
             |> addOption Options.checkpointDays
             |> addCommonOptions
 
-        setCheckpointDaysCommand.Action <- SetCheckpointDays
+        setCheckpointDaysCommand.Action <- new SetCheckpointDays()
         repositoryCommand.Subcommands.Add(setCheckpointDaysCommand)
 
         let setDiffCacheDaysCommand =
@@ -1955,7 +1850,7 @@ module Repository =
             |> addOption Options.diffCacheDays
             |> addCommonOptions
 
-        setDiffCacheDaysCommand.Action <- SetDiffCacheDays
+        setDiffCacheDaysCommand.Action <- new SetDiffCacheDays()
         repositoryCommand.Subcommands.Add(setDiffCacheDaysCommand)
 
         let setDirectoryVersionCacheDaysCommand =
@@ -1963,7 +1858,7 @@ module Repository =
             |> addOption Options.directoryVersionCacheDays
             |> addCommonOptions
 
-        setDirectoryVersionCacheDaysCommand.Action <- SetDirectoryVersionCacheDays
+        setDirectoryVersionCacheDaysCommand.Action <- new SetDirectoryVersionCacheDays()
         repositoryCommand.Subcommands.Add(setDirectoryVersionCacheDaysCommand)
 
         let setLogicalDeleteDaysCommand =
@@ -1974,7 +1869,7 @@ module Repository =
             |> addOption Options.logicalDeleteDays
             |> addCommonOptions
 
-        setLogicalDeleteDaysCommand.Action <- SetLogicalDeleteDays
+        setLogicalDeleteDaysCommand.Action <- new SetLogicalDeleteDays()
         repositoryCommand.Subcommands.Add(setLogicalDeleteDaysCommand)
 
         let setNameCommand =
@@ -1982,7 +1877,7 @@ module Repository =
             |> addOption Options.newName
             |> addCommonOptions
 
-        setNameCommand.Action <- SetName
+        setNameCommand.Action <- new SetName()
         repositoryCommand.Subcommands.Add(setNameCommand)
 
         let setDescriptionCommand =
@@ -1990,7 +1885,7 @@ module Repository =
             |> addOption Options.description
             |> addCommonOptions
 
-        setDescriptionCommand.Action <- SetDescription
+        setDescriptionCommand.Action <- new SetDescription()
         repositoryCommand.Subcommands.Add(setDescriptionCommand)
 
         let deleteCommand =
@@ -1999,14 +1894,14 @@ module Repository =
             |> addOption Options.force
             |> addCommonOptions
 
-        deleteCommand.Action <- Delete
+        deleteCommand.Action <- new Delete()
         repositoryCommand.Subcommands.Add(deleteCommand)
 
         let undeleteCommand =
             new Command("undelete", Description = "Undeletes the repository.")
             |> addCommonOptions
 
-        undeleteCommand.Action <- Undelete
+        undeleteCommand.Action <- new Undelete()
         repositoryCommand.Subcommands.Add(undeleteCommand)
 
         repositoryCommand

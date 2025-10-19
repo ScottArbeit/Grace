@@ -3,6 +3,7 @@ namespace Grace.CLI.Command
 open FSharpPlus
 open Grace.CLI.Common
 open Grace.CLI.Common.Validations
+open Grace.CLI.Services
 open Grace.CLI.Text
 open Grace.SDK
 open Grace.Shared
@@ -20,6 +21,7 @@ open System.CommandLine.Invocation
 open System.Linq
 open System.Threading
 open System.Threading.Tasks
+open Grace.CLI
 
 module Organization =
 
@@ -114,242 +116,187 @@ module Organization =
                 Arity = ArgumentArity.ZeroOrOne
             )
 
-    /// Adjusts parameters to account for whether Id's or Name's were specified by the user, or should be taken from default values.
-    let normalizeIdsAndNames<'T when 'T :> CommonParameters> (parseResult: ParseResult) (parameters: 'T) =
-        // If the name was specified on the command line, but the id wasn't,
-        //   then we should only send the name, and we set the id to String.Empty.
-        if
-            parseResult.GetResult(Options.ownerId).Implicit
-            && not <| isNull (parseResult.GetResult(Options.ownerName))
-            && not <| parseResult.GetResult(Options.ownerName).Implicit
-        then
-            parameters.OwnerId <- String.Empty
-
-        if
-            parseResult.GetResult(Options.organizationId).Implicit
-            && not <| isNull (parseResult.GetResult(Options.organizationName))
-            && not <| parseResult.GetResult(Options.organizationName).Implicit
-        then
-            parameters.OrganizationId <- String.Empty
-
-        parameters
-
     // Create subcommand.
-    type CreateParameters() =
-        inherit CommonParameters()
+    type Create() =
+        inherit AsynchronousCommandLineAction()
 
-    let private createHandler (parseResult: ParseResult) (createParameters: CreateParameters) =
-        task {
-            try
-                if parseResult |> verbose then printParseResult parseResult
-
-                let validateIncomingParameters = parseResult |> CommonValidations
-
-                match validateIncomingParameters with
-                | Ok _ ->
-                    let organizationId =
-                        if parseResult.GetResult(Options.organizationId).Implicit then
-                            Guid.NewGuid().ToString()
-                        else
-                            createParameters.OrganizationId
-
-                    let parameters =
-                        Parameters.Organization.CreateOrganizationParameters(
-                            OwnerId = createParameters.OwnerId,
-                            OwnerName = createParameters.OwnerName,
-                            OrganizationId = organizationId,
-                            OrganizationName = createParameters.OrganizationName,
-                            CorrelationId = createParameters.CorrelationId
-                        )
-
-                    if parseResult |> hasOutput then
-                        return!
-                            progress
-                                .Columns(progressColumns)
-                                .StartAsync(fun progressContext ->
-                                    task {
-                                        let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
-
-                                        let! result = Organization.Create(parameters)
-                                        t0.Increment(100.0)
-                                        return result
-                                    })
-                    else
-                        return! Organization.Create(parameters)
-                | Error error -> return Error error
-            with ex ->
-                return Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
-        }
-
-    let private Create =
-        CommandLineAction.Create(fun (parseResult: ParseResult) (createParameters: CreateParameters) ->
-            //CommandHandler.Create(fun (parseResult: ParseResult) (createParameters: CreateParameters) ->
+        override this.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
-                let! result = createHandler parseResult createParameters
+                try
+                    if parseResult |> verbose then printParseResult parseResult
+                    let graceIds = parseResult |> getNormalizedIdsAndNames
+                    let validateIncomingParameters = parseResult |> CommonValidations
 
-                match result with
-                | Ok returnValue ->
-                    // Update the Grace configuration file with the newly-created organization.
-                    if not <| parseResult.GetValue(Options.doNotSwitch) then
-                        let newConfig = Current()
-                        newConfig.OrganizationId <- Guid.Parse($"{returnValue.Properties[nameof OrganizationId]}")
-                        newConfig.OrganizationName <- $"{returnValue.Properties[nameof OrganizationName]}"
-                        updateConfiguration newConfig
-                | Error _ -> ()
+                    match validateIncomingParameters with
+                    | Ok _ ->
+                        let organizationId =
+                            if parseResult.GetResult(Options.organizationId).Implicit then
+                                Guid.NewGuid().ToString()
+                            else
+                                graceIds.OrganizationIdString
 
-                return result |> renderOutput parseResult
-            })
+                        let parameters =
+                            Parameters.Organization.CreateOrganizationParameters(
+                                OwnerId = graceIds.OwnerIdString,
+                                OwnerName = graceIds.OwnerName,
+                                OrganizationId = organizationId,
+                                OrganizationName = graceIds.OrganizationName,
+                                CorrelationId = getCorrelationId parseResult
+                            )
+
+                        if parseResult |> hasOutput then
+                            let! result =
+                                progress
+                                    .Columns(progressColumns)
+                                    .StartAsync(fun progressContext ->
+                                        task {
+                                            let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
+
+                                            let! result = Organization.Create(parameters)
+                                            t0.Increment(100.0)
+                                            return result
+                                        })
+
+                            match result with
+                            | Ok returnValue ->
+                                if not <| parseResult.GetValue(Options.doNotSwitch) then
+                                    let newConfig = Current()
+                                    newConfig.OrganizationId <- Guid.Parse($"{returnValue.Properties[nameof OrganizationId]}")
+                                    newConfig.OrganizationName <- $"{returnValue.Properties[nameof OrganizationName]}"
+                                    updateConfiguration newConfig
+                                return result |> renderOutput parseResult
+                            | Error _ -> return result |> renderOutput parseResult
+                        else
+                            let! result = Organization.Create(parameters)
+                            match result with
+                            | Ok returnValue ->
+                                if not <| parseResult.GetValue(Options.doNotSwitch) then
+                                    let newConfig = Current()
+                                    newConfig.OrganizationId <- Guid.Parse($"{returnValue.Properties[nameof OrganizationId]}")
+                                    newConfig.OrganizationName <- $"{returnValue.Properties[nameof OrganizationName]}"
+                                    updateConfiguration newConfig
+                                return result |> renderOutput parseResult
+                            | Error _ -> return result |> renderOutput parseResult
+                    | Error error -> return Error error |> renderOutput parseResult
+
+                with ex ->
+                    return
+                        renderOutput
+                            parseResult
+                            (GraceResult.Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId)))
+            }
 
     // Get subcommand
-    type GetParameters() =
-        inherit CommonParameters()
-        member val public IncludeDeleted: bool = false with get, set
+    type Get() =
+        inherit AsynchronousCommandLineAction()
 
-    let private getHandler (parseResult: ParseResult) (getParameters: GetParameters) =
-        task {
-            try
-                if parseResult |> verbose then printParseResult parseResult
-
-                let validateIncomingParameters = parseResult |> CommonValidations
-
-                match validateIncomingParameters with
-                | Ok _ ->
-                    let parameters =
-                        Parameters.Organization.GetOrganizationParameters(
-                            OwnerId = getParameters.OwnerId,
-                            OwnerName = getParameters.OwnerName,
-                            OrganizationId = getParameters.OrganizationId,
-                            OrganizationName = getParameters.OrganizationName,
-                            IncludeDeleted = getParameters.IncludeDeleted,
-                            CorrelationId = getParameters.CorrelationId
-                        )
-
-                    if parseResult |> hasOutput then
-                        return!
-                            progress
-                                .Columns(progressColumns)
-                                .StartAsync(fun progressContext ->
-                                    task {
-                                        let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
-
-                                        let! result = Organization.Get(parameters)
-                                        t0.Increment(100.0)
-                                        return result
-                                    })
-                    else
-                        return! Organization.Get(parameters)
-                | Error error -> return Error error
-            with ex ->
-                return Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
-        }
-
-    let private Get =
-        CommandHandler.Create(fun (parseResult: ParseResult) (getParameters: GetParameters) ->
+        override this.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
-                let! result = getHandler parseResult (getParameters |> normalizeIdsAndNames parseResult)
-                //return result |> renderOutput parseResult
-                match result with
-                | Ok graceReturnValue ->
-                    let jsonText = JsonText(serialize graceReturnValue.ReturnValue)
-                    AnsiConsole.Write(jsonText)
-                    AnsiConsole.WriteLine()
-                    return Ok graceReturnValue |> renderOutput parseResult
-                | Error graceError -> return Error graceError |> renderOutput parseResult
-            })
+                try
+                    if parseResult |> verbose then printParseResult parseResult
+                    let graceIds = parseResult |> getNormalizedIdsAndNames
+                    let validateIncomingParameters = parseResult |> CommonValidations
+
+                    match validateIncomingParameters with
+                    | Ok _ ->
+                        let parameters =
+                            Parameters.Organization.GetOrganizationParameters(
+                                OwnerId = graceIds.OwnerIdString,
+                                OwnerName = graceIds.OwnerName,
+                                OrganizationId = graceIds.OrganizationIdString,
+                                OrganizationName = graceIds.OrganizationName,
+                                IncludeDeleted = parseResult.GetValue(Options.includeDeleted),
+                                CorrelationId = getCorrelationId parseResult
+                            )
+
+                        if parseResult |> hasOutput then
+                            let! result =
+                                progress
+                                    .Columns(progressColumns)
+                                    .StartAsync(fun progressContext ->
+                                        task {
+                                            let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
+
+                                            let! result = Organization.Get(parameters)
+                                            t0.Increment(100.0)
+                                            return result
+                                        })
+
+                            match result with
+                            | Ok graceReturnValue ->
+                                let jsonText = JsonText(serialize graceReturnValue.ReturnValue)
+                                AnsiConsole.Write(jsonText)
+                                AnsiConsole.WriteLine()
+                                return Ok graceReturnValue |> renderOutput parseResult
+                            | Error graceError -> return Error graceError |> renderOutput parseResult
+                        else
+                            let! result = Organization.Get(parameters)
+                            match result with
+                            | Ok graceReturnValue ->
+                                let jsonText = JsonText(serialize graceReturnValue.ReturnValue)
+                                AnsiConsole.Write(jsonText)
+                                AnsiConsole.WriteLine()
+                                return Ok graceReturnValue |> renderOutput parseResult
+                            | Error graceError -> return Error graceError |> renderOutput parseResult
+                    | Error error -> return Error error |> renderOutput parseResult
+
+                with ex ->
+                    return
+                        renderOutput
+                            parseResult
+                            (GraceResult.Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId)))
+            }
 
     // SetName subcommand
-    type NameParameters() =
-        inherit CommonParameters()
-        member val public NewName: string = String.Empty with get, set
+    type SetName() =
+        inherit AsynchronousCommandLineAction()
 
-    let private setNameHandler (parseResult: ParseResult) (setNameParameters: NameParameters) =
-        task {
-            try
-                if parseResult |> verbose then printParseResult parseResult
-
-                let validateIncomingParameters = CommonValidations(parseResult, setNameParameters)
-
-                match validateIncomingParameters with
-                | Ok _ ->
-                    let parameters =
-                        Parameters.Organization.SetOrganizationNameParameters(
-                            OwnerId = setNameParameters.OwnerId,
-                            OwnerName = setNameParameters.OwnerName,
-                            OrganizationId = setNameParameters.OrganizationId,
-                            OrganizationName = setNameParameters.OrganizationName,
-                            NewName = setNameParameters.NewName,
-                            CorrelationId = setNameParameters.CorrelationId
-                        )
-
-                    if parseResult |> hasOutput then
-                        return!
-                            progress
-                                .Columns(progressColumns)
-                                .StartAsync(fun progressContext ->
-                                    task {
-                                        let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
-
-                                        let! result = Organization.SetName(parameters)
-                                        t0.Increment(100.0)
-                                        return result
-                                    })
-                    else
-                        return! Organization.SetName(parameters)
-                | Error error -> return Error error
-            with ex ->
-                return Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
-        }
-
-    let private SetName =
-        CommandHandler.Create(fun (parseResult: ParseResult) (setNameParameters: NameParameters) ->
+        override this.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
-                let! result = setNameHandler parseResult (setNameParameters |> normalizeIdsAndNames parseResult)
-                return result |> renderOutput parseResult
-            })
+                try
+                    if parseResult |> verbose then printParseResult parseResult
+                    let graceIds = parseResult |> getNormalizedIdsAndNames
+                    let validateIncomingParameters = parseResult |> CommonValidations
 
-    // SetType subcommand
-    type TypeParameters() =
-        inherit CommonParameters()
-        member val public OrganizationType: string = String.Empty with get, set
+                    match validateIncomingParameters with
+                    | Ok _ ->
+                        let parameters =
+                            Parameters.Organization.SetOrganizationNameParameters(
+                                OwnerId = graceIds.OwnerIdString,
+                                OwnerName = graceIds.OwnerName,
+                                OrganizationId = graceIds.OrganizationIdString,
+                                OrganizationName = graceIds.OrganizationName,
+                                NewName = parseResult.GetValue(Options.newName),
+                                CorrelationId = getCorrelationId parseResult
+                            )
 
-    let private setTypeHandler (parseResult: ParseResult) (setTypeParameters: TypeParameters) =
-        task {
-            try
-                if parseResult |> verbose then printParseResult parseResult
+                        if parseResult |> hasOutput then
+                            let! result =
+                                progress
+                                    .Columns(progressColumns)
+                                    .StartAsync(fun progressContext ->
+                                        task {
+                                            let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
 
-                let validateIncomingParameters = CommonValidations(parseResult, setTypeParameters)
+                                            let! result = Organization.SetName(parameters)
+                                            t0.Increment(100.0)
+                                            return result
+                                        })
 
-                match validateIncomingParameters with
-                | Ok _ ->
-                    let parameters =
-                        Parameters.Organization.SetOrganizationTypeParameters(
-                            OwnerId = setTypeParameters.OwnerId,
-                            OwnerName = setTypeParameters.OwnerName,
-                            OrganizationId = setTypeParameters.OrganizationId,
-                            OrganizationName = setTypeParameters.OrganizationName,
-                            OrganizationType = setTypeParameters.OrganizationType,
-                            CorrelationId = setTypeParameters.CorrelationId
-                        )
+                            return result |> renderOutput parseResult
+                        else
+                            let! result = Organization.SetName(parameters)
+                            return result |> renderOutput parseResult
+                    | Error error -> return Error error |> renderOutput parseResult
 
-                    if parseResult |> hasOutput then
-                        return!
-                            progress
-                                .Columns(progressColumns)
-                                .StartAsync(fun progressContext ->
-                                    task {
-                                        let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
+                with ex ->
+                    return
+                        renderOutput
+                            parseResult
+                            (GraceResult.Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId)))
+            }
 
-                                        let! result = Organization.SetType(parameters)
-                                        t0.Increment(100.0)
-                                        return result
-                                    })
-                    else
-                        return! Organization.SetType(parameters)
-                | Error error -> return Error error
-            with ex ->
-                return Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
-        }
-
+    /// Organization.SetType subcommand definition
     type SetType() =
         inherit AsynchronousCommandLineAction()
 
@@ -357,232 +304,242 @@ module Organization =
             task {
                 try
                     if parseResult |> verbose then printParseResult parseResult
-                    let ownerId = parseResult.GetValue(Options.ownerId)
-                    return 0
+                    let graceIds = parseResult |> getNormalizedIdsAndNames
+                    let validateIncomingParameters = parseResult |> CommonValidations
+
+                    match validateIncomingParameters with
+                    | Ok _ ->
+                        let parameters =
+                            Parameters.Organization.SetOrganizationTypeParameters(
+                                OwnerId = graceIds.OwnerIdString,
+                                OwnerName = graceIds.OwnerName,
+                                OrganizationId = graceIds.OrganizationIdString,
+                                OrganizationName = graceIds.OrganizationName,
+                                OrganizationType = parseResult.GetValue(Options.organizationType),
+                                CorrelationId = getCorrelationId parseResult
+                            )
+
+                        if parseResult |> hasOutput then
+                            let! result =
+                                progress
+                                    .Columns(progressColumns)
+                                    .StartAsync(fun progressContext ->
+                                        task {
+                                            let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
+
+                                            let! result = Organization.SetType(parameters)
+                                            t0.Increment(100.0)
+                                            return result
+                                        })
+
+                            return result |> renderOutput parseResult
+                        else
+                            let! result = Organization.SetType(parameters)
+                            return result |> renderOutput parseResult
+                    | Error error -> return Error error |> renderOutput parseResult
+
                 with ex ->
                     return
                         renderOutput
                             parseResult
                             (GraceResult.Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId)))
-            //let! result = setTypeHandler parseResult (setTypeParameters |> normalizeIdsAndNames parseResult)
-            //return result |> renderOutput parseResult
-
             }
 
-    //let private SetType =
-    //    CommandHandler.Create(fun (parseResult: ParseResult) (setTypeParameters: TypeParameters) ->
-    //        task {
-    //            let! result = setTypeHandler parseResult (setTypeParameters |> normalizeIdsAndNames parseResult)
-    //            return result |> renderOutput parseResult
-    //        })
-
     // SetSearchVisibility subcommand
-    type SearchVisibilityParameters() =
-        inherit CommonParameters()
-        member val public SearchVisibility: string = String.Empty with get, set
+    type SetSearchVisibility() =
+        inherit AsynchronousCommandLineAction()
 
-    let private setSearchVisibilityHandler (parseResult: ParseResult) (setSearchVisibilityParameters: SearchVisibilityParameters) =
-        task {
-            try
-                if parseResult |> verbose then printParseResult parseResult
-
-                let validateIncomingParameters = CommonValidations(parseResult, setSearchVisibilityParameters)
-
-                match validateIncomingParameters with
-                | Ok _ ->
-                    let organizationId =
-                        if not <| String.IsNullOrEmpty(setSearchVisibilityParameters.OrganizationId) then
-                            setSearchVisibilityParameters.OrganizationId
-                        else
-                            $"{Current().OrganizationId}"
-
-                    let parameters =
-                        Parameters.Organization.SetOrganizationSearchVisibilityParameters(
-                            OwnerId = setSearchVisibilityParameters.OwnerId,
-                            OwnerName = setSearchVisibilityParameters.OwnerName,
-                            OrganizationId = organizationId,
-                            OrganizationName = setSearchVisibilityParameters.OrganizationName,
-                            SearchVisibility = setSearchVisibilityParameters.SearchVisibility,
-                            CorrelationId = setSearchVisibilityParameters.CorrelationId
-                        )
-
-                    if parseResult |> hasOutput then
-                        return!
-                            progress
-                                .Columns(progressColumns)
-                                .StartAsync(fun progressContext ->
-                                    task {
-                                        let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
-
-                                        let! result = Organization.SetSearchVisibility(parameters)
-                                        t0.Increment(100.0)
-                                        return result
-                                    })
-                    else
-                        return! Organization.SetSearchVisibility(parameters)
-                | Error error -> return Error error
-            with ex ->
-                return Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
-        }
-
-    let private SetSearchVisibility =
-        CommandHandler.Create(fun (parseResult: ParseResult) (setSearchVisibilityParameters: SearchVisibilityParameters) ->
+        override this.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
-                let! result = setSearchVisibilityHandler parseResult (setSearchVisibilityParameters |> normalizeIdsAndNames parseResult)
+                try
+                    if parseResult |> verbose then printParseResult parseResult
+                    let graceIds = parseResult |> getNormalizedIdsAndNames
+                    let validateIncomingParameters = parseResult |> CommonValidations
 
-                return result |> renderOutput parseResult
-            })
+                    match validateIncomingParameters with
+                    | Ok _ ->
+                        let parameters =
+                            Parameters.Organization.SetOrganizationSearchVisibilityParameters(
+                                OwnerId = graceIds.OwnerIdString,
+                                OwnerName = graceIds.OwnerName,
+                                OrganizationId = graceIds.OrganizationIdString,
+                                OrganizationName = graceIds.OrganizationName,
+                                SearchVisibility = parseResult.GetValue(Options.searchVisibility),
+                                CorrelationId = getCorrelationId parseResult
+                            )
+
+                        if parseResult |> hasOutput then
+                            let! result =
+                                progress
+                                    .Columns(progressColumns)
+                                    .StartAsync(fun progressContext ->
+                                        task {
+                                            let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
+
+                                            let! result = Organization.SetSearchVisibility(parameters)
+                                            t0.Increment(100.0)
+                                            return result
+                                        })
+
+                            return result |> renderOutput parseResult
+                        else
+                            let! result = Organization.SetSearchVisibility(parameters)
+                            return result |> renderOutput parseResult
+                    | Error error -> return Error error |> renderOutput parseResult
+
+                with ex ->
+                    return
+                        renderOutput
+                            parseResult
+                            (GraceResult.Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId)))
+            }
 
     // SetDescription subcommand
-    type DescriptionParameters() =
-        inherit CommonParameters()
-        member val public Description: string = String.Empty with get, set
+    type SetDescription() =
+        inherit AsynchronousCommandLineAction()
 
-    let private setDescriptionHandler (parseResult: ParseResult) (descriptionParameters: DescriptionParameters) =
-        task {
-            try
-                if parseResult |> verbose then printParseResult parseResult
-
-                let validateIncomingParameters = CommonValidations(parseResult, descriptionParameters)
-
-                match validateIncomingParameters with
-                | Ok _ ->
-                    let parameters =
-                        Parameters.Organization.SetOrganizationDescriptionParameters(
-                            OwnerId = descriptionParameters.OwnerId,
-                            OwnerName = descriptionParameters.OwnerName,
-                            OrganizationId = descriptionParameters.OrganizationId,
-                            OrganizationName = descriptionParameters.OrganizationName,
-                            Description = descriptionParameters.Description,
-                            CorrelationId = descriptionParameters.CorrelationId
-                        )
-
-                    if parseResult |> hasOutput then
-                        return!
-                            progress
-                                .Columns(progressColumns)
-                                .StartAsync(fun progressContext ->
-                                    task {
-                                        let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
-
-                                        let! result = Organization.SetDescription(parameters)
-                                        t0.Increment(100.0)
-                                        return result
-                                    })
-                    else
-                        return! Organization.SetDescription(parameters)
-                | Error error -> return Error error
-            with ex ->
-                return Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
-        }
-
-    let private SetDescription =
-        CommandHandler.Create(fun (parseResult: ParseResult) (descriptionParameters: DescriptionParameters) ->
+        override this.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
-                let! result = setDescriptionHandler parseResult (descriptionParameters |> normalizeIdsAndNames parseResult)
+                try
+                    if parseResult |> verbose then printParseResult parseResult
+                    let graceIds = parseResult |> getNormalizedIdsAndNames
+                    let validateIncomingParameters = parseResult |> CommonValidations
 
-                return result |> renderOutput parseResult
-            })
+                    match validateIncomingParameters with
+                    | Ok _ ->
+                        let parameters =
+                            Parameters.Organization.SetOrganizationDescriptionParameters(
+                                OwnerId = graceIds.OwnerIdString,
+                                OwnerName = graceIds.OwnerName,
+                                OrganizationId = graceIds.OrganizationIdString,
+                                OrganizationName = graceIds.OrganizationName,
+                                Description = parseResult.GetValue(Options.description),
+                                CorrelationId = getCorrelationId parseResult
+                            )
+
+                        if parseResult |> hasOutput then
+                            let! result =
+                                progress
+                                    .Columns(progressColumns)
+                                    .StartAsync(fun progressContext ->
+                                        task {
+                                            let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
+
+                                            let! result = Organization.SetDescription(parameters)
+                                            t0.Increment(100.0)
+                                            return result
+                                        })
+
+                            return result |> renderOutput parseResult
+                        else
+                            let! result = Organization.SetDescription(parameters)
+                            return result |> renderOutput parseResult
+                    | Error error -> return Error error |> renderOutput parseResult
+
+                with ex ->
+                    return
+                        renderOutput
+                            parseResult
+                            (GraceResult.Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId)))
+            }
 
     // Delete subcommand
-    type DeleteParameters() =
-        inherit CommonParameters()
-        member val public Force: bool = false with get, set
-        member val public DeleteReason: DeleteReason = String.Empty with get, set
+    type Delete() =
+        inherit AsynchronousCommandLineAction()
 
-    let private deleteHandler (parseResult: ParseResult) (deleteParameters: DeleteParameters) =
-        task {
-            try
-                if parseResult |> verbose then printParseResult parseResult
-
-                let validateIncomingParameters = CommonValidations(parseResult, deleteParameters)
-
-                match validateIncomingParameters with
-                | Ok _ ->
-                    let parameters =
-                        Parameters.Organization.DeleteOrganizationParameters(
-                            OwnerId = deleteParameters.OwnerId,
-                            OwnerName = deleteParameters.OwnerName,
-                            OrganizationId = deleteParameters.OrganizationId,
-                            OrganizationName = deleteParameters.OrganizationName,
-                            Force = deleteParameters.Force,
-                            DeleteReason = deleteParameters.DeleteReason,
-                            CorrelationId = deleteParameters.CorrelationId
-                        )
-
-                    if parseResult |> hasOutput then
-                        return!
-                            progress
-                                .Columns(progressColumns)
-                                .StartAsync(fun progressContext ->
-                                    task {
-                                        let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
-
-                                        let! result = Organization.Delete(parameters)
-                                        t0.Increment(100.0)
-                                        return result
-                                    })
-                    else
-                        return! Organization.Delete(parameters)
-                | Error error -> return Error error
-            with ex ->
-                return Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
-        }
-
-    let private Delete =
-        CommandHandler.Create(fun (parseResult: ParseResult) (deleteParameters: DeleteParameters) ->
+        override this.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
-                let! result = deleteHandler parseResult (deleteParameters |> normalizeIdsAndNames parseResult)
-                return result |> renderOutput parseResult
-            })
+                try
+                    if parseResult |> verbose then printParseResult parseResult
+                    let graceIds = parseResult |> getNormalizedIdsAndNames
+                    let validateIncomingParameters = parseResult |> CommonValidations
+
+                    match validateIncomingParameters with
+                    | Ok _ ->
+                        let parameters =
+                            Parameters.Organization.DeleteOrganizationParameters(
+                                OwnerId = graceIds.OwnerIdString,
+                                OwnerName = graceIds.OwnerName,
+                                OrganizationId = graceIds.OrganizationIdString,
+                                OrganizationName = graceIds.OrganizationName,
+                                Force = parseResult.GetValue(Options.force),
+                                DeleteReason = parseResult.GetValue(Options.deleteReason),
+                                CorrelationId = getCorrelationId parseResult
+                            )
+
+                        if parseResult |> hasOutput then
+                            let! result =
+                                progress
+                                    .Columns(progressColumns)
+                                    .StartAsync(fun progressContext ->
+                                        task {
+                                            let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
+
+                                            let! result = Organization.Delete(parameters)
+                                            t0.Increment(100.0)
+                                            return result
+                                        })
+
+                            return result |> renderOutput parseResult
+                        else
+                            let! result = Organization.Delete(parameters)
+                            return result |> renderOutput parseResult
+                    | Error error -> return Error error |> renderOutput parseResult
+
+                with ex ->
+                    return
+                        renderOutput
+                            parseResult
+                            (GraceResult.Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId)))
+            }
 
     // Undelete subcommand
-    type UndeleteParameters() =
-        inherit CommonParameters()
+    type Undelete() =
+        inherit AsynchronousCommandLineAction()
 
-    let private undeleteHandler (parseResult: ParseResult) (undeleteParameters: UndeleteParameters) =
-        task {
-            try
-                if parseResult |> verbose then printParseResult parseResult
-
-                let validateIncomingParameters = CommonValidations(parseResult, undeleteParameters)
-
-                match validateIncomingParameters with
-                | Ok _ ->
-                    let parameters =
-                        Parameters.Organization.DeleteOrganizationParameters(
-                            OwnerId = undeleteParameters.OwnerId,
-                            OwnerName = undeleteParameters.OwnerName,
-                            OrganizationId = undeleteParameters.OrganizationId,
-                            OrganizationName = undeleteParameters.OrganizationName,
-                            CorrelationId = undeleteParameters.CorrelationId
-                        )
-
-                    if parseResult |> hasOutput then
-                        return!
-                            progress
-                                .Columns(progressColumns)
-                                .StartAsync(fun progressContext ->
-                                    task {
-                                        let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
-
-                                        let! result = Organization.Delete(parameters)
-                                        t0.Increment(100.0)
-                                        return result
-                                    })
-                    else
-                        return! Organization.Delete(parameters)
-                | Error error -> return Error error
-            with ex ->
-                return Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
-        }
-
-    let private Undelete =
-        CommandHandler.Create(fun (parseResult: ParseResult) (undeleteParameters: UndeleteParameters) ->
+        override this.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
-                let! result = undeleteHandler parseResult (undeleteParameters |> normalizeIdsAndNames parseResult)
-                return result |> renderOutput parseResult
-            })
+                try
+                    if parseResult |> verbose then printParseResult parseResult
+                    let graceIds = parseResult |> getNormalizedIdsAndNames
+                    let validateIncomingParameters = parseResult |> CommonValidations
+
+                    match validateIncomingParameters with
+                    | Ok _ ->
+                        let parameters =
+                            Parameters.Organization.DeleteOrganizationParameters(
+                                OwnerId = graceIds.OwnerIdString,
+                                OwnerName = graceIds.OwnerName,
+                                OrganizationId = graceIds.OrganizationIdString,
+                                OrganizationName = graceIds.OrganizationName,
+                                CorrelationId = getCorrelationId parseResult
+                            )
+
+                        if parseResult |> hasOutput then
+                            let! result =
+                                progress
+                                    .Columns(progressColumns)
+                                    .StartAsync(fun progressContext ->
+                                        task {
+                                            let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
+
+                                            let! result = Organization.Delete(parameters)
+                                            t0.Increment(100.0)
+                                            return result
+                                        })
+
+                            return result |> renderOutput parseResult
+                        else
+                            let! result = Organization.Delete(parameters)
+                            return result |> renderOutput parseResult
+                    | Error error -> return Error error |> renderOutput parseResult
+
+                with ex ->
+                    return
+                        renderOutput
+                            parseResult
+                            (GraceResult.Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId)))
+            }
 
     let Build =
         let addCommonOptionsWithoutOrganizationName (command: Command) =
@@ -608,7 +565,7 @@ module Organization =
             |> addCommonOptionsWithoutOrganizationName
             |> addOption Options.doNotSwitch
 
-        organizationCreateCommand.Action <- Create
+        organizationCreateCommand.Action <- new Create()
         organizationCommand.Subcommands.Add(organizationCreateCommand)
 
         let getCommand =
@@ -616,7 +573,7 @@ module Organization =
             |> addOption Options.includeDeleted
             |> addCommonOptions
 
-        getCommand.Action <- Get
+        getCommand.Action <- new Get()
         organizationCommand.Subcommands.Add(getCommand)
 
         let setNameCommand =
@@ -624,7 +581,7 @@ module Organization =
             |> addOption Options.newName
             |> addCommonOptions
 
-        setNameCommand.Action <- SetName
+        setNameCommand.Action <- new SetName()
         organizationCommand.Subcommands.Add(setNameCommand)
 
         let setTypeCommand =
@@ -640,7 +597,7 @@ module Organization =
             |> addOption Options.searchVisibility
             |> addCommonOptions
 
-        setSearchVisibilityCommand.Action <- SetSearchVisibility
+        setSearchVisibilityCommand.Action <- new SetSearchVisibility()
         organizationCommand.Subcommands.Add(setSearchVisibilityCommand)
 
         let setDescriptionCommand =
@@ -648,7 +605,7 @@ module Organization =
             |> addOption Options.description
             |> addCommonOptions
 
-        setDescriptionCommand.Action <- SetDescription
+        setDescriptionCommand.Action <- new SetDescription()
         organizationCommand.Subcommands.Add(setDescriptionCommand)
 
         let deleteCommand =
@@ -657,14 +614,14 @@ module Organization =
             |> addOption Options.deleteReason
             |> addCommonOptions
 
-        deleteCommand.Action <- Delete
+        deleteCommand.Action <- new Delete()
         organizationCommand.Subcommands.Add(deleteCommand)
 
         let undeleteCommand =
             new Command("undelete", Description = "Undeletes the organization.")
             |> addCommonOptions
 
-        undeleteCommand.Action <- Undelete
+        undeleteCommand.Action <- new Undelete()
         organizationCommand.Subcommands.Add(undeleteCommand)
 
         organizationCommand

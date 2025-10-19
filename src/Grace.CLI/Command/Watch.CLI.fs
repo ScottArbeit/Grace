@@ -340,251 +340,250 @@ module Watch =
                 do! updateGraceWatchInterprocessFile graceStatusFromDisk
         }
 
-    let watchHandler (parseResult: ParseResult) (cancellationToken: CancellationToken) (parameters: WatchParameters) =
-        task {
-            try
-                // Create the FileSystemWatcher, but don't enable it yet.
-                use rootDirectoryFileSystemWatcher = createFileSystemWatcher (Current().RootDirectory)
+    type Watch() =
+        inherit AsynchronousCommandLineAction()
 
-                use created =
-                    Observable
-                        .FromEventPattern<FileSystemEventArgs>(rootDirectoryFileSystemWatcher, "Created")
-                        .Select(fun e -> e.EventArgs)
-                        .Subscribe(OnCreated)
-
-                use changed =
-                    Observable
-                        .FromEventPattern<FileSystemEventArgs>(rootDirectoryFileSystemWatcher, "Changed")
-                        .Select(fun e -> e.EventArgs)
-                        .Subscribe(OnChanged)
-
-                use deleted =
-                    Observable
-                        .FromEventPattern<FileSystemEventArgs>(rootDirectoryFileSystemWatcher, "Deleted")
-                        .Select(fun e -> e.EventArgs)
-                        .Subscribe(OnDeleted)
-
-                use renamed =
-                    Observable
-                        .FromEventPattern<RenamedEventArgs>(rootDirectoryFileSystemWatcher, "Renamed")
-                        .Select(fun e -> e.EventArgs)
-                        .Subscribe(OnRenamed)
-
-                use errored =
-                    Observable
-                        .FromEventPattern<ErrorEventArgs>(rootDirectoryFileSystemWatcher, "Error")
-                        .Select(fun e -> e.EventArgs)
-                        .Subscribe(OnError) // I want all of the errors.
-
-                Directory.CreateDirectory(Path.GetDirectoryName(updateInProgressFileName))
-                |> ignore
-
-                use updateInProgressFileSystemWatcher = createFileSystemWatcher (Path.GetDirectoryName(updateInProgressFileName))
-
-                use updateInProgressChanged =
-                    Observable
-                        .FromEventPattern<FileSystemEventArgs>(updateInProgressFileSystemWatcher, "Created")
-                        .Select(fun e -> e.EventArgs)
-                        .Subscribe(OnGraceUpdateInProgressCreated)
-
-                use updateInProgressDeleted =
-                    Observable
-                        .FromEventPattern<FileSystemEventArgs>(updateInProgressFileSystemWatcher, "Deleted")
-                        .Select(fun e -> e.EventArgs)
-                        .Subscribe(OnGraceUpdateInProgressDeleted)
-
-                // Load the Grace Index file.
-                let! status = readGraceStatusFile ()
-                graceStatus <- status
-
-                // Create the inter-process communication file.
-                do! updateGraceWatchInterprocessFile graceStatus
-
-                // Enable the FileSystemWatcher.
-                rootDirectoryFileSystemWatcher.EnableRaisingEvents <- true
-                updateInProgressFileSystemWatcher.EnableRaisingEvents <- true
-
-                let timerTimeSpan = TimeSpan.FromSeconds(1.0)
-
-                logToAnsiConsole Colors.Verbose $"The change processor timer will tick every {timerTimeSpan.TotalSeconds:F1} seconds."
-
-                // Open a SignalR connection to the server.
-                let signalRUrl = Uri($"{Current().ServerUri}/notifications")
-                logToConsole $"signalRUrl: {signalRUrl}."
-
-                use signalRConnection =
-                    HubConnectionBuilder()
-                        .WithAutomaticReconnect()
-                        .WithUrl(signalRUrl, HttpTransportType.ServerSentEvents)
-                        .Build()
-
-                use serverToClient =
-                    signalRConnection.On<string>("ServerToClientMessage", (fun message -> logToAnsiConsole Colors.Important $"From Grace Server: {message}"))
-
-                use notifyOnPromotion =
-                    signalRConnection.On<BranchId, BranchName, ReferenceId>(
-                        "NotifyOnPromotion",
-                        fun parentBranchId parentBranchName referenceId ->
-                            (task {
-                                logToAnsiConsole Colors.Highlighted $"Parent branch {parentBranchName} has a new promotion; referenceId: {referenceId}."
-
-                                let! graceStatus = readGraceStatusFile ()
-
-                                let rebaseParameters =
-                                    Branch.RebaseParameters(
-                                        OwnerId = $"{Current().OwnerId}",
-                                        OrganizationId = $"{Current().OrganizationId}",
-                                        RepositoryId = $"{Current().RepositoryId}",
-                                        BranchId = $"{Current().BranchId}",
-                                        BasedOn = referenceId,
-                                        CorrelationId = (parseResult |> getCorrelationId)
-                                    )
-
-                                let! x = Branch.rebaseHandler parseResult rebaseParameters graceStatus
-                                ()
-                            })
-                            :> Task
-                    )
-
-                use notifyOnSave =
-                    signalRConnection.On<BranchName, BranchName, BranchId, ReferenceId>(
-                        "NotifyOnSave",
-                        fun branchName parentBranchName parentBranchId referenceId ->
-                            (task {
-                                logToAnsiConsole
-                                    Colors.Highlighted
-                                    $"Branch {branchName} with parent branch {parentBranchName} has a new save; referenceId: {referenceId}."
-                            })
-                            :> Task
-                    )
-
-                use notifyOnCheckpoint =
-                    signalRConnection.On<BranchName, BranchName, BranchId, ReferenceId>(
-                        "NotifyOnCheckpoint",
-                        fun branchName parentBranchName parentBranchId referenceId ->
-                            (task {
-                                logToAnsiConsole
-                                    Colors.Highlighted
-                                    $"Branch {branchName} with parent branch {parentBranchName} has a new checkpoint; referenceId: {referenceId}."
-                            })
-                            :> Task
-                    )
-
-                use notifyOnCommit =
-                    signalRConnection.On<BranchName, BranchName, BranchId, ReferenceId>(
-                        "NotifyOnCommit",
-                        fun branchName parentBranchName parentBranchId referenceId ->
-                            (task {
-                                logToAnsiConsole
-                                    Colors.Highlighted
-                                    $"Branch {branchName} with parent branch {parentBranchName} has a new commit; referenceId: {referenceId}."
-                            })
-                            :> Task
-                    )
-
-                do! signalRConnection.StartAsync(cancellationToken)
-
-                // Get the parent BranchId so we can tell SignalR what to notify us about.
-                let branchGetParameters =
-                    GetBranchParameters(
-                        OwnerId = $"{Current().OwnerId}",
-                        OrganizationId = $"{Current().OrganizationId}",
-                        RepositoryId = $"{Current().RepositoryId}",
-                        BranchId = $"{Current().BranchId}"
-                    )
-
-                match! Branch.GetParentBranch branchGetParameters with
-                | Ok returnValue ->
-                    let parentBranchDto = returnValue.ReturnValue
-
-                    do! signalRConnection.InvokeAsync("RegisterParentBranch", Current().BranchId, parentBranchDto.BranchId, cancellationToken)
-
-                    logToAnsiConsole
-                        Colors.Highlighted
-                        $"Connected to SignalR Hub. Listening for changes in parent branch {parentBranchDto.BranchName} ({parentBranchDto.BranchId}); connectionId: {signalRConnection.ConnectionId}."
-                | Error error ->
-                    logToAnsiConsole Colors.Error $"Failed to retrieve branch metadata. Cannot connect to SignalR Hub."
-
-                    logToAnsiConsole Colors.Error $"{Markup.Escape(error.ToString())}"
-
-                // Check for changes that occurred while not running.
-                logToAnsiConsole Colors.Verbose $"Scanning for differences."
-                let! differences = scanForDifferences graceStatus // <--- This always finds the directories with updated write times, but we never update GraceStatus below..
-
-                if differences |> Seq.isEmpty then
-                    logToAnsiConsole Colors.Verbose $"Already up-to-date."
-                else
-                    logToAnsiConsole Colors.Verbose $"Found {differences.Count} differences."
-
-                for difference in differences do
-                    match difference.FileSystemEntryType with
-                    | Directory -> directoriesToProcess.TryAdd(difference.RelativePath, ()) |> ignore
-                    | File -> filesToProcess.TryAdd(difference.RelativePath, ()) |> ignore
-
-                // Process any changes that occurred while not running.
-                graceStatus <- GraceStatus.Default
-                do! processChangedFiles ()
-
-                // Create a timer to process the file changes detected by the FileSystemWatcher.
-                // This timer is the reason that there's a delay in stopping `grace watch`.
-                logToAnsiConsole Colors.Verbose $"Starting timer."
-                use periodicTimer = new PeriodicTimer(timerTimeSpan)
-                let! tick = periodicTimer.WaitForNextTickAsync()
-                let mutable previousGC = getCurrentInstant ()
-                let mutable ticked = true
-
-                while ticked && not (cancellationToken.IsCancellationRequested) do
-                    // Grace Status may have changed from branch switch, or other commands.
-                    if graceStatusHasChanged then
-                        let! updatedGraceStatus = readGraceStatusFile ()
-                        graceStatus <- updatedGraceStatus
-                        do! updateGraceWatchInterprocessFile graceStatus
-                        //logToAnsiConsole Colors.Important $"Setting graceStatusHasChanged to false in OnWatch(). Current value: {graceStatusHasChanged}."
-                        graceStatusHasChanged <- false
-
-                    do! processChangedFiles ()
-                    let! tick = periodicTimer.WaitForNextTickAsync()
-                    ticked <- tick
-
-                    // About once a minute, do a full GC to be kind with our memory usage. This is for looks, not for function.
-                    //
-                    //   In .NET, when a computer has lots of available memory, and there's no signal from the OS that there's any memory pressure, GC doesn't happen much, if at all.
-                    //   With no memory pressure, `grace watch` wouldn't bother releasing its unused heap after handling events like saves and auto-rebases.
-                    //   Seeing that kind of memory usage could lead to uninformed people saying things like, "OMG, `grace watch` takes up so much memory!"
-                    //   `grace watch` needs more memory only momentarily to handle events. We deliberately release the memory back to the OS as quickly as possible.
-                    //   That means forcing a full GC.
-                    //
-                    //   Because of DATAS (see https://learn.microsoft.com/en-us/dotnet/standard/garbage-collection/datas), it may take more than one GC.Collect()
-                    //   call to fully compact the heap (and that's OK). If we weren't being so aggressive about memory usage, we would just let DATAS compute
-                    //   a close-to-optimal heap size on its own over time.
-                    if previousGC < getCurrentInstant().Minus(Duration.FromMinutes(1.0)) then
-                        //let memoryBeforeGC = Process.GetCurrentProcess().WorkingSet64
-                        GC.Collect(2, GCCollectionMode.Forced, blocking = true, compacting = true)
-                        //logToAnsiConsole Colors.Verbose $"Memory before GC: {memoryBeforeGC:N0}; after: {Process.GetCurrentProcess().WorkingSet64:N0}."
-                        previousGC <- getCurrentInstant ()
-            with ex ->
-                //let exceptionMarkup = Markup.Escape($"{ExceptionResponse.Create ex}").Replace("\\\\", @"\").Replace("\r\n", Environment.NewLine)
-                //logToAnsiConsole Colors.Error $"{exceptionMarkup}"
-                let exceptionSettings = ExceptionSettings()
-                // Need to fill in some exception styles here.
-                exceptionSettings.Format <- ExceptionFormats.Default
-                AnsiConsole.WriteException(ex, exceptionSettings)
-        }
-        :> Task
-
-    /// This is the main loop for the `grace watch` command.
-    let OnWatch =
-        CommandHandler.Create(fun (parseResult: ParseResult) (cancellationToken: CancellationToken) (parameters: WatchParameters) ->
+        override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) =
             task {
-                let! result = watchHandler parseResult cancellationToken parameters
-                return result
+                try
+                    // Create the FileSystemWatcher, but don't enable it yet.
+                    use rootDirectoryFileSystemWatcher = createFileSystemWatcher (Current().RootDirectory)
+
+                    use created =
+                        Observable
+                            .FromEventPattern<FileSystemEventArgs>(rootDirectoryFileSystemWatcher, "Created")
+                            .Select(fun e -> e.EventArgs)
+                            .Subscribe(OnCreated)
+
+                    use changed =
+                        Observable
+                            .FromEventPattern<FileSystemEventArgs>(rootDirectoryFileSystemWatcher, "Changed")
+                            .Select(fun e -> e.EventArgs)
+                            .Subscribe(OnChanged)
+
+                    use deleted =
+                        Observable
+                            .FromEventPattern<FileSystemEventArgs>(rootDirectoryFileSystemWatcher, "Deleted")
+                            .Select(fun e -> e.EventArgs)
+                            .Subscribe(OnDeleted)
+
+                    use renamed =
+                        Observable
+                            .FromEventPattern<RenamedEventArgs>(rootDirectoryFileSystemWatcher, "Renamed")
+                            .Select(fun e -> e.EventArgs)
+                            .Subscribe(OnRenamed)
+
+                    use errored =
+                        Observable
+                            .FromEventPattern<ErrorEventArgs>(rootDirectoryFileSystemWatcher, "Error")
+                            .Select(fun e -> e.EventArgs)
+                            .Subscribe(OnError) // I want all of the errors.
+
+                    Directory.CreateDirectory(Path.GetDirectoryName(updateInProgressFileName))
+                    |> ignore
+
+                    use updateInProgressFileSystemWatcher = createFileSystemWatcher (Path.GetDirectoryName(updateInProgressFileName))
+
+                    use updateInProgressChanged =
+                        Observable
+                            .FromEventPattern<FileSystemEventArgs>(updateInProgressFileSystemWatcher, "Created")
+                            .Select(fun e -> e.EventArgs)
+                            .Subscribe(OnGraceUpdateInProgressCreated)
+
+                    use updateInProgressDeleted =
+                        Observable
+                            .FromEventPattern<FileSystemEventArgs>(updateInProgressFileSystemWatcher, "Deleted")
+                            .Select(fun e -> e.EventArgs)
+                            .Subscribe(OnGraceUpdateInProgressDeleted)
+
+                    // Load the Grace Index file.
+                    let! status = readGraceStatusFile ()
+                    graceStatus <- status
+
+                    // Create the inter-process communication file.
+                    do! updateGraceWatchInterprocessFile graceStatus
+
+                    // Enable the FileSystemWatcher.
+                    rootDirectoryFileSystemWatcher.EnableRaisingEvents <- true
+                    updateInProgressFileSystemWatcher.EnableRaisingEvents <- true
+
+                    let timerTimeSpan = TimeSpan.FromSeconds(1.0)
+
+                    logToAnsiConsole Colors.Verbose $"The change processor timer will tick every {timerTimeSpan.TotalSeconds:F1} seconds."
+
+                    // Open a SignalR connection to the server.
+                    let signalRUrl = Uri($"{Current().ServerUri}/notifications")
+                    logToConsole $"signalRUrl: {signalRUrl}."
+
+                    use signalRConnection =
+                        HubConnectionBuilder()
+                            .WithAutomaticReconnect()
+                            .WithUrl(signalRUrl, HttpTransportType.ServerSentEvents)
+                            .Build()
+
+                    use serverToClient =
+                        signalRConnection.On<string>(
+                            "ServerToClientMessage",
+                            (fun message -> logToAnsiConsole Colors.Important $"From Grace Server: {message}")
+                        )
+
+                    use notifyOnPromotion =
+                        signalRConnection.On<BranchId, BranchName, ReferenceId>(
+                            "NotifyOnPromotion",
+                            fun parentBranchId parentBranchName referenceId ->
+                                (task {
+                                    logToAnsiConsole Colors.Highlighted $"Parent branch {parentBranchName} has a new promotion; referenceId: {referenceId}."
+
+                                    let! graceStatus = readGraceStatusFile ()
+
+                                    let rebaseParameters =
+                                        RebaseParameters(
+                                            OwnerId = $"{Current().OwnerId}",
+                                            OrganizationId = $"{Current().OrganizationId}",
+                                            RepositoryId = $"{Current().RepositoryId}",
+                                            BranchId = $"{Current().BranchId}",
+                                            BasedOn = referenceId,
+                                            CorrelationId = (parseResult |> getCorrelationId)
+                                        )
+
+                                    let! x = Branch.rebaseHandler parseResult graceStatus
+                                    ()
+                                })
+                                :> Task
+                        )
+
+                    use notifyOnSave =
+                        signalRConnection.On<BranchName, BranchName, BranchId, ReferenceId>(
+                            "NotifyOnSave",
+                            fun branchName parentBranchName parentBranchId referenceId ->
+                                (task {
+                                    logToAnsiConsole
+                                        Colors.Highlighted
+                                        $"Branch {branchName} with parent branch {parentBranchName} has a new save; referenceId: {referenceId}."
+                                })
+                                :> Task
+                        )
+
+                    use notifyOnCheckpoint =
+                        signalRConnection.On<BranchName, BranchName, BranchId, ReferenceId>(
+                            "NotifyOnCheckpoint",
+                            fun branchName parentBranchName parentBranchId referenceId ->
+                                (task {
+                                    logToAnsiConsole
+                                        Colors.Highlighted
+                                        $"Branch {branchName} with parent branch {parentBranchName} has a new checkpoint; referenceId: {referenceId}."
+                                })
+                                :> Task
+                        )
+
+                    use notifyOnCommit =
+                        signalRConnection.On<BranchName, BranchName, BranchId, ReferenceId>(
+                            "NotifyOnCommit",
+                            fun branchName parentBranchName parentBranchId referenceId ->
+                                (task {
+                                    logToAnsiConsole
+                                        Colors.Highlighted
+                                        $"Branch {branchName} with parent branch {parentBranchName} has a new commit; referenceId: {referenceId}."
+                                })
+                                :> Task
+                        )
+
+                    do! signalRConnection.StartAsync(cancellationToken)
+
+                    // Get the parent BranchId so we can tell SignalR what to notify us about.
+                    let branchGetParameters =
+                        GetBranchParameters(
+                            OwnerId = $"{Current().OwnerId}",
+                            OrganizationId = $"{Current().OrganizationId}",
+                            RepositoryId = $"{Current().RepositoryId}",
+                            BranchId = $"{Current().BranchId}"
+                        )
+
+                    match! Branch.GetParentBranch branchGetParameters with
+                    | Ok returnValue ->
+                        let parentBranchDto = returnValue.ReturnValue
+
+                        do! signalRConnection.InvokeAsync("RegisterParentBranch", Current().BranchId, parentBranchDto.BranchId, cancellationToken)
+
+                        logToAnsiConsole
+                            Colors.Highlighted
+                            $"Connected to SignalR Hub. Listening for changes in parent branch {parentBranchDto.BranchName} ({parentBranchDto.BranchId}); connectionId: {signalRConnection.ConnectionId}."
+                    | Error error ->
+                        logToAnsiConsole Colors.Error $"Failed to retrieve branch metadata. Cannot connect to SignalR Hub."
+
+                        logToAnsiConsole Colors.Error $"{Markup.Escape(error.ToString())}"
+
+                    // Check for changes that occurred while not running.
+                    logToAnsiConsole Colors.Verbose $"Scanning for differences."
+                    let! differences = scanForDifferences graceStatus // <--- This always finds the directories with updated write times, but we never update GraceStatus below..
+
+                    if differences |> Seq.isEmpty then
+                        logToAnsiConsole Colors.Verbose $"Already up-to-date."
+                    else
+                        logToAnsiConsole Colors.Verbose $"Found {differences.Count} differences."
+
+                    for difference in differences do
+                        match difference.FileSystemEntryType with
+                        | Directory -> directoriesToProcess.TryAdd(difference.RelativePath, ()) |> ignore
+                        | File -> filesToProcess.TryAdd(difference.RelativePath, ()) |> ignore
+
+                    // Process any changes that occurred while not running.
+                    graceStatus <- GraceStatus.Default
+                    do! processChangedFiles ()
+
+                    // Create a timer to process the file changes detected by the FileSystemWatcher.
+                    // This timer is the reason that there's a delay in stopping `grace watch`.
+                    logToAnsiConsole Colors.Verbose $"Starting timer."
+                    use periodicTimer = new PeriodicTimer(timerTimeSpan)
+                    let! tick = periodicTimer.WaitForNextTickAsync()
+                    let mutable previousGC = getCurrentInstant ()
+                    let mutable ticked = true
+
+                    while ticked && not (cancellationToken.IsCancellationRequested) do
+                        // Grace Status may have changed from branch switch, or other commands.
+                        if graceStatusHasChanged then
+                            let! updatedGraceStatus = readGraceStatusFile ()
+                            graceStatus <- updatedGraceStatus
+                            do! updateGraceWatchInterprocessFile graceStatus
+                            //logToAnsiConsole Colors.Important $"Setting graceStatusHasChanged to false in OnWatch(). Current value: {graceStatusHasChanged}."
+                            graceStatusHasChanged <- false
+
+                        do! processChangedFiles ()
+                        let! tick = periodicTimer.WaitForNextTickAsync()
+                        ticked <- tick
+
+                        // About once a minute, do a full GC to be kind with our memory usage. This is for looks, not for function.
+                        //
+                        //   In .NET, when a computer has lots of available memory, and there's no signal from the OS that there's any memory pressure, GC doesn't happen much, if at all.
+                        //   With no memory pressure, `grace watch` wouldn't bother releasing its unused heap after handling events like saves and auto-rebases.
+                        //   Seeing that kind of memory usage could lead to uninformed people saying things like, "OMG, `grace watch` takes up so much memory!"
+                        //   `grace watch` needs more memory only momentarily to handle events. We deliberately release the memory back to the OS as quickly as possible.
+                        //   That means forcing a full GC.
+                        //
+                        //   Because of DATAS (see https://learn.microsoft.com/en-us/dotnet/standard/garbage-collection/datas), it may take more than one GC.Collect()
+                        //   call to fully compact the heap (and that's OK). If we weren't being so aggressive about memory usage, we would just let DATAS compute
+                        //   a close-to-optimal heap size on its own over time.
+                        if previousGC < getCurrentInstant().Minus(Duration.FromMinutes(1.0)) then
+                            //let memoryBeforeGC = Process.GetCurrentProcess().WorkingSet64
+                            GC.Collect(2, GCCollectionMode.Forced, blocking = true, compacting = true)
+                            //logToAnsiConsole Colors.Verbose $"Memory before GC: {memoryBeforeGC:N0}; after: {Process.GetCurrentProcess().WorkingSet64:N0}."
+                            previousGC <- getCurrentInstant ()
+
+                    return 0
+                with ex ->
+                    //let exceptionMarkup = Markup.Escape($"{ExceptionResponse.Create ex}").Replace("\\\\", @"\").Replace("\r\n", Environment.NewLine)
+                    //logToAnsiConsole Colors.Error $"{exceptionMarkup}"
+                    let exceptionSettings = ExceptionSettings()
+                    // Need to fill in some exception styles here.
+                    exceptionSettings.Format <- ExceptionFormats.Default
+                    AnsiConsole.WriteException(ex, exceptionSettings)
+                    return -1
             }
-            :> Task)
 
     let Build =
         // Create main command and aliases, if any.
         let watchCommand = new Command("watch", Description = "Watches your repo for changes, and uploads new versions of your files.")
 
         watchCommand.Aliases.Add("w")
-        watchCommand.Action <- OnWatch
+        watchCommand.Action <- Watch()
         watchCommand

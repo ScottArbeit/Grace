@@ -83,7 +83,7 @@ module Common =
     /// <returns>A Task containing the result of the POST command.</returns>
     /// <typeparam name="'T">The type of the parameters to use when sending the POST command.</typeparam>
     /// <typeparam name="'U">The type of the result of the command.</typeparam>
-    let postServer<'T, 'U when 'T :> CommonParameters> (parameters: 'T, route: string) =
+    let postServer<'T, 'U when 'T :> CommonParameters> (parameters: 'T, route: string) : (Task<GraceResult<'U>>) =
         task {
             try
                 //checkMemoryCache ()

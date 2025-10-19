@@ -2,6 +2,7 @@ namespace Grace.CLI.Command
 
 open FSharpPlus
 open Grace.CLI.Common
+open Grace.CLI.Common.Validations
 open Grace.CLI.Services
 open Grace.CLI.Text
 open Grace.SDK
@@ -39,16 +40,6 @@ open Grace.Shared.Parameters.Storage
 
 module DirectoryVersion =
     open Grace.Shared.Validation.Common.Input
-
-    type CommonParameters() =
-        inherit ParameterBase()
-        member val public OwnerId: string = String.Empty with get, set
-        member val public OwnerName: string = String.Empty with get, set
-        member val public OrganizationId: string = String.Empty with get, set
-        member val public OrganizationName: string = String.Empty with get, set
-        member val public RepositoryId: string = String.Empty with get, set
-        member val public RepositoryName: string = String.Empty with get, set
-        member val public DirectoryVersionId: string = String.Empty with get, set
 
     module private Options =
         let ownerId =
@@ -134,206 +125,86 @@ module DirectoryVersion =
                 Arity = ArgumentArity.ExactlyOne
             )
 
-    let mustBeAValidGuid (parseResult: ParseResult) (parameters: CommonParameters) (option: Option) (value: string) (error: DirectoryVersionError) =
-        let mutable guid = Guid.Empty
-
-        if
-            parseResult.GetResult(option) <> null
-            && not <| String.IsNullOrEmpty(value)
-            && (Guid.TryParse(value, &guid) = false || guid = Guid.Empty)
-        then
-            Error(GraceError.Create (DirectoryVersionError.getErrorMessage error) (parameters.CorrelationId))
-        else
-            Ok(parseResult, parameters)
-
-    let mustBeAValidGraceName (parseResult: ParseResult) (parameters: CommonParameters) (option: Option) (value: string) (error: DirectoryVersionError) =
-        if
-            parseResult.GetResult(option) <> null
-            && not <| Constants.GraceNameRegex.IsMatch(value)
-        then
-            Error(GraceError.Create (DirectoryVersionError.getErrorMessage error) (parameters.CorrelationId))
-        else
-            Ok(parseResult, parameters)
-
-    let oneOfTheseOptionsMustBeProvided (parseResult: ParseResult) (parameters: CommonParameters) (options: Option array) (error: DirectoryVersionError) =
-        match options |> Array.tryFind (fun opt -> not <| isNull (parseResult.GetResult(opt))) with
-        | Some opt -> Ok(parseResult, parameters)
-        | None -> Error(GraceError.Create (DirectoryVersionError.getErrorMessage error) (parameters.CorrelationId))
-
-    let private parseResult |> CommonValidations commonParameters =
-        let ``OwnerId must be a Guid`` (parseResult: ParseResult, commonParameters: CommonParameters) =
-            mustBeAValidGuid parseResult commonParameters Options.ownerId commonParameters.OwnerId DirectoryVersionError.InvalidOwnerId
-
-        let ``OwnerName must be a valid Grace name`` (parseResult: ParseResult, commonParameters: CommonParameters) =
-            mustBeAValidGraceName parseResult commonParameters Options.ownerName commonParameters.OwnerName DirectoryVersionError.InvalidOwnerName
-
-        let ``OrganizationId must be a Guid`` (parseResult: ParseResult, commonParameters: CommonParameters) =
-            mustBeAValidGuid parseResult commonParameters Options.organizationId commonParameters.OrganizationId DirectoryVersionError.InvalidOrganizationId
-
-        let ``OrganizationName must be a valid Grace name`` (parseResult: ParseResult, commonParameters: CommonParameters) =
-            mustBeAValidGraceName
-                parseResult
-                commonParameters
-                Options.organizationName
-                commonParameters.OrganizationName
-                DirectoryVersionError.InvalidOrganizationName
-
-        let ``RepositoryId must be a Guid`` (parseResult: ParseResult, commonParameters: CommonParameters) =
-            mustBeAValidGuid parseResult commonParameters Options.repositoryId commonParameters.RepositoryId DirectoryVersionError.InvalidRepositoryId
-
-        let ``RepositoryName must be a valid Grace name`` (parseResult: ParseResult, commonParameters: CommonParameters) =
-            mustBeAValidGraceName
-                parseResult
-                commonParameters
-                Options.repositoryName
-                commonParameters.RepositoryName
-                DirectoryVersionError.InvalidRepositoryName
-
-        let ``DirectoryVersionId must be a Guid`` (parseResult: ParseResult, commonParameters: CommonParameters) =
-            mustBeAValidGuid
-                parseResult
-                commonParameters
-                Options.directoryVersionIdRequired
-                commonParameters.DirectoryVersionId
-                DirectoryVersionError.InvalidDirectoryVersionId
-
-        let ``Grace index file must exist`` (parseResult: ParseResult, commonParameters: CommonParameters) =
+    let private DirectoryVersionValidations parseResult =
+        let ``Grace index file must exist`` (parseResult: ParseResult) =
             if not <| File.Exists(Current().GraceStatusFile) then
-                Error(GraceError.Create (getErrorMessage DirectoryVersionError.IndexFileNotFound) commonParameters.CorrelationId)
+                Error(GraceError.Create (getErrorMessage DirectoryVersionError.IndexFileNotFound) (getCorrelationId parseResult))
             else
-                Ok(parseResult, commonParameters)
+                Ok parseResult
 
-        let ``Grace object cache file must exist`` (parseResult: ParseResult, commonParameters: CommonParameters) =
+        let ``Grace object cache file must exist`` (parseResult: ParseResult) =
             if not <| File.Exists(Current().GraceStatusFile) then
-                Error(GraceError.Create (getErrorMessage DirectoryVersionError.ObjectCacheFileNotFound) commonParameters.CorrelationId)
+                Error(GraceError.Create (getErrorMessage DirectoryVersionError.ObjectCacheFileNotFound) (getCorrelationId parseResult))
             else
-                Ok(parseResult, commonParameters)
+                Ok parseResult
 
-        (parseResult, commonParameters)
-        |> ``OwnerId must be a Guid``
-        >>= ``OwnerName must be a valid Grace name``
-        >>= ``OrganizationId must be a Guid``
-        >>= ``OrganizationName must be a valid Grace name``
-        >>= ``RepositoryId must be a Guid``
-        >>= ``RepositoryName must be a valid Grace name``
-        >>= ``Grace index file must exist``
+        parseResult
+        |> ``Grace index file must exist``
         >>= ``Grace object cache file must exist``
 
-    /// Adjusts parameters to account for whether Id's or Name's were specified by the user, or should be taken from default values.
-    let normalizeIdsAndNames<'T when 'T :> CommonParameters> (parseResult: ParseResult) (parameters: 'T) =
-        // If the name was specified on the command line, but the id wasn't, then we should only send the name, and we set the id to String.Empty.
-        if
-            parseResult.GetResult(Options.ownerId).Implicit
-            && not <| isNull (parseResult.GetResult(Options.ownerName))
-            && not <| parseResult.GetResult(Options.ownerName).Implicit
-        then
-            parameters.OwnerId <- String.Empty
+    type GetZipFile() =
+        inherit AsynchronousCommandLineAction()
 
-        if
-            parseResult.GetResult(Options.organizationId).Implicit
-            && not <| isNull (parseResult.GetResult(Options.organizationName))
-            && not <| parseResult.GetResult(Options.organizationName).Implicit
-        then
-            parameters.OrganizationId <- String.Empty
-
-        if
-            parseResult.GetResult(Options.repositoryId).Implicit
-            && not <| isNull (parseResult.GetResult(Options.repositoryName))
-            && not <| parseResult.GetResult(Options.repositoryName).Implicit
-        then
-            parameters.RepositoryId <- String.Empty
-
-        parameters
-
-    /// Populates OwnerId, OrganizationId, RepositoryId, and BranchId based on the command parameters and the contents of graceconfig.json.
-    let getIds<'T when 'T :> CommonParameters> (parameters: 'T) =
-        let ownerId =
-            if
-                not <| String.IsNullOrEmpty(parameters.OwnerId)
-                || not <| String.IsNullOrEmpty(parameters.OwnerName)
-            then
-                parameters.OwnerId
-            else
-                $"{Current().OwnerId}"
-
-        let organizationId =
-            if
-                not <| String.IsNullOrEmpty(parameters.OrganizationId)
-                || not <| String.IsNullOrEmpty(parameters.OrganizationName)
-            then
-                parameters.OrganizationId
-            else
-                $"{Current().OrganizationId}"
-
-        let repositoryId =
-            if
-                not <| String.IsNullOrEmpty(parameters.RepositoryId)
-                || not <| String.IsNullOrEmpty(parameters.RepositoryName)
-            then
-                parameters.RepositoryId
-            else
-                $"{Current().RepositoryId}"
-
-        (ownerId, organizationId, repositoryId)
-
-    type GetZipFileParameters() =
-        inherit CommonParameters()
-        member val public Sha256Hash: Sha256Hash = String.Empty with get, set
-
-    let getZipFileHandler (parseResult: ParseResult) (getZipFileParameters: GetZipFileParameters) =
-        task {
-            try
-                if parseResult |> verbose then printParseResult parseResult
-
-                let validateIncomingParameters = parseResult |> CommonValidations
-
-                match validateIncomingParameters with
-                | Ok _ ->
-                    let normalizedParameters = getZipFileParameters |> normalizeIdsAndNames parseResult
-
-                    let sdkParameters =
-                        Parameters.DirectoryVersion.GetZipFileParameters(
-                            OwnerId = normalizedParameters.OwnerId,
-                            OwnerName = normalizedParameters.OwnerName,
-                            OrganizationId = normalizedParameters.OrganizationId,
-                            OrganizationName = normalizedParameters.OrganizationName,
-                            RepositoryId = normalizedParameters.RepositoryId,
-                            RepositoryName = normalizedParameters.RepositoryName,
-                            DirectoryVersionId = normalizedParameters.DirectoryVersionId,
-                            Sha256Hash = normalizedParameters.Sha256Hash,
-                            CorrelationId = normalizedParameters.CorrelationId
-                        )
-
-                    if parseResult |> hasOutput then
-                        return!
-                            progress
-                                .Columns(progressColumns)
-                                .StartAsync(fun progressContext ->
-                                    task {
-                                        let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
-
-                                        let! result = DirectoryVersion.GetZipFile(sdkParameters)
-                                        t0.Increment(100.0)
-                                        return result
-                                    })
-                    else
-                        return! DirectoryVersion.GetZipFile(sdkParameters)
-                | Error error -> return Error error
-            with ex ->
-                return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
-        }
-
-    let private GetZipFile =
-        CommandHandler.Create(fun (parseResult: ParseResult) (getZipFileParameters: GetZipFileParameters) ->
+        override _.InvokeAsync(parseResult: ParseResult, cancellationToken: Threading.CancellationToken) : Task<int> =
             task {
-                let! result = getZipFileHandler parseResult getZipFileParameters
+                try
+                    if parseResult |> verbose then printParseResult parseResult
 
-                match result with
-                | Ok returnValue -> AnsiConsole.MarkupLine $"[{Colors.Highlighted}]{returnValue.ReturnValue}[/]"
-                | Error error -> logToAnsiConsole Colors.Error $"{error}"
+                    let validateIncomingParameters = parseResult |> CommonValidations >>= DirectoryVersionValidations
 
-                return result |> renderOutput parseResult
-            })
+                    match validateIncomingParameters with
+                    | Ok _ ->
+                        let graceIds = getNormalizedIdsAndNames parseResult
+                        let directoryVersionId = parseResult.GetValue(Options.directoryVersionIdRequired)
+                        let sha256Hash = parseResult.GetValue(Options.sha256Hash)
+
+                        let sdkParameters =
+                            Parameters.DirectoryVersion.GetZipFileParameters(
+                                OwnerId = graceIds.OwnerIdString,
+                                OwnerName = graceIds.OwnerName,
+                                OrganizationId = graceIds.OrganizationIdString,
+                                OrganizationName = graceIds.OrganizationName,
+                                RepositoryId = graceIds.RepositoryIdString,
+                                RepositoryName = graceIds.RepositoryName,
+                                DirectoryVersionId = directoryVersionId,
+                                Sha256Hash = sha256Hash,
+                                CorrelationId = graceIds.CorrelationId
+                            )
+
+                        if parseResult |> hasOutput then
+                            let! result =
+                                progress
+                                    .Columns(progressColumns)
+                                    .StartAsync(fun progressContext ->
+                                        task {
+                                            let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
+
+                                            let! result = DirectoryVersion.GetZipFile(sdkParameters)
+                                            t0.Increment(100.0)
+
+                                            match result with
+                                            | Ok returnValue -> AnsiConsole.MarkupLine $"[{Colors.Highlighted}]{returnValue.ReturnValue}[/]"
+                                            | Error error -> logToAnsiConsole Colors.Error $"{error}"
+
+                                            return result
+                                        })
+
+                            return result |> renderOutput parseResult
+                        else
+                            let! result = DirectoryVersion.GetZipFile(sdkParameters)
+                            return result |> renderOutput parseResult
+                    | Error error -> return Error error |> renderOutput parseResult
+                with ex ->
+                    return
+                        Error(GraceError.Create $"{ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
+                        |> renderOutput parseResult
+
+            //match result with
+            //| Ok returnValue -> AnsiConsole.MarkupLine $"[{Colors.Highlighted}]{returnValue.ReturnValue}[/]"
+            //| Error error -> logToAnsiConsole Colors.Error $"{error}"
+
+            //return result |> renderOutput parseResult
+            }
 
     let Build =
         let addCommonOptions (command: Command) =
@@ -357,7 +228,7 @@ module DirectoryVersion =
             |> addOption Options.sha256Hash
             |> addCommonOptions
 
-        getZipFileCommand.Action <- GetZipFile
+        getZipFileCommand.Action <- GetZipFile()
         directoryVersionCommand.Subcommands.Add(getZipFileCommand)
 
         directoryVersionCommand

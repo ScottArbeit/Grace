@@ -765,12 +765,16 @@ module Types =
     type GraceIds =
         { OwnerId: OwnerId
           OwnerIdString: string
+          OwnerName: OwnerName
           OrganizationId: OrganizationId
           OrganizationIdString: string
+          OrganizationName: OrganizationName
           RepositoryId: RepositoryId
           RepositoryIdString: string
+          RepositoryName: RepositoryName
           BranchId: BranchId
           BranchIdString: string
+          BranchName: BranchName
           CorrelationId: string
           HasOwner: bool
           HasOrganization: bool
@@ -780,12 +784,16 @@ module Types =
         static member Default =
             { OwnerId = OwnerId.Empty
               OwnerIdString = String.Empty
+              OwnerName = OwnerName.Empty
               OrganizationId = OrganizationId.Empty
               OrganizationIdString = String.Empty
+              OrganizationName = OrganizationName.Empty
               RepositoryId = RepositoryId.Empty
               RepositoryIdString = String.Empty
+              RepositoryName = RepositoryName.Empty
               BranchId = BranchId.Empty
               BranchIdString = String.Empty
+              BranchName = BranchName.Empty
               CorrelationId = String.Empty
               HasOwner = false
               HasOrganization = false

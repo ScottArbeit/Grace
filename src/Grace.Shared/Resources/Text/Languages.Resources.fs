@@ -145,6 +145,7 @@ module Text =
         | Sha256HashIsRequired
         | StringIsTooLong
         | TagIsDisabled
+        | TestFailed
         | UnknownObjectStorageProvider
         | UpdatingWorkingDirectory
         | UploadingFiles

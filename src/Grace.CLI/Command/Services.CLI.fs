@@ -2,6 +2,7 @@ namespace Grace.CLI
 
 open Microsoft.Extensions
 open FSharp.Collections
+open Grace.CLI.Text
 open Grace.SDK
 open Grace.Shared.Client.Configuration
 open Grace.Shared
@@ -1625,3 +1626,82 @@ module Services =
 
             return newFileVersions
         }
+
+    /// Checks if an option was present in the definition of the command.
+    let isOptionPresent (parseResult: ParseResult) (optionName: string) = not <| isNull (parseResult.GetResult(optionName))
+
+    /// Checks if an option was implicitly specified (i.e. the default value was used), or explicitly specified by the user.
+    let isOptionResultImplicit (parseResult: ParseResult) (optionName: string) =
+        let option = parseResult.GetResult(optionName) :?> OptionResult
+        not option.Implicit || not (isNull (parseResult.GetResult(option.Option)))
+
+    /// Adjusts command-line options to account for whether Id's or Name's were explicitly specified by the user, or should be taken from default values.
+    let getNormalizedIdsAndNames (parseResult: ParseResult) =
+        let getNormalizedId idOption (nameOption: string) =
+            if
+                isOptionResultImplicit parseResult idOption
+                && not <| isNull (parseResult.GetResult(nameOption))
+                && not <| isOptionResultImplicit parseResult nameOption
+            then
+                Guid.Empty
+            else
+                parseResult.GetValue<Guid>(idOption)
+
+        // If the name was specified on the command line, but the id wasn't (i.e. the default value was specified, and Implicit = true),
+        //   then we should only send the name, and we set the id to Guid.Empty.
+
+        let mutable graceIds = GraceIds.Default
+
+        if
+            isOptionPresent parseResult OptionName.OwnerId
+            || isOptionPresent parseResult OptionName.OwnerName
+        then
+            let ownerId = getNormalizedId OptionName.OwnerId OptionName.OwnerName
+
+            graceIds <-
+                { graceIds with
+                    OwnerId = ownerId
+                    OwnerIdString = if ownerId = Guid.Empty then "" else $"{ownerId}"
+                    OwnerName = parseResult.GetValue<string>(OptionName.OwnerName)
+                    HasOwner = true }
+
+        if
+            isOptionPresent parseResult OptionName.OrganizationId
+            || isOptionPresent parseResult OptionName.OrganizationName
+        then
+            let organizationId = getNormalizedId OptionName.OrganizationId OptionName.OrganizationName
+
+            graceIds <-
+                { graceIds with
+                    OrganizationId = organizationId
+                    OrganizationIdString = if organizationId = Guid.Empty then "" else $"{organizationId}"
+                    OrganizationName = parseResult.GetValue<string>(OptionName.OrganizationName)
+                    HasOrganization = true }
+
+        if
+            isOptionPresent parseResult OptionName.RepositoryId
+            || isOptionPresent parseResult OptionName.RepositoryName
+        then
+            let repositoryId = getNormalizedId OptionName.RepositoryId OptionName.RepositoryName
+
+            graceIds <-
+                { graceIds with
+                    RepositoryId = repositoryId
+                    RepositoryIdString = if repositoryId = Guid.Empty then "" else $"{repositoryId}"
+                    RepositoryName = parseResult.GetValue<string>(OptionName.RepositoryName)
+                    HasRepository = true }
+
+        if
+            isOptionPresent parseResult OptionName.BranchId
+            || isOptionPresent parseResult OptionName.BranchName
+        then
+            let branchId = getNormalizedId OptionName.BranchId OptionName.BranchName
+
+            graceIds <-
+                { graceIds with
+                    BranchId = branchId
+                    BranchIdString = if branchId = Guid.Empty then "" else $"{branchId}"
+                    BranchName = parseResult.GetValue<string>(OptionName.BranchName)
+                    HasBranch = true }
+
+        graceIds

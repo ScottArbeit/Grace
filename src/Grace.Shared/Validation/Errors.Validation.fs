@@ -593,6 +593,20 @@ module Errors =
             | Some error -> StorageError.getErrorMessage error
             | None -> String.Empty
 
+    type TestError =
+        | TestFailed
+
+        interface IErrorDiscriminatedUnion
+
+        static member getErrorMessage(testError: TestError) : string =
+            match testError with
+            | TestFailed -> getLocalizedString StringResourceName.TestFailed
+
+        static member getErrorMessage(testError: TestError option) : string =
+            match testError with
+            | Some error -> TestError.getErrorMessage error
+            | None -> String.Empty
+
     /// Given an error object, returns the corresponding error message string.
     let getErrorMessage<'T when 'T :> IErrorDiscriminatedUnion> (error: 'T) : string =
         match box error with
@@ -605,6 +619,7 @@ module Errors =
         | :? ReferenceError as referenceError -> ReferenceError.getErrorMessage referenceError
         | :? RepositoryError as repositoryError -> RepositoryError.getErrorMessage repositoryError
         | :? StorageError as storageError -> StorageError.getErrorMessage storageError
+        | :? TestError as testError -> TestError.getErrorMessage testError
         | _ -> String.Empty
 
     /// Given an optional error object, returns the corresponding error message string, or an empty string if None.
