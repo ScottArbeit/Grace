@@ -204,7 +204,7 @@ module MemoryCache =
 
         /// Create a new entry in MemoryCache to store the current thread count information.
         member this.CreateThreadCountEntry(threadInfo: string) =
-            use newCacheEntry = this.CreateEntry("ThreadCounts", Value = threadInfo, AbsoluteExpiration = DateTimeOffset.UtcNow.AddSeconds 15)
+            use newCacheEntry = this.CreateEntry("ThreadCounts", Value = threadInfo, AbsoluteExpiration = DateTimeOffset.UtcNow.AddSeconds 6)
             ()
 
         /// Check if we have an entry in MemoryCache for the current ThreadCount.
@@ -213,15 +213,11 @@ module MemoryCache =
         /// Create a new entry in MemoryCache to store context information for an Orleans grain.
         member this.CreateOrleansContextEntry(grainId: GrainId, orleansContext: Dictionary<string, obj>) =
             use newCacheEntry =
-                this.CreateEntry(
-                    $"{orleansContextPrefix}:{grainId}",
-                    Value = (orleansContext :> IReadOnlyDictionary<string, obj>),
-                    AbsoluteExpiration = DateTimeOffset.UtcNow.AddSeconds 15
-                )
+                this.CreateEntry($"{orleansContextPrefix}:{grainId}", Value = orleansContext, AbsoluteExpiration = DateTimeOffset.UtcNow.AddSeconds 60)
 
             ()
 
         /// Check if we have an entry in MemoryCache for the Orleans context, and return the value if we have it.
         member this.GetOrleansContextEntry(grainId: GrainId) =
-            this.GetFromCache<IReadOnlyDictionary<string, obj>> $"{orleansContextPrefix}:{grainId}"
-            |> Option.bind (fun orleansContext -> Some orleansContext)
+            this.GetFromCache<Dictionary<string, obj>> $"{orleansContextPrefix}:{grainId}"
+            |> Option.bind (fun orleansContext -> Some(orleansContext :> IReadOnlyDictionary<string, obj>))

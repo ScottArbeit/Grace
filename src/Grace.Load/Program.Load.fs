@@ -30,7 +30,7 @@ module Load =
             else
                 AnsiConsole.MarkupLine($"[Red]Error: {Markup.Escape(error.Error)}[/]")
 
-    let parallelOptions = ParallelOptions(MaxDegreeOfParallelism = Environment.ProcessorCount * 8)
+    let parallelOptions = ParallelOptions(MaxDegreeOfParallelism = Environment.ProcessorCount * 4)
 
     [<EntryPoint>]
     let main args =
@@ -131,7 +131,7 @@ module Load =
                                                 OwnerId = $"{ownerId}",
                                                 OrganizationId = $"{organizationId}",
                                                 RepositoryId = $"{repositoryId}",
-                                                LogicalDeleteDays = single (TimeSpan.FromSeconds(45.0).TotalDays),
+                                                LogicalDeleteDays = single (TimeSpan.FromSeconds(90.0).TotalDays),
                                                 CorrelationId = generateCorrelationId ()
                                             )
                                         )

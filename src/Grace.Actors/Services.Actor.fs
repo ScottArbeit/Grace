@@ -861,10 +861,15 @@ module Services =
 
                                 organizations.Add(organizationDto))
 
-                        Activity.Current
-                            .SetTag("indexMetrics", $"{indexMetrics.Remove(indexMetrics.Length - 2, 2)}")
-                            .SetTag("requestCharge", $"{requestCharge.Remove(requestCharge.Length - 2, 2)}")
-                        |> ignore
+                        if
+                            (indexMetrics.Length >= 2)
+                            && (requestCharge.Length >= 2)
+                            && Activity.Current <> null
+                        then
+                            Activity.Current
+                                .SetTag("indexMetrics", $"{indexMetrics.Remove(indexMetrics.Length - 2, 2)}")
+                                .SetTag("requestCharge", $"{requestCharge.Remove(requestCharge.Length - 2, 2)}")
+                            |> ignore
                     with ex ->
                         logToConsole $"Got an exception."
                         logToConsole $"{ExceptionResponse.Create ex}"
@@ -1048,10 +1053,15 @@ module Services =
 
                                 repositories.Add(repositoryDto))
 
-                        Activity.Current
-                            .SetTag("indexMetrics", $"{indexMetrics.Remove(indexMetrics.Length - 2, 2)}")
-                            .SetTag("requestCharge", $"{requestCharge.Remove(requestCharge.Length - 2, 2)}")
-                        |> ignore
+                        if
+                            (indexMetrics.Length >= 2)
+                            && (requestCharge.Length >= 2)
+                            && Activity.Current <> null
+                        then
+                            Activity.Current
+                                .SetTag("indexMetrics", $"{indexMetrics.Remove(indexMetrics.Length - 2, 2)}")
+                                .SetTag("requestCharge", $"{requestCharge.Remove(requestCharge.Length - 2, 2)}")
+                            |> ignore
                     with ex ->
                         logToConsole $"Got an exception."
                         logToConsole $"{ExceptionResponse.Create ex}"
@@ -1116,7 +1126,11 @@ module Services =
 
                                 branches.Add(branchDto))
 
-                        if indexMetrics.Length >= 2 && requestCharge.Length >= 2 then
+                        if
+                            indexMetrics.Length >= 2
+                            && requestCharge.Length >= 2
+                            && Activity.Current <> null
+                        then
                             Activity.Current
                                 .SetTag("indexMetrics", $"{indexMetrics.Remove(indexMetrics.Length - 2, 2)}")
                                 .SetTag("requestCharge", $"{requestCharge.Remove(requestCharge.Length - 2, 2)}")
@@ -1180,10 +1194,15 @@ module Services =
 
                             references.Add(referenceDto))
 
-                    Activity.Current
-                        .SetTag("indexMetrics", $"{indexMetrics.Remove(indexMetrics.Length - 2, 2)}")
-                        .SetTag("requestCharge", $"{requestCharge.Remove(requestCharge.Length - 2, 2)}")
-                    |> ignore
+                    if
+                        (indexMetrics.Length >= 2)
+                        && (requestCharge.Length >= 2)
+                        && Activity.Current <> null
+                    then
+                        Activity.Current
+                            .SetTag("indexMetrics", $"{indexMetrics.Remove(indexMetrics.Length - 2, 2)}")
+                            .SetTag("requestCharge", $"{requestCharge.Remove(requestCharge.Length - 2, 2)}")
+                        |> ignore
                 finally
                     stringBuilderPool.Return(indexMetrics)
                     stringBuilderPool.Return(requestCharge)
@@ -1246,11 +1265,15 @@ module Services =
 
                             references.Add(referenceDto))
 
-                //if indexMetrics.Length >= 2 && requestCharge.Length >= 2 then
-                //    Activity.Current
-                //        .SetTag("indexMetrics", $"{indexMetrics.Remove(indexMetrics.Length - 2, 2)}")
-                //        .SetTag("requestCharge", $"{requestCharge.Remove(requestCharge.Length - 2, 2)}")
-                //    |> ignore
+                    if
+                        indexMetrics.Length >= 2
+                        && requestCharge.Length >= 2
+                        && Activity.Current <> null
+                    then
+                        Activity.Current
+                            .SetTag("indexMetrics", $"{indexMetrics.Remove(indexMetrics.Length - 2, 2)}")
+                            .SetTag("requestCharge", $"{requestCharge.Remove(requestCharge.Length - 2, 2)}")
+                        |> ignore
                 finally
                     stringBuilderPool.Return(indexMetrics)
                     stringBuilderPool.Return(requestCharge)
@@ -1424,7 +1447,11 @@ module Services =
 
                             references.Add(referenceDto))
 
-                    if indexMetrics.Length >= 2 && requestCharge.Length >= 2 then
+                    if
+                        indexMetrics.Length >= 2
+                        && requestCharge.Length >= 2
+                        && Activity.Current <> null
+                    then
                         Activity.Current
                             .SetTag("indexMetrics", $"{indexMetrics.Remove(indexMetrics.Length - 2, 2)}")
                             .SetTag("requestCharge", $"{requestCharge.Remove(requestCharge.Length - 2, 2)}")
@@ -1489,7 +1516,11 @@ module Services =
 
                             references.Add(referenceDto))
 
-                    if (indexMetrics.Length >= 2) && (requestCharge.Length >= 2) then
+                    if
+                        (indexMetrics.Length >= 2)
+                        && (requestCharge.Length >= 2)
+                        && Activity.Current <> null
+                    then
                         Activity.Current
                             .SetTag("indexMetrics", $"{indexMetrics.Remove(indexMetrics.Length - 2, 2)}")
                             .SetTag("requestCharge", $"{requestCharge.Remove(requestCharge.Length - 2, 2)}")
@@ -1568,13 +1599,15 @@ module Services =
                                 ))
                         )
 
-                //Activity.Current
-                //    .SetTag("indexMetrics", $"{indexMetrics.Remove(indexMetrics.Length - 2, 2)}")
-                //    .SetTag("requestCharge", $"{requestCharge.Remove(requestCharge.Length - 2, 2)}")
-                //Activity.Current
-                //    .SetTag("indexMetrics", $"{indexMetrics}")
-                //    .SetTag("requestCharge", $"{requestCharge}")
-                //|> ignore
+                    if
+                        (indexMetrics.Length >= 2)
+                        && (requestCharge.Length >= 2)
+                        && Activity.Current <> null
+                    then
+                        Activity.Current
+                            .SetTag("indexMetrics", $"{indexMetrics.Remove(indexMetrics.Length - 2, 2)}")
+                            .SetTag("requestCharge", $"{requestCharge.Remove(requestCharge.Length - 2, 2)}")
+                        |> ignore
                 finally
                     stringBuilderPool.Return(indexMetrics)
                     stringBuilderPool.Return(requestCharge)
@@ -1630,10 +1663,15 @@ module Services =
 
                             references.Add(referenceDto))
 
-                    Activity.Current
-                        .SetTag("indexMetrics", $"{indexMetrics.Remove(indexMetrics.Length - 2, 2)}")
-                        .SetTag("requestCharge", $"{requestCharge.Remove(requestCharge.Length - 2, 2)}")
-                    |> ignore
+                    if
+                        (indexMetrics.Length >= 2)
+                        && (requestCharge.Length >= 2)
+                        && Activity.Current <> null
+                    then
+                        Activity.Current
+                            .SetTag("indexMetrics", $"{indexMetrics.Remove(indexMetrics.Length - 2, 2)}")
+                            .SetTag("requestCharge", $"{requestCharge.Remove(requestCharge.Length - 2, 2)}")
+                        |> ignore
 
                     if references.Count > 0 then return Some references[0] else return None
                 finally
@@ -1716,10 +1754,15 @@ module Services =
                             if directoryVersionDtos.Count > 0 then
                                 directoryVersion <- directoryVersionDtos[0].DirectoryVersion
 
-                        Activity.Current
-                            .SetTag("indexMetrics", $"{indexMetrics.Remove(indexMetrics.Length - 2, 2)}")
-                            .SetTag("requestCharge", $"{requestCharge.Remove(requestCharge.Length - 2, 2)}")
-                        |> ignore
+                        if
+                            (indexMetrics.Length >= 2)
+                            && (requestCharge.Length >= 2)
+                            && Activity.Current <> null
+                        then
+                            Activity.Current
+                                .SetTag("indexMetrics", $"{indexMetrics.Remove(indexMetrics.Length - 2, 2)}")
+                                .SetTag("requestCharge", $"{requestCharge.Remove(requestCharge.Length - 2, 2)}")
+                            |> ignore
                     with ex ->
                         log.LogError(
                             ex,
@@ -1793,10 +1836,15 @@ module Services =
 
                                 directoryVersionDtos.Add(directoryVersionDto))
 
-                        Activity.Current
-                            .SetTag("indexMetrics", $"{indexMetrics.Remove(indexMetrics.Length - 2, 2)}")
-                            .SetTag("requestCharge", $"{requestCharge.Remove(requestCharge.Length - 2, 2)}")
-                        |> ignore
+                        if
+                            (indexMetrics.Length >= 2)
+                            && (requestCharge.Length >= 2)
+                            && Activity.Current <> null
+                        then
+                            Activity.Current
+                                .SetTag("indexMetrics", $"{indexMetrics.Remove(indexMetrics.Length - 2, 2)}")
+                                .SetTag("requestCharge", $"{requestCharge.Remove(requestCharge.Length - 2, 2)}")
+                            |> ignore
                     with ex ->
                         let parameters =
                             queryDefinition.GetQueryParameters()
