@@ -55,16 +55,31 @@ module ReminderService =
                 match actorStateStorageProvider with
                 | Unknown -> ()
                 | AzureCosmosDb ->
-                    let queryText =
-                        """SELECT TOP @maxCount c.id as Id, c.partitionKey as PartitionKey, c["value"].ReminderId, c["value"].CorrelationId FROM c
-                            WHERE c["value"].Class = @class
-                            AND c["value"].ReminderTime < GetCurrentDateTime()
-                            ORDER BY c["value"].ReminderTime ASC"""
-
                     let queryDefinition =
-                        QueryDefinition(queryText)
+                        QueryDefinition(
+                            """
+                            SELECT TOP @maxCount c.id as Id, c.State.Reminder.ReminderId AS ReminderId, c.State.Reminder.CorrelationId AS CorrelationId
+                            FROM c
+                            WHERE c.GrainType = @grainType
+                                AND c.PartitionKey = @partitionKey
+                                AND c.State.Reminder.ReminderTime < GetCurrentDateTime()
+                                ORDER BY c._ts ASC
+                            """
+                        )
                             .WithParameter("@maxCount", reminderBatchSize)
-                            .WithParameter("@class", nameof ReminderDto)
+                            .WithParameter("@grainType", StateName.Reminder)
+                            .WithParameter("@partitionKey", StateName.Reminder)
+
+                    //let queryText =
+                    //    """SELECT TOP @maxCount c.id as Id, c.partitionKey as PartitionKey, c["value"].ReminderId, c["value"].CorrelationId FROM c
+                    //        WHERE c["value"].Class = @class
+                    //        AND c["value"].ReminderTime < GetCurrentDateTime()
+                    //        ORDER BY c["value"].ReminderTime ASC"""
+
+                    //let queryDefinition =
+                    //    QueryDefinition(queryText)
+                    //        .WithParameter("@maxCount", reminderBatchSize)
+                    //        .WithParameter("@class", nameof ReminderDto)
 
                     use iterator = ApplicationContext.cosmosContainer.GetItemQueryIterator<ReminderValue>(queryDefinition)
 
@@ -101,15 +116,15 @@ module ReminderService =
                 let start = getCurrentInstant ()
 
                 try
-                    //log.LogInformation(
-                    //    "{CurrentInstant}: Node: {HostName}; In ReminderService.ProcessReminders. Retrieving reminders.",
-                    //    getCurrentInstantExtended (),
-                    //    getMachineName
-                    //)
+                    log.LogInformation(
+                        "{CurrentInstant}: Node: {HostName}; In ReminderService.ProcessReminders. Retrieving reminders.",
+                        getCurrentInstantExtended (),
+                        getMachineName
+                    )
 
                     let! reminders = retrieveReminders cancellationToken
 
-                    if reminders.Count > 0 then
+                    if reminders.Count >= 0 then
                         log.LogInformation(
                             "{CurrentInstant}: Node: {HostName}; In ReminderService.ProcessReminders. Processing {reminderCount} reminder(s).",
                             getCurrentInstantExtended (),
@@ -137,7 +152,7 @@ module ReminderService =
 
                                                 // Delete the reminder from storage to avoid reprocessing.
                                                 let! deleteReminderResponse =
-                                                    cosmosContainer.DeleteItemAsync(reminder.Id, PartitionKey(reminder.PartitionKey), itemRequestOptions)
+                                                    cosmosContainer.DeleteItemAsync(reminder.Id, PartitionKey(StateName.Reminder), itemRequestOptions)
 
                                                 if deleteReminderResponse.StatusCode <> HttpStatusCode.NoContent then
                                                     log.LogError(

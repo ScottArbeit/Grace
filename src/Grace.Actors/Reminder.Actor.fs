@@ -137,39 +137,46 @@ module Reminder =
                     try
                         this.correlationId <- correlationId
 
+                        // Parse the Guid from the ActorId. Example: "referenceactor/da3926330c394275813d95e390a5c374"
+                        let actorId =
+                            if reminderDto.ActorName = ActorName.Diff then
+                                // Diff actors have a different ActorId format: "directoryVersionId1*directoryVersionId2"
+                                Guid.Empty
+                            else
+                                Guid.ParseExact(reminderDto.ActorId.Split("/").[1], "N")
+
                         match reminderDto.ActorName with
                         | ActorName.Owner ->
-                            let ownerActorProxy = Owner.CreateActorProxy (Guid.Parse(reminderDto.ActorId)) correlationId
+                            let ownerActorProxy = Owner.CreateActorProxy actorId correlationId
                             return! ownerActorProxy.ReceiveReminderAsync reminderDto
                         | ActorName.Organization ->
-                            let organizationActorProxy = Organization.CreateActorProxy (Guid.Parse(reminderDto.ActorId)) correlationId
+                            let organizationActorProxy = Organization.CreateActorProxy actorId correlationId
                             return! organizationActorProxy.ReceiveReminderAsync reminderDto
                         | ActorName.Repository ->
-                            let repositoryActorProxy = Repository.CreateActorProxy reminderDto.OrganizationId (Guid.Parse(reminderDto.ActorId)) correlationId
+                            let repositoryActorProxy = Repository.CreateActorProxy actorId reminderDto.RepositoryId correlationId
                             return! repositoryActorProxy.ReceiveReminderAsync reminderDto
                         | ActorName.Branch ->
-                            let branchActorProxy = Branch.CreateActorProxy (Guid.Parse(reminderDto.ActorId)) reminderDto.RepositoryId correlationId
+                            let branchActorProxy = Branch.CreateActorProxy actorId reminderDto.RepositoryId correlationId
                             return! branchActorProxy.ReceiveReminderAsync reminderDto
                         | ActorName.DirectoryVersion ->
-                            let directoryVersionActorProxy =
-                                DirectoryVersion.CreateActorProxy (Guid.Parse(reminderDto.ActorId)) reminderDto.RepositoryId correlationId
+                            let directoryVersionActorProxy = DirectoryVersion.CreateActorProxy actorId reminderDto.RepositoryId correlationId
 
                             return! directoryVersionActorProxy.ReceiveReminderAsync reminderDto
+                        | ActorName.Reference ->
+                            let referenceActorProxy = Reference.CreateActorProxy actorId reminderDto.RepositoryId correlationId
+                            return! referenceActorProxy.ReceiveReminderAsync reminderDto
                         | ActorName.Diff ->
-                            let directoryIds = reminderDto.ActorId.Split("*")
+                            let directoryIds = reminderDto.ActorId.Split("/").[1].Split("*")
 
                             let diffActorProxy =
                                 Diff.CreateActorProxy
-                                    (DirectoryVersionId directoryIds[0])
-                                    (DirectoryVersionId directoryIds[1])
+                                    (Guid.ParseExact(directoryIds[0], "N"))
+                                    (Guid.ParseExact(directoryIds[1], "N"))
                                     reminderDto.OrganizationId
                                     reminderDto.RepositoryId
                                     correlationId
 
                             return! diffActorProxy.ReceiveReminderAsync reminderDto
-                        | ActorName.Reference ->
-                            let referenceActorProxy = Reference.CreateActorProxy (Guid.Parse(reminderDto.ActorId)) reminderDto.RepositoryId correlationId
-                            return! referenceActorProxy.ReceiveReminderAsync reminderDto
                         | _ -> return Ok()
                     with ex ->
                         log.LogError(

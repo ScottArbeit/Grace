@@ -136,6 +136,28 @@ module Load =
                                             )
                                         )
 
+                                    let! rrrrr =
+                                        Repository.SetSaveDays(
+                                            Repository.SetSaveDaysParameters(
+                                                OwnerId = $"{ownerId}",
+                                                OrganizationId = $"{organizationId}",
+                                                RepositoryId = $"{repositoryId}",
+                                                SaveDays = single (TimeSpan.FromSeconds(90.0).TotalDays),
+                                                CorrelationId = generateCorrelationId ()
+                                            )
+                                        )
+
+                                    let! rrrrr =
+                                        Repository.SetCheckpointDays(
+                                            Repository.SetCheckpointDaysParameters(
+                                                OwnerId = $"{ownerId}",
+                                                OrganizationId = $"{organizationId}",
+                                                RepositoryId = $"{repositoryId}",
+                                                CheckpointDays = single (TimeSpan.FromSeconds(90.0).TotalDays),
+                                                CorrelationId = generateCorrelationId ()
+                                            )
+                                        )
+
                                     match!
                                         Branch.Get(
                                             Branch.GetBranchParameters(
