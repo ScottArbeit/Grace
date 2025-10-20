@@ -118,11 +118,11 @@ module Reference =
             )
 
         let parentBranchId =
-            new Option<String>("--parentBranchId", [||], Required = false, Description = "The parent branch's ID <Guid>.", Arity = ArgumentArity.ExactlyOne)
+            new Option<String>(OptionName.ParentBranchId, [||], Required = false, Description = "The parent branch's ID <Guid>.", Arity = ArgumentArity.ExactlyOne)
 
         let parentBranchName =
             new Option<String>(
-                "--parentBranchName",
+                OptionName.ParentBranchName,
                 [||],
                 Required = false,
                 Description = "The name of the parent branch. [default: current branch]",
@@ -134,7 +134,7 @@ module Reference =
 
         let message =
             new Option<String>(
-                "--message",
+                OptionName.Message,
                 [| "-m" |],
                 Required = false,
                 Description = "The text to store with this reference.",
@@ -143,7 +143,7 @@ module Reference =
 
         let messageRequired =
             new Option<String>(
-                "--message",
+                OptionName.Message,
                 [| "-m" |],
                 Required = true,
                 Description = "The text to store with this reference.",
@@ -151,25 +151,25 @@ module Reference =
             )
 
         let referenceType =
-            (new Option<String>("--referenceType", Required = false, Description = "The type of reference.", Arity = ArgumentArity.ExactlyOne))
+            (new Option<String>(OptionName.ReferenceType, Required = false, Description = "The type of reference.", Arity = ArgumentArity.ExactlyOne))
                 .AcceptOnlyFromAmong(listCases<ReferenceType> ())
 
-        let fullSha = new Option<bool>("--fullSha", Required = false, Description = "Show the full SHA-256 value in output.", Arity = ArgumentArity.ZeroOrOne)
+        let fullSha = new Option<bool>(OptionName.FullSha, Required = false, Description = "Show the full SHA-256 value in output.", Arity = ArgumentArity.ZeroOrOne)
 
         let maxCount =
             new Option<int>(
-                "--maxCount",
+                OptionName.MaxCount,
                 Required = false,
                 Description = "The maximum number of results to return.",
                 Arity = ArgumentArity.ExactlyOne,
                 DefaultValueFactory = (fun _ -> 30)
             )
 
-        let referenceId = new Option<Guid>("--referenceId", [||], Required = false, Description = "The reference ID <Guid>.", Arity = ArgumentArity.ExactlyOne)
+        let referenceId = new Option<Guid>(OptionName.ReferenceId, [||], Required = false, Description = "The reference ID <Guid>.", Arity = ArgumentArity.ExactlyOne)
 
         let sha256Hash =
             new Option<String>(
-                "--sha256Hash",
+                OptionName.Sha256Hash,
                 [||],
                 Required = false,
                 Description = "The full or partial SHA-256 hash value of the version.",
@@ -177,16 +177,16 @@ module Reference =
             )
 
         let enabled =
-            new Option<bool>("--enabled", Required = false, Description = "True to enable the feature; false to disable it.", Arity = ArgumentArity.ZeroOrOne)
+            new Option<bool>(OptionName.Enabled, Required = false, Description = "True to enable the feature; false to disable it.", Arity = ArgumentArity.ZeroOrOne)
 
         let includeDeleted =
-            new Option<bool>("--include-deleted", [| "-d" |], Required = false, Description = "Include deleted branches in the result. [default: false]")
+            new Option<bool>(OptionName.IncludeDeleted, [| "-d" |], Required = false, Description = "Include deleted branches in the result. [default: false]")
 
-        let showEvents = new Option<bool>("--show-events", [| "-e" |], Required = false, Description = "Include actor events in the result. [default: false]")
+        let showEvents = new Option<bool>(OptionName.ShowEvents, [| "-e" |], Required = false, Description = "Include actor events in the result. [default: false]")
 
         let directoryVersionId =
             new Option<Guid>(
-                "--directoryVersionId",
+                OptionName.DirectoryVersionId,
                 [| "-v" |],
                 Required = false,
                 Description = "The directory version ID to assign to the promotion <Guid>.",

@@ -284,10 +284,8 @@ module Repository =
             /// Receives a Grace reminder.
             member this.ReceiveReminderAsync(reminder: ReminderDto) : Task<Result<unit, GraceError>> =
                 task {
-                    match reminder.ReminderType with
-                    | ReminderTypes.PhysicalDeletion ->
-                        // Get values from state.
-                        let physicalDeletionReminderState = reminder.State :?> PhysicalDeletionReminderState
+                    match reminder.ReminderType, reminder.State with
+                    | ReminderTypes.PhysicalDeletion, ReminderState.RepositoryPhysicalDeletion physicalDeletionReminderState ->
                         this.correlationId <- physicalDeletionReminderState.CorrelationId
 
                         do! state.ClearStateAsync()
@@ -305,11 +303,11 @@ module Repository =
 
                         this.DeactivateOnIdle()
                         return Ok()
-                    | _ ->
+                    | reminderType, state ->
                         return
                             Error(
                                 GraceError.Create
-                                    $"{actorName} does not process reminder type {getDiscriminatedUnionCaseName reminder.ReminderType}."
+                                    $"{actorName} does not process reminder type {getDiscriminatedUnionCaseName reminderType} with state {getDiscriminatedUnionCaseName state}."
                                     this.correlationId
                             )
                 }
@@ -493,7 +491,7 @@ module Repository =
                                                     (this :> IGraceReminderWithGuidKey).ScheduleReminderAsync
                                                         ReminderTypes.PhysicalDeletion
                                                         (Duration.FromDays(float repositoryDto.LogicalDeleteDays))
-                                                        physicalDeletionReminderState
+                                                        (ReminderState.RepositoryPhysicalDeletion physicalDeletionReminderState)
                                                         metadata.CorrelationId
 
                                                 ()

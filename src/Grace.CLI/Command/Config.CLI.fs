@@ -36,7 +36,7 @@ module Config =
     module private Options =
         let directory =
             new Option<string>(
-                "--directory",
+                OptionName.Directory,
                 Required = false,
                 Description = "The root path of the repository to initialize Grace in [default: current directory]",
                 Arity = ArgumentArity.ExactlyOne
@@ -44,7 +44,7 @@ module Config =
 
         let overwrite =
             new Option<bool>(
-                "--overwrite",
+                OptionName.Overwrite,
                 Required = false,
                 Description = "Allows Grace to overwrite an existing graceconfig.json file with default values",
                 Arity = ArgumentArity.ZeroOrOne,
@@ -115,7 +115,7 @@ module Config =
                 if File.Exists(graceConfigPath) && not parameters.Overwrite then
                     if parseResult |> hasOutput then
                         printfn
-                            $"Found existing Grace configuration file at {graceConfigPath}. Specify --overwrite if you'd like to overwrite it.{Environment.NewLine}"
+                            $"Found existing Grace configuration file at {graceConfigPath}. Specify {OptionName.Overwrite} if you'd like to overwrite it.{Environment.NewLine}"
                 else
                     let directoryInfo = Directory.CreateDirectory(graceDirPath)
 
@@ -160,7 +160,7 @@ module Config =
                     if File.Exists(graceConfigPath) && not overwrite then
                         if parseResult |> hasOutput then
                             printfn
-                                $"Found existing Grace configuration file at {graceConfigPath}. Specify --overwrite if you'd like to overwrite it.{Environment.NewLine}"
+                                $"Found existing Grace configuration file at {graceConfigPath}. Specify {OptionName.Overwrite} if you'd like to overwrite it.{Environment.NewLine}"
                     else
                         let directoryInfo = Directory.CreateDirectory(graceDirPath)
 

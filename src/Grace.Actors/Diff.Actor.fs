@@ -176,11 +176,8 @@ module Diff =
                 task {
                     this.correlationId <- reminder.CorrelationId
 
-                    match reminder.ReminderType with
-                    | ReminderTypes.DeleteCachedState ->
-                        // Get values from state.
-                        let deleteCachedStateReminderState = reminder.State :?> DeleteCachedStateReminderState
-
+                    match reminder.ReminderType, reminder.State with
+                    | ReminderTypes.DeleteCachedState, ReminderState.DiffDeleteCachedState deleteCachedStateReminderState ->
                         this.correlationId <- deleteCachedStateReminderState.CorrelationId
 
                         // Delete saved state for this actor.
@@ -199,11 +196,11 @@ module Diff =
 
                         this.DeactivateOnIdle()
                         return Ok()
-                    | _ ->
+                    | reminderType, state ->
                         return
                             Error(
                                 (GraceError.Create
-                                    $"{actorName} does not process reminder type {getDiscriminatedUnionCaseName reminder.ReminderType}."
+                                    $"{actorName} does not process reminder type {getDiscriminatedUnionCaseName reminderType} with state {getDiscriminatedUnionCaseName state}."
                                     this.correlationId)
                                     .enhance ("IsRetryable", "false")
                             )
@@ -348,7 +345,7 @@ module Diff =
                                 (this :> IDiffActor).ScheduleReminderAsync
                                     ReminderTypes.DeleteCachedState
                                     (Duration.FromDays(float repositoryDto.DiffCacheDays))
-                                    deleteCachedStateReminderState
+                                    (ReminderState.DiffDeleteCachedState deleteCachedStateReminderState)
                                     correlationId
 
                             return true

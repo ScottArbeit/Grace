@@ -63,12 +63,12 @@ module Owner =
             new Option<String>(OptionName.OwnerName, Required = true, Description = "The name of the owner.", Arity = ArgumentArity.ExactlyOne)
 
         let ownerTypeRequired =
-            (new Option<String>("--ownerType", Required = true, Description = "The type of owner. [default: Public]", Arity = ArgumentArity.ExactlyOne))
+            (new Option<String>(OptionName.OwnerType, Required = true, Description = "The type of owner. [default: Public]", Arity = ArgumentArity.ExactlyOne))
                 .AcceptOnlyFromAmong(Utilities.listCases<OwnerType> ())
 
         let searchVisibilityRequired =
             (new Option<String>(
-                "--searchVisibility",
+                OptionName.SearchVisibility,
                 Required = true,
                 Description = "Enables or disables the owner appearing in searches. [default: true]",
                 Arity = ArgumentArity.ExactlyOne
@@ -81,13 +81,13 @@ module Owner =
         let newName =
             new Option<String>(OptionName.NewName, Required = true, Description = "The new name of the organization.", Arity = ArgumentArity.ExactlyOne)
 
-        let force = new Option<bool>("--force", Required = false, Description = "Delete even if there is data under this owner. [default: false]")
+        let force = new Option<bool>(OptionName.Force, Required = false, Description = "Delete even if there is data under this owner. [default: false]")
 
         let includeDeleted =
-            new Option<bool>("--include-deleted", [| "-d" |], Required = false, Description = "Include deleted owners in the result. [default: false]")
+            new Option<bool>(OptionName.IncludeDeleted, [| "-d" |], Required = false, Description = "Include deleted owners in the result. [default: false]")
 
         let deleteReason =
-            new Option<String>("--deleteReason", Required = true, Description = "The reason for deleting the owner.", Arity = ArgumentArity.ExactlyOne)
+            new Option<String>(OptionName.DeleteReason, Required = true, Description = "The reason for deleting the owner.", Arity = ArgumentArity.ExactlyOne)
 
         let doNotSwitch =
             new Option<bool>(

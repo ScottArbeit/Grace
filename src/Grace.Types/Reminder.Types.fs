@@ -1,12 +1,32 @@
 namespace Grace.Types
 
 open Grace.Shared.Utilities
+open Grace.Types.Branch
+open Grace.Types.Diff
+open Grace.Types.DirectoryVersion
+open Grace.Types.Organization
+open Grace.Types.Owner
+open Grace.Types.Reference
+open Grace.Types.Repository
 open Grace.Types.Types
 open NodaTime
-open System
 open Orleans
+open System
 
 module Reminder =
+
+    [<GenerateSerializer>]
+    type ReminderState =
+        | EmptyReminderState
+        | OwnerPhysicalDeletion of Owner.PhysicalDeletionReminderState
+        | OrganizationPhysicalDeletion of Organization.PhysicalDeletionReminderState
+        | RepositoryPhysicalDeletion of Repository.PhysicalDeletionReminderState
+        | BranchPhysicalDeletion of Branch.PhysicalDeletionReminderState
+        | ReferencePhysicalDeletion of Reference.PhysicalDeletionReminderState
+        | DirectoryVersionPhysicalDeletion of DirectoryVersion.PhysicalDeletionReminderState
+        | DirectoryVersionDeleteCachedState of DirectoryVersion.PhysicalDeletionReminderState
+        | DirectoryVersionDeleteZipFile of DirectoryVersion.PhysicalDeletionReminderState
+        | DiffDeleteCachedState of Diff.DeleteCachedStateReminderState
 
     /// Defines all reminders used in Grace.
     type ReminderDto =
@@ -21,7 +41,7 @@ module Reminder =
           CreatedAt: Instant
           ReminderTime: Instant
           CorrelationId: CorrelationId
-          State: obj }
+          State: ReminderState }
 
         static member Default =
             { Class = nameof ReminderDto
@@ -35,7 +55,7 @@ module Reminder =
               CreatedAt = Instant.MinValue
               ReminderTime = Instant.MinValue
               CorrelationId = String.Empty
-              State = obj () }
+              State = ReminderState.EmptyReminderState }
 
         /// Creates a ReminderDto.
         static member Create actorName actorId ownerId organizationId repositoryId reminderType reminderTime state correlationId =

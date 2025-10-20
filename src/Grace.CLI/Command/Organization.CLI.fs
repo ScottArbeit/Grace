@@ -77,7 +77,7 @@ module Organization =
 
         let organizationType =
             (new Option<String>(
-                "--organizationType",
+                OptionName.OrganizationType,
                 Required = true,
                 Description = "The type of the organization. [default: Public]",
                 Arity = ArgumentArity.ExactlyOne
@@ -86,7 +86,7 @@ module Organization =
 
         let searchVisibility =
             (new Option<String>(
-                "--searchVisibility",
+                OptionName.SearchVisibility,
                 Required = true,
                 Description = "Enables or disables the organization appearing in searches. [default: Visible]",
                 Arity = ArgumentArity.ExactlyOne
@@ -99,13 +99,13 @@ module Organization =
         let newName =
             new Option<String>(OptionName.NewName, Required = true, Description = "The new name of the organization.", Arity = ArgumentArity.ExactlyOne)
 
-        let force = new Option<bool>("--force", Required = false, Description = "Delete even if there is data under this organization. [default: false]")
+        let force = new Option<bool>(OptionName.Force, Required = false, Description = "Delete even if there is data under this organization. [default: false]")
 
         let includeDeleted =
-            new Option<bool>("--include-deleted", [| "-d" |], Required = false, Description = "Include deleted organizations in the result. [default: false]")
+            new Option<bool>(OptionName.IncludeDeleted, [| "-d" |], Required = false, Description = "Include deleted organizations in the result. [default: false]")
 
         let deleteReason =
-            new Option<String>("--deleteReason", Required = true, Description = "The reason for deleting the organization.", Arity = ArgumentArity.ExactlyOne)
+            new Option<String>(OptionName.DeleteReason, Required = true, Description = "The reason for deleting the organization.", Arity = ArgumentArity.ExactlyOne)
 
         let doNotSwitch =
             new Option<bool>(

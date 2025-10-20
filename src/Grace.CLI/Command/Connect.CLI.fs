@@ -79,7 +79,7 @@ module Connect =
 
         let correlationId =
             new Option<String>(
-                "--correlationId",
+                OptionName.CorrelationId,
                 [| "-c" |],
                 Required = false,
                 Description = "CorrelationId to track this command throughout Grace. [default: new Guid]",
@@ -88,7 +88,7 @@ module Connect =
 
         let serverAddress =
             new Option<String>(
-                "--serverAddress",
+                OptionName.ServerAddress,
                 [| "-s" |],
                 Required = false,
                 Description = "Address of the Grace server to connect to.",
@@ -97,7 +97,7 @@ module Connect =
 
         let retrieveDefaultBranch =
             new Option<bool>(
-                "--retrieveDefaultBranch",
+                OptionName.RetrieveDefaultBranch,
                 [||],
                 Required = false,
                 Description = "True to retrieve the default branch after connecting; false to connect but not download any files.",

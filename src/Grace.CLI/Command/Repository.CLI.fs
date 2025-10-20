@@ -117,12 +117,12 @@ module Repository =
                 .AcceptOnlyFromAmong(listCases<RepositoryType> ())
 
         let status =
-            (new Option<String>("--status", Required = true, Description = "The status of the repository.", Arity = ArgumentArity.ExactlyOne))
+            (new Option<String>(OptionName.Status, Required = true, Description = "The status of the repository.", Arity = ArgumentArity.ExactlyOne))
                 .AcceptOnlyFromAmong(listCases<RepositoryStatus> ())
 
         let recordSaves =
             new Option<bool>(
-                "--recordSaves",
+                OptionName.RecordSaves,
                 Required = true,
                 Description = "True to record all saves; false to turn it off.",
                 Arity = ArgumentArity.ExactlyOne
@@ -130,7 +130,7 @@ module Repository =
 
         let defaultServerApiVersion =
             (new Option<String>(
-                "--defaultServerApiVersion",
+                OptionName.DefaultServerApiVersion,
                 Required = true,
                 Description = "The default version of the server API that clients should use when accessing this repository.",
                 Arity = ArgumentArity.ExactlyOne
@@ -138,11 +138,11 @@ module Repository =
                 .AcceptOnlyFromAmong(listCases<Constants.ServerApiVersions> ())
 
         let saveDays =
-            new Option<single>("--saveDays", Required = true, Description = "How many days to keep saves. [default: 7.0]", Arity = ArgumentArity.ExactlyOne)
+            new Option<single>(OptionName.SaveDays, Required = true, Description = "How many days to keep saves. [default: 7.0]", Arity = ArgumentArity.ExactlyOne)
 
         let checkpointDays =
             new Option<single>(
-                "--checkpointDays",
+                OptionName.CheckpointDays,
                 Required = true,
                 Description = "How many days to keep checkpoints. [default: 365.0]",
                 Arity = ArgumentArity.ExactlyOne
@@ -150,7 +150,7 @@ module Repository =
 
         let diffCacheDays =
             new Option<single>(
-                "--diffCacheDays",
+                OptionName.DiffCacheDays,
                 Required = true,
                 Description = "How many days to keep diff results cached in the database. [default: 3.0]",
                 Arity = ArgumentArity.ExactlyOne
@@ -158,7 +158,7 @@ module Repository =
 
         let directoryVersionCacheDays =
             new Option<single>(
-                "--directoryVersionCacheDays",
+                OptionName.DirectoryVersionCacheDays,
                 Required = true,
                 Description = "How many days to keep recursive directory version contents cached. [default: 3.0]",
                 Arity = ArgumentArity.ExactlyOne
@@ -166,7 +166,7 @@ module Repository =
 
         let logicalDeleteDays =
             new Option<single>(
-                "--logicalDeleteDays",
+                OptionName.LogicalDeleteDays,
                 Required = true,
                 Description = "How many days to keep deleted branches before permanently deleting them. [default: 30.0]",
                 Arity = ArgumentArity.ExactlyOne
@@ -176,11 +176,11 @@ module Repository =
             new Option<String>(OptionName.NewName, Required = true, Description = "The new name for the repository.", Arity = ArgumentArity.ExactlyOne)
 
         let deleteReason =
-            new Option<String>("--deleteReason", Required = true, Description = "The reason for deleting the repository.", Arity = ArgumentArity.ExactlyOne)
+            new Option<String>(OptionName.DeleteReason, Required = true, Description = "The reason for deleting the repository.", Arity = ArgumentArity.ExactlyOne)
 
         let graceConfig =
             new Option<String>(
-                "--graceConfig",
+                OptionName.GraceConfig,
                 Required = false,
                 Description = "The path of a Grace config file that you'd like to use instead of the default graceconfig.json.",
                 Arity = ArgumentArity.ExactlyOne
@@ -188,7 +188,7 @@ module Repository =
 
         let force =
             new Option<bool>(
-                "--force",
+                OptionName.Force,
                 Required = false,
                 Description = "Deletes repository even if there are links to other repositories.",
                 Arity = ArgumentArity.ExactlyOne
@@ -205,7 +205,7 @@ module Repository =
 
         let directory =
             new Option<String>(
-                "--directory",
+                OptionName.Directory,
                 Required = false,
                 Description = "The directory to use when initializing the repository. [default: current directory]",
                 Arity = ArgumentArity.ExactlyOne
@@ -213,7 +213,7 @@ module Repository =
 
         let includeDeleted =
             new Option<bool>(
-                "--include-deleted",
+                OptionName.IncludeDeleted,
                 [| "-d" |],
                 Required = false,
                 Description = "Include deleted branches in the result.",
@@ -222,7 +222,7 @@ module Repository =
 
         let anonymousAccess =
             new Option<bool>(
-                "--anonymousAccess",
+                OptionName.AnonymousAccess,
                 Required = true,
                 Description = "Enable or disable anonymous access for the repository.",
                 Arity = ArgumentArity.ExactlyOne
@@ -230,7 +230,7 @@ module Repository =
 
         let allowsLargeFiles =
             new Option<bool>(
-                "--allowsLargeFiles",
+                OptionName.AllowsLargeFiles,
                 Required = true,
                 Description = "Enable or disable large file support for the repository.",
                 Arity = ArgumentArity.ExactlyOne

@@ -49,7 +49,7 @@ module Common =
     module Options =
         let correlationId =
             new Option<String>(
-                "--correlationId",
+                OptionName.CorrelationId,
                 [| "-c" |],
                 Required = false,
                 Description = "CorrelationId for end-to-end tracking <String>.",
@@ -60,7 +60,7 @@ module Common =
 
         let output =
             (new Option<String>(
-                "--output",
+                OptionName.Output,
                 [| "-o" |],
                 Required = false,
                 Description = "The style of output.",

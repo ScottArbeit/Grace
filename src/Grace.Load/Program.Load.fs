@@ -37,7 +37,6 @@ module Load =
         (task {
             let startTime = getCurrentInstant ()
             let cancellationToken = new CancellationToken()
-            //ThreadPool.SetMinThreads(200, 200) |> ignore
 
             let suffixes = ConcurrentDictionary<int, string>()
 

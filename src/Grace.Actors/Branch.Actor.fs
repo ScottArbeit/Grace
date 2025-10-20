@@ -232,11 +232,8 @@ module Branch =
                 this.correlationId <- reminder.CorrelationId
 
                 task {
-                    match reminder.ReminderType with
-                    | ReminderTypes.PhysicalDeletion ->
-                        // Get values from state.
-                        let physicalDeletionReminderState = reminder.State :?> PhysicalDeletionReminderState
-
+                    match reminder.ReminderType, reminder.State with
+                    | ReminderTypes.PhysicalDeletion, ReminderState.BranchPhysicalDeletion physicalDeletionReminderState ->
                         this.correlationId <- physicalDeletionReminderState.CorrelationId
 
                         // Delete saved state for this actor.
@@ -255,11 +252,11 @@ module Branch =
 
                         this.DeactivateOnIdle()
                         return Ok()
-                    | _ ->
+                    | reminderType, state ->
                         return
                             Error(
                                 GraceError.Create
-                                    $"{actorName} does not process reminder type {getDiscriminatedUnionCaseName reminder.ReminderType}."
+                                    $"{actorName} does not process reminder type {getDiscriminatedUnionCaseName reminderType} with state {getDiscriminatedUnionCaseName state}."
                                     this.correlationId
                             )
                 }
@@ -482,7 +479,7 @@ module Branch =
                                             (this :> IGraceReminderWithGuidKey).ScheduleReminderAsync
                                                 ReminderTypes.PhysicalDeletion
                                                 (Duration.FromDays(float repositoryDto.LogicalDeleteDays))
-                                                physicalDeletionReminderState
+                                                (ReminderState.BranchPhysicalDeletion physicalDeletionReminderState)
                                                 metadata.CorrelationId
 
                                         return Ok(LogicalDeleted(force, deleteReason))

@@ -83,7 +83,7 @@ module Maintenance =
 
         let listDirectories =
             new Option<bool>(
-                "--listDirectories",
+                OptionName.ListDirectories,
                 Required = false,
                 Description = "Show a list of directories in the Grace Index. [default: true]",
                 Arity = ArgumentArity.ExactlyOne,
@@ -92,9 +92,9 @@ module Maintenance =
 
         let listFiles =
             new Option<bool>(
-                "--listFiles",
+                OptionName.ListFiles,
                 Required = false,
-                Description = "Show a list of files in the Grace Index. Implies --listDirectories. [default: true]",
+                Description = $"Show a list of files in the Grace Index. Implies {OptionName.ListDirectories}. [default: true]",
                 Arity = ArgumentArity.ExactlyOne,
                 DefaultValueFactory = (fun _ -> true)
             )

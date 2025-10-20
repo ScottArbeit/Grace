@@ -74,10 +74,8 @@ module Reference =
                 task {
                     this.correlationId <- reminder.CorrelationId
 
-                    match reminder.ReminderType with
-                    | ReminderTypes.PhysicalDeletion ->
-                        // Get values from state.
-                        let physicalDeletionReminderState = reminder.State :?> PhysicalDeletionReminderState
+                    match reminder.ReminderType, reminder.State with
+                    | ReminderTypes.PhysicalDeletion, ReminderState.ReferencePhysicalDeletion physicalDeletionReminderState ->
 
                         this.correlationId <- physicalDeletionReminderState.CorrelationId
 
@@ -103,11 +101,11 @@ module Reference =
 
                         this.DeactivateOnIdle()
                         return Ok()
-                    | _ ->
+                    | reminderType, state ->
                         return
                             Error(
                                 (GraceError.Create
-                                    $"{actorName} does not process reminder type {getDiscriminatedUnionCaseName reminder.ReminderType}."
+                                    $"{actorName} does not process reminder type {getDiscriminatedUnionCaseName reminderType} with state {getDiscriminatedUnionCaseName state}."
                                     this.correlationId)
                                     .enhance ("IsRetryable", "false")
                             )
@@ -154,7 +152,7 @@ module Reference =
                                         (this :> IGraceReminderWithGuidKey).ScheduleReminderAsync
                                             ReminderTypes.PhysicalDeletion
                                             (Duration.FromDays(float repositoryDto.SaveDays))
-                                            reminderState
+                                            (ReminderState.ReferencePhysicalDeletion reminderState)
                                             correlationId
                                 }
                             | ReferenceType.Checkpoint ->
@@ -174,7 +172,7 @@ module Reference =
                                         (this :> IGraceReminderWithGuidKey).ScheduleReminderAsync
                                             ReminderTypes.PhysicalDeletion
                                             (Duration.FromDays(float repositoryDto.CheckpointDays))
-                                            reminderState
+                                            (ReminderState.ReferencePhysicalDeletion reminderState)
                                             correlationId
                                 }
                             | _ -> () |> returnTask
@@ -303,7 +301,7 @@ module Reference =
                                         (this :> IGraceReminderWithGuidKey).ScheduleReminderAsync
                                             ReminderTypes.PhysicalDeletion
                                             (Duration.FromDays(float repositoryDto.LogicalDeleteDays))
-                                            reminderState
+                                            (ReminderState.ReferencePhysicalDeletion reminderState)
                                             metadata.CorrelationId
 
                                     return LogicalDeleted(force, deleteReason)

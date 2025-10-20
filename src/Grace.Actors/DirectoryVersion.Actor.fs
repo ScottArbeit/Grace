@@ -92,12 +92,9 @@ module DirectoryVersion =
                 task {
                     this.correlationId <- reminder.CorrelationId
 
-                    match reminder.ReminderType with
-                    | ReminderTypes.DeleteCachedState ->
-                        // Get values from state.
-                        let physicalDeletionReminderState = reminder.State :?> PhysicalDeletionReminderState
-
-                        this.correlationId <- physicalDeletionReminderState.CorrelationId
+                    match reminder.ReminderType, reminder.State with
+                    | ReminderTypes.DeleteCachedState, ReminderState.DirectoryVersionDeleteCachedState reminderState ->
+                        this.correlationId <- reminderState.CorrelationId
 
                         // Delete cached state for this actor.
                         let directoryVersionBlobClient =
@@ -112,28 +109,25 @@ module DirectoryVersion =
                                 "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; Deleted cached state for directory version; RepositoryId: {RepositoryId}; DirectoryVersionId: {DirectoryVersionId}; deleteReason: {deleteReason}.",
                                 getCurrentInstantExtended (),
                                 getMachineName,
-                                physicalDeletionReminderState.CorrelationId,
+                                reminderState.CorrelationId,
                                 directoryVersionDto.DirectoryVersion.RepositoryId,
                                 directoryVersionDto.DirectoryVersion.DirectoryVersionId,
-                                physicalDeletionReminderState.DeleteReason
+                                reminderState.DeleteReason
                             )
                         else
                             log.LogWarning(
                                 "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; Failed to delete cached state for directory version (it may have already been deleted); RepositoryId: {RepositoryId}; DirectoryVersionId: {DirectoryVersionId}; deleteReason: {deleteReason}.",
                                 getCurrentInstantExtended (),
                                 getMachineName,
-                                physicalDeletionReminderState.CorrelationId,
+                                reminderState.CorrelationId,
                                 directoryVersionDto.DirectoryVersion.RepositoryId,
                                 directoryVersionDto.DirectoryVersion.DirectoryVersionId,
-                                physicalDeletionReminderState.DeleteReason
+                                reminderState.DeleteReason
                             )
 
                         return Ok()
-                    | ReminderTypes.DeleteZipFile ->
-                        // Get values from state.
-                        let physicalDeletionReminderState = reminder.State :?> PhysicalDeletionReminderState
-
-                        this.correlationId <- physicalDeletionReminderState.CorrelationId
+                    | ReminderTypes.DeleteZipFile, ReminderState.DirectoryVersionDeleteZipFile reminderState ->
+                        this.correlationId <- reminderState.CorrelationId
 
                         let directoryVersion = directoryVersionDto.DirectoryVersion
 
@@ -141,9 +135,9 @@ module DirectoryVersion =
                             Repository.CreateActorProxy
                                 directoryVersion.OrganizationId
                                 directoryVersion.RepositoryId
-                                physicalDeletionReminderState.CorrelationId
+                                reminderState.CorrelationId
 
-                        let! repositoryDto = repositoryActorProxy.Get physicalDeletionReminderState.CorrelationId
+                        let! repositoryDto = repositoryActorProxy.Get reminderState.CorrelationId
 
                         // Delete cached directory version contents for this actor.
                         let zipFileBlobClient = zipFileContainerClient.GetBlobClient $"{directoryVersion.DirectoryVersionId}.zip"
@@ -155,28 +149,25 @@ module DirectoryVersion =
                                 "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; Deleted cache for directory version; RepositoryId: {RepositoryId}; DirectoryVersionId: {DirectoryVersionId}; deleteReason: {deleteReason}.",
                                 getCurrentInstantExtended (),
                                 getMachineName,
-                                physicalDeletionReminderState.CorrelationId,
+                                reminderState.CorrelationId,
                                 directoryVersionDto.DirectoryVersion.RepositoryId,
                                 directoryVersionDto.DirectoryVersion.DirectoryVersionId,
-                                physicalDeletionReminderState.DeleteReason
+                                reminderState.DeleteReason
                             )
                         else
                             log.LogWarning(
                                 "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; Failed to delete cache for directory version (it may have already been deleted); RepositoryId: {RepositoryId}; DirectoryVersionId: {DirectoryVersionId}; deleteReason: {deleteReason}.",
                                 getCurrentInstantExtended (),
                                 getMachineName,
-                                physicalDeletionReminderState.CorrelationId,
+                                reminderState.CorrelationId,
                                 directoryVersionDto.DirectoryVersion.RepositoryId,
                                 directoryVersionDto.DirectoryVersion.DirectoryVersionId,
-                                physicalDeletionReminderState.DeleteReason
+                                reminderState.DeleteReason
                             )
 
                         return Ok()
-                    | ReminderTypes.PhysicalDeletion ->
-                        // Get values from state.
-                        let physicalDeletionReminderState = reminder.State :?> PhysicalDeletionReminderState
-
-                        this.correlationId <- physicalDeletionReminderState.CorrelationId
+                    | ReminderTypes.PhysicalDeletion, ReminderState.DirectoryVersionPhysicalDeletion reminderState ->
+                        this.correlationId <- reminderState.CorrelationId
 
                         // Delete saved state for this actor.
                         do! state.ClearStateAsync()
@@ -185,19 +176,19 @@ module DirectoryVersion =
                             "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; Deleted state for directory version; RepositoryId: {RepositoryId}; DirectoryVersionId: {DirectoryVersionId}; deleteReason: {deleteReason}.",
                             getCurrentInstantExtended (),
                             getMachineName,
-                            physicalDeletionReminderState.CorrelationId,
+                            reminderState.CorrelationId,
                             directoryVersionDto.DirectoryVersion.RepositoryId,
                             directoryVersionDto.DirectoryVersion.DirectoryVersionId,
-                            physicalDeletionReminderState.DeleteReason
+                            reminderState.DeleteReason
                         )
 
                         this.DeactivateOnIdle()
                         return Ok()
-                    | _ ->
+                    | reminderType, state ->
                         return
                             Error(
                                 (GraceError.Create
-                                    $"{actorName} does not process reminder type {getDiscriminatedUnionCaseName reminder.ReminderType}."
+                                    $"{actorName} does not process reminder type {getDiscriminatedUnionCaseName reminderType} with state {getDiscriminatedUnionCaseName state}."
                                     this.correlationId)
                                     .enhance ("IsRetryable", "false")
                             )
@@ -423,13 +414,15 @@ module DirectoryVersion =
                             )
 
                             // Create a reminder to delete the cached state after the configured number of cache days.
-                            let deletionReminderState = (getDiscriminatedUnionCaseName ReminderTypes.DeleteCachedState, correlationId)
+                            let deletionReminderState: PhysicalDeletionReminderState =
+                                { DeleteReason = getDiscriminatedUnionCaseName ReminderTypes.DeleteCachedState
+                                  CorrelationId = correlationId }
 
                             do!
                                 (this :> IGraceReminderWithGuidKey).ScheduleReminderAsync
                                     ReminderTypes.DeleteCachedState
                                     (Duration.FromDays(float repositoryDto.DirectoryVersionCacheDays))
-                                    (serialize deletionReminderState)
+                                    (ReminderState.DirectoryVersionDeleteCachedState deletionReminderState)
                                     correlationId
 
                             log.LogDebug(
@@ -500,7 +493,7 @@ module DirectoryVersion =
                                             (this :> IGraceReminderWithGuidKey).ScheduleReminderAsync
                                                 ReminderTypes.PhysicalDeletion
                                                 (Duration.FromDays(float repositoryDto.LogicalDeleteDays))
-                                                physicalDeletionReminderState
+                                                (ReminderState.DirectoryVersionPhysicalDeletion physicalDeletionReminderState)
                                                 metadata.CorrelationId
 
                                         return Ok(LogicalDeleted deleteReason)
@@ -667,13 +660,15 @@ module DirectoryVersion =
                                 directoryVersion.Files
 
                         // Schedule a reminder to delete the .zip file after the cache days have passed.
-                        let deletionReminderState = (getDiscriminatedUnionCaseName DeleteZipFile, correlationId)
+                        let deletionReminderState: PhysicalDeletionReminderState =
+                            { DeleteReason = getDiscriminatedUnionCaseName DeleteZipFile
+                              CorrelationId = correlationId }
 
                         do!
                             (this :> IGraceReminderWithGuidKey).ScheduleReminderAsync
                                 DeleteZipFile
                                 (Duration.FromDays(float repositoryDto.DirectoryVersionCacheDays))
-                                (serialize deletionReminderState)
+                                (ReminderState.DirectoryVersionDeleteZipFile deletionReminderState)
                                 correlationId
 
                         let! uriWithSas = getUriWithReadSharedAccessSignature repositoryDto blobName correlationId

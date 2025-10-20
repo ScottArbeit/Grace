@@ -75,7 +75,7 @@ module Interfaces =
         /// Receives a reminder and processes it asynchronously.
         abstract member ReceiveReminderAsync: reminder: ReminderDto -> Task<Result<unit, GraceError>>
         /// Schedules a reminder to be sent to the actor after a specified delay.
-        abstract member ScheduleReminderAsync: reminderType: ReminderTypes -> delay: Duration -> state: obj -> correlationId: CorrelationId -> Task
+        abstract member ScheduleReminderAsync: reminderType: ReminderTypes -> delay: Duration -> state: ReminderState -> correlationId: CorrelationId -> Task
 
     /// Defines the operations that an actor must implement to handle Grace reminders.
     [<Interface>]
@@ -84,7 +84,7 @@ module Interfaces =
         /// Receives a reminder and processes it asynchronously.
         abstract member ReceiveReminderAsync: reminder: ReminderDto -> Task<Result<unit, GraceError>>
         /// Schedules a reminder to be sent to the actor after a specified delay.
-        abstract member ScheduleReminderAsync: reminderType: ReminderTypes -> delay: Duration -> state: obj -> correlationId: CorrelationId -> Task
+        abstract member ScheduleReminderAsync: reminderType: ReminderTypes -> delay: Duration -> state: ReminderState -> correlationId: CorrelationId -> Task
 
     /// Defines the operations for the Branch actor.
     [<Interface>]

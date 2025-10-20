@@ -1298,9 +1298,6 @@ module Services =
             let failed = List<string>()
 
             try
-                // (MaxDegreeOfParallelism = 3) runs at 700 RU's, so it fits under the free 1,000 RU limit for CosmosDB, without getting throttled.
-                let parallelOptions = ParallelOptions(MaxDegreeOfParallelism = 4)
-
                 let itemRequestOptions =
                     ItemRequestOptions(AddRequestHeaders = fun headers -> headers.Add(Constants.CorrelationIdHeaderKey, "deleteAllFromCosmosDBThatMatch"))
 
@@ -1323,20 +1320,9 @@ module Services =
                     do!
                         Parallel.ForEachAsync(
                             batchResults,
-                            parallelOptions,
                             (fun document ct ->
                                 ValueTask(
                                     task {
-                                        //let! deleteResponse =
-                                        //    cosmosContainer.DeleteItemAsync(document.id, PartitionKey(document.PartitionKey), itemRequestOptions)
-
-                                        //// Multiplying by 1000 because Interlocked.Add() expects an int64; we'll divide by 1000 when logging.
-                                        //totalRequestCharge <- Interlocked.Add(&totalRequestCharge, int64 (deleteResponse.RequestCharge * 1000.0))
-
-                                        //if deleteResponse.StatusCode <> HttpStatusCode.NoContent then
-                                        //    failed.Add(document.id)
-                                        //    logToConsole $"Failed to delete id {document.id}."
-
                                         use! deleteResponse =
                                             cosmosContainer.DeleteAllItemsByPartitionKeyStreamAsync(PartitionKey(document.PartitionKey), itemRequestOptions)
 
@@ -1376,7 +1362,6 @@ module Services =
     let deleteAllFromCosmosDb () =
         task {
 #if DEBUG
-            //let queryDefinition = QueryDefinition("""SELECT c.id, c.PartitionKey FROM c ORDER BY c.PartitionKey""")
             let queryDefinition = QueryDefinition("""SELECT DISTINCT c.PartitionKey FROM c ORDER BY c.PartitionKey""")
             return! deleteAllFromCosmosDBThatMatch queryDefinition
 #else

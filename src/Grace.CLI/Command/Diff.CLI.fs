@@ -112,8 +112,8 @@ module Diff =
 
         let directoryVersionId1 =
             new Option<Guid>(
-                "--directoryVersionId1",
-                [| "--d1" |],
+                OptionName.DirectoryVersionId1,
+                [| OptionName.D1 |],
                 Required = true,
                 Description = "The first DirectoryId to compare in the diff.",
                 Arity = ArgumentArity.ExactlyOne
@@ -121,8 +121,8 @@ module Diff =
 
         let directoryVersionId2 =
             new Option<Guid>(
-                "--directoryVersionId2",
-                [| "--d2" |],
+                OptionName.DirectoryVersionId2,
+                [| OptionName.D2 |],
                 Required = false,
                 Description = "The second DirectoryId to compare in the diff.",
                 Arity = ArgumentArity.ExactlyOne
@@ -130,8 +130,8 @@ module Diff =
 
         let sha256Hash1 =
             new Option<Sha256Hash>(
-                "--sha256Hash1",
-                [| "--s1" |],
+                OptionName.Sha256Hash1,
+                [| OptionName.S1 |],
                 Required = true,
                 Description = "The first partial or full SHA-256 hash to compare in the diff.",
                 Arity = ArgumentArity.ExactlyOne
@@ -139,14 +139,14 @@ module Diff =
 
         let sha256Hash2 =
             new Option<Sha256Hash>(
-                "--sha256Hash2",
-                [| "--s2" |],
+                OptionName.Sha256Hash2,
+                [| OptionName.S2 |],
                 Required = false,
                 Description = "The second partial or full SHA-256 hash to compare in the diff.",
                 Arity = ArgumentArity.ExactlyOne
             )
 
-        let tag = new Option<string>("--tag", Required = true, Description = "The tag to compare the current version to.", Arity = ArgumentArity.ExactlyOne)
+        let tag = new Option<string>(OptionName.Tag, Required = true, Description = "The tag to compare the current version to.", Arity = ArgumentArity.ExactlyOne)
 
     let private sha256Validations parseResult =
         let graceIds = getNormalizedIdsAndNames parseResult

@@ -167,10 +167,8 @@ module Owner =
                 task {
                     this.correlationId <- reminder.CorrelationId
 
-                    match reminder.ReminderType with
-                    | ReminderTypes.PhysicalDeletion ->
-                        // Get values from state.
-                        let physicalDeletionReminderState = reminder.State :?> PhysicalDeletionReminderState
+                    match reminder.ReminderType, reminder.State with
+                    | ReminderTypes.PhysicalDeletion, ReminderState.OwnerPhysicalDeletion physicalDeletionReminderState ->
                         this.correlationId <- physicalDeletionReminderState.CorrelationId
 
                         // Delete saved state for this actor.
@@ -188,11 +186,11 @@ module Owner =
                         // Deactivate the actor after the PhysicalDeletion reminder is processed.
                         this.DeactivateOnIdle()
                         return Ok()
-                    | _ ->
+                    | reminderType, state ->
                         return
                             Error(
                                 GraceError.Create
-                                    $"{actorName} does not process reminder type {getDiscriminatedUnionCaseName reminder.ReminderType}."
+                                    $"{actorName} does not process reminder type {getDiscriminatedUnionCaseName reminderType} with state {getDiscriminatedUnionCaseName state}."
                                     this.correlationId
                             )
                 }
@@ -300,7 +298,7 @@ module Owner =
                                                     (this :> IGraceReminderWithGuidKey).ScheduleReminderAsync
                                                         ReminderTypes.PhysicalDeletion
                                                         DefaultPhysicalDeletionReminderDuration
-                                                        physicalDeletionReminderState
+                                                        (ReminderState.OwnerPhysicalDeletion physicalDeletionReminderState)
                                                         metadata.CorrelationId
 
                                                 return Ok(LogicalDeleted(force, deleteReason))

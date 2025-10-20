@@ -97,7 +97,7 @@ module DirectoryVersion =
 
         let maxCount =
             new Option<int>(
-                "--maxCount",
+                OptionName.MaxCount,
                 Required = false,
                 Description = "The maximum number of results to return.",
                 Arity = ArgumentArity.ExactlyOne,
@@ -106,7 +106,7 @@ module DirectoryVersion =
 
         let sha256Hash =
             new Option<String>(
-                "--sha256Hash",
+                OptionName.Sha256Hash,
                 [||],
                 Required = false,
                 Description = "The full or partial SHA-256 hash value of the version.",
@@ -114,11 +114,11 @@ module DirectoryVersion =
             )
 
         let includeDeleted =
-            new Option<bool>("--include-deleted", [| "-d" |], Required = false, Description = "Include deleted branches in the result. [default: false]")
+            new Option<bool>(OptionName.IncludeDeleted, [| "-d" |], Required = false, Description = "Include deleted branches in the result. [default: false]")
 
         let directoryVersionIdRequired =
             new Option<String>(
-                "--directoryVersionId",
+                OptionName.DirectoryVersionId,
                 [| "-v" |],
                 Required = true,
                 Description = "The DirectoryVersionId to act on <Guid>.",
