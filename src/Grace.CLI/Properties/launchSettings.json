@@ -70,8 +70,8 @@
     },
     "grace owner get": {
       "commandName": "Project",
-      "commandLineArgs": "owner get --ownerName Owner4",
-      "workingDirectory": "D:\\Source\\GraceDemo\\Mika"
+      "commandLineArgs": "owner get -o Verbose",
+      "workingDirectory": "E:\\GraceDemo\\User01"
     },
     "grace org create": {
       "commandName": "Project",

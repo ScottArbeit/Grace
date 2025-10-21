@@ -65,7 +65,7 @@ module Reference =
             new Option<String>(OptionName.BranchName, [| "-b" |], Required = true, Description = "The name of the branch.", Arity = ArgumentArity.ExactlyOne)
 
         let ownerId =
-            new Option<Guid>(
+            new Option<OwnerId>(
                 OptionName.OwnerId,
                 Required = false,
                 Description = "The repository's owner ID <Guid>.",
@@ -82,7 +82,7 @@ module Reference =
             )
 
         let organizationId =
-            new Option<Guid>(
+            new Option<OrganizationId>(
                 OptionName.OrganizationId,
                 Required = false,
                 Description = "The repository's organization ID <Guid>.",
@@ -99,7 +99,7 @@ module Reference =
             )
 
         let repositoryId =
-            new Option<Guid>(
+            new Option<RepositoryId>(
                 OptionName.RepositoryId,
                 [| "-r" |],
                 Required = false,
@@ -118,7 +118,13 @@ module Reference =
             )
 
         let parentBranchId =
-            new Option<String>(OptionName.ParentBranchId, [||], Required = false, Description = "The parent branch's ID <Guid>.", Arity = ArgumentArity.ExactlyOne)
+            new Option<BranchId>(
+                OptionName.ParentBranchId,
+                [||],
+                Required = false,
+                Description = "The parent branch's ID <Guid>.",
+                Arity = ArgumentArity.ExactlyOne
+            )
 
         let parentBranchName =
             new Option<String>(
@@ -154,7 +160,8 @@ module Reference =
             (new Option<String>(OptionName.ReferenceType, Required = false, Description = "The type of reference.", Arity = ArgumentArity.ExactlyOne))
                 .AcceptOnlyFromAmong(listCases<ReferenceType> ())
 
-        let fullSha = new Option<bool>(OptionName.FullSha, Required = false, Description = "Show the full SHA-256 value in output.", Arity = ArgumentArity.ZeroOrOne)
+        let fullSha =
+            new Option<bool>(OptionName.FullSha, Required = false, Description = "Show the full SHA-256 value in output.", Arity = ArgumentArity.ZeroOrOne)
 
         let maxCount =
             new Option<int>(
@@ -165,7 +172,8 @@ module Reference =
                 DefaultValueFactory = (fun _ -> 30)
             )
 
-        let referenceId = new Option<Guid>(OptionName.ReferenceId, [||], Required = false, Description = "The reference ID <Guid>.", Arity = ArgumentArity.ExactlyOne)
+        let referenceId =
+            new Option<ReferenceId>(OptionName.ReferenceId, [||], Required = false, Description = "The reference ID <Guid>.", Arity = ArgumentArity.ExactlyOne)
 
         let sha256Hash =
             new Option<String>(
@@ -177,15 +185,21 @@ module Reference =
             )
 
         let enabled =
-            new Option<bool>(OptionName.Enabled, Required = false, Description = "True to enable the feature; false to disable it.", Arity = ArgumentArity.ZeroOrOne)
+            new Option<bool>(
+                OptionName.Enabled,
+                Required = false,
+                Description = "True to enable the feature; false to disable it.",
+                Arity = ArgumentArity.ZeroOrOne
+            )
 
         let includeDeleted =
             new Option<bool>(OptionName.IncludeDeleted, [| "-d" |], Required = false, Description = "Include deleted branches in the result. [default: false]")
 
-        let showEvents = new Option<bool>(OptionName.ShowEvents, [| "-e" |], Required = false, Description = "Include actor events in the result. [default: false]")
+        let showEvents =
+            new Option<bool>(OptionName.ShowEvents, [| "-e" |], Required = false, Description = "Include actor events in the result. [default: false]")
 
         let directoryVersionId =
-            new Option<Guid>(
+            new Option<DirectoryVersionId>(
                 OptionName.DirectoryVersionId,
                 [| "-v" |],
                 Required = false,

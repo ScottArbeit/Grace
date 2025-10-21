@@ -38,7 +38,7 @@ module Connect =
 
     module private Options =
         let repositoryId =
-            new Option<String>(
+            new Option<RepositoryId>(
                 OptionName.RepositoryId,
                 [| "-r" |],
                 Required = false,
@@ -56,13 +56,13 @@ module Connect =
             )
 
         let ownerId =
-            new Option<String>(OptionName.OwnerId, Required = false, Description = "The repository's owner ID <Guid>.", Arity = ArgumentArity.ExactlyOne)
+            new Option<OwnerId>(OptionName.OwnerId, Required = false, Description = "The repository's owner ID <Guid>.", Arity = ArgumentArity.ExactlyOne)
 
         let ownerName =
             new Option<String>(OptionName.OwnerName, Required = false, Description = "The repository's owner name.", Arity = ArgumentArity.ExactlyOne)
 
         let organizationId =
-            new Option<String>(
+            new Option<OrganizationId>(
                 OptionName.OrganizationId,
                 Required = false,
                 Description = "The repository's organization ID <Guid>.",

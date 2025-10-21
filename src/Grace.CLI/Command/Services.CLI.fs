@@ -1632,15 +1632,20 @@ module Services =
 
     /// Checks if an option was implicitly specified (i.e. the default value was used), or explicitly specified by the user.
     let isOptionResultImplicit (parseResult: ParseResult) (optionName: string) =
-        let option = parseResult.GetResult(optionName) :?> OptionResult
-        not option.Implicit || not (isNull (parseResult.GetResult(option.Option)))
+        if isOptionPresent parseResult optionName then
+            let option = parseResult.GetResult(optionName) :?> OptionResult
+            option.Implicit
+        else
+            false
 
-    /// Adjusts command-line options to account for whether Id's or Name's were explicitly specified by the user, or should be taken from default values.
+    /// Adjusts command-line options to account for whether Id's or Name's were explicitly specified by the user,
+    ///    or should be taken from default values.
     let getNormalizedIdsAndNames (parseResult: ParseResult) =
-        let getNormalizedId idOption (nameOption: string) =
+
+        let getNormalizedId (idOption: string) (nameOption: string) =
             if
                 isOptionResultImplicit parseResult idOption
-                && not <| isNull (parseResult.GetResult(nameOption))
+                && isOptionPresent parseResult nameOption
                 && not <| isOptionResultImplicit parseResult nameOption
             then
                 Guid.Empty

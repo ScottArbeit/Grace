@@ -74,10 +74,20 @@ module Common =
     let getCorrelationId (parseResult: ParseResult) = parseResult.GetValue(Options.correlationId)
 
     module Validations =
+        /// Checks that a given name option is a valid Grace name. If the option is not present, it does not return an error.
         let mustBeAValidGraceName<'T when 'T :> IErrorDiscriminatedUnion> (parseResult: ParseResult) (optionName: string) (error: 'T) =
-            let value = parseResult.GetValue(optionName)
+            let result = parseResult.GetResult(optionName)
+            let value = parseResult.GetValue<string>(optionName)
 
-            if value <> null && not <| Constants.GraceNameRegex.IsMatch(value) then
+            if result <> null && not <| Constants.GraceNameRegex.IsMatch(value) then
+                Error(GraceError.Create (getErrorMessage error) (parseResult |> getCorrelationId))
+            else
+                Ok(parseResult)
+
+        let ``Option must be present`` (optionName: string) (error: IErrorDiscriminatedUnion) (parseResult: ParseResult) =
+            let result = parseResult.GetResult(optionName)
+
+            if isNull result then
                 Error(GraceError.Create (getErrorMessage error) (parseResult |> getCorrelationId))
             else
                 Ok(parseResult)
@@ -103,13 +113,21 @@ module Common =
 
             // Only perform this validation if the command has an OwnerId option.
             if command.Options.Any(fun option -> option.Name = OptionName.OwnerId) then
+                let ownerIdResult = parseResult.GetResult(OptionName.OwnerId) :?> OptionResult
                 let ownerId = parseResult.GetValue<Guid>(OptionName.OwnerId)
                 let ownerName = parseResult.GetValue<string>(OptionName.OwnerName)
 
-                if ownerId = Guid.Empty && String.IsNullOrWhiteSpace(ownerName) then
-                    Error(GraceError.Create (getErrorMessage OwnerError.EitherOwnerIdOrOwnerNameRequired) (parseResult |> getCorrelationId))
-                else
+                let isOk =
+                    ownerIdResult.Implicit
+                    || ownerId <> Guid.Empty
+                    || not <| String.IsNullOrWhiteSpace(ownerName)
+
+                logToAnsiConsole Colors.Verbose $"OwnerId option implicit: {ownerIdResult.Implicit}; isOk: {isOk}; ownerId: {ownerId}."
+
+                if isOk then
                     Ok(parseResult)
+                else
+                    Error(GraceError.Create (getErrorMessage OwnerError.EitherOwnerIdOrOwnerNameRequired) (parseResult |> getCorrelationId))
             else
                 Ok(parseResult)
 
@@ -168,10 +186,11 @@ module Common =
             >>= ``RepositoryName must be a valid Grace name``
             >>= ``BranchName must be a valid Grace name``
             >>= ``NewName must be a valid Grace name``
-            >>= ``Either OwnerId or OwnerName must be provided``
-            >>= ``Either OrganizationId or OrganizationName must be provided``
-            >>= ``Either RepositoryId or RepositoryName must be provided``
-            >>= ``Either BranchId or BranchName must be provided``
+
+    //>>= ``Either OwnerId or OwnerName must be provided``
+    //>>= ``Either OrganizationId or OrganizationName must be provided``
+    //>>= ``Either RepositoryId or RepositoryName must be provided``
+    //>>= ``Either BranchId or BranchName must be provided``
 
     /// Checks if the output format from the command line is a specific format.
     let isOutputFormat (outputFormat: OutputFormat) (parseResult: ParseResult) =

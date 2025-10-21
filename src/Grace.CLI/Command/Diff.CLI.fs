@@ -39,7 +39,7 @@ module Diff =
 
     module private Options =
         let ownerId =
-            new Option<Guid>(
+            new Option<OwnerId>(
                 OptionName.OwnerId,
                 Required = false,
                 Description = "The repository's owner ID <Guid>.",
@@ -56,7 +56,7 @@ module Diff =
             )
 
         let organizationId =
-            new Option<Guid>(
+            new Option<OrganizationId>(
                 OptionName.OrganizationId,
                 Required = false,
                 Description = "The repository's organization ID <Guid>.",
@@ -73,7 +73,7 @@ module Diff =
             )
 
         let repositoryId =
-            new Option<Guid>(
+            new Option<RepositoryId>(
                 OptionName.RepositoryId,
                 [| "-r" |],
                 Required = false,
@@ -92,7 +92,7 @@ module Diff =
             )
 
         let branchId =
-            new Option<Guid>(
+            new Option<BranchId>(
                 OptionName.BranchId,
                 [| "-i" |],
                 Required = false,
@@ -111,7 +111,7 @@ module Diff =
             )
 
         let directoryVersionId1 =
-            new Option<Guid>(
+            new Option<DirectoryVersionId>(
                 OptionName.DirectoryVersionId1,
                 [| OptionName.D1 |],
                 Required = true,
@@ -120,7 +120,7 @@ module Diff =
             )
 
         let directoryVersionId2 =
-            new Option<Guid>(
+            new Option<DirectoryVersionId>(
                 OptionName.DirectoryVersionId2,
                 [| OptionName.D2 |],
                 Required = false,
@@ -146,7 +146,8 @@ module Diff =
                 Arity = ArgumentArity.ExactlyOne
             )
 
-        let tag = new Option<string>(OptionName.Tag, Required = true, Description = "The tag to compare the current version to.", Arity = ArgumentArity.ExactlyOne)
+        let tag =
+            new Option<string>(OptionName.Tag, Required = true, Description = "The tag to compare the current version to.", Arity = ArgumentArity.ExactlyOne)
 
     let private sha256Validations parseResult =
         let graceIds = getNormalizedIdsAndNames parseResult

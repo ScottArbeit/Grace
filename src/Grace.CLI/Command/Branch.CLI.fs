@@ -57,7 +57,7 @@ module Branch =
     module private Options =
 
         let branchId =
-            new Option<Guid>(
+            new Option<BranchId>(
                 OptionName.BranchId,
                 [| "-i" |],
                 Required = false,
@@ -79,7 +79,7 @@ module Branch =
             new Option<String>(OptionName.BranchName, [| "-b" |], Required = true, Description = "The name of the branch.", Arity = ArgumentArity.ExactlyOne)
 
         let ownerId =
-            new Option<Guid>(
+            new Option<OwnerId>(
                 OptionName.OwnerId,
                 Required = false,
                 Description = "The repository's owner ID <Guid>.",
@@ -96,7 +96,7 @@ module Branch =
             )
 
         let organizationId =
-            new Option<Guid>(
+            new Option<OrganizationId>(
                 OptionName.OrganizationId,
                 Required = false,
                 Description = "The repository's organization ID <Guid>.",
@@ -118,7 +118,7 @@ module Branch =
             )
 
         let repositoryId =
-            new Option<Guid>(
+            new Option<RepositoryId>(
                 OptionName.RepositoryId,
                 [| "-r" |],
                 Required = false,
@@ -142,7 +142,13 @@ module Branch =
             )
 
         let parentBranchId =
-            new Option<Guid>(OptionName.ParentBranchId, [||], Required = false, Description = "The parent branch's ID <Guid>.", Arity = ArgumentArity.ExactlyOne)
+            new Option<Guid>(
+                OptionName.ParentBranchId,
+                [||],
+                Required = false,
+                Description = "The parent branch's ID <Guid>.",
+                Arity = ArgumentArity.ExactlyOne
+            )
 
         let parentBranchName =
             new Option<String>(
@@ -204,7 +210,8 @@ module Branch =
                 DefaultValueFactory = (fun _ -> 30)
             )
 
-        let referenceId = new Option<Guid>(OptionName.ReferenceId, [||], Required = false, Description = "The reference ID <Guid>.", Arity = ArgumentArity.ExactlyOne)
+        let referenceId =
+            new Option<ReferenceId>(OptionName.ReferenceId, [||], Required = false, Description = "The reference ID <Guid>.", Arity = ArgumentArity.ExactlyOne)
 
         let sha256Hash =
             new Option<String>(
@@ -216,12 +223,18 @@ module Branch =
             )
 
         let enabled =
-            new Option<bool>(OptionName.Enabled, Required = false, Description = "True to enable the feature; false to disable it.", Arity = ArgumentArity.ZeroOrOne)
+            new Option<bool>(
+                OptionName.Enabled,
+                Required = false,
+                Description = "True to enable the feature; false to disable it.",
+                Arity = ArgumentArity.ZeroOrOne
+            )
 
         let includeDeleted =
             new Option<bool>(OptionName.IncludeDeleted, [| "-d" |], Required = false, Description = "Include deleted branches in the result. [default: false]")
 
-        let showEvents = new Option<bool>(OptionName.ShowEvents, [| "-e" |], Required = false, Description = "Include actor events in the result. [default: false]")
+        let showEvents =
+            new Option<bool>(OptionName.ShowEvents, [| "-e" |], Required = false, Description = "Include actor events in the result. [default: false]")
 
         let initialPermissions =
             new Option<ReferenceType array>(
@@ -233,7 +246,7 @@ module Branch =
             )
 
         let toBranchId =
-            new Option<Guid>(
+            new Option<BranchId>(
                 OptionName.ToBranchId,
                 [| "-d" |],
                 Required = false,
@@ -259,7 +272,7 @@ module Branch =
             )
 
         let directoryVersionId =
-            new Option<Guid>(
+            new Option<DirectoryVersionId>(
                 OptionName.DirectoryVersionId,
                 [| "-v" |],
                 Required = false,

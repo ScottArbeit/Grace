@@ -132,101 +132,100 @@ module GraceCommand =
         rootCommand.Subcommands.Add(Alias)
         rootCommand
 
-    /// Converts tokens to the exact casing defined in their options, enabling case-insensitive parsing on Windows.
-    let caseInsensitiveMiddleware (rootCommand: Command, parseResult: ParseResult, isCaseInsensitive) =
-        if isCaseInsensitive then
-            let commandOptions =
-                parseResult.CommandResult.Command.Options
-                |> Seq.append parseResult.RootCommandResult.Command.Options
+    ///// Converts tokens to the exact casing defined in their options, enabling case-insensitive parsing on Windows.
+    //let caseInsensitiveMiddleware (rootCommand: Command, isCaseInsensitive) =
+    //    if isCaseInsensitive then
+    //        let parseResult = rootCommand.Parse()
+    //        let commandOptions = rootCommand.Options
 
-            // Collect all of the aliases for all of the options.
-            let allAliases = commandOptions |> Seq.collect (fun option -> option.Aliases)
+    //        // Collect all of the aliases for all of the options.
+    //        let allAliases = commandOptions |> Seq.collect (fun option -> option.Aliases)
 
-            /// Finds tokens that are either aliases for options, or pre-defined valid values for an option (i.e. completions), and converts them to the exact case found in the option definitions.
-            let getCorrectTokenCase (tokens: string array) =
-                /// The case-corrected list of tokens.
-                let newTokens = List<string>(tokens.Length)
+    //        /// Finds tokens that are either aliases for options, or pre-defined valid values for an option (i.e. completions), and converts them to the exact case found in the option definitions.
+    //        let getCorrectTokenCase (tokens: string array) =
+    //            /// The case-corrected list of tokens.
+    //            let newTokens = List<string>(tokens.Length)
 
-                // Loop through every token.
-                for i = 0 to (tokens.Length - 1) do
-                    let token = tokens[i]
-                    // First, check if this is an alias for an option.
-                    match
-                        allAliases
-                        |> Seq.tryFind (fun alias -> alias.Equals(token, StringComparison.InvariantCultureIgnoreCase))
-                    with
-                    | Some alias ->
-                        // We found an alias, so we'll use the alias from the option definition to get the case exactly right.
-                        newTokens.Add(alias)
-                    | None ->
-                        // This is either a value, or just an invalid option we didn't find.
-                        // If it's a known value (i.e. completion) for an option, we want to use the completion value defined in the option to get the case right.
-                        // If we don't recognize it, we'll just leave it as-is.
-                        if i > 0 then
-                            // Check if the previous token is an option. If it is, there's a chance it has completions.
-                            let previousToken = tokens[i - 1]
+    //            // Loop through every token.
+    //            for i = 0 to (tokens.Length - 1) do
+    //                let token = tokens[i]
+    //                // First, check if this is an alias for an option.
+    //                match
+    //                    allAliases
+    //                    |> Seq.tryFind (fun alias -> alias.Equals(token, StringComparison.InvariantCultureIgnoreCase))
+    //                with
+    //                | Some alias ->
+    //                    // We found an alias, so we'll use the alias from the option definition to get the case exactly right.
+    //                    newTokens.Add(alias)
+    //                | None ->
+    //                    // This is either a value, or just an invalid option we didn't find.
+    //                    // If it's a known value (i.e. completion) for an option, we want to use the completion value defined in the option to get the case right.
+    //                    // If we don't recognize it, we'll just leave it as-is.
+    //                    if i > 0 then
+    //                        // Check if the previous token is an option. If it is, there's a chance it has completions.
+    //                        let previousToken = tokens[i - 1]
 
-                            match
-                                commandOptions
-                                |> Seq.tryFind (fun option -> option.Aliases.Contains(previousToken, StringComparer.InvariantCultureIgnoreCase))
-                            with
-                            | Some option ->
-                                // We found an option for the previous token, so we'll check if it has completions.
-                                let dlk = Completions.CompletionContext.Empty
+    //                        match
+    //                            commandOptions
+    //                            |> Seq.tryFind (fun option -> option.Aliases.Contains(previousToken, StringComparer.InvariantCultureIgnoreCase))
+    //                        with
+    //                        | Some option ->
+    //                            // We found an option for the previous token, so we'll check if it has completions.
+    //                            let dlk = Completions.CompletionContext.Empty
 
-                                let completions =
-                                    option.GetCompletions(parseResult.GetCompletionContext())
-                                    |> Seq.map (fun completion -> completion.InsertText)
-                                    |> Seq.toArray
+    //                            let completions =
+    //                                option.GetCompletions(parseResult.GetCompletionContext())
+    //                                |> Seq.map (fun completion -> completion.InsertText)
+    //                                |> Seq.toArray
 
-                                // If we have completions, and this token is one of them, we'll use the actual completion value to get the case right.
-                                if completions.Length > 0 then
-                                    newTokens.Add(
-                                        completions.FirstOrDefault(
-                                            (fun completion -> token.Equals(completion, StringComparison.InvariantCultureIgnoreCase)),
-                                            token
-                                        )
-                                    )
-                                else
-                                    // There are no completions, so we'll just use the current token as-is.
-                                    newTokens.Add(token)
-                            | None ->
-                                // We didn't find an option for the previous token, so we'll just use the current token as-is.
-                                newTokens.Add(token)
-                        else
-                            // This is the first token, so we'll just use it as-is. If this were a valid option, we would have matched it and returned `Some alias`.
-                            newTokens.Add(token)
+    //                            // If we have completions, and this token is one of them, we'll use the actual completion value to get the case right.
+    //                            if completions.Length > 0 then
+    //                                newTokens.Add(
+    //                                    completions.FirstOrDefault(
+    //                                        (fun completion -> token.Equals(completion, StringComparison.InvariantCultureIgnoreCase)),
+    //                                        token
+    //                                    )
+    //                                )
+    //                            else
+    //                                // There are no completions, so we'll just use the current token as-is.
+    //                                newTokens.Add(token)
+    //                        | None ->
+    //                            // We didn't find an option for the previous token, so we'll just use the current token as-is.
+    //                            newTokens.Add(token)
+    //                    else
+    //                        // This is the first token, so we'll just use it as-is. If this were a valid option, we would have matched it and returned `Some alias`.
+    //                        newTokens.Add(token)
 
-                newTokens.ToArray()
+    //            newTokens.ToArray()
 
-            // Get the text from all tokens on the command-line into an array.
-            let tokens = parseResult.Tokens.Select(fun token -> token.Value).ToArray()
+    //        // Get the text from all tokens on the command-line into an array.
+    //        let tokens = parseResult.Tokens.Select(fun token -> token.Value).ToArray()
 
-            // Convert the tokens to the correct case.
-            let newTokens =
-                match tokens.Length with
-                | 0 ->
-                    // There are no tokens, so we'll just return an empty array.
-                    Array.empty<string>
-                | 1 ->
-                    // This could be a command like `grace branch`, which is a valid request for help. I'll convert the token to lower-case to match Grace's command structure.
-                    [| tokens[0].ToLowerInvariant() |]
-                | _ ->
-                    // We've already converted aliases to their noun-verb form, so we know the first two tokens should be converted to lower-case to match Grace's command structure.
-                    // The rest of the tokens are either options or values, and will be converted to their exact casing based on the option definitions.
+    //        // Convert the tokens to the correct case.
+    //        let newTokens =
+    //            match tokens.Count with
+    //            | 0 ->
+    //                // There are no tokens, so we'll just return an empty array.
+    //                Array.empty<string>
+    //            | 1 ->
+    //                // This could be a command like `grace branch`, which is a valid request for help. I'll convert the token to lower-case to match Grace's command structure.
+    //                [| tokens[0].ToLowerInvariant() |]
+    //            | _ ->
+    //                // We've already converted aliases to their noun-verb form, so we know the first two tokens should be converted to lower-case to match Grace's command structure.
+    //                // The rest of the tokens are either options or values, and will be converted to their exact casing based on the option definitions.
 
-                    // In case someone typed `grace --some-option blah`, which is invalid, I want to leave it alone.
-                    if tokens[0].StartsWith("-") then
-                        tokens
-                    else
-                        // Convert the first two tokens to lower-case.
-                        //Array.append [| tokens[0].ToLowerInvariant(); tokens[1].ToLowerInvariant() |] (getCorrectTokenCase tokens[2..])
-                        Array.append [| tokens[0].ToLowerInvariant() |] (getCorrectTokenCase tokens[1..])
+    //                // In case someone typed `grace --some-option blah`, which is invalid, I want to leave it alone.
+    //                if tokens[0].StartsWith("-") then
+    //                    tokens
+    //                else
+    //                    // Convert the first two tokens to lower-case.
+    //                    //Array.append [| tokens[0].ToLowerInvariant(); tokens[1].ToLowerInvariant() |] (getCorrectTokenCase tokens[2..])
+    //                    Array.append [| tokens[0].ToLowerInvariant() |] (getCorrectTokenCase tokens[1..])
 
-            // Replace the old ParseResult with one based on the updated tokens with exact casing.
-            rootCommand.Parse(newTokens)
-        else
-            parseResult
+    //        // Replace the old ParseResult with one based on the updated tokens with exact casing.
+    //        rootCommand.Parse(newTokens)
+    //    else
+    //        rootCommand.Parse()
 
     /// Checks if the command is a `grace watch` command.
     let isGraceWatch (parseResult: ParseResult) = if (parseResult.CommandResult.Command.Name = "watch") then true else false
@@ -261,8 +260,8 @@ module GraceCommand =
         //let memoryCacheOptions = MemoryCacheOptions(TrackStatistics = false, TrackLinkedCacheEntries = false)
         //memoryCache <- new MemoryCache(memoryCacheOptions)
 
-        // Checks if we're running on a Windows system, and if so, sets the case-insensitive flag.
-        let isCaseInsensitive = Environment.OSVersion.Platform <> PlatformID.Win32NT
+        /// True if the OS is case-insensitive (i.e. Windows), false otherwise.
+        let isCaseInsensitive = Environment.OSVersion.Platform = PlatformID.Win32NT
 
         (task {
             let mutable parseResult: ParseResult = null
@@ -272,33 +271,47 @@ module GraceCommand =
                 try
                     //let commandLineConfiguration = ParserConfiguration rootCommand
 
-                    // Right now, in order to handle default values, we need to read the Grace configuration file as the commands are being built, and before they're executed.
-                    // For instance, when the command is `grace repo create...`, the `repo` command is built by System.CommandLine in-memory, and that causes `graceconfig.json` to be read
-                    //    to get default values for things like OwnerId, OrganizationId, etc.
-                    // If grace is being run in a directory where there's no config, that obviously won't work, so, first, we check if we have a config file.
+                    // Right now, in order to handle default values, we need to read the Grace configuration file
+                    //   as the commands are being built, and before they're executed.
+                    // For instance, when the command is `grace repo create...`, the `repo` command is built by
+                    //   System.CommandLine in-memory, and that causes `graceconfig.json` to be read to get
+                    //   default values for things like OwnerId, OrganizationId, etc.
+                    // If grace is being run in a directory where there's no config, that obviously won't work, so,
+                    //   first, we check if we have a config file.
                     // If we do have a config file, great! we can parse it and use it.
                     // If we don't, we're just going to print an error message and exit.
+
                     if configurationFileExists () then
                         if args.Length > 0 then
                             let firstToken = if isCaseInsensitive then args[0].ToLowerInvariant() else args[0]
 
+                            // Adjust the casing of any options in the args array for case-insensitive OSes.
+                            let properCasedArgs =
+                                args
+                                |> Array.map (fun arg ->
+                                    if isCaseInsensitive && arg.StartsWith("--") then
+                                        arg.ToLowerInvariant()
+                                    else
+                                        arg)
+
+                            // Check if the first token is an alias for a command.
                             if aliases.ContainsKey(firstToken) then
                                 let newArgs = List<string>()
 
-                                // Reverse the full command so we insert them in the right order.
+                                // Reverse the expanded command so we insert them in the right order.
                                 for token in aliases[firstToken].Reverse() do
                                     newArgs.Insert(0, token)
 
-                                for token in args[1..] do
+                                for token in properCasedArgs[1..] do
                                     newArgs.Add(token)
 
-                                let newArgsString = String.Join(" ", newArgs)
+                                //let newArgsString = String.Join(" ", newArgs)
                                 //logToAnsiConsole Colors.Verbose $"Using alias for command: {firstToken} -> {newArgsString}."
                                 parseResult <- rootCommand.Parse(newArgs)
                             else
-                                let argsString = String.Join(" ", args)
+                                //let argsString = String.Join(" ", properCasedArgs)
                                 //logToAnsiConsole Colors.Verbose $"No alias; parsing command line arguments: {argsString}."
-                                parseResult <- rootCommand.Parse(args)
+                                parseResult <- rootCommand.Parse(properCasedArgs)
                         else
                             // If we have no tokens, we want to show the help text for the command,
                             //   so we parse the command again with one of the help options to get the help text.
@@ -347,12 +360,12 @@ module GraceCommand =
                             //   "[default: thing-we-said-in-the-Option-definition] [default:e4def31b-4547-4f6b-9324-56eba666b4b2]"
                             //   i.e. whatever the generated Guid value on create might be.
                             let optionsToUpdate =
-                                [ { optionName = "correlationId"; command = String.Empty; display = "new NanoId"; displayOnCreate = "new NanoId" }
-                                  { optionName = "branchId"; command = "Branch"; display = "current branch"; displayOnCreate = "new Guid" }
-                                  { optionName = "organizationId"; command = "Organization"; display = "current organization"; displayOnCreate = "new Guid" }
-                                  { optionName = "ownerId"; command = "Owner"; display = "current owner"; displayOnCreate = "new Guid" }
-                                  { optionName = "repositoryId"; command = "Repository"; display = "current repository"; displayOnCreate = "new Guid" }
-                                  { optionName = "parentBranchId"
+                                [ { optionName = "correlation-id"; command = String.Empty; display = "new NanoId"; displayOnCreate = "new NanoId" }
+                                  { optionName = "branch-id"; command = "Branch"; display = "current branch"; displayOnCreate = "new Guid" }
+                                  { optionName = "organization-id"; command = "Organization"; display = "current organization"; displayOnCreate = "new Guid" }
+                                  { optionName = "owner-id"; command = "Owner"; display = "current owner"; displayOnCreate = "new Guid" }
+                                  { optionName = "repository-id"; command = "Repository"; display = "current repository"; displayOnCreate = "new Guid" }
+                                  { optionName = "parent-branch-id"
                                     command = "Branch"
                                     display = "current branch, empty if parentBranchName is provided"
                                     displayOnCreate = "current branch, empty if parentBranchName is provided" } ]
@@ -373,7 +386,7 @@ module GraceCommand =
 
                             returnValue <- parseResult.Invoke()
                         | _ ->
-                            parseResult <- caseInsensitiveMiddleware (rootCommand, parseResult, isCaseInsensitive)
+                            //parseResult <- caseInsensitiveMiddleware (rootCommand, parseResult, isCaseInsensitive)
 
                             if parseResult |> hasOutput then
                                 if parseResult |> verbose then

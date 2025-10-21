@@ -11,8 +11,6 @@ open Grace.Shared.Client.Theme
 open Grace.Shared.Validation
 open Grace.Shared.Validation.Errors
 open Grace.Types.Types
-open Grace.Shared.Validation
-open Grace.Shared.Validation.Errors
 open NodaTime
 open System
 open System.Collections.Generic
@@ -30,25 +28,15 @@ open Grace.CLI.Services
 
 module Owner =
 
-    type CommonParameters() =
-        inherit ParameterBase()
-        member val public OwnerId: string = String.Empty with get, set
-        member val public OwnerName: string = String.Empty with get, set
-
     module private Options =
         let ownerId =
-            new Option<String>(
+            new Option<OwnerId>(
                 OptionName.OwnerId,
                 [||],
                 Required = false,
                 Description = "The Id of the owner <Guid>.",
                 Arity = ArgumentArity.ExactlyOne,
-                DefaultValueFactory =
-                    (fun _ ->
-                        if Current().OwnerId = Guid.Empty then
-                            $"{Guid.NewGuid()}"
-                        else
-                            $"{Current().OwnerId}")
+                DefaultValueFactory = (fun _ -> if Current().OwnerId = Guid.Empty then Guid.NewGuid() else Current().OwnerId)
             )
 
         let ownerName =
@@ -97,6 +85,8 @@ module Owner =
                 Arity = ArgumentArity.ZeroOrOne
             )
 
+    let ownerCommonValidations = CommonValidations >=> ``Either OwnerId or OwnerName must be provided``
+
     // Create subcommand.
     type Create() =
         inherit AsynchronousCommandLineAction()
@@ -106,7 +96,11 @@ module Owner =
                 try
                     if parseResult |> verbose then printParseResult parseResult
                     let graceIds = parseResult |> getNormalizedIdsAndNames
-                    let validateIncomingParameters = parseResult |> CommonValidations
+
+                    let validateIncomingParameters =
+                        parseResult
+                        |> ownerCommonValidations
+                        >>= (``Option must be present`` OptionName.OwnerName OwnerNameIsRequired)
 
                     match validateIncomingParameters with
                     | Ok _ ->
@@ -181,7 +175,8 @@ module Owner =
                 try
                     if parseResult |> verbose then printParseResult parseResult
                     let graceIds = parseResult |> getNormalizedIdsAndNames
-                    let validateIncomingParameters = parseResult |> CommonValidations
+                    logToAnsiConsole Colors.Verbose $"graceIds: {serialize graceIds}"
+                    let validateIncomingParameters = parseResult |> ownerCommonValidations
 
                     match validateIncomingParameters with
                     | Ok _ ->
@@ -241,7 +236,7 @@ module Owner =
                 try
                     if parseResult |> verbose then printParseResult parseResult
                     let graceIds = parseResult |> getNormalizedIdsAndNames
-                    let validateIncomingParameters = parseResult |> CommonValidations
+                    let validateIncomingParameters = parseResult |> ownerCommonValidations
 
                     match validateIncomingParameters with
                     | Ok _ ->
@@ -306,7 +301,7 @@ module Owner =
                 try
                     if parseResult |> verbose then printParseResult parseResult
                     let graceIds = parseResult |> getNormalizedIdsAndNames
-                    let validateIncomingParameters = parseResult |> CommonValidations
+                    let validateIncomingParameters = parseResult |> ownerCommonValidations
 
                     match validateIncomingParameters with
                     | Ok _ ->
@@ -353,7 +348,7 @@ module Owner =
                 try
                     if parseResult |> verbose then printParseResult parseResult
                     let graceIds = parseResult |> getNormalizedIdsAndNames
-                    let validateIncomingParameters = parseResult |> CommonValidations
+                    let validateIncomingParameters = parseResult |> ownerCommonValidations
 
                     match validateIncomingParameters with
                     | Ok _ ->
@@ -400,7 +395,7 @@ module Owner =
                 try
                     if parseResult |> verbose then printParseResult parseResult
                     let graceIds = parseResult |> getNormalizedIdsAndNames
-                    let validateIncomingParameters = parseResult |> CommonValidations
+                    let validateIncomingParameters = parseResult |> ownerCommonValidations
 
                     match validateIncomingParameters with
                     | Ok _ ->
@@ -447,7 +442,7 @@ module Owner =
                 try
                     if parseResult |> verbose then printParseResult parseResult
                     let graceIds = parseResult |> getNormalizedIdsAndNames
-                    let validateIncomingParameters = parseResult |> CommonValidations
+                    let validateIncomingParameters = parseResult |> ownerCommonValidations
 
                     match validateIncomingParameters with
                     | Ok _ ->
@@ -495,7 +490,7 @@ module Owner =
                 try
                     if parseResult |> verbose then printParseResult parseResult
                     let graceIds = parseResult |> getNormalizedIdsAndNames
-                    let validateIncomingParameters = parseResult |> CommonValidations
+                    let validateIncomingParameters = parseResult |> ownerCommonValidations
 
                     match validateIncomingParameters with
                     | Ok _ ->

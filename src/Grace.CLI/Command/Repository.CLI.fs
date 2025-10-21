@@ -33,7 +33,7 @@ module Repository =
 
     module private Options =
         let ownerId =
-            new Option<Guid>(
+            new Option<OwnerId>(
                 OptionName.OwnerId,
                 Required = false,
                 Description = "The repository's owner ID <Guid>.",
@@ -50,7 +50,7 @@ module Repository =
             )
 
         let organizationId =
-            new Option<Guid>(
+            new Option<OrganizationId>(
                 OptionName.OrganizationId,
                 Required = false,
                 Description = "The repository's organization ID <Guid>.",
@@ -72,7 +72,7 @@ module Repository =
             )
 
         let repositoryId =
-            new Option<Guid>(
+            new Option<RepositoryId>(
                 OptionName.RepositoryId,
                 [| "-r" |],
                 Required = false,
@@ -138,7 +138,12 @@ module Repository =
                 .AcceptOnlyFromAmong(listCases<Constants.ServerApiVersions> ())
 
         let saveDays =
-            new Option<single>(OptionName.SaveDays, Required = true, Description = "How many days to keep saves. [default: 7.0]", Arity = ArgumentArity.ExactlyOne)
+            new Option<single>(
+                OptionName.SaveDays,
+                Required = true,
+                Description = "How many days to keep saves. [default: 7.0]",
+                Arity = ArgumentArity.ExactlyOne
+            )
 
         let checkpointDays =
             new Option<single>(
@@ -176,7 +181,12 @@ module Repository =
             new Option<String>(OptionName.NewName, Required = true, Description = "The new name for the repository.", Arity = ArgumentArity.ExactlyOne)
 
         let deleteReason =
-            new Option<String>(OptionName.DeleteReason, Required = true, Description = "The reason for deleting the repository.", Arity = ArgumentArity.ExactlyOne)
+            new Option<String>(
+                OptionName.DeleteReason,
+                Required = true,
+                Description = "The reason for deleting the repository.",
+                Arity = ArgumentArity.ExactlyOne
+            )
 
         let graceConfig =
             new Option<String>(

@@ -102,10 +102,20 @@ module Organization =
         let force = new Option<bool>(OptionName.Force, Required = false, Description = "Delete even if there is data under this organization. [default: false]")
 
         let includeDeleted =
-            new Option<bool>(OptionName.IncludeDeleted, [| "-d" |], Required = false, Description = "Include deleted organizations in the result. [default: false]")
+            new Option<bool>(
+                OptionName.IncludeDeleted,
+                [| "-d" |],
+                Required = false,
+                Description = "Include deleted organizations in the result. [default: false]"
+            )
 
         let deleteReason =
-            new Option<String>(OptionName.DeleteReason, Required = true, Description = "The reason for deleting the organization.", Arity = ArgumentArity.ExactlyOne)
+            new Option<String>(
+                OptionName.DeleteReason,
+                Required = true,
+                Description = "The reason for deleting the organization.",
+                Arity = ArgumentArity.ExactlyOne
+            )
 
         let doNotSwitch =
             new Option<bool>(
@@ -164,10 +174,12 @@ module Organization =
                                     newConfig.OrganizationId <- Guid.Parse($"{returnValue.Properties[nameof OrganizationId]}")
                                     newConfig.OrganizationName <- $"{returnValue.Properties[nameof OrganizationName]}"
                                     updateConfiguration newConfig
+
                                 return result |> renderOutput parseResult
                             | Error _ -> return result |> renderOutput parseResult
                         else
                             let! result = Organization.Create(parameters)
+
                             match result with
                             | Ok returnValue ->
                                 if not <| parseResult.GetValue(Options.doNotSwitch) then
@@ -175,6 +187,7 @@ module Organization =
                                     newConfig.OrganizationId <- Guid.Parse($"{returnValue.Properties[nameof OrganizationId]}")
                                     newConfig.OrganizationName <- $"{returnValue.Properties[nameof OrganizationName]}"
                                     updateConfiguration newConfig
+
                                 return result |> renderOutput parseResult
                             | Error _ -> return result |> renderOutput parseResult
                     | Error error -> return Error error |> renderOutput parseResult
@@ -231,6 +244,7 @@ module Organization =
                             | Error graceError -> return Error graceError |> renderOutput parseResult
                         else
                             let! result = Organization.Get(parameters)
+
                             match result with
                             | Ok graceReturnValue ->
                                 let jsonText = JsonText(serialize graceReturnValue.ReturnValue)

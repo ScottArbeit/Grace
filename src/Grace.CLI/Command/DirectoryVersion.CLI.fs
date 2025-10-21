@@ -43,12 +43,12 @@ module DirectoryVersion =
 
     module private Options =
         let ownerId =
-            new Option<String>(
+            new Option<OwnerId>(
                 OptionName.OwnerId,
                 Required = false,
                 Description = "The repository's owner ID <Guid>.",
                 Arity = ArgumentArity.ZeroOrOne,
-                DefaultValueFactory = (fun _ -> $"{Current().OwnerId}")
+                DefaultValueFactory = (fun _ -> Current().OwnerId)
             )
 
         let ownerName =
@@ -60,12 +60,12 @@ module DirectoryVersion =
             )
 
         let organizationId =
-            new Option<String>(
+            new Option<OrganizationId>(
                 OptionName.OrganizationId,
                 Required = false,
                 Description = "The repository's organization ID <Guid>.",
                 Arity = ArgumentArity.ExactlyOne,
-                DefaultValueFactory = (fun _ -> $"{Current().OrganizationId}")
+                DefaultValueFactory = (fun _ -> Current().OrganizationId)
             )
 
         let organizationName =
@@ -77,13 +77,13 @@ module DirectoryVersion =
             )
 
         let repositoryId =
-            new Option<String>(
+            new Option<RepositoryId>(
                 OptionName.RepositoryId,
                 [| "-r" |],
                 Required = false,
                 Description = "The repository's ID <Guid>.",
                 Arity = ArgumentArity.ExactlyOne,
-                DefaultValueFactory = (fun _ -> $"{Current().RepositoryId}")
+                DefaultValueFactory = (fun _ -> Current().RepositoryId)
             )
 
         let repositoryName =
@@ -117,7 +117,7 @@ module DirectoryVersion =
             new Option<bool>(OptionName.IncludeDeleted, [| "-d" |], Required = false, Description = "Include deleted branches in the result. [default: false]")
 
         let directoryVersionIdRequired =
-            new Option<String>(
+            new Option<DirectoryVersionId>(
                 OptionName.DirectoryVersionId,
                 [| "-v" |],
                 Required = true,
@@ -166,7 +166,7 @@ module DirectoryVersion =
                                 OrganizationName = graceIds.OrganizationName,
                                 RepositoryId = graceIds.RepositoryIdString,
                                 RepositoryName = graceIds.RepositoryName,
-                                DirectoryVersionId = directoryVersionId,
+                                DirectoryVersionId = $"{directoryVersionId}",
                                 Sha256Hash = sha256Hash,
                                 CorrelationId = graceIds.CorrelationId
                             )
