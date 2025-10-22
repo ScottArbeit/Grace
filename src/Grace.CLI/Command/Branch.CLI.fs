@@ -403,24 +403,34 @@ module Branch =
                 try
                     if parseResult |> verbose then printParseResult parseResult
 
-                    let correlationId = getCorrelationId parseResult
-
-                    let graceIds =
-                        parseResult
-                        |> getNormalizedIdsAndNames
-                        |> fun ids -> { ids with CorrelationId = correlationId }
-
                     let validateIncomingParameters = parseResult |> CommonValidations >>= ``BranchName must not be empty``
 
                     match validateIncomingParameters with
                     | Ok _ ->
-                        let parentBranchIdOption = parseResult.GetValue(Options.parentBranchId)
+                        let correlationId = getCorrelationId parseResult
 
-                        let parentBranchId =
-                            if parentBranchIdOption = Guid.Empty then
-                                String.Empty
+                        // In a Create() command, if --branch-id is implicit, that's actually going to be the parent branch id,
+                        //   and we need to set the new branch id to a new Guid.
+                        let graceIds =
+                            parseResult
+                            |> getNormalizedIdsAndNames
+                            |> fun ids ->
+                                if parseResult.GetResult(Options.branchId).Implicit then
+                                    let branchId = Guid.NewGuid()
+                                    { ids with BranchId = branchId; BranchIdString = $"{branchId}"; CorrelationId = correlationId }
+                                else
+                                    { ids with CorrelationId = correlationId }
+
+                        let parentBranchId = parseResult.GetValue(Options.parentBranchId)
+
+                        let parentBranchIdString =
+                            if parentBranchId = Guid.Empty then
+                                if parseResult.GetResult(Options.branchId).Implicit then
+                                    parseResult.GetValue(Options.branchId).ToString()
+                                else
+                                    String.Empty
                             else
-                                parentBranchIdOption.ToString()
+                                parentBranchId.ToString()
 
                         let parentBranchName = parseResult.GetValue(Options.parentBranchName) |> valueOrEmpty
 
@@ -439,7 +449,7 @@ module Branch =
                                 OrganizationName = graceIds.OrganizationName,
                                 BranchId = graceIds.BranchIdString,
                                 BranchName = graceIds.BranchName,
-                                ParentBranchId = parentBranchId,
+                                ParentBranchId = parentBranchIdString,
                                 ParentBranchName = parentBranchName,
                                 InitialPermissions = initialPermissions,
                                 CorrelationId = correlationId

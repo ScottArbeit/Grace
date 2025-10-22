@@ -333,7 +333,13 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
                             | None ->
                                 if path.Equals("/branch/create", StringComparison.InvariantCultureIgnoreCase) then
                                     // If we're creating a new Branch, we don't need to resolve the Id.
-                                    graceIds <- { graceIds with BranchId = Guid.Parse(branchIdString); BranchIdString = branchIdString; HasBranch = true }
+                                    let mutable branchId = Guid.Empty
+                                    Guid.TryParse(branchIdString, &branchId) |> ignore
+
+                                    logToConsole
+                                        $"********** In ValidateIdsMiddleware: branchId: {branchId}; branchIdString: {branchIdString}; CorrelationId: {correlationId}."
+
+                                    graceIds <- { graceIds with BranchId = branchId; BranchIdString = branchIdString; HasBranch = true }
                                 else
                                     // Resolve the BranchId based on the provided Id and Name.
                                     match!

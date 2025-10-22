@@ -245,8 +245,30 @@ module Common =
     /// Prints the ParseResult with markup.
     let printParseResult (parseResult: ParseResult) =
         if not <| isNull parseResult then
-            AnsiConsole.MarkupLine($"[{Colors.Verbose}]{escapeBrackets (parseResult.ToString())}[/]")
-            AnsiConsole.WriteLine()
+            let sb = stringBuilderPool.Get()
+
+            try
+                let optionList =
+                    parseResult.RootCommandResult.Command.Options
+                    |> Seq.append parseResult.CommandResult.Command.Options
+                    |> Seq.sortBy (fun option -> option.Name)
+                    |> Seq.toIReadOnlyList
+
+                for option in optionList do
+                    let value = parseResult.GetValue(option.Name)
+
+                    if not (isNull value) then
+                        if option.ValueType.IsArray then
+                            sb.AppendLine($"{option.Name}: {serialize value}") |> ignore
+                        else
+                            sb.AppendLine($"{option.Name}: {value}") |> ignore
+
+                AnsiConsole.MarkupLine($"[{Colors.Verbose}]{escapeBrackets (parseResult.ToString())}[/]")
+                AnsiConsole.WriteLine()
+                AnsiConsole.MarkupLine($"[{Colors.Verbose}]{escapeBrackets (sb.ToString())}[/]")
+                AnsiConsole.WriteLine()
+            finally
+                stringBuilderPool.Return sb
 
     /// Prints AnsiConsole markup to the console.
     let writeMarkup (markup: IRenderable) =

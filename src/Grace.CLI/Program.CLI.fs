@@ -395,7 +395,7 @@ module GraceCommand =
                                             .RightJustified()
                                     )
 
-                                    printParseResult parseResult
+                                //printParseResult parseResult
                                 else
                                     AnsiConsole.Write(new Rule())
 
