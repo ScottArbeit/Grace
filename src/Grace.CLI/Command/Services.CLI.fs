@@ -1657,6 +1657,9 @@ module Services =
 
         let mutable graceIds = GraceIds.Default
 
+        if isOptionPresent parseResult OptionName.CorrelationId then
+            graceIds <- { graceIds with CorrelationId = parseResult.GetValue(OptionName.CorrelationId) }
+
         if
             isOptionPresent parseResult OptionName.OwnerId
             || isOptionPresent parseResult OptionName.OwnerName

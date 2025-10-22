@@ -95,7 +95,14 @@ module Owner =
             task {
                 try
                     if parseResult |> verbose then printParseResult parseResult
-                    let graceIds = parseResult |> getNormalizedIdsAndNames
+
+                    // In a Create() command, if --owner-id is implicit, that's actually the old OwnerId taken from graceconfig.json,
+                    //   and we need to set OwnerId to a new Guid.
+                    let mutable graceIds = parseResult |> getNormalizedIdsAndNames
+
+                    if parseResult.GetResult(Options.ownerId).Implicit then
+                        let ownerId = Guid.NewGuid()
+                        graceIds <- { graceIds with OwnerId = ownerId; OwnerIdString = $"{ownerId}" }
 
                     let validateIncomingParameters =
                         parseResult
@@ -111,11 +118,7 @@ module Owner =
                                 graceIds.OwnerIdString
 
                         let parameters =
-                            Parameters.Owner.CreateOwnerParameters(
-                                OwnerId = ownerId,
-                                OwnerName = graceIds.OwnerName,
-                                CorrelationId = getCorrelationId parseResult
-                            )
+                            Parameters.Owner.CreateOwnerParameters(OwnerId = ownerId, OwnerName = graceIds.OwnerName, CorrelationId = graceIds.CorrelationId)
 
                         if parseResult |> hasOutput then
                             let! result =

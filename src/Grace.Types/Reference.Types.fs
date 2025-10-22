@@ -23,7 +23,7 @@ module Reference =
     [<KnownType("GetKnownTypes")>]
     type ReferenceCommand =
         | Create of
-            referenceId: ReferenceId *
+            ReferenceId: ReferenceId *
             OwnerId: OwnerId *
             OrganizationId: OrganizationId *
             RepositoryId: RepositoryId *
@@ -45,7 +45,7 @@ module Reference =
     [<KnownType("GetKnownTypes")>]
     type ReferenceEventType =
         | Created of
-            referenceId: ReferenceId *
+            ReferenceId: ReferenceId *
             OwnerId: OwnerId *
             OrganizationId: OrganizationId *
             RepositoryId: RepositoryId *

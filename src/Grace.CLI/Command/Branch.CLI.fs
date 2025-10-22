@@ -39,6 +39,7 @@ open System.Threading.Tasks
 open System.Text
 open System.Text.Json
 open Grace.Shared.Parameters
+open Grace.Shared.Client
 
 module Branch =
     open Grace.Shared.Validation.Common.Input
@@ -364,35 +365,11 @@ module Branch =
 
     let private valueOrEmpty (value: string) = if String.IsNullOrWhiteSpace(value) then String.Empty else value
 
-    type private CommandContext =
-        { OwnerId: string
-          OwnerName: string
-          OrganizationId: string
-          OrganizationName: string
-          RepositoryId: string
-          RepositoryName: string
-          BranchId: string
-          BranchName: string
-          CorrelationId: string }
-
     let private guidToString (value: Guid) = if value = Guid.Empty then String.Empty else $"{value}"
 
     let private fallbackString hasValue supplied fallbackValue = if hasValue then supplied |> valueOrEmpty else fallbackValue |> valueOrEmpty
 
     let private fallbackGuidString hasValue supplied fallbackValue = if hasValue then supplied |> valueOrEmpty else fallbackValue |> guidToString
-
-    let private buildCommandContext (parseResult: ParseResult) (graceIds: GraceIds) =
-        let currentConfig = Current()
-
-        { OwnerId = fallbackGuidString graceIds.HasOwner graceIds.OwnerIdString currentConfig.OwnerId
-          OwnerName = fallbackString graceIds.HasOwner graceIds.OwnerName currentConfig.OwnerName
-          OrganizationId = fallbackGuidString graceIds.HasOrganization graceIds.OrganizationIdString currentConfig.OrganizationId
-          OrganizationName = fallbackString graceIds.HasOrganization graceIds.OrganizationName currentConfig.OrganizationName
-          RepositoryId = fallbackGuidString graceIds.HasRepository graceIds.RepositoryIdString currentConfig.RepositoryId
-          RepositoryName = fallbackString graceIds.HasRepository graceIds.RepositoryName currentConfig.RepositoryName
-          BranchId = fallbackGuidString graceIds.HasBranch graceIds.BranchIdString currentConfig.BranchId
-          BranchName = fallbackString graceIds.HasBranch graceIds.BranchName currentConfig.BranchName
-          CorrelationId = getCorrelationId parseResult }
 
     // Create subcommand.
     type Create() =
@@ -407,19 +384,13 @@ module Branch =
 
                     match validateIncomingParameters with
                     | Ok _ ->
-                        let correlationId = getCorrelationId parseResult
+                        // In a Create() command, if --branch-id is implicit, that's the current branch taken from graceconfig.json, and the
+                        //   current branch, by default, is the parent branch of the new one. Therefore, we need to set BranchId to a new Guid.
+                        let mutable graceIds = parseResult |> getNormalizedIdsAndNames
 
-                        // In a Create() command, if --branch-id is implicit, that's actually going to be the parent branch id,
-                        //   and we need to set the new branch id to a new Guid.
-                        let graceIds =
-                            parseResult
-                            |> getNormalizedIdsAndNames
-                            |> fun ids ->
-                                if parseResult.GetResult(Options.branchId).Implicit then
-                                    let branchId = Guid.NewGuid()
-                                    { ids with BranchId = branchId; BranchIdString = $"{branchId}"; CorrelationId = correlationId }
-                                else
-                                    { ids with CorrelationId = correlationId }
+                        if parseResult.GetResult(Options.branchId).Implicit then
+                            let branchId = Guid.NewGuid()
+                            graceIds <- { graceIds with BranchId = branchId; BranchIdString = $"{branchId}" }
 
                         let parentBranchId = parseResult.GetValue(Options.parentBranchId)
 
@@ -452,7 +423,7 @@ module Branch =
                                 ParentBranchId = parentBranchIdString,
                                 ParentBranchName = parentBranchName,
                                 InitialPermissions = initialPermissions,
-                                CorrelationId = correlationId
+                                CorrelationId = graceIds.CorrelationId
                             )
 
                         let! result =
@@ -811,26 +782,22 @@ module Branch =
 
     type CreateReferenceCommand = CreateReferenceParameters -> Task<GraceResult<String>>
 
-    let private createReferenceHandler
-        (parseResult: ParseResult)
-        (context: CommandContext)
-        (message: string)
-        (command: CreateReferenceCommand)
-        (commandType: string)
-        =
+    let private createReferenceHandler (parseResult: ParseResult) (message: string) (command: CreateReferenceCommand) (commandType: string) =
         task {
             try
                 if parseResult |> verbose then printParseResult parseResult
 
                 let validateIncomingParameters = parseResult |> CommonValidations
-                let sanitizedMessage = message |> valueOrEmpty
-                let repositoryId = RepositoryId.Parse(context.RepositoryId)
+                let sanitizedMessage = message.Trim()
 
                 match validateIncomingParameters with
                 | Ok _ ->
+                    let graceIds = parseResult |> getNormalizedIdsAndNames
+
                     //let sha256Bytes = SHA256.HashData(Encoding.ASCII.GetBytes(rnd.NextInt64().ToString("x8")))
                     //let sha256Hash = Seq.fold (fun (sb: StringBuilder) currentByte ->
                     //    sb.Append(sprintf $"{currentByte:X2}")) (StringBuilder(sha256Bytes.Length)) sha256Bytes
+
                     if parseResult |> hasOutput then
                         return!
                             progress
@@ -913,12 +880,12 @@ module Branch =
                                             if newFileVersions.Count() > 0 then
                                                 let getUploadMetadataForFilesParameters =
                                                     Storage.GetUploadMetadataForFilesParameters(
-                                                        OwnerId = context.OwnerId,
-                                                        OwnerName = context.OwnerName,
-                                                        OrganizationId = context.OrganizationId,
-                                                        OrganizationName = context.OrganizationName,
-                                                        RepositoryId = context.RepositoryId,
-                                                        RepositoryName = context.RepositoryName,
+                                                        OwnerId = graceIds.OwnerIdString,
+                                                        OwnerName = graceIds.OwnerName,
+                                                        OrganizationId = graceIds.OrganizationIdString,
+                                                        OrganizationName = graceIds.OrganizationName,
+                                                        RepositoryId = graceIds.RepositoryIdString,
+                                                        RepositoryName = graceIds.RepositoryName,
                                                         CorrelationId = getCorrelationId parseResult,
                                                         FileVersions =
                                                             (newFileVersions
@@ -940,12 +907,12 @@ module Branch =
 
                                             if newDirectoryVersions.Count > 0 then
                                                 let saveParameters = SaveDirectoryVersionsParameters()
-                                                saveParameters.OwnerId <- context.OwnerId
-                                                saveParameters.OwnerName <- context.OwnerName
-                                                saveParameters.OrganizationId <- context.OrganizationId
-                                                saveParameters.OrganizationName <- context.OrganizationName
-                                                saveParameters.RepositoryId <- context.RepositoryId
-                                                saveParameters.RepositoryName <- context.RepositoryName
+                                                saveParameters.OwnerId <- graceIds.OwnerIdString
+                                                saveParameters.OwnerName <- graceIds.OwnerName
+                                                saveParameters.OrganizationId <- graceIds.OrganizationIdString
+                                                saveParameters.OrganizationName <- graceIds.OrganizationName
+                                                saveParameters.RepositoryId <- graceIds.RepositoryIdString
+                                                saveParameters.RepositoryName <- graceIds.RepositoryName
                                                 saveParameters.DirectoryVersionId <- $"{newGraceStatus.RootDirectoryId}"
 
                                                 saveParameters.DirectoryVersions <- newDirectoryVersions.Select(fun dv -> dv.ToDirectoryVersion).ToList()
@@ -971,18 +938,18 @@ module Branch =
 
                                         let sdkParameters =
                                             Parameters.Branch.CreateReferenceParameters(
-                                                BranchId = context.BranchId,
-                                                BranchName = context.BranchName,
-                                                OwnerId = context.OwnerId,
-                                                OwnerName = context.OwnerName,
-                                                OrganizationId = context.OrganizationId,
-                                                OrganizationName = context.OrganizationName,
-                                                RepositoryId = context.RepositoryId,
-                                                RepositoryName = context.RepositoryName,
+                                                BranchId = graceIds.BranchIdString,
+                                                BranchName = graceIds.BranchName,
+                                                OwnerId = graceIds.OwnerIdString,
+                                                OwnerName = graceIds.OwnerName,
+                                                OrganizationId = graceIds.OrganizationIdString,
+                                                OrganizationName = graceIds.OrganizationName,
+                                                RepositoryId = graceIds.RepositoryIdString,
+                                                RepositoryName = graceIds.RepositoryName,
                                                 DirectoryVersionId = rootDirectoryId,
                                                 Sha256Hash = rootDirectorySha256Hash,
                                                 Message = sanitizedMessage,
-                                                CorrelationId = context.CorrelationId
+                                                CorrelationId = graceIds.CorrelationId
                                             )
 
                                         let! result = command sdkParameters
@@ -1020,12 +987,12 @@ module Branch =
 
                         let getUploadMetadataForFilesParameters =
                             Storage.GetUploadMetadataForFilesParameters(
-                                OwnerId = context.OwnerId,
-                                OwnerName = context.OwnerName,
-                                OrganizationId = context.OrganizationId,
-                                OrganizationName = context.OrganizationName,
-                                RepositoryId = context.RepositoryId,
-                                RepositoryName = context.RepositoryName,
+                                OwnerId = graceIds.OwnerIdString,
+                                OwnerName = graceIds.OwnerName,
+                                OrganizationId = graceIds.OrganizationIdString,
+                                OrganizationName = graceIds.OrganizationName,
+                                RepositoryId = graceIds.RepositoryIdString,
+                                RepositoryName = graceIds.RepositoryName,
                                 CorrelationId = getCorrelationId parseResult,
                                 FileVersions =
                                     (newFileVersions
@@ -1035,12 +1002,12 @@ module Branch =
 
                         let! uploadResult = uploadFilesToObjectStorage getUploadMetadataForFilesParameters
                         let saveParameters = SaveDirectoryVersionsParameters()
-                        saveParameters.OwnerId <- context.OwnerId
-                        saveParameters.OwnerName <- context.OwnerName
-                        saveParameters.OrganizationId <- context.OrganizationId
-                        saveParameters.OrganizationName <- context.OrganizationName
-                        saveParameters.RepositoryId <- context.RepositoryId
-                        saveParameters.RepositoryName <- context.RepositoryName
+                        saveParameters.OwnerId <- graceIds.OwnerIdString
+                        saveParameters.OwnerName <- graceIds.OwnerName
+                        saveParameters.OrganizationId <- graceIds.OrganizationIdString
+                        saveParameters.OrganizationName <- graceIds.OrganizationName
+                        saveParameters.RepositoryId <- graceIds.RepositoryIdString
+                        saveParameters.RepositoryName <- graceIds.RepositoryName
                         saveParameters.CorrelationId <- getCorrelationId parseResult
                         saveParameters.DirectoryVersions <- newDirectoryVersions.Select(fun dv -> dv.ToDirectoryVersion).ToList()
 
@@ -1049,18 +1016,18 @@ module Branch =
 
                         let sdkParameters =
                             Parameters.Branch.CreateReferenceParameters(
-                                BranchId = context.BranchId,
-                                BranchName = context.BranchName,
-                                OwnerId = context.OwnerId,
-                                OwnerName = context.OwnerName,
-                                OrganizationId = context.OrganizationId,
-                                OrganizationName = context.OrganizationName,
-                                RepositoryId = context.RepositoryId,
-                                RepositoryName = context.RepositoryName,
+                                BranchId = graceIds.BranchIdString,
+                                BranchName = graceIds.BranchName,
+                                OwnerId = graceIds.OwnerIdString,
+                                OwnerName = graceIds.OwnerName,
+                                OrganizationId = graceIds.OrganizationIdString,
+                                OrganizationName = graceIds.OrganizationName,
+                                RepositoryId = graceIds.RepositoryIdString,
+                                RepositoryName = graceIds.RepositoryName,
                                 DirectoryVersionId = rootDirectoryVersion.DirectoryVersionId,
                                 Sha256Hash = rootDirectoryVersion.Sha256Hash,
                                 Message = sanitizedMessage,
-                                CorrelationId = context.CorrelationId
+                                CorrelationId = graceIds.CorrelationId
                             )
 
                         let! result = command sdkParameters
@@ -1070,16 +1037,18 @@ module Branch =
                 return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
         }
 
-    let private promotionHandler (parseResult: ParseResult) (context: CommandContext) (message: string) =
+    let private promotionHandler (parseResult: ParseResult) (message: string) =
         task {
             try
                 if parseResult |> verbose then printParseResult parseResult
 
                 let validateIncomingParameters = parseResult |> CommonValidations
-                let sanitizedMessage = message |> valueOrEmpty
+                let sanitizedMessage = message.Trim()
 
                 match validateIncomingParameters with
                 | Ok _ ->
+                    let graceIds = parseResult |> getNormalizedIdsAndNames
+
                     if parseResult |> hasOutput then
                         return!
                             progress
@@ -1106,16 +1075,20 @@ module Branch =
                                         // Get the Dto for the current branch. That will have its latest commit.
                                         let branchGetParameters =
                                             GetBranchParameters(
-                                                BranchId = context.BranchId,
-                                                BranchName = context.BranchName,
-                                                OwnerId = context.OwnerId,
-                                                OwnerName = context.OwnerName,
-                                                OrganizationId = context.OrganizationId,
-                                                OrganizationName = context.OrganizationName,
-                                                RepositoryId = context.RepositoryId,
-                                                RepositoryName = context.RepositoryName,
-                                                CorrelationId = context.CorrelationId
+                                                BranchId = graceIds.BranchIdString,
+                                                BranchName = graceIds.BranchName,
+                                                OwnerId = graceIds.OwnerIdString,
+                                                OwnerName = graceIds.OwnerName,
+                                                OrganizationId = graceIds.OrganizationIdString,
+                                                OrganizationName = graceIds.OrganizationName,
+                                                RepositoryId = graceIds.RepositoryIdString,
+                                                RepositoryName = graceIds.RepositoryName,
+                                                CorrelationId = graceIds.CorrelationId
                                             )
+
+                                        logToAnsiConsole
+                                            Colors.Verbose
+                                            $"In promotionHandler: branchGetParameters:{Environment.NewLine}{serialize branchGetParameters}"
 
                                         let! branchResult = Branch.Get(branchGetParameters)
 
@@ -1128,16 +1101,10 @@ module Branch =
                                             | Ok parentBranchReturnValue ->
                                                 // Yay, we have both Dto's.
                                                 let branchDto = branchReturnValue.ReturnValue
-                                                let parentBranchDto = parentBranchReturnValue.ReturnValue
 
-                                                // Get the references for the latest commit and/or promotion on the current branch.
-                                                //let getReferenceParameters =
-                                                //    Parameters.Branch.GetReferenceParameters(BranchId = context.BranchId, BranchName = context.BranchName,
-                                                //        OwnerId = context.OwnerId, OwnerName = context.OwnerName,
-                                                //        OrganizationId = context.OrganizationId, OrganizationName = context.OrganizationName,
-                                                //        RepositoryId = context.RepositoryId, RepositoryName = context.RepositoryName,
-                                                //        ReferenceId = $"{branchDto.LatestCommit}", CorrelationId = context.CorrelationId)
-                                                //let! referenceResult = Branch.GetReference(getReferenceParameters)
+                                                logToAnsiConsole Colors.Verbose $"In promotionHandler: branchDto:{Environment.NewLine}{serialize branchDto}"
+
+                                                let parentBranchDto = parentBranchReturnValue.ReturnValue
 
                                                 let referenceIds = List<ReferenceId>()
 
@@ -1150,15 +1117,19 @@ module Branch =
                                                 if referenceIds.Count > 0 then
                                                     let getReferencesByReferenceIdParameters =
                                                         Parameters.Repository.GetReferencesByReferenceIdParameters(
-                                                            OwnerId = context.OwnerId,
-                                                            OwnerName = context.OwnerName,
-                                                            OrganizationId = context.OrganizationId,
-                                                            OrganizationName = context.OrganizationName,
-                                                            RepositoryId = context.RepositoryId,
-                                                            RepositoryName = context.RepositoryName,
+                                                            OwnerId = graceIds.OwnerIdString,
+                                                            OwnerName = graceIds.OwnerName,
+                                                            OrganizationId = graceIds.OrganizationIdString,
+                                                            OrganizationName = graceIds.OrganizationName,
+                                                            RepositoryId = graceIds.RepositoryIdString,
+                                                            RepositoryName = graceIds.RepositoryName,
                                                             ReferenceIds = referenceIds,
-                                                            CorrelationId = context.CorrelationId
+                                                            CorrelationId = graceIds.CorrelationId
                                                         )
+
+                                                    logToAnsiConsole
+                                                        Colors.Verbose
+                                                        $"In promotionHandler: getReferencesByReferenceIdParameters:{Environment.NewLine}{serialize getReferencesByReferenceIdParameters}"
 
                                                     match! Repository.GetReferencesByReferenceId(getReferencesByReferenceIdParameters) with
                                                     | Ok returnValue ->
@@ -1183,16 +1154,16 @@ module Branch =
                                                             let promotionParameters =
                                                                 Parameters.Branch.CreateReferenceParameters(
                                                                     BranchId = $"{parentBranchDto.BranchId}",
-                                                                    OwnerId = context.OwnerId,
-                                                                    OwnerName = context.OwnerName,
-                                                                    OrganizationId = context.OrganizationId,
-                                                                    OrganizationName = context.OrganizationName,
-                                                                    RepositoryId = context.RepositoryId,
-                                                                    RepositoryName = context.RepositoryName,
+                                                                    OwnerId = graceIds.OwnerIdString,
+                                                                    OwnerName = graceIds.OwnerName,
+                                                                    OrganizationId = graceIds.OrganizationIdString,
+                                                                    OrganizationName = graceIds.OrganizationName,
+                                                                    RepositoryId = graceIds.RepositoryIdString,
+                                                                    RepositoryName = graceIds.RepositoryName,
                                                                     DirectoryVersionId = latestPromotableReference.DirectoryId,
                                                                     Sha256Hash = latestPromotableReference.Sha256Hash,
                                                                     Message = sanitizedMessage,
-                                                                    CorrelationId = context.CorrelationId
+                                                                    CorrelationId = graceIds.CorrelationId
                                                                 )
 
                                                             let! promotionResult = Branch.Promote(promotionParameters)
@@ -1207,10 +1178,10 @@ module Branch =
                                                                     Parameters.Branch.RebaseParameters(
                                                                         BranchId = $"{branchDto.BranchId}",
                                                                         RepositoryId = $"{branchDto.RepositoryId}",
-                                                                        OwnerId = context.OwnerId,
-                                                                        OwnerName = context.OwnerName,
-                                                                        OrganizationId = context.OrganizationId,
-                                                                        OrganizationName = context.OrganizationName,
+                                                                        OwnerId = graceIds.OwnerIdString,
+                                                                        OwnerName = graceIds.OwnerName,
+                                                                        OrganizationId = graceIds.OrganizationIdString,
+                                                                        OrganizationName = graceIds.OrganizationName,
                                                                         BasedOn = promotionReferenceId
                                                                     )
 
@@ -1268,10 +1239,9 @@ module Branch =
                     if parseResult |> verbose then printParseResult parseResult
 
                     let graceIds = parseResult |> getNormalizedIdsAndNames
-                    let context = buildCommandContext parseResult graceIds
                     let message = parseResult.GetValue(Options.message) |> valueOrEmpty
 
-                    let! result = promotionHandler parseResult context message
+                    let! result = promotionHandler parseResult message
                     return result |> renderOutput parseResult
                 with ex ->
                     let graceError = GraceError.Create $"{ExceptionResponse.Create ex}" (parseResult |> getCorrelationId)
@@ -1287,11 +1257,10 @@ module Branch =
                     if parseResult |> verbose then printParseResult parseResult
 
                     let graceIds = parseResult |> getNormalizedIdsAndNames
-                    let context = buildCommandContext parseResult graceIds
                     let message = parseResult.GetValue(Options.messageRequired) |> valueOrEmpty
                     let command (parameters: CreateReferenceParameters) = task { return! Branch.Commit(parameters) }
 
-                    let! result = createReferenceHandler parseResult context message command (nameof(Commit).ToLowerInvariant())
+                    let! result = createReferenceHandler parseResult message command (nameof(Commit).ToLowerInvariant())
 
                     return result |> renderOutput parseResult
                 with ex ->
@@ -1308,11 +1277,10 @@ module Branch =
                     if parseResult |> verbose then printParseResult parseResult
 
                     let graceIds = parseResult |> getNormalizedIdsAndNames
-                    let context = buildCommandContext parseResult graceIds
                     let message = parseResult.GetValue(Options.message) |> valueOrEmpty
                     let command (parameters: CreateReferenceParameters) = task { return! Branch.Checkpoint(parameters) }
 
-                    let! result = createReferenceHandler parseResult context message command (nameof(Checkpoint).ToLowerInvariant())
+                    let! result = createReferenceHandler parseResult message command (nameof(Checkpoint).ToLowerInvariant())
 
                     return result |> renderOutput parseResult
                 with ex ->
@@ -1329,11 +1297,10 @@ module Branch =
                     if parseResult |> verbose then printParseResult parseResult
 
                     let graceIds = parseResult |> getNormalizedIdsAndNames
-                    let context = buildCommandContext parseResult graceIds
                     let message = parseResult.GetValue(Options.message) |> valueOrEmpty
                     let command (parameters: CreateReferenceParameters) = task { return! Branch.Save(parameters) }
 
-                    let! result = createReferenceHandler parseResult context message command (nameof(Save).ToLowerInvariant())
+                    let! result = createReferenceHandler parseResult message command (nameof(Save).ToLowerInvariant())
 
                     return result |> renderOutput parseResult
                 with ex ->
@@ -1350,11 +1317,10 @@ module Branch =
                     if parseResult |> verbose then printParseResult parseResult
 
                     let graceIds = parseResult |> getNormalizedIdsAndNames
-                    let context = buildCommandContext parseResult graceIds
                     let message = parseResult.GetValue(Options.messageRequired) |> valueOrEmpty
                     let command (parameters: CreateReferenceParameters) = task { return! Branch.Tag(parameters) }
 
-                    let! result = createReferenceHandler parseResult context message command (nameof(Tag).ToLowerInvariant())
+                    let! result = createReferenceHandler parseResult message command (nameof(Tag).ToLowerInvariant())
 
                     return result |> renderOutput parseResult
                 with ex ->
@@ -1371,11 +1337,10 @@ module Branch =
                     if parseResult |> verbose then printParseResult parseResult
 
                     let graceIds = parseResult |> getNormalizedIdsAndNames
-                    let context = buildCommandContext parseResult graceIds
                     let message = parseResult.GetValue(Options.messageRequired) |> valueOrEmpty
                     let command (parameters: CreateReferenceParameters) = task { return! Branch.CreateExternal(parameters) }
 
-                    let! result = createReferenceHandler parseResult context message command ("External".ToLowerInvariant())
+                    let! result = createReferenceHandler parseResult message command ("External".ToLowerInvariant())
 
                     return result |> renderOutput parseResult
                 with ex ->
@@ -1385,7 +1350,7 @@ module Branch =
 
     type EnableFeatureCommand = EnableFeatureParameters -> Task<GraceResult<string>>
 
-    let private enableFeatureHandler (parseResult: ParseResult) (context: CommandContext) (enabled: bool) (command: EnableFeatureCommand) =
+    let private enableFeatureHandler (parseResult: ParseResult) (enabled: bool) (command: EnableFeatureCommand) =
         task {
             try
                 if parseResult |> verbose then printParseResult parseResult
@@ -1394,24 +1359,26 @@ module Branch =
 
                 match validateIncomingParameters with
                 | Ok _ ->
+                    let graceIds = parseResult |> getNormalizedIdsAndNames
+
                     let parameters =
                         Parameters.Branch.EnableFeatureParameters(
-                            BranchId = context.BranchId,
-                            BranchName = context.BranchName,
-                            OwnerId = context.OwnerId,
-                            OwnerName = context.OwnerName,
-                            OrganizationId = context.OrganizationId,
-                            OrganizationName = context.OrganizationName,
-                            RepositoryId = context.RepositoryId,
-                            RepositoryName = context.RepositoryName,
+                            BranchId = graceIds.BranchIdString,
+                            BranchName = graceIds.BranchName,
+                            OwnerId = graceIds.OwnerIdString,
+                            OwnerName = graceIds.OwnerName,
+                            OrganizationId = graceIds.OrganizationIdString,
+                            OrganizationName = graceIds.OrganizationName,
+                            RepositoryId = graceIds.RepositoryIdString,
+                            RepositoryName = graceIds.RepositoryName,
                             Enabled = enabled,
-                            CorrelationId = context.CorrelationId
+                            CorrelationId = graceIds.CorrelationId
                         )
 
                     let! result = command parameters
 
                     match result with
-                    | Ok returnValue -> return Ok(GraceReturnValue.Create (returnValue.ReturnValue) context.CorrelationId)
+                    | Ok returnValue -> return Ok(GraceReturnValue.Create (returnValue.ReturnValue) graceIds.CorrelationId)
                     | Error error -> return Error error
                 | Error error -> return Error error
             with ex ->
@@ -1425,11 +1392,10 @@ module Branch =
             task {
                 try
                     let graceIds = parseResult |> getNormalizedIdsAndNames
-                    let context = buildCommandContext parseResult graceIds
                     let enabled = parseResult.GetValue(Options.enabled)
                     let command (parameters: EnableFeatureParameters) = task { return! Branch.EnableAssign(parameters) }
 
-                    let! result = enableFeatureHandler parseResult context enabled command
+                    let! result = enableFeatureHandler parseResult enabled command
                     return result |> renderOutput parseResult
                 with ex ->
                     let graceError = GraceError.Create $"{ExceptionResponse.Create ex}" (parseResult |> getCorrelationId)
@@ -1443,11 +1409,10 @@ module Branch =
             task {
                 try
                     let graceIds = parseResult |> getNormalizedIdsAndNames
-                    let context = buildCommandContext parseResult graceIds
                     let enabled = parseResult.GetValue(Options.enabled)
                     let command (parameters: EnableFeatureParameters) = task { return! Branch.EnablePromotion(parameters) }
 
-                    let! result = enableFeatureHandler parseResult context enabled command
+                    let! result = enableFeatureHandler parseResult enabled command
                     return result |> renderOutput parseResult
                 with ex ->
                     let graceError = GraceError.Create $"{ExceptionResponse.Create ex}" (parseResult |> getCorrelationId)
@@ -1461,11 +1426,10 @@ module Branch =
             task {
                 try
                     let graceIds = parseResult |> getNormalizedIdsAndNames
-                    let context = buildCommandContext parseResult graceIds
                     let enabled = parseResult.GetValue(Options.enabled)
                     let command (parameters: EnableFeatureParameters) = task { return! Branch.EnableCommit(parameters) }
 
-                    let! result = enableFeatureHandler parseResult context enabled command
+                    let! result = enableFeatureHandler parseResult enabled command
                     return result |> renderOutput parseResult
                 with ex ->
                     let graceError = GraceError.Create $"{ExceptionResponse.Create ex}" (parseResult |> getCorrelationId)
@@ -1479,11 +1443,10 @@ module Branch =
             task {
                 try
                     let graceIds = parseResult |> getNormalizedIdsAndNames
-                    let context = buildCommandContext parseResult graceIds
                     let enabled = parseResult.GetValue(Options.enabled)
                     let command (parameters: EnableFeatureParameters) = task { return! Branch.EnableCheckpoint(parameters) }
 
-                    let! result = enableFeatureHandler parseResult context enabled command
+                    let! result = enableFeatureHandler parseResult enabled command
                     return result |> renderOutput parseResult
                 with ex ->
                     let graceError = GraceError.Create $"{ExceptionResponse.Create ex}" (parseResult |> getCorrelationId)
@@ -1497,11 +1460,10 @@ module Branch =
             task {
                 try
                     let graceIds = parseResult |> getNormalizedIdsAndNames
-                    let context = buildCommandContext parseResult graceIds
                     let enabled = parseResult.GetValue(Options.enabled)
                     let command (parameters: EnableFeatureParameters) = task { return! Branch.EnableSave(parameters) }
 
-                    let! result = enableFeatureHandler parseResult context enabled command
+                    let! result = enableFeatureHandler parseResult enabled command
                     return result |> renderOutput parseResult
                 with ex ->
                     let graceError = GraceError.Create $"{ExceptionResponse.Create ex}" (parseResult |> getCorrelationId)
@@ -1515,11 +1477,10 @@ module Branch =
             task {
                 try
                     let graceIds = parseResult |> getNormalizedIdsAndNames
-                    let context = buildCommandContext parseResult graceIds
                     let enabled = parseResult.GetValue(Options.enabled)
                     let command (parameters: EnableFeatureParameters) = task { return! Branch.EnableTag(parameters) }
 
-                    let! result = enableFeatureHandler parseResult context enabled command
+                    let! result = enableFeatureHandler parseResult enabled command
                     return result |> renderOutput parseResult
                 with ex ->
                     let graceError = GraceError.Create $"{ExceptionResponse.Create ex}" (parseResult |> getCorrelationId)
@@ -1533,11 +1494,10 @@ module Branch =
             task {
                 try
                     let graceIds = parseResult |> getNormalizedIdsAndNames
-                    let context = buildCommandContext parseResult graceIds
                     let enabled = parseResult.GetValue(Options.enabled)
                     let command (parameters: EnableFeatureParameters) = task { return! Branch.EnableExternal(parameters) }
 
-                    let! result = enableFeatureHandler parseResult context enabled command
+                    let! result = enableFeatureHandler parseResult enabled command
                     return result |> renderOutput parseResult
                 with ex ->
                     let graceError = GraceError.Create $"{ExceptionResponse.Create ex}" (parseResult |> getCorrelationId)
@@ -1551,11 +1511,10 @@ module Branch =
             task {
                 try
                     let graceIds = parseResult |> getNormalizedIdsAndNames
-                    let context = buildCommandContext parseResult graceIds
                     let enabled = parseResult.GetValue(Options.enabled)
                     let command (parameters: EnableFeatureParameters) = task { return! Branch.EnableAutoRebase(parameters) }
 
-                    let! result = enableFeatureHandler parseResult context enabled command
+                    let! result = enableFeatureHandler parseResult enabled command
                     return result |> renderOutput parseResult
                 with ex ->
                     let graceError = GraceError.Create $"{ExceptionResponse.Create ex}" (parseResult |> getCorrelationId)
@@ -1573,24 +1532,24 @@ module Branch =
 
                     let includeDeleted = parseResult.GetValue(Options.includeDeleted)
                     let showEvents = parseResult.GetValue(Options.showEvents)
-                    let graceIds = parseResult |> getNormalizedIdsAndNames
-                    let context = buildCommandContext parseResult graceIds
                     let validateIncomingParameters = parseResult |> CommonValidations
 
                     match validateIncomingParameters with
                     | Ok _ ->
+                        let graceIds = parseResult |> getNormalizedIdsAndNames
+
                         let branchParameters =
                             GetBranchParameters(
-                                OwnerId = context.OwnerId,
-                                OwnerName = context.OwnerName,
-                                OrganizationId = context.OrganizationId,
-                                OrganizationName = context.OrganizationName,
-                                RepositoryId = context.RepositoryId,
-                                RepositoryName = context.RepositoryName,
-                                BranchId = context.BranchId,
-                                BranchName = context.BranchName,
+                                OwnerId = graceIds.OwnerIdString,
+                                OwnerName = graceIds.OwnerName,
+                                OrganizationId = graceIds.OrganizationIdString,
+                                OrganizationName = graceIds.OrganizationName,
+                                RepositoryId = graceIds.RepositoryIdString,
+                                RepositoryName = graceIds.RepositoryName,
+                                BranchId = graceIds.BranchIdString,
+                                BranchName = graceIds.BranchName,
                                 IncludeDeleted = includeDeleted,
-                                CorrelationId = context.CorrelationId
+                                CorrelationId = graceIds.CorrelationId
                             )
 
                         let! result =
@@ -1617,16 +1576,16 @@ module Branch =
                             if showEvents then
                                 let eventsParameters =
                                     GetBranchVersionParameters(
-                                        OwnerId = context.OwnerId,
-                                        OwnerName = context.OwnerName,
-                                        OrganizationId = context.OrganizationId,
-                                        OrganizationName = context.OrganizationName,
-                                        RepositoryId = context.RepositoryId,
-                                        RepositoryName = context.RepositoryName,
-                                        BranchId = context.BranchId,
-                                        BranchName = context.BranchName,
+                                        OwnerId = graceIds.OwnerIdString,
+                                        OwnerName = graceIds.OwnerName,
+                                        OrganizationId = graceIds.OrganizationIdString,
+                                        OrganizationName = graceIds.OrganizationName,
+                                        RepositoryId = graceIds.RepositoryIdString,
+                                        RepositoryName = graceIds.RepositoryName,
+                                        BranchId = graceIds.BranchIdString,
+                                        BranchName = graceIds.BranchName,
                                         IncludeDeleted = includeDeleted,
-                                        CorrelationId = context.CorrelationId
+                                        CorrelationId = graceIds.CorrelationId
                                     )
 
                                 let! eventsResult =
@@ -3051,7 +3010,6 @@ module Branch =
                     do! File.WriteAllTextAsync(updateInProgressFileName, "`grace rebase` is in progress.")
 
                     let graceIds = parseResult |> getNormalizedIdsAndNames
-                    let context = buildCommandContext parseResult graceIds
                     let! graceStatus = readGraceStatusFile ()
 
                     let! result = rebaseHandler parseResult graceStatus
@@ -3278,7 +3236,6 @@ module Branch =
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
                 let graceIds = parseResult |> getNormalizedIdsAndNames
-                let context = buildCommandContext parseResult graceIds
                 return! statusHandler parseResult
             }
 

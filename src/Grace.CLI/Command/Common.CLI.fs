@@ -248,6 +248,7 @@ module Common =
             let sb = stringBuilderPool.Get()
 
             try
+                // Gather all options from the root command and the invoked command.
                 let optionList =
                     parseResult.RootCommandResult.Command.Options
                     |> Seq.append parseResult.CommandResult.Command.Options
@@ -265,6 +266,7 @@ module Common =
 
                 AnsiConsole.MarkupLine($"[{Colors.Verbose}]{escapeBrackets (parseResult.ToString())}[/]")
                 AnsiConsole.WriteLine()
+                AnsiConsole.MarkupLine($"[{Colors.Verbose}]Parameter values:[/]")
                 AnsiConsole.MarkupLine($"[{Colors.Verbose}]{escapeBrackets (sb.ToString())}[/]")
                 AnsiConsole.WriteLine()
             finally

@@ -58,8 +58,8 @@ module Branch =
                     task {
                         let actorProxy = Branch.CreateActorProxy graceIds.BranchId graceIds.RepositoryId correlationId
 
-                        logToConsole
-                            $"In Branch.Server.processCommand: command: {commandName}; OwnerId: {graceIds.OwnerIdString}; OrganizationId: {graceIds.OrganizationIdString}; RepositoryId: {graceIds.RepositoryIdString}; BranchId: {graceIds.BranchIdString}."
+                        //logToConsole
+                        //    $"In Branch.Server.processCommand: command: {commandName}; OwnerId: {graceIds.OwnerIdString}; OrganizationId: {graceIds.OrganizationIdString}; RepositoryId: {graceIds.RepositoryIdString}; BranchId: {graceIds.BranchIdString}."
 
                         match! actorProxy.Handle cmd (createMetadata context) with
                         | Ok graceReturnValue ->

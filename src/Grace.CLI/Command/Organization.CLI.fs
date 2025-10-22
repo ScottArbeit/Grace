@@ -134,7 +134,15 @@ module Organization =
             task {
                 try
                     if parseResult |> verbose then printParseResult parseResult
-                    let graceIds = parseResult |> getNormalizedIdsAndNames
+
+                    // In a Create() command, if --organization-id is implicit, that's actually the old OrganizationId taken from graceconfig.json,
+                    //   and we need to set OrganizationId to a new Guid.
+                    let mutable graceIds = parseResult |> getNormalizedIdsAndNames
+
+                    if parseResult.GetResult(Options.organizationId).Implicit then
+                        let organizationId = Guid.NewGuid()
+                        graceIds <- { graceIds with OrganizationId = organizationId; OrganizationIdString = $"{organizationId}" }
+
                     let validateIncomingParameters = parseResult |> CommonValidations
 
                     match validateIncomingParameters with

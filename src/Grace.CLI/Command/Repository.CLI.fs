@@ -254,7 +254,15 @@ module Repository =
             task {
                 try
                     if parseResult |> verbose then printParseResult parseResult
-                    let graceIds = parseResult |> getNormalizedIdsAndNames
+
+                    // In a Create() command, if --repository-id is implicit, that's actually the old RepositoryId taken from graceconfig.json,
+                    //   and we need to set RepositoryId to a new Guid.
+                    let mutable graceIds = parseResult |> getNormalizedIdsAndNames
+
+                    if parseResult.GetResult(Options.ownerId).Implicit then
+                        let repositoryId = Guid.NewGuid()
+                        graceIds <- { graceIds with RepositoryId = repositoryId; RepositoryIdString = $"{repositoryId}" }
+
                     let validateIncomingParameters = parseResult |> Grace.CLI.Common.Validations.CommonValidations
 
                     match validateIncomingParameters with

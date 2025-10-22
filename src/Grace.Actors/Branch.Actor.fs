@@ -327,8 +327,8 @@ module Branch =
                 let processCommand (command: BranchCommand) (metadata: EventMetadata) =
                     task {
                         try
-                            logToConsole
-                                $"In BranchActor.Handle.processCommand: command: {getDiscriminatedUnionFullName command}; metadata: {serialize metadata}."
+                            //logToConsole
+                            //    $"In BranchActor.Handle.processCommand: command: {getDiscriminatedUnionFullName command}; metadata: {serialize metadata}."
 
                             let! event =
                                 task {
@@ -387,8 +387,13 @@ module Branch =
                                             //logToConsole $"In BranchActor.Handle.processCommand: rebaseReferenceDto: {rebaseReferenceDto}."
                                             return Ok(Rebased referenceId)
                                         | Error error ->
-                                            logToConsole
-                                                $"In BranchActor.Handle.processCommand: Error rebasing on referenceId: {referenceId}. promotionDto: {serialize promotionDto}"
+                                            log.LogError(
+                                                "{CurrentInstant}: Error rebasing on referenceId: {referenceId}; promotionDto: {promotionDto}.\n{Error}",
+                                                getCurrentInstantExtended (),
+                                                referenceId,
+                                                serialize promotionDto,
+                                                error
+                                            )
 
                                             return Error error
                                     | SetName branchName -> return Ok(NameSet branchName)
