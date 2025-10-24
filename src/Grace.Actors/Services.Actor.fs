@@ -125,7 +125,16 @@ module Services =
             sb.Append(queryDefinition.QueryText) |> ignore
 
             queryDefinition.GetQueryParameters()
-            |> Seq.iter (fun struct (name, value) -> sb.Replace(name, $"\"{value}\"") |> ignore)
+            |> Seq.iter (fun struct (name, value: obj) ->
+                match value with
+                | :? int64 as intValue -> sb.Replace(name, $"{intValue}")
+                | :? int as intValue -> sb.Replace(name, $"{intValue}")
+                | :? double as doubleValue -> sb.Replace(name, $"{doubleValue}")
+                | :? bool as boolValue -> sb.Replace(name, $"{boolValue.ToString().ToLower()}")
+                | :? single as floatValue -> sb.Replace(name, $"{floatValue}")
+                | :? Guid as guidValue -> sb.Replace(name, $"\"{guidValue}\"")
+                | _ -> sb.Replace(name, $"\"{value}\"")
+                |> ignore)
 
             let trimmedSql = Regex.Replace(sb.ToString(), @"(?m)^[ \t]+", "    ").Trim()
             trimmedSql
@@ -287,9 +296,8 @@ module Services =
                             """
                             SELECT c.State
                             FROM c
-                                JOIN s IN c.State
-                            WHERE (STRINGEQUALS(s[0].Event.created.ownerName, @ownerName, true)
-                                OR STRINGEQUALS(s[0].Event.setName.ownerName, @ownerName, true))
+                            WHERE (STRINGEQUALS(c.State[0].Event.created.ownerName, @ownerName, true)
+                                OR STRINGEQUALS(c.State[0].Event.setName.ownerName, @ownerName, true))
                                 AND c.GrainType = @grainType
                                 AND c.PartitionKey = @partitionKey
                             """
@@ -508,10 +516,10 @@ module Services =
                             let queryDefinition =
                                 QueryDefinition(
                                     """
-                                    SELECT s[0].Event.created.organizationId AS OrganizationId
-                                    FROM c JOIN s IN c.State
-                                    WHERE STRINGEQUALS(s[0].Event.created.organizationName, @organizationName, true)
-                                        AND STRINGEQUALS(s[0].Event.created.ownerId, @ownerId, true)
+                                    SELECT c.State[0].Event.created.organizationId AS OrganizationId
+                                    FROM c
+                                    WHERE STRINGEQUALS(c.State[0].Event.created.organizationName, @organizationName, true)
+                                        AND STRINGEQUALS(c.State[0].Event.created.ownerId, @ownerId, true)
                                         AND c.GrainType = @grainType
                                         AND c.PartitionKey = @partitionKey
                                     """
@@ -628,12 +636,11 @@ module Services =
                             let queryDefinition =
                                 QueryDefinition(
                                     """
-                                    SELECT s[0].Event.created.repositoryId AS RepositoryId
+                                    SELECT c.State[0].Event.created.repositoryId AS RepositoryId
                                     FROM c
-                                        JOIN s IN c.State
-                                    WHERE STRINGEQUALS(s[0].Event.created.repositoryName, @repositoryName, true)
-                                        AND STRINGEQUALS(s[0].Event.created.organizationId, @organizationId, true)
-                                        AND STRINGEQUALS(s[0].Event.created.ownerId, @ownerId, true)
+                                    WHERE STRINGEQUALS(c.State[0].Event.created.repositoryName, @repositoryName, true)
+                                        AND STRINGEQUALS(c.State[0].Event.created.organizationId, @organizationId, true)
+                                        AND STRINGEQUALS(c.State[0].Event.created.ownerId, @ownerId, true)
                                         AND c.GrainType = @grainType
                                         AND c.PartitionKey = @partitionKey
                                    """
@@ -744,12 +751,11 @@ module Services =
                             let queryDefinition =
                                 QueryDefinition(
                                     """
-                                    SELECT s[0].Event.created.branchId AS BranchId
+                                    SELECT c.State[0].Event.created.branchId AS BranchId
                                     FROM c
-                                        JOIN s IN c.State
-                                    WHERE STRINGEQUALS(s[0].Event.created.branchName, @branchName, true)
-                                        AND STRINGEQUALS(s[0].Event.created.organizationId, @organizationId, true)
-                                        AND STRINGEQUALS(s[0].Event.created.ownerId, @ownerId, true)
+                                    WHERE STRINGEQUALS(c.State[0].Event.created.branchName, @branchName, true)
+                                        AND STRINGEQUALS(c.State[0].Event.created.organizationId, @organizationId, true)
+                                        AND STRINGEQUALS(c.State[0].Event.created.ownerId, @ownerId, true)
                                         AND c.GrainType = @grainType
                                         AND c.PartitionKey = @partitionKey
                                     """
@@ -802,11 +808,11 @@ module Services =
             """
             AND (
             (SELECT VALUE COUNT(1)
-                FROM c JOIN subEvent IN c.State
-                WHERE IS_DEFINED(subEvent.Event.logicalDeleted)) =
+                FROM c
+                WHERE IS_DEFINED(c.State.Event.logicalDeleted)) =
             (SELECT VALUE COUNT(1)
-                FROM c JOIN subEvent IN c.State
-                WHERE IS_DEFINED(subEvent.Event.undeleted))
+                FROM c
+                WHERE IS_DEFINED(c.State.Event.undeleted))
             )
             """
 
@@ -828,8 +834,7 @@ module Services =
                                 $"""
                                 SELECT TOP @maxCount c.State
                                 FROM c
-                                    JOIN s IN c.State
-                                WHERE STRINGEQUALS(s[0].Event.created.ownerId, @ownerId, true)
+                                WHERE STRINGEQUALS(c.State[0].Event.created.ownerId, @ownerId, true)
                                     AND c.GrainType = @grainType
                                     AND c.PartitionKey = @partitionKey
                                     {includeDeletedEntitiesClause includeDeleted}
@@ -893,10 +898,9 @@ module Services =
                             """
                             SELECT c.State
                             FROM c
-                                JOIN s IN c.State
-                            WHERE (STRINGEQUALS(s[0].Event.created.organizationName, @organizationName, true)
-                                OR STRINGEQUALS(s[0].Event.setName.organizationName, @organizationName, true))
-                                AND STRINGEQUALS(s[0].Event.created.ownerId, @ownerId, true)
+                            WHERE (STRINGEQUALS(c.State[0].Event.created.organizationName, @organizationName, true)
+                                OR STRINGEQUALS(c.State[0].Event.setName.organizationName, @organizationName, true))
+                                AND STRINGEQUALS(c.State[0].Event.created.ownerId, @ownerId, true)
                                 AND c.GrainType = @grainType
                                 AND c.PartitionKey = @partitionKey
                             """
@@ -953,11 +957,10 @@ module Services =
                             """
                             SELECT c.State
                             FROM c
-                                JOIN s IN c.State
-                            WHERE (STRINGEQUALS(s[0].Event.created.repositoryName, @repositoryName, true)
-                                OR STRINGEQUALS(s[0].Event.setName.repositoryName, @repositoryName, true))
-                                AND STRINGEQUALS(s[0].Event.created.organizationId, @organizationId, true)
-                                AND STRINGEQUALS(s[0].Event.created.ownerId, @ownerId, true)
+                            WHERE (STRINGEQUALS(c.State[0].Event.created.repositoryName, @repositoryName, true)
+                                OR STRINGEQUALS(c.State[0].Event.setName.repositoryName, @repositoryName, true))
+                                AND STRINGEQUALS(c.State[0].Event.created.organizationId, @organizationId, true)
+                                AND STRINGEQUALS(c.State[0].Event.created.ownerId, @ownerId, true)
                                 AND c.GrainType = @grainType
                                 AND c.PartitionKey = @partitionKey
                             """
@@ -1018,9 +1021,8 @@ module Services =
                                 $"""
                                 SELECT TOP @maxCount c.State
                                 FROM c
-                                    JOIN s IN c.State
-                                WHERE STRINGEQUALS(s[0].Event.created.organizationId, @organizationId, true)
-                                    AND STRINGEQUALS(s[0].Event.created.ownerId, @ownerId, true)
+                                WHERE STRINGEQUALS(c.State[0].Event.created.organizationId, @organizationId, true)
+                                    AND STRINGEQUALS(c.State[0].Event.created.ownerId, @ownerId, true)
                                     {includeDeletedEntitiesClause includeDeleted}
                                     AND c.GrainType = @grainType
                                     AND c.PartitionKey = @partitionKey
@@ -1089,10 +1091,9 @@ module Services =
                                 $"""
                                 SELECT TOP @maxCount c.State
                                 FROM c
-                                    JOIN s IN c.State
-                                WHERE STRINGEQUALS(s[0].Event.created.ownerId, @ownerId, true)
-                                    AND STRINGEQUALS(s[0].Event.created.organizationId, @organizationId, true)
-                                    AND LENGTH(s[0].Event.created.branchName) > 0
+                                WHERE STRINGEQUALS(c.State[0].Event.created.ownerId, @ownerId, true)
+                                    AND STRINGEQUALS(c.State[0].Event.created.organizationId, @organizationId, true)
+                                    AND LENGTH(c.State[0].Event.created.branchName) > 0
                                     {includeDeletedEntitiesClause includeDeleted}
                                     AND c.GrainType = @grainType
                                     AND c.PartitionKey = @partitionKey
@@ -1102,7 +1103,7 @@ module Services =
                                 .WithParameter("@ownerId", ownerId)
                                 .WithParameter("@organizationId", organizationId)
                                 .WithParameter("@grainType", StateName.Branch)
-                                .WithParameter("@partitionKey", $"{repositoryId}")
+                                .WithParameter("@partitionKey", repositoryId)
 
                         let iterator = cosmosContainer.GetItemQueryIterator<BranchEventValue>(queryDefinition, requestOptions = queryRequestOptions)
 
@@ -1159,9 +1160,8 @@ module Services =
                             """
                             SELECT TOP @maxCount c.State
                             FROM c
-                                JOIN s IN c.State
-                            WHERE STRINGEQUALS(s[0].Event.created.BranchId, @branchId, true)
-                                AND STARTSWITH(s[0].Event.created.Sha256Hash, @sha256Hash, true)
+                            WHERE STRINGEQUALS(c.State[0].Event.created.BranchId, @branchId, true)
+                                AND STARTSWITH(c.State[0].Event.created.Sha256Hash, @sha256Hash, true)
                                 AND c.GrainType = @grainType
                                 AND c.PartitionKey = @partitionKey
                             """
@@ -1170,7 +1170,7 @@ module Services =
                             .WithParameter("@sha256Hash", sha256Hash)
                             .WithParameter("@branchId", branchId)
                             .WithParameter("@grainType", StateName.Reference)
-                            .WithParameter("@partitionKey", $"{repositoryId}")
+                            .WithParameter("@partitionKey", repositoryId)
 
                     let iterator = cosmosContainer.GetItemQueryIterator<ReferenceEventValue>(queryDefinition, requestOptions = queryRequestOptions)
 
@@ -1229,8 +1229,7 @@ module Services =
                             """
                             SELECT TOP @maxCount c.State
                             FROM c
-                                JOIN s IN c.State 
-                            WHERE STRINGEQUALS(s[0].Event.created.BranchId, @branchId, true)
+                            WHERE STRINGEQUALS(c.State[0].Event.created.BranchId, @branchId, true)
                                 AND c.GrainType = @grainType
                                 AND c.PartitionKey = @partitionKey
                             """
@@ -1256,6 +1255,9 @@ module Services =
                                 |> Array.fold (fun referenceDto referenceEvent -> referenceDto |> ReferenceDto.UpdateDto referenceEvent) ReferenceDto.Default
 
                             references.Add(referenceDto))
+
+                    //logToConsole
+                    //    $"In Services.Actor.getReferences: BranchId: {branchId}; RepositoryId: {repositoryId}; Retrieved {references.Count} references.{Environment.NewLine}{printQueryDefinition queryDefinition}{Environment.NewLine}{serialize references}"
 
                     if
                         indexMetrics.Length >= 2
@@ -1391,9 +1393,8 @@ module Services =
                             """
                             SELECT TOP @maxCount c.State
                             FROM c
-                                JOIN s IN c.State
-                            WHERE STRINGEQUALS(s[0].Event.created.BranchId, @branchId, true)
-                                AND STRINGEQUALS(s[0].Event.created.ReferenceType, @referenceType, true)
+                            WHERE STRINGEQUALS(c.State[0].Event.created.BranchId, @branchId, true)
+                                AND STRINGEQUALS(c.State[0].Event.created.ReferenceType, @referenceType, true)
                                 AND c.GrainType = @grainType
                                 AND c.PartitionKey = @partitionKey
                             """
@@ -1465,8 +1466,8 @@ module Services =
                             FROM c
                             WHERE STRINGEQUALS(c.State[0].Event.created.BranchId, @branchId, true)
                                 AND c.GrainType = @grainType
-                                AND c.PartitionKey = @repositoryId
-                            ORDER BY c.State.Event.created.CreatedAt DESC
+                                AND c.PartitionKey = @partitionKey
+                            ORDER BY c.State[0].Event.created.CreatedAt DESC
                             """
                         )
                             .WithParameter("@branchId", branchId)
@@ -1520,8 +1521,7 @@ module Services =
                 try
                     // CosmosDB SQL doesn't have a UNION clause. That means that the only way to get the latest reference
                     //   for each ReferenceType is to do separate queries for each ReferenceType that gets passed in.
-                    //   It's annoying, but at least let's do it in parallel.
-
+                    //   It's annoying, but at least we can do it in parallel.
                     do!
                         Parallel.ForEachAsync(
                             referenceTypes,
@@ -1538,7 +1538,7 @@ module Services =
                                                     AND STRINGEQUALS(c.State[0].Event.created.ReferenceType, @referenceType, true)
                                                     AND c.GrainType = @grainType
                                                     AND c.PartitionKey = @partitionKey
-                                                ORDER BY c.State.Event.created.CreatedAt DESC
+                                                ORDER BY c.State[0].Event.created.CreatedAt DESC
                                                 """
                                             )
                                                 .WithParameter("@branchId", branchId)
@@ -1551,8 +1551,8 @@ module Services =
 
                                         while iterator.HasMoreResults do
                                             let! results = iterator.ReadNextAsync()
-                                            //indexMetrics.Append($"{results.IndexMetrics}, ") |> ignore
-                                            //requestCharge.Append($"{results.RequestCharge}, ") |> ignore
+                                            indexMetrics.Append($"{results.IndexMetrics}, ") |> ignore
+                                            requestCharge.Append($"{results.RequestCharge:F3}, ") |> ignore
                                             let eventsForAllReferences = results.Resource
 
                                             eventsForAllReferences
@@ -1564,10 +1564,6 @@ module Services =
                                                         ReferenceDto.Default
 
                                                 referenceDtos.TryAdd(referenceType, referenceDto) |> ignore)
-
-                                        logToConsole
-                                            $"In getLatestReferenceByReferenceTypes(): QueryDefinition:{Environment.NewLine}{printQueryDefinition queryDefinition}{Environment.NewLine}ReferenceDtos:{Environment.NewLine}{serialize referenceDtos}."
-
                                     }
                                 ))
                         )
@@ -1608,7 +1604,7 @@ module Services =
                                 AND STRINGEQUALS(c.State[0].Event.created.ReferenceType, @referenceType, true)
                                 AND c.GrainType = @grainType
                                 AND c.PartitionKey = @partitionKey
-                            ORDER BY c.State.Event.created.CreatedAt DESC
+                            ORDER BY c.State[0].Event.created.CreatedAt DESC
                             """
                         )
                             .WithParameter("@branchId", branchId)
@@ -1689,8 +1685,7 @@ module Services =
                             """
                             SELECT TOP 1 c.State
                             FROM c
-                                JOIN s IN c.State
-                            WHERE STARTSWITH(s[0].Event.created.Sha256Hash, @sha256Hash, true)
+                            WHERE STARTSWITH(c.State[0].Event.created.Sha256Hash, @sha256Hash, true)
                                 AND c.GrainType = @grainType
                                 AND c.PartitionKey = @partitionKey
                             """
@@ -1770,9 +1765,8 @@ module Services =
                             $"""
                             SELECT TOP 1 c.State
                             FROM c
-                                JOIN s IN c.State
-                            WHERE STARTSWITH(s[0].Event.created.Sha256Hash, @sha256Hash, true)
-                                AND STRINGEQUALS(s[0].Event.create.RelativePath, @relativePath, true)                                
+                            WHERE STARTSWITH(c.State[0].Event.created.Sha256Hash, @sha256Hash, true)
+                                AND STRINGEQUALS(c.State[0].Event.created.RelativePath, @relativePath, true)                                
                                 AND c.GrainType = @grainType
                                 AND c.PartitionKey = @partitionKey
                             """
@@ -1866,8 +1860,7 @@ module Services =
                             """
                             SELECT c.State
                             FROM c
-                                JOIN s IN c.State
-                            WHERE STRINGEQUALS(s[0].Event.created.DirectoryId, @directoryId, true)
+                            WHERE STRINGEQUALS(c.State[0].Event.created.DirectoryId, @directoryId, true)
                                 AND c.GrainType = @grainType
                                 AND c.PartitionKey = @partitionKey
                             """
@@ -1923,10 +1916,9 @@ module Services =
                         queryText.Append(
                             @"SELECT TOP @maxCount c.State
                               FROM c
-                                  JOIN s IN c.State
                               WHERE c.GrainType = @grainType
                                   AND c.PartitionKey = @partitionKey
-                                  AND s[0].Event.created.ReferenceId IN ("
+                                  AND c.State[0].Event.created.ReferenceId IN ("
                         )
                         |> ignore
                         // Then we add a parameter for each referenceId.
@@ -1936,8 +1928,6 @@ module Services =
                         |> Seq.iteri (fun i referenceId -> queryText.Append($"@referenceId{i},") |> ignore)
                         // Then we remove the last comma and close the parenthesis.
                         queryText.Remove(queryText.Length - 1, 1).Append(")") |> ignore
-
-                        logToConsole $"In getReferencesByReferenceId(): QueryText:{Environment.NewLine}{queryText.ToString()}."
 
                         // Create the query definition.
                         let queryDefinition =
@@ -1951,6 +1941,8 @@ module Services =
                             .Where(fun referenceId -> not <| referenceId.Equals(ReferenceId.Empty))
                             .Distinct()
                         |> Seq.iteri (fun i referenceId -> queryDefinition.WithParameter($"@referenceId{i}", $"{referenceId}") |> ignore)
+
+                        logToConsole $"In getReferencesByReferenceId(): QueryText:{Environment.NewLine}{printQueryDefinition queryDefinition}."
 
                         // Execute the query.
                         let iterator = cosmosContainer.GetItemQueryIterator<ReferenceEventValue>(queryDefinition, requestOptions = queryRequestOptions)
@@ -2020,8 +2012,7 @@ module Services =
                             $"""
                             SELECT TOP @maxCount c.State
                             FROM c
-                                JOIN s IN c.State
-                            WHERE STRINGEQUALS(s[0].Event.created.BranchId, @branchId, true)
+                            WHERE STRINGEQUALS(c.State[0].Event.created.BranchId, @branchId, true)
                                 AND c.GrainType = @grainType
                                 AND c.PartitionKey = @partitionKey
                                 {includeDeletedEntitiesClause includeDeleted}
