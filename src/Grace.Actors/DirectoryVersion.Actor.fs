@@ -38,13 +38,12 @@ open MessagePack
 module DirectoryVersion =
 
     type DirectoryVersionActor
-        (
-            [<PersistentState(StateName.DirectoryVersion, Constants.GraceActorStorage)>] state: IPersistentState<List<DirectoryVersionEvent>>,
-            log: ILogger<DirectoryVersionActor>
-        ) =
+        ([<PersistentState(StateName.DirectoryVersion, Constants.GraceActorStorage)>] state: IPersistentState<List<DirectoryVersionEvent>>) =
         inherit Grain()
 
         static let actorName = ActorName.DirectoryVersion
+
+        let log = loggerFactory.CreateLogger("DirectoryVersion.Actor")
 
         let mutable directoryVersionDto = DirectoryVersionDto.Default
         let mutable currentCommand = String.Empty
@@ -132,10 +131,7 @@ module DirectoryVersion =
                         let directoryVersion = directoryVersionDto.DirectoryVersion
 
                         let repositoryActorProxy =
-                            Repository.CreateActorProxy
-                                directoryVersion.OrganizationId
-                                directoryVersion.RepositoryId
-                                reminderState.CorrelationId
+                            Repository.CreateActorProxy directoryVersion.OrganizationId directoryVersion.RepositoryId reminderState.CorrelationId
 
                         let! repositoryDto = repositoryActorProxy.Get reminderState.CorrelationId
 
@@ -415,8 +411,7 @@ module DirectoryVersion =
 
                             // Create a reminder to delete the cached state after the configured number of cache days.
                             let deletionReminderState: PhysicalDeletionReminderState =
-                                { DeleteReason = getDiscriminatedUnionCaseName ReminderTypes.DeleteCachedState
-                                  CorrelationId = correlationId }
+                                { DeleteReason = getDiscriminatedUnionCaseName ReminderTypes.DeleteCachedState; CorrelationId = correlationId }
 
                             do!
                                 (this :> IGraceReminderWithGuidKey).ScheduleReminderAsync
@@ -661,8 +656,7 @@ module DirectoryVersion =
 
                         // Schedule a reminder to delete the .zip file after the cache days have passed.
                         let deletionReminderState: PhysicalDeletionReminderState =
-                            { DeleteReason = getDiscriminatedUnionCaseName DeleteZipFile
-                              CorrelationId = correlationId }
+                            { DeleteReason = getDiscriminatedUnionCaseName DeleteZipFile; CorrelationId = correlationId }
 
                         do!
                             (this :> IGraceReminderWithGuidKey).ScheduleReminderAsync

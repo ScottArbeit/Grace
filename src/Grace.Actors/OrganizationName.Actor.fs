@@ -16,10 +16,12 @@ open System.Threading.Tasks
 
 module OrganizationName =
 
-    type OrganizationNameActor(log: ILogger<OrganizationNameActor>) =
+    type OrganizationNameActor() =
         inherit Grain()
 
         static let actorName = ActorName.OrganizationName
+
+        let log = loggerFactory.CreateLogger("OrganizationName.Actor")
 
         let mutable cachedOrganizationId: OrganizationId option = None
 

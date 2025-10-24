@@ -16,12 +16,12 @@ open System.Threading.Tasks
 
 module RepositoryName =
 
-    let log = loggerFactory.CreateLogger("RepositoryName.Actor")
-
     type RepositoryNameActor() =
         inherit Grain()
 
         static let actorName = ActorName.RepositoryName
+
+        let log = loggerFactory.CreateLogger("RepositoryName.Actor")
 
         let mutable cachedRepositoryId: RepositoryId option = None
 

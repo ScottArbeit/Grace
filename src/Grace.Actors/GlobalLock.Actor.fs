@@ -30,6 +30,8 @@ module GlobalLock =
 
         static let actorName = ActorName.GlobalLock
 
+        let log = loggerFactory.CreateLogger("GlobalLock.Actor")
+
         let mutable actorStartTime = Instant.MinValue
 
         let mutable lockState = LockState.Unlocked

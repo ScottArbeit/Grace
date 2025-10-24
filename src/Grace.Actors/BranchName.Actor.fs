@@ -19,10 +19,12 @@ module BranchName =
 
     //let log = loggerFactory.CreateLogger("BranchName.Actor")
 
-    type BranchNameActor(log: ILogger<BranchNameActor>) =
+    type BranchNameActor() =
         inherit Grain()
 
         static let actorName = ActorName.BranchName
+
+        let log = loggerFactory.CreateLogger("BranchName.Actor")
 
         let mutable cachedBranchId: Guid option = None
 

@@ -104,7 +104,7 @@ module Branch =
                     let duration = getDurationRightAligned_ms startTime
 
                     log.LogInformation(
-                        "{CurrentInstant}: Node: {HostName}; Duration: {duration}; CorrelationId: {correlationId}; Finished {path}; Status code: {statusCode}; OwnerId: {ownerId}; OrganizationId: {organizationId}; RepositoryId: {repositoryId}; BranchId: {branchId}.",
+                        "{CurrentInstant}: Node: {hostName}; Duration: {duration}; CorrelationId: {correlationId}; Finished {path}; Status code: {statusCode}; OwnerId: {ownerId}; OrganizationId: {organizationId}; RepositoryId: {repositoryId}; BranchId: {branchId}.",
                         getCurrentInstantExtended (),
                         getMachineName,
                         duration,

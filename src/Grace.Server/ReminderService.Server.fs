@@ -116,7 +116,7 @@ module ReminderService =
                 let start = getCurrentInstant ()
 
                 try
-                    log.LogInformation(
+                    log.LogTrace(
                         "{CurrentInstant}: Node: {HostName}; In ReminderService.ProcessReminders. Retrieving reminders.",
                         getCurrentInstantExtended (),
                         getMachineName
@@ -124,7 +124,7 @@ module ReminderService =
 
                     let! reminders = retrieveReminders cancellationToken
 
-                    if reminders.Count >= 0 then
+                    if reminders.Count > 0 then
                         log.LogInformation(
                             "{CurrentInstant}: Node: {HostName}; In ReminderService.ProcessReminders. Processing {reminderCount} reminder(s).",
                             getCurrentInstantExtended (),
@@ -132,56 +132,56 @@ module ReminderService =
                             reminders.Count
                         )
 
-                    do!
-                        Parallel.ForEachAsync(
-                            reminders,
-                            ParallelOptions,
-                            (fun reminder ct ->
-                                ValueTask(
-                                    task {
-                                        try
-                                            let reminderActorProxy = Reminder.CreateActorProxy reminder.ReminderId reminder.CorrelationId
+                        do!
+                            Parallel.ForEachAsync(
+                                reminders,
+                                ParallelOptions,
+                                (fun reminder ct ->
+                                    ValueTask(
+                                        task {
+                                            try
+                                                let reminderActorProxy = Reminder.CreateActorProxy reminder.ReminderId reminder.CorrelationId
 
-                                            match! reminderActorProxy.Remind reminder.CorrelationId with
-                                            | Ok() ->
-                                                let itemRequestOptions =
-                                                    ItemRequestOptions(
-                                                        AddRequestHeaders =
-                                                            fun headers -> headers.Add(Constants.CorrelationIdHeaderKey, reminder.CorrelationId)
-                                                    )
+                                                match! reminderActorProxy.Remind reminder.CorrelationId with
+                                                | Ok() ->
+                                                    let itemRequestOptions =
+                                                        ItemRequestOptions(
+                                                            AddRequestHeaders =
+                                                                fun headers -> headers.Add(Constants.CorrelationIdHeaderKey, reminder.CorrelationId)
+                                                        )
 
-                                                // Delete the reminder from storage to avoid reprocessing.
-                                                let! deleteReminderResponse =
-                                                    cosmosContainer.DeleteItemAsync(reminder.Id, PartitionKey(StateName.Reminder), itemRequestOptions)
+                                                    // Delete the reminder from storage to avoid reprocessing.
+                                                    let! deleteReminderResponse =
+                                                        cosmosContainer.DeleteItemAsync(reminder.Id, PartitionKey(StateName.Reminder), itemRequestOptions)
 
-                                                if deleteReminderResponse.StatusCode <> HttpStatusCode.NoContent then
+                                                    if deleteReminderResponse.StatusCode <> HttpStatusCode.NoContent then
+                                                        log.LogError(
+                                                            "{CurrentInstant}: Node: {HostName}; Error deleting reminder: {reminder.id}. Status code: {deleteResponse.StatusCode}.",
+                                                            getCurrentInstantExtended (),
+                                                            getMachineName,
+                                                            reminder.Id,
+                                                            deleteReminderResponse.StatusCode
+                                                        )
+                                                | Error error ->
                                                     log.LogError(
-                                                        "{CurrentInstant}: Node: {HostName}; Error deleting reminder: {reminder.id}. Status code: {deleteResponse.StatusCode}.",
+                                                        "{CurrentInstant}: Node: {HostName}; Error processing reminder: {reminder.id}. {error}.",
                                                         getCurrentInstantExtended (),
                                                         getMachineName,
                                                         reminder.Id,
-                                                        deleteReminderResponse.StatusCode
+                                                        error
                                                     )
-                                            | Error error ->
+                                            with ex ->
                                                 log.LogError(
-                                                    "{CurrentInstant}: Node: {HostName}; Error processing reminder: {reminder.id}. {error}.",
+                                                    "{CurrentInstant}: Node: {HostName}; Error processing reminder. Reminder: {Reminder}. Error: {error}.",
                                                     getCurrentInstantExtended (),
                                                     getMachineName,
-                                                    reminder.Id,
-                                                    error
+                                                    reminder,
+                                                    (ExceptionResponse.Create ex)
                                                 )
-                                        with ex ->
-                                            log.LogError(
-                                                "{CurrentInstant}: Node: {HostName}; Error processing reminder. Reminder: {Reminder}. Error: {error}.",
-                                                getCurrentInstantExtended (),
-                                                getMachineName,
-                                                reminder,
-                                                (ExceptionResponse.Create ex)
-                                            )
-                                    }
-                                    :> Task
-                                ))
-                        )
+                                        }
+                                        :> Task
+                                    ))
+                            )
                 with ex ->
                     log.LogError(
                         "{CurrentInstant}: Node: {HostName}; Error processing reminder. Error: {error}.",

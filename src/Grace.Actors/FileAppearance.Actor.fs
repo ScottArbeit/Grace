@@ -25,12 +25,10 @@ module FileAppearance =
     type FileAppearanceDto() =
         member val public Appearances = SortedSet<Appearance>() with get, set
 
-    type FileAppearanceActor
-        (
-            [<PersistentState(StateName.FileAppearance, Constants.GraceActorStorage)>] state: IPersistentState<SortedSet<Appearance>>,
-            log: ILogger<FileAppearanceActor>
-        ) =
+    type FileAppearanceActor([<PersistentState(StateName.FileAppearance, Constants.GraceActorStorage)>] state: IPersistentState<SortedSet<Appearance>>) =
         inherit Grain()
+
+        let log = loggerFactory.CreateLogger("FileAppearance.Actor")
 
         let mutable correlationId = String.Empty
 

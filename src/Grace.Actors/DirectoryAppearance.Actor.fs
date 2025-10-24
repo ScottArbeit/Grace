@@ -24,13 +24,12 @@ module DirectoryAppearance =
         member val public RepositoryId: RepositoryId = RepositoryId.Empty with get, set
 
     type DirectoryAppearanceActor
-        (
-            [<PersistentState(StateName.DirectoryAppearance, Constants.GraceActorStorage)>] state: IPersistentState<SortedSet<Appearance>>,
-            log: ILogger<DirectoryAppearanceDto>
-        ) =
+        ([<PersistentState(StateName.DirectoryAppearance, Constants.GraceActorStorage)>] state: IPersistentState<SortedSet<Appearance>>) =
         inherit Grain()
 
         let actorName = ActorName.DirectoryAppearance
+
+        let log = loggerFactory.CreateLogger("DirectoryAppearance.Actor")
 
         let directoryAppearanceDto = DirectoryAppearanceDto()
 

@@ -38,12 +38,12 @@ open Grace.Shared.Services
 
 module Repository =
 
-    let log = loggerFactory.CreateLogger("Repository.Actor")
-
     type RepositoryActor([<PersistentState(StateName.Repository, Constants.GraceActorStorage)>] state: IPersistentState<List<RepositoryEvent>>) =
         inherit Grain()
 
         static let actorName = ActorName.Repository
+
+        let log = loggerFactory.CreateLogger("Repository.Actor")
 
         let mutable repositoryDto = RepositoryDto.Default
         member val private correlationId: CorrelationId = String.Empty with get, set
@@ -291,8 +291,9 @@ module Repository =
                         do! state.ClearStateAsync()
 
                         log.LogInformation(
-                            "{CurrentInstant}: CorrelationId: {correlationId}; Deleted physical state for repository; RepositoryId: {}; RepositoryName: {}; OrganizationId: {organizationId}; OwnerId: {ownerId}; deleteReason: {deleteReason}.",
+                            "{CurrentInstant}: Node: {hostName}; CorrelationId: {correlationId}; Deleted physical state for repository; RepositoryId: {}; RepositoryName: {}; OrganizationId: {organizationId}; OwnerId: {ownerId}; deleteReason: {deleteReason}.",
                             getCurrentInstantExtended (),
+                            getMachineName,
                             physicalDeletionReminderState.CorrelationId,
                             repositoryDto.RepositoryId,
                             repositoryDto.RepositoryName,

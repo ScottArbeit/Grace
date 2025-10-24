@@ -30,12 +30,12 @@ open System.Threading.Tasks
 
 module Organization =
 
-    let log = loggerFactory.CreateLogger("Organization.Actor")
-
     type OrganizationActor([<PersistentState(StateName.Organization, Constants.GraceActorStorage)>] state: IPersistentState<List<OrganizationEvent>>) =
         inherit Grain()
 
         static let actorName = ActorName.Organization
+
+        let log = loggerFactory.CreateLogger("Organization.Actor")
 
         let mutable organizationDto = OrganizationDto.Default
 
@@ -170,8 +170,9 @@ module Organization =
                         do! state.ClearStateAsync()
 
                         log.LogInformation(
-                            "{CurrentInstant}: CorrelationId: {correlationId}; Deleted physical state for organization; OrganizationId: {organizationId}; OrganizationName: {organizationName}; OwnerId: {ownerId}; deleteReason: {deleteReason}.",
+                            "{CurrentInstant}: Node: {hostName}; CorrelationId: {correlationId}; Deleted physical state for organization; OrganizationId: {organizationId}; OrganizationName: {organizationName}; OwnerId: {ownerId}; deleteReason: {deleteReason}.",
                             getCurrentInstantExtended (),
+                            getMachineName,
                             physicalDeletionReminderState.CorrelationId,
                             organizationDto.OrganizationId,
                             organizationDto.OrganizationName,

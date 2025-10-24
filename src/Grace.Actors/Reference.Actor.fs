@@ -26,11 +26,12 @@ open System.Threading.Tasks
 
 module Reference =
 
-    type ReferenceActor
-        ([<PersistentState(StateName.Reference, Constants.GraceActorStorage)>] state: IPersistentState<List<ReferenceEvent>>, log: ILogger<ReferenceActor>) =
+    type ReferenceActor([<PersistentState(StateName.Reference, Constants.GraceActorStorage)>] state: IPersistentState<List<ReferenceEvent>>) =
         inherit Grain()
 
         static let actorName = ActorName.Reference
+
+        let log = loggerFactory.CreateLogger("Reference.Actor")
 
         let mutable currentCommand = String.Empty
 
@@ -89,8 +90,9 @@ module Reference =
                         do! state.ClearStateAsync()
 
                         log.LogInformation(
-                            "{CurrentInstant}: CorrelationId: {correlationId}; Deleted physical state for reference; RepositoryId: {RepositoryId}; BranchId: {BranchId}; ReferenceId: {ReferenceId}; DirectoryVersionId: {DirectoryVersionId}; deleteReason: {deleteReason}.",
+                            "{CurrentInstant}: Node: {hostName}; CorrelationId: {correlationId}; Deleted physical state for reference; RepositoryId: {RepositoryId}; BranchId: {BranchId}; ReferenceId: {ReferenceId}; DirectoryVersionId: {DirectoryVersionId}; deleteReason: {deleteReason}.",
                             getCurrentInstantExtended (),
+                            getMachineName,
                             physicalDeletionReminderState.CorrelationId,
                             physicalDeletionReminderState.RepositoryId,
                             physicalDeletionReminderState.BranchId,
@@ -192,8 +194,9 @@ module Reference =
                 with ex ->
                     log.LogError(
                         ex,
-                        "{CurrentInstant}: CorrelationId: {correlationId}; Failed to apply event {eventType} for reference {referenceId} in repository {repositoryId} on branch {branchId} with directory version {directoryVersionId}.",
+                        "{CurrentInstant}: Node: {hostName}; CorrelationId: {correlationId}; Failed to apply event {eventType} for reference {referenceId} in repository {repositoryId} on branch {branchId} with directory version {directoryVersionId}.",
                         getCurrentInstantExtended (),
+                        getMachineName,
                         correlationId,
                         getDiscriminatedUnionCaseName referenceEvent.Event,
                         referenceDto.ReferenceId,

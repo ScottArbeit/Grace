@@ -32,12 +32,12 @@ open System.Threading.Tasks
 
 module Owner =
 
-    let log = loggerFactory.CreateLogger("Owner.Actor")
-
     type OwnerActor([<PersistentState(StateName.Owner, Constants.GraceActorStorage)>] state: IPersistentState<List<OwnerEvent>>) =
         inherit Grain()
 
         static let actorName = ActorName.Owner
+
+        let log = loggerFactory.CreateLogger("Owner.Actor")
 
         let mutable ownerDto = OwnerDto.Default
 
@@ -175,8 +175,9 @@ module Owner =
                         do! state.ClearStateAsync()
 
                         log.LogInformation(
-                            "{CurrentInstant}: CorrelationId: {correlationId}; Deleted physical state for owner; OwnerId: {ownerId}; OwnerName: {ownerName}; deleteReason: {deleteReason}.",
+                            "{CurrentInstant}: Node: {hostName}; CorrelationId: {correlationId}; Deleted physical state for owner; OwnerId: {ownerId}; OwnerName: {ownerName}; deleteReason: {deleteReason}.",
                             getCurrentInstantExtended (),
+                            getMachineName,
                             physicalDeletionReminderState.CorrelationId,
                             ownerDto.OwnerId,
                             ownerDto.OwnerName,

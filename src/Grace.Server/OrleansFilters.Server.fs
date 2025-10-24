@@ -25,6 +25,8 @@ open Grace.Shared.Parameters
 module Orleans =
 
     type GracePartitionKeyProvider() =
+        let log = loggerFactory.CreateLogger("OrleansFilters.Server")
+
         interface Cosmos.IPartitionKeyProvider with
             member _.GetPartitionKey(grainType: string, grainId: GrainId) =
                 ValueTask<string>(
@@ -69,7 +71,9 @@ module Orleans =
                 )
 
     /// Centralizes pre‑ and post‑invoke behavior for all grains.
-    type CorrelationLoggingFilter(loggerFactory: ILoggerFactory) =
+    type CorrelationLoggingFilter() =
+        let log = loggerFactory.CreateLogger("OrleansFilters.Server")
+
         interface IIncomingGrainCallFilter with
             member _.Invoke(context: IIncomingGrainCallContext) =
                 task {

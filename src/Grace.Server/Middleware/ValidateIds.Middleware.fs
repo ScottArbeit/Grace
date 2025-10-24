@@ -367,8 +367,9 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
                     context.Items.Add("BadRequest", error.Error)
 
                     log.LogWarning(
-                        "{CurrentInstant}: CorrelationId: {correlationId}; {currentFunction}: Path: {path}; {message}; Duration: {duration_ms}ms.",
+                        "{CurrentInstant}: Node: {hostName}; CorrelationId: {correlationId}; {currentFunction}: Path: {path}; {message}; Duration: {duration_ms}ms.",
                         getCurrentInstantExtended (),
+                        getMachineName,
                         correlationId,
                         nameof ValidateIdsMiddleware,
                         path,

@@ -21,6 +21,8 @@ module OwnerName =
 
         static let actorName = ActorName.OwnerName
 
+        let log = loggerFactory.CreateLogger("OwnerName.Actor")
+
         let mutable cachedOwnerId: OwnerId option = None
 
         member val private correlationId: CorrelationId = String.Empty with get, set

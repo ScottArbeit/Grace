@@ -35,10 +35,12 @@ open System.Threading
 
 module Branch =
 
-    type BranchActor([<PersistentState(StateName.Branch, Constants.GraceActorStorage)>] state: IPersistentState<List<BranchEvent>>, log: ILogger<BranchActor>) =
+    type BranchActor([<PersistentState(StateName.Branch, Constants.GraceActorStorage)>] state: IPersistentState<List<BranchEvent>>) =
         inherit Grain()
 
         static let actorName = ActorName.Branch
+
+        let log = loggerFactory.CreateLogger("Branch.Actor")
 
         let mutable branchDto: BranchDto = BranchDto.Default
 
@@ -240,8 +242,9 @@ module Branch =
                         do! state.ClearStateAsync()
 
                         log.LogInformation(
-                            "{CurrentInstant}: CorrelationId: {correlationId}; Deleted physical state for branch; RepositoryId: {repositoryId}; BranchId: {branchId}; BranchName: {branchName}; ParentBranchId: {parentBranchId}; deleteReason: {deleteReason}.",
+                            "{CurrentInstant}: Node: {hostName}; CorrelationId: {correlationId}; Deleted physical state for branch; RepositoryId: {repositoryId}; BranchId: {branchId}; BranchName: {branchName}; ParentBranchId: {parentBranchId}; deleteReason: {deleteReason}.",
                             getCurrentInstantExtended (),
+                            getMachineName,
                             physicalDeletionReminderState.CorrelationId,
                             physicalDeletionReminderState.RepositoryId,
                             physicalDeletionReminderState.BranchId,

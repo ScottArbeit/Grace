@@ -116,8 +116,9 @@ module Services =
     let private sharedKeyCredential = StorageSharedKeyCredential(DefaultObjectStorageAccount, azureStorageKey)
 
     /// Logger instance for the Services.Actor module.
-    let log = loggerFactory.CreateLogger("Services.Actor")
+    let private log = loggerFactory.CreateLogger("Services.Actor")
 
+    /// Prints a Cosmos DB QueryDefinition with parameters replaced for easier debugging.
     let printQueryDefinition (queryDefinition: QueryDefinition) =
         let sb = stringBuilderPool.Get()
 
@@ -136,19 +137,17 @@ module Services =
                 | _ -> sb.Replace(name, $"\"{value}\"")
                 |> ignore)
 
+            // Replaces any leading spaces or tabs at the start of each line with four spaces (multiline) and then trims leading/trailing whitespace from the entire multi-line string.
             let trimmedSql = Regex.Replace(sb.ToString(), @"(?m)^[ \t]+", "    ").Trim()
             trimmedSql
         finally
             stringBuilderPool.Return sb
 
-    /// Cosmos LINQ serializer options
-    let linqSerializerOptions = CosmosLinqSerializerOptions(PropertyNamingPolicy = CosmosPropertyNamingPolicy.CamelCase)
-
     /// Custom QueryRequestOptions that requests Index Metrics only in DEBUG build.
     let queryRequestOptions = QueryRequestOptions()
-    //#if DEBUG
-    //    queryRequestOptions.PopulateIndexMetrics <- true
-    //#endif
+#if DEBUG
+    queryRequestOptions.PopulateIndexMetrics <- true
+#endif
 
     /// Gets an Azure Blob Storage container client for the container that holds the object files for the given repository.
     let getContainerClient (repositoryDto: RepositoryDto) correlationId =
@@ -850,7 +849,7 @@ module Services =
                         while iterator.HasMoreResults do
                             let! results = iterator.ReadNextAsync()
                             indexMetrics.Append($"{results.IndexMetrics}, ") |> ignore
-                            requestCharge.Append($"{results.RequestCharge}, ") |> ignore
+                            requestCharge.Append($"{results.RequestCharge:F3}, ") |> ignore
 
                             let eventsForAllOrganizations = results.Resource
 
@@ -1039,7 +1038,7 @@ module Services =
                         while iterator.HasMoreResults do
                             let! results = iterator.ReadNextAsync()
                             indexMetrics.Append($"{results.IndexMetrics}, ") |> ignore
-                            requestCharge.Append($"{results.RequestCharge}, ") |> ignore
+                            requestCharge.Append($"{results.RequestCharge:F3}, ") |> ignore
 
                             let eventsForAllRepositories = results.Resource
 
@@ -1112,7 +1111,7 @@ module Services =
                             let! results = iterator.ReadNextAsync()
                             addTiming TimingFlag.AfterStorageQuery "getBranches" correlationId
                             indexMetrics.Append($"{results.IndexMetrics}, ") |> ignore
-                            requestCharge.Append($"{results.RequestCharge}, ") |> ignore
+                            requestCharge.Append($"{results.RequestCharge:F3}, ") |> ignore
                             let eventsForAllBranches = results.Resource
 
                             eventsForAllBranches
@@ -1177,7 +1176,7 @@ module Services =
                     while iterator.HasMoreResults do
                         let! results = iterator.ReadNextAsync()
                         indexMetrics.Append($"{results.IndexMetrics}, ") |> ignore
-                        requestCharge.Append($"{results.RequestCharge}, ") |> ignore
+                        requestCharge.Append($"{results.RequestCharge:F3}, ") |> ignore
                         let eventsForAllReferences = results.Resource
 
                         eventsForAllReferences
@@ -1245,7 +1244,7 @@ module Services =
                         addTiming TimingFlag.BeforeStorageQuery "getReferences" correlationId
                         let! results = iterator.ReadNextAsync()
                         indexMetrics.Append($"{results.IndexMetrics}, ") |> ignore
-                        requestCharge.Append($"{results.RequestCharge}, ") |> ignore
+                        requestCharge.Append($"{results.RequestCharge:F3}, ") |> ignore
                         let eventsForAllReferences = results.Resource
 
                         eventsForAllReferences
@@ -1297,12 +1296,13 @@ module Services =
 
                 let mutable totalRecordsDeleted = 0
                 let overallStartTime = getCurrentInstant ()
-                queryRequestOptions.MaxItemCount <- 1000
+                let deleteQueryRequestOptions = queryRequestOptions.ShallowCopy() :?> QueryRequestOptions
+                deleteQueryRequestOptions.MaxItemCount <- 1000
 
                 logToConsole
                     $"cosmosContainer.Id: {cosmosContainer.Id}; cosmosContainer.Database.Id: {cosmosContainer.Database.Id}; cosmosContainer.Database.Client.Endpoint: {cosmosContainer.Database.Client.Endpoint}."
 
-                let iterator = cosmosContainer.GetItemQueryIterator<PartitionKeyIdentifier>(queryDefinition, requestOptions = queryRequestOptions)
+                let iterator = cosmosContainer.GetItemQueryIterator<PartitionKeyIdentifier>(queryDefinition, requestOptions = deleteQueryRequestOptions)
 
                 while iterator.HasMoreResults do
                     let batchStartTime = getCurrentInstant ()
@@ -1412,7 +1412,7 @@ module Services =
                         let! results = iterator.ReadNextAsync()
                         addTiming TimingFlag.AfterStorageQuery "getReferencesByType" correlationId
                         indexMetrics.Append($"{results.IndexMetrics}, ") |> ignore
-                        requestCharge.Append($"{results.RequestCharge}, ") |> ignore
+                        requestCharge.Append($"{results.RequestCharge:F3}, ") |> ignore
                         let eventsForAllReferences = results.Resource
 
                         eventsForAllReferences
@@ -1479,7 +1479,7 @@ module Services =
                     while iterator.HasMoreResults do
                         let! results = iterator.ReadNextAsync()
                         indexMetrics.Append($"{results.IndexMetrics}, ") |> ignore
-                        requestCharge.Append($"{results.RequestCharge}, ") |> ignore
+                        requestCharge.Append($"{results.RequestCharge:F3}, ") |> ignore
                         let eventsForAllReferences = results.Resource
 
                         eventsForAllReferences
@@ -1619,7 +1619,7 @@ module Services =
                     while iterator.HasMoreResults do
                         let! results = DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> iterator.ReadNextAsync())
                         indexMetrics.Append($"{results.IndexMetrics}, ") |> ignore
-                        requestCharge.Append($"{results.RequestCharge}, ") |> ignore
+                        requestCharge.Append($"{results.RequestCharge:F3}, ") |> ignore
                         let eventsForAllReferences = results.Resource
 
                         eventsForAllReferences
@@ -1702,7 +1702,7 @@ module Services =
                         while iterator.HasMoreResults do
                             let! results = DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> iterator.ReadNextAsync())
                             indexMetrics.Append($"{results.IndexMetrics}, ") |> ignore
-                            requestCharge.Append($"{results.RequestCharge}, ") |> ignore
+                            requestCharge.Append($"{results.RequestCharge:F3}, ") |> ignore
                             let eventsForAllDirectories = results.Resource
 
                             eventsForAllDirectories
@@ -1784,7 +1784,7 @@ module Services =
                         while iterator.HasMoreResults do
                             let! results = iterator.ReadNextAsync()
                             indexMetrics.Append($"{results.IndexMetrics}, ") |> ignore
-                            requestCharge.Append($"{results.RequestCharge}, ") |> ignore
+                            requestCharge.Append($"{results.RequestCharge:F3}, ") |> ignore
                             let eventsForAllDirectories = results.Resource
 
                             eventsForAllDirectories

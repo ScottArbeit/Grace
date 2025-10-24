@@ -35,10 +35,12 @@ open System.Threading.Tasks
 
 module Diff =
 
-    type DiffActor([<PersistentState(StateName.Diff, Constants.GraceObjectStorage)>] state: IPersistentState<DiffDto>, log: ILogger<DiffActor>) =
+    type DiffActor([<PersistentState(StateName.Diff, Constants.GraceObjectStorage)>] state: IPersistentState<DiffDto>) =
         inherit Grain()
 
         static let actorName = ActorName.Diff
+
+        let log = loggerFactory.CreateLogger("Diff.Actor")
 
         let mutable diffDto: DiffDto = DiffDto.Default
 

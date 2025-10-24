@@ -4,6 +4,7 @@ open Orleans
 open Orleans.Runtime
 open Grace.Actors
 open Grace.Actors.Constants
+open Grace.Actors.Context
 open Grace.Actors.Extensions.ActorProxy
 open Grace.Actors.Extensions.MemoryCache
 open Grace.Actors.Interfaces
@@ -23,11 +24,12 @@ open System.Threading.Tasks
 module Reminder =
 
     /// Orleans implementation of the ReminderActor.
-    type ReminderActor
-        ([<PersistentState(StateName.Reminder, Constants.GraceActorStorage)>] reminderState: IPersistentState<ReminderWrapper>, log: ILogger<ReminderActor>) =
+    type ReminderActor([<PersistentState(StateName.Reminder, Constants.GraceActorStorage)>] reminderState: IPersistentState<ReminderWrapper>) =
         inherit Grain()
 
         static let actorName = ActorName.Reminder
+
+        let log = loggerFactory.CreateLogger("Reminder.Actor")
 
         member val private correlationId: CorrelationId = String.Empty with get, set
 
