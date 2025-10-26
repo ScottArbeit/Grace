@@ -146,6 +146,7 @@ module ReminderService =
                                                 | Ok() ->
                                                     let itemRequestOptions =
                                                         ItemRequestOptions(
+                                                            PriorityLevel = PriorityLevel.Low,
                                                             AddRequestHeaders =
                                                                 fun headers -> headers.Add(Constants.CorrelationIdHeaderKey, reminder.CorrelationId)
                                                         )

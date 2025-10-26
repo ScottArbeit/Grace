@@ -1072,76 +1072,6 @@ module Services =
             return repositories.OrderBy(fun r -> r.RepositoryName).ToArray()
         }
 
-    /// Gets a list of branches for a given repository.
-    let getBranches (ownerId: OwnerId) (organizationId: OrganizationId) (repositoryId: RepositoryId) (maxCount: int) includeDeleted correlationId =
-        task {
-            let branches = ConcurrentBag<BranchDto>()
-
-            match actorStateStorageProvider with
-            | Unknown -> ()
-            | AzureCosmosDb ->
-                let indexMetrics = stringBuilderPool.Get()
-                let requestCharge = stringBuilderPool.Get()
-
-                try
-                    try
-                        let queryDefinition =
-                            QueryDefinition(
-                                $"""
-                                SELECT TOP @maxCount c.State
-                                FROM c
-                                WHERE STRINGEQUALS(c.State[0].Event.created.ownerId, @ownerId, true)
-                                    AND STRINGEQUALS(c.State[0].Event.created.organizationId, @organizationId, true)
-                                    AND LENGTH(c.State[0].Event.created.branchName) > 0
-                                    {includeDeletedEntitiesClause includeDeleted}
-                                    AND c.GrainType = @grainType
-                                    AND c.PartitionKey = @partitionKey
-                                """
-                            )
-                                .WithParameter("@maxCount", maxCount)
-                                .WithParameter("@ownerId", ownerId)
-                                .WithParameter("@organizationId", organizationId)
-                                .WithParameter("@grainType", StateName.Branch)
-                                .WithParameter("@partitionKey", repositoryId)
-
-                        let iterator = cosmosContainer.GetItemQueryIterator<BranchEventValue>(queryDefinition, requestOptions = queryRequestOptions)
-
-                        while iterator.HasMoreResults do
-                            addTiming TimingFlag.BeforeStorageQuery "getBranches" correlationId
-                            let! results = iterator.ReadNextAsync()
-                            addTiming TimingFlag.AfterStorageQuery "getBranches" correlationId
-                            indexMetrics.Append($"{results.IndexMetrics}, ") |> ignore
-                            requestCharge.Append($"{results.RequestCharge:F3}, ") |> ignore
-                            let eventsForAllBranches = results.Resource
-
-                            eventsForAllBranches
-                            |> Seq.iter (fun eventsForOneBranch ->
-                                let branchDto =
-                                    eventsForOneBranch.State
-                                    |> Array.fold (fun branchDto branchEvent -> branchDto |> BranchDto.UpdateDto branchEvent) BranchDto.Default
-
-                                branches.Add(branchDto))
-
-                        if
-                            indexMetrics.Length >= 2
-                            && requestCharge.Length >= 2
-                            && Activity.Current <> null
-                        then
-                            Activity.Current
-                                .SetTag("indexMetrics", $"{indexMetrics.Remove(indexMetrics.Length - 2, 2)}")
-                                .SetTag("requestCharge", $"{requestCharge.Remove(requestCharge.Length - 2, 2)}")
-                            |> ignore
-                    with ex ->
-                        logToConsole $"Got an exception."
-                        logToConsole $"{ExceptionResponse.Create ex}"
-                finally
-                    stringBuilderPool.Return(indexMetrics)
-                    stringBuilderPool.Return(requestCharge)
-            | MongoDB -> ()
-
-            return branches.OrderBy(fun b -> b.BranchName).ToArray()
-        }
-
     /// Gets a list of references that match a provided SHA-256 hash.
     let getReferencesBySha256Hash (repositoryId: RepositoryId) (branchId: BranchId) (sha256Hash: Sha256Hash) (maxCount: int) =
         task {
@@ -1397,6 +1327,7 @@ module Services =
                                 AND STRINGEQUALS(c.State[0].Event.created.ReferenceType, @referenceType, true)
                                 AND c.GrainType = @grainType
                                 AND c.PartitionKey = @partitionKey
+                            ORDER BY c.State[0].Event.created.CreatedAt DESC
                             """
                         )
                             .WithParameter("@maxCount", maxCount)
@@ -1667,6 +1598,87 @@ module Services =
 
     /// Gets the latest rebase from a branch.
     let getLatestRebase = getLatestReferenceByType ReferenceType.Rebase
+
+    /// Gets a list of branches for a given repository.
+    let getBranches (ownerId: OwnerId) (organizationId: OrganizationId) (repositoryId: RepositoryId) (maxCount: int) includeDeleted correlationId =
+        task {
+            let branches = ConcurrentDictionary<BranchId, BranchDto>()
+            let branchIds = List<BranchId>()
+
+            match actorStateStorageProvider with
+            | Unknown -> ()
+            | AzureCosmosDb ->
+                let indexMetrics = stringBuilderPool.Get()
+                let requestCharge = stringBuilderPool.Get()
+
+                try
+                    try
+                        // First, get all of the branches for the repository.
+                        let queryDefinition =
+                            QueryDefinition(
+                                $"""
+                                SELECT TOP @maxCount c.State[0].Event.created.branchId
+                                FROM c
+                                WHERE STRINGEQUALS(c.State[0].Event.created.ownerId, @ownerId, true)
+                                    AND STRINGEQUALS(c.State[0].Event.created.organizationId, @organizationId, true)
+                                    AND LENGTH(c.State[0].Event.created.branchName) > 0
+                                    {includeDeletedEntitiesClause includeDeleted}
+                                    AND c.GrainType = @grainType
+                                    AND c.PartitionKey = @partitionKey
+                                """
+                            )
+                                .WithParameter("@maxCount", maxCount)
+                                .WithParameter("@ownerId", ownerId)
+                                .WithParameter("@organizationId", organizationId)
+                                .WithParameter("@grainType", StateName.Branch)
+                                .WithParameter("@partitionKey", repositoryId)
+
+                        let iterator = cosmosContainer.GetItemQueryIterator<BranchIdValue>(queryDefinition, requestOptions = queryRequestOptions)
+
+                        while iterator.HasMoreResults do
+                            addTiming TimingFlag.BeforeStorageQuery "getBranches" correlationId
+                            let! results = iterator.ReadNextAsync()
+                            addTiming TimingFlag.AfterStorageQuery "getBranches" correlationId
+                            indexMetrics.Append($"{results.IndexMetrics}, ") |> ignore
+                            requestCharge.Append($"{results.RequestCharge:F3}, ") |> ignore
+
+                            let branchIdValues = results.Resource
+
+                            for branchIdValue in branchIdValues do
+                                branchIds.Add(branchIdValue.branchId)
+
+                        do!
+                            Parallel.ForEachAsync(
+                                branchIds,
+                                (fun branchId ct ->
+                                    ValueTask(
+                                        task {
+                                            let actorProxy = Branch.CreateActorProxy branchId repositoryId correlationId
+                                            let! branchDto = actorProxy.Get correlationId
+                                            branches[branchDto.BranchId] <- branchDto
+                                        }
+                                    ))
+                            )
+
+                        if
+                            indexMetrics.Length >= 2
+                            && requestCharge.Length >= 2
+                            && Activity.Current <> null
+                        then
+                            Activity.Current
+                                .SetTag("indexMetrics", $"{indexMetrics.Remove(indexMetrics.Length - 2, 2)}")
+                                .SetTag("requestCharge", $"{requestCharge.Remove(requestCharge.Length - 2, 2)}")
+                            |> ignore
+                    with ex ->
+                        logToConsole $"Got an exception."
+                        logToConsole $"{ExceptionResponse.Create ex}"
+                finally
+                    stringBuilderPool.Return(indexMetrics)
+                    stringBuilderPool.Return(requestCharge)
+            | MongoDB -> ()
+
+            return branches.Values.OrderBy(fun branchDto -> branchDto.UpdatedAt).ToArray()
+        }
 
     /// Gets a DirectoryVersion by searching using a Sha256Hash value.
     let getDirectoryBySha256Hash (repositoryId: RepositoryId) (sha256Hash: Sha256Hash) correlationId =

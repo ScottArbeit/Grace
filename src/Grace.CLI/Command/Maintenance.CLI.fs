@@ -742,23 +742,23 @@ module Maintenance =
                                         do!
                                             Parallel.ForEachAsync(
                                                 directoryVersionGroups,
-                                                Constants.ParallelOptions,
+                                                ParallelOptions(MaxDegreeOfParallelism = 3),
                                                 (fun directoryVersionGroup ct ->
                                                     ValueTask(
                                                         task {
-                                                            let saveParameters = SaveDirectoryVersionsParameters()
-                                                            saveParameters.OwnerId <- graceIds.OwnerIdString
-                                                            saveParameters.OwnerName <- graceIds.OwnerName
-                                                            saveParameters.OrganizationId <- graceIds.OrganizationIdString
-                                                            saveParameters.OrganizationName <- graceIds.OrganizationName
-                                                            saveParameters.RepositoryId <- graceIds.RepositoryIdString
-                                                            saveParameters.RepositoryName <- graceIds.RepositoryName
-                                                            saveParameters.CorrelationId <- getCorrelationId parseResult
+                                                            let saveDirectoryVersionsParameters = SaveDirectoryVersionsParameters()
+                                                            saveDirectoryVersionsParameters.OwnerId <- graceIds.OwnerIdString
+                                                            saveDirectoryVersionsParameters.OwnerName <- graceIds.OwnerName
+                                                            saveDirectoryVersionsParameters.OrganizationId <- graceIds.OrganizationIdString
+                                                            saveDirectoryVersionsParameters.OrganizationName <- graceIds.OrganizationName
+                                                            saveDirectoryVersionsParameters.RepositoryId <- graceIds.RepositoryIdString
+                                                            saveDirectoryVersionsParameters.RepositoryName <- graceIds.RepositoryName
+                                                            saveDirectoryVersionsParameters.CorrelationId <- getCorrelationId parseResult
 
-                                                            saveParameters.DirectoryVersions <-
+                                                            saveDirectoryVersionsParameters.DirectoryVersions <-
                                                                 directoryVersionGroup.Select(fun dv -> dv.ToDirectoryVersion).ToList()
 
-                                                            match! DirectoryVersion.SaveDirectoryVersions saveParameters with
+                                                            match! DirectoryVersion.SaveDirectoryVersions saveDirectoryVersionsParameters with
                                                             | Ok result -> succeeded.Enqueue(result)
                                                             | Error error -> errors.Enqueue(error)
 

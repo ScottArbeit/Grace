@@ -869,10 +869,11 @@ module Repository =
 
                                 let allBranches = returnValue.ReturnValue
 
+                                // Get the parent branch names and latest promotions for all branches
                                 let parents =
                                     allBranches.Select(fun branch ->
-                                        {| branchId = branch.BranchId
-                                           branchName =
+                                        {| BranchId = branch.BranchId
+                                           BranchName =
                                             if branch.ParentBranchId = Constants.DefaultParentBranchId then
                                                 "root"
                                             else
@@ -880,7 +881,7 @@ module Repository =
                                                     .Where(fun br -> br.BranchId = branch.ParentBranchId)
                                                     .Select(fun br -> br.BranchName)
                                                     .First()
-                                           latestPromotion =
+                                           LatestPromotion =
                                             if branch.ParentBranchId = Constants.DefaultParentBranchId then
                                                 branch.LatestPromotion
                                             else
@@ -894,34 +895,34 @@ module Repository =
                                         .Join(
                                             parents,
                                             (fun branch -> branch.BranchId),
-                                            (fun parent -> parent.branchId),
+                                            (fun parent -> parent.BranchId),
                                             (fun branch parent ->
-                                                {| branchId = branch.BranchId
-                                                   branchName = branch.BranchName
-                                                   sha256Hash = branch.LatestReference.Sha256Hash
-                                                   updatedAt = branch.UpdatedAt
-                                                   ago = ago branch.CreatedAt
-                                                   parentBranchName = parent.branchName
-                                                   basedOnLatestPromotion = (branch.BasedOn.ReferenceId = parent.latestPromotion.ReferenceId) |})
+                                                {| BranchId = branch.BranchId
+                                                   BranchName = branch.BranchName
+                                                   Sha256Hash = branch.LatestReference.Sha256Hash
+                                                   UpdatedAt = branch.UpdatedAt
+                                                   Ago = ago branch.CreatedAt
+                                                   ParentBranchName = parent.BranchName
+                                                   BasedOnLatestPromotion = (branch.BasedOn.ReferenceId = parent.LatestPromotion.ReferenceId) |})
                                         )
-                                        .OrderBy(fun branch -> branch.parentBranchName, branch.branchName)
+                                        .OrderBy(fun branch -> branch.UpdatedAt)
 
                                 for br in branchesWithParentNames do
                                     let updatedAt =
-                                        match br.updatedAt with
+                                        match br.UpdatedAt with
                                         | Some t -> instantToLocalTime (t)
                                         | None -> String.Empty
 
                                     table.AddRow(
-                                        br.branchName,
-                                        $"[{Colors.Deemphasized}]{br.branchId}[/]",
-                                        br.sha256Hash |> getShortSha256Hash,
-                                        (if br.basedOnLatestPromotion then
+                                        br.BranchName,
+                                        $"[{Colors.Deemphasized}]{br.BranchId}[/]",
+                                        br.Sha256Hash |> getShortSha256Hash,
+                                        (if br.BasedOnLatestPromotion then
                                              $"[{Colors.Added}]Yes[/]"
                                          else
                                              $"[{Colors.Important}]No[/]"),
-                                        br.parentBranchName,
-                                        br.ago,
+                                        br.ParentBranchName,
+                                        br.Ago,
                                         $"[{Colors.Deemphasized}]{updatedAt}[/]"
                                     )
                                     |> ignore
@@ -1832,7 +1833,7 @@ module Repository =
         repositoryCommand.Subcommands.Add(setAllowsLargeFilesCommand)
 
         let setRecordSavesCommand =
-            new Command("set-recordsaves", Description = "Sets whether the repository defaults to recording every save.")
+            new Command("set-record-saves", Description = "Sets whether the repository defaults to recording every save.")
             |> addOption Options.recordSaves
             |> addCommonOptions
 
@@ -1840,7 +1841,10 @@ module Repository =
         repositoryCommand.Subcommands.Add(setRecordSavesCommand)
 
         let setDefaultServerApiVersionCommand =
-            new Command("set-defaultserverapiversion", Description = "Sets the default server API version for clients to use when accessing this repository.")
+            new Command(
+                "set-default-server-api-version",
+                Description = "Sets the default server API version for clients to use when accessing this repository."
+            )
             |> addOption Options.defaultServerApiVersion
             |> addCommonOptions
 
@@ -1848,7 +1852,7 @@ module Repository =
         repositoryCommand.Subcommands.Add(setDefaultServerApiVersionCommand)
 
         let setSaveDaysCommand =
-            new Command("set-savedays", Description = "Sets the number of days to keep saves in the repository.")
+            new Command("set-save-days", Description = "Sets the number of days to keep saves in the repository.")
             |> addOption Options.saveDays
             |> addCommonOptions
 
@@ -1856,7 +1860,7 @@ module Repository =
         repositoryCommand.Subcommands.Add(setSaveDaysCommand)
 
         let setCheckpointDaysCommand =
-            new Command("set-checkpointdays", Description = "Sets the number of days to keep checkpoints in the repository.")
+            new Command("set-checkpoint-days", Description = "Sets the number of days to keep checkpoints in the repository.")
             |> addOption Options.checkpointDays
             |> addCommonOptions
 
@@ -1864,7 +1868,7 @@ module Repository =
         repositoryCommand.Subcommands.Add(setCheckpointDaysCommand)
 
         let setDiffCacheDaysCommand =
-            new Command("set-diffcachedays", Description = "Sets the number of days to keep diff results cached in the repository.")
+            new Command("set-diff-cache-days", Description = "Sets the number of days to keep diff results cached in the repository.")
             |> addOption Options.diffCacheDays
             |> addCommonOptions
 
@@ -1872,7 +1876,10 @@ module Repository =
         repositoryCommand.Subcommands.Add(setDiffCacheDaysCommand)
 
         let setDirectoryVersionCacheDaysCommand =
-            new Command("set-directoryversioncachedays", Description = "Sets how long to keep recursive directory version contents cached in the repository.")
+            new Command(
+                "set-directory-version-cache-days",
+                Description = "Sets how long to keep recursive directory version contents cached in the repository."
+            )
             |> addOption Options.directoryVersionCacheDays
             |> addCommonOptions
 
@@ -1881,7 +1888,7 @@ module Repository =
 
         let setLogicalDeleteDaysCommand =
             new Command(
-                "set-logicaldeletedays",
+                "set-logical-delete-days",
                 Description = "Sets the number of days to keep deleted branches in the repository before permanently deleting them."
             )
             |> addOption Options.logicalDeleteDays

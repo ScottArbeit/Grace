@@ -1172,7 +1172,15 @@ module Branch =
                                                             | Ok returnValue ->
                                                                 logToAnsiConsole Colors.Verbose $"Succeeded doing promotion."
 
-                                                                let promotionReferenceId = Guid.Parse(returnValue.Properties["ReferenceId"] :?> string)
+                                                                logToAnsiConsole
+                                                                    Colors.Verbose
+                                                                    $"{serialize (returnValue.Properties.OrderBy(fun kvp -> kvp.Key))}"
+
+                                                                Console.WriteLine("Hit <Enter> to continue...")
+                                                                Console.ReadLine() |> ignore
+
+                                                                let promotionReferenceId = returnValue.Properties["ReferenceId"].ToString()
+                                                                //let promotionReferenceId = returnValue.Properties.Item(nameof ReferenceId) :?> string
 
                                                                 let rebaseParameters =
                                                                     Parameters.Branch.RebaseParameters(
@@ -1182,7 +1190,7 @@ module Branch =
                                                                         OwnerName = graceIds.OwnerName,
                                                                         OrganizationId = graceIds.OrganizationIdString,
                                                                         OrganizationName = graceIds.OrganizationName,
-                                                                        BasedOn = promotionReferenceId
+                                                                        BasedOn = Guid.Parse(promotionReferenceId)
                                                                     )
 
                                                                 let! rebaseResult = Branch.Rebase(rebaseParameters)
