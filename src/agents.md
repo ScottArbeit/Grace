@@ -1,22 +1,33 @@
-# Repository Guidelines
+# Grace Repository Agents Guide
 
-## Project Structure & Module Organization
-`Grace.sln` ties together the F# services, tooling, and shared libraries. Core HTTP and Orleans functionality lives in `Grace.Server`, while reusable contracts and helpers belong in `Grace.Shared`. The developer CLI sits in `Grace.CLI`, cloud-facing utilities in `Grace.SDK` and `Grace.Actors`, and serialization helpers in `CosmosSerializer`. Integration and regression tests reside under `Grace.Server.Tests`, and deployment manifests are collected in `AzureResources`, `OpenAPI`, and the Kubernetes YAML files at the repository root.
+Agents operating under `D:SourceGracesrc` should follow this playbook alongside the existing `agents.md` in the repo root. Treat this file as the canonical high-level brief; each project folder contains an `AGENTS.md` with deeper context.
 
-## Build, Test, and Development Commands
-- `dotnet build --configuration Release` – validates the solution and mirrors CI settings.
-- `dotnet test --no-build` – runs the NUnit/FsUnit suite in `Grace.Server.Tests`; add `--collect:"XPlat Code Coverage"` when you need coverage artifacts.
-- `fantomas .` (or `dotnet tool run fantomas .` if installed as a local tool) – formats touched F# files per the repo defaults.
-- Read the `instructions.md` file for specific guidance for each Grace project.
+## Core Engineering Expectations
 
-## Coding Style & Naming Conventions
-Follow the Microsoft F# style guide: `PascalCase` for types, modules, and DU cases; `camelCase` for values and functions. Keep functions small, prefer immutability, and compose with helpers in `Grace.Shared` before adding new utilities. Order `open` statements alphabetically, align arguments with four-space indentation, and add `///` XML docs to public members. Use the `task { }` computation expression for async work and `Result<'T,'E>` (or discriminated unions) for recoverable errors.
+-   Prefer read/inspect commands before mutating files; never revert changes introduced by others.
+-   Make a multi-step plan for non-trivial work, keep edits focused, and leave code cleaner than you found it.
+-   Validate changes with `dotnet build --configuration Release` and `dotnet test --no-build`; run `fantomas .` after touching F# source.
+-   Treat secrets with care, avoid logging PII, and preserve structured logging (including correlation IDs).
+-   Favor existing helpers in `Grace.Shared` before adding new utilities; when new helpers are required, keep them composable and well documented.
 
-## Testing Guidelines
-Tests use NUnit with FsUnit assertions. Name modules and fixtures after the component under test (e.g., `RepositoryServerTests`) and structure assertions with Given/When/Then style comments when intent is not obvious. New behavior requires matching tests; for serialization updates, add round-trip cases for each serializer. Run `dotnet test --no-build` locally before every push to keep the suite green.
+## F# Coding Guidelines
 
-## Commit & Pull Request Guidelines
-Adopt Conventional Commits (`feat:`, `fix:`, `chore:`, `docs:`) and keep each commit focused. Before pushing, ensure build, tests, and formatting succeed. PRs should summarize the change, call out risks or migration notes (especially for serialized contracts), list tests executed, and link tracking issues. Request reviewers familiar with the impacted area and highlight any follow-up tasks in the description.
+-   Default to F# for new code unless stakeholders specify another language; surface trade-offs if deviation seems necessary.
+-   Use `task { }` for asynchronous workflows and keep side effects isolated; ensure any awaited operations remain within the computation expression.
+-   Prefer a functional style with immutable data, small pure functions, and explicit dependencies passed as parameters.
+-   Apply the modern indexer syntax (`myList[0]`) for lists, arrays, and sequences; avoid the legacy `.[ ]` form.
+-   Structure modules so that domain types live in `Grace.Types`, shared helpers in `Grace.Shared`, and orchestration in the appropriate project-specific assembly.
+-   Add lightweight inline comments when control flow or transformations are non-obvious, and log key variable values in functions longer than ten lines to aid diagnostics.
+-   Format code with `fantomas` and include comprehensive, copy/paste-ready snippets when sharing examples.
 
-## Security & Configuration Tips
-Never commit secrets or live connection strings; prefer `.env` overrides for local runs and environment variables or secret stores elsewhere. Preserve structured logging with correlation IDs, and avoid logging PII. When touching serialization or storage code, double-check that migrations keep older data readable.
+## Agent-Friendly Context Practices
+
+-   Start with the relevant `AGENTS.md` file(s) to load key patterns, dependencies, and test strategy before exploring the codebase. These files replace the old `instructions.md`.
+-   Use these summaries to decide which source files actually need inspection; open code only when context is missing or implementation verification is required.
+-   When documenting new behavior, update the closest `AGENTS.md` to keep future agents informed—living documentation reduces the need for broad code scans.
+
+## Collaboration & Communication
+
+-   Summarise modifications clearly, cite file paths with 1-based line numbers, and call out follow-up actions or tests that remain.
+-   Coordinate cross-project changes across `Grace.Types`, `Grace.Shared`, `Grace.Server`, `Grace.Actors`, and `Grace.SDK` to keep contracts aligned.
+-   When adding new capabilities, ensure matching tests exist and note any coverage gaps or risks in the final hand-off.
