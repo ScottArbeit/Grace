@@ -166,8 +166,8 @@ module DirectoryVersion =
 
                 let query (context: HttpContext) (maxCount: int) (actorProxy: IDirectoryVersionActor) =
                     task {
-                        let! directoryVersion = actorProxy.Get(getCorrelationId context)
-                        return directoryVersion
+                        let! directoryVersionDto = actorProxy.Get(getCorrelationId context)
+                        return directoryVersionDto
                     }
 
                 let! parameters = context |> parse<GetParameters>
@@ -197,9 +197,9 @@ module DirectoryVersion =
 
                 let query (context: HttpContext) (maxCount: int) (actorProxy: IDirectoryVersionActor) =
                     task {
-                        let! directoryVersions = actorProxy.GetRecursiveDirectoryVersions false (getCorrelationId context)
+                        let! directoryVersionDtos = actorProxy.GetRecursiveDirectoryVersions false (getCorrelationId context)
 
-                        return directoryVersions :> IEnumerable<DirectoryVersion>
+                        return directoryVersionDtos :> IEnumerable<DirectoryVersionDto>
                     }
 
                 let! parameters = context |> parse<GetParameters>
@@ -228,17 +228,17 @@ module DirectoryVersion =
 
                 let query (context: HttpContext) (maxCount: int) (actorProxy: IDirectoryVersionActor) =
                     task {
-                        let directoryVersions = List<DirectoryVersion>()
+                        let directoryVersionDtos = List<DirectoryVersionDto>()
 
                         let directoryIds = context.Items[nameof GetByDirectoryIdsParameters] :?> List<DirectoryVersionId>
 
                         for directoryId in directoryIds do
                             let actorProxy = DirectoryVersion.CreateActorProxy directoryId repositoryId (getCorrelationId context)
 
-                            let! directoryVersion = actorProxy.Get(getCorrelationId context)
-                            directoryVersions.Add(directoryVersion)
+                            let! directoryVersionDto = actorProxy.Get(getCorrelationId context)
+                            directoryVersionDtos.Add(directoryVersionDto)
 
-                        return directoryVersions :> IEnumerable<DirectoryVersion>
+                        return directoryVersionDtos :> IEnumerable<DirectoryVersionDto>
                     }
 
                 let! parameters = context |> parse<GetByDirectoryIdsParameters>

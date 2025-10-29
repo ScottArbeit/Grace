@@ -168,12 +168,14 @@ module Reminder =
                             let referenceActorProxy = Reference.CreateActorProxy actorId reminderDto.RepositoryId correlationId
                             return! referenceActorProxy.ReceiveReminderAsync reminderDto
                         | ActorName.Diff ->
-                            let directoryIds = reminderDto.ActorId.Split("/").[1].Split("*")
+                            // Example reminderDto.ActorId: "diffactor/15b50c95-7306-4ecb-9850-a0a5dc7419cf*1e7b6f83-4715-42f8-ba0b-9b0262356f08"
+                            let directoryVersionIds = reminderDto.ActorId.Split("/").[1].Split("*")
 
                             let diffActorProxy =
                                 Diff.CreateActorProxy
-                                    (Guid.ParseExact(directoryIds[0], "N"))
-                                    (Guid.ParseExact(directoryIds[1], "N"))
+                                    (Guid.ParseExact(directoryVersionIds[0], "D")) // "D" = 32 digits separated by hyphens
+                                    (Guid.ParseExact(directoryVersionIds[1], "D"))
+                                    reminderDto.OwnerId
                                     reminderDto.OrganizationId
                                     reminderDto.RepositoryId
                                     correlationId

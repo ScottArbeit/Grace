@@ -61,8 +61,8 @@
         <PackageReference Include="MessagePack.Annotations" Version="3.1.4" />
         <PackageReference Include="MessagePack.FSharpExtensions" Version="4.0.0" />
         <PackageReference Include="MessagePack.NodaTime" Version="3.4.4" />
-        <PackageReference Include="Microsoft.Extensions.Caching.Memory" Version="10.0.0-rc.1.25451.107" />
-        <PackageReference Include="Microsoft.Extensions.ObjectPool" Version="10.0.0-rc.1.25451.107" />
+        <PackageReference Include="Microsoft.Extensions.Caching.Memory" Version="10.0.0-rc.2.25502.107" />
+        <PackageReference Include="Microsoft.Extensions.ObjectPool" Version="10.0.0-rc.2.25502.107" />
         <PackageReference Include="Microsoft.Orleans.Core" Version="9.2.1" />
         <PackageReference Include="Microsoft.Orleans.Sdk" Version="9.2.1" />
         <PackageReference Include="Microsoft.Orleans.Serialization.FSharp" Version="9.2.1" />
@@ -81,7 +81,7 @@
     </ItemGroup>
 
     <ItemGroup>
-        <PackageReference Update="FSharp.Core" Version="10.0.100-preview7.25451.107" />
+        <PackageReference Update="FSharp.Core" Version="10.0.100-rc2.25502.107" />
     </ItemGroup>
 
 </Project>

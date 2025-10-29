@@ -28,7 +28,7 @@ open System.Text.Json
 module Diff =
     type Validations<'T when 'T :> DiffParameters> = 'T -> ValueTask<Result<unit, DiffError>> array
 
-    let activitySource = new ActivitySource("Repository")
+    let activitySource = new ActivitySource("Diff")
 
     ///let processCommand<'T when 'T :> DiffParameters> (context: HttpContext) (validations: Validations<'T>) (command: 'T -> Task<DiffCommand>) =
     //    task {
@@ -93,6 +93,7 @@ module Diff =
                         Diff.CreateActorProxy
                             parameters.DirectoryVersionId1
                             parameters.DirectoryVersionId2
+                            graceIds.OwnerId
                             graceIds.OrganizationId
                             graceIds.RepositoryId
                             correlationId

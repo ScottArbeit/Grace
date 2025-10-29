@@ -129,12 +129,24 @@ module Notifications =
     type GraceEventActor(hubContext: IHubContext<NotificationHub, IGraceClientConnection>) =
         inherit Grain()
 
-        let diffTwoDirectoryVersions directoryVersionId1 directoryVersionId2 organizationId repositoryId correlationId =
+        let diffTwoDirectoryVersions directoryVersionId1 directoryVersionId2 ownerId organizationId repositoryId correlationId =
             task {
-                let diffActorProxy = Diff.CreateActorProxy directoryVersionId1 directoryVersionId2 organizationId repositoryId correlationId
+                let diffActorProxy = Diff.CreateActorProxy directoryVersionId1 directoryVersionId2 ownerId organizationId repositoryId correlationId
 
-                let! x = diffActorProxy.Compute correlationId
-                ()
+                match! diffActorProxy.Compute correlationId with
+                | Ok result -> return ()
+                | Error graceError ->
+                    log.LogError(
+                        "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; In GraceEventActor.diffTwoDirectoryVersions: Error computing diff between DirectoryVersionId {DirectoryVersionId1} and {DirectoryVersionId2}:\n{GraceError}",
+                        getCurrentInstantExtended (),
+                        getMachineName,
+                        correlationId,
+                        directoryVersionId1,
+                        directoryVersionId2,
+                        graceError
+                    )
+
+                    return ()
             }
 
         override this.OnActivateAsync(ct) =
@@ -190,6 +202,7 @@ module Notifications =
                                     diffTwoDirectoryVersions
                                         latestTwoPromotions[0].DirectoryId
                                         latestTwoPromotions[1].DirectoryId
+                                        branchDto.OwnerId
                                         branchDto.OrganizationId
                                         branchDto.RepositoryId
                                         correlationId
@@ -211,6 +224,7 @@ module Notifications =
                                     diffTwoDirectoryVersions
                                         latestTwoCommits[0].DirectoryId
                                         latestTwoCommits[1].DirectoryId
+                                        branchDto.OwnerId
                                         branchDto.OrganizationId
                                         branchDto.RepositoryId
                                         correlationId
@@ -222,6 +236,7 @@ module Notifications =
                                     diffTwoDirectoryVersions
                                         referenceDto.DirectoryId
                                         latestPromotion.DirectoryId
+                                        branchDto.OwnerId
                                         branchDto.OrganizationId
                                         branchDto.RepositoryId
                                         correlationId
@@ -248,6 +263,7 @@ module Notifications =
                                     diffTwoDirectoryVersions
                                         checkpoints[0].DirectoryId
                                         checkpoints[1].DirectoryId
+                                        branchDto.OwnerId
                                         branchDto.OrganizationId
                                         branchDto.RepositoryId
                                         correlationId
@@ -259,6 +275,7 @@ module Notifications =
                                     diffTwoDirectoryVersions
                                         referenceDto.DirectoryId
                                         latestCommit.DirectoryId
+                                        branchDto.OwnerId
                                         branchDto.OrganizationId
                                         branchDto.RepositoryId
                                         correlationId
@@ -281,6 +298,7 @@ module Notifications =
                                     diffTwoDirectoryVersions
                                         latestTwoSaves[0].DirectoryId
                                         latestTwoSaves[1].DirectoryId
+                                        branchDto.OwnerId
                                         branchDto.OrganizationId
                                         branchDto.RepositoryId
                                         correlationId
@@ -296,6 +314,7 @@ module Notifications =
                                     diffTwoDirectoryVersions
                                         latestCommit.DirectoryId
                                         referenceDto.DirectoryId
+                                        branchDto.OwnerId
                                         branchDto.OrganizationId
                                         branchDto.RepositoryId
                                         correlationId
@@ -310,6 +329,7 @@ module Notifications =
                                         diffTwoDirectoryVersions
                                             latestCheckpoint.DirectoryId
                                             referenceDto.DirectoryId
+                                            branchDto.OwnerId
                                             branchDto.OrganizationId
                                             branchDto.RepositoryId
                                             correlationId

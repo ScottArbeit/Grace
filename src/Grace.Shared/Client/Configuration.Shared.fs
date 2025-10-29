@@ -213,6 +213,8 @@ module Configuration =
                     graceConfiguration.GraceDirectoryIgnoreEntries <-
                         graceIgnoreEntries
                         |> Array.where (fun graceIgnoreLine -> pathContainsSeparator graceIgnoreLine)
+                        |> Array.map (fun graceIgnoreLine -> $"*{graceIgnoreLine}")
+
                     //graceConfiguration.Aliases <- aliases
                     graceConfiguration.IsPopulated <- true
                     graceConfiguration

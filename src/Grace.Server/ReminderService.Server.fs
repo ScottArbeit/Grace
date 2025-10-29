@@ -251,7 +251,9 @@ module ReminderService =
                             ticked <- tick
                         else
                             do! Task.Delay(TimeSpan.FromSeconds(1.0), stoppingToken)
-                with ex ->
+                with
+                | :? OperationCanceledException -> ()
+                | ex ->
                     log.LogError(
                         "{CurrentInstant}: Node: {HostName}; Error in ReminderService.ExecuteAsync. Error: {error}.",
                         getCurrentInstantExtended (),

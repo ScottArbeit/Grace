@@ -11,6 +11,7 @@ open Grace.Server.Validations
 open Grace.Shared
 open Grace.Shared.Extensions
 open Grace.Shared.Parameters.Branch
+open Grace.Types
 open Grace.Types.Branch
 open Grace.Types.Diff
 open Grace.Types.Types
@@ -340,9 +341,10 @@ module Branch =
                             let directoryVersionActorProxy =
                                 DirectoryVersion.CreateActorProxy parameters.DirectoryVersionId repositoryId parameters.CorrelationId
 
-                            let! directoryVersion = directoryVersionActorProxy.Get(parameters.CorrelationId)
+                            let! directoryVersionDto = directoryVersionActorProxy.Get(parameters.CorrelationId)
 
-                            return Some(Assign(parameters.DirectoryVersionId, directoryVersion.Sha256Hash, ReferenceText parameters.Message))
+                            return
+                                Some(Assign(parameters.DirectoryVersionId, directoryVersionDto.DirectoryVersion.Sha256Hash, ReferenceText parameters.Message))
                         elif not <| String.IsNullOrEmpty(parameters.Sha256Hash) then
                             match! getDirectoryBySha256Hash (Guid.Parse(graceIds.RepositoryIdString)) parameters.Sha256Hash parameters.CorrelationId with
                             | Some directoryVersion ->
@@ -1001,6 +1003,7 @@ module Branch =
                                                     Diff.CreateActorProxy
                                                         sortedRefs[i].DirectoryId
                                                         sortedRefs[i + 1].DirectoryId
+                                                        branchDto.OwnerId
                                                         branchDto.OrganizationId
                                                         branchDto.RepositoryId
                                                         correlationId
@@ -1490,7 +1493,7 @@ module Branch =
                                     let! contents = directoryActorProxy.GetRecursiveDirectoryVersions listContentsParameters.ForceRecompute correlationId
 
                                     return contents
-                                | None -> return Array.Empty<DirectoryVersion>()
+                                | None -> return Array.Empty<DirectoryVersion.DirectoryVersionDto>()
                             elif not <| String.IsNullOrEmpty(listContentsParameters.ReferenceId) then
                                 // We have a ReferenceId, so we'll get the DirectoryVersion from that reference.
                                 let referenceGuid = Guid.Parse(listContentsParameters.ReferenceId)
@@ -1515,7 +1518,7 @@ module Branch =
                                     let! contents = directoryActorProxy.GetRecursiveDirectoryVersions listContentsParameters.ForceRecompute correlationId
 
                                     return contents
-                                | None -> return Array.Empty<DirectoryVersion>()
+                                | None -> return Array.Empty<DirectoryVersion.DirectoryVersionDto>()
                         }
 
                     let! parameters = context |> parse<ListContentsParameters>
@@ -1593,9 +1596,13 @@ module Branch =
                                 let directoryVersionActorProxy =
                                     DirectoryVersion.CreateActorProxy rootDirectoryVersion.DirectoryVersionId repositoryId correlationId
 
-                                let! directoryVersions = directoryVersionActorProxy.GetRecursiveDirectoryVersions false correlationId
+                                let! directoryVersionDtos = directoryVersionActorProxy.GetRecursiveDirectoryVersions false correlationId
 
-                                let directoryIds = directoryVersions.Select(fun dv -> dv.DirectoryVersionId).ToList()
+                                let directoryIds =
+                                    directoryVersionDtos
+                                        .Select(fun dv -> dv.DirectoryVersion.DirectoryVersionId)
+                                        .ToList()
+
                                 return directoryIds
                             | None -> return List<DirectoryVersionId>()
                         }

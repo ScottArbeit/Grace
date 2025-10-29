@@ -135,7 +135,7 @@ module Interfaces =
         inherit IGraceReminderWithStringKey
 
         /// Populates the contents of the diff without returning the results.
-        abstract member Compute: correlationId: CorrelationId -> Task<bool>
+        abstract member Compute: correlationId: CorrelationId -> Task<GraceResult<string>>
 
         /// Gets the results of the diff. If the diff has not already been computed, it will be computed.
         abstract member GetDiff: correlationId: CorrelationId -> Task<DiffDto>
@@ -166,7 +166,7 @@ module Interfaces =
         abstract member Exists: correlationId: CorrelationId -> Task<bool>
 
         /// Returns the DirectoryVersion instance for this directory.
-        abstract member Get: correlationId: CorrelationId -> Task<DirectoryVersion>
+        abstract member Get: correlationId: CorrelationId -> Task<DirectoryVersionDto>
 
         /// Returns the list of subdirectories contained in this directory.
         abstract member GetCreatedAt: correlationId: CorrelationId -> Task<Instant>
@@ -184,7 +184,7 @@ module Interfaces =
         abstract member GetSize: correlationId: CorrelationId -> Task<int64>
 
         /// Returns a list of DirectoryVersion objects for all subdirectories.
-        abstract member GetRecursiveDirectoryVersions: forceRegenerate: bool -> correlationId: CorrelationId -> Task<DirectoryVersion array>
+        abstract member GetRecursiveDirectoryVersions: forceRegenerate: bool -> correlationId: CorrelationId -> Task<DirectoryVersionDto array>
 
         /// Returns the total size of files contained in this directory and all subdirectories.
         abstract member GetRecursiveSize: correlationId: CorrelationId -> Task<int64>

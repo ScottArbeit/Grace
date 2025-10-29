@@ -14,6 +14,7 @@ module Diff =
     type DeleteCachedStateReminderState = { DeleteReason: DeleteReason; CorrelationId: CorrelationId }
 
     /// Represents a Diff between two DirectoryVersions in a repository.
+    //[<GenerateSerializer>]
     type DiffDto =
         { Class: string
           OwnerId: OwnerId

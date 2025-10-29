@@ -12,7 +12,7 @@
 	<ItemGroup>
 		<PackageReference Include="Azure.Core" Version="1.49.0" />
 		<PackageReference Include="Ben.Demystifier" Version="0.4.1" />
-		<PackageReference Include="Microsoft.Azure.Cosmos" Version="3.53.1" />
+		<PackageReference Include="Microsoft.Azure.Cosmos" Version="3.54.0" />
         <PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
 	</ItemGroup>
 

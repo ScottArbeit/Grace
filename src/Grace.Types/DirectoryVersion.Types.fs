@@ -4,6 +4,7 @@ open Grace.Shared
 open Grace.Shared.Utilities
 open Grace.Types.Types
 open NodaTime
+open MessagePack
 open Orleans
 open System
 open System.Collections.Generic
@@ -43,11 +44,19 @@ module DirectoryVersion =
         }
 
     /// The DirectoryVersionDto is a data transfer object that represents a directory version in the system.
+    [<MessagePackObject>]
     type DirectoryVersionDto =
-        { DirectoryVersion: DirectoryVersion
+        { [<Key(0)>]
+          DirectoryVersion: DirectoryVersion
+          [<Key(1)>]
           RecursiveSize: int64
+          [<Key(2)>]
           DeletedAt: Instant option
+          [<Key(3)>]
           DeleteReason: DeleteReason }
+
+        static member Default =
+            { DirectoryVersion = DirectoryVersion.Default; RecursiveSize = Constants.InitialDirectorySize; DeletedAt = None; DeleteReason = String.Empty }
 
         static member UpdateDto directoryVersionEvent currentDirectoryVersionDto =
             let directoryVersionEventType = directoryVersionEvent.Event
@@ -58,7 +67,3 @@ module DirectoryVersion =
             | LogicalDeleted deleteReason -> { currentDirectoryVersionDto with DeletedAt = Some(getCurrentInstant ()); DeleteReason = deleteReason }
             | PhysicalDeleted -> currentDirectoryVersionDto // Do nothing because it's about to be deleted anyway.
             | Undeleted -> { currentDirectoryVersionDto with DeletedAt = None; DeleteReason = String.Empty }
-
-
-        static member Default =
-            { DirectoryVersion = DirectoryVersion.Default; RecursiveSize = Constants.InitialDirectorySize; DeletedAt = None; DeleteReason = String.Empty }

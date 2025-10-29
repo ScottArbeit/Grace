@@ -1,8 +1,12 @@
 namespace Grace.Shared
 
+open NodaTime
+open MessagePack
+open MessagePack.FSharp
+open MessagePack.NodaTime
+open MessagePack.Resolvers
 open Microsoft.Extensions.Caching.Memory
 open Microsoft.FSharp.Reflection
-open NodaTime
 open NodaTime.Serialization.SystemTextJson
 open Polly
 open Polly.Contrib.WaitAndRetry
@@ -14,10 +18,6 @@ open System.Text.Json.Serialization
 open System.Text.RegularExpressions
 open System.Collections.Generic
 open System.Threading.Tasks
-open MessagePack
-open MessagePack.FSharp
-open MessagePack.NodaTime
-open MessagePack.Resolvers
 
 module Constants =
 
@@ -65,7 +65,19 @@ module Constants =
     /// The universal MessagePack serialization options for Grace.
     let messagePackSerializerOptions =
         MessagePackSerializerOptions.Standard
-            .WithResolver(CompositeResolver.Create(NodatimeResolver.Instance, StandardResolver.Instance))
+            .WithResolver(
+                CompositeResolver.Create(
+                    [|
+                       // 1) Generated formatters (classes like Grace_Types_Types.DirectoryVersionFormatter1)
+                       //GeneratedResolver.Instance
+                       // 2) F# helpers for records/DUs
+                       FSharpResolver.Instance
+                       // 3) NodaTime formatters (Instant, LocalDate, etc.)
+                       NodatimeResolver.Instance
+                       // 4) Final fallback
+                       StandardResolver.Instance |]
+                )
+            )
             .WithCompression(MessagePackCompression.Lz4BlockArray)
             .WithSecurity(MessagePackSecurity.UntrustedData)
 
@@ -325,7 +337,7 @@ module Constants =
     /// Grace's global settings for Parallel.ForEach/ForEachAsync expressions; sets MaxDegreeofParallelism to maximize performance.
     // I'm choosing a higher-than-usual number here because these parallel loops are used in code where most of the time is spent on network
     //   and disk traffic - and therefore Task<'T> - and we can run lots of them simultaneously.
-    let ParallelOptions = ParallelOptions(MaxDegreeOfParallelism = Environment.ProcessorCount * 2)
+    let ParallelOptions = ParallelOptions(MaxDegreeOfParallelism = Environment.ProcessorCount * 1)
 
     /// Default directory size magic value.
     let InitialDirectorySize = int64 -1

@@ -69,6 +69,7 @@ module ActorProxy =
         let CreateActorProxy
             (directoryVersionId1: DirectoryVersionId)
             (directoryVersionId2: DirectoryVersionId)
+            (ownerId: OwnerId)
             (organizationId: OrganizationId)
             (repositoryId: RepositoryId)
             correlationId
@@ -76,6 +77,7 @@ module ActorProxy =
             let grain = orleansClient.CreateActorProxyWithCorrelationId<IDiffActor>((GetPrimaryKey directoryVersionId1 directoryVersionId2), correlationId)
             let orleansContext = Dictionary<string, obj>()
             orleansContext.Add(Constants.ActorNameProperty, ActorName.Diff)
+            orleansContext.Add(nameof OwnerId, ownerId)
             orleansContext.Add(nameof OrganizationId, organizationId)
             orleansContext.Add(nameof RepositoryId, repositoryId)
             memoryCache.CreateOrleansContextEntry(grain.GetGrainId(), orleansContext)

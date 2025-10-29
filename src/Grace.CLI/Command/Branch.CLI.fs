@@ -16,6 +16,7 @@ open Grace.Shared.Utilities
 open Grace.Shared.Validation
 open Grace.Shared.Validation.Errors
 open Grace.Types.Branch
+open Grace.Types.DirectoryVersion
 open Grace.Types.Reference
 open Grace.Types.Types
 open NodaTime
@@ -1086,9 +1087,9 @@ module Branch =
                                                 CorrelationId = graceIds.CorrelationId
                                             )
 
-                                        logToAnsiConsole
-                                            Colors.Verbose
-                                            $"In promotionHandler: branchGetParameters:{Environment.NewLine}{serialize branchGetParameters}"
+                                        //logToAnsiConsole
+                                        //    Colors.Verbose
+                                        //    $"In promotionHandler: branchGetParameters:{Environment.NewLine}{serialize branchGetParameters}"
 
                                         let! branchResult = Branch.Get(branchGetParameters)
 
@@ -1102,7 +1103,7 @@ module Branch =
                                                 // Yay, we have both Dto's.
                                                 let branchDto = branchReturnValue.ReturnValue
 
-                                                logToAnsiConsole Colors.Verbose $"In promotionHandler: branchDto:{Environment.NewLine}{serialize branchDto}"
+                                                //logToAnsiConsole Colors.Verbose $"In promotionHandler: branchDto:{Environment.NewLine}{serialize branchDto}"
 
                                                 let parentBranchDto = parentBranchReturnValue.ReturnValue
 
@@ -1127,9 +1128,9 @@ module Branch =
                                                             CorrelationId = graceIds.CorrelationId
                                                         )
 
-                                                    logToAnsiConsole
-                                                        Colors.Verbose
-                                                        $"In promotionHandler: getReferencesByReferenceIdParameters:{Environment.NewLine}{serialize getReferencesByReferenceIdParameters}"
+                                                    //logToAnsiConsole
+                                                    //    Colors.Verbose
+                                                    //    $"In promotionHandler: getReferencesByReferenceIdParameters:{Environment.NewLine}{serialize getReferencesByReferenceIdParameters}"
 
                                                     match! Repository.GetReferencesByReferenceId(getReferencesByReferenceIdParameters) with
                                                     | Ok returnValue ->
@@ -1170,14 +1171,11 @@ module Branch =
 
                                                             match promotionResult with
                                                             | Ok returnValue ->
-                                                                logToAnsiConsole Colors.Verbose $"Succeeded doing promotion."
+                                                                //logToAnsiConsole Colors.Verbose $"Succeeded doing promotion."
 
-                                                                logToAnsiConsole
-                                                                    Colors.Verbose
-                                                                    $"{serialize (returnValue.Properties.OrderBy(fun kvp -> kvp.Key))}"
-
-                                                                Console.WriteLine("Hit <Enter> to continue...")
-                                                                Console.ReadLine() |> ignore
+                                                                //logToAnsiConsole
+                                                                //    Colors.Verbose
+                                                                //    $"{serialize (returnValue.Properties.OrderBy(fun kvp -> kvp.Key))}"
 
                                                                 let promotionReferenceId = returnValue.Properties["ReferenceId"].ToString()
                                                                 //let promotionReferenceId = returnValue.Properties.Item(nameof ReferenceId) :?> string
@@ -1198,7 +1196,7 @@ module Branch =
 
                                                                 match rebaseResult with
                                                                 | Ok returnValue ->
-                                                                    logToAnsiConsole Colors.Verbose $"Succeeded doing rebase."
+                                                                    //logToAnsiConsole Colors.Verbose $"Succeeded doing rebase."
 
                                                                     return promotionResult
                                                                 | Error error -> return Error error
@@ -2383,13 +2381,13 @@ module Branch =
                             match! DirectoryVersion.GetByDirectoryIds getByDirectoryIdParameters with
                             | Ok returnValue ->
                                 // Create a new version of GraceStatus that includes the new DirectoryVersions.
-                                let newDirectoryVersions = returnValue.ReturnValue
+                                let newDirectoryVersionDtos = returnValue.ReturnValue
 
                                 if parseResult |> verbose then
-                                    logToAnsiConsole Colors.Verbose $"In updateWorkingDirectory: newDirectoryVersions.Count: {newDirectoryVersions.Count()}."
+                                    logToAnsiConsole Colors.Verbose $"In updateWorkingDirectory: newDirectoryVersions.Count: {newDirectoryVersionDtos.Count()}."
 
                                 let graceStatusWithNewDirectoryVersionsFromServer =
-                                    updateGraceStatusWithNewDirectoryVersionsFromServer newGraceStatus newDirectoryVersions
+                                    updateGraceStatusWithNewDirectoryVersionsFromServer newGraceStatus newDirectoryVersionDtos
 
                                 let mutable isError = false
 
@@ -2420,7 +2418,7 @@ module Branch =
                                                 updateWorkingDirectory
                                                     newGraceStatus
                                                     graceStatusWithNewDirectoryVersionsFromServer
-                                                    newDirectoryVersions
+                                                    newDirectoryVersionDtos
                                                     (getCorrelationId parseResult)
                                             //logToAnsiConsole Colors.Verbose $"Succeeded calling updateWorkingDirectory."
 
@@ -2780,10 +2778,11 @@ module Branch =
 
                                 let! d2 = DirectoryVersion.GetDirectoryVersionsRecursive(getLatestReferenceDirectoryParameters)
 
-                                let createFileVersionLookupDictionary (directoryVersions: IEnumerable<DirectoryVersion>) =
+                                let createFileVersionLookupDictionary (directoryVersionDtos: IEnumerable<DirectoryVersionDto>) =
                                     let lookup = Dictionary<RelativePath, LocalFileVersion>(StringComparer.OrdinalIgnoreCase)
 
-                                    directoryVersions
+                                    directoryVersionDtos
+                                    |> Seq.map (fun dv -> dv.DirectoryVersion)
                                     |> Seq.map (fun dv -> dv.ToLocalDirectoryVersion(dv.CreatedAt.ToDateTimeUtc()))
                                     |> Seq.map (fun dv -> dv.Files)
                                     |> Seq.concat

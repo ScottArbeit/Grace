@@ -32,6 +32,7 @@ open System.Linq
 open System.IO
 open System.IO.Compression
 open System.Threading.Tasks
+open Grace.Actors.Extensions
 
 module Diff =
 
@@ -101,20 +102,21 @@ module Diff =
         member val private correlationId: CorrelationId = String.Empty with get, set
 
         /// Builds a ServerGraceIndex from a root DirectoryId.
-        member private this.buildGraceIndex (directoryId: DirectoryVersionId) correlationId =
+        member private this.buildGraceIndex (directoryId: DirectoryVersionId) repositoryId correlationId =
             task {
                 this.correlationId <- correlationId
                 let graceIndex = ServerGraceIndex()
 
-                let directory = orleansClient.CreateActorProxyWithCorrelationId<IDirectoryVersionActor>(directoryId, correlationId)
+                let directoryVersionActorProxy = ActorProxy.DirectoryVersion.CreateActorProxy directoryId repositoryId correlationId
 
-                let! directoryCreatedAt = directory.GetCreatedAt correlationId
-                let! directoryContents = directory.GetRecursiveDirectoryVersions false correlationId
-                //logToConsole $"In DiffActor.buildGraceIndex(): directoryContents.Count: {directoryContents.Count}"
-                for directoryVersion in directoryContents do
+                let! directoryCreatedAt = directoryVersionActorProxy.GetCreatedAt correlationId
+                let! directoryVersionDtos = directoryVersionActorProxy.GetRecursiveDirectoryVersions false correlationId
+
+                for directoryVersionDto in directoryVersionDtos do
+                    let directoryVersion = directoryVersionDto.DirectoryVersion
                     graceIndex.TryAdd(directoryVersion.RelativePath, directoryVersion) |> ignore
 
-                return (graceIndex, directoryCreatedAt, directoryContents[0].RepositoryId)
+                return (graceIndex, directoryCreatedAt)
             }
 
         /// Gets a Stream from object storage for a specific FileVersion, using a generated Uri.
@@ -208,23 +210,41 @@ module Diff =
                             )
                 }
 
-            member this.Compute correlationId =
+            member this.Compute correlationId : Task<GraceResult<string>> =
                 this.correlationId <- correlationId
 
-                // If it's already populated, skip this.
-                if diffDto.DirectoryVersionId1 <> DiffDto.Default.DirectoryVersionId1 then
-                    (true |> returnTask)
-                else
-                    task {
-                        let (directoryVersionId1, directoryVersionId2) = deconstructActorId ($"{this.GetGrainId().Key}")
+                task {
+                    try
 
-                        logToConsole $"In DiffActor.Populate(); DirectoryVersionId1: {directoryVersionId1}; DirectoryVersionId2: {directoryVersionId2}"
+                        // If it's already populated, skip this.
+                        if diffDto.DirectoryVersionId1 <> DiffDto.Default.DirectoryVersionId1 then
+                            return
+                                Ok(
+                                    (GraceReturnValue.Create<string> "DiffActor.Compute: already populated." correlationId)
+                                        .enhance("DirectoryVersionId1", $"{diffDto.DirectoryVersionId1}")
+                                        .enhance("DirectoryVersionId2", $"{diffDto.DirectoryVersionId2}")
+                                        .enhance("OwnerId", $"{diffDto.OwnerId}")
+                                        .enhance("OrganizationId", $"{diffDto.OrganizationId}")
+                                        .enhance("RepositoryId", $"{diffDto.RepositoryId}")
+                                        .enhance ("HasDifferences", $"{diffDto.HasDifferences}")
+                                )
+                        else
+                            let (directoryVersionId1, directoryVersionId2) = deconstructActorId ($"{this.GetGrainId().Key}")
 
-                        try
+                            logToConsole $"In DiffActor.Populate(); DirectoryVersionId1: {directoryVersionId1}; DirectoryVersionId2: {directoryVersionId2}"
+
+                            let orleansContext = memoryCache.GetOrleansContextEntry(this.GetGrainId())
+                            let ownerId = orleansContext.Value[nameof OwnerId] :?> OwnerId
+                            let organizationId = orleansContext.Value[nameof OrganizationId] :?> OrganizationId
+                            let repositoryId = orleansContext.Value[nameof RepositoryId] :?> RepositoryId
+                            let repositoryActorProxy = Repository.CreateActorProxy organizationId repositoryId correlationId
+                            let! repositoryDto = repositoryActorProxy.Get correlationId
+
                             // Build a GraceIndex for each DirectoryId.
-                            let! (graceIndex1, createdAt1, repositoryId1) = this.buildGraceIndex directoryVersionId1 correlationId
+                            let! (graceIndex1, createdAt1) = this.buildGraceIndex directoryVersionId1 repositoryId correlationId
 
-                            let! (graceIndex2, createdAt2, repositoryId2) = this.buildGraceIndex directoryVersionId2 correlationId
+                            let! (graceIndex2, createdAt2) = this.buildGraceIndex directoryVersionId2 repositoryId correlationId
+
                             //logToConsole $"In DiffActor.Populate(); createdAt1: {createdAt1}; createdAt2: {createdAt2}."
 
                             // Compare the GraceIndices.
@@ -238,9 +258,7 @@ module Diff =
 
                             //logToConsole $"In Actor.Populate(); got differences."
 
-                            let organizationId = RequestContext.Get(nameof OrganizationId) :?> OrganizationId
-                            let repositoryActorProxy = Repository.CreateActorProxy organizationId repositoryId1 correlationId
-                            let! repositoryDto = repositoryActorProxy.Get correlationId
+                            diffDto <- { diffDto with OwnerId = ownerId; OrganizationId = organizationId; RepositoryId = repositoryDto.RepositoryId }
 
                             /// Gets a Stream for a given RelativePath.
                             let getFileStream (graceIndex: ServerGraceIndex) (relativePath: RelativePath) (repositoryDto: RepositoryDto) =
@@ -350,33 +368,58 @@ module Diff =
                                     (ReminderState.DiffDeleteCachedState deleteCachedStateReminderState)
                                     correlationId
 
-                            return true
-                        with ex ->
-                            logToConsole $"Exception in DiffActor.Compute(): {ExceptionResponse.Create ex}"
-                            logToConsole $"directoryVersionId1: {directoryVersionId1}; directoryVersionId2: {directoryVersionId2}"
+                            return
+                                Ok(
+                                    (GraceReturnValue.Create<string> "DiffActor.Compute: populated." correlationId)
+                                        .enhance("DirectoryVersionId1", $"{diffDto.DirectoryVersionId1}")
+                                        .enhance("DirectoryVersionId2", $"{diffDto.DirectoryVersionId2}")
+                                        .enhance("OwnerId", $"{diffDto.OwnerId}")
+                                        .enhance("OrganizationId", $"{diffDto.OrganizationId}")
+                                        .enhance("RepositoryId", $"{diffDto.RepositoryId}")
+                                        .enhance ("HasDifferences", $"{diffDto.HasDifferences}")
+                                )
+                    with ex ->
+                        logToConsole $"Exception in DiffActor.Compute(): {ExceptionResponse.Create ex}"
+                        logToConsole $"directoryVersionId1: {diffDto.DirectoryVersionId1}; directoryVersionId2: {diffDto.DirectoryVersionId2}"
 
+                        if not <| isNull Activity.Current then
                             Activity.Current
                                 .SetStatus(ActivityStatusCode.Error, "Exception while creating diff.")
                                 .AddTag("ex.Message", ex.Message)
                                 .AddTag("ex.StackTrace", ex.StackTrace)
 
-                                .AddTag("directoryVersionId1", $"{directoryVersionId1}")
-                                .AddTag("directoryVersionId2", $"{directoryVersionId2}")
+                                .AddTag("directoryVersionId1", $"{diffDto.DirectoryVersionId1}")
+                                .AddTag("directoryVersionId2", $"{diffDto.DirectoryVersionId2}")
                             |> ignore
 
-                            return false
-                    }
+                        return
+                            Error(
+                                (GraceError.Create "Exception while creating diff." correlationId)
+                                    .enhance("DirectoryVersionId1", $"{diffDto.DirectoryVersionId1}")
+                                    .enhance("DirectoryVersionId2", $"{diffDto.DirectoryVersionId2}")
+                                    .enhance("OwnerId", $"{diffDto.OwnerId}")
+                                    .enhance("OrganizationId", $"{diffDto.OrganizationId}")
+                                    .enhance("RepositoryId", $"{diffDto.RepositoryId}")
+                                    .enhance ("HasDifferences", $"{diffDto.HasDifferences}")
+                            )
+                }
 
             member this.GetDiff correlationId =
                 task {
                     this.correlationId <- correlationId
 
                     if diffDto.DirectoryVersionId1.Equals(DiffDto.Default.DirectoryVersionId1) then
-                        logToConsole $"In Actor.GetDiff(), not yet populated."
                         let! populated = (this :> IDiffActor).Compute correlationId
-                        logToConsole $"In Actor.GetDiff(), now populated."
-                        return diffDto
+
+                        log.LogTrace(
+                            "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; In DiffActor.GetDiff(); was not previously computed.",
+                            getCurrentInstantExtended (),
+                            getMachineName,
+                            correlationId,
+                            populated
+                        )
                     else
                         logToConsole $"In Actor.GetDiff(), already populated."
-                        return diffDto
+
+                    return diffDto
                 }

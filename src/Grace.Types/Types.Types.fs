@@ -188,15 +188,22 @@ module Types =
     /// A FileVersion represents a version of a file in a repository with unique contents, and therefore with a unique SHA-256 hash. It is immutable.
     ///
     /// It is the server-side representation of the LocalFileVersion type, used for the local object cache.
-    [<CLIMutable; GenerateSerializer>]
+    [<CLIMutable; MessagePackObject; GenerateSerializer>]
     type FileVersion =
-        { Class: string
+        { [<Key(0)>]
+          Class: string
           //RepositoryId: RepositoryId
+          [<Key(1)>]
           RelativePath: RelativePath
+          [<Key(2)>]
           Sha256Hash: Sha256Hash
+          [<Key(3)>]
           IsBinary: bool
+          [<Key(4)>]
           Size: int64
+          [<Key(5)>]
           CreatedAt: Instant
+          [<Key(6)>]
           BlobUri: string }
 
         static member Create
@@ -223,8 +230,11 @@ module Types =
             LocalFileVersion.Create this.RelativePath this.Sha256Hash this.IsBinary this.Size this.CreatedAt true lastWriteTimeUtc
 
         /// Get the object directory file name, which includes the SHA256 Hash value. Example: hello.js -> hello_04bef0a4b298de9c02930234.js
+        [<IgnoreMember>]
         member this.GetObjectFileName = getObjectFileName this.RelativePath this.Sha256Hash
+
         /// Gets the relative directory path of the file. Example: "/dir/subdir/file.js" -> "/dir/subdir/".
+        [<IgnoreMember>]
         member this.RelativeDirectory = getRelativeDirectory $"{this.RelativePath}" ""
 
     /// A LocalFileVersion represents a version of a file in a repository with unique contents, and therefore with a unique SHA-256 hash. It is immutable.
@@ -235,19 +245,19 @@ module Types =
           Class: string
           //[<Key(1)>]
           //RepositoryId: RepositoryId
-          [<Key(2)>]
+          [<Key(1)>]
           RelativePath: RelativePath
-          [<Key(3)>]
+          [<Key(2)>]
           Sha256Hash: Sha256Hash
-          [<Key(4)>]
+          [<Key(3)>]
           IsBinary: bool
-          [<Key(5)>]
+          [<Key(4)>]
           Size: int64
-          [<Key(6)>]
+          [<Key(5)>]
           CreatedAt: Instant
-          [<Key(7)>]
+          [<Key(6)>]
           UploadedToObjectStorage: bool
-          [<Key(8)>]
+          [<Key(7)>]
           LastWriteTimeUtc: DateTime }
 
         static member Create
@@ -285,18 +295,29 @@ module Types =
     /// A DirectoryVersion represents a version of a directory in a repository with unique contents, and therefore with a unique SHA-256 hash.
     ///
     /// It is the server-side representation of the LocalDirectoryVersion type. LocalDirectoryVersion is used for the local object cache.
-    [<GenerateSerializer>]
+    [<CLIMutable; MessagePackObject; GenerateSerializer>]
     type DirectoryVersion =
-        { Class: string
+        { [<Key(0)>]
+          Class: string
+          [<Key(1)>]
           DirectoryVersionId: DirectoryVersionId
+          [<Key(2)>]
           OwnerId: OwnerId
+          [<Key(3)>]
           OrganizationId: OrganizationId
+          [<Key(4)>]
           RepositoryId: RepositoryId
+          [<Key(5)>]
           RelativePath: RelativePath
+          [<Key(6)>]
           Sha256Hash: Sha256Hash
+          [<Key(7)>]
           Directories: List<DirectoryVersionId>
+          [<Key(8)>]
           Files: List<FileVersion>
+          [<Key(9)>]
           Size: int64
+          [<Key(10)>]
           CreatedAt: Instant }
 
         static member GetKnownTypes() = GetKnownTypes<DirectoryVersion>()

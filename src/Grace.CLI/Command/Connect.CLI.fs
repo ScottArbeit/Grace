@@ -216,8 +216,13 @@ module Connect =
                                 match (directoryVersionsResult, getZipFileResult) with
                                 | (Ok directoryVerionsReturnValue, Ok getZipFileReturnValue) ->
                                     AnsiConsole.MarkupLine $"[{Colors.Important}]Retrieved all DirectoryVersions.[/]"
-                                    let directoryVersions = directoryVerionsReturnValue.ReturnValue
-                                    let fileVersions = directoryVersions |> Seq.collect (fun dv -> dv.Files)
+                                    let directoryVersionDtos = directoryVerionsReturnValue.ReturnValue
+
+                                    let fileVersions =
+                                        directoryVersionDtos
+                                        |> Seq.map (fun directoryVersionDto -> directoryVersionDto.DirectoryVersion)
+                                        |> Seq.collect (fun dv -> dv.Files)
+
                                     let fileVersionLookup = Dictionary<RelativePath, bool>(fileVersions |> Seq.length)
 
                                     fileVersions

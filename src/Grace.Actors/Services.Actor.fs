@@ -1161,6 +1161,7 @@ module Services =
                             WHERE STRINGEQUALS(c.State[0].Event.created.BranchId, @branchId, true)
                                 AND c.GrainType = @grainType
                                 AND c.PartitionKey = @partitionKey
+                            ORDER BY c.State[0].Event.created.CreatedAt DESC
                             """
                         )
                             .WithParameter("@maxCount", maxCount)
@@ -1193,9 +1194,10 @@ module Services =
                         && requestCharge.Length >= 2
                         && Activity.Current <> null
                     then
-                        Activity.Current
-                            .SetTag("indexMetrics", $"{indexMetrics.Remove(indexMetrics.Length - 2, 2)}")
-                            .SetTag("requestCharge", $"{requestCharge.Remove(requestCharge.Length - 2, 2)}")
+                        Activity.Current.SetTag("indexMetrics", $"{indexMetrics.Remove(indexMetrics.Length - 2, 2)}")
+                        |> ignore
+
+                        Activity.Current.SetTag("requestCharge", $"{requestCharge.Remove(requestCharge.Length - 2, 2)}")
                         |> ignore
                 finally
                     stringBuilderPool.Return(indexMetrics)

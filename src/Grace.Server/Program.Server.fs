@@ -31,6 +31,7 @@ open System.Collections.Generic
 open System.IO
 open System.Linq
 open System.Security.Authentication
+open System.Text.Json
 open System.Threading.Tasks
 open System.Net
 open Microsoft.Extensions.Logging
@@ -61,6 +62,17 @@ module Program =
     [<InternalsVisibleTo("Host")>]
     do ()
 
+    type SystemTextJsonGrainStorageSerializer(options: JsonSerializerOptions) =
+        interface IGrainStorageSerializer with
+            member _.Serialize(obj) =
+                let t = obj.GetType()
+                let bytes = JsonSerializer.SerializeToUtf8Bytes(obj, t, options)
+                BinaryData(bytes)
+
+            member _.Deserialize<'T>(data: BinaryData) =
+                use stream = data.ToStream()
+                JsonSerializer.Deserialize<'T>(stream, options)
+
     // Load environment variables from .env file, if it exists.
     let envPaths =
         [| Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".env") // during debug
@@ -89,6 +101,7 @@ module Program =
                         options.ServiceId <- Environment.GetEnvironmentVariable EnvironmentVariables.OrleansServiceId)
                     .Configure<SiloOptions>(fun (options: SiloOptions) ->
                         options.SiloName <- $"Silo-{Environment.GetEnvironmentVariable EnvironmentVariables.OrleansServiceId}")
+                    .Configure<MessagingOptions>(fun (options: MessagingOptions) -> options.ResponseTimeout <- TimeSpan.FromSeconds(60.0))
                     .Configure<GrainCollectionOptions>(fun (options: GrainCollectionOptions) ->
                         options.CollectionAge <- TimeSpan.FromMinutes(15.0)
                         options.ClassSpecificCollectionAge[$"{(typeof<GrainRepository.GrainRepositoryActor>).FullName}"] <- TimeSpan.FromMinutes(5.0))
@@ -105,14 +118,15 @@ module Program =
                             options.ClientOptions.ApplicationName <- "Grace.Server"
                             options.ClientOptions.EnableContentResponseOnWrite <- true
                             options.ClientOptions.LimitToEndpoint <- false
-                            options.ClientOptions.Serializer <- new CosmosJsonSerializer(JsonSerializerOptions)),
+                            options.ClientOptions.Serializer <- new CosmosJsonSerializer(Grace.Shared.Constants.JsonSerializerOptions)),
                         typeof<GracePartitionKeyProvider>
                     )
                     .AddAzureBlobGrainStorage(
                         GraceObjectStorage,
                         (fun (options: AzureBlobStorageOptions) ->
                             options.BlobServiceClient <- Context.blobServiceClient
-                            options.ContainerName <- Environment.GetEnvironmentVariable EnvironmentVariables.DiffContainerName)
+                            options.ContainerName <- Environment.GetEnvironmentVariable EnvironmentVariables.DiffContainerName
+                            options.GrainStorageSerializer <- SystemTextJsonGrainStorageSerializer(Grace.Shared.Constants.JsonSerializerOptions))
                     )
                     .AddAzureQueueStreams(
                         GraceEventStreamProvider,
@@ -130,6 +144,7 @@ module Program =
                             options.BlobServiceClient <- Context.blobServiceClient
                             options.ContainerName <- GraceEventStreamProvider)
                     )
+                    .AddActivityPropagation()
 
                 |> ignore
 
@@ -141,7 +156,7 @@ module Program =
                             (fun t ->
                                 not <| String.IsNullOrEmpty(t.Namespace)
                                 && t.Namespace.StartsWith("Grace", StringComparison.InvariantCulture)),
-                        jsonSerializerOptions = JsonSerializerOptions
+                        jsonSerializerOptions = Grace.Shared.Constants.JsonSerializerOptions
                     )
                     |> ignore)
                 |> ignore)

@@ -7,7 +7,7 @@
     "grace diff commit": {
       "commandName": "Project",
       "commandLineArgs": "diff commit",
-      "workingDirectory": "D:\\Source\\grace\\src"
+      "workingDirectory": "E:\\GraceDemo\\User01"
     },
     "grace merge - PlayWithFlexbox": {
       "commandName": "Project",

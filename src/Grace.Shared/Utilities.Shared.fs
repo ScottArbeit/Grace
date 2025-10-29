@@ -228,6 +228,7 @@ module Utilities =
     /// Returns the given path, replacing any Windows-style backslash characters (\) with forward-slash characters (/).
     let normalizedTimeSpan = TimeSpan.FromMinutes(1.0)
 
+    /// Converts backslashes to forward slashes, and caches the result for performance.
     let normalizeFilePath (filePath: string) =
         let mutable result = String.Empty
 

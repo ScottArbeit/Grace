@@ -14,6 +14,13 @@ open System.Text
 open System.Collections.Concurrent
 open System.Collections.Generic
 open Azure.Storage.Blobs.Models
+open NodaTime.Serialization.SystemTextJson
+open MessagePack
+open MessagePack.Resolvers
+open MessagePack.FSharp
+open MessagePack.NodaTime
+open MessagePack.Resolvers
+
 
 module Context =
 

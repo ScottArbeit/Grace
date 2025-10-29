@@ -129,26 +129,19 @@ module Services =
 
     /// Returns true if directory matches this graceIgnoreEntry; otherwise returns false.
     let checkIgnoreLineAgainstDirectory (directoryInfoToCheck: DirectoryInfo) (graceIgnoreEntry: string) =
-        let expression = $"{graceIgnoreEntry}"
-
         let normalizedDirectoryPath =
             if Path.EndsInDirectorySeparator(directoryInfoToCheck.FullName) then
                 normalizeFilePath directoryInfoToCheck.FullName
             else
                 normalizeFilePath (directoryInfoToCheck.FullName + "/")
 
-        if FileSystemName.MatchesSimpleExpression(expression, normalizedDirectoryPath, ignoreCase) then
-            //if normalizedDirectoryPath.Contains(".git") then
-            //AnsiConsole.MarkupLine(
-            //    $"{getCurrentInstantExtended ()} [{Colors.Deleted}]In checkIgnoreLineAgainstDirectory(): normalizedDirectoryPath: {normalizedDirectoryPath}; expression: {expression}; matches: true. Should ignore.[/]"
-            //)
-
+        if FileSystemName.MatchesSimpleExpression(graceIgnoreEntry, normalizedDirectoryPath, ignoreCase) then
+            //logToAnsiConsole Colors.Changed $"checkIgnoreLineAgainstDirectory: directory '{normalizedDirectoryPath}' matches ignore entry '{graceIgnoreEntry}'."
             true
         else
-            //if normalizedDirectoryPath.Contains(".git") then
-            //AnsiConsole.MarkupLine(
-            //    $"{getCurrentInstantExtended ()} [{Colors.Added}]In checkIgnoreLineAgainstDirectory(): normalizedDirectoryPath: {normalizedDirectoryPath}; expression: {expression}; matches: false. Should not ignore.[/]"
-            //)
+            //logToAnsiConsole
+            //    Colors.Verbose
+            //    $"checkIgnoreLineAgainstDirectory: directory '{normalizedDirectoryPath}' does not match ignore entry '{graceIgnoreEntry}'."
 
             false
 
@@ -201,8 +194,8 @@ module Services =
 
             let shouldIgnoreDirectory =
                 directoryInfo.FullName.StartsWith(Current().GraceDirectory)
-                || (Current().GraceDirectoryIgnoreEntries
-                    |> Array.exists (fun graceIgnoreLine -> checkIgnoreLineAgainstDirectory directoryInfo graceIgnoreLine))
+                || Current()
+                    .GraceDirectoryIgnoreEntries.Any(fun graceIgnoreLine -> checkIgnoreLineAgainstDirectory directoryInfo graceIgnoreLine)
 
             shouldIgnoreCache.TryAdd(directoryPath, shouldIgnoreDirectory) |> ignore
             //logToAnsiConsole Colors.Verbose $"In shouldIgnoreDirectory: directoryPath: {directoryPath}; shouldIgnore: {shouldIgnoreDirectory}"
@@ -1246,17 +1239,22 @@ module Services =
         objectCache.Index.ContainsKey(directoryVersion.DirectoryVersionId)
 
     /// Updates the Grace Status index with new directory versions after getting them from the server.
-    let updateGraceStatusWithNewDirectoryVersionsFromServer (graceStatus: GraceStatus) (newDirectoryVersions: IEnumerable<DirectoryVersion>) =
+    let updateGraceStatusWithNewDirectoryVersionsFromServer
+        (graceStatus: GraceStatus)
+        (newDirectoryVersionDtos: IEnumerable<Grace.Types.DirectoryVersion.DirectoryVersionDto>)
+        =
         let newGraceIndex = GraceIndex(graceStatus.Index)
         let mutable dvForDeletions = LocalDirectoryVersion.Default
 
         if parseResult |> isOutputFormat "Verbose" then
             logToAnsiConsole
                 Colors.Verbose
-                $"In updateGraceStatusWithNewDirectoryVersionsFromServer: Processing {newDirectoryVersions.Count()} new DirectoryVersions."
+                $"In updateGraceStatusWithNewDirectoryVersionsFromServer: Processing {newDirectoryVersionDtos.Count()} new DirectoryVersions."
 
         // First, either add the new ones, or replace the existing ones.
-        for newDirectoryVersion in newDirectoryVersions do
+        for newDirectoryVersionDto in newDirectoryVersionDtos do
+            let newDirectoryVersion = newDirectoryVersionDto.DirectoryVersion
+
             logToAnsiConsole Colors.Verbose $"Processing new DirectoryVersion: {newDirectoryVersion.RelativePath}."
 
             let existingDirectoryVersion =
@@ -1350,12 +1348,13 @@ module Services =
     let updateWorkingDirectory
         (previousGraceStatus: GraceStatus)
         (updatedGraceStatus: GraceStatus)
-        (newDirectoryVersions: IEnumerable<DirectoryVersion>)
+        (newDirectoryVersionDtos: IEnumerable<Grace.Types.DirectoryVersion.DirectoryVersionDto>)
         (correlationId: CorrelationId)
         =
         task {
             // Loop through each new DirectoryVersion.
-            for newDirectoryVersion in newDirectoryVersions do
+            for newDirectoryVersionDto in newDirectoryVersionDtos do
+                let newDirectoryVersion = newDirectoryVersionDto.DirectoryVersion
                 // Get the previous DirectoryVersion, so we can compare contents below.
                 let previousDirectoryVersion =
                     previousGraceStatus.Index.Values.FirstOrDefault(

@@ -250,7 +250,7 @@ module Diff =
                 else
                     renderInlineDiff fileDiff.InlineDiff
         else
-            logToAnsiConsole Colors.Highlighted $"No differences found."
+            addToOutput (Markup($"[{Colors.Highlighted}]No differences found.[/]"))
 
     /// Creates the text output for a diff to the most recent specific ReferenceType.
     type GetDiffByReferenceTypeParameters() =
@@ -296,7 +296,6 @@ module Diff =
                                     let mutable rootDirectoryId = DirectoryVersionId.Empty
                                     let mutable rootDirectorySha256Hash = Sha256Hash String.Empty
                                     let mutable previousDirectoryIds: HashSet<DirectoryVersionId> = null
-                                    let repositoryId = graceIds.RepositoryId
 
                                     // Check for latest commit and latest root directory version from grace watch. If it's running, we know GraceStatus is up-to-date.
                                     match! getGraceWatchStatus () with
@@ -312,7 +311,6 @@ module Diff =
                                         previousDirectoryIds <- graceWatchStatus.DirectoryIds
                                     | None ->
                                         let! previousGraceStatus = readGraceStatusFile ()
-                                        let mutable graceStatus = previousGraceStatus
                                         t0.Value <- 100.0
                                         t1.StartTask()
                                         let! differences = scanForDifferences previousGraceStatus

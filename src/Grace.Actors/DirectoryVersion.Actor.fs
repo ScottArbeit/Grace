@@ -261,7 +261,7 @@ module DirectoryVersion =
 
             member this.Get correlationId =
                 this.correlationId <- correlationId
-                directoryVersionDto.DirectoryVersion |> returnTask
+                directoryVersionDto |> returnTask
 
             member this.GetCreatedAt correlationId =
                 this.correlationId <- correlationId
@@ -293,71 +293,128 @@ module DirectoryVersion =
                                 recursiveDirectoryVersionsCacheFileName directoryVersionDto.DirectoryVersion.DirectoryVersionId
                             )
 
-
                         // Check if the subdirectory versions have already been generated and cached.
                         let cachedSubdirectoryVersions =
                             task {
                                 if not forceRegenerate && directoryVersionBlobClient.Exists() then
                                     use! blobStream = directoryVersionBlobClient.OpenReadAsync()
-                                    let! json = MessagePackSerializer.DeserializeAsync<DirectoryVersion array>(blobStream, messagePackSerializerOptions)
-                                    //use memoryStream = new MemoryStream()
-                                    //let! blah = blobClient.DownloadToAsync(memoryStream)
-                                    //memoryStream.Position <- 0
-                                    //use decompressedStream = new GZipStream(memoryStream, CompressionMode.Decompress)
-                                    //use reader = new StreamReader(decompressedStream)
-                                    //let json = reader.ReadToEnd()
-                                    return Some json
+
+                                    let! directoryVersions =
+                                        MessagePackSerializer.DeserializeAsync<DirectoryVersionDto array>(blobStream, messagePackSerializerOptions)
+
+                                    return Some directoryVersions
                                 else
                                     return None
                             }
 
                         // If they have already been generated, return them.
                         match! cachedSubdirectoryVersions with
-                        | Some subdirectoryVersions ->
-                            log.LogDebug(
-                                "In DirectoryVersionActor.GetRecursiveDirectoryVersions({id}). Retrieved SubdirectoryVersions from cache.",
+                        | Some subdirectoryVersionDtos ->
+                            log.LogTrace(
+                                "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; In DirectoryVersionActor.GetRecursiveDirectoryVersions({id}): Retrieved SubdirectoryVersions from cache.",
+                                getCurrentInstantExtended (),
+                                getMachineName,
+                                correlationId,
                                 this.IdentityString
                             )
 
-                            return subdirectoryVersions
+                            return subdirectoryVersionDtos
                         // If they haven't, generate them by calling each subdirectory in parallel.
                         | None ->
-                            log.LogDebug(
-                                "In DirectoryVersionActor.GetRecursiveDirectoryVersions({id}). SubdirectoryVersions will be generated. forceRegenerate: {forceRegenerate}",
-                                this.IdentityString,
+                            log.LogTrace(
+                                "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; In DirectoryVersionActor.GetRecursiveDirectoryVersions({id}): subdirectoryVersions will be generated. forceRegenerate: {forceRegenerate}",
+                                getCurrentInstantExtended (),
+                                getMachineName,
+                                correlationId,
+                                directoryVersionDto.DirectoryVersion.DirectoryVersionId,
                                 forceRegenerate
                             )
 
-                            let subdirectoryVersions = ConcurrentQueue<DirectoryVersion>()
+                            let subdirectoryVersionDtos = ConcurrentDictionary<DirectoryVersionId, DirectoryVersionDto>()
 
                             // First, add the current directory version to the queue.
-                            subdirectoryVersions.Enqueue(directoryVersionDto.DirectoryVersion)
+                            log.LogTrace(
+                                "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; In DirectoryVersionActor.GetRecursiveDirectoryVersions({id}): Adding current directory version. RelativePath: {relativePath}",
+                                getCurrentInstantExtended (),
+                                getMachineName,
+                                correlationId,
+                                this.GetPrimaryKey(),
+                                directoryVersionDto.DirectoryVersion.RelativePath
+                            )
 
-                            // Then, get the subdirectory versions in parallel and add them to the queue.
+                            subdirectoryVersionDtos.TryAdd(directoryVersionDto.DirectoryVersion.DirectoryVersionId, directoryVersionDto)
+                            |> ignore
+
+                            // Then, get the subdirectory versions in parallel and add them to the dictionary.
                             do!
                                 Parallel.ForEachAsync(
                                     directoryVersionDto.DirectoryVersion.Directories,
                                     Constants.ParallelOptions,
-                                    (fun directoryId ct ->
+                                    (fun subdirectoryVersionId ct ->
                                         ValueTask(
                                             task {
                                                 try
                                                     let subdirectoryActor =
                                                         DirectoryVersion.CreateActorProxy
-                                                            directoryId
+                                                            subdirectoryVersionId
                                                             directoryVersionDto.DirectoryVersion.RepositoryId
                                                             correlationId
 
+                                                    let! subdirectoryVersion = subdirectoryActor.Get correlationId
+
+                                                    log.LogTrace(
+                                                        "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; In DirectoryVersionActor.GetRecursiveDirectoryVersions({id}): subdirectoryVersionId: {subdirectoryVersionId}. RelativePath: {relativePath}\n{directoryVersion}",
+                                                        getCurrentInstantExtended (),
+                                                        getMachineName,
+                                                        correlationId,
+                                                        directoryVersionDto.DirectoryVersion.DirectoryVersionId,
+                                                        subdirectoryVersionId,
+                                                        subdirectoryVersion.DirectoryVersion.RelativePath,
+                                                        serialize subdirectoryVersion
+                                                    )
+
                                                     let! subdirectoryContents = subdirectoryActor.GetRecursiveDirectoryVersions forceRegenerate correlationId
 
-                                                    for directoryVersion in subdirectoryContents do
-                                                        subdirectoryVersions.Enqueue(directoryVersion)
+                                                    log.LogTrace(
+                                                        "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; In DirectoryVersionActor.GetRecursiveDirectoryVersions({id}): subdirectoryVersionId: {subdirectoryVersionId}; Retrieved {count} subdirectory versions for RelativePath: {relativePath}\n{subdirectoryContents}",
+                                                        getCurrentInstantExtended (),
+                                                        getMachineName,
+                                                        correlationId,
+                                                        directoryVersionDto.DirectoryVersion.DirectoryVersionId,
+                                                        subdirectoryVersionId,
+                                                        subdirectoryContents.Length,
+                                                        subdirectoryVersion.DirectoryVersion.RelativePath,
+                                                        serialize subdirectoryContents
+                                                    )
+
+                                                    for directoryVersionDto in subdirectoryContents do
+                                                        let directoryVersion = directoryVersionDto.DirectoryVersion
+
+                                                        log.LogTrace(
+                                                            "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; In DirectoryVersionActor.GetRecursiveDirectoryVersions({id}): subdirectoryVersionId: {subdirectoryVersionId}; Adding subdirectories. RelativePath: {relativePath}",
+                                                            getCurrentInstantExtended (),
+                                                            getMachineName,
+                                                            correlationId,
+                                                            directoryVersion.DirectoryVersionId,
+                                                            subdirectoryVersionId,
+                                                            directoryVersion.RelativePath
+                                                        )
+
+                                                        if not (subdirectoryVersionDtos.TryAdd(directoryVersion.DirectoryVersionId, directoryVersionDto)) then
+                                                            logToConsole
+                                                                $"Warning: In DirectoryVersionActor.GetRecursiveDirectoryVersions({this.GetPrimaryKey()}); Failed to add subdirectory version {directoryVersion.DirectoryVersionId} with relative path {directoryVersion.RelativePath} to the dictionary because it already exists."
+
+                                                            logToConsole $"Current dictionary contents: {serialize subdirectoryVersionDtos}"
+
+                                                            logToConsole $"Attempted to add: {serialize directoryVersionDto}"
+
+                                                            Environment.Exit(-99)
                                                 with ex ->
                                                     log.LogError(
                                                         "{CurrentInstant}: Error in {methodName}; DirectoryId: {directoryId}; Exception: {exception}",
                                                         getCurrentInstantExtended (),
                                                         "GetRecursiveDirectoryVersions",
-                                                        directoryId,
+                                                        subdirectoryVersionId,
                                                         ExceptionResponse.Create ex
                                                     )
                                             }
@@ -366,8 +423,9 @@ module DirectoryVersion =
 
                             // Sort the subdirectory versions by their relative path.
                             let subdirectoryVersionsList =
-                                subdirectoryVersions.ToArray()
-                                |> Array.sortBy (fun directoryVersion -> directoryVersion.RelativePath)
+                                subdirectoryVersionDtos.Values
+                                    .OrderBy(fun directoryVersionDto -> directoryVersionDto.DirectoryVersion.RelativePath)
+                                    .ToArray()
 
                             // Save the recursive results to Azure Blob Storage.
                             //use memoryStream = new MemoryStream()
@@ -434,7 +492,7 @@ module DirectoryVersion =
                             ExceptionResponse.Create ex
                         )
 
-                        return Array.Empty<DirectoryVersion>()
+                        return Array.Empty<DirectoryVersionDto>()
                 }
 
             member this.Handle command metadata =
@@ -526,7 +584,9 @@ module DirectoryVersion =
                     if directoryVersionDto.RecursiveSize = Constants.InitialDirectorySize then
                         let! directoryVersions = (this :> IDirectoryVersionActor).GetRecursiveDirectoryVersions false correlationId
 
-                        let recursiveSize = directoryVersions |> Seq.sumBy (fun directoryVersion -> directoryVersion.Size)
+                        let recursiveSize =
+                            directoryVersions
+                            |> Seq.sumBy (fun directoryVersionDto -> directoryVersionDto.DirectoryVersion.Size)
 
                         match! (this :> IDirectoryVersionActor).Handle (SetRecursiveSize recursiveSize) (EventMetadata.New correlationId "GraceSystem") with
                         | Ok returnValue -> return recursiveSize
