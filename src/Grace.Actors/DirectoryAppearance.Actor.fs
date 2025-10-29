@@ -1,119 +1,79 @@
 namespace Grace.Actors
 
-open Dapr.Actors
-open Dapr.Actors.Runtime
 open Grace.Actors.Constants
 open Grace.Actors.Context
 open Grace.Actors.Extensions.ActorProxy
+open Grace.Actors.Interfaces
 open Grace.Actors.Services
 open Grace.Actors.Types
-open Grace.Shared.Types
 open Grace.Shared
+open Grace.Types.Types
+open Grace.Shared.Utilities
+open Microsoft.Extensions.Logging
 open NodaTime
+open Orleans
+open Orleans.Runtime
 open System
 open System.Collections.Generic
 open System.Threading.Tasks
-open Interfaces
-open Grace.Shared.Utilities
 
 module DirectoryAppearance =
 
-    let GetActorId (directoryId: DirectoryVersionId) = ActorId($"{directoryId}")
-
-    type Appearance = { Root: DirectoryVersionId; Parent: DirectoryVersionId; Created: Instant }
-
-    type AppearancesList = SortedSet<Appearance>
-
     type DirectoryAppearanceDto() =
-        member val public Appearances: AppearancesList = AppearancesList() with get, set
+        member val public Appearances = SortedSet<Appearance>() with get, set
+        member val public RepositoryId: RepositoryId = RepositoryId.Empty with get, set
 
-    type IDirectoryAppearanceActor =
-        inherit IActor
-        abstract member Add: appearance: Appearance -> Task
-        abstract member Remove: appearance: Appearance -> correlationId: string -> Task
-        abstract member Contains: appearance: Appearance -> Task<bool>
-        abstract member Appearances: unit -> Task<AppearancesList>
-
-    type DirectoryAppearanceActor(host: ActorHost) =
-        inherit Actor(host)
+    type DirectoryAppearanceActor
+        ([<PersistentState(StateName.DirectoryAppearance, Constants.GraceActorStorage)>] state: IPersistentState<SortedSet<Appearance>>) =
+        inherit Grain()
 
         let actorName = ActorName.DirectoryAppearance
-        let log = host.LoggerFactory.CreateLogger("DirectoryAppearance.Actor")
 
-        let mutable stateManager = Unchecked.defaultof<IActorStateManager>
+        let log = loggerFactory.CreateLogger("DirectoryAppearance.Actor")
 
-        let dtoStateName = StateName.DirectoryAppearance
-        let mutable dto = DirectoryAppearanceDto()
+        let directoryAppearanceDto = DirectoryAppearanceDto()
 
         member val private correlationId: CorrelationId = String.Empty with get, set
 
-        override this.OnActivateAsync() =
-            stateManager <- this.StateManager
-
-            task {
-                let! directoryAppearanceDtoFromStorage =
-                    task {
-                        match! (Storage.RetrieveState<DirectoryAppearanceDto> stateManager dtoStateName this.correlationId) with
-                        | Some dto -> return dto
-                        | None -> return DirectoryAppearanceDto()
-                    }
-
-                dto <- directoryAppearanceDtoFromStorage
-            }
-            :> Task
-
-        interface IGraceReminder with
-            /// Schedules a Grace reminder.
-            member this.ScheduleReminderAsync reminderType delay state correlationId =
-                task {
-                    let reminder = ReminderDto.Create actorName $"{this.Id}" reminderType (getFutureInstant delay) state correlationId
-                    do! createReminder reminder
-                }
-                :> Task
-
-            /// Receives a Grace reminder.
-            member this.ReceiveReminderAsync(reminder: ReminderDto) : Task<Result<unit, GraceError>> =
-                this.correlationId <- reminder.CorrelationId
-                logToConsole $"Received a reminder: {reminder}."
-                Ok() |> returnTask
+        override this.OnActivateAsync(ct) =
+            directoryAppearanceDto.Appearances <- state.State
+            Task.CompletedTask
 
         interface IDirectoryAppearanceActor with
 
-            member this.Add(appearance) =
+            member this.Add appearance correlationId =
                 task {
-                    let wasAdded = dto.Appearances.Add(appearance)
+                    let wasAdded = directoryAppearanceDto.Appearances.Add(appearance)
 
-                    if wasAdded then
-                        do! Storage.SaveState stateManager dtoStateName dto this.correlationId
+                    if wasAdded then do! state.WriteStateAsync()
                 }
                 :> Task
 
             member this.Remove appearance correlationId =
                 task {
-                    let wasRemoved = dto.Appearances.Remove(appearance)
+                    let wasRemoved = directoryAppearanceDto.Appearances.Remove(appearance)
 
                     if wasRemoved then
-                        if dto.Appearances |> Seq.isEmpty then
-                            let! deleteSucceeded = Storage.DeleteState stateManager dtoStateName
+                        if directoryAppearanceDto.Appearances |> Seq.isEmpty then
+                            do! state.ClearStateAsync()
 
-                            if deleteSucceeded then
-                                let directoryVersionGuid = Guid.Parse($"{this.Id}")
-                                let directoryVersionActorProxy = DirectoryVersion.CreateActorProxy directoryVersionGuid correlationId
+                            let directoryVersionGuid = this.GetGrainId().GetGuidKey()
 
-                                let! result = directoryVersionActorProxy.Delete(correlationId)
+                            let directoryVersionActorProxy =
+                                DirectoryVersion.CreateActorProxy directoryVersionGuid directoryAppearanceDto.RepositoryId correlationId
 
-                                match result with
-                                | Ok returnValue -> ()
-                                | Error error -> ()
+                            let! result = directoryVersionActorProxy.Delete(correlationId)
 
-                                ()
+                            match result with
+                            | Ok returnValue -> ()
+                            | Error error -> ()
+
+                            ()
                         else
-                            do! Storage.SaveState stateManager dtoStateName dto this.correlationId
-
-                        ()
+                            do! state.WriteStateAsync()
                 }
                 :> Task
 
-            member this.Contains(appearance) = Task.FromResult(dto.Appearances.Contains(appearance))
+            member this.Contains appearance correlationId = directoryAppearanceDto.Appearances.Contains(appearance) |> returnTask
 
-            member this.Appearances() = Task.FromResult(dto.Appearances)
+            member this.Appearances correlationId = directoryAppearanceDto.Appearances |> returnTask

@@ -2,15 +2,16 @@ namespace Grace.CLI
 
 open Microsoft.Extensions
 open FSharp.Collections
+open Grace.CLI.Text
 open Grace.SDK
 open Grace.Shared.Client.Configuration
 open Grace.Shared
 open Grace.Shared.Constants
 open Grace.Shared.Parameters.DirectoryVersion
 open Grace.Shared.Services
-open Grace.Shared.Types
+open Grace.Types.Types
 open Grace.Shared.Utilities
-open Grace.Shared.Validation.Errors.Storage
+open Grace.Shared.Validation.Errors
 open NodaTime
 open NodaTime.Text
 open Spectre.Console
@@ -35,12 +36,16 @@ open MessagePack
 open System.Threading
 open Grace.Shared.Parameters
 open Grace.Shared.Parameters.Storage
+open System.Runtime.Intrinsics.Arm
 
 module Services =
 
+    let mutable lockObject = new Lock()
+
     /// Utility method to write to the console using color.
     let logToAnsiConsole (color: string) message =
-        AnsiConsole.MarkupLine $"[{color}]{getCurrentInstantExtended ()} {Environment.CurrentManagedThreadId:X2} {Markup.Escape(message)}[/]"
+        lock lockObject (fun () ->
+            AnsiConsole.MarkupLine $"[{color}]{getCurrentInstantExtended ()} {Environment.CurrentManagedThreadId:X2} {Markup.Escape(message)}[/]")
 
     /// A cache of paths that we've already decided to ignore or not.
     let private shouldIgnoreCache = ConcurrentDictionary<FilePath, bool>()
@@ -124,26 +129,19 @@ module Services =
 
     /// Returns true if directory matches this graceIgnoreEntry; otherwise returns false.
     let checkIgnoreLineAgainstDirectory (directoryInfoToCheck: DirectoryInfo) (graceIgnoreEntry: string) =
-        let expression = $"{graceIgnoreEntry}"
-
         let normalizedDirectoryPath =
             if Path.EndsInDirectorySeparator(directoryInfoToCheck.FullName) then
                 normalizeFilePath directoryInfoToCheck.FullName
             else
                 normalizeFilePath (directoryInfoToCheck.FullName + "/")
 
-        if FileSystemName.MatchesSimpleExpression(expression, normalizedDirectoryPath, ignoreCase) then
-            //if normalizedDirectoryPath.Contains(".git") then
-            //AnsiConsole.MarkupLine(
-            //    $"{getCurrentInstantExtended ()} [{Colors.Deleted}]In checkIgnoreLineAgainstDirectory(): normalizedDirectoryPath: {normalizedDirectoryPath}; expression: {expression}; matches: true. Should ignore.[/]"
-            //)
-
+        if FileSystemName.MatchesSimpleExpression(graceIgnoreEntry, normalizedDirectoryPath, ignoreCase) then
+            //logToAnsiConsole Colors.Changed $"checkIgnoreLineAgainstDirectory: directory '{normalizedDirectoryPath}' matches ignore entry '{graceIgnoreEntry}'."
             true
         else
-            //if normalizedDirectoryPath.Contains(".git") then
-            //AnsiConsole.MarkupLine(
-            //    $"{getCurrentInstantExtended ()} [{Colors.Added}]In checkIgnoreLineAgainstDirectory(): normalizedDirectoryPath: {normalizedDirectoryPath}; expression: {expression}; matches: false. Should not ignore.[/]"
-            //)
+            //logToAnsiConsole
+            //    Colors.Verbose
+            //    $"checkIgnoreLineAgainstDirectory: directory '{normalizedDirectoryPath}' does not match ignore entry '{graceIgnoreEntry}'."
 
             false
 
@@ -196,8 +194,8 @@ module Services =
 
             let shouldIgnoreDirectory =
                 directoryInfo.FullName.StartsWith(Current().GraceDirectory)
-                || (Current().GraceDirectoryIgnoreEntries
-                    |> Array.exists (fun graceIgnoreLine -> checkIgnoreLineAgainstDirectory directoryInfo graceIgnoreLine))
+                || Current()
+                    .GraceDirectoryIgnoreEntries.Any(fun graceIgnoreLine -> checkIgnoreLineAgainstDirectory directoryInfo graceIgnoreLine)
 
             shouldIgnoreCache.TryAdd(directoryPath, shouldIgnoreDirectory) |> ignore
             //logToAnsiConsole Colors.Verbose $"In shouldIgnoreDirectory: directoryPath: {directoryPath}; shouldIgnore: {shouldIgnoreDirectory}"
@@ -210,24 +208,31 @@ module Services =
     let createLocalFileVersion (fileInfo: FileInfo) =
         task {
             if fileInfo.Exists then
-                let relativePath = Path.GetRelativePath(Current().RootDirectory, fileInfo.FullName)
+                try
+                    let relativePath = Path.GetRelativePath(Current().RootDirectory, fileInfo.FullName)
 
-                use stream = fileInfo.Open(fileStreamOptionsRead)
-                let! isBinary = isBinaryFile stream
-                stream.Position <- 0
-                let! shaValue = computeSha256ForFile stream relativePath
-                //logToConsole $"fileRelativePath: {fileRelativePath}; Sha256Hash: {shaValue}."
-                return
-                    Some(
+                    use stream = fileInfo.Open(fileStreamOptionsRead)
+
+                    let! isBinary = isBinaryFile stream
+
+                    stream.Position <- 0
+                    let! sha256Hash = computeSha256ForFile stream relativePath
+
+                    let returnValue =
                         LocalFileVersion.Create
-                            (RelativePath(normalizeFilePath relativePath))
-                            (Sha256Hash shaValue)
+                            relativePath
+                            sha256Hash
                             isBinary
                             fileInfo.Length
                             (Instant.FromDateTimeUtc(fileInfo.LastWriteTimeUtc))
                             true
                             fileInfo.LastWriteTimeUtc
-                    )
+
+                    return Some returnValue
+                with ex ->
+                    logToAnsiConsole Colors.Error $"Exception in createLocalFileVersion for file {fileInfo.FullName}:"
+                    logToAnsiConsole Colors.Error $"{ExceptionResponse.Create ex}"
+                    return None
             else
                 return None
         }
@@ -323,7 +328,8 @@ module Services =
             Directory.CreateDirectory(Path.GetDirectoryName(Current().GraceStatusFile))
             |> ignore // No-op if the directory already exists
 
-            do! serializeMessagePack (Current().GraceStatusFile) graceStatus
+            let graceStatusFilePath = Current().GraceStatusFile
+            do! serializeMessagePack graceStatusFilePath graceStatus
         }
 
     /// Retrieves the Grace object cache file and returns it as a GraceIndex instance.
@@ -437,197 +443,200 @@ module Services =
         (parseResult: ParseResult)
         =
 
+        /// Gets a list of subdirectories and files from a specific directory
         let getDirectoryContents (previousDirectoryVersions: Dictionary<RelativePath, LocalDirectoryVersion>) (directoryInfo: DirectoryInfo) =
             task {
-                let files = ConcurrentQueue<LocalFileVersion>()
-                let directories = ConcurrentQueue<LocalDirectoryVersion>()
+                try
+                    let files = ConcurrentQueue<LocalFileVersion>()
+                    let directories = ConcurrentQueue<LocalDirectoryVersion>()
 
-                // Create LocalFileVersion instances for each file in this directory.
-                do!
-                    Parallel.ForEachAsync(
-                        directoryInfo.GetFiles().Where(fun f -> not <| shouldIgnoreFile f.FullName),
-                        Constants.ParallelOptions,
-                        (fun fileInfo continuationToken ->
-                            ValueTask(
-                                task {
-                                    match! createLocalFileVersion fileInfo with
-                                    | Some fileVersion -> files.Enqueue(fileVersion)
-                                    | None -> ()
-                                }
-                            ))
-                    )
+                    // Create LocalFileVersion instances for each file in this directory.
+                    do!
+                        Parallel.ForEachAsync(
+                            directoryInfo.GetFiles().Where(fun f -> not <| shouldIgnoreFile f.FullName),
+                            Constants.ParallelOptions,
+                            (fun fileInfo continuationToken ->
+                                ValueTask(
+                                    task {
+                                        try
+                                            match! createLocalFileVersion fileInfo with
+                                            | Some fileVersion -> files.Enqueue(fileVersion)
+                                            | None -> ()
+                                        with ex ->
+                                            logToAnsiConsole Colors.Error $"Exception in getDirectoryContents (Parallel.ForEachAsync):"
+                                            logToAnsiConsole Colors.Error $"{ExceptionResponse.Create ex}"
+                                    }
+                                ))
+                        )
 
-                // Create or reuse existing LocalDirectoryVersion instances for each subdirectory in this directory.
-                let defaultDirectoryVersion = KeyValuePair(String.Empty, LocalDirectoryVersion.Default)
+                    // Create or reuse existing LocalDirectoryVersion instances for each subdirectory in this directory.
+                    let defaultDirectoryVersion = KeyValuePair(String.Empty, LocalDirectoryVersion.Default)
 
-                do!
-                    Parallel.ForEachAsync(
-                        directoryInfo
-                            .GetDirectories()
-                            .Where(fun d -> shouldNotIgnoreDirectory d.FullName),
-                        Constants.ParallelOptions,
-                        (fun subdirectoryInfo continuationToken ->
-                            ValueTask(
-                                task {
-                                    let subdirectoryRelativePath = Path.GetRelativePath(Current().RootDirectory, subdirectoryInfo.FullName)
+                    do!
+                        Parallel.ForEachAsync(
+                            directoryInfo
+                                .GetDirectories()
+                                .Where(fun d -> shouldNotIgnoreDirectory d.FullName),
+                            Constants.ParallelOptions,
+                            (fun subdirectoryInfo continuationToken ->
+                                ValueTask(
+                                    task {
+                                        try
 
-                                    let! (subdirectoryVersions: List<LocalDirectoryVersion>, filesInSubdirectory: List<LocalFileVersion>, sha256Hash) =
-                                        collectDirectoriesAndFiles subdirectoryRelativePath previousDirectoryVersions newGraceStatus parseResult
+                                            let subdirectoryRelativePath = Path.GetRelativePath(Current().RootDirectory, subdirectoryInfo.FullName)
 
-                                    // Check if we already have a LocalDirectoryVersion for this subdirectory.
-                                    let existingSubdirectoryVersion =
-                                        previousDirectoryVersions
-                                            .FirstOrDefault(
-                                                (fun existingDirectoryVersion -> existingDirectoryVersion.Key = normalizeFilePath subdirectoryRelativePath),
-                                                defaultValue = defaultDirectoryVersion
-                                            )
-                                            .Value
 
-                                    // Check if we already have this exact SHA-256 hash for this relative path; if so, keep the existing SubdirectoryVersion and its Guid.
-                                    // If the DirectoryId is Guid.Empty (from LocalDirectoryVersion.Default), or the Sha256Hash doesn't match, create a new LocalDirectoryVersion reflecting the changes.
-                                    if
-                                        existingSubdirectoryVersion.DirectoryVersionId = Guid.Empty
-                                        || existingSubdirectoryVersion.Sha256Hash <> sha256Hash
-                                    then
-                                        if parseResult |> isOutputFormat "Verbose" then
-                                            logToAnsiConsole
-                                                Colors.Verbose
-                                                $"In collectDirectoriesAndFiles: Processing {subdirectoryRelativePath};  Creating new subdirectoryVersion."
+                                            let! (subdirectoryVersions: List<LocalDirectoryVersion>, filesInSubdirectory: List<LocalFileVersion>, sha256Hash) =
+                                                collectDirectoriesAndFiles subdirectoryRelativePath previousDirectoryVersions newGraceStatus parseResult
 
-                                        let directoryIds =
-                                            subdirectoryVersions
-                                                .OrderBy(fun d -> d.RelativePath)
-                                                .Select(fun d -> d.DirectoryVersionId)
-                                                .ToList()
+                                            // Check if we already have a LocalDirectoryVersion for this subdirectory.
+                                            let existingSubdirectoryVersion =
+                                                previousDirectoryVersions
+                                                    .FirstOrDefault(
+                                                        (fun existingDirectoryVersion ->
+                                                            existingDirectoryVersion.Key = normalizeFilePath subdirectoryRelativePath),
+                                                        defaultValue = defaultDirectoryVersion
+                                                    )
+                                                    .Value
 
-                                        let subdirectoryVersion =
-                                            LocalDirectoryVersion.Create
-                                                (Guid.NewGuid())
-                                                (Current().RepositoryId)
-                                                (RelativePath(normalizeFilePath subdirectoryRelativePath))
-                                                sha256Hash
-                                                directoryIds
-                                                filesInSubdirectory
-                                                (getLocalDirectorySize filesInSubdirectory)
-                                                subdirectoryInfo.LastWriteTimeUtc
-                                        //processedThings.Enqueue($"New      {subdirectoryVersion.RelativePath}")
-                                        newGraceStatus.Index.TryAdd(subdirectoryVersion.DirectoryVersionId, subdirectoryVersion)
-                                        |> ignore
+                                            // Check if we already have this exact SHA-256 hash for this relative path; if so, keep the existing SubdirectoryVersion and its Guid.
+                                            // If the DirectoryId is Guid.Empty (from LocalDirectoryVersion.Default), or the Sha256Hash doesn't match, create a new LocalDirectoryVersion reflecting the changes.
+                                            if
+                                                existingSubdirectoryVersion.DirectoryVersionId = Guid.Empty
+                                                || existingSubdirectoryVersion.Sha256Hash <> sha256Hash
+                                            then
+                                                let directoryIds =
+                                                    subdirectoryVersions
+                                                        .OrderBy(fun d -> d.RelativePath)
+                                                        .Select(fun d -> d.DirectoryVersionId)
+                                                        .ToList()
 
-                                        Interlocked.Increment(&newDirectoryVersionCount) |> ignore
+                                                let subdirectoryVersion =
+                                                    LocalDirectoryVersion.Create
+                                                        (Guid.NewGuid())
+                                                        (Current().OwnerId)
+                                                        (Current().OrganizationId)
+                                                        (Current().RepositoryId)
+                                                        (RelativePath(normalizeFilePath subdirectoryRelativePath))
+                                                        sha256Hash
+                                                        directoryIds
+                                                        filesInSubdirectory
+                                                        (getLocalDirectorySize filesInSubdirectory)
+                                                        subdirectoryInfo.LastWriteTimeUtc
+                                                //processedThings.Enqueue($"New      {subdirectoryVersion.RelativePath}")
+                                                newGraceStatus.Index.TryAdd(subdirectoryVersion.DirectoryVersionId, subdirectoryVersion)
+                                                |> ignore
 
-                                        if parseResult |> isOutputFormat "Verbose" then
-                                            logToAnsiConsole
-                                                Colors.Important
-                                                $"Created new DirectoryVersion: RelativePath: {normalizeFilePath subdirectoryRelativePath}; existing SHA256Hash: {existingSubdirectoryVersion.Sha256Hash}; new SHA256Hash: {sha256Hash}."
+                                                Interlocked.Increment(&newDirectoryVersionCount) |> ignore
 
-                                        directories.Enqueue(subdirectoryVersion)
-                                    else
-                                        if parseResult |> isOutputFormat "Verbose" then
-                                            logToAnsiConsole
-                                                Colors.Verbose
-                                                $"In collectDirectoriesAndFiles: Processing {subdirectoryRelativePath};  Existing subdirectoryVersion: {existingSubdirectoryVersion.DirectoryVersionId}."
-                                        //processedThings.Enqueue($"Existing {existingSubdirectoryVersion.RelativePath}")
-                                        newGraceStatus.Index.TryAdd(existingSubdirectoryVersion.DirectoryVersionId, existingSubdirectoryVersion)
-                                        |> ignore
+                                                directories.Enqueue(subdirectoryVersion)
+                                            else
+                                                //processedThings.Enqueue($"Existing {existingSubdirectoryVersion.RelativePath}")
+                                                newGraceStatus.Index.TryAdd(existingSubdirectoryVersion.DirectoryVersionId, existingSubdirectoryVersion)
+                                                |> ignore
 
-                                        Interlocked.Increment(&existingDirectoryVersionCount) |> ignore
+                                                Interlocked.Increment(&existingDirectoryVersionCount) |> ignore
 
-                                        directories.Enqueue(existingSubdirectoryVersion)
-                                }
-                            ))
-                    )
+                                                directories.Enqueue(existingSubdirectoryVersion)
+                                        with ex ->
+                                            logToAnsiConsole Colors.Error $"Exception in getDirectoryContents: {ExceptionResponse.Create ex}"
+                                    }
+                                ))
+                        )
 
-                return (directories.OrderBy(fun d -> d.RelativePath).ToList(), files.OrderBy(fun d -> d.RelativePath).ToList())
+                    return (directories.OrderBy(fun d -> d.RelativePath).ToList(), files.OrderBy(fun d -> d.RelativePath).ToList())
+                with ex ->
+                    logToAnsiConsole Colors.Error $"Exception in getDirectoryContents:"
+                    logToAnsiConsole Colors.Error $"{ExceptionResponse.Create ex}"
+                    return (List<LocalDirectoryVersion>(), List<LocalFileVersion>())
             }
 
         task {
-            let directoryInfo = DirectoryInfo(Path.Combine(Current().RootDirectory, relativeDirectoryPath))
+            try
+                let directoryInfo = DirectoryInfo(Path.Combine(Current().RootDirectory, relativeDirectoryPath))
 
-            let! (directories, files) = getDirectoryContents previousDirectoryVersions directoryInfo
-            //for file in files do processedThings.Enqueue(file.RelativePath)
-            if parseResult |> isOutputFormat "Verbose" then
-                logToAnsiConsole
-                    Colors.Verbose
-                    $"In collectDirectoriesAndFiles: Processing {relativeDirectoryPath}: {files.Count} files, {directories.Count} directories."
+                let! (directories, files) = getDirectoryContents previousDirectoryVersions directoryInfo
+                //for file in files do processedThings.Enqueue(file.RelativePath)
 
-            let sha256Hash = computeSha256ForDirectory relativeDirectoryPath directories files
+                let sha256Hash = computeSha256ForDirectory relativeDirectoryPath directories files
 
-            if parseResult |> isOutputFormat "Verbose" then
-                logToAnsiConsole
-                    Colors.Verbose
-                    $"In collectDirectoriesAndFiles: newDirectoryVersionCount: {newDirectoryVersionCount}; existingDirectoryVersionCount: {existingDirectoryVersionCount}."
-
-            return (directories, files, sha256Hash)
+                return (directories, files, sha256Hash)
+            with ex ->
+                logToAnsiConsole Colors.Error $"Exception in collectDirectoriesAndFiles: {ExceptionResponse.Create ex}"
+                return (List<LocalDirectoryVersion>(), List<LocalFileVersion>(), Sha256Hash.Empty)
         }
 
     /// Creates the Grace index file by scanning the repository's working directory.
     let createNewGraceStatusFile (previousGraceStatus: GraceStatus) (parseResult: ParseResult) =
         task {
-            // Start with a new GraceStatus instance.
-            let newGraceStatus = GraceStatus.Default
-            let rootDirectoryInfo = DirectoryInfo(Current().RootDirectory)
+            try
+                // Start with a new GraceStatus instance.
+                let newGraceStatus = GraceStatus.Default
+                let rootDirectoryInfo = DirectoryInfo(Current().RootDirectory)
 
-            // Get the previous GraceStatus index values into a Dictionary for faster lookup.
-            let previousDirectoryVersions = Dictionary<RelativePath, LocalDirectoryVersion>()
+                // Get the previous GraceStatus index values into a Dictionary for faster lookup.
+                let previousDirectoryVersions = Dictionary<RelativePath, LocalDirectoryVersion>()
 
-            for kvp in previousGraceStatus.Index do
-                if not <| previousDirectoryVersions.TryAdd(kvp.Value.RelativePath, kvp.Value) then
-                    logToAnsiConsole Colors.Error $"createNewGraceStatusFile: Failed to add {kvp.Value.RelativePath} to previousDirectoryVersions."
+                for kvp in previousGraceStatus.Index do
+                    if not <| previousDirectoryVersions.TryAdd(kvp.Value.RelativePath, kvp.Value) then
+                        logToAnsiConsole Colors.Error $"createNewGraceStatusFile: Failed to add {kvp.Value.RelativePath} to previousDirectoryVersions."
 
-            let! (subdirectoriesInRootDirectory, filesInRootDirectory, rootSha256Hash) =
-                collectDirectoriesAndFiles Constants.RootDirectoryPath previousDirectoryVersions newGraceStatus parseResult
+                let! (subdirectoriesInRootDirectory, filesInRootDirectory, rootSha256Hash) =
+                    collectDirectoriesAndFiles Constants.RootDirectoryPath previousDirectoryVersions newGraceStatus parseResult
 
-            //let getBySha256HashParameters = GetBySha256HashParameters(RepositoryId = $"{Current().RepositoryId}", Sha256Hash = rootSha256Hash)
-            //let! directoryId = Directory.GetBySha256Hash(getBySha256HashParameters)
+                //let getBySha256HashParameters = GetBySha256HashParameters(RepositoryId = $"{Current().RepositoryId}", Sha256Hash = rootSha256Hash)
+                //let! directoryId = Directory.GetBySha256Hash(getBySha256HashParameters)
 
-            // Check for existing root directory version so we don't update the Guid if it already exists.
-            let rootDirectoryVersion =
-                let previousRootDirectoryVersion =
-                    previousDirectoryVersions
-                        .FirstOrDefault(
-                            (fun existingDirectoryVersion -> existingDirectoryVersion.Key = Constants.RootDirectoryPath),
-                            defaultValue = KeyValuePair(String.Empty, LocalDirectoryVersion.Default)
-                        )
-                        .Value
+                // Check for existing root directory version so we don't update the Guid if it already exists.
+                let rootDirectoryVersion =
+                    let previousRootDirectoryVersion =
+                        previousDirectoryVersions
+                            .FirstOrDefault(
+                                (fun existingDirectoryVersion -> existingDirectoryVersion.Key = Constants.RootDirectoryPath),
+                                defaultValue = KeyValuePair(String.Empty, LocalDirectoryVersion.Default)
+                            )
+                            .Value
 
-                if previousRootDirectoryVersion.Sha256Hash = rootSha256Hash then
-                    if parseResult |> isOutputFormat "Verbose" then
-                        logToAnsiConsole
-                            Colors.Verbose
-                            $"In createNewGraceStatusFile: Using existing rootDirectoryVersion: {previousRootDirectoryVersion.DirectoryVersionId}."
+                    if previousRootDirectoryVersion.Sha256Hash = rootSha256Hash then
+                        previousRootDirectoryVersion
+                    else
+                        let subdirectoryIds =
+                            subdirectoriesInRootDirectory
+                                .OrderBy(fun d -> d.RelativePath)
+                                .Select(fun d -> d.DirectoryVersionId)
+                                .ToList()
 
-                    previousRootDirectoryVersion
-                else
-                    if parseResult |> isOutputFormat "Verbose" then
-                        logToAnsiConsole Colors.Verbose $"In createNewGraceStatusFile: Creating new rootDirectoryVersion."
+                        LocalDirectoryVersion.Create
+                            (Guid.NewGuid())
+                            (Current().OwnerId)
+                            (Current().OrganizationId)
+                            (Current().RepositoryId)
+                            (RelativePath(normalizeFilePath Constants.RootDirectoryPath))
+                            (Sha256Hash rootSha256Hash)
+                            subdirectoryIds
+                            filesInRootDirectory
+                            (getLocalDirectorySize filesInRootDirectory)
+                            rootDirectoryInfo.LastWriteTimeUtc
 
-                    let subdirectoryIds =
-                        subdirectoriesInRootDirectory
-                            .OrderBy(fun d -> d.RelativePath)
-                            .Select(fun d -> d.DirectoryVersionId)
-                            .ToList()
+                newGraceStatus.Index.TryAdd(Guid.Parse($"{rootDirectoryVersion.DirectoryVersionId}"), rootDirectoryVersion)
+                |> ignore
 
-                    LocalDirectoryVersion.Create
-                        (Guid.NewGuid())
-                        (Current().RepositoryId)
-                        (RelativePath(normalizeFilePath Constants.RootDirectoryPath))
-                        (Sha256Hash rootSha256Hash)
-                        subdirectoryIds
-                        filesInRootDirectory
-                        (getLocalDirectorySize filesInRootDirectory)
-                        rootDirectoryInfo.LastWriteTimeUtc
+                //let sb = StringBuilder(processedThings.Count)
+                //for dir in processedThings.OrderBy(fun d -> d) do
+                //    sb.AppendLine(dir) |> ignore
+                //do! File.WriteAllTextAsync(@$"C:\Intel\ProcessedThings{sb.Length}.txt", sb.ToString())
+                let rootDirectoryVersion = getRootDirectoryVersion newGraceStatus
 
-            newGraceStatus.Index.TryAdd(Guid.Parse($"{rootDirectoryVersion.DirectoryVersionId}"), rootDirectoryVersion)
-            |> ignore
+                if parseResult |> isOutputFormat "Verbose" then
+                    logToAnsiConsole Colors.Verbose $"Finished createNewGraceStatusFile. newGraceStatus.Index.Count: {newGraceStatus.Index.Count}."
 
-            //let sb = StringBuilder(processedThings.Count)
-            //for dir in processedThings.OrderBy(fun d -> d) do
-            //    sb.AppendLine(dir) |> ignore
-            //do! File.WriteAllTextAsync(@$"C:\Intel\ProcessedThings{sb.Length}.txt", sb.ToString())
-            let rootDirectoryVersion = getRootDirectoryVersion newGraceStatus
+                let newGraceStatus =
+                    { newGraceStatus with RootDirectoryId = rootDirectoryVersion.DirectoryVersionId; RootDirectorySha256Hash = rootDirectoryVersion.Sha256Hash }
 
-            return { newGraceStatus with RootDirectoryId = rootDirectoryVersion.DirectoryVersionId; RootDirectorySha256Hash = rootDirectoryVersion.Sha256Hash }
+                return newGraceStatus
+            with ex ->
+                logToAnsiConsole Colors.Error $"Exception in createNewGraceStatusFile: {ExceptionResponse.Create ex}"
+                return GraceStatus.Default
         }
 
     /// Adds a LocalDirectoryVersion to the local object cache.
@@ -723,8 +732,7 @@ module Services =
     let uploadFilesToObjectStorage (parameters: GetUploadMetadataForFilesParameters) =
         task {
             match Current().ObjectStorageProvider with
-            | ObjectStorageProvider.Unknown ->
-                return Error(GraceError.Create (StorageError.getErrorMessage StorageError.NotImplemented) parameters.CorrelationId)
+            | ObjectStorageProvider.Unknown -> return Error(GraceError.Create (getErrorMessage StorageError.NotImplemented) parameters.CorrelationId)
             | AzureBlobStorage ->
                 //logToAnsiConsole Colors.Verbose $"Uploading {fileVersions.Count()} files to object storage."
                 if parameters.FileVersions.Count() > 0 then
@@ -768,15 +776,14 @@ module Services =
                             // use Seq.fold to create a single error message from the ConcurrentQueue<GraceError>
                             let errorMessage = errors |> Seq.fold (fun acc error -> $"{acc}\n{error.Error}") ""
 
-                            let graceError =
-                                GraceError.Create (StorageError.getErrorMessage StorageError.FailedUploadingFilesToObjectStorage) parameters.CorrelationId
+                            let graceError = GraceError.Create (getErrorMessage StorageError.FailedUploadingFilesToObjectStorage) parameters.CorrelationId
 
                             return Error graceError |> enhance "Errors" errorMessage
                     | Error error -> return Error error
                 else
                     return Ok(GraceReturnValue.Create true parameters.CorrelationId)
-            | AWSS3 -> return Error(GraceError.Create (StorageError.getErrorMessage StorageError.NotImplemented) parameters.CorrelationId)
-            | GoogleCloudStorage -> return Error(GraceError.Create (StorageError.getErrorMessage StorageError.NotImplemented) parameters.CorrelationId)
+            | AWSS3 -> return Error(GraceError.Create (getErrorMessage StorageError.NotImplemented) parameters.CorrelationId)
+            | GoogleCloudStorage -> return Error(GraceError.Create (getErrorMessage StorageError.NotImplemented) parameters.CorrelationId)
         }
 
     /// Creates an updated LocalDirectoryVersion instance, with a new DirectoryId, based on changes to an existing one.
@@ -816,6 +823,8 @@ module Services =
         let newDirectoryVersion =
             LocalDirectoryVersion.Create
                 (Guid.NewGuid())
+                previousDirectoryVersion.OwnerId
+                previousDirectoryVersion.OrganizationId
                 previousDirectoryVersion.RepositoryId
                 previousDirectoryVersion.RelativePath
                 newSha256Hash
@@ -893,6 +902,8 @@ module Services =
                         let localDirectoryVersion =
                             LocalDirectoryVersion.Create
                                 (Guid.NewGuid())
+                                previousRootDirectoryVersion.OwnerId
+                                previousRootDirectoryVersion.OrganizationId
                                 previousRootDirectoryVersion.RepositoryId
                                 difference.RelativePath
                                 sha256Hash
@@ -1228,17 +1239,22 @@ module Services =
         objectCache.Index.ContainsKey(directoryVersion.DirectoryVersionId)
 
     /// Updates the Grace Status index with new directory versions after getting them from the server.
-    let updateGraceStatusWithNewDirectoryVersionsFromServer (graceStatus: GraceStatus) (newDirectoryVersions: IEnumerable<DirectoryVersion>) =
+    let updateGraceStatusWithNewDirectoryVersionsFromServer
+        (graceStatus: GraceStatus)
+        (newDirectoryVersionDtos: IEnumerable<Grace.Types.DirectoryVersion.DirectoryVersionDto>)
+        =
         let newGraceIndex = GraceIndex(graceStatus.Index)
         let mutable dvForDeletions = LocalDirectoryVersion.Default
 
         if parseResult |> isOutputFormat "Verbose" then
             logToAnsiConsole
                 Colors.Verbose
-                $"In updateGraceStatusWithNewDirectoryVersionsFromServer: Processing {newDirectoryVersions.Count()} new DirectoryVersions."
+                $"In updateGraceStatusWithNewDirectoryVersionsFromServer: Processing {newDirectoryVersionDtos.Count()} new DirectoryVersions."
 
         // First, either add the new ones, or replace the existing ones.
-        for newDirectoryVersion in newDirectoryVersions do
+        for newDirectoryVersionDto in newDirectoryVersionDtos do
+            let newDirectoryVersion = newDirectoryVersionDto.DirectoryVersion
+
             logToAnsiConsole Colors.Verbose $"Processing new DirectoryVersion: {newDirectoryVersion.RelativePath}."
 
             let existingDirectoryVersion =
@@ -1332,12 +1348,13 @@ module Services =
     let updateWorkingDirectory
         (previousGraceStatus: GraceStatus)
         (updatedGraceStatus: GraceStatus)
-        (newDirectoryVersions: IEnumerable<DirectoryVersion>)
+        (newDirectoryVersionDtos: IEnumerable<Grace.Types.DirectoryVersion.DirectoryVersionDto>)
         (correlationId: CorrelationId)
         =
         task {
             // Loop through each new DirectoryVersion.
-            for newDirectoryVersion in newDirectoryVersions do
+            for newDirectoryVersionDto in newDirectoryVersionDtos do
+                let newDirectoryVersion = newDirectoryVersionDto.DirectoryVersion
                 // Get the previous DirectoryVersion, so we can compare contents below.
                 let previousDirectoryVersion =
                     previousGraceStatus.Index.Values.FirstOrDefault(
@@ -1608,3 +1625,90 @@ module Services =
 
             return newFileVersions
         }
+
+    /// Checks if an option was present in the definition of the command.
+    let isOptionPresent (parseResult: ParseResult) (optionName: string) = not <| isNull (parseResult.GetResult(optionName))
+
+    /// Checks if an option was implicitly specified (i.e. the default value was used), or explicitly specified by the user.
+    let isOptionResultImplicit (parseResult: ParseResult) (optionName: string) =
+        if isOptionPresent parseResult optionName then
+            let option = parseResult.GetResult(optionName) :?> OptionResult
+            option.Implicit
+        else
+            false
+
+    /// Adjusts command-line options to account for whether Id's or Name's were explicitly specified by the user,
+    ///    or should be taken from default values.
+    let getNormalizedIdsAndNames (parseResult: ParseResult) =
+
+        let getNormalizedId (idOption: string) (nameOption: string) =
+            if
+                isOptionResultImplicit parseResult idOption
+                && isOptionPresent parseResult nameOption
+                && not <| isOptionResultImplicit parseResult nameOption
+            then
+                Guid.Empty
+            else
+                parseResult.GetValue<Guid>(idOption)
+
+        // If the name was specified on the command line, but the id wasn't (i.e. the default value was specified, and Implicit = true),
+        //   then we should only send the name, and we set the id to Guid.Empty.
+
+        let mutable graceIds = GraceIds.Default
+
+        if isOptionPresent parseResult OptionName.CorrelationId then
+            graceIds <- { graceIds with CorrelationId = parseResult.GetValue(OptionName.CorrelationId) }
+
+        if
+            isOptionPresent parseResult OptionName.OwnerId
+            || isOptionPresent parseResult OptionName.OwnerName
+        then
+            let ownerId = getNormalizedId OptionName.OwnerId OptionName.OwnerName
+
+            graceIds <-
+                { graceIds with
+                    OwnerId = ownerId
+                    OwnerIdString = if ownerId = Guid.Empty then "" else $"{ownerId}"
+                    OwnerName = parseResult.GetValue<string>(OptionName.OwnerName)
+                    HasOwner = true }
+
+        if
+            isOptionPresent parseResult OptionName.OrganizationId
+            || isOptionPresent parseResult OptionName.OrganizationName
+        then
+            let organizationId = getNormalizedId OptionName.OrganizationId OptionName.OrganizationName
+
+            graceIds <-
+                { graceIds with
+                    OrganizationId = organizationId
+                    OrganizationIdString = if organizationId = Guid.Empty then "" else $"{organizationId}"
+                    OrganizationName = parseResult.GetValue<string>(OptionName.OrganizationName)
+                    HasOrganization = true }
+
+        if
+            isOptionPresent parseResult OptionName.RepositoryId
+            || isOptionPresent parseResult OptionName.RepositoryName
+        then
+            let repositoryId = getNormalizedId OptionName.RepositoryId OptionName.RepositoryName
+
+            graceIds <-
+                { graceIds with
+                    RepositoryId = repositoryId
+                    RepositoryIdString = if repositoryId = Guid.Empty then "" else $"{repositoryId}"
+                    RepositoryName = parseResult.GetValue<string>(OptionName.RepositoryName)
+                    HasRepository = true }
+
+        if
+            isOptionPresent parseResult OptionName.BranchId
+            || isOptionPresent parseResult OptionName.BranchName
+        then
+            let branchId = getNormalizedId OptionName.BranchId OptionName.BranchName
+
+            graceIds <-
+                { graceIds with
+                    BranchId = branchId
+                    BranchIdString = if branchId = Guid.Empty then "" else $"{branchId}"
+                    BranchName = parseResult.GetValue<string>(OptionName.BranchName)
+                    HasBranch = true }
+
+        graceIds

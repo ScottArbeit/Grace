@@ -1,10 +1,12 @@
 namespace Grace.Actors.Extensions
 
-open Dapr.Actors
 open Grace.Shared.Constants
-open Grace.Shared.Types
+open Grace.Types.Types
+open Orleans.Runtime
 open Microsoft.Extensions.Caching.Memory
 open System
+open System.Collections.Generic
+open Grace.Shared
 
 module MemoryCache =
     [<Literal>]
@@ -34,6 +36,9 @@ module MemoryCache =
     [<Literal>]
     let correlationIdPrefix = "CoI"
 
+    [<Literal>]
+    let orleansContextPrefix = "Orl"
+
     type Microsoft.Extensions.Caching.Memory.IMemoryCache with
 
         /// Get a value from MemoryCache, if it exists.
@@ -43,19 +48,19 @@ module MemoryCache =
 
         /// Create a new entry in MemoryCache with a default expiration time.
         member this.CreateWithDefaultExpirationTime (key: string) value =
-            use newCacheEntry = this.CreateEntry(key, Value = value, AbsoluteExpiration = DateTimeOffset.UtcNow.Add(MemoryCache.DefaultExpirationTime))
+            use newCacheEntry = this.CreateEntry(key, Value = value, AbsoluteExpiration = DateTimeOffset.UtcNow.Add MemoryCache.DefaultExpirationTime)
+            //Utilities.logToConsole $"In CreateWithDefaultExpirationTime: {key}: {value}"
             ()
 
         /// Create a new entry in MemoryCache to link an ActorId with a CorrelationId.
-        member this.CreateCorrelationIdEntry (actorId: ActorId) (correlationId: CorrelationId) =
+        member this.CreateCorrelationIdEntry (identityString: string) (correlationId: CorrelationId) =
             use newCacheEntry =
-                this.CreateEntry($"{correlationIdPrefix}:{actorId}", Value = correlationId, AbsoluteExpiration = DateTimeOffset.UtcNow.AddSeconds(5))
+                this.CreateEntry($"{correlationIdPrefix}:{identityString}", Value = correlationId, AbsoluteExpiration = DateTimeOffset.UtcNow.AddSeconds 5)
 
             ()
 
         /// Check if we have an entry in MemoryCache for an ActorId, and return the CorrelationId if we have it.
-        member this.GetCorrelationIdEntry(actorId: ActorId) = this.GetFromCache<string> $"{correlationIdPrefix}:{actorId}"
-
+        member this.GetCorrelationIdEntry(identityString: string) = this.GetFromCache<string> $"{correlationIdPrefix}:{identityString}"
 
         /// Create a new entry in MemoryCache to confirm that an OwnerId exists.
         member this.CreateOwnerIdEntry (ownerId: OwnerId) (value: string) = this.CreateWithDefaultExpirationTime $"{ownerIdPrefix}:{ownerId}" value
@@ -177,20 +182,42 @@ module MemoryCache =
 
 
         /// Create a new entry in MemoryCache to link a BranchName with a BranchId.
-        member this.CreateBranchNameEntry (repositoryId: string) (branchName: string) (branchId: BranchId) =
+        member this.CreateBranchNameEntry(repositoryId: string, branchName: string, branchId: BranchId) =
+            this.CreateWithDefaultExpirationTime $"{branchNamePrefix}:{repositoryId}-{branchName}" branchId
+
+        /// Create a new entry in MemoryCache to link a BranchName with a BranchId.
+        member this.CreateBranchNameEntry(repositoryId: Guid, branchName: string, branchId: BranchId) =
             this.CreateWithDefaultExpirationTime $"{branchNamePrefix}:{repositoryId}-{branchName}" branchId
 
         /// Check if we have an entry in MemoryCache for a BranchName, and return the BranchId if we have it.
-        member this.GetBranchNameEntry (repositoryId: string) (branchName: string) = this.GetFromCache<Guid> $"{branchNamePrefix}:{repositoryId}-{branchName}"
+        member this.GetBranchNameEntry(repositoryId: string, branchName: string) = this.GetFromCache<Guid> $"{branchNamePrefix}:{repositoryId}-{branchName}"
+
+        /// Check if we have an entry in MemoryCache for a BranchName, and return the BranchId if we have it.
+        member this.GetBranchNameEntry(repositoryId: Guid, branchName: string) = this.GetFromCache<Guid> $"{branchNamePrefix}:{repositoryId}-{branchName}"
 
         /// Remove an entry in MemoryCache for a BranchName.
-        member this.RemoveBranchNameEntry (repositoryId: string) (branchName: string) = this.Remove($"{branchNamePrefix}:{repositoryId}-{branchName}")
+        member this.RemoveBranchNameEntry(repositoryId: string, branchName: string) = this.Remove($"{branchNamePrefix}:{repositoryId}-{branchName}")
+
+        /// Remove an entry in MemoryCache for a BranchName.
+        member this.RemoveBranchNameEntry(repositoryId: Guid, branchName: string) = this.Remove($"{branchNamePrefix}:{repositoryId}-{branchName}")
 
 
         /// Create a new entry in MemoryCache to store the current thread count information.
         member this.CreateThreadCountEntry(threadInfo: string) =
-            use newCacheEntry = this.CreateEntry("ThreadCounts", Value = threadInfo, AbsoluteExpiration = DateTimeOffset.UtcNow.Add(TimeSpan.FromSeconds(6.0)))
+            use newCacheEntry = this.CreateEntry("ThreadCounts", Value = threadInfo, AbsoluteExpiration = DateTimeOffset.UtcNow.AddSeconds 6)
             ()
 
         /// Check if we have an entry in MemoryCache for the current ThreadCount.
         member this.GetThreadCountEntry() = this.GetFromCache<string> "ThreadCounts"
+
+        /// Create a new entry in MemoryCache to store context information for an Orleans grain.
+        member this.CreateOrleansContextEntry(grainId: GrainId, orleansContext: Dictionary<string, obj>) =
+            use newCacheEntry =
+                this.CreateEntry($"{orleansContextPrefix}:{grainId}", Value = orleansContext, AbsoluteExpiration = DateTimeOffset.UtcNow.AddSeconds 60)
+
+            ()
+
+        /// Check if we have an entry in MemoryCache for the Orleans context, and return the value if we have it.
+        member this.GetOrleansContextEntry(grainId: GrainId) =
+            this.GetFromCache<Dictionary<string, obj>> $"{orleansContextPrefix}:{grainId}"
+            |> Option.bind (fun orleansContext -> Some(orleansContext :> IReadOnlyDictionary<string, obj>))

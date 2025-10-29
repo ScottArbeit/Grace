@@ -12,6 +12,8 @@
 /.vscode/
 **/[Cc]omponents
 **/dapr
+**/*Azurite*
+**/.env
 
 # Secrets file to configure Orleans persistence
 Orleans.secrets.fs
@@ -214,3 +216,4 @@ FakesAssemblies/
 /src/Check-CosmosDB-RUs.ps1
 *.nettrace
 *.gcdump
+

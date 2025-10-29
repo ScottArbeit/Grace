@@ -51,6 +51,7 @@ module en_US =
         | FailedCreatingInitialBranch -> "A server error occurred while attempting to create the initial branch."
         | FailedCreatingInitialPromotion -> "A server error occurred while attempting to create the initial promotion."
         | FailedRebasingInitialBranch -> "A server error occurred while attempting to rebase the initial branch."
+        | FailedToAddReference -> "A server error occurred while attempting to add the reference."
         | FailedToGetUploadUrls -> "A server error occurred while retrieving the URLs to upload new files to object storage."
         | FailedToRetrieveBranch -> "A server error occurred while retrieving the branch information."
         | FailedUploadingFilesToObjectStorage -> "One or more files could not be uploaded to object storage."
@@ -76,6 +77,8 @@ module en_US =
         | InvalidDirectoryVersionId -> "The provided DirectoryVersionId is not a valid Guid."
         | InvalidLogicalDeleteDaysValue -> "The provided value for LogicalDeleteDays is invalid."
         | InvalidMaxCountValue -> "The provided value for MaxCount is invalid."
+        | InvalidNewName ->
+            "The NewName is not a valid Grace name. A valid object name in Grace has between 2 and 64 characters, has a letter for the first character ([A-Za-z]), and letters, numbers, or - for the rest ([A-Za-z0-9\-]{1,63})."
         | InvalidObjectStorageProvider -> "The provided object storage provider is not valid."
         | InvalidOrganizationId -> "The provided OrganizationId is not a valid Guid."
         | InvalidOrganizationName ->
@@ -159,6 +162,7 @@ module en_US =
         | Sha256HashIsRequired -> "The Sha256Hash value is required."
         | StringIsTooLong -> "The provided string is longer than allowed."
         | TagIsDisabled -> "This branch has disabled tags."
+        | TestFailed -> "The test failed."
         | UnknownObjectStorageProvider -> "The object storage provider for this repository is unknown."
         | UpdatingWorkingDirectory -> "Updating your working directory to match the new branch."
         | UploadingFiles -> "Uploading new and updated files to object storage."

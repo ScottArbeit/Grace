@@ -1,9 +1,6 @@
 namespace Grace.Server
 
-open Dapr.Actors
-open Dapr.Actors.Client
 open Giraffe
-open Grace.Actors.Commands.Owner
 open Grace.Actors.Constants
 open Grace.Actors.Extensions.ActorProxy
 open Grace.Actors.Interfaces
@@ -12,12 +9,13 @@ open Grace.Server.ApplicationContext
 open Grace.Server.Services
 open Grace.Server.Validations
 open Grace.Shared
+open Grace.Types.Owner
 open Grace.Shared.Extensions
 open Grace.Shared.Parameters.Owner
 open Grace.Shared.Validation.Common
 open Grace.Shared.Validation.Utilities
-open Grace.Shared.Validation.Errors.Owner
-open Grace.Shared.Types
+open Grace.Shared.Validation.Errors
+open Grace.Types.Types
 open Grace.Shared.Utilities
 open Microsoft.AspNetCore.Http
 open Microsoft.Azure.Cosmos
@@ -37,15 +35,13 @@ module Owner =
 
     let activitySource = new ActivitySource("Owner")
 
-    let actorProxyFactory = ApplicationContext.actorProxyFactory
-
     /// Generic processor for all Owner commands.
     let processCommand<'T when 'T :> OwnerParameters> (context: HttpContext) (validations: Validations<'T>) (command: 'T -> ValueTask<OwnerCommand>) =
         task {
             let commandName = context.Items["Command"] :?> string
             let graceIds = getGraceIds context
             let correlationId = getCorrelationId context
-            let parameterDictionary = Dictionary<string, string>()
+            let parameterDictionary = Dictionary<string, obj>()
 
             try
                 use activity = activitySource.StartActivity("processCommand", ActivityKind.Server)
@@ -53,29 +49,42 @@ module Owner =
                 parameterDictionary.AddRange(getParametersAsDictionary parameters)
 
                 // We know these Id's from ValidateIds.Middleware, so let's set them so we never have to resolve them again.
-                parameters.OwnerId <- graceIds.OwnerId
+                parameters.OwnerId <- graceIds.OwnerIdString
 
                 let handleCommand (ownerId: string) cmd =
                     task {
+                        let t = cmd.GetType()
+
+                        let isSupported =
+                            not <| (isNull t.Namespace)
+                            && t.Namespace.StartsWith("Grace", StringComparison.InvariantCulture)
+
                         let ownerGuid = Guid.Parse(ownerId)
                         let actorProxy = Owner.CreateActorProxy ownerGuid (getCorrelationId context)
+                        let metadata = createMetadata context
 
-                        match! actorProxy.Handle cmd (createMetadata context) with
+                        match! actorProxy.Handle cmd metadata with
                         | Ok graceReturnValue ->
+                            logToConsole $"In Owner.Server.processCommand: graceReturnValue.ReturnValue: {graceReturnValue.ReturnValue}"
+                            logToConsole $"In Owner.Server.processCommand: graceReturnValue.CorrelationId: {graceReturnValue.CorrelationId}."
+                            logToConsole $"In Owner.Server.processCommand: graceReturnValue.EventTime: {graceReturnValue.EventTime}."
+                            logToConsole $"In Owner.Server.processCommand: graceReturnValue.Properties: {serialize graceReturnValue.Properties}."
+
                             graceReturnValue
-                                .enhance(parameterDictionary)
-                                .enhance(nameof (OwnerId), graceIds.OwnerId)
+                                .enhance(parameterDictionary :> IReadOnlyDictionary<string, obj>)
+                                .enhance(nameof OwnerId, graceIds.OwnerId)
                                 .enhance("Command", commandName)
-                                .enhance ("Path", context.Request.Path)
+                                .enhance ("Path", context.Request.Path.Value)
                             |> ignore
+
 
                             return! context |> result200Ok graceReturnValue
                         | Error graceError ->
                             graceError
                                 .enhance(parameterDictionary)
-                                .enhance(nameof (OwnerId), graceIds.OwnerId)
+                                .enhance(nameof OwnerId, graceIds.OwnerId)
                                 .enhance("Command", commandName)
-                                .enhance ("Path", context.Request.Path)
+                                .enhance ("Path", context.Request.Path.Value)
                             |> ignore
 
                             log.LogDebug(
@@ -99,7 +108,8 @@ module Owner =
 
                 if validationsPassed then
                     let! cmd = command parameters
-                    let! result = handleCommand graceIds.OwnerId cmd
+
+                    let! result = handleCommand graceIds.OwnerIdString cmd
 
                     log.LogInformation(
                         "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; Finished {path}; Status code: {statusCode}; OwnerId: {ownerId}.",
@@ -108,7 +118,7 @@ module Owner =
                         correlationId,
                         context.Request.Path,
                         context.Response.StatusCode,
-                        graceIds.OwnerId
+                        graceIds.OwnerIdString
                     )
 
                     return result
@@ -120,16 +130,16 @@ module Owner =
                     let graceError =
                         (GraceError.Create errorMessage (getCorrelationId context))
                             .enhance(parameterDictionary)
-                            .enhance(nameof (OwnerId), graceIds.OwnerId)
+                            .enhance(nameof OwnerId, graceIds.OwnerId)
                             .enhance("Command", commandName)
-                            .enhance("Path", context.Request.Path)
+                            .enhance("Path", context.Request.Path.Value)
                             .enhance ("Error", errorMessage)
 
                     return! context |> result400BadRequest graceError
             with ex ->
                 log.LogError(
                     ex,
-                    "{CurrentInstant}: Exception in Organization.Server.processCommand. CorrelationId: {correlationId}.",
+                    "{CurrentInstant}: Exception in Owner.Server.processCommand. CorrelationId: {correlationId}.",
                     getCurrentInstantExtended (),
                     (getCorrelationId context)
                 )
@@ -137,8 +147,8 @@ module Owner =
                 let graceError =
                     (GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (getCorrelationId context))
                         .enhance(parameterDictionary)
-                        .enhance(nameof (OwnerId), graceIds.OwnerId)
-                        .enhance ("Path", context.Request.Path)
+                        .enhance(nameof OwnerId, graceIds.OwnerId)
+                        .enhance ("Path", context.Request.Path.Value)
 
                 return! context |> result500ServerError graceError
         }
@@ -163,8 +173,7 @@ module Owner =
 
                 if validationsPassed then
                     // Get the actor proxy for this owner.
-                    let ownerGuid = Guid.Parse(graceIds.OwnerId)
-                    let actorProxy = Owner.CreateActorProxy ownerGuid correlationId
+                    let actorProxy = Owner.CreateActorProxy graceIds.OwnerId correlationId
 
                     // Execute the query.
                     let! queryResult = query context maxCount actorProxy
@@ -173,10 +182,9 @@ module Owner =
                     let graceReturnValue =
                         (GraceReturnValue.Create queryResult correlationId)
                             .enhance(parameterDictionary)
-                            .enhance(nameof (OwnerId), graceIds.OwnerId)
-                            .enhance ("Path", context.Request.Path)
+                            .enhance(nameof OwnerId, graceIds.OwnerId)
+                            .enhance ("Path", context.Request.Path.Value)
 
-                    //logToConsole $"In Owner.Server.processQuery: graceReturnValue: {graceReturnValue}"
                     return! context |> result200Ok graceReturnValue
                 else
                     let! error = validationResults |> getFirstError
@@ -184,16 +192,16 @@ module Owner =
                     let graceError =
                         (GraceError.Create (OwnerError.getErrorMessage error) correlationId)
                             .enhance(parameterDictionary)
-                            .enhance(nameof (OwnerId), graceIds.OwnerId)
-                            .enhance ("Path", context.Request.Path)
+                            .enhance(nameof OwnerId, graceIds.OwnerId)
+                            .enhance ("Path", context.Request.Path.Value)
 
                     return! context |> result400BadRequest graceError
             with ex ->
                 let graceError =
                     (GraceError.Create $"{ExceptionResponse.Create ex}" correlationId)
                         .enhance(parameterDictionary)
-                        .enhance(nameof (OwnerId), graceIds.OwnerId)
-                        .enhance ("Path", context.Request.Path)
+                        .enhance(nameof OwnerId, graceIds.OwnerId)
+                        .enhance ("Path", context.Request.Path.Value)
 
                 return! context |> result500ServerError graceError
         }
@@ -210,7 +218,7 @@ module Owner =
                     let ownerIdGuid = Guid.Parse(parameters.OwnerId)
                     Create(ownerIdGuid, OwnerName parameters.OwnerName) |> returnValueTask
 
-                context.Items.Add("Command", nameof (Create))
+                context.Items.Add("Command", nameof Create)
                 return! processCommand context validations command
             }
 
@@ -219,14 +227,14 @@ module Owner =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let validations (parameters: SetOwnerNameParameters) =
-                    [| String.isNotEmpty parameters.NewName OwnerNameIsRequired
-                       String.isValidGraceName parameters.NewName InvalidOwnerName
-                       Owner.ownerIsNotDeleted context parameters.CorrelationId OwnerIsDeleted
-                       Owner.ownerNameDoesNotExist parameters.NewName parameters.CorrelationId OwnerNameAlreadyExists |]
+                    [| String.isNotEmpty parameters.NewName OwnerError.OwnerNameIsRequired
+                       String.isValidGraceName parameters.NewName OwnerError.InvalidOwnerName
+                       Owner.ownerIsNotDeleted context parameters.CorrelationId OwnerError.OwnerIsDeleted
+                       Owner.ownerNameDoesNotExist parameters.NewName parameters.CorrelationId OwnerError.OwnerNameAlreadyExists |]
 
                 let command (parameters: SetOwnerNameParameters) = SetName(OwnerName parameters.NewName) |> returnValueTask
 
-                context.Items.Add("Command", nameof (SetName))
+                context.Items.Add("Command", nameof SetName)
                 return! processCommand context validations command
             }
 
@@ -235,15 +243,15 @@ module Owner =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let validations (parameters: SetOwnerTypeParameters) =
-                    [| String.isNotEmpty parameters.OwnerType OwnerTypeIsRequired
-                       DiscriminatedUnion.isMemberOf<OwnerType, OwnerError> parameters.OwnerType InvalidOwnerType
-                       Owner.ownerIsNotDeleted context parameters.CorrelationId OwnerIsDeleted |]
+                    [| String.isNotEmpty parameters.OwnerType OwnerError.OwnerTypeIsRequired
+                       DiscriminatedUnion.isMemberOf<OwnerType, OwnerError> parameters.OwnerType OwnerError.InvalidOwnerType
+                       Owner.ownerIsNotDeleted context parameters.CorrelationId OwnerError.OwnerIsDeleted |]
 
                 let command (parameters: SetOwnerTypeParameters) =
                     OwnerCommand.SetType(discriminatedUnionFromString<OwnerType>(parameters.OwnerType).Value)
                     |> returnValueTask
 
-                context.Items.Add("Command", nameof (SetType))
+                context.Items.Add("Command", nameof SetType)
                 return! processCommand context validations command
             }
 
@@ -252,8 +260,8 @@ module Owner =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let validations (parameters: SetOwnerSearchVisibilityParameters) =
-                    [| String.isNotEmpty parameters.SearchVisibility SearchVisibilityIsRequired
-                       DiscriminatedUnion.isMemberOf<SearchVisibility, OwnerError> parameters.SearchVisibility InvalidSearchVisibility
+                    [| String.isNotEmpty parameters.SearchVisibility OwnerError.SearchVisibilityIsRequired
+                       DiscriminatedUnion.isMemberOf<SearchVisibility, OwnerError> parameters.SearchVisibility OwnerError.InvalidSearchVisibility
                        Owner.ownerIsNotDeleted context parameters.CorrelationId OwnerIsDeleted |]
 
                 let command (parameters: SetOwnerSearchVisibilityParameters) =
@@ -264,7 +272,7 @@ module Owner =
                     )
                     |> returnValueTask
 
-                context.Items.Add("Command", nameof (SetSearchVisibility))
+                context.Items.Add("Command", nameof SetSearchVisibility)
                 return! processCommand context validations command
             }
 
@@ -273,13 +281,13 @@ module Owner =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let validations (parameters: SetOwnerDescriptionParameters) =
-                    [| String.isNotEmpty parameters.Description DescriptionIsRequired
-                       String.maxLength parameters.Description 2048 DescriptionIsTooLong
-                       Owner.ownerIsNotDeleted context parameters.CorrelationId OwnerIsDeleted |]
+                    [| String.isNotEmpty parameters.Description OwnerError.DescriptionIsRequired
+                       String.maxLength parameters.Description 2048 OwnerError.DescriptionIsTooLong
+                       Owner.ownerIsNotDeleted context parameters.CorrelationId OwnerError.OwnerIsDeleted |]
 
                 let command (parameters: SetOwnerDescriptionParameters) = OwnerCommand.SetDescription(parameters.Description) |> returnValueTask
 
-                context.Items.Add("Command", nameof (SetDescription))
+                context.Items.Add("Command", nameof SetDescription)
                 return! processCommand context validations command
             }
 
@@ -288,7 +296,7 @@ module Owner =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 try
-                    let validations (parameters: ListOrganizationsParameters) = [| Guid.isValidAndNotEmptyGuid parameters.OwnerId InvalidOwnerId |]
+                    let validations (parameters: ListOrganizationsParameters) = [| Guid.isValidAndNotEmptyGuid parameters.OwnerId OwnerError.InvalidOwnerId |]
 
                     let query (context: HttpContext) (maxCount: int) (actorProxy: IOwnerActor) =
                         task {
@@ -309,14 +317,14 @@ module Owner =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let validations (parameters: DeleteOwnerParameters) =
-                    [| String.isNotEmpty parameters.DeleteReason DeleteReasonIsRequired
-                       Owner.ownerIsNotDeleted context parameters.CorrelationId OwnerIsDeleted |]
+                    [| String.isNotEmpty parameters.DeleteReason OwnerError.DeleteReasonIsRequired
+                       Owner.ownerIsNotDeleted context parameters.CorrelationId OwnerError.OwnerIsDeleted |]
 
                 let command (parameters: DeleteOwnerParameters) =
                     OwnerCommand.DeleteLogical(parameters.Force, parameters.DeleteReason)
                     |> returnValueTask
 
-                context.Items.Add("Command", nameof (Delete))
+                context.Items.Add("Command", nameof Delete)
                 return! processCommand context validations command
             }
 
@@ -324,11 +332,11 @@ module Owner =
     let Undelete: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
-                let validations (parameters: OwnerParameters) = [| Owner.ownerIsDeleted context parameters.CorrelationId OwnerIsNotDeleted |]
+                let validations (parameters: OwnerParameters) = [| Owner.ownerIsDeleted context parameters.CorrelationId OwnerError.OwnerIsNotDeleted |]
 
                 let command (parameters: OwnerParameters) = OwnerCommand.Undelete |> returnValueTask
 
-                context.Items.Add("Command", nameof (Undelete))
+                context.Items.Add("Command", nameof Undelete)
                 return! processCommand context validations command
             }
 
@@ -340,15 +348,15 @@ module Owner =
                 let graceIds = getGraceIds context
 
                 try
-                    let validations (parameters: GetOwnerParameters) = [| Owner.ownerIsNotDeleted context parameters.CorrelationId OwnerIsDeleted |]
+                    let validations (parameters: GetOwnerParameters) = [| Owner.ownerIsNotDeleted context parameters.CorrelationId OwnerError.OwnerIsDeleted |]
 
-                    let query (context: HttpContext) (maxCount: int) (actorProxy: IOwnerActor) = task { return! actorProxy.Get(getCorrelationId context) }
+                    let query (context: HttpContext) (maxCount: int) (actorProxy: IOwnerActor) = actorProxy.Get(getCorrelationId context)
 
                     let! parameters = context |> parse<GetOwnerParameters>
 
                     let! result = processQuery context parameters validations 1 query
 
-                    let duration_ms = getPaddedDuration_ms startTime
+                    let duration_ms = getDurationRightAligned_ms startTime
 
                     log.LogInformation(
                         "{CurrentInstant}: Node: {HostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {path}; OwnerId: {ownerId}.",
@@ -357,12 +365,12 @@ module Owner =
                         duration_ms,
                         (getCorrelationId context),
                         context.Request.Path,
-                        graceIds.OwnerId
+                        graceIds.OwnerIdString
                     )
 
                     return result
                 with ex ->
-                    let duration_ms = getPaddedDuration_ms startTime
+                    let duration_ms = getDurationRightAligned_ms startTime
 
                     log.LogError(
                         ex,
@@ -372,13 +380,13 @@ module Owner =
                         duration_ms,
                         (getCorrelationId context),
                         context.Request.Path,
-                        graceIds.OwnerId
+                        graceIds.OwnerIdString
                     )
 
                     let graceError =
                         (GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId context))
-                            .enhance(nameof (OwnerId), graceIds.OwnerId)
-                            .enhance ("Path", context.Request.Path)
+                            .enhance(nameof OwnerId, graceIds.OwnerId)
+                            .enhance ("Path", context.Request.Path.Value)
 
                     return! context |> result500ServerError graceError
             }

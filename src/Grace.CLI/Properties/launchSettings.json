@@ -7,7 +7,7 @@
     "grace diff commit": {
       "commandName": "Project",
       "commandLineArgs": "diff commit",
-      "workingDirectory": "D:\\Source\\grace\\src"
+      "workingDirectory": "E:\\GraceDemo\\User01"
     },
     "grace merge - PlayWithFlexbox": {
       "commandName": "Project",
@@ -21,8 +21,8 @@
     },
     "grace owner create": {
       "commandName": "Project",
-      "commandLineArgs": "owner create --output Verbose --ownerName Owner9FED --ownerId f37d3fcd-5f76-4187-942d-890f21656ebe",
-      "workingDirectory": "D:\\Source\\GraceDemo\\Ryan"
+      "commandLineArgs": "owner create --output Verbose --ownerName Owner3F",
+      "workingDirectory": "E:\\GraceDemo\\User01"
     },
     "grace refs -b main": {
       "commandName": "Project",
@@ -40,8 +40,8 @@
     },
     "grace maint update-index": {
       "commandName": "Project",
-      "commandLineArgs": "maint update-index",
-      "workingDirectory": "D:\\Source\\gracedemo\\Scott"
+      "commandLineArgs": "maint update-index -o Verbose",
+      "workingDirectory": "E:\\GraceDemo\\User01"
     },
     "grace repo set-checkpointdays": {
       "commandName": "Project",
@@ -63,11 +63,6 @@
       "commandLineArgs": "branches --output Verbose",
       "workingDirectory": "D:\\Source\\GraceDemo\\Mika"
     },
-    "grace watch - Mika": {
-      "commandName": "Project",
-      "commandLineArgs": "watch",
-      "workingDirectory": "D:\\Source\\GraceDemo\\Mika"
-    },
     "grace config write": {
       "commandName": "Project",
       "commandLineArgs": "config write",
@@ -75,13 +70,13 @@
     },
     "grace owner get": {
       "commandName": "Project",
-      "commandLineArgs": "owner get --ownerName Owner4",
-      "workingDirectory": "D:\\Source\\GraceDemo\\Mika"
+      "commandLineArgs": "owner get -o Verbose",
+      "workingDirectory": "E:\\GraceDemo\\User01"
     },
     "grace org create": {
       "commandName": "Project",
-      "commandLineArgs": "org create --output Verbose --ownerName Owner9FEDA --organizationName Org9FEDc --organizationId 9871826b-73f4-41a4-bf4b-dea42ea95bf1",
-      "workingDirectory": "D:\\Source\\GraceDemo\\Ryan"
+      "commandLineArgs": "org create --output Verbose --ownerName Owner1C --organizationName Org9FEDc --organizationId 9871826b-73f4-41a4-bf4b-dea42ea95bf1",
+      "workingDirectory": "E:\\GraceDemo\\User01"
     },
     "grace watch - Chris": {
       "commandName": "Project",
@@ -102,6 +97,11 @@
       "commandName": "Project",
       "commandLineArgs": "status",
       "workingDirectory": "E:\\GraceDemo\\User01"
+    },
+    "grace watch": {
+      "commandName": "Project",
+      "commandLineArgs": "watch",
+      "workingDirectory": "E:\\GraceDemo\\User02"
     }
   }
 }

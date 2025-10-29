@@ -5,20 +5,21 @@ open DiffPlex.DiffBuilder.Model
 open FSharpPlus
 open Grace.CLI.Common
 open Grace.CLI.Services
+open Grace.CLI.Text
 open Grace.SDK
 open Grace.Shared
 open Grace.Shared.Client.Configuration
-open Grace.Shared.Dto.Branch
-open Grace.Shared.Dto.Reference
-open Grace.Shared.Types
+open Grace.Types.Branch
+open Grace.Types.Reference
+open Grace.Types.Types
 open Grace.Shared.Utilities
-open Grace.Shared.Validation.Errors.Config
+open Grace.Shared.Validation.Errors
 open Spectre.Console
 open System
 open System.Collections.Concurrent
 open System.Collections.Generic
 open System.CommandLine
-open System.CommandLine.NamingConventionBinder
+open System.CommandLine.Invocation
 open System.CommandLine.Parsing
 open System.Linq
 open System.IO
@@ -35,29 +36,31 @@ module Config =
     module private Options =
         let directory =
             new Option<string>(
-                "--directory",
-                IsRequired = false,
+                OptionName.Directory,
+                Required = false,
                 Description = "The root path of the repository to initialize Grace in [default: current directory]",
                 Arity = ArgumentArity.ExactlyOne
             )
 
         let overwrite =
             new Option<bool>(
-                "--overwrite",
-                IsRequired = false,
+                OptionName.Overwrite,
+                Required = false,
                 Description = "Allows Grace to overwrite an existing graceconfig.json file with default values",
                 Arity = ArgumentArity.ZeroOrOne,
-                getDefaultValue = (fun _ -> false)
+                DefaultValueFactory = (fun _ -> false)
             )
 
-    let private CommonValidations (parseResult, parameters) =
-        let ``Directory must be a valid path`` (parseResult: ParseResult, parameters: CommonParameters) =
-            if Directory.Exists(parameters.Directory) then
-                Ok(parseResult, parameters)
-            else
-                Error(GraceError.Create (ConfigError.getErrorMessage InvalidDirectoryPath) (parameters.CorrelationId))
+    let private CommonValidations parseResult =
+        let ``Directory must be a valid path`` (parseResult: ParseResult) =
+            let directory = parseResult.GetValue(Options.directory)
 
-        (parseResult, parameters) |> ``Directory must be a valid path``
+            if Directory.Exists(directory) then
+                Ok parseResult
+            else
+                Error(GraceError.Create (getErrorMessage ConfigError.InvalidDirectoryPath) (getCorrelationId parseResult))
+
+        parseResult |> ``Directory must be a valid path``
 
     let private renderLine (diffLine: DiffPiece) =
         if not <| diffLine.Position.HasValue then
@@ -86,7 +89,7 @@ module Config =
         task {
             if parseResult |> verbose then printParseResult parseResult
 
-            let validateIncomingParameters = (parseResult, parameters) |> CommonValidations
+            let validateIncomingParameters = parseResult |> CommonValidations
 
             match validateIncomingParameters with
             | Ok _ ->
@@ -112,7 +115,7 @@ module Config =
                 if File.Exists(graceConfigPath) && not parameters.Overwrite then
                     if parseResult |> hasOutput then
                         printfn
-                            $"Found existing Grace configuration file at {graceConfigPath}. Specify --overwrite if you'd like to overwrite it.{Environment.NewLine}"
+                            $"Found existing Grace configuration file at {graceConfigPath}. Specify {OptionName.Overwrite} if you'd like to overwrite it.{Environment.NewLine}"
                 else
                     let directoryInfo = Directory.CreateDirectory(graceDirPath)
 
@@ -125,12 +128,54 @@ module Config =
             | Error error -> return (Error error)
         }
 
-    let Write =
-        CommandHandler.Create(fun (parseResult: ParseResult) (parameters: WriteParameters) ->
+    type Write() =
+        inherit AsynchronousCommandLineAction()
+
+        override _.InvokeAsync(parseResult: ParseResult, cancellationToken: Threading.CancellationToken) : Task<int> =
             task {
-                let! writeResult = writeHandler parseResult parameters
-                return writeResult |> renderOutput parseResult
-            })
+                if parseResult |> verbose then printParseResult parseResult
+
+                let validateIncomingParameters = parseResult |> CommonValidations
+                let directory = parseResult.GetValue(Options.directory)
+                let overwrite = parseResult.GetValue(Options.overwrite)
+
+                match validateIncomingParameters with
+                | Ok _ ->
+                    // Search for existing .grace directory and existing graceconfig.json
+                    // If I find them, and parameters.Overwrite is true, then I can empty out the .grace directory and write a default graceconfig.json.
+                    // If I don't find them, I should create the .grace directory and write a default graceconfig.json.
+                    // We should use `GraceConfiguration() |> saveConfigFile parameters.Directory` to write the default config
+                    let graceDirPath = Path.Combine(directory, ".grace")
+                    let graceConfigPath = Path.Combine(graceDirPath, "graceconfig.json")
+
+                    let overwriteExisting = overwrite && Directory.Exists(graceDirPath) && File.Exists(graceConfigPath)
+
+                    if overwriteExisting then
+                        // Clear out everything in the .grace directory.
+                        if parseResult |> hasOutput then
+                            printfn "Deleting contents of existing .grace directory."
+
+                        Directory.Delete(graceDirPath, recursive = true)
+
+                    if File.Exists(graceConfigPath) && not overwrite then
+                        if parseResult |> hasOutput then
+                            printfn
+                                $"Found existing Grace configuration file at {graceConfigPath}. Specify {OptionName.Overwrite} if you'd like to overwrite it.{Environment.NewLine}"
+                    else
+                        let directoryInfo = Directory.CreateDirectory(graceDirPath)
+
+                        if parseResult |> hasOutput then
+                            printfn $"Writing new Grace configuration file at {graceConfigPath}.{Environment.NewLine}"
+
+                        GraceConfiguration() |> saveConfigFile graceConfigPath
+
+                    return
+                        Ok(GraceReturnValue.Create () (getCorrelationId parseResult))
+                        |> renderOutput parseResult
+                | Error error -> return (Error error) |> renderOutput parseResult
+            //let! writeResult = writeHandler parseResult
+            //return writeResult |> renderOutput parseResult
+            }
 
     let Build =
         let addCommonOptions (command: Command) = command |> addOption Options.directory |> addOption Options.overwrite
@@ -141,7 +186,7 @@ module Config =
             new Command("write", Description = "Initializes a repository with a default Grace configuration.")
             |> addCommonOptions
 
-        writeCommand.Handler <- Write
-        configCommand.AddCommand(writeCommand)
+        writeCommand.Action <- Write()
+        configCommand.Subcommands.Add(writeCommand)
 
         configCommand

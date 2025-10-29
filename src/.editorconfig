@@ -1,10 +1,12 @@
 # http://editorconfig.org
 
 root = true
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
 
 [*.{fs,fsi,fsproj,cs,csproj}]
 charset = utf-8
-end_of_line = lf
 fsharp_max_function_binding_width = 160
 fsharp_max_if_then_short_width = 80
 fsharp_max_if_then_else_short_width = 80

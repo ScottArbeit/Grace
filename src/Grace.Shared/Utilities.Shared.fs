@@ -1,7 +1,5 @@
 namespace Grace.Shared
 
-open Grace.Shared.Constants
-open Grace.Shared.Resources
 open Microsoft.Extensions.Caching.Memory
 open Microsoft.FSharp.NativeInterop
 open Microsoft.FSharp.Reflection
@@ -43,7 +41,8 @@ module Combinators =
     let (>=>) s1 s2 = s1 >> bind s2
 
 module Utilities =
-    let mutable memoryCache: IMemoryCache = null
+    let memoryCacheOptions = MemoryCacheOptions(TrackStatistics = false, TrackLinkedCacheEntries = false, ExpirationScanFrequency = TimeSpan.FromSeconds(30.0))
+    let memoryCache: IMemoryCache = new MemoryCache(memoryCacheOptions)
 
     /// Defines a PooledObjectPolicy specialized for the StringBuilder type.
     type StringBuilderPooledObjectPolicy() =
@@ -122,14 +121,16 @@ module Utilities =
     /// Ensures that the Instant is printed in exactly the same number of characters, so the output is aligned.
     let formatInstantAligned (instant: Instant) = formatDateTimeAligned (instant.ToDateTimeUtc())
 
+    let mutable lockObject = new Threading.Lock()
+
     /// Logs the message to the console, with the current instant and thread ID.
-    let logToConsole message = printfn $"{getCurrentInstantExtended ()} {Environment.CurrentManagedThreadId:X2} {message}"
+    let logToConsole message = lock lockObject (fun () -> printfn $"{getCurrentInstantExtended ()} {Environment.CurrentManagedThreadId:X2} {message}")
 
     /// Gets the elapsed time since the start time, in milliseconds, right-aligned in a string of not less than 7 characters.
     ///
     /// If the duration is less than 7 characters, it is padded with spaces.
     /// If the duration is more than 7 characters, nothing is truncated.
-    let getPaddedDuration_ms (time: Instant) =
+    let getDurationRightAligned_ms (time: Instant) =
         let milliseconds = $"{getCurrentInstant().Minus(time).TotalMilliseconds:F3}"
         let result = (String.replicate (Math.Max(7 - milliseconds.Length, 0)) " ") + milliseconds // Right-align, 7 characters.
         //logToConsole $"milliseconds: {milliseconds}; Math.Max(7 - milliseconds.Length, 0): {Math.Max(7 - milliseconds.Length, 0)}; result: |{result}|"
@@ -141,12 +142,18 @@ module Utilities =
     /// Converts both the type name and case name of a discriminated union to a string.
     ///
     /// Example: Animal.Dog -> "Animal.Dog"
-    let getDiscriminatedUnionFullName (x: 'T) = getDiscriminatedUnionFullName x
+    let getDiscriminatedUnionFullName (x: 'T) =
+        let discriminatedUnionType = typeof<'T>
+        let (case, _) = FSharpValue.GetUnionFields(x, discriminatedUnionType)
+        $"{discriminatedUnionType.Name}.{case.Name}"
 
     /// Converts just the case name of a discriminated union to a string.
     ///
     /// Example: Animal.Dog -> "Dog"
-    let getDiscriminatedUnionCaseName (x: 'T) = getDiscriminatedUnionCaseName x
+    let getDiscriminatedUnionCaseName (x: 'T) =
+        let discriminatedUnionType = typeof<'T>
+        let (case, _) = FSharpValue.GetUnionFields(x, discriminatedUnionType)
+        $"{case.Name}"
 
     /// Converts a string into the corresponding case of a discriminated union type.
     ///
@@ -179,7 +186,7 @@ module Utilities =
     let deserialize<'T> (s: string) = JsonSerializer.Deserialize<'T>(s, Constants.JsonSerializerOptions)
 
     /// Deserializes a stream of JSON to a provided type, using Grace's custom JsonSerializerOptions.
-    let deserializeAsync<'T> stream = task { return! JsonSerializer.DeserializeAsync<'T>(stream, Constants.JsonSerializerOptions) }
+    let deserializeAsync<'T> (stream: Stream) = task { return! JsonSerializer.DeserializeAsync<'T>(stream, Constants.JsonSerializerOptions) }
 
     /// Deserializes the Content from an HttpResponseMessage to the provided type, using Grace's custom JsonSerializerOptions.
     let deserializeContent<'T> (response: HttpResponseMessage) =
@@ -190,11 +197,6 @@ module Utilities =
 
     /// Create JsonContent from the provided object, using Grace's custom JsonSerializerOptions.
     let createJsonContent<'T> item = JsonContent.Create(item, options = Constants.JsonSerializerOptions)
-
-    /// Retrieves the localized version of a system resource string.
-    ///
-    /// Note: For now, it's hardcoded to return en_US. I'll fix this when we really implement localization.
-    let getLocalizedString stringName = en_US.getString stringName
 
     /// Returns true if Grace is running on a Windows machine.
     let runningOnWindows =
@@ -226,6 +228,7 @@ module Utilities =
     /// Returns the given path, replacing any Windows-style backslash characters (\) with forward-slash characters (/).
     let normalizedTimeSpan = TimeSpan.FromMinutes(1.0)
 
+    /// Converts backslashes to forward slashes, and caches the result for performance.
     let normalizeFilePath (filePath: string) =
         let mutable result = String.Empty
 
@@ -311,6 +314,10 @@ module Utilities =
             finally
                 stringBuilderPool.Return(sb)
 
+
+    [<Literal>]
+    let CorrelationIdAlphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz._-"
+
     /// Returns a randomly-generated, 12-character NanoId as a new CorrelationId.
     let generateCorrelationId () =
         // According to https://alex7kom.github.io/nano-nanoid-cc/?alphabet=~._-0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz&size=12&speed=1000&speedUnit=second
@@ -357,7 +364,7 @@ module Utilities =
     /// NOTE: This is different from Encoding.UTF8.GetBytes(), which interprets the string as UTF-8 characters.
     let stringAsByteArray (s: ReadOnlySpan<char>) =
         if s.Length % 2 <> 0 then
-            raise (ArgumentException("The hexadecimal string must have an even number of digits.", nameof (s)))
+            raise (ArgumentException("The hexadecimal string must have an even number of digits.", nameof s))
 
         let byteArrayLength = int32 (s.Length / 2)
         let bytes = Array.zeroCreate byteArrayLength
@@ -492,20 +499,14 @@ module Utilities =
             properties <- typeof<'T>.GetProperties(BindingFlags.Instance ||| BindingFlags.Public)
             propertyLookupByType.TryAdd(typeof<'T>, properties) |> ignore
 
-        let dictionary = Dictionary<string, string>()
+        let dictionary = Dictionary<string, obj>()
 
         for prop in properties do
             let value = prop.GetValue(obj)
 
-            let valueString =
-                match value with
-                | null -> "null"
-                | :? string as s -> s
-                | _ -> value.ToString()
+            dictionary[$"parameter:{prop.Name}"] <- value
 
-            dictionary[$"parameter:{prop.Name}"] <- valueString
-
-        dictionary
+        dictionary :> IReadOnlyDictionary<string, obj>
 
     /// This construct is equivalent to using IHttpClientFactory in the ASP.NET Dependency Injection container, for code (like this) that isn't using GenericHost.
     ///

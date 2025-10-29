@@ -1,10 +1,10 @@
 namespace Grace.SDK
 
 open Grace.SDK.Common
-open Grace.Shared.Dto
 open Grace.Shared.Parameters.DirectoryVersion
 open Grace.Shared
-open Grace.Shared.Types
+open Grace.Types
+open Grace.Types.DirectoryVersion
 open Grace.Shared.Utilities
 open System
 open System.Collections.Generic
@@ -13,11 +13,11 @@ open System.Threading.Tasks
 type DirectoryVersion() =
     /// Retrieves a DirectoryVersion instance.
     static member public Get(parameters: GetParameters) =
-        postServer<GetParameters, DirectoryVersion> (parameters |> ensureCorrelationIdIsSet, $"directory/{nameof (DirectoryVersion.Get)}")
+        postServer<GetParameters, DirectoryVersionDto> (parameters |> ensureCorrelationIdIsSet, $"directory/{nameof (DirectoryVersion.Get)}")
 
     /// Retrieves a DirectoryVersion instance.
     static member public GetByDirectoryIds(parameters: GetByDirectoryIdsParameters) =
-        postServer<GetByDirectoryIdsParameters, IEnumerable<Types.DirectoryVersion>> (
+        postServer<GetByDirectoryIdsParameters, IEnumerable<DirectoryVersionDto>> (
             parameters |> ensureCorrelationIdIsSet,
             $"directory/{nameof (DirectoryVersion.GetByDirectoryIds)}"
         )
@@ -28,7 +28,7 @@ type DirectoryVersion() =
 
     /// Retrieves the Uri to download the .zip file for a specific DirectoryVersion.
     static member public GetZipFile(parameters: GetZipFileParameters) =
-        postServer<GetZipFileParameters, UriWithSharedAccessSignature> (
+        postServer<GetZipFileParameters, Types.UriWithSharedAccessSignature> (
             parameters |> ensureCorrelationIdIsSet,
             $"directory/{nameof (DirectoryVersion.GetZipFile)}"
         )
@@ -46,7 +46,7 @@ type DirectoryVersion() =
 
     /// Retrieves the recursive set of DirectoryVersions from a specific DirectoryVersion.
     static member public GetDirectoryVersionsRecursive(parameters: GetParameters) =
-        postServer<GetParameters, IEnumerable<Types.DirectoryVersion>> (
+        postServer<GetParameters, IEnumerable<DirectoryVersionDto>> (
             parameters |> ensureCorrelationIdIsSet,
             $"directory/{nameof (DirectoryVersion.GetDirectoryVersionsRecursive)}"
         )

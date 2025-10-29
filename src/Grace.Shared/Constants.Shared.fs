@@ -1,8 +1,12 @@
 namespace Grace.Shared
 
+open NodaTime
+open MessagePack
+open MessagePack.FSharp
+open MessagePack.NodaTime
+open MessagePack.Resolvers
 open Microsoft.Extensions.Caching.Memory
 open Microsoft.FSharp.Reflection
-open NodaTime
 open NodaTime.Serialization.SystemTextJson
 open Polly
 open Polly.Contrib.WaitAndRetry
@@ -14,10 +18,6 @@ open System.Text.Json.Serialization
 open System.Text.RegularExpressions
 open System.Collections.Generic
 open System.Threading.Tasks
-open MessagePack
-open MessagePack.FSharp
-open MessagePack.NodaTime
-open MessagePack.Resolvers
 
 module Constants =
 
@@ -43,9 +43,11 @@ module Constants =
     /// The universal JSON serialization options for Grace.
     let public JsonSerializerOptions = JsonSerializerOptions()
     JsonSerializerOptions.Converters.Add(JsonFSharpConverter(jsonFSharpOptions))
+    JsonSerializerOptions.Converters.Add(JsonStringEnumConverter(JsonNamingPolicy.CamelCase))
     JsonSerializerOptions.AllowTrailingCommas <- true
     JsonSerializerOptions.DefaultBufferSize <- 64 * 1024
     JsonSerializerOptions.DefaultIgnoreCondition <- JsonIgnoreCondition.WhenWritingDefault // JsonSerializerOptions.IgnoreNullValues is deprecated. This is the new way to say it.
+    JsonSerializerOptions.IncludeFields <- true // Include fields in serialization. This is important for F# records and discriminated unions.
     JsonSerializerOptions.IndentSize <- 2
     JsonSerializerOptions.MaxDepth <- 64 // Default is 64, and I'm assuming this setting would need to change if there were a directory depth greater than 64 in a repo.
     JsonSerializerOptions.NumberHandling <- JsonNumberHandling.AllowReadingFromString
@@ -63,7 +65,19 @@ module Constants =
     /// The universal MessagePack serialization options for Grace.
     let messagePackSerializerOptions =
         MessagePackSerializerOptions.Standard
-            .WithResolver(CompositeResolver.Create(NodatimeResolver.Instance, StandardResolver.Instance))
+            .WithResolver(
+                CompositeResolver.Create(
+                    [|
+                       // 1) Generated formatters (classes like Grace_Types_Types.DirectoryVersionFormatter1)
+                       //GeneratedResolver.Instance
+                       // 2) F# helpers for records/DUs
+                       FSharpResolver.Instance
+                       // 3) NodaTime formatters (Instant, LocalDate, etc.)
+                       NodatimeResolver.Instance
+                       // 4) Final fallback
+                       StandardResolver.Instance |]
+                )
+            )
             .WithCompression(MessagePackCompression.Lz4BlockArray)
             .WithSecurity(MessagePackSecurity.UntrustedData)
 
@@ -87,17 +101,25 @@ module Constants =
     [<Literal>]
     let GraceSystemUser = "gracesystem"
 
-    /// The name of the Dapr service for Grace object storage.
-    [<Literal>]
-    let GraceObjectStorage = "graceobjectstorage"
-
-    /// The name of the Dapr service for Actor storage. This should be a document database.
+    /// The name of the storage service for Actor storage. This should be a document database.
     [<Literal>]
     let GraceActorStorage = "actorstorage"
+
+    /// The name of the storage service for in-memory actors.
+    [<Literal>]
+    let GraceInMemoryStorage = "in-memory"
+
+    /// The name of the service for Grace object storage.
+    [<Literal>]
+    let GraceObjectStorage = "graceobjectstorage"
 
     /// The name of the Dapr service for Grace event pub/sub.
     [<Literal>]
     let GracePubSubService = "graceevents"
+
+    /// The name of the Orleans stream provider to publish to.
+    [<Literal>]
+    let GraceEventStreamProvider = "graceeventstreamprovider"
 
     /// The name of the event topic to publish to.
     [<Literal>]
@@ -192,29 +214,48 @@ module Constants =
         [<Literal>]
         let CosmosDatabaseName = "cosmosdatabasename"
 
-        /// The environment variable that contains the Dapr application ID.
-        [<Literal>]
-        let DaprAppId = "DAPR_APP_ID"
-
         /// The environment variable that contains the Dapr server Uri. The Uri should not include a port number.
         [<Literal>]
-        let DaprServerUri = "DAPR_SERVER_URI"
+        let GraceServerUri = "GRACE_SERVER_URI"
 
         /// The environment variable that contains the application's port.
         [<Literal>]
-        let DaprAppPort = "DAPR_APP_PORT"
+        let GraceAppPort = "GRACE_APP_PORT"
 
-        /// The environment variable that contains the Dapr HTTP port.
+        /// The name of the container in object storage that holds memoized RecursiveDirectoryVersions.
         [<Literal>]
-        let DaprHttpPort = "DAPR_HTTP_PORT"
+        let DirectoryVersionContainerName = "directoryversion_container"
 
-        /// The environment variable that contains the Dapr gRPC port.
+        /// The name of the container in object storage that holds cached Diff contents.
         [<Literal>]
-        let DaprGrpcPort = "DAPR_GRPC_PORT"
+        let DiffContainerName = "diff_container"
+
+        /// The name of the container in object storage that holds memoized RecursiveDirectoryVersions.
+        [<Literal>]
+        let ZipFileContainerName = "zipfile_container"
 
         /// The environment variable that contains the maximum number of reminders that each Grace instance should retrieve from the database and publish for processing.
         [<Literal>]
         let GraceReminderBatchSize = "gracereminderbatchsize"
+
+        /// The environment variable that contains the name of the Orleans cluster to use.
+        [<Literal>]
+        let OrleansClusterId = "orleans_cluster_id"
+
+        /// The environment variable that contains the name of the Orleans service to use.
+        [<Literal>]
+        let OrleansServiceId = "orleans_service_id"
+
+        /// The environment variable that contains the Redis host name.
+        [<Literal>]
+        let RedisHost = "redis_host"
+
+        /// The environment variable that contains the Redis port number.
+        [<Literal>]
+        let RedisPort = "redis_port"
+
+        [<Literal>]
+        let UseLocalHostClustering = "use_orleans_localhost_configuration"
 
     /// The default CacheControl header for object storage.
     [<Literal>]
@@ -230,6 +271,14 @@ module Constants =
     /// The key for the HttpContext metadata value that holds the CorrelationId for this transaction.
     [<Literal>]
     let CorrelationId = "correlationId"
+
+    /// The property name for the CurrentCommand being handled by a grain.
+    [<Literal>]
+    let CurrentCommandProperty = "currentCommand"
+
+    /// The property name for the ActorName being handled by a grain.
+    [<Literal>]
+    let ActorNameProperty = "actorName"
 
     /// The header name for a W3C trace.
     [<Literal>]
@@ -288,7 +337,7 @@ module Constants =
     /// Grace's global settings for Parallel.ForEach/ForEachAsync expressions; sets MaxDegreeofParallelism to maximize performance.
     // I'm choosing a higher-than-usual number here because these parallel loops are used in code where most of the time is spent on network
     //   and disk traffic - and therefore Task<'T> - and we can run lots of them simultaneously.
-    let ParallelOptions = ParallelOptions(MaxDegreeOfParallelism = Environment.ProcessorCount * 2)
+    let ParallelOptions = ParallelOptions(MaxDegreeOfParallelism = Environment.ProcessorCount * 1)
 
     /// Default directory size magic value.
     let InitialDirectorySize = int64 -1
@@ -310,6 +359,10 @@ module Constants =
 
     /// The default value for a timestamp during record construction. Equal to 2000-01-01T00:00:00Z.
     let DefaultTimestamp = Instant.FromDateTimeUtc(DateTime(2000, 1, 1, 0, 0, 0, DateTimeKind.Utc))
+
+    /// The default name of the account in object storage that holds Grace objects.
+    [<Literal>]
+    let DefaultObjectStorageAccount = "gracevcsdevelopment"
 
     /// Values used with Grace's MemoryCache.
     module MemoryCache =

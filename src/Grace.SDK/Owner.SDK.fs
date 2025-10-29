@@ -1,9 +1,9 @@
-﻿namespace Grace.SDK
+namespace Grace.SDK
 
 open Grace.SDK.Common
-open Grace.Shared.Dto.Owner
 open Grace.Shared.Parameters.Owner
-open Grace.Shared.Types
+open Grace.Types.Owner
+open Grace.Types.Types
 open System
 open System.Threading.Tasks
 
@@ -17,9 +17,9 @@ type Owner() =
         postServer<CreateOwnerParameters, String> (parameters |> ensureCorrelationIdIsSet, $"owner/{nameof (Owner.Create)}")
 
     /// <summary>
-    /// Sets the owner's name.
+    /// Gets the owner's information.
     /// </summary>
-    /// <param name="parameters">Values to use when setting the owner name.</param>
+    /// <param name="parameters">Values to use when retrieving the owner information.</param>
     static member public Get(parameters: GetOwnerParameters) =
         postServer<GetOwnerParameters, OwnerDto> (parameters |> ensureCorrelationIdIsSet, $"owner/{nameof (Owner.Get)}")
 

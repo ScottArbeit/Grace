@@ -2,564 +2,532 @@ namespace Grace.CLI.Command
 
 open FSharpPlus
 open Grace.CLI.Common
+open Grace.CLI.Common.Validations
+open Grace.CLI.Text
 open Grace.SDK
 open Grace.Shared
 open Grace.Shared.Client.Configuration
 open Grace.Shared.Client.Theme
-open Grace.Shared.Types
 open Grace.Shared.Validation
-open Grace.Shared.Validation.Errors.Owner
+open Grace.Shared.Validation.Errors
+open Grace.Types.Types
 open NodaTime
 open System
 open System.Collections.Generic
-open System.CommandLine.NamingConventionBinder
+open System.CommandLine.Invocation
 open System.CommandLine.Parsing
 open System.Linq
+open System.Threading
 open System.Threading.Tasks
 open System.CommandLine
 open Spectre.Console
 open Spectre.Console.Json
 open Grace.Shared.Utilities
+open Grace.CLI
+open Grace.CLI.Services
 
 module Owner =
 
-    type CommonParameters() =
-        inherit ParameterBase()
-        member val public OwnerId: string = String.Empty with get, set
-        member val public OwnerName: string = String.Empty with get, set
-
     module private Options =
         let ownerId =
-            new Option<String>(
-                "--ownerId",
-                IsRequired = false,
+            new Option<OwnerId>(
+                OptionName.OwnerId,
+                [||],
+                Required = false,
                 Description = "The Id of the owner <Guid>.",
                 Arity = ArgumentArity.ExactlyOne,
-                getDefaultValue =
-                    (fun _ ->
-                        if Current().OwnerId = Guid.Empty then
-                            $"{Guid.NewGuid()}"
-                        else
-                            $"{Current().OwnerId}")
+                DefaultValueFactory = (fun _ -> if Current().OwnerId = Guid.Empty then Guid.NewGuid() else Current().OwnerId)
             )
 
         let ownerName =
             new Option<String>(
-                "--ownerName",
-                IsRequired = false,
+                OptionName.OwnerName,
+                Required = false,
                 Description = "The name of the owner. [default: current owner]",
                 Arity = ArgumentArity.ExactlyOne
             )
 
-        let ownerNameRequired = new Option<String>("--ownerName", IsRequired = true, Description = "The name of the owner.", Arity = ArgumentArity.ExactlyOne)
+        let ownerNameRequired =
+            new Option<String>(OptionName.OwnerName, Required = true, Description = "The name of the owner.", Arity = ArgumentArity.ExactlyOne)
 
         let ownerTypeRequired =
-            (new Option<String>("--ownerType", IsRequired = true, Description = "The type of owner. [default: Public]", Arity = ArgumentArity.ExactlyOne))
-                .FromAmong(Utilities.listCases<OwnerType> ())
+            (new Option<String>(OptionName.OwnerType, Required = true, Description = "The type of owner. [default: Public]", Arity = ArgumentArity.ExactlyOne))
+                .AcceptOnlyFromAmong(Utilities.listCases<OwnerType> ())
 
         let searchVisibilityRequired =
             (new Option<String>(
-                "--searchVisibility",
-                IsRequired = true,
+                OptionName.SearchVisibility,
+                Required = true,
                 Description = "Enables or disables the owner appearing in searches. [default: true]",
                 Arity = ArgumentArity.ExactlyOne
             ))
-                .FromAmong(Utilities.listCases<SearchVisibility> ())
+                .AcceptOnlyFromAmong(Utilities.listCases<SearchVisibility> ())
 
         let descriptionRequired =
-            new Option<String>("--description", IsRequired = true, Description = "Description of the owner.", Arity = ArgumentArity.ExactlyOne)
+            new Option<String>(OptionName.Description, Required = true, Description = "Description of the owner.", Arity = ArgumentArity.ExactlyOne)
 
-        let newName = new Option<String>("--newName", IsRequired = true, Description = "The new name of the organization.", Arity = ArgumentArity.ExactlyOne)
+        let newName =
+            new Option<String>(OptionName.NewName, Required = true, Description = "The new name of the organization.", Arity = ArgumentArity.ExactlyOne)
 
-        let force = new Option<bool>("--force", IsRequired = false, Description = "Delete even if there is data under this owner. [default: false]")
+        let force = new Option<bool>(OptionName.Force, Required = false, Description = "Delete even if there is data under this owner. [default: false]")
 
         let includeDeleted =
-            new Option<bool>([| "--include-deleted"; "-d" |], IsRequired = false, Description = "Include deleted owners in the result. [default: false]")
+            new Option<bool>(OptionName.IncludeDeleted, [| "-d" |], Required = false, Description = "Include deleted owners in the result. [default: false]")
 
         let deleteReason =
-            new Option<String>("--deleteReason", IsRequired = true, Description = "The reason for deleting the owner.", Arity = ArgumentArity.ExactlyOne)
+            new Option<String>(OptionName.DeleteReason, Required = true, Description = "The reason for deleting the owner.", Arity = ArgumentArity.ExactlyOne)
 
         let doNotSwitch =
             new Option<bool>(
-                "--doNotSwitch",
-                IsRequired = false,
-                Description = "Do not switch to the new owner as the current owner.",
+                OptionName.DoNotSwitch,
+                Required = false,
+                Description = "Do not switch your current owner to the new owner after it is created. By default, the new owner becomes the current owner.",
                 Arity = ArgumentArity.ZeroOrOne
             )
 
-    let mustBeAValidGuid (parseResult: ParseResult) (parameters: CommonParameters) (option: Option) (value: string) (error: OwnerError) =
-        let mutable guid = Guid.Empty
-
-        if
-            parseResult.CommandResult.FindResultFor(option) <> null
-            && not <| String.IsNullOrEmpty(value)
-            && (Guid.TryParse(value, &guid) = false || guid = Guid.Empty)
-        then
-            Error(GraceError.Create (OwnerError.getErrorMessage error) (parameters.CorrelationId))
-        else
-            Ok(parseResult, parameters)
-
-    let mustBeAValidGraceName (parseResult: ParseResult) (parameters: CommonParameters) (option: Option) (value: string) (error: OwnerError) =
-        if
-            parseResult.CommandResult.FindResultFor(option) <> null
-            && not <| Constants.GraceNameRegex.IsMatch(value)
-        then
-            Error(GraceError.Create (OwnerError.getErrorMessage error) (parameters.CorrelationId))
-        else
-            Ok(parseResult, parameters)
-
-    let private CommonValidations (parseResult, commonParameters) =
-        let ``OwnerId must be a Guid`` (parseResult: ParseResult, parameters: CommonParameters) =
-            mustBeAValidGuid parseResult parameters Options.ownerId parameters.OwnerId InvalidOwnerId
-
-        let ``OwnerName must be a valid Grace name`` (parseResult: ParseResult, parameters: CommonParameters) =
-            mustBeAValidGraceName parseResult parameters Options.ownerName parameters.OwnerName InvalidOwnerName
-
-        (parseResult, commonParameters)
-        |> ``OwnerId must be a Guid``
-        >>= ``OwnerName must be a valid Grace name``
-
-    let private ``OwnerName must not be empty`` (parseResult: ParseResult, commonParameters: CommonParameters) =
-        if
-            (parseResult.HasOption(Options.ownerNameRequired)
-             || parseResult.HasOption(Options.ownerName))
-            && not <| String.IsNullOrEmpty(commonParameters.OwnerName)
-        then
-            Ok(parseResult, commonParameters)
-        else
-            Error(GraceError.Create (OwnerError.getErrorMessage OwnerNameIsRequired) (commonParameters.CorrelationId))
-
-    /// Adjusts parameters to account for whether Id's or Name's were specified by the user, or should be taken from default values.
-    let normalizeIdsAndNames<'T when 'T :> CommonParameters> (parseResult: ParseResult) (parameters: 'T) =
-        // If the name was specified on the command line, but the id wasn't, then we should only send the name, and we set the id to String.Empty.
-        if
-            parseResult.CommandResult.FindResultFor(Options.ownerId).IsImplicit
-            && not <| isNull (parseResult.CommandResult.FindResultFor(Options.ownerName))
-            && not <| parseResult.CommandResult.FindResultFor(Options.ownerName).IsImplicit
-        then
-            parameters.OwnerId <- String.Empty
-
-        parameters
+    let ownerCommonValidations = CommonValidations >=> ``Either OwnerId or OwnerName must be provided``
 
     // Create subcommand.
-    type CreateParameters() =
-        inherit CommonParameters()
+    type Create() =
+        inherit AsynchronousCommandLineAction()
 
-    let private createHandler (parseResult: ParseResult) (createParameters: CreateParameters) =
-        task {
-            try
-                if parseResult |> verbose then printParseResult parseResult
+        override this.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
+            task {
+                try
+                    if parseResult |> verbose then printParseResult parseResult
 
-                let validateIncomingParameters = CommonValidations(parseResult, createParameters)
+                    // In a Create() command, if --owner-id is implicit, that's actually the old OwnerId taken from graceconfig.json,
+                    //   and we need to set OwnerId to a new Guid.
+                    let mutable graceIds = parseResult |> getNormalizedIdsAndNames
 
-                match validateIncomingParameters with
-                | Ok _ ->
-                    let ownerId =
-                        if parseResult.FindResultFor(Options.ownerId).IsImplicit then
-                            Guid.NewGuid().ToString()
+                    if parseResult.GetResult(Options.ownerId).Implicit then
+                        let ownerId = Guid.NewGuid()
+                        graceIds <- { graceIds with OwnerId = ownerId; OwnerIdString = $"{ownerId}" }
+
+                    let validateIncomingParameters =
+                        parseResult
+                        |> ownerCommonValidations
+                        >>= (``Option must be present`` OptionName.OwnerName OwnerNameIsRequired)
+
+                    match validateIncomingParameters with
+                    | Ok _ ->
+                        let ownerId =
+                            if parseResult.GetResult(Options.ownerId).Implicit then
+                                Guid.NewGuid().ToString()
+                            else
+                                graceIds.OwnerIdString
+
+                        let parameters =
+                            Parameters.Owner.CreateOwnerParameters(OwnerId = ownerId, OwnerName = graceIds.OwnerName, CorrelationId = graceIds.CorrelationId)
+
+                        if parseResult |> hasOutput then
+                            let! result =
+                                progress
+                                    .Columns(progressColumns)
+                                    .StartAsync(fun progressContext ->
+                                        task {
+                                            let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
+
+                                            let! result = Owner.Create(parameters)
+                                            t0.Increment(100.0)
+                                            return result
+                                        })
+
+                            match result with
+                            | Ok returnValue ->
+                                // Update the Grace configuration file with the newly-created owner.
+                                if not <| parseResult.GetValue(Options.doNotSwitch) then
+                                    let newConfig = Current()
+                                    newConfig.OwnerId <- Guid.Parse($"{returnValue.Properties[nameof OwnerId]}")
+                                    newConfig.OwnerName <- $"{returnValue.Properties[nameof OwnerName]}"
+                                    logToAnsiConsole Colors.Verbose $"newConfig: {serialize newConfig}."
+                                    updateConfiguration newConfig
+
+                                return result |> renderOutput parseResult
+                            | Error _ -> return result |> renderOutput parseResult
                         else
-                            createParameters.OwnerId
+                            let! result = Owner.Create(parameters)
 
-                    let parameters =
-                        Parameters.Owner.CreateOwnerParameters(
-                            OwnerId = ownerId,
-                            OwnerName = createParameters.OwnerName,
-                            CorrelationId = createParameters.CorrelationId
-                        )
+                            match result with
+                            | Ok returnValue ->
+                                // Update the Grace configuration file with the newly-created owner.
+                                if not <| parseResult.GetValue(Options.doNotSwitch) then
+                                    let newConfig = Current()
+                                    newConfig.OwnerId <- Guid.Parse($"{returnValue.Properties[nameof OwnerId]}")
+                                    newConfig.OwnerName <- $"{returnValue.Properties[nameof OwnerName]}"
+                                    logToAnsiConsole Colors.Verbose $"newConfig: {serialize newConfig}."
+                                    updateConfiguration newConfig
 
-                    if parseResult |> hasOutput then
-                        return!
-                            progress
-                                .Columns(progressColumns)
-                                .StartAsync(fun progressContext ->
-                                    task {
-                                        let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
+                                return result |> renderOutput parseResult
+                            | Error _ -> return result |> renderOutput parseResult
+                    | Error error -> return Error error |> renderOutput parseResult
 
-                                        let! result = Owner.Create(parameters)
-                                        t0.Increment(100.0)
-                                        return result
-                                    })
-                    else
-                        return! Owner.Create(parameters)
-                | Error error -> return Error error
-            with ex ->
-                return Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
-        }
+                with ex ->
+                    return
+                        renderOutput
+                            parseResult
+                            (GraceResult.Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId)))
+            }
 
-    let private Create =
-        CommandHandler.Create(fun (parseResult: ParseResult) (createParameters: CreateParameters) ->
+    // Get subcommand
+    type Get() =
+        inherit AsynchronousCommandLineAction()
+
+        override this.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
-                let! result = createHandler parseResult (createParameters |> normalizeIdsAndNames parseResult)
+                try
+                    if parseResult |> verbose then printParseResult parseResult
+                    let graceIds = parseResult |> getNormalizedIdsAndNames
+                    let validateIncomingParameters = parseResult |> ownerCommonValidations
 
-                match result with
-                | Ok returnValue ->
-                    // Update the Grace configuration file with the newly-created owner.
-                    if not <| parseResult.HasOption(Options.doNotSwitch) then
-                        let newConfig = Current()
-                        newConfig.OwnerId <- Guid.Parse(returnValue.Properties[nameof (OwnerId)])
-                        newConfig.OwnerName <- returnValue.Properties[nameof (OwnerName)]
-                        updateConfiguration newConfig
-                | Error _ -> ()
+                    match validateIncomingParameters with
+                    | Ok _ ->
+                        let parameters =
+                            Parameters.Owner.GetOwnerParameters(
+                                OwnerId = graceIds.OwnerIdString,
+                                OwnerName = graceIds.OwnerName,
+                                IncludeDeleted = parseResult.GetValue(Options.includeDeleted),
+                                CorrelationId = getCorrelationId parseResult
+                            )
 
-                return result |> renderOutput parseResult
-            })
+                        if parseResult |> hasOutput then
+                            let! result =
+                                progress
+                                    .Columns(progressColumns)
+                                    .StartAsync(fun progressContext ->
+                                        task {
+                                            let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
 
-    type GetParameters() =
-        inherit CommonParameters()
-        member val public IncludeDeleted: bool = false with get, set
+                                            let! result = Owner.Get(parameters)
+                                            t0.Increment(100.0)
+                                            return result
+                                        })
 
-    let private getHandler (parseResult: ParseResult) (getParameters: GetParameters) =
-        task {
-            try
-                if parseResult |> verbose then printParseResult parseResult
+                            match result with
+                            | Ok graceReturnValue ->
+                                let jsonText = JsonText(serialize graceReturnValue.ReturnValue)
+                                AnsiConsole.Write(jsonText)
+                                AnsiConsole.WriteLine()
+                                return Ok graceReturnValue |> renderOutput parseResult
+                            | Error graceError -> return Error graceError |> renderOutput parseResult
+                        else
+                            let! result = Owner.Get(parameters)
 
-                let validateIncomingParameters = CommonValidations(parseResult, getParameters)
+                            match result with
+                            | Ok graceReturnValue ->
+                                let jsonText = JsonText(serialize graceReturnValue.ReturnValue)
+                                AnsiConsole.Write(jsonText)
+                                AnsiConsole.WriteLine()
+                                return Ok graceReturnValue |> renderOutput parseResult
+                            | Error graceError -> return Error graceError |> renderOutput parseResult
+                    | Error error -> return Error error |> renderOutput parseResult
 
-                match validateIncomingParameters with
-                | Ok _ ->
-                    let parameters =
-                        Parameters.Owner.GetOwnerParameters(
-                            OwnerId = getParameters.OwnerId,
-                            OwnerName = getParameters.OwnerName,
-                            IncludeDeleted = getParameters.IncludeDeleted,
-                            CorrelationId = getParameters.CorrelationId
-                        )
+                with ex ->
+                    return
+                        renderOutput
+                            parseResult
+                            (GraceResult.Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId)))
+            }
 
-                    if parseResult |> hasOutput then
-                        return!
-                            progress
-                                .Columns(progressColumns)
-                                .StartAsync(fun progressContext ->
-                                    task {
-                                        let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
+    // SetName subcommand
+    type SetName() =
+        inherit AsynchronousCommandLineAction()
 
-                                        let! result = Owner.Get(parameters)
-                                        t0.Increment(100.0)
-                                        return result
-                                    })
-                    else
-                        return! Owner.Get(parameters)
-                | Error error -> return Error error
-            with ex ->
-                return Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
-        }
-
-    let private Get =
-        CommandHandler.Create(fun (parseResult: ParseResult) (getParameters: GetParameters) ->
+        override this.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
-                let! result = getHandler parseResult (getParameters |> normalizeIdsAndNames parseResult)
-                //return result |> renderOutput parseResult
-                match result with
-                | Ok graceReturnValue ->
-                    let jsonText = JsonText(serialize graceReturnValue.ReturnValue)
-                    AnsiConsole.Write(jsonText)
-                    AnsiConsole.WriteLine()
-                    return (Ok graceReturnValue) |> renderOutput parseResult
-                | Error graceError -> return Error graceError |> renderOutput parseResult
-            })
+                try
+                    if parseResult |> verbose then printParseResult parseResult
+                    let graceIds = parseResult |> getNormalizedIdsAndNames
+                    let validateIncomingParameters = parseResult |> ownerCommonValidations
 
-    type SetNameParameters() =
-        inherit CommonParameters()
-        member val public NewName: string = String.Empty with get, set
+                    match validateIncomingParameters with
+                    | Ok _ ->
+                        let parameters =
+                            Parameters.Owner.SetOwnerNameParameters(
+                                OwnerId = graceIds.OwnerIdString,
+                                OwnerName = graceIds.OwnerName,
+                                NewName = parseResult.GetValue(Options.newName),
+                                CorrelationId = getCorrelationId parseResult
+                            )
 
-    let private setNameHandler (parseResult: ParseResult) (setNameParameters: SetNameParameters) =
-        task {
-            try
-                if parseResult |> verbose then printParseResult parseResult
+                        if parseResult |> hasOutput then
+                            let! result =
+                                progress
+                                    .Columns(progressColumns)
+                                    .StartAsync(fun progressContext ->
+                                        task {
+                                            let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
 
-                let validateIncomingParameters = CommonValidations(parseResult, setNameParameters)
+                                            let! result = Owner.SetName(parameters)
 
-                match validateIncomingParameters with
-                | Ok _ ->
-                    let parameters =
-                        Parameters.Owner.SetOwnerNameParameters(
-                            OwnerId = setNameParameters.OwnerId,
-                            OwnerName = setNameParameters.OwnerName,
-                            NewName = setNameParameters.NewName,
-                            CorrelationId = setNameParameters.CorrelationId
-                        )
+                                            match result with
+                                            | Ok returnValue ->
+                                                // Update the Grace configuration file with the new Owner name.
+                                                let newConfig = Current()
+                                                newConfig.OwnerName <- parseResult.GetValue(Options.newName)
+                                                updateConfiguration newConfig
+                                            | Error _ -> ()
 
-                    if parseResult |> hasOutput then
-                        return!
-                            progress
-                                .Columns(progressColumns)
-                                .StartAsync(fun progressContext ->
-                                    task {
-                                        let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
+                                            t0.Increment(100.0)
+                                            return result
+                                        })
 
-                                        let! result = Owner.SetName(parameters)
+                            return result |> renderOutput parseResult
+                        else
+                            let! result = Owner.SetName(parameters)
 
-                                        match result with
-                                        | Ok returnValue ->
-                                            // Update the Grace configuration file with the new Owner name.
-                                            let newConfig = Current()
-                                            newConfig.OwnerName <- setNameParameters.NewName
-                                            updateConfiguration newConfig
-                                        | Error _ -> ()
+                            match result with
+                            | Ok graceReturnValue ->
+                                // Update the Grace configuration file with the new Owner name.
+                                let newConfig = Current()
+                                newConfig.OwnerName <- parseResult.GetValue(Options.newName)
+                                updateConfiguration newConfig
+                            | Error _ -> ()
 
-                                        t0.Increment(100.0)
-                                        return result
-                                    })
-                    else
-                        let! result = Owner.SetName(parameters)
+                            return result |> renderOutput parseResult
+                    | Error error -> return Error error |> renderOutput parseResult
 
-                        match result with
-                        | Ok graceReturnValue ->
-                            // Update the Grace configuration file with the new Owner name.
-                            let newConfig = Current()
-                            newConfig.OwnerName <- graceReturnValue.Properties[setNameParameters.NewName]
-                            updateConfiguration newConfig
-                        | Error _ -> ()
+                with ex ->
+                    return
+                        renderOutput
+                            parseResult
+                            (GraceResult.Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId)))
+            }
 
-                        return result
-                | Error error -> return Error error
-            with ex ->
-                return Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
-        }
+    // SetType subcommand
+    type SetType() =
+        inherit AsynchronousCommandLineAction()
 
-    let private SetName =
-        CommandHandler.Create(fun (parseResult: ParseResult) (setNameParameters: SetNameParameters) ->
+        override this.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
-                let! result = setNameHandler parseResult (setNameParameters |> normalizeIdsAndNames parseResult)
-                return result |> renderOutput parseResult
-            })
+                try
+                    if parseResult |> verbose then printParseResult parseResult
+                    let graceIds = parseResult |> getNormalizedIdsAndNames
+                    let validateIncomingParameters = parseResult |> ownerCommonValidations
 
-    type SetTypeParameters() =
-        inherit CommonParameters()
-        member val public OwnerType: string = String.Empty with get, set
+                    match validateIncomingParameters with
+                    | Ok _ ->
+                        let parameters =
+                            Parameters.Owner.SetOwnerTypeParameters(
+                                OwnerId = graceIds.OwnerIdString,
+                                OwnerName = graceIds.OwnerName,
+                                OwnerType = parseResult.GetValue(Options.ownerTypeRequired),
+                                CorrelationId = getCorrelationId parseResult
+                            )
 
-    let private setTypeHandler (parseResult: ParseResult) (setTypeParameters: SetTypeParameters) =
-        task {
-            try
-                if parseResult |> verbose then printParseResult parseResult
+                        if parseResult |> hasOutput then
+                            let! result =
+                                progress
+                                    .Columns(progressColumns)
+                                    .StartAsync(fun progressContext ->
+                                        task {
+                                            let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
 
-                let validateIncomingParameters = CommonValidations(parseResult, setTypeParameters)
+                                            let! result = Owner.SetType(parameters)
+                                            t0.Increment(100.0)
+                                            return result
+                                        })
 
-                match validateIncomingParameters with
-                | Ok _ ->
-                    let parameters =
-                        Parameters.Owner.SetOwnerTypeParameters(
-                            OwnerId = setTypeParameters.OwnerId,
-                            OwnerName = setTypeParameters.OwnerName,
-                            OwnerType = setTypeParameters.OwnerType,
-                            CorrelationId = setTypeParameters.CorrelationId
-                        )
+                            return result |> renderOutput parseResult
+                        else
+                            let! result = Owner.SetType(parameters)
+                            return result |> renderOutput parseResult
+                    | Error error -> return Error error |> renderOutput parseResult
 
-                    if parseResult |> hasOutput then
-                        return!
-                            progress
-                                .Columns(progressColumns)
-                                .StartAsync(fun progressContext ->
-                                    task {
-                                        let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
+                with ex ->
+                    return
+                        renderOutput
+                            parseResult
+                            (GraceResult.Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId)))
+            }
 
-                                        let! result = Owner.SetType(parameters)
-                                        t0.Increment(100.0)
-                                        return result
-                                    })
-                    else
-                        return! Owner.SetType(parameters)
-                | Error error -> return Error error
-            with ex ->
-                return Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
-        }
+    // SetSearchVisibility subcommand
+    type SetSearchVisibility() =
+        inherit AsynchronousCommandLineAction()
 
-    let private SetType =
-        CommandHandler.Create(fun (parseResult: ParseResult) (setTypeParameters: SetTypeParameters) ->
+        override this.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
-                let! result = setTypeHandler parseResult (setTypeParameters |> normalizeIdsAndNames parseResult)
-                return result |> renderOutput parseResult
-            })
+                try
+                    if parseResult |> verbose then printParseResult parseResult
+                    let graceIds = parseResult |> getNormalizedIdsAndNames
+                    let validateIncomingParameters = parseResult |> ownerCommonValidations
 
-    type SetSearchVisibilityParameters() =
-        inherit CommonParameters()
-        member val public SearchVisibility: string = String.Empty with get, set
+                    match validateIncomingParameters with
+                    | Ok _ ->
+                        let parameters =
+                            Parameters.Owner.SetOwnerSearchVisibilityParameters(
+                                OwnerId = graceIds.OwnerIdString,
+                                OwnerName = graceIds.OwnerName,
+                                SearchVisibility = parseResult.GetValue(Options.searchVisibilityRequired),
+                                CorrelationId = getCorrelationId parseResult
+                            )
 
-    let private searchVisibilityHandler (parseResult: ParseResult) (setSearchVisibilityParameters: SetSearchVisibilityParameters) =
-        task {
-            try
-                if parseResult |> verbose then printParseResult parseResult
+                        if parseResult |> hasOutput then
+                            let! result =
+                                progress
+                                    .Columns(progressColumns)
+                                    .StartAsync(fun progressContext ->
+                                        task {
+                                            let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
 
-                let validateIncomingParameters = CommonValidations(parseResult, setSearchVisibilityParameters)
+                                            let! result = Owner.SetSearchVisibility(parameters)
+                                            t0.Increment(100.0)
+                                            return result
+                                        })
 
-                match validateIncomingParameters with
-                | Ok _ ->
-                    let parameters =
-                        Parameters.Owner.SetOwnerSearchVisibilityParameters(
-                            OwnerId = setSearchVisibilityParameters.OwnerId,
-                            OwnerName = setSearchVisibilityParameters.OwnerName,
-                            SearchVisibility = setSearchVisibilityParameters.SearchVisibility,
-                            CorrelationId = setSearchVisibilityParameters.CorrelationId
-                        )
+                            return result |> renderOutput parseResult
+                        else
+                            let! result = Owner.SetSearchVisibility(parameters)
+                            return result |> renderOutput parseResult
+                    | Error error -> return Error error |> renderOutput parseResult
 
-                    if parseResult |> hasOutput then
-                        return!
-                            progress
-                                .Columns(progressColumns)
-                                .StartAsync(fun progressContext ->
-                                    task {
-                                        let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
+                with ex ->
+                    return
+                        renderOutput
+                            parseResult
+                            (GraceResult.Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId)))
+            }
 
-                                        let! result = Owner.SetSearchVisibility(parameters)
-                                        t0.Increment(100.0)
-                                        return result
-                                    })
-                    else
-                        return! Owner.SetSearchVisibility(parameters)
-                | Error error -> return Error error
-            with ex ->
-                return Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
-        }
+    // SetDescription subcommand
+    type SetDescription() =
+        inherit AsynchronousCommandLineAction()
 
-    let private SetSearchVisibility =
-        CommandHandler.Create(fun (parseResult: ParseResult) (setSearchVisibilityParameters: SetSearchVisibilityParameters) ->
+        override this.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
-                let! result = searchVisibilityHandler parseResult (setSearchVisibilityParameters |> normalizeIdsAndNames parseResult)
+                try
+                    if parseResult |> verbose then printParseResult parseResult
+                    let graceIds = parseResult |> getNormalizedIdsAndNames
+                    let validateIncomingParameters = parseResult |> ownerCommonValidations
 
-                return result |> renderOutput parseResult
-            })
+                    match validateIncomingParameters with
+                    | Ok _ ->
+                        let parameters =
+                            Parameters.Owner.SetOwnerDescriptionParameters(
+                                OwnerId = graceIds.OwnerIdString,
+                                OwnerName = graceIds.OwnerName,
+                                Description = parseResult.GetValue(Options.descriptionRequired),
+                                CorrelationId = getCorrelationId parseResult
+                            )
 
-    type SetDescriptionParameters() =
-        inherit CommonParameters()
-        member val public Description: string = String.Empty with get, set
+                        if parseResult |> hasOutput then
+                            let! result =
+                                progress
+                                    .Columns(progressColumns)
+                                    .StartAsync(fun progressContext ->
+                                        task {
+                                            let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
 
-    let private descriptionHandler (parseResult: ParseResult) (setDescriptionParameters: SetDescriptionParameters) =
-        task {
-            try
-                if parseResult |> verbose then printParseResult parseResult
+                                            let! result = Owner.SetDescription(parameters)
+                                            t0.Increment(100.0)
+                                            return result
+                                        })
 
-                let validateIncomingParameters = CommonValidations(parseResult, setDescriptionParameters)
+                            return result |> renderOutput parseResult
+                        else
+                            let! result = Owner.SetDescription(parameters)
+                            return result |> renderOutput parseResult
+                    | Error error -> return Error error |> renderOutput parseResult
 
-                match validateIncomingParameters with
-                | Ok _ ->
-                    let parameters =
-                        Parameters.Owner.SetOwnerDescriptionParameters(
-                            OwnerId = setDescriptionParameters.OwnerId,
-                            OwnerName = setDescriptionParameters.OwnerName,
-                            Description = setDescriptionParameters.Description,
-                            CorrelationId = setDescriptionParameters.CorrelationId
-                        )
+                with ex ->
+                    return
+                        renderOutput
+                            parseResult
+                            (GraceResult.Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId)))
+            }
 
-                    if parseResult |> hasOutput then
-                        return!
-                            progress
-                                .Columns(progressColumns)
-                                .StartAsync(fun progressContext ->
-                                    task {
-                                        let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
+    // Delete subcommand
+    type Delete() =
+        inherit AsynchronousCommandLineAction()
 
-                                        let! result = Owner.SetDescription(parameters)
-                                        t0.Increment(100.0)
-                                        return result
-                                    })
-                    else
-                        return! Owner.SetDescription(parameters)
-                | Error error -> return Error error
-            with ex ->
-                return Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
-        }
-
-    let private SetDescription =
-        CommandHandler.Create(fun (parseResult: ParseResult) (setDescriptionParameters: SetDescriptionParameters) ->
+        override this.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
-                let! result = descriptionHandler parseResult (setDescriptionParameters |> normalizeIdsAndNames parseResult)
+                try
+                    if parseResult |> verbose then printParseResult parseResult
+                    let graceIds = parseResult |> getNormalizedIdsAndNames
+                    let validateIncomingParameters = parseResult |> ownerCommonValidations
 
-                return result |> renderOutput parseResult
-            })
+                    match validateIncomingParameters with
+                    | Ok _ ->
+                        let parameters =
+                            Parameters.Owner.DeleteOwnerParameters(
+                                OwnerId = graceIds.OwnerIdString,
+                                OwnerName = graceIds.OwnerName,
+                                Force = parseResult.GetValue(Options.force),
+                                DeleteReason = parseResult.GetValue(Options.deleteReason),
+                                CorrelationId = getCorrelationId parseResult
+                            )
 
-    type DeleteParameters() =
-        inherit CommonParameters()
-        member val public Force: bool = false with get, set
-        member val public DeleteReason: DeleteReason = String.Empty with get, set
+                        if parseResult |> hasOutput then
+                            let! result =
+                                progress
+                                    .Columns(progressColumns)
+                                    .StartAsync(fun progressContext ->
+                                        task {
+                                            let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
 
-    let private deleteHandler (parseResult: ParseResult) (deleteParameters: DeleteParameters) =
-        task {
-            try
-                if parseResult |> verbose then printParseResult parseResult
+                                            let! result = Owner.Delete(parameters)
+                                            t0.Increment(100.0)
+                                            return result
+                                        })
 
-                let validateIncomingParameters = CommonValidations(parseResult, deleteParameters)
+                            return result |> renderOutput parseResult
+                        else
+                            let! result = Owner.Delete(parameters)
+                            return result |> renderOutput parseResult
+                    | Error error -> return Error error |> renderOutput parseResult
 
-                match validateIncomingParameters with
-                | Ok _ ->
-                    let parameters =
-                        Parameters.Owner.DeleteOwnerParameters(
-                            OwnerId = deleteParameters.OwnerId,
-                            OwnerName = deleteParameters.OwnerName,
-                            Force = deleteParameters.Force,
-                            DeleteReason = deleteParameters.DeleteReason,
-                            CorrelationId = deleteParameters.CorrelationId
-                        )
+                with ex ->
+                    return
+                        renderOutput
+                            parseResult
+                            (GraceResult.Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId)))
+            }
 
-                    if parseResult |> hasOutput then
-                        return!
-                            progress
-                                .Columns(progressColumns)
-                                .StartAsync(fun progressContext ->
-                                    task {
-                                        let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
+    // Undelete subcommand
+    type Undelete() =
+        inherit AsynchronousCommandLineAction()
 
-                                        let! result = Owner.Delete(parameters)
-                                        t0.Increment(100.0)
-                                        return result
-                                    })
-                    else
-                        return! Owner.Delete(parameters)
-                | Error error -> return Error error
-            with ex ->
-                return Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
-        }
-
-    let private Delete =
-        CommandHandler.Create(fun (parseResult: ParseResult) (deleteParameters: DeleteParameters) ->
+        override this.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
-                let! result = deleteHandler parseResult (deleteParameters |> normalizeIdsAndNames parseResult)
-                return result |> renderOutput parseResult
-            })
+                try
+                    if parseResult |> verbose then printParseResult parseResult
+                    let graceIds = parseResult |> getNormalizedIdsAndNames
+                    let validateIncomingParameters = parseResult |> ownerCommonValidations
 
-    type UndeleteParameters() =
-        inherit CommonParameters()
+                    match validateIncomingParameters with
+                    | Ok _ ->
+                        let parameters =
+                            Parameters.Owner.UndeleteOwnerParameters(
+                                OwnerId = graceIds.OwnerIdString,
+                                OwnerName = graceIds.OwnerName,
+                                CorrelationId = getCorrelationId parseResult
+                            )
 
-    let private undeleteHandler (parseResult: ParseResult) (undeleteParameters: UndeleteParameters) =
-        task {
-            try
-                if parseResult |> verbose then printParseResult parseResult
+                        if parseResult |> hasOutput then
+                            let! result =
+                                progress
+                                    .Columns(progressColumns)
+                                    .StartAsync(fun progressContext ->
+                                        task {
+                                            let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
 
-                let validateIncomingParameters = CommonValidations(parseResult, undeleteParameters)
+                                            let! result = Owner.Undelete(parameters)
+                                            t0.Increment(100.0)
+                                            return result
+                                        })
 
-                match validateIncomingParameters with
-                | Ok _ ->
-                    let parameters =
-                        Parameters.Owner.UndeleteOwnerParameters(
-                            OwnerId = undeleteParameters.OwnerId,
-                            OwnerName = undeleteParameters.OwnerName,
-                            CorrelationId = undeleteParameters.CorrelationId
-                        )
+                            return result |> renderOutput parseResult
+                        else
+                            let! result = Owner.Undelete(parameters)
+                            return result |> renderOutput parseResult
+                    | Error error -> return Error error |> renderOutput parseResult
 
-                    if parseResult |> hasOutput then
-                        return!
-                            progress
-                                .Columns(progressColumns)
-                                .StartAsync(fun progressContext ->
-                                    task {
-                                        let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
-
-                                        let! result = Owner.Undelete(parameters)
-                                        t0.Increment(100.0)
-                                        return result
-                                    })
-                    else
-                        return! Owner.Undelete(parameters)
-                | Error error -> return Error error
-            with ex ->
-                return Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
-        }
-
-    let private Undelete =
-        CommandHandler.Create(fun (parseResult: ParseResult) (undeleteParameters: UndeleteParameters) ->
-            task {
-                let! result = undeleteHandler parseResult (undeleteParameters |> normalizeIdsAndNames parseResult)
-                return result |> renderOutput parseResult
-            })
+                with ex ->
+                    return
+                        renderOutput
+                            parseResult
+                            (GraceResult.Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId)))
+            }
 
     let Build =
         let addCommonOptions (command: Command) = command |> addOption Options.ownerName |> addOption Options.ownerId
@@ -574,48 +542,48 @@ module Owner =
             |> addOption Options.ownerId
             |> addOption Options.doNotSwitch
 
-        ownerCreateCommand.Handler <- Create
-        ownerCommand.AddCommand(ownerCreateCommand)
+        ownerCreateCommand.Action <- new Create()
+        ownerCommand.Subcommands.Add(ownerCreateCommand)
 
         let getCommand =
             new Command("get", Description = "Gets details for the owner.")
             |> addOption Options.includeDeleted
             |> addCommonOptions
 
-        getCommand.Handler <- Get
-        ownerCommand.AddCommand(getCommand)
+        getCommand.Action <- new Get()
+        ownerCommand.Subcommands.Add(getCommand)
 
         let setNameCommand =
             new Command("set-name", Description = "Change the name of the owner.")
             |> addOption Options.newName
             |> addCommonOptions
 
-        setNameCommand.Handler <- SetName
-        ownerCommand.AddCommand(setNameCommand)
+        setNameCommand.Action <- new SetName()
+        ownerCommand.Subcommands.Add(setNameCommand)
 
         let setTypeCommand =
             new Command("set-type", Description = "Change the type of the owner.")
             |> addOption Options.ownerTypeRequired
             |> addCommonOptions
 
-        setTypeCommand.Handler <- SetType
-        ownerCommand.AddCommand(setTypeCommand)
+        setTypeCommand.Action <- new SetType()
+        ownerCommand.Subcommands.Add(setTypeCommand)
 
         let setSearchVisibilityCommand =
             new Command("set-search-visibility", Description = "Change the search visibility of the owner.")
             |> addOption Options.searchVisibilityRequired
             |> addCommonOptions
 
-        setSearchVisibilityCommand.Handler <- SetSearchVisibility
-        ownerCommand.AddCommand(setSearchVisibilityCommand)
+        setSearchVisibilityCommand.Action <- new SetSearchVisibility()
+        ownerCommand.Subcommands.Add(setSearchVisibilityCommand)
 
         let setDescriptionCommand =
             new Command("set-description", Description = "Change the description of the owner.")
             |> addOption Options.descriptionRequired
             |> addCommonOptions
 
-        setDescriptionCommand.Handler <- SetDescription
-        ownerCommand.AddCommand(setDescriptionCommand)
+        setDescriptionCommand.Action <- new SetDescription()
+        ownerCommand.Subcommands.Add(setDescriptionCommand)
 
         let deleteCommand =
             new Command("delete", Description = "Delete the owner.")
@@ -623,14 +591,14 @@ module Owner =
             |> addOption Options.deleteReason
             |> addCommonOptions
 
-        deleteCommand.Handler <- Delete
-        ownerCommand.AddCommand(deleteCommand)
+        deleteCommand.Action <- new Delete()
+        ownerCommand.Subcommands.Add(deleteCommand)
 
         let undeleteCommand =
             new Command("undelete", Description = "Undelete a deleted owner.")
             |> addCommonOptions
 
-        undeleteCommand.Handler <- Undelete
-        ownerCommand.AddCommand(undeleteCommand)
+        undeleteCommand.Action <- new Undelete()
+        ownerCommand.Subcommands.Add(undeleteCommand)
 
         ownerCommand

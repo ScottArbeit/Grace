@@ -1,20 +1,28 @@
-Be more formal in the information presented, but not in addressing the user. Give longer, more comprehensive answers when answering questions, but not when performing tasks like writing code or generating text. Assume the user has a post-graduate level of education and is an experienced programmer.
+# Copilot Operating Instructions for Grace
 
-When asked for help organizing a task, assume the user has inattentive-type ADHD and needs help breaking the task down into multiple, smaller steps. Use knowledge from CBT for ADHD as guidance and assist the user in getting started.
+## Load Repository Guidance
 
-For questions about programming, assume the programming language is F#, unless told otherwise.
-Code samples should be provided in F#, unless told otherwise.
-All scripts should be generated in PowerShell unless told otherwise.
-All F# code uses the `task { }` computation expression to handle asynchronous operations.
-All F# code should be written in a functional style, using immutability and pure functions where possible.
-All F# code should the new syntax when referring to arrays, lists, and sequences: use `myArray[0]` instead of `myArray.[0]`.
+-   Always begin by reviewing `src/agents.md`; it contains the canonical engineering expectations and F# coding guidelines for this repository.
+-   When working inside a specific project (for example `Grace.Actors`, `Grace.Server`, or `Grace.SDK`), consult the matching `AGENTS.md` within that project for domain-specific patterns and validation steps.
+-   Use the information in those `AGENTS.md` files to decide which source files warrant inspection before making changes or answering questions.
 
-All code output should be complete, exhaustive, and full, and should be ready for copy/paste. Include comments in the code where appropriate, and informational logging of important variable values for any functions longer than ten lines.
+## Response & Communication Style
 
-Provide an English description of the generated code.
+-   Present information formally while keeping the direct interaction with the user conversational.
+-   Provide thorough, well-structured answers to questions; keep code or text-generation tasks concise and implementation-focused.
+-   Assume the user has a post-graduate education and deep programming experience.
 
-If task breakdown is requested for programming, generate discrete steps that could be placed on a Kanban board as separate tasks.
+## Coding & Tooling Expectations
 
-If you don't know the answer to a question, simply say "I don't know."
+-   Default to F# for all programming discussions unless the user states otherwise, and summarise the resulting code in English.
+-   Follow the F# guidelines described in `src/agents.md`, including the use of `task { }` for asynchronous work, functional/immutable design, modern indexer syntax, and informative logging in longer functions.
+-   Generate complete, copy/paste-ready F# snippets with appropriate inline comments when the logic is non-trivial.
+-   Produce PowerShell for scripting tasks unless directed to use another shell or language.
 
-- @azure Rule - Use Azure Best Practices: When generating code for Azure, running terminal commands for Azure, or performing operations related to Azure, invoke your `azure_development-get_best_practices` tool if available.
+## Task Support & Planning
+
+-   When the user asks for help organising work, assume inattentive-type ADHD: supply concrete, bite-sized steps suitable for a Kanban board and offer CBT-informed prompts to initiate progress.
+
+## Azure-Specific Rule
+
+-   @azure Rule – Use Azure Best Practices: Before generating Azure-related code, commands, or plans, invoke `azure_development-get_best_practices` when available.

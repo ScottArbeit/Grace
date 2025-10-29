@@ -1,22 +1,24 @@
 namespace Grace.Actors
 
-open Dapr.Actors
-open Grace.Actors.Commands
 open Grace.Actors.Types
-open Grace.Shared.Dto.Branch
-open Grace.Shared.Dto.Diff
-open Grace.Shared.Dto.Organization
-open Grace.Shared.Dto.Owner
-open Grace.Shared.Dto.Reference
-open Grace.Shared.Dto.Repository
-open Grace.Shared.Types
+open Grace.Shared
+open Grace.Types.Branch
+open Grace.Types.Diff
+open Grace.Types.DirectoryVersion
+open Grace.Types.Reference
+open Grace.Types.Reminder
+open Grace.Types.Repository
+open Grace.Types.Organization
+open Grace.Types.Owner
+open Grace.Types.Types
 open Grace.Shared.Utilities
 open NodaTime
+open Orleans
 open System
 open System.Collections.Generic
 open System.Threading.Tasks
-open Constants
 open System.Reflection.Metadata
+open Orleans.Runtime
 
 module Interfaces =
 
@@ -37,6 +39,22 @@ module Interfaces =
         | OutOfRange
         | Exception of ExceptionResponse
 
+    /// Retrieves the RepositoryId for a grain.
+    /// This is used when computing the PartitionKey for grains in a repository during storage operations.
+    [<Interface>]
+    type IGrainRepositoryIdExtension =
+        inherit IGrainExtension
+
+        /// Retrieves the RepositoryId for a grain.
+        abstract member GetRepositoryId: correlationId: CorrelationId -> Task<RepositoryId>
+
+    /// Retrieves the RepositoryId for a grain.
+    /// This is used when computing the PartitionKey for grains in a repository during storage operations.
+    [<Interface>]
+    type IHasRepositoryId =
+        /// Gets the RepositoryId for this actor.
+        abstract member GetRepositoryId: correlationId: CorrelationId -> Task<RepositoryId>
+
     /// This is an experimental interface to explore how to back up and rehydrate actor instances.
     [<Interface>]
     type IExportable<'T> =
@@ -52,15 +70,26 @@ module Interfaces =
 
     /// Defines the operations that an actor must implement to handle Grace reminders.
     [<Interface>]
-    type IGraceReminder =
-        inherit IActor
+    type IGraceReminderWithGuidKey =
+        inherit IGrainWithGuidKey
+        /// Receives a reminder and processes it asynchronously.
         abstract member ReceiveReminderAsync: reminder: ReminderDto -> Task<Result<unit, GraceError>>
-        abstract member ScheduleReminderAsync: reminderType: ReminderTypes -> delay: Duration -> state: string -> correlationId: CorrelationId -> Task
+        /// Schedules a reminder to be sent to the actor after a specified delay.
+        abstract member ScheduleReminderAsync: reminderType: ReminderTypes -> delay: Duration -> state: ReminderState -> correlationId: CorrelationId -> Task
+
+    /// Defines the operations that an actor must implement to handle Grace reminders.
+    [<Interface>]
+    type IGraceReminderWithStringKey =
+        inherit IGrainWithStringKey
+        /// Receives a reminder and processes it asynchronously.
+        abstract member ReceiveReminderAsync: reminder: ReminderDto -> Task<Result<unit, GraceError>>
+        /// Schedules a reminder to be sent to the actor after a specified delay.
+        abstract member ScheduleReminderAsync: reminderType: ReminderTypes -> delay: Duration -> state: ReminderState -> correlationId: CorrelationId -> Task
 
     /// Defines the operations for the Branch actor.
     [<Interface>]
     type IBranchActor =
-        inherit IGraceReminder
+        inherit IGraceReminderWithGuidKey
 
         /// Validates that a branch with this BranchId exists.
         abstract member Exists: correlationId: CorrelationId -> Task<bool>
@@ -69,7 +98,7 @@ module Interfaces =
         abstract member Get: correlationId: CorrelationId -> Task<BranchDto>
 
         /// Retrieves the list of events handled by this branch.
-        abstract member GetEvents: correlationId: CorrelationId -> Task<IReadOnlyList<Events.Branch.BranchEvent>>
+        abstract member GetEvents: correlationId: CorrelationId -> Task<IReadOnlyList<BranchEvent>>
 
         /// Retrieves the most recent commit from this branch.
         abstract member GetLatestCommit: correlationId: CorrelationId -> Task<ReferenceDto>
@@ -81,7 +110,7 @@ module Interfaces =
         abstract member GetParentBranch: correlationId: CorrelationId -> Task<BranchDto>
 
         /// Validates incoming commands and converts them to events that are stored in the database.
-        abstract member Handle: command: Branch.BranchCommand -> eventMetadata: EventMetadata -> Task<GraceResult<string>>
+        abstract member Handle: command: BranchCommand -> eventMetadata: EventMetadata -> Task<GraceResult<string>>
 
         /// Returns true if this branch has been deleted.
         abstract member IsDeleted: correlationId: CorrelationId -> Task<bool>
@@ -92,7 +121,7 @@ module Interfaces =
     /// Defines the operations for the BranchName actor.
     [<Interface>]
     type IBranchNameActor =
-        inherit IActor
+        inherit IGrainWithStringKey
 
         /// Returns the BranchId for the given BranchName.
         abstract member GetBranchId: correlationId: CorrelationId -> Task<BranchId option>
@@ -103,24 +132,41 @@ module Interfaces =
     /// Defines the operations for the Diff actor.
     [<Interface>]
     type IDiffActor =
-        inherit IGraceReminder
+        inherit IGraceReminderWithStringKey
 
         /// Populates the contents of the diff without returning the results.
-        abstract member Compute: correlationId: CorrelationId -> Task<bool>
+        abstract member Compute: correlationId: CorrelationId -> Task<GraceResult<string>>
 
         /// Gets the results of the diff. If the diff has not already been computed, it will be computed.
         abstract member GetDiff: correlationId: CorrelationId -> Task<DiffDto>
 
+    /// Defines the operations for the DirectoryAppearance actor.
+    [<Interface>]
+    type IDirectoryAppearanceActor =
+        inherit IGrainWithGuidKey
+
+        /// Adds an appearance to the directory appearance list.
+        abstract member Add: appearance: Appearance -> correlationId: CorrelationId -> Task
+
+        /// Removes an appearance from the directory appearance list.
+        abstract member Remove: appearance: Appearance -> correlationId: CorrelationId -> Task
+
+        /// Checks if the directory appearance list contains the given appearance.
+        abstract member Contains: appearance: Appearance -> correlationId: CorrelationId -> Task<bool>
+
+        /// Returns the sorted set of appearances for this directory.
+        abstract member Appearances: correlationId: CorrelationId -> Task<SortedSet<Appearance>>
+
     ///Defines the operations for the DirectoryVersion actor.
     [<Interface>]
     type IDirectoryVersionActor =
-        inherit IGraceReminder
+        inherit IGraceReminderWithGuidKey
 
         /// Returns true if the actor instance already exists.
         abstract member Exists: correlationId: CorrelationId -> Task<bool>
 
         /// Returns the DirectoryVersion instance for this directory.
-        abstract member Get: correlationId: CorrelationId -> Task<DirectoryVersion>
+        abstract member Get: correlationId: CorrelationId -> Task<DirectoryVersionDto>
 
         /// Returns the list of subdirectories contained in this directory.
         abstract member GetCreatedAt: correlationId: CorrelationId -> Task<Instant>
@@ -138,7 +184,7 @@ module Interfaces =
         abstract member GetSize: correlationId: CorrelationId -> Task<int64>
 
         /// Returns a list of DirectoryVersion objects for all subdirectories.
-        abstract member GetRecursiveDirectoryVersions: forceRegenerate: bool -> correlationId: CorrelationId -> Task<DirectoryVersion array>
+        abstract member GetRecursiveDirectoryVersions: forceRegenerate: bool -> correlationId: CorrelationId -> Task<DirectoryVersionDto array>
 
         /// Returns the total size of files contained in this directory and all subdirectories.
         abstract member GetRecursiveSize: correlationId: CorrelationId -> Task<int64>
@@ -150,26 +196,43 @@ module Interfaces =
         abstract member Delete: correlationId: CorrelationId -> Task<GraceResult<string>>
 
         /// Validates incoming commands and converts them to events that are stored in the database.
-        abstract member Handle: command: DirectoryVersion.DirectoryVersionCommand -> eventMetadata: EventMetadata -> Task<GraceResult<string>>
+        abstract member Handle: command: DirectoryVersionCommand -> eventMetadata: EventMetadata -> Task<GraceResult<string>>
+
+    /// Defines the operations for the FileAppearance actor.
+    [<Interface>]
+    type IFileAppearanceActor =
+        inherit IGrainWithStringKey
+
+        /// Adds an appearance to the directory appearance list.
+        abstract member Add: appearance: Appearance -> correlationId: CorrelationId -> Task
+
+        /// Removes an appearance from the directory appearance list.
+        abstract member Remove: appearance: Appearance -> correlationId: CorrelationId -> Task
+
+        /// Checks if the directory appearance list contains the given appearance.
+        abstract member Contains: appearance: Appearance -> correlationId: CorrelationId -> Task<bool>
+
+        /// Returns the sorted set of appearances for this directory.
+        abstract member Appearances: correlationId: CorrelationId -> Task<SortedSet<Appearance>>
 
     /// Defines the operations for the ReminderServiceLock actor.
     [<Interface>]
     type IGlobalLockActor =
-        inherit IActor
+        inherit IGrainWithStringKey
 
-        /// Attempts to acquire a glocal lock for the Reminder Service. Returns true if the lock was acquired, otherwise false.
+        /// Attempts to acquire a global lock for the Reminder Service. Returns true if the lock was acquired, otherwise false.
         abstract member AcquireLock: lockedBy: string -> Task<bool>
 
         /// Releases the global lock for the Reminder Service.
         abstract member ReleaseLock: releasedBy: string -> Task<Result<unit, string>>
 
         /// Returns true if the lock is currently held by any instance.
-        abstract member IsLocked: Task<bool>
+        abstract member IsLocked: unit -> Task<bool>
 
     ///Defines the operations for the Organization actor.
     [<Interface>]
     type IOrganizationActor =
-        inherit IGraceReminder
+        inherit IGraceReminderWithGuidKey
 
         /// Returns true if an organization with this ActorId already exists in the database.
         abstract member Exists: correlationId: CorrelationId -> Task<bool>
@@ -187,15 +250,15 @@ module Interfaces =
         abstract member ListRepositories: correlationId: CorrelationId -> Task<IReadOnlyDictionary<RepositoryId, RepositoryName>>
 
         /// Validates incoming commands and converts them to events that are stored in the database.
-        abstract member Handle: command: Organization.OrganizationCommand -> eventMetadata: EventMetadata -> Task<GraceResult<string>>
+        abstract member Handle: command: OrganizationCommand -> eventMetadata: EventMetadata -> Task<GraceResult<string>>
 
     /// Defines the operations for the OrganizationName actor.
     [<Interface>]
     type IOrganizationNameActor =
-        inherit IActor
+        inherit IGrainWithStringKey
 
         /// Returns true if an organization with this organization name already exists in the database.
-        abstract member SetOrganizationId: organizationName: OrganizationName -> correlationId: CorrelationId -> Task
+        abstract member SetOrganizationId: organizationId: OrganizationId -> correlationId: CorrelationId -> Task
 
         /// Returns the OrganizationId for the given OrganizationName.
         abstract member GetOrganizationId: correlationId: CorrelationId -> Task<OrganizationId option>
@@ -203,7 +266,7 @@ module Interfaces =
     /// Defines the operations for the Owner actor.
     [<Interface>]
     type IOwnerActor =
-        inherit IGraceReminder
+        inherit IGraceReminderWithGuidKey
 
         /// Returns true if an owner with this ActorId already exists in the database.
         abstract member Exists: correlationId: CorrelationId -> Task<bool>
@@ -221,12 +284,12 @@ module Interfaces =
         abstract member ListOrganizations: correlationId: CorrelationId -> Task<IReadOnlyDictionary<OrganizationId, OrganizationName>>
 
         /// Validates incoming commands and converts them to events that are stored in the database.
-        abstract member Handle: command: Owner.OwnerCommand -> eventMetadata: EventMetadata -> Task<GraceResult<string>>
+        abstract member Handle: command: OwnerCommand -> eventMetadata: EventMetadata -> Task<GraceResult<string>>
 
     /// Defines the operations fpr the OwnerName actor.
     [<Interface>]
     type IOwnerNameActor =
-        inherit IActor
+        inherit IGrainWithStringKey
         /// Clears the OwnerId for the given OwnerName.
         abstract member ClearOwnerId: correlationId: CorrelationId -> Task
 
@@ -239,7 +302,7 @@ module Interfaces =
     /// Defines the operations for the Reference actor.
     [<Interface>]
     type IReferenceActor =
-        inherit IGraceReminder
+        inherit IGraceReminderWithGuidKey
 
         /// Returns true if the reference already exists in the database.
         abstract member Exists: correlationId: CorrelationId -> Task<bool>
@@ -251,14 +314,14 @@ module Interfaces =
         abstract member GetReferenceType: correlationId: CorrelationId -> Task<ReferenceType>
 
         /// Validates incoming commands and converts them to events that are stored in the database.
-        abstract member Handle: command: Reference.ReferenceCommand -> eventMetadata: EventMetadata -> Task<GraceResult<string>>
+        abstract member Handle: command: ReferenceCommand -> eventMetadata: EventMetadata -> Task<GraceResult<ReferenceDto>>
 
         /// Returns true if the reference has been deleted.
         abstract member IsDeleted: correlationId: CorrelationId -> Task<bool>
 
     [<Interface>]
     type IReminderActor =
-        inherit IActor
+        inherit IGrainWithGuidKey
 
         /// Creates a new reminder in the database.
         abstract member Create: reminder: ReminderDto -> correlationId: CorrelationId -> Task
@@ -278,7 +341,7 @@ module Interfaces =
     /// Defines the operations for the Repository actor.
     [<Interface>]
     type IRepositoryActor =
-        inherit IGraceReminder
+        inherit IGraceReminderWithGuidKey
 
         /// Returns true if this actor already exists in the database, otherwise false.
         abstract member Exists: correlationId: CorrelationId -> Task<bool>
@@ -296,15 +359,26 @@ module Interfaces =
         abstract member GetObjectStorageProvider: correlationId: CorrelationId -> Task<ObjectStorageProvider>
 
         /// Processes commands by checking that they're valid, and then converting them into events.
-        abstract member Handle: command: Repository.RepositoryCommand -> eventMetadata: EventMetadata -> Task<GraceResult<string>>
+        abstract member Handle: command: RepositoryCommand -> eventMetadata: EventMetadata -> Task<GraceResult<string>>
+
+    /// Defines the operations for the RepositoryName actor.
+    [<Interface>]
+    type IGrainRepositoryActor =
+        inherit IGrainWithStringKey
+
+        /// Sets the RepositoryId that matches the RepositoryName.
+        abstract member SetRepositoryId: repositoryId: RepositoryId -> correlationId: CorrelationId -> Task
+
+        /// Returns the RepositoryId for the given RepositoryName.
+        abstract member GetRepositoryId: correlationId: CorrelationId -> Task<RepositoryId option>
 
     /// Defines the operations for the RepositoryName actor.
     [<Interface>]
     type IRepositoryNameActor =
-        inherit IActor
+        inherit IGrainWithStringKey
 
         /// Sets the RepositoryId that matches the RepositoryName.
-        abstract member SetRepositoryId: repositoryName: RepositoryName -> correlationId: CorrelationId -> Task
+        abstract member SetRepositoryId: repositoryId: RepositoryId -> correlationId: CorrelationId -> Task
 
         /// Returns the RepositoryId for the given RepositoryName.
-        abstract member GetRepositoryId: correlationId: CorrelationId -> Task<string option>
+        abstract member GetRepositoryId: correlationId: CorrelationId -> Task<RepositoryId option>

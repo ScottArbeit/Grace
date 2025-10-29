@@ -3,13 +3,8 @@ namespace Grace.Actors
 open Azure.Storage.Blobs
 open Azure.Storage.Blobs.Models
 open Azure.Storage.Blobs.Specialized
-open Dapr.Actors
-open Dapr.Actors.Client
-open Dapr.Actors.Runtime
-open Grace.Actors.Commands.DirectoryVersion
 open Grace.Actors.Constants
 open Grace.Actors.Context
-open Grace.Actors.Events.DirectoryVersion
 open Grace.Actors.Extensions.ActorProxy
 open Grace.Actors.Extensions.MemoryCache
 open Grace.Actors.Interfaces
@@ -18,12 +13,17 @@ open Grace.Actors.Types
 open Grace.Shared
 open Grace.Shared.Constants
 open Grace.Shared.Services
-open Grace.Shared.Types
-open Grace.Shared.Dto.Repository
 open Grace.Shared.Utilities
-open Grace.Shared.Validation.Errors.DirectoryVersion
+open Grace.Shared.Validation.Errors
+open Grace.Types.Events
+open Grace.Types.Reminder
+open Grace.Types.Repository
+open Grace.Types.DirectoryVersion
+open Grace.Types.Types
 open Microsoft.Extensions.Logging
 open NodaTime
+open Orleans
+open Orleans.Runtime
 open System
 open System.Collections.Concurrent
 open System.Collections.Generic
@@ -33,157 +33,55 @@ open System.IO.Compression
 open System.Linq
 open System.Threading.Tasks
 open System.Reflection.Metadata
+open MessagePack
 
 module DirectoryVersion =
 
-    /// The data types stored in physical deletion reminders.
-    type PhysicalDeletionReminderState = DeleteReason * CorrelationId
-    type DeleteCachedStateReminderState = unit
-
-    let GetActorId (directoryId: DirectoryVersionId) = ActorId($"{directoryId}")
-    let log = loggerFactory.CreateLogger("DirectoryVersion.Actor")
-
-    type DirectoryVersionDto =
-        { DirectoryVersion: DirectoryVersion
-          RecursiveSize: int64
-          DeletedAt: Instant option
-          DeleteReason: DeleteReason }
-
-        static member Default =
-            { DirectoryVersion = DirectoryVersion.Default; RecursiveSize = Constants.InitialDirectorySize; DeletedAt = None; DeleteReason = String.Empty }
-
-    type DirectoryVersionActor(host: ActorHost) =
-        inherit Actor(host)
+    type DirectoryVersionActor
+        ([<PersistentState(StateName.DirectoryVersion, Constants.GraceActorStorage)>] state: IPersistentState<List<DirectoryVersionEvent>>) =
+        inherit Grain()
 
         static let actorName = ActorName.DirectoryVersion
-        static let eventsStateName = StateName.DirectoryVersion
-        static let directoryVersionCacheStateName = StateName.DirectoryVersionCache
 
-        let directoryVersionEvents = List<DirectoryVersionEvent>()
+        let log = loggerFactory.CreateLogger("DirectoryVersion.Actor")
 
         let mutable directoryVersionDto = DirectoryVersionDto.Default
-        let mutable actorStartTime = Instant.MinValue
-        let mutable logScope: IDisposable = null
         let mutable currentCommand = String.Empty
-        let mutable stateManager = Unchecked.defaultof<IActorStateManager>
 
-        /// Indicates that the actor is in an undefined state, and should be reset.
-        let mutable isDisposed = false
-
-        let updateDto directoryVersionEvent currentDirectoryVersionDto =
-            match directoryVersionEvent with
-            | Created directoryVersion -> { currentDirectoryVersionDto with DirectoryVersion = directoryVersion }
-            | RecursiveSizeSet recursiveSize -> { currentDirectoryVersionDto with RecursiveSize = recursiveSize }
-            | LogicalDeleted deleteReason -> { currentDirectoryVersionDto with DeletedAt = Some(getCurrentInstant ()); DeleteReason = deleteReason }
-            | PhysicalDeleted -> currentDirectoryVersionDto // Do nothing because it's about to be deleted anyway.
-            | Undeleted -> { currentDirectoryVersionDto with DeletedAt = None; DeleteReason = String.Empty }
+        let recursiveDirectoryVersionsCacheFileName directoryVersionId = $"{directoryVersionId}.msgpack"
 
         member val private correlationId: CorrelationId = String.Empty with get, set
 
-        override this.OnActivateAsync() =
+        override this.OnActivateAsync(ct) =
             let activateStartTime = getCurrentInstant ()
-            stateManager <- this.StateManager
 
-            task {
-                let correlationId =
-                    match memoryCache.GetCorrelationIdEntry this.Id with
-                    | Some correlationId -> correlationId
-                    | None -> String.Empty
+            // Apply the events to build the current Dto.
+            directoryVersionDto <-
+                state.State
+                |> Seq.fold
+                    (fun directoryVersionDto directoryVersionEvent -> directoryVersionDto |> DirectoryVersionDto.UpdateDto directoryVersionEvent)
+                    DirectoryVersionDto.Default
 
-                try
-                    let! retrievedEvents = Storage.RetrieveState<List<DirectoryVersionEvent>> stateManager eventsStateName correlationId
-
-                    match retrievedEvents with
-                    | Some retrievedEvents ->
-                        // Load the existing events into memory.
-                        directoryVersionEvents.AddRange(retrievedEvents)
-
-                        // Apply the events to build the current Dto.
-                        directoryVersionDto <-
-                            retrievedEvents
-                            |> Seq.fold
-                                (fun directoryVersionDto directoryVersionEvent -> directoryVersionDto |> updateDto directoryVersionEvent.Event)
-                                DirectoryVersionDto.Default
-
-                        logToConsole
-                            $"In DirectoryVersionActor.OnActivateAsync: directoryVersion.DirectoryVersionId: {directoryVersionDto.DirectoryVersion.DirectoryVersionId}; directoryVersion.RelativePath: {directoryVersionDto.DirectoryVersion.RelativePath}."
-                    | None -> ()
-
-                    logActorActivation log activateStartTime correlationId actorName this.Id (getActorActivationMessage retrievedEvents)
-                with ex ->
-                    let exc = ExceptionResponse.Create ex
-                    log.LogError("{CurrentInstant} Error activating {ActorType} {ActorId}.", getCurrentInstantExtended (), this.GetType().Name, host.Id)
-                    log.LogError("{CurrentInstant} {ExceptionDetails}", getCurrentInstantExtended (), exc.ToString())
-                    logActorActivation log activateStartTime correlationId actorName this.Id "Exception occurred during activation."
-            }
-            :> Task
-
-        override this.OnPreActorMethodAsync(context) =
-            this.correlationId <- String.Empty
-
-            if context.CallType = ActorCallType.ReminderMethod then
-                log.LogInformation(
-                    "{CurrentInstant}: Reminder {ActorName}.{MethodName} Id: {Id}.",
-                    getCurrentInstantExtended (),
-                    actorName,
-                    context.MethodName,
-                    this.Id
-                )
-
-            actorStartTime <- getCurrentInstant ()
-            currentCommand <- String.Empty
-            logScope <- log.BeginScope("Actor {actorName}", actorName)
-
-            log.LogTrace("{CurrentInstant}: Started {ActorName}.{MethodName} Id: {Id}.", getCurrentInstantExtended (), actorName, context.MethodName, this.Id)
-
-            // This checks if the actor is still active, but in an undefined state, which will _almost_ never happen.
-            // isDisposed is set when the actor is deleted, or if an error occurs where we're not sure of the state and want to reload from the database.
-            if isDisposed then
-                this.OnActivateAsync().Wait()
-                isDisposed <- false
+            logActorActivation log this.IdentityString activateStartTime (getActorActivationMessage state.RecordExists)
 
             Task.CompletedTask
 
-        override this.OnPostActorMethodAsync(context) =
-            let duration_ms = getPaddedDuration_ms actorStartTime
-
-            if String.IsNullOrEmpty(currentCommand) then
-                log.LogInformation(
-                    "{CurrentInstant}: Node: {HostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {ActorName}.{MethodName}; DirectoryVersionId: {DirectoryVersionId}; RelativePath: {RelativePath}; RepositoryId: {RepositoryId}.",
-                    getCurrentInstantExtended (),
-                    getMachineName,
-                    duration_ms,
-                    this.correlationId,
-                    actorName,
-                    context.MethodName,
-                    directoryVersionDto.DirectoryVersion.DirectoryVersionId,
-                    directoryVersionDto.DirectoryVersion.RelativePath,
-                    directoryVersionDto.DirectoryVersion.RepositoryId
-                )
-            else
-                log.LogInformation(
-                    "{CurrentInstant}: Node: {HostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {ActorName}.{MethodName}; Command: {Command}; DirectoryVersionId: {DirectoryVersionId}; RelativePath: {RelativePath}; RepositoryId: {RepositoryId}.",
-                    getCurrentInstantExtended (),
-                    getMachineName,
-                    duration_ms,
-                    this.correlationId,
-                    actorName,
-                    context.MethodName,
-                    currentCommand,
-                    directoryVersionDto.DirectoryVersion.DirectoryVersionId,
-                    directoryVersionDto.DirectoryVersion.RelativePath,
-                    directoryVersionDto.DirectoryVersion.RepositoryId
-                )
-
-            logScope.Dispose()
-            Task.CompletedTask
-
-
-        interface IGraceReminder with
+        interface IGraceReminderWithGuidKey with
             /// Schedules a Grace reminder.
             member this.ScheduleReminderAsync reminderType delay state correlationId =
                 task {
-                    let reminder = ReminderDto.Create actorName $"{this.Id}" reminderType (getFutureInstant delay) state correlationId
+                    let reminder =
+                        ReminderDto.Create
+                            actorName
+                            $"{this.IdentityString}"
+                            directoryVersionDto.DirectoryVersion.OwnerId
+                            directoryVersionDto.DirectoryVersion.OrganizationId
+                            directoryVersionDto.DirectoryVersion.RepositoryId
+                            reminderType
+                            (getFutureInstant delay)
+                            state
+                            correlationId
+
                     do! createReminder reminder
                 }
                 :> Task
@@ -193,120 +91,100 @@ module DirectoryVersion =
                 task {
                     this.correlationId <- reminder.CorrelationId
 
-                    match reminder.ReminderType with
-                    | ReminderTypes.DeleteCachedState ->
-                        // Get values from state.
-                        if not <| String.IsNullOrEmpty reminder.State then
-                            let (deleteReason, correlationId) = deserialize<PhysicalDeletionReminderState> reminder.State
+                    match reminder.ReminderType, reminder.State with
+                    | ReminderTypes.DeleteCachedState, ReminderState.DirectoryVersionDeleteCachedState reminderState ->
+                        this.correlationId <- reminderState.CorrelationId
 
-                            this.correlationId <- correlationId
+                        // Delete cached state for this actor.
+                        let directoryVersionBlobClient =
+                            directoryVersionContainerClient.GetBlobClient(
+                                recursiveDirectoryVersionsCacheFileName directoryVersionDto.DirectoryVersion.DirectoryVersionId
+                            )
 
-                            // Delete saved state for this actor.
-                            let! deleted = Storage.DeleteState stateManager directoryVersionCacheStateName
+                        let! deleted = directoryVersionBlobClient.DeleteIfExistsAsync()
 
-                            if deleted then
-                                log.LogInformation(
-                                    "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; Deleted cache for directory version; RepositoryId: {RepositoryId}; DirectoryVersionId: {DirectoryVersionId}; deleteReason: {deleteReason}.",
-                                    getCurrentInstantExtended (),
-                                    getMachineName,
-                                    correlationId,
-                                    directoryVersionDto.DirectoryVersion.RepositoryId,
-                                    directoryVersionDto.DirectoryVersion.DirectoryVersionId,
-                                    deleteReason
-                                )
-                            else
-                                log.LogWarning(
-                                    "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; Failed to delete cache for directory version (it may have already been deleted); RepositoryId: {RepositoryId}; DirectoryVersionId: {DirectoryVersionId}; deleteReason: {deleteReason}.",
-                                    getCurrentInstantExtended (),
-                                    getMachineName,
-                                    correlationId,
-                                    directoryVersionDto.DirectoryVersion.RepositoryId,
-                                    directoryVersionDto.DirectoryVersion.DirectoryVersionId,
-                                    deleteReason
-                                )
-
-                        return Ok()
-                    | ReminderTypes.DeleteZipFile ->
-                        // Get values from state.
-                        if not <| String.IsNullOrEmpty reminder.State then
-                            let (deleteReason, correlationId) = deserialize<PhysicalDeletionReminderState> reminder.State
-
-                            this.correlationId <- correlationId
-
-                            let directoryVersion = directoryVersionDto.DirectoryVersion
-                            let repositoryActorProxy = Repository.CreateActorProxy directoryVersion.RepositoryId correlationId
-                            let! repositoryDto = repositoryActorProxy.Get correlationId
-
-                            // Delete cached directory version contents for this actor.
-                            let blobName = $"{GraceDirectoryVersionStorageFolderName}/{directoryVersion.DirectoryVersionId}.zip"
-                            let! zipFileBlobClient = getAzureBlobClient repositoryDto blobName correlationId
-
-                            let! deleted = zipFileBlobClient.DeleteIfExistsAsync()
-
-                            if deleted.Value then
-                                log.LogInformation(
-                                    "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; Deleted cache for directory version; RepositoryId: {RepositoryId}; DirectoryVersionId: {DirectoryVersionId}; deleteReason: {deleteReason}.",
-                                    getCurrentInstantExtended (),
-                                    getMachineName,
-                                    correlationId,
-                                    directoryVersionDto.DirectoryVersion.RepositoryId,
-                                    directoryVersionDto.DirectoryVersion.DirectoryVersionId,
-                                    deleteReason
-                                )
-                            else
-                                log.LogWarning(
-                                    "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; Failed to delete cache for directory version (it may have already been deleted); RepositoryId: {RepositoryId}; DirectoryVersionId: {DirectoryVersionId}; deleteReason: {deleteReason}.",
-                                    getCurrentInstantExtended (),
-                                    getMachineName,
-                                    correlationId,
-                                    directoryVersionDto.DirectoryVersion.RepositoryId,
-                                    directoryVersionDto.DirectoryVersion.DirectoryVersionId,
-                                    deleteReason
-                                )
-
-                        return Ok()
-                    | ReminderTypes.PhysicalDeletion ->
-                        // Get values from state.
-                        let (deleteReason, correlationId) = deserialize<PhysicalDeletionReminderState> reminder.State
-
-                        this.correlationId <- correlationId
-
-                        // Delete saved state for this actor.
-                        let! deleted = Storage.DeleteState stateManager eventsStateName
-
-                        if deleted then
+                        if deleted.HasValue && deleted.Value then
                             log.LogInformation(
-                                "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; Deleted state for directory version; RepositoryId: {RepositoryId}; DirectoryVersionId: {DirectoryVersionId}; deleteReason: {deleteReason}.",
+                                "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; Deleted cached state for directory version; RepositoryId: {RepositoryId}; DirectoryVersionId: {DirectoryVersionId}; deleteReason: {deleteReason}.",
                                 getCurrentInstantExtended (),
                                 getMachineName,
-                                correlationId,
+                                reminderState.CorrelationId,
                                 directoryVersionDto.DirectoryVersion.RepositoryId,
                                 directoryVersionDto.DirectoryVersion.DirectoryVersionId,
-                                deleteReason
+                                reminderState.DeleteReason
                             )
                         else
                             log.LogWarning(
-                                "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; Failed to delete state for directory version (it may have already been deleted); RepositoryId: {RepositoryId}; DirectoryVersionId: {DirectoryVersionId}; deleteReason: {deleteReason}.",
+                                "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; Failed to delete cached state for directory version (it may have already been deleted); RepositoryId: {RepositoryId}; DirectoryVersionId: {DirectoryVersionId}; deleteReason: {deleteReason}.",
                                 getCurrentInstantExtended (),
                                 getMachineName,
-                                correlationId,
+                                reminderState.CorrelationId,
                                 directoryVersionDto.DirectoryVersion.RepositoryId,
                                 directoryVersionDto.DirectoryVersion.DirectoryVersionId,
-                                deleteReason
+                                reminderState.DeleteReason
                             )
 
-                        // Set all values to default.
-                        directoryVersionDto <- DirectoryVersionDto.Default
-                        directoryVersionEvents.Clear()
-
-                        // Mark the actor as disposed, in case someone tries to use it before Dapr GC's it.
-                        isDisposed <- true
                         return Ok()
-                    | _ ->
+                    | ReminderTypes.DeleteZipFile, ReminderState.DirectoryVersionDeleteZipFile reminderState ->
+                        this.correlationId <- reminderState.CorrelationId
+
+                        let directoryVersion = directoryVersionDto.DirectoryVersion
+
+                        let repositoryActorProxy =
+                            Repository.CreateActorProxy directoryVersion.OrganizationId directoryVersion.RepositoryId reminderState.CorrelationId
+
+                        let! repositoryDto = repositoryActorProxy.Get reminderState.CorrelationId
+
+                        // Delete cached directory version contents for this actor.
+                        let zipFileBlobClient = zipFileContainerClient.GetBlobClient $"{directoryVersion.DirectoryVersionId}.zip"
+
+                        let! deleted = zipFileBlobClient.DeleteIfExistsAsync()
+
+                        if deleted.HasValue && deleted.Value then
+                            log.LogInformation(
+                                "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; Deleted cache for directory version; RepositoryId: {RepositoryId}; DirectoryVersionId: {DirectoryVersionId}; deleteReason: {deleteReason}.",
+                                getCurrentInstantExtended (),
+                                getMachineName,
+                                reminderState.CorrelationId,
+                                directoryVersionDto.DirectoryVersion.RepositoryId,
+                                directoryVersionDto.DirectoryVersion.DirectoryVersionId,
+                                reminderState.DeleteReason
+                            )
+                        else
+                            log.LogWarning(
+                                "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; Failed to delete cache for directory version (it may have already been deleted); RepositoryId: {RepositoryId}; DirectoryVersionId: {DirectoryVersionId}; deleteReason: {deleteReason}.",
+                                getCurrentInstantExtended (),
+                                getMachineName,
+                                reminderState.CorrelationId,
+                                directoryVersionDto.DirectoryVersion.RepositoryId,
+                                directoryVersionDto.DirectoryVersion.DirectoryVersionId,
+                                reminderState.DeleteReason
+                            )
+
+                        return Ok()
+                    | ReminderTypes.PhysicalDeletion, ReminderState.DirectoryVersionPhysicalDeletion reminderState ->
+                        this.correlationId <- reminderState.CorrelationId
+
+                        // Delete saved state for this actor.
+                        do! state.ClearStateAsync()
+
+                        log.LogInformation(
+                            "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; Deleted state for directory version; RepositoryId: {RepositoryId}; DirectoryVersionId: {DirectoryVersionId}; deleteReason: {deleteReason}.",
+                            getCurrentInstantExtended (),
+                            getMachineName,
+                            reminderState.CorrelationId,
+                            directoryVersionDto.DirectoryVersion.RepositoryId,
+                            directoryVersionDto.DirectoryVersion.DirectoryVersionId,
+                            reminderState.DeleteReason
+                        )
+
+                        this.DeactivateOnIdle()
+                        return Ok()
+                    | reminderType, state ->
                         return
                             Error(
                                 (GraceError.Create
-                                    $"{actorName} does not process reminder type {getDiscriminatedUnionCaseName reminder.ReminderType}."
+                                    $"{actorName} does not process reminder type {getDiscriminatedUnionCaseName reminderType} with state {getDiscriminatedUnionCaseName state}."
                                     this.correlationId)
                                     .enhance ("IsRetryable", "false")
                             )
@@ -316,46 +194,56 @@ module DirectoryVersion =
             task {
                 try
                     // Add the event to the list of events, and save it to actor state.
-                    directoryVersionEvents.Add(directoryVersionEvent)
-                    do! DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> stateManager.SetStateAsync(eventsStateName, directoryVersionEvents))
+                    state.State.Add(directoryVersionEvent)
+                    do! state.WriteStateAsync()
 
                     // Update the Dto with the event.
-                    directoryVersionDto <- directoryVersionDto |> updateDto directoryVersionEvent.Event
+                    directoryVersionDto <- directoryVersionDto |> DirectoryVersionDto.UpdateDto directoryVersionEvent
 
-                    logToConsole
-                        $"In ApplyEvent(): directoryVersion.DirectoryVersionId: {directoryVersionDto.DirectoryVersion.DirectoryVersionId}; directoryVersion.RelativePath: {directoryVersionDto.DirectoryVersion.RelativePath}."
-
+                    //logToConsole
+                    //    $"In ApplyEvent(): directoryVersion.DirectoryVersionId: {directoryVersionDto.DirectoryVersion.DirectoryVersionId}; directoryVersion.RelativePath: {directoryVersionDto.DirectoryVersion.RelativePath}."
 
                     // Publish the event to the rest of the world.
-                    let graceEvent = Events.GraceEvent.DirectoryVersionEvent directoryVersionEvent
-                    do! daprClient.PublishEventAsync(GracePubSubService, GraceEventStreamTopic, graceEvent)
+                    let graceEvent = GraceEvent.DirectoryVersionEvent directoryVersionEvent
+
+                    let streamProvider = this.GetStreamProvider GraceEventStreamProvider
+
+                    let stream =
+                        streamProvider.GetStream<GraceEvent>(
+                            StreamId.Create(Constants.GraceEventStreamTopic, directoryVersionDto.DirectoryVersion.DirectoryVersionId)
+                        )
+
+                    do! stream.OnNextAsync(graceEvent)
 
                     let returnValue = GraceReturnValue.Create "Directory version command succeeded." directoryVersionEvent.Metadata.CorrelationId
 
                     returnValue
-                        .enhance(nameof (RepositoryId), $"{directoryVersionDto.DirectoryVersion.RepositoryId}")
-                        .enhance(nameof (DirectoryVersionId), $"{directoryVersionDto.DirectoryVersion.DirectoryVersionId}")
-                        .enhance(nameof (Sha256Hash), $"{directoryVersionDto.DirectoryVersion.Sha256Hash}")
-                        .enhance (nameof (DirectoryVersionEventType), $"{getDiscriminatedUnionFullName directoryVersionEvent.Event}")
+                        .enhance(nameof RepositoryId, directoryVersionDto.DirectoryVersion.RepositoryId)
+                        .enhance(nameof DirectoryVersionId, directoryVersionDto.DirectoryVersion.DirectoryVersionId)
+                        .enhance(nameof Sha256Hash, directoryVersionDto.DirectoryVersion.Sha256Hash)
+                        .enhance (nameof DirectoryVersionEventType, getDiscriminatedUnionFullName directoryVersionEvent.Event)
                     |> ignore
 
                     return Ok returnValue
                 with ex ->
-                    let exceptionResponse = ExceptionResponse.Create ex
-
                     let graceError =
-                        GraceError.Create (DirectoryVersionError.getErrorMessage FailedWhileApplyingEvent) directoryVersionEvent.Metadata.CorrelationId
+                        GraceError.CreateWithException
+                            ex
+                            (getErrorMessage DirectoryVersionError.FailedWhileApplyingEvent)
+                            directoryVersionEvent.Metadata.CorrelationId
 
                     graceError
-                        .enhance("Exception details", exceptionResponse.``exception`` + exceptionResponse.innerException)
-                        .enhance(nameof (RepositoryId), $"{directoryVersionDto.DirectoryVersion.RepositoryId}")
-                        .enhance(nameof (DirectoryVersionId), $"{directoryVersionDto.DirectoryVersion.DirectoryVersionId}")
-                        .enhance(nameof (Sha256Hash), $"{directoryVersionDto.DirectoryVersion.Sha256Hash}")
-                        .enhance (nameof (DirectoryVersionEventType), $"{getDiscriminatedUnionFullName directoryVersionEvent.Event}")
+                        .enhance(nameof RepositoryId, directoryVersionDto.DirectoryVersion.RepositoryId)
+                        .enhance(nameof DirectoryVersionId, directoryVersionDto.DirectoryVersion.DirectoryVersionId)
+                        .enhance(nameof Sha256Hash, directoryVersionDto.DirectoryVersion.Sha256Hash)
+                        .enhance (nameof DirectoryVersionEventType, getDiscriminatedUnionFullName directoryVersionEvent.Event)
                     |> ignore
 
                     return Error graceError
             }
+
+        interface IHasRepositoryId with
+            member this.GetRepositoryId correlationId = directoryVersionDto.DirectoryVersion.RepositoryId |> returnTask
 
         interface IDirectoryVersionActor with
             member this.Exists correlationId =
@@ -373,7 +261,7 @@ module DirectoryVersion =
 
             member this.Get correlationId =
                 this.correlationId <- correlationId
-                directoryVersionDto.DirectoryVersion |> returnTask
+                directoryVersionDto |> returnTask
 
             member this.GetCreatedAt correlationId =
                 this.correlationId <- correlationId
@@ -400,79 +288,200 @@ module DirectoryVersion =
 
                 task {
                     try
+                        let directoryVersionBlobClient =
+                            directoryVersionContainerClient.GetBlockBlobClient(
+                                recursiveDirectoryVersionsCacheFileName directoryVersionDto.DirectoryVersion.DirectoryVersionId
+                            )
+
                         // Check if the subdirectory versions have already been generated and cached.
                         let cachedSubdirectoryVersions =
                             task {
-                                if not <| forceRegenerate then
-                                    return! Storage.RetrieveState<DirectoryVersion array> stateManager directoryVersionCacheStateName correlationId
+                                if not forceRegenerate && directoryVersionBlobClient.Exists() then
+                                    use! blobStream = directoryVersionBlobClient.OpenReadAsync()
+
+                                    let! directoryVersions =
+                                        MessagePackSerializer.DeserializeAsync<DirectoryVersionDto array>(blobStream, messagePackSerializerOptions)
+
+                                    return Some directoryVersions
                                 else
                                     return None
                             }
 
                         // If they have already been generated, return them.
                         match! cachedSubdirectoryVersions with
-                        | Some subdirectoryVersions ->
-                            log.LogDebug("In DirectoryVersionActor.GetDirectoryVersionsRecursive({id}). Retrieved SubdirectoryVersions from cache.", this.Id)
+                        | Some subdirectoryVersionDtos ->
+                            log.LogTrace(
+                                "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; In DirectoryVersionActor.GetRecursiveDirectoryVersions({id}): Retrieved SubdirectoryVersions from cache.",
+                                getCurrentInstantExtended (),
+                                getMachineName,
+                                correlationId,
+                                this.IdentityString
+                            )
 
-                            return subdirectoryVersions.ToArray()
+                            return subdirectoryVersionDtos
                         // If they haven't, generate them by calling each subdirectory in parallel.
                         | None ->
-                            log.LogDebug(
-                                "In DirectoryVersionActor.GetDirectoryVersionsRecursive({id}). SubdirectoryVersions will be generated. forceRegenerate: {forceRegenerate}",
-                                this.Id,
+                            log.LogTrace(
+                                "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; In DirectoryVersionActor.GetRecursiveDirectoryVersions({id}): subdirectoryVersions will be generated. forceRegenerate: {forceRegenerate}",
+                                getCurrentInstantExtended (),
+                                getMachineName,
+                                correlationId,
+                                directoryVersionDto.DirectoryVersion.DirectoryVersionId,
                                 forceRegenerate
                             )
 
-                            let subdirectoryVersions = ConcurrentQueue<DirectoryVersion>()
-                            subdirectoryVersions.Enqueue(directoryVersionDto.DirectoryVersion)
+                            let subdirectoryVersionDtos = ConcurrentDictionary<DirectoryVersionId, DirectoryVersionDto>()
 
+                            // First, add the current directory version to the queue.
+                            log.LogTrace(
+                                "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; In DirectoryVersionActor.GetRecursiveDirectoryVersions({id}): Adding current directory version. RelativePath: {relativePath}",
+                                getCurrentInstantExtended (),
+                                getMachineName,
+                                correlationId,
+                                this.GetPrimaryKey(),
+                                directoryVersionDto.DirectoryVersion.RelativePath
+                            )
+
+                            subdirectoryVersionDtos.TryAdd(directoryVersionDto.DirectoryVersion.DirectoryVersionId, directoryVersionDto)
+                            |> ignore
+
+                            // Then, get the subdirectory versions in parallel and add them to the dictionary.
                             do!
                                 Parallel.ForEachAsync(
                                     directoryVersionDto.DirectoryVersion.Directories,
                                     Constants.ParallelOptions,
-                                    (fun directoryId ct ->
+                                    (fun subdirectoryVersionId ct ->
                                         ValueTask(
                                             task {
                                                 try
-                                                    let subdirectoryActor = DirectoryVersion.CreateActorProxy directoryId correlationId
+                                                    let subdirectoryActor =
+                                                        DirectoryVersion.CreateActorProxy
+                                                            subdirectoryVersionId
+                                                            directoryVersionDto.DirectoryVersion.RepositoryId
+                                                            correlationId
+
+                                                    let! subdirectoryVersion = subdirectoryActor.Get correlationId
+
+                                                    log.LogTrace(
+                                                        "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; In DirectoryVersionActor.GetRecursiveDirectoryVersions({id}): subdirectoryVersionId: {subdirectoryVersionId}. RelativePath: {relativePath}\n{directoryVersion}",
+                                                        getCurrentInstantExtended (),
+                                                        getMachineName,
+                                                        correlationId,
+                                                        directoryVersionDto.DirectoryVersion.DirectoryVersionId,
+                                                        subdirectoryVersionId,
+                                                        subdirectoryVersion.DirectoryVersion.RelativePath,
+                                                        serialize subdirectoryVersion
+                                                    )
 
                                                     let! subdirectoryContents = subdirectoryActor.GetRecursiveDirectoryVersions forceRegenerate correlationId
 
-                                                    for directoryVersion in subdirectoryContents do
-                                                        subdirectoryVersions.Enqueue(directoryVersion)
+                                                    log.LogTrace(
+                                                        "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; In DirectoryVersionActor.GetRecursiveDirectoryVersions({id}): subdirectoryVersionId: {subdirectoryVersionId}; Retrieved {count} subdirectory versions for RelativePath: {relativePath}\n{subdirectoryContents}",
+                                                        getCurrentInstantExtended (),
+                                                        getMachineName,
+                                                        correlationId,
+                                                        directoryVersionDto.DirectoryVersion.DirectoryVersionId,
+                                                        subdirectoryVersionId,
+                                                        subdirectoryContents.Length,
+                                                        subdirectoryVersion.DirectoryVersion.RelativePath,
+                                                        serialize subdirectoryContents
+                                                    )
+
+                                                    for directoryVersionDto in subdirectoryContents do
+                                                        let directoryVersion = directoryVersionDto.DirectoryVersion
+
+                                                        log.LogTrace(
+                                                            "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; In DirectoryVersionActor.GetRecursiveDirectoryVersions({id}): subdirectoryVersionId: {subdirectoryVersionId}; Adding subdirectories. RelativePath: {relativePath}",
+                                                            getCurrentInstantExtended (),
+                                                            getMachineName,
+                                                            correlationId,
+                                                            directoryVersion.DirectoryVersionId,
+                                                            subdirectoryVersionId,
+                                                            directoryVersion.RelativePath
+                                                        )
+
+                                                        if not (subdirectoryVersionDtos.TryAdd(directoryVersion.DirectoryVersionId, directoryVersionDto)) then
+                                                            logToConsole
+                                                                $"Warning: In DirectoryVersionActor.GetRecursiveDirectoryVersions({this.GetPrimaryKey()}); Failed to add subdirectory version {directoryVersion.DirectoryVersionId} with relative path {directoryVersion.RelativePath} to the dictionary because it already exists."
+
+                                                            logToConsole $"Current dictionary contents: {serialize subdirectoryVersionDtos}"
+
+                                                            logToConsole $"Attempted to add: {serialize directoryVersionDto}"
+
+                                                            Environment.Exit(-99)
                                                 with ex ->
                                                     log.LogError(
                                                         "{CurrentInstant}: Error in {methodName}; DirectoryId: {directoryId}; Exception: {exception}",
                                                         getCurrentInstantExtended (),
                                                         "GetRecursiveDirectoryVersions",
-                                                        directoryId,
+                                                        subdirectoryVersionId,
                                                         ExceptionResponse.Create ex
                                                     )
                                             }
                                         ))
                                 )
 
+                            // Sort the subdirectory versions by their relative path.
                             let subdirectoryVersionsList =
-                                subdirectoryVersions.ToArray()
-                                |> Array.sortBy (fun directoryVersion -> directoryVersion.RelativePath)
+                                subdirectoryVersionDtos.Values
+                                    .OrderBy(fun directoryVersionDto -> directoryVersionDto.DirectoryVersion.RelativePath)
+                                    .ToArray()
 
-                            do! Storage.SaveState stateManager directoryVersionCacheStateName subdirectoryVersionsList this.correlationId
-
-                            log.LogDebug("In DirectoryVersionActor.GetDirectoryVersionsRecursive({id}); Storing subdirectoryVersion list.", this.Id)
-
-                            let repositoryActorProxy = Repository.CreateActorProxy directoryVersionDto.DirectoryVersion.RepositoryId correlationId
-                            let! repositoryDto = repositoryActorProxy.Get correlationId
-
-                            let deletionReminderState = (getDiscriminatedUnionCaseName ReminderTypes.DeleteCachedState, correlationId)
-
-                            do!
-                                (this :> IGraceReminder).ScheduleReminderAsync
-                                    ReminderTypes.DeleteCachedState
-                                    (Duration.FromDays(float repositoryDto.DirectoryVersionCacheDays))
-                                    (serialize deletionReminderState)
+                            // Save the recursive results to Azure Blob Storage.
+                            //use memoryStream = new MemoryStream()
+                            //use compressedStream = new GZipStream(memoryStream, CompressionMode.Compress)
+                            //use writer = new StreamWriter(compressedStream)
+                            //let json = serialize subdirectoryVersionsList
+                            //writer.Write(json)
+                            //writer.Flush()
+                            //compressedStream.Flush()
+                            //memoryStream.Position <- 0
+                            //let! uploadResponse = blobClient.UploadAsync(memoryStream, overwrite = true)
+                            let repositoryActorProxy =
+                                Repository.CreateActorProxy
+                                    directoryVersionDto.DirectoryVersion.OrganizationId
+                                    directoryVersionDto.DirectoryVersion.RepositoryId
                                     correlationId
 
-                            log.LogDebug("In DirectoryVersionActor.GetDirectoryVersionsRecursive({id}); Delete cached state reminder was set.", this.Id)
+                            let! repositoryDto = repositoryActorProxy.Get correlationId
+
+                            let tags = Dictionary<string, string>()
+                            tags.Add(nameof DirectoryVersionId, $"{directoryVersionDto.DirectoryVersion.DirectoryVersionId}")
+                            tags.Add(nameof RepositoryId, $"{directoryVersionDto.DirectoryVersion.RepositoryId}")
+                            tags.Add(nameof RelativePath, $"{directoryVersionDto.DirectoryVersion.RelativePath}")
+                            tags.Add(nameof Sha256Hash, $"{directoryVersionDto.DirectoryVersion.Sha256Hash}")
+                            tags.Add(nameof OwnerId, $"{repositoryDto.OwnerId}")
+                            tags.Add(nameof OrganizationId, $"{repositoryDto.OrganizationId}")
+
+                            // Write the JSON using MessagePack serialization for efficiency.
+                            use! blobStream = directoryVersionBlobClient.OpenWriteAsync(overwrite = true)
+                            do! MessagePackSerializer.SerializeAsync(blobStream, subdirectoryVersionsList, messagePackSerializerOptions)
+                            do! blobStream.DisposeAsync()
+
+                            // Set the tags for the blob.
+                            let! azureResponse = directoryVersionBlobClient.SetTagsAsync(tags)
+
+                            log.LogDebug(
+                                "In DirectoryVersionActor.GetRecursiveDirectoryVersions({id}); Saving cached list of directory versions. RelativePath: {relativePath}.",
+                                this.GetPrimaryKey(),
+                                directoryVersionDto.DirectoryVersion.RelativePath
+                            )
+
+                            // Create a reminder to delete the cached state after the configured number of cache days.
+                            let deletionReminderState: PhysicalDeletionReminderState =
+                                { DeleteReason = getDiscriminatedUnionCaseName ReminderTypes.DeleteCachedState; CorrelationId = correlationId }
+
+                            do!
+                                (this :> IGraceReminderWithGuidKey).ScheduleReminderAsync
+                                    ReminderTypes.DeleteCachedState
+                                    (Duration.FromDays(float repositoryDto.DirectoryVersionCacheDays))
+                                    (ReminderState.DirectoryVersionDeleteCachedState deletionReminderState)
+                                    correlationId
+
+                            log.LogDebug(
+                                "In DirectoryVersionActor.GetRecursiveDirectoryVersions({id}); Delete cached state reminder was set.",
+                                this.GetPrimaryKey()
+                            )
 
                             return subdirectoryVersionsList
                     with ex ->
@@ -483,7 +492,7 @@ module DirectoryVersion =
                             ExceptionResponse.Create ex
                         )
 
-                        return Array.Empty<DirectoryVersion>()
+                        return Array.Empty<DirectoryVersionDto>()
                 }
 
             member this.Handle command metadata =
@@ -492,9 +501,9 @@ module DirectoryVersion =
                         match command with
                         | DirectoryVersionCommand.Create directoryVersion ->
                             if
-                                directoryVersionEvents.Any(fun e ->
+                                state.State.Any(fun e ->
                                     match e.Event with
-                                    | Created _ -> true
+                                    | DirectoryVersionEventType.Created _ -> true
                                     | _ -> false)
                             then
                                 return
@@ -523,22 +532,27 @@ module DirectoryVersion =
                                     | SetRecursiveSize recursiveSize -> return Ok(RecursiveSizeSet recursiveSize)
                                     | DeleteLogical deleteReason ->
                                         let repositoryActorProxy =
-                                            Repository.CreateActorProxy directoryVersionDto.DirectoryVersion.RepositoryId metadata.CorrelationId
+                                            Repository.CreateActorProxy
+                                                directoryVersionDto.DirectoryVersion.OrganizationId
+                                                directoryVersionDto.DirectoryVersion.RepositoryId
+                                                metadata.CorrelationId
 
                                         let! repositoryDto = repositoryActorProxy.Get metadata.CorrelationId
 
-                                        let (reminderState: PhysicalDeletionReminderState) = (deleteReason, metadata.CorrelationId)
+                                        let physicalDeletionReminderState =
+                                            { DeleteReason = getDiscriminatedUnionCaseName deleteReason; CorrelationId = metadata.CorrelationId }
 
                                         do!
-                                            (this :> IGraceReminder).ScheduleReminderAsync
+                                            (this :> IGraceReminderWithGuidKey).ScheduleReminderAsync
                                                 ReminderTypes.PhysicalDeletion
                                                 (Duration.FromDays(float repositoryDto.LogicalDeleteDays))
-                                                (serialize reminderState)
+                                                (ReminderState.DirectoryVersionPhysicalDeletion physicalDeletionReminderState)
                                                 metadata.CorrelationId
 
                                         return Ok(LogicalDeleted deleteReason)
                                     | DeletePhysical ->
-                                        isDisposed <- true
+                                        do! state.ClearStateAsync()
+                                        this.DeactivateOnIdle()
                                         return Ok(PhysicalDeleted)
                                     | Undelete -> return Ok(Undeleted)
                                 }
@@ -547,16 +561,20 @@ module DirectoryVersion =
                             | Ok event -> return! this.ApplyEvent { Event = event; Metadata = metadata }
                             | Error error -> return Error error
                         with ex ->
-                            return Error(GraceError.CreateWithMetadata $"{ExceptionResponse.Create ex}" metadata.CorrelationId metadata.Properties)
+                            return Error(GraceError.CreateWithMetadata ex String.Empty metadata.CorrelationId metadata.Properties)
                     }
 
                 task {
-                    this.correlationId <- metadata.CorrelationId
-                    currentCommand <- getDiscriminatedUnionCaseName command
+                    try
+                        this.correlationId <- metadata.CorrelationId
+                        currentCommand <- getDiscriminatedUnionCaseName command
 
-                    match! isValid command metadata with
-                    | Ok command -> return! processCommand command metadata
-                    | Error error -> return Error error
+                        match! isValid command metadata with
+                        | Ok command -> return! processCommand command metadata
+                        | Error error -> return Error error
+                    with ex ->
+                        logToConsole $"Exception in DirectoryVersionActor.Handle(): {ExceptionResponse.Create ex}"
+                        return Error(GraceError.CreateWithException ex "Exception in DirectoryVersionActor.Handle()" metadata.CorrelationId)
                 }
 
             member this.GetRecursiveSize correlationId =
@@ -566,7 +584,9 @@ module DirectoryVersion =
                     if directoryVersionDto.RecursiveSize = Constants.InitialDirectorySize then
                         let! directoryVersions = (this :> IDirectoryVersionActor).GetRecursiveDirectoryVersions false correlationId
 
-                        let recursiveSize = directoryVersions |> Seq.sumBy (fun directoryVersion -> directoryVersion.Size)
+                        let recursiveSize =
+                            directoryVersions
+                            |> Seq.sumBy (fun directoryVersionDto -> directoryVersionDto.DirectoryVersion.Size)
 
                         match! (this :> IDirectoryVersionActor).Handle (SetRecursiveSize recursiveSize) (EventMetadata.New correlationId "GraceSystem") with
                         | Ok returnValue -> return recursiveSize
@@ -602,13 +622,25 @@ module DirectoryVersion =
                             let zipFileUris = new ConcurrentDictionary<DirectoryVersionId, UriWithSharedAccessSignature>()
 
                             // Step 2: Ensure that .zip files exist for all subdirectories, in parallel.
-                            do! Parallel.ForEachAsync(subdirectoryVersionIds, Constants.ParallelOptions, fun subdirectoryVersionId ct ->
-                                ValueTask(task {
-                                    // Call the subdirectory actor to get the .zip file URI, which will create the .zip file if it doesn't already exist.
-                                    let subdirectoryActorProxy = DirectoryVersion.CreateActorProxy subdirectoryVersionId correlationId
-                                    let! subdirectoryZipFileUri = subdirectoryActorProxy.GetZipFileUri correlationId
-                                    zipFileUris[subdirectoryVersionId] <- subdirectoryZipFileUri
-                                }))
+                            do!
+                                Parallel.ForEachAsync(
+                                    subdirectoryVersionIds,
+                                    Constants.ParallelOptions,
+                                    fun subdirectoryVersionId ct ->
+                                        ValueTask(
+                                            task {
+                                                // Call the subdirectory actor to get the .zip file URI, which will create the .zip file if it doesn't already exist.
+                                                let subdirectoryActorProxy =
+                                                    DirectoryVersion.CreateActorProxy
+                                                        subdirectoryVersionId
+                                                        directoryVersionDto.DirectoryVersion.RepositoryId
+                                                        correlationId
+
+                                                let! subdirectoryZipFileUri = subdirectoryActorProxy.GetZipFileUri correlationId
+                                                zipFileUris[subdirectoryVersionId] <- subdirectoryZipFileUri
+                                            }
+                                        )
+                                )
 
                             // Step 3: Process the subdirectories of the current directory one at a time, because we need to add entries to the .zip file one at a time.
                             for subdirectoryVersionId in subdirectoryVersionIds do
@@ -645,7 +677,7 @@ module DirectoryVersion =
                                     do! fileStream.CopyToAsync(zipEntryStream)
 
                             // Step 5: Upload the new ZIP to Azure Blob Storage
-                            archive.Dispose()   // Dispose the archive before uploading to ensure it's properly flushed to the disk.
+                            archive.Dispose() // Dispose the archive before uploading to ensure it's properly flushed to the disk.
                             let! zipFileBlobClient = getAzureBlobClient repositoryDto zipFileBlobName correlationId
                             use tempZipFileStream = File.OpenRead(tempZipPath)
                             let! response = zipFileBlobClient.UploadAsync(tempZipFileStream, overwrite = true)
@@ -659,7 +691,8 @@ module DirectoryVersion =
                     }
 
                 task {
-                    let repositoryActorProxy = Repository.CreateActorProxy directoryVersion.RepositoryId correlationId
+                    logToConsole $"In GetZipFileUri: directoryVersion: {serialize directoryVersion}."
+                    let repositoryActorProxy = Repository.CreateActorProxy directoryVersion.OrganizationId directoryVersion.RepositoryId correlationId
                     let! repositoryDto = repositoryActorProxy.Get correlationId
 
                     let blobName = $"{GraceDirectoryVersionStorageFolderName}/{directoryVersion.DirectoryVersionId}.zip"
@@ -682,13 +715,14 @@ module DirectoryVersion =
                                 directoryVersion.Files
 
                         // Schedule a reminder to delete the .zip file after the cache days have passed.
-                        let deletionReminderState = (getDiscriminatedUnionCaseName DeleteZipFile, correlationId)
+                        let deletionReminderState: PhysicalDeletionReminderState =
+                            { DeleteReason = getDiscriminatedUnionCaseName DeleteZipFile; CorrelationId = correlationId }
 
                         do!
-                            (this :> IGraceReminder).ScheduleReminderAsync
+                            (this :> IGraceReminderWithGuidKey).ScheduleReminderAsync
                                 DeleteZipFile
                                 (Duration.FromDays(float repositoryDto.DirectoryVersionCacheDays))
-                                (serialize deletionReminderState)
+                                (ReminderState.DirectoryVersionDeleteZipFile deletionReminderState)
                                 correlationId
 
                         let! uriWithSas = getUriWithReadSharedAccessSignature repositoryDto blobName correlationId

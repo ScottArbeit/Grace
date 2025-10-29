@@ -6,7 +6,8 @@
 		<PublishReadyToRun>true</PublishReadyToRun>
 		<GenerateDocumentationFile>true</GenerateDocumentationFile>
 		<AccelerateBuildsInVisualStudio>true</AccelerateBuildsInVisualStudio>
-		<WarnOn>3390;$(WarnOn)</WarnOn>
+        <SuppressNETCoreSdkPreviewMessage>true</SuppressNETCoreSdkPreviewMessage>
+        <WarnOn>3390;$(WarnOn)</WarnOn>
 		<WarningsAsErrors>FS0025</WarningsAsErrors>
 		<NoWarn>1057,3391</NoWarn>
 		<Platforms>AnyCPU</Platforms>
@@ -15,8 +16,8 @@
 		<OtherFlags>--test:ParallelIlxGen</OtherFlags>
 	</PropertyGroup>
 	<ItemGroup>
+		<None Include="instructions.md" />
 		<Compile Include="Common.SDK.fs" />
-		<Compile Include="Dapr.SDK.fs" />
 		<Compile Include="Storage.SDK.fs" />
 		<Compile Include="Branch.SDK.fs" />
 		<Compile Include="Owner.SDK.fs" />
@@ -27,18 +28,18 @@
 	</ItemGroup>
 
 	<ItemGroup>
-		<PackageReference Include="Azure.Storage.Blobs" Version="12.24.0" />
+		<PackageReference Include="Azure.Storage.Blobs" Version="12.26.0" />
 		<PackageReference Include="Ben.Demystifier" Version="0.4.1" />
-		<PackageReference Include="Dapr.Client" Version="1.15.3" />
-		<PackageReference Include="Polly" Version="8.5.2" />
+		<PackageReference Include="Polly" Version="8.6.4" />
 	</ItemGroup>
 
 	<ItemGroup>
+		<ProjectReference Include="..\Grace.Types\Grace.Types.fsproj" />
 		<ProjectReference Include="..\Grace.Shared\Grace.Shared.fsproj" />
 	</ItemGroup>
 
 	<ItemGroup>
-		<PackageReference Update="FSharp.Core" Version="9.0.202" />
+		<PackageReference Update="FSharp.Core" Version="10.0.100-rc2.25502.107" />
 	</ItemGroup>
 
 </Project>

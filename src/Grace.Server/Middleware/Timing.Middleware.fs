@@ -31,7 +31,7 @@ type TimingMiddleware(next: RequestDelegate) =
 #if DEBUG
             let middlewareTraceHeader = context.Request.Headers["X-MiddlewareTraceIn"]
 
-            context.Request.Headers["X-MiddlewareTraceIn"] <- $"{middlewareTraceHeader}{nameof (TimingMiddleware)} --> "
+            context.Request.Headers["X-MiddlewareTraceIn"] <- $"{middlewareTraceHeader}{nameof TimingMiddleware} --> "
 #endif
 
             // We expect the CorrelationId to be set at this point.
@@ -59,6 +59,6 @@ type TimingMiddleware(next: RequestDelegate) =
         // On the way out...
 #if DEBUG
             let middlewareTraceOutHeader = context.Request.Headers["X-MiddlewareTraceOut"]
-            context.Request.Headers["X-MiddlewareTraceOut"] <- $"{middlewareTraceOutHeader}{nameof (TimingMiddleware)} --> "
+            context.Request.Headers["X-MiddlewareTraceOut"] <- $"{middlewareTraceOutHeader}{nameof TimingMiddleware} --> "
 #endif
         }

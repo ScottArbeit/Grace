@@ -26,12 +26,17 @@ Project("{6EC3EE1D-3C4E-46DD-8F32-0CC8E7565705}") = "Grace.Server.Tests", "Grace
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution items", "Solution items", "{40F2D935-0455-48D5-B8E1-BEC3020C4FF1}"
 	ProjectSection(SolutionItems) = preProject
+		agents.md = agents.md
 		Directory.Build.props = Directory.Build.props
 	EndProjectSection
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Grace.Aspire.AppHost", "Grace.Aspire.AppHost\Grace.Aspire.AppHost.csproj", "{02A981E8-7BAF-4EAE-B0B1-CD6619F119E9}"
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Grace.Aspire.ServiceDefaults", "Grace.Aspire.ServiceDefaults\Grace.Aspire.ServiceDefaults.csproj", "{6BAB5FC5-3501-4CAB-8507-4EAC4B9D2E5E}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Grace.Orleans.CodeGen", "Grace.Orleans.CodeGen\Grace.Orleans.CodeGen.csproj", "{70C75B35-D0BA-4355-914D-A41A99DCB9A2}"
+EndProject
+Project("{F2A71F9B-5D33-465A-A702-920D77279786}") = "Grace.Types", "Grace.Types\Grace.Types.fsproj", "{95C2BE88-50BF-45C9-AEA5-A3914C3F5695}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -80,6 +85,14 @@ Global
 		{6BAB5FC5-3501-4CAB-8507-4EAC4B9D2E5E}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{6BAB5FC5-3501-4CAB-8507-4EAC4B9D2E5E}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{6BAB5FC5-3501-4CAB-8507-4EAC4B9D2E5E}.Release|Any CPU.Build.0 = Release|Any CPU
+		{70C75B35-D0BA-4355-914D-A41A99DCB9A2}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{70C75B35-D0BA-4355-914D-A41A99DCB9A2}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{70C75B35-D0BA-4355-914D-A41A99DCB9A2}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{70C75B35-D0BA-4355-914D-A41A99DCB9A2}.Release|Any CPU.Build.0 = Release|Any CPU
+		{95C2BE88-50BF-45C9-AEA5-A3914C3F5695}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{95C2BE88-50BF-45C9-AEA5-A3914C3F5695}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{95C2BE88-50BF-45C9-AEA5-A3914C3F5695}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{95C2BE88-50BF-45C9-AEA5-A3914C3F5695}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

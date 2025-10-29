@@ -8,7 +8,7 @@ open Grace.Shared
 open Grace.Shared.Client.Configuration
 open Grace.Shared.Parameters.Branch
 open Grace.Shared.Services
-open Grace.Shared.Types
+open Grace.Types.Types
 open Grace.Shared.Utilities
 open Microsoft.AspNetCore.Http.Connections
 open Microsoft.AspNetCore.SignalR.Client
@@ -18,7 +18,7 @@ open System
 open System.Buffers
 open System.Collections.Generic
 open System.CommandLine
-open System.CommandLine.NamingConventionBinder
+open System.CommandLine.Invocation
 open System.CommandLine.Parsing
 open System.ComponentModel
 open System.Diagnostics
@@ -259,10 +259,10 @@ module Watch =
             use gzStream = new GZipStream(graceStatusMemoryStream, CompressionMode.Decompress)
 
             let! retrievedGraceStatus = JsonSerializer.DeserializeAsync<GraceStatus>(gzStream, Constants.JsonSerializerOptions)
-
             graceStatus <- retrievedGraceStatus
             logToAnsiConsole Colors.Verbose $"Retrieved Grace Status from compressed memory stream."
-            do! gzStream.DisposeAsync()
+
+            do! gzStream.DisposeAsync() // Dispose the GZipStream first, before disposing the MemoryStream.
             do! graceStatusMemoryStream.DisposeAsync()
             graceStatusMemoryStream <- null
         }
@@ -340,9 +340,10 @@ module Watch =
                 do! updateGraceWatchInterprocessFile graceStatusFromDisk
         }
 
-    /// This is the main loop for the `grace watch` command.
-    let OnWatch =
-        CommandHandler.Create(fun (parseResult: ParseResult) (cancellationToken: CancellationToken) (parameters: WatchParameters) ->
+    type Watch() =
+        inherit AsynchronousCommandLineAction()
+
+        override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) =
             task {
                 try
                     // Create the FileSystemWatcher, but don't enable it yet.
@@ -423,7 +424,7 @@ module Watch =
                     use serverToClient =
                         signalRConnection.On<string>(
                             "ServerToClientMessage",
-                            fun message -> logToAnsiConsole Colors.Important $"From Grace Server: {message}"
+                            (fun message -> logToAnsiConsole Colors.Important $"From Grace Server: {message}")
                         )
 
                     use notifyOnPromotion =
@@ -436,7 +437,7 @@ module Watch =
                                     let! graceStatus = readGraceStatusFile ()
 
                                     let rebaseParameters =
-                                        Branch.RebaseParameters(
+                                        RebaseParameters(
                                             OwnerId = $"{Current().OwnerId}",
                                             OrganizationId = $"{Current().OrganizationId}",
                                             RepositoryId = $"{Current().RepositoryId}",
@@ -445,7 +446,7 @@ module Watch =
                                             CorrelationId = (parseResult |> getCorrelationId)
                                         )
 
-                                    let! x = Branch.rebaseHandler parseResult rebaseParameters graceStatus
+                                    let! x = Branch.rebaseHandler parseResult graceStatus
                                     ()
                                 })
                                 :> Task
@@ -554,20 +555,21 @@ module Watch =
                         // About once a minute, do a full GC to be kind with our memory usage. This is for looks, not for function.
                         //
                         //   In .NET, when a computer has lots of available memory, and there's no signal from the OS that there's any memory pressure, GC doesn't happen much, if at all.
-                        //   With no memory pressure, `grace watch` wouldn't bother releasing its unused heap after handling events like saves and auto-rebases, and it would look like it's taking up a lot of memory.
+                        //   With no memory pressure, `grace watch` wouldn't bother releasing its unused heap after handling events like saves and auto-rebases.
                         //   Seeing that kind of memory usage could lead to uninformed people saying things like, "OMG, `grace watch` takes up so much memory!"
-                        //   For `grace watch`, which will only momentarily need memory to handle events, it *looks better* if we deliberately release the memory back to the OS.
+                        //   `grace watch` needs more memory only momentarily to handle events. We deliberately release the memory back to the OS as quickly as possible.
                         //   That means forcing a full GC.
                         //
-                        //   What I've noticed, for whatever reason, is that it can take two full GCs to get the memory usage back down to where it was before the event handling.
-                        //   Running a full GC when there's nothing to clean up takes well less than a millisecond.
-                        //
-                        //   Anyway, forcing a full GC every minute will cause `grace watch` to stay as slim as possible, so it looks as lightweight as it actually is.
+                        //   Because of DATAS (see https://learn.microsoft.com/en-us/dotnet/standard/garbage-collection/datas), it may take more than one GC.Collect()
+                        //   call to fully compact the heap (and that's OK). If we weren't being so aggressive about memory usage, we would just let DATAS compute
+                        //   a close-to-optimal heap size on its own over time.
                         if previousGC < getCurrentInstant().Minus(Duration.FromMinutes(1.0)) then
                             //let memoryBeforeGC = Process.GetCurrentProcess().WorkingSet64
                             GC.Collect(2, GCCollectionMode.Forced, blocking = true, compacting = true)
                             //logToAnsiConsole Colors.Verbose $"Memory before GC: {memoryBeforeGC:N0}; after: {Process.GetCurrentProcess().WorkingSet64:N0}."
                             previousGC <- getCurrentInstant ()
+
+                    return 0
                 with ex ->
                     //let exceptionMarkup = Markup.Escape($"{ExceptionResponse.Create ex}").Replace("\\\\", @"\").Replace("\r\n", Environment.NewLine)
                     //logToAnsiConsole Colors.Error $"{exceptionMarkup}"
@@ -575,13 +577,13 @@ module Watch =
                     // Need to fill in some exception styles here.
                     exceptionSettings.Format <- ExceptionFormats.Default
                     AnsiConsole.WriteException(ex, exceptionSettings)
+                    return -1
             }
-            :> Task)
 
     let Build =
         // Create main command and aliases, if any.
         let watchCommand = new Command("watch", Description = "Watches your repo for changes, and uploads new versions of your files.")
 
-        watchCommand.AddAlias("w")
-        watchCommand.Handler <- OnWatch
+        watchCommand.Aliases.Add("w")
+        watchCommand.Action <- Watch()
         watchCommand

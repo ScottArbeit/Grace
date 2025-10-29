@@ -6,7 +6,8 @@ open Grace.Actors.Services
 open Grace.Actors.Types
 open Grace.Server.ApplicationContext
 open Grace.Shared
-open Grace.Shared.Types
+open Grace.Types.Reminder
+open Grace.Types.Types
 open Grace.Shared.Utilities
 open Microsoft.Extensions.Hosting
 open Microsoft.Extensions.Logging
@@ -54,16 +55,31 @@ module ReminderService =
                 match actorStateStorageProvider with
                 | Unknown -> ()
                 | AzureCosmosDb ->
-                    let queryText =
-                        """SELECT TOP @maxCount c.id as Id, c.partitionKey as PartitionKey, c["value"].ReminderId, c["value"].CorrelationId FROM c
-                            WHERE c["value"].Class = @class
-                            AND c["value"].ReminderTime < GetCurrentDateTime()
-                            ORDER BY c["value"].ReminderTime ASC"""
-
                     let queryDefinition =
-                        QueryDefinition(queryText)
+                        QueryDefinition(
+                            """
+                            SELECT TOP @maxCount c.id as Id, c.State.Reminder.ReminderId AS ReminderId, c.State.Reminder.CorrelationId AS CorrelationId
+                            FROM c
+                            WHERE c.GrainType = @grainType
+                                AND c.PartitionKey = @partitionKey
+                                AND c.State.Reminder.ReminderTime < GetCurrentDateTime()
+                                ORDER BY c._ts ASC
+                            """
+                        )
                             .WithParameter("@maxCount", reminderBatchSize)
-                            .WithParameter("@class", nameof (ReminderDto))
+                            .WithParameter("@grainType", StateName.Reminder)
+                            .WithParameter("@partitionKey", StateName.Reminder)
+
+                    //let queryText =
+                    //    """SELECT TOP @maxCount c.id as Id, c.partitionKey as PartitionKey, c["value"].ReminderId, c["value"].CorrelationId FROM c
+                    //        WHERE c["value"].Class = @class
+                    //        AND c["value"].ReminderTime < GetCurrentDateTime()
+                    //        ORDER BY c["value"].ReminderTime ASC"""
+
+                    //let queryDefinition =
+                    //    QueryDefinition(queryText)
+                    //        .WithParameter("@maxCount", reminderBatchSize)
+                    //        .WithParameter("@class", nameof ReminderDto)
 
                     use iterator = ApplicationContext.cosmosContainer.GetItemQueryIterator<ReminderValue>(queryDefinition)
 
@@ -100,71 +116,73 @@ module ReminderService =
                 let start = getCurrentInstant ()
 
                 try
-                    //log.LogInformation(
-                    //    "{CurrentInstant}: Node: {HostName}; In ReminderService.ProcessReminders. Retrieving reminders.",
-                    //    getCurrentInstantExtended (),
-                    //    getMachineName
-                    //)
+                    log.LogTrace(
+                        "{CurrentInstant}: Node: {HostName}; In ReminderService.ProcessReminders. Retrieving reminders.",
+                        getCurrentInstantExtended (),
+                        getMachineName
+                    )
 
                     let! reminders = retrieveReminders cancellationToken
 
-                    log.LogInformation(
-                        "{CurrentInstant}: Node: {HostName}; In ReminderService.ProcessReminders. Processing {reminderCount} reminder(s).",
-                        getCurrentInstantExtended (),
-                        getMachineName,
-                        reminders.Count
-                    )
+                    if reminders.Count > 0 then
+                        log.LogInformation(
+                            "{CurrentInstant}: Node: {HostName}; In ReminderService.ProcessReminders. Processing {reminderCount} reminder(s).",
+                            getCurrentInstantExtended (),
+                            getMachineName,
+                            reminders.Count
+                        )
 
-                    do!
-                        Parallel.ForEachAsync(
-                            reminders,
-                            ParallelOptions,
-                            (fun reminder ct ->
-                                ValueTask(
-                                    task {
-                                        try
-                                            let reminderActorProxy = Reminder.CreateActorProxy reminder.ReminderId reminder.CorrelationId
+                        do!
+                            Parallel.ForEachAsync(
+                                reminders,
+                                ParallelOptions,
+                                (fun reminder ct ->
+                                    ValueTask(
+                                        task {
+                                            try
+                                                let reminderActorProxy = Reminder.CreateActorProxy reminder.ReminderId reminder.CorrelationId
 
-                                            match! reminderActorProxy.Remind reminder.CorrelationId with
-                                            | Ok() ->
-                                                let itemRequestOptions =
-                                                    ItemRequestOptions(
-                                                        AddRequestHeaders =
-                                                            fun headers -> headers.Add(Constants.CorrelationIdHeaderKey, reminder.CorrelationId)
-                                                    )
+                                                match! reminderActorProxy.Remind reminder.CorrelationId with
+                                                | Ok() ->
+                                                    let itemRequestOptions =
+                                                        ItemRequestOptions(
+                                                            PriorityLevel = PriorityLevel.Low,
+                                                            AddRequestHeaders =
+                                                                fun headers -> headers.Add(Constants.CorrelationIdHeaderKey, reminder.CorrelationId)
+                                                        )
 
-                                                // Delete the reminder from storage to avoid reprocessing.
-                                                let! deleteReminderResponse =
-                                                    cosmosContainer.DeleteItemAsync(reminder.Id, PartitionKey(reminder.PartitionKey), itemRequestOptions)
+                                                    // Delete the reminder from storage to avoid reprocessing.
+                                                    let! deleteReminderResponse =
+                                                        cosmosContainer.DeleteItemAsync(reminder.Id, PartitionKey(StateName.Reminder), itemRequestOptions)
 
-                                                if deleteReminderResponse.StatusCode <> HttpStatusCode.NoContent then
+                                                    if deleteReminderResponse.StatusCode <> HttpStatusCode.NoContent then
+                                                        log.LogError(
+                                                            "{CurrentInstant}: Node: {HostName}; Error deleting reminder: {reminder.id}. Status code: {deleteResponse.StatusCode}.",
+                                                            getCurrentInstantExtended (),
+                                                            getMachineName,
+                                                            reminder.Id,
+                                                            deleteReminderResponse.StatusCode
+                                                        )
+                                                | Error error ->
                                                     log.LogError(
-                                                        "{CurrentInstant}: Node: {HostName}; Error deleting reminder: {reminder.id}. Status code: {deleteResponse.StatusCode}.",
+                                                        "{CurrentInstant}: Node: {HostName}; Error processing reminder: {reminder.id}. {error}.",
                                                         getCurrentInstantExtended (),
                                                         getMachineName,
                                                         reminder.Id,
-                                                        deleteReminderResponse.StatusCode
+                                                        error
                                                     )
-                                            | Error error ->
+                                            with ex ->
                                                 log.LogError(
-                                                    "{CurrentInstant}: Node: {HostName}; Error processing reminder: {reminder.id}. {error}.",
+                                                    "{CurrentInstant}: Node: {HostName}; Error processing reminder. Reminder: {Reminder}. Error: {error}.",
                                                     getCurrentInstantExtended (),
                                                     getMachineName,
-                                                    reminder.Id,
-                                                    error
+                                                    reminder,
+                                                    (ExceptionResponse.Create ex)
                                                 )
-                                        with ex ->
-                                            log.LogError(
-                                                "{CurrentInstant}: Node: {HostName}; Error processing reminder. Reminder: {Reminder}. Error: {error}.",
-                                                getCurrentInstantExtended (),
-                                                getMachineName,
-                                                reminder,
-                                                (ExceptionResponse.Create ex)
-                                            )
-                                    }
-                                    :> Task
-                                ))
-                        )
+                                        }
+                                        :> Task
+                                    ))
+                            )
                 with ex ->
                     log.LogError(
                         "{CurrentInstant}: Node: {HostName}; Error processing reminder. Error: {error}.",
@@ -233,7 +251,9 @@ module ReminderService =
                             ticked <- tick
                         else
                             do! Task.Delay(TimeSpan.FromSeconds(1.0), stoppingToken)
-                with ex ->
+                with
+                | :? OperationCanceledException -> ()
+                | ex ->
                     log.LogError(
                         "{CurrentInstant}: Node: {HostName}; Error in ReminderService.ExecuteAsync. Error: {error}.",
                         getCurrentInstantExtended (),

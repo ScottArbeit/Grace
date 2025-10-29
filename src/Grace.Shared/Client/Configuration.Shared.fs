@@ -2,7 +2,7 @@ namespace Grace.Shared.Client
 
 open Grace.Shared.Client.Theme
 open Grace.Shared
-open Grace.Shared.Types
+open Grace.Types.Types
 open Grace.Shared.Utilities
 open System
 open System.Collections.Generic
@@ -213,6 +213,8 @@ module Configuration =
                     graceConfiguration.GraceDirectoryIgnoreEntries <-
                         graceIgnoreEntries
                         |> Array.where (fun graceIgnoreLine -> pathContainsSeparator graceIgnoreLine)
+                        |> Array.map (fun graceIgnoreLine -> $"*{graceIgnoreLine}")
+
                     //graceConfiguration.Aliases <- aliases
                     graceConfiguration.IsPopulated <- true
                     graceConfiguration

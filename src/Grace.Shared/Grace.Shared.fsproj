@@ -1,82 +1,87 @@
-<Project Sdk="Microsoft.NET.Sdk">
-	<PropertyGroup>
-		<TargetFramework>net10.0</TargetFramework>
-		<LangVersion>preview</LangVersion>
-		<PublishReadyToRun>true</PublishReadyToRun>
-		<Version>0.1</Version>
-		<Description>The shared core module for Grace.</Description>
-		<GenerateDocumentationFile>true</GenerateDocumentationFile>
-		<AccelerateBuildsInVisualStudio>true</AccelerateBuildsInVisualStudio>
-		<NoWarn>67;1057,3391</NoWarn>
-		<WarningsAsErrors>FS0025</WarningsAsErrors>
-		<Platforms>AnyCPU;x64</Platforms>
-		<OtherFlags>--test:GraphBasedChecking</OtherFlags>
-		<OtherFlags>--test:ParallelOptimization</OtherFlags>
-		<OtherFlags>--test:ParallelIlxGen</OtherFlags>
-	</PropertyGroup>
-	<ItemGroup>
-		<Compile Include="Extensions.Shared.fs" />
-		<Compile Include="Constants.Shared.fs" />
-		<Compile Include="Resources\Text\Languages.Resources.fs" />
-		<Compile Include="Resources\Text\en-US.fs" />
-		<Compile Include="Combinators.fs" />
-		<Compile Include="Utilities.Shared.fs" />
-		<Compile Include="Types.Shared.fs" />
-		<Compile Include="Dto\Dto.Shared.fs" />
-		<Compile Include="Converters\BranchDtoConverter.Shared.fs" />
-		<Compile Include="Services.Shared.fs" />
-		<Compile Include="Diff.Shared.fs" />
-		<Compile Include="Client\Theme.Shared.fs" />
-		<Compile Include="Client\Configuration.Shared.fs" />
-		<Compile Include="Parameters\Common.Parameters.fs" />
-		<Compile Include="Parameters\Owner.Parameters.fs" />
-		<Compile Include="Parameters\Organization.Parameters.fs" />
-		<Compile Include="Parameters\Repository.Parameters.fs" />
-		<Compile Include="Parameters\Branch.Parameters.fs" />
-		<Compile Include="Parameters\Reference.Parameters.fs" />
-		<Compile Include="Parameters\Directory.Parameters.fs" />
-		<Compile Include="Parameters\Diff.Parameters.fs" />
-		<Compile Include="Parameters\Storage.Parameters.fs" />
-		<Compile Include="Validation\Errors.Validation.fs" />
-		<Compile Include="Validation\Common.Validation.fs" />
-		<Compile Include="Validation\Utilities.Validation.fs" />
-		<Compile Include="Validation\Connect.Validation.fs" />
-		<Compile Include="Validation\Repository.Validation.fs" />
-	</ItemGroup>
+﻿<Project Sdk="Microsoft.NET.Sdk">
+    <PropertyGroup>
+        <TargetFramework>net10.0</TargetFramework>
+        <LangVersion>preview</LangVersion>
+        <PublishReadyToRun>true</PublishReadyToRun>
+        <Version>0.1</Version>
+        <Description>The shared core module for Grace.</Description>
+        <GenerateDocumentationFile>true</GenerateDocumentationFile>
+        <AccelerateBuildsInVisualStudio>true</AccelerateBuildsInVisualStudio>
+        <SuppressNETCoreSdkPreviewMessage>true</SuppressNETCoreSdkPreviewMessage>
+        <NoWarn>67;1057,3391</NoWarn>
+        <WarningsAsErrors>FS0025</WarningsAsErrors>
+        <Platforms>AnyCPU;x64</Platforms>
+        <OtherFlags>--test:GraphBasedChecking</OtherFlags>
+        <OtherFlags>--test:ParallelOptimization</OtherFlags>
+        <OtherFlags>--test:ParallelIlxGen</OtherFlags>
+    </PropertyGroup>
+    <ItemGroup>
+        <None Include="instructions.md" />
+        <Compile Include="Extensions.Shared.fs" />
+        <Compile Include="Constants.Shared.fs" />
+        <Compile Include="Resources\Text\Languages.Resources.fs" />
+        <Compile Include="Resources\Text\en-US.fs" />
+        <Compile Include="Resources\Utilities.Resources.fs" />
+        <Compile Include="Combinators.fs" />
+        <Compile Include="Utilities.Shared.fs" />
+        <Compile Include="Converters\BranchDtoConverter.Shared.fs" />
+        <Compile Include="Services.Shared.fs" />
+        <Compile Include="Diff.Shared.fs" />
+        <Compile Include="Client\Theme.Shared.fs" />
+        <Compile Include="Client\Configuration.Shared.fs" />
+        <Compile Include="Parameters\Common.Parameters.fs" />
+        <Compile Include="Parameters\Owner.Parameters.fs" />
+        <Compile Include="Parameters\Organization.Parameters.fs" />
+        <Compile Include="Parameters\Repository.Parameters.fs" />
+        <Compile Include="Parameters\Branch.Parameters.fs" />
+        <Compile Include="Parameters\Reference.Parameters.fs" />
+        <Compile Include="Parameters\Directory.Parameters.fs" />
+        <Compile Include="Parameters\Diff.Parameters.fs" />
+        <Compile Include="Parameters\Storage.Parameters.fs" />
+        <Compile Include="Validation\Errors.Validation.fs" />
+        <Compile Include="Validation\Common.Validation.fs" />
+        <Compile Include="Validation\Utilities.Validation.fs" />
+        <Compile Include="Validation\Connect.Validation.fs" />
+        <Compile Include="Validation\Repository.Validation.fs" />
+    </ItemGroup>
 
-	<ItemGroup>
-		<content Include="Monikers.imagemanifest">
-			<IncludeInVSIX>true</IncludeInVSIX>
-		</content>
-	</ItemGroup>
+    <ItemGroup>
+        <content Include="Monikers.imagemanifest">
+            <IncludeInVSIX>true</IncludeInVSIX>
+        </content>
+    </ItemGroup>
 
-	<ItemGroup>
-		<PackageReference Include="Ben.Demystifier" Version="0.4.1" />
-		<PackageReference Include="DiffPlex" Version="1.7.2" />
-		<PackageReference Include="FSharp.Control.TaskSeq" Version="0.4.0" />
-		<PackageReference Include="FSharp.SystemTextJson" Version="1.3.13" />
-		<PackageReference Include="FSharpPlus" Version="1.7.0" />
-		<PackageReference Include="MessagePack" Version="3.1.3" />
-		<PackageReference Include="MessagePack.Annotations" Version="3.1.3" />
-		<PackageReference Include="MessagePack.FSharpExtensions" Version="4.0.0" />
-		<PackageReference Include="MessagePack.NodaTime" Version="3.4.3" />
-		<PackageReference Include="Microsoft.Extensions.Caching.Memory" Version="10.0.0-preview.3.25171.5" />
-		<PackageReference Include="Microsoft.Extensions.ObjectPool" Version="10.0.0-preview.3.25172.1" />
-		<PackageReference Include="MimeTypeMapOfficial" Version="1.0.17" />
-		<PackageReference Include="MimeTypes" Version="2.5.2">
-			<PrivateAssets>all</PrivateAssets>
-			<IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
-		</PackageReference>
-		<PackageReference Include="Nanoid" Version="3.1.0" />
-		<PackageReference Include="NodaTime" Version="3.2.2" />
-		<PackageReference Include="NodaTime.Serialization.SystemTextJson" Version="1.3.0" />
-		<PackageReference Include="Polly" Version="8.5.2" />
-		<PackageReference Include="Polly.Contrib.WaitAndRetry" Version="1.1.1" />
-        <PackageReference Include="System.Text.Json" Version="10.0.0-preview.3.25171.5" />
-	</ItemGroup>
+    <ItemGroup>
+        <PackageReference Include="Ben.Demystifier" Version="0.4.1" />
+        <PackageReference Include="DiffPlex" Version="1.9.0" />
+        <PackageReference Include="FSharp.Control.TaskSeq" Version="0.4.0" />
+        <PackageReference Include="FSharp.SystemTextJson" Version="1.4.36" />
+        <PackageReference Include="FSharpPlus" Version="1.7.0" />
+        <PackageReference Include="MessagePack" Version="3.1.4" />
+        <PackageReference Include="MessagePack.Annotations" Version="3.1.4" />
+        <PackageReference Include="MessagePack.FSharpExtensions" Version="4.0.0" />
+        <PackageReference Include="MessagePack.NodaTime" Version="3.4.4" />
+        <PackageReference Include="Microsoft.Extensions.Caching.Memory" Version="10.0.0-rc.2.25502.107" />
+        <PackageReference Include="Microsoft.Extensions.ObjectPool" Version="10.0.0-rc.2.25502.107" />
+        <PackageReference Include="Microsoft.Orleans.Core" Version="9.2.1" />
+        <PackageReference Include="Microsoft.Orleans.Sdk" Version="9.2.1" />
+        <PackageReference Include="Microsoft.Orleans.Serialization.FSharp" Version="9.2.1" />
+        <PackageReference Include="Microsoft.Orleans.Serialization.SystemTextJson" Version="9.2.1" />
+        <PackageReference Include="MimeTypeMapOfficial" Version="1.0.17" />
+        <PackageReference Include="MimeTypes" Version="2.5.2" />
+        <PackageReference Include="Nanoid" Version="3.1.0" />
+        <PackageReference Include="NodaTime" Version="3.2.2" />
+        <PackageReference Include="NodaTime.Serialization.SystemTextJson" Version="1.3.0" />
+        <PackageReference Include="Polly" Version="8.6.4" />
+        <PackageReference Include="Polly.Contrib.WaitAndRetry" Version="1.1.1" />
+    </ItemGroup>
 
-	<ItemGroup>
-		<PackageReference Update="FSharp.Core" Version="9.0.202" />
-	</ItemGroup>
+    <ItemGroup>
+        <ProjectReference Include="..\Grace.Types\Grace.Types.fsproj" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <PackageReference Update="FSharp.Core" Version="10.0.100-rc2.25502.107" />
+    </ItemGroup>
 
 </Project>

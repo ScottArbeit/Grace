@@ -3,13 +3,11 @@ namespace Grace.Server
 open Azure.Storage
 open Azure.Storage.Blobs
 open CosmosJsonSerializer
-open Dapr.Client
-open Dapr.Actors.Client
 open Grace.Actors.Constants
 open Grace.Actors.Context
 open Grace.Actors.Types
 open Grace.Shared
-open Grace.Shared.Types
+open Grace.Types.Types
 open Grace.Shared.Utilities
 open Microsoft.Azure.Cosmos
 open Microsoft.Extensions.Caching.Memory
@@ -18,6 +16,8 @@ open Microsoft.Extensions.DependencyInjection
 open Microsoft.Extensions.Logging
 open Microsoft.Extensions.ObjectPool
 open NodaTime
+open Orleans
+open Orleans.Runtime
 open System
 open System.Collections.Concurrent
 open System.Collections.Generic
@@ -30,6 +30,9 @@ open System.Reflection
 open System.Text
 open System.Threading
 open System.Threading.Tasks
+open System.Diagnostics
+open Microsoft.AspNetCore.Hosting
+open Orleans.Serialization
 
 module ApplicationContext =
 
@@ -40,8 +43,9 @@ module ApplicationContext =
     /// Global dictionary of timing information for each request.
     let timings = ConcurrentDictionary<CorrelationId, List<Timing>>()
 
-    /// Dapr actor proxy factory instance
-    let mutable actorProxyFactory: IActorProxyFactory = null
+    /// Orleans client instance for the application.
+    let mutable grainFactory: IGrainFactory = null
+    //let orleansClient = ServiceCollection().FirstOrDefault(fun service -> service.ServiceType = typeof<IGrainFactory>).ImplementationInstance :?> IGrainFactory
 
     /// Dapr actor state storage provider instance
     let mutable actorStateStorageProvider: ActorStateStorageProvider = ActorStateStorageProvider.Unknown
@@ -69,10 +73,10 @@ module ApplicationContext =
         configuration <- config
     //configuration.AsEnumerable() |> Seq.iter (fun kvp -> logToConsole $"{kvp.Key}: {kvp.Value}")
 
-    /// Sets the ActorProxyFactory for the application.
-    let setActorProxyFactory proxyFactory =
-        actorProxyFactory <- proxyFactory
-        setActorProxyFactory proxyFactory
+    /// Sets the Orleans client (IGrainFactory instance) for the application.
+    let setGrainFactory client =
+        grainFactory <- client
+        setGrainFactory grainFactory
 
     /// Sets the ActorStateStorageProvider for the application.
     let setActorStateStorageProvider actorStateStorage =
@@ -88,23 +92,6 @@ module ApplicationContext =
     /// Holds information about each Azure Storage Account used by the application.
     type StorageAccount = { StorageAccountName: string; StorageAccountConnectionString: string }
 
-    let graceServerAppId = Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.DaprAppId)
-
-    let daprHttpEndpoint =
-        $"{Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.DaprServerUri)}:{Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.DaprHttpPort)}"
-
-    let daprGrpcEndpoint =
-        $"{Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.DaprServerUri)}:{Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.DaprGrpcPort)}"
-
-    logToConsole $"daprHttpEndpoint: {daprHttpEndpoint}; daprGrpcEndpoint: {daprGrpcEndpoint}"
-
-    let daprClient =
-        DaprClientBuilder()
-            .UseJsonSerializationOptions(Constants.JsonSerializerOptions)
-            .UseHttpEndpoint(daprHttpEndpoint)
-            .UseGrpcEndpoint(daprGrpcEndpoint)
-            .Build()
-
     let mutable sharedKeyCredential: StorageSharedKeyCredential = null
     let mutable grpcPortListener: TcpListener = null
     let secondsToWaitForDaprToBeReady = 30.0
@@ -114,6 +101,7 @@ module ApplicationContext =
     /// Sets multiple values for the application. In functional programming, a global construct like this is used instead of dependency injection.
     let Set =
         task {
+            (*
             let mutable isReady = false
 
             // Wait for the Dapr gRPC port to be ready.
@@ -156,10 +144,11 @@ module ApplicationContext =
             else
                 logToConsole $"Could not parse gRPC port {grpcPortString} as a port number. Exiting."
                 Environment.Exit(-1)
+            *)
 
             let storageKey = Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.AzureStorageKey)
 
-            sharedKeyCredential <- StorageSharedKeyCredential(DefaultObjectStorageAccount, storageKey)
+            sharedKeyCredential <- StorageSharedKeyCredential(Constants.DefaultObjectStorageAccount, storageKey)
 
             let cosmosDbConnectionString = Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.AzureCosmosDBConnectionString)
 
@@ -170,9 +159,9 @@ module ApplicationContext =
             // Get a reference to the CosmosDB database.
             let cosmosClientOptions =
                 CosmosClientOptions(
-                    ApplicationName = graceServerAppId,
-                    EnableContentResponseOnWrite = false,
-                    LimitToEndpoint = true,
+                    ApplicationName = "Grace.Server",
+                    EnableContentResponseOnWrite = true,
+                    LimitToEndpoint = false,
                     Serializer = new CosmosJsonSerializer(Constants.JsonSerializerOptions)
                 )
 
@@ -193,7 +182,7 @@ module ApplicationContext =
             let database = databaseResponse.Database
 
             // Get a reference to the CosmosDB container.
-            let containerProperties = ContainerProperties(Id = cosmosContainerName, PartitionKeyPath = "/partitionKey", DefaultTimeToLive = 3600)
+            let containerProperties = ContainerProperties(Id = cosmosContainerName, PartitionKeyPath = "/PartitionKey", DefaultTimeToLive = 3600)
 
             let! containerResponse = database.CreateContainerIfNotExistsAsync(containerProperties)
             cosmosContainer <- containerResponse.Container
@@ -204,15 +193,15 @@ module ApplicationContext =
             let memoryCacheOptions =
                 MemoryCacheOptions(TrackStatistics = false, TrackLinkedCacheEntries = false, ExpirationScanFrequency = TimeSpan.FromSeconds(30.0))
             //memoryCacheOptions.SizeLimit <- 100L * 1024L * 1024L
-            memoryCache <- new MemoryCache(memoryCacheOptions, loggerFactory)
+            //memoryCache <- new MemoryCache(memoryCacheOptions, loggerFactory)
 
             // Inject things into Grace.Shared.
-            Utilities.memoryCache <- memoryCache
+            //Utilities.memoryCache <- memoryCache
 
             // Inject things into Actor Services.
             setCosmosClient cosmosClient
             setCosmosContainer cosmosContainer
-            setMemoryCache memoryCache
+            //setMemoryCache memoryCache
             setTimings timings
 
             logToConsole "Grace Server is ready."

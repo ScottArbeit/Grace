@@ -4,7 +4,6 @@ open Azure.Core
 open Azure.Storage.Blobs
 open Azure.Storage.Blobs.Models
 open Azure.Storage.Sas
-open Dapr.Actors.Client
 open Giraffe
 open Grace.Actors
 open Grace.Actors.Constants
@@ -12,13 +11,13 @@ open Grace.Actors.Extensions.ActorProxy
 open Grace.Actors.Services
 open Grace.Server.ApplicationContext
 open Grace.Server.Services
-open Grace.Shared.Dto.Repository
 open Grace.Shared.Parameters.Storage
-open Grace.Shared.Types
 open Grace.Shared.Utilities
 open Grace.Shared
 open Grace.Shared.Client.Configuration
-open Grace.Shared.Validation.Errors.Storage
+open Grace.Shared.Validation.Errors
+open Grace.Types.Repository
+open Grace.Types.Types
 open Microsoft.AspNetCore.Http
 open Microsoft.Extensions.Logging
 open System
@@ -46,14 +45,14 @@ module Storage =
                 let! azureResponse = blobClient.GetPropertiesAsync()
                 let blobProperties = azureResponse.Value
                 return Ok(blobProperties.Metadata :?> IReadOnlyDictionary<string, string>)
-            | AWSS3 -> return Error(StorageError.getErrorMessage NotImplemented)
-            | GoogleCloudStorage -> return Error(StorageError.getErrorMessage NotImplemented)
+            | AWSS3 -> return Error(getErrorMessage StorageError.NotImplemented)
+            | GoogleCloudStorage -> return Error(getErrorMessage StorageError.NotImplemented)
             | ObjectStorageProvider.Unknown ->
                 logToConsole
                     $"Error: Unknown ObjectStorageProvider in getFileMetadata for repository {repositoryDto.RepositoryId} - {repositoryDto.RepositoryName}."
 
                 logToConsole (sprintf "%A" repositoryDto)
-                return Error(StorageError.getErrorMessage StorageError.UnknownObjectStorageProvider)
+                return Error(getErrorMessage StorageError.UnknownObjectStorageProvider)
         }
 
     /// Gets a download URI for the specified file version that can be used by a Grace client.
@@ -61,10 +60,11 @@ module Storage =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let correlationId = (getCorrelationId context)
+                let graceIds = getGraceIds context
 
                 try
                     let! parameters = context.BindJsonAsync<GetDownloadUriParameters>()
-                    let repositoryActor = Repository.CreateActorProxy (RepositoryId.Parse(parameters.RepositoryId)) correlationId
+                    let repositoryActor = Repository.CreateActorProxy graceIds.OrganizationId graceIds.RepositoryId correlationId
                     let! repositoryDto = repositoryActor.Get correlationId
 
                     let! downloadUri = getUriWithReadSharedAccessSignatureForFileVersion repositoryDto parameters.FileVersion correlationId
@@ -86,7 +86,7 @@ module Storage =
 
                 try
                     let! parameters = context.BindJsonAsync<GetUploadUriParameters>()
-                    let repositoryActor = Repository.CreateActorProxy (RepositoryId.Parse(graceIds.RepositoryId)) correlationId
+                    let repositoryActor = Repository.CreateActorProxy graceIds.OrganizationId graceIds.RepositoryId correlationId
                     let! repositoryDto = repositoryActor.Get correlationId
 
                     for fileVersion in parameters.FileVersions do
@@ -128,7 +128,7 @@ module Storage =
                     |> ignore
 
                     if parameters.FileVersions.Length > 0 then
-                        let repositoryActor = Repository.CreateActorProxy (RepositoryId.Parse(graceIds.RepositoryId)) correlationId
+                        let repositoryActor = Repository.CreateActorProxy graceIds.OrganizationId graceIds.RepositoryId correlationId
                         let! repositoryDto = repositoryActor.Get correlationId
 
                         let uploadMetadata = ConcurrentQueue<UploadMetadata>()
@@ -166,13 +166,13 @@ module Storage =
                     else
                         return!
                             context
-                            |> result400BadRequest (GraceError.Create (StorageError.getErrorMessage FilesMustNotBeEmpty) correlationId)
+                            |> result400BadRequest (GraceError.Create (getErrorMessage StorageError.FilesMustNotBeEmpty) correlationId)
                 with ex ->
                     logToConsole $"Exception in GetUploadMetadataForFiles: {(ExceptionResponse.Create ex)}"
 
                     return!
                         context
-                        |> result500ServerError (GraceError.Create (StorageError.getErrorMessage ObjectStorageException) correlationId)
+                        |> result500ServerError (GraceError.Create (getErrorMessage StorageError.ObjectStorageException) correlationId)
             }
 
     /// Deletes all documents from Cosmos DB. After calling, the web connection will time-out, but the method will continue to run until Cosmos DB is empty.

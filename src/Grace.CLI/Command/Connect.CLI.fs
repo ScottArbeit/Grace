@@ -2,15 +2,18 @@ namespace Grace.CLI.Command
 
 open FSharpPlus
 open Grace.CLI.Common
+open Grace.CLI.Services
+open Grace.CLI.Text
 open Grace.SDK
 open Grace.Shared
 open Grace.Shared.Client.Configuration
-open Grace.Shared.Types
+open Grace.Types.Owner
+open Grace.Types.Types
 open Grace.Shared.Validation.Common
-open Grace.Shared.Validation.Errors.Connect
+open Grace.Shared.Validation.Errors
 open System
 open System.Collections.Generic
-open System.CommandLine.NamingConventionBinder
+open System.CommandLine.Invocation
 open System.CommandLine.Parsing
 open System.IO
 open System.Threading.Tasks
@@ -19,7 +22,7 @@ open Spectre.Console
 open Azure.Storage.Blobs
 open Azure.Storage.Blobs.Models
 open System.IO.Compression
-open Grace.CLI.Services
+open Grace.CLI
 
 module Connect =
 
@@ -35,170 +38,115 @@ module Connect =
 
     module private Options =
         let repositoryId =
-            new Option<String>([| "--repositoryId"; "-r" |], IsRequired = false, Description = "The repository's ID <Guid>.", Arity = ArgumentArity.ExactlyOne)
+            new Option<RepositoryId>(
+                OptionName.RepositoryId,
+                [| "-r" |],
+                Required = false,
+                Description = "The repository's ID <Guid>.",
+                Arity = ArgumentArity.ExactlyOne
+            )
 
         let repositoryName =
             new Option<String>(
-                [| "--repositoryName"; "-n" |],
-                IsRequired = false,
+                OptionName.RepositoryName,
+                [| "-n" |],
+                Required = false,
                 Description = "The name of the repository.",
                 Arity = ArgumentArity.ExactlyOne
             )
 
-        let ownerId = new Option<String>("--ownerId", IsRequired = false, Description = "The repository's owner ID <Guid>.", Arity = ArgumentArity.ExactlyOne)
+        let ownerId =
+            new Option<OwnerId>(OptionName.OwnerId, Required = false, Description = "The repository's owner ID <Guid>.", Arity = ArgumentArity.ExactlyOne)
 
-        let ownerName = new Option<String>("--ownerName", IsRequired = false, Description = "The repository's owner name.", Arity = ArgumentArity.ExactlyOne)
+        let ownerName =
+            new Option<String>(OptionName.OwnerName, Required = false, Description = "The repository's owner name.", Arity = ArgumentArity.ExactlyOne)
 
         let organizationId =
-            new Option<String>(
-                "--organizationId",
-                IsRequired = false,
+            new Option<OrganizationId>(
+                OptionName.OrganizationId,
+                Required = false,
                 Description = "The repository's organization ID <Guid>.",
                 Arity = ArgumentArity.ExactlyOne
             )
 
         let organizationName =
-            new Option<String>("--organizationName", IsRequired = false, Description = "The repository's organization name.", Arity = ArgumentArity.ZeroOrOne)
+            new Option<String>(
+                OptionName.OrganizationName,
+                Required = false,
+                Description = "The repository's organization name.",
+                Arity = ArgumentArity.ZeroOrOne
+            )
 
         let correlationId =
             new Option<String>(
-                [| "--correlationId"; "-c" |],
-                IsRequired = false,
+                OptionName.CorrelationId,
+                [| "-c" |],
+                Required = false,
                 Description = "CorrelationId to track this command throughout Grace. [default: new Guid]",
                 Arity = ArgumentArity.ExactlyOne
             )
 
         let serverAddress =
             new Option<String>(
-                [| "--serverAddress"; "-s" |],
-                IsRequired = false,
+                OptionName.ServerAddress,
+                [| "-s" |],
+                Required = false,
                 Description = "Address of the Grace server to connect to.",
                 Arity = ArgumentArity.ExactlyOne
             )
 
         let retrieveDefaultBranch =
             new Option<bool>(
-                [| "--retrieveDefaultBranch" |],
-                IsRequired = false,
+                OptionName.RetrieveDefaultBranch,
+                [||],
+                Required = false,
                 Description = "True to retrieve the default branch after connecting; false to connect but not download any files.",
                 Arity = ArgumentArity.ExactlyOne
             )
 
-    let private ValidateIncomingParameters (parseResult: ParseResult) commonParameters =
+    type Connect() =
+        inherit AsynchronousCommandLineAction()
 
-        let ``RepositoryId must be a non-empty Guid`` (parseResult: ParseResult, commonParameters: CommonParameters) =
-            let mutable repositoryId: Guid = Guid.Empty
-
-            if parseResult.HasOption(Options.repositoryId) then
-                match
-                    (Guid.isValidAndNotEmptyGuid commonParameters.RepositoryId InvalidRepositoryId)
-                        .Result
-                with
-                | Ok result -> Result.Ok(parseResult, commonParameters)
-                | Error error -> Result.Error error
-            else
-                Result.Ok(parseResult, commonParameters)
-
-        let ``RepositoryName must be valid`` (parseResult: ParseResult, commonParameters: CommonParameters) =
-            if parseResult.HasOption(Options.repositoryName) then
-                match
-                    (String.isValidGraceName commonParameters.RepositoryName InvalidRepositoryName)
-                        .Result
-                with
-                | Ok result -> Result.Ok(parseResult, commonParameters)
-                | Error error -> Result.Error error
-            else
-                Result.Ok(parseResult, commonParameters)
-
-        let ``OwnerId must be a non-empty Guid`` (parseResult: ParseResult, commonParameters: CommonParameters) =
-            let mutable ownerId: Guid = Guid.Empty
-
-            if parseResult.HasOption(Options.ownerId) then
-                match (Guid.isValidAndNotEmptyGuid commonParameters.OwnerId InvalidOwnerId).Result with
-                | Ok result -> Result.Ok(parseResult, commonParameters)
-                | Error error -> Result.Error error
-            else
-                Result.Ok(parseResult, commonParameters)
-
-        let ``OwnerName must be valid`` (parseResult: ParseResult, commonParameters: CommonParameters) =
-            if parseResult.HasOption(Options.ownerName) then
-                match (String.isValidGraceName commonParameters.OwnerName InvalidOwnerName).Result with
-                | Ok result -> Result.Ok(parseResult, commonParameters)
-                | Error error -> Result.Error error
-            else
-                Result.Ok(parseResult, commonParameters)
-
-        let ``OrganizationId must be a non-empty Guid`` (parseResult: ParseResult, commonParameters: CommonParameters) =
-            let mutable organizationId: Guid = Guid.Empty
-
-            if parseResult.HasOption(Options.organizationId) then
-                match
-                    (Guid.isValidAndNotEmptyGuid commonParameters.OrganizationId InvalidOrganizationId)
-                        .Result
-                with
-                | Ok result -> Result.Ok(parseResult, commonParameters)
-                | Error error -> Result.Error error
-            else
-                Result.Ok(parseResult, commonParameters)
-
-        let ``OrganizationName must be valid`` (parseResult: ParseResult, commonParameters: CommonParameters) =
-            if parseResult.HasOption(Options.organizationName) then
-                match
-                    (String.isValidGraceName commonParameters.OrganizationName InvalidOrganizationName)
-                        .Result
-                with
-                | Ok result -> Result.Ok(parseResult, commonParameters)
-                | Error error -> Result.Error error
-            else
-                Result.Ok(parseResult, commonParameters)
-
-        (parseResult, commonParameters)
-        |> ``RepositoryId must be a non-empty Guid``
-        >>= ``RepositoryName must be valid``
-        >>= ``OwnerId must be a non-empty Guid``
-        >>= ``OwnerName must be valid``
-        >>= ``OrganizationId must be a non-empty Guid``
-        >>= ``OrganizationName must be valid``
-
-    let private Connect =
-        CommandHandler.Create(fun (parseResult: ParseResult) (parameters: CommonParameters) ->
+        override _.InvokeAsync(parseResult: ParseResult, cancellationToken: Threading.CancellationToken) : Task<int> =
             task {
                 try
                     if parseResult |> verbose then printParseResult parseResult
 
-                    let validateIncomingParameters = ValidateIncomingParameters parseResult parameters
+                    let validateIncomingParameters = Validations.CommonValidations parseResult
 
                     match validateIncomingParameters with
                     | Ok _ ->
+                        let graceIds = getNormalizedIdsAndNames parseResult
+
                         let ownerParameters =
                             Parameters.Owner.GetOwnerParameters(
-                                OwnerId = parameters.OwnerId,
-                                OwnerName = parameters.OwnerName,
-                                CorrelationId = parameters.CorrelationId
+                                OwnerId = graceIds.OwnerIdString,
+                                OwnerName = graceIds.OwnerName,
+                                CorrelationId = graceIds.CorrelationId
                             )
 
-                        let! ownerResult = Owner.Get(ownerParameters)
+                        let! ownerResult = Grace.SDK.Owner.Get(ownerParameters)
 
                         let organizationParameters =
                             Parameters.Organization.GetOrganizationParameters(
-                                OwnerId = parameters.OwnerId,
-                                OwnerName = parameters.OwnerName,
-                                OrganizationId = parameters.OrganizationId,
-                                OrganizationName = parameters.OrganizationName,
-                                CorrelationId = parameters.CorrelationId
+                                OwnerId = graceIds.OwnerIdString,
+                                OwnerName = graceIds.OwnerName,
+                                OrganizationId = graceIds.OrganizationIdString,
+                                OrganizationName = graceIds.OrganizationName,
+                                CorrelationId = graceIds.CorrelationId
                             )
 
                         let! organizationResult = Organization.Get(organizationParameters)
 
                         let repositoryParameters =
                             Parameters.Repository.GetRepositoryParameters(
-                                OwnerId = parameters.OwnerId,
-                                OwnerName = parameters.OwnerName,
-                                OrganizationId = parameters.OrganizationId,
-                                OrganizationName = parameters.OrganizationName,
-                                RepositoryId = parameters.RepositoryId,
-                                RepositoryName = parameters.RepositoryName,
-                                CorrelationId = parameters.CorrelationId
+                                OwnerId = graceIds.OwnerIdString,
+                                OwnerName = graceIds.OwnerName,
+                                OrganizationId = graceIds.OrganizationIdString,
+                                OrganizationName = graceIds.OrganizationName,
+                                RepositoryId = graceIds.RepositoryIdString,
+                                RepositoryName = graceIds.RepositoryName,
+                                CorrelationId = graceIds.CorrelationId
                             )
 
                         let! repositoryResult = Repository.Get(repositoryParameters)
@@ -217,7 +165,7 @@ module Connect =
                                     OrganizationId = $"{organizationDto.OrganizationId}",
                                     RepositoryId = $"{repositoryDto.RepositoryId}",
                                     BranchName = $"{repositoryDto.DefaultBranchName}",
-                                    CorrelationId = parameters.CorrelationId
+                                    CorrelationId = graceIds.CorrelationId
                                 )
 
                             match! Branch.Get(branchParameters) with
@@ -246,7 +194,7 @@ module Connect =
                                         OrganizationId = $"{organizationDto.OrganizationId}",
                                         RepositoryId = $"{repositoryDto.RepositoryId}",
                                         DirectoryVersionId = $"{branchDto.LatestPromotion.DirectoryId}",
-                                        CorrelationId = parameters.CorrelationId
+                                        CorrelationId = graceIds.CorrelationId
                                     )
 
                                 AnsiConsole.MarkupLine $"[{Colors.Important}]Retrieving all DirectoryVersions.[/]"
@@ -258,7 +206,7 @@ module Connect =
                                         OrganizationId = $"{organizationDto.OrganizationId}",
                                         RepositoryId = $"{repositoryDto.RepositoryId}",
                                         DirectoryVersionId = $"{branchDto.LatestPromotion.DirectoryId}",
-                                        CorrelationId = parameters.CorrelationId
+                                        CorrelationId = graceIds.CorrelationId
                                     )
 
                                 AnsiConsole.MarkupLine $"[{Colors.Important}]Retrieving zip file download uri.[/]"
@@ -268,8 +216,13 @@ module Connect =
                                 match (directoryVersionsResult, getZipFileResult) with
                                 | (Ok directoryVerionsReturnValue, Ok getZipFileReturnValue) ->
                                     AnsiConsole.MarkupLine $"[{Colors.Important}]Retrieved all DirectoryVersions.[/]"
-                                    let directoryVersions = directoryVerionsReturnValue.ReturnValue
-                                    let fileVersions = directoryVersions |> Seq.collect (fun dv -> dv.Files)
+                                    let directoryVersionDtos = directoryVerionsReturnValue.ReturnValue
+
+                                    let fileVersions =
+                                        directoryVersionDtos
+                                        |> Seq.map (fun directoryVersionDto -> directoryVersionDto.DirectoryVersion)
+                                        |> Seq.collect (fun dv -> dv.Files)
+
                                     let fileVersionLookup = Dictionary<RelativePath, bool>(fileVersions |> Seq.length)
 
                                     fileVersions
@@ -371,21 +324,21 @@ module Connect =
                     return 0
                 with :? OperationCanceledException as ex ->
                     return -1
-            })
+            }
 
     let Build =
         // Create main command and aliases, if any.
         let connectCommand = new Command("connect", Description = "Connect to a Grace repository.")
 
-        connectCommand.AddOption(Options.repositoryId)
-        connectCommand.AddOption(Options.repositoryName)
-        connectCommand.AddOption(Options.ownerId)
-        connectCommand.AddOption(Options.ownerName)
-        connectCommand.AddOption(Options.organizationId)
-        connectCommand.AddOption(Options.organizationName)
-        connectCommand.AddOption(Options.correlationId)
-        connectCommand.AddOption(Options.serverAddress)
-        connectCommand.AddOption(Options.retrieveDefaultBranch)
+        connectCommand.Options.Add(Options.repositoryId)
+        connectCommand.Options.Add(Options.repositoryName)
+        connectCommand.Options.Add(Options.ownerId)
+        connectCommand.Options.Add(Options.ownerName)
+        connectCommand.Options.Add(Options.organizationId)
+        connectCommand.Options.Add(Options.organizationName)
+        connectCommand.Options.Add(Options.correlationId)
+        connectCommand.Options.Add(Options.serverAddress)
+        connectCommand.Options.Add(Options.retrieveDefaultBranch)
 
-        connectCommand.Handler <- Connect
+        connectCommand.Action <- Connect()
         connectCommand

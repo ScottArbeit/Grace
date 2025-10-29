@@ -1,7 +1,7 @@
 namespace Grace.Shared.Parameters
 
 open Grace.Shared.Parameters.Common
-open Grace.Shared.Types
+open Grace.Types.Types
 open System
 open System.Collections.Generic
 
@@ -20,6 +20,7 @@ module Repository =
     /// Parameters for the /repository/create endpoint.
     type CreateRepositoryParameters() =
         inherit RepositoryParameters()
+        member val public ObjectStorageProvider = ObjectStorageProvider.DefaultObjectStorageProvider with get, set
 
     /// Parameters for the /repository/get endpoint.
     type GetRepositoryParameters() =

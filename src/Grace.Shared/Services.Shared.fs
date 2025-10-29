@@ -1,7 +1,6 @@
 namespace Grace.Shared
 
-open Grace.Shared.Dto
-open Grace.Shared.Types
+open Grace.Types.Types
 open Grace.Shared.Utilities
 open Microsoft.Extensions.ObjectPool
 open System
@@ -12,6 +11,7 @@ open System.IO
 open System.Linq
 open System.Security.Cryptography
 open System.Text
+open System.Threading.Tasks
 
 module Services =
 
@@ -53,6 +53,7 @@ module Services =
     /// This is the same algorithm used by Git.
     let isBinaryFile (stream: Stream) =
         task {
+            //logToConsole $"In isBinaryFile: stream.Length: {stream.Length}."
             // If the file is smaller than 8K, we'll check the whole file.
             let defaultBytesToCheck = 8 * 1024
 
@@ -64,19 +65,21 @@ module Services =
 
             // Get a buffer to hold the part of the file we're going to check.
             let startingBytes = ArrayPool<byte>.Shared.Rent(bytesToCheck)
+            //logToConsole $"In isBinaryFile: stream.Length: {stream.Length}. Rented byte array of length {bytesToCheck}."
 
             try
-                // Read the beginning of the file into the buffer.
-                let! bytesRead = stream.ReadAsync(startingBytes, 0, bytesToCheck)
+                try
+                    // Read the beginning of the file into the buffer.
+                    //logToConsole $"In isBinaryFile: stream.Length: {stream.Length}. About to read stream."
+                    stream.Position <- 0L
+                    let! bytesRead = stream.ReadAsync(startingBytes, 0, bytesToCheck)
+                    //logToConsole $"In isBinaryFile: stream.Length: {stream.Length}. Finished reading stream."
 
-                // Search for a 0x00 character.
-                match
-                    startingBytes
-                    |> Array.take bytesRead
-                    |> Array.tryFind (fun b -> char (b) = nulChar)
-                with
-                | Some nul -> return true
-                | None -> return false
+                    // Search for a 0x00 character.
+                    return startingBytes.Take(bytesRead).Any(fun b -> char (b) = nulChar)
+                with ex ->
+                    //logToConsole $"In isBinaryFile: stream.Length: {stream.Length}. Caught exception: {ExceptionResponse.Create ex}."
+                    return false
             finally
                 // Return the rented buffer to the pool, even if an exception is thrown.
                 if not <| isNull startingBytes then ArrayPool<byte>.Shared.Return(startingBytes)
@@ -87,12 +90,15 @@ module Services =
     /// Sha256Hash values for files are computed by hashing the file's contents, and then appending the relative path of the file, and the file length.
     let computeSha256ForFile (stream: Stream) (relativeFilePath: RelativePath) =
         task {
-            // Did some informal perf testing on large files, this size was best, larger didn't help, and 64K is still on the small object heap.
+            //logToConsole $"In computeSha256ForFile: relativeFilePath: {relativeFilePath}."
+
+            // Did some informal perf testing on large files, this size was best, larger didn't help, and 64K keeps it on the small object heap.
             let bufferLength = 64 * 1024
 
             // Using object pooling for both of these.
             let buffer = ArrayPool<byte>.Shared.Rent(bufferLength)
             let hasher = incrementalHashPool.Get()
+            //logToConsole $"In computeSha256ForFile: relativeFilePath: {relativeFilePath}. Got hasher."
 
             try
                 // 1. Read bytes from the file and feed them into the hasher.
@@ -114,12 +120,23 @@ module Services =
                 hasher.GetCurrentHash(sha256Bytes) |> ignore
                 // 5. Convert the SHA-256 value from a byte[] to a string, and return it.
                 //    Example: byte[]{0x43, 0x2a, 0x01, 0xfa} -> "432a01fa"
-                return byteArrayToString (sha256Bytes)
+
+                let sha256Hash = byteArrayToString (sha256Bytes)
+                //logToConsole $"In computeSha256ForFile: relativeFilePath: {relativeFilePath}. sha256Hash: {sha256Hash}."
+
+                return Sha256Hash sha256Hash
             finally
+                //logToConsole $"In computeSha256ForFile (finally clause): relativeFilePath: {relativeFilePath}. About to return buffer to ArrayPool."
+
                 if not <| isNull buffer then
                     ArrayPool<byte>.Shared.Return(buffer, clearArray = true)
 
+                //logToConsole
+                //    $"In computeSha256ForFile (finally clause): relativeFilePath: {relativeFilePath}. Returned buffer to ArrayPool. About to return hasher to incrementalHashPool."
+
                 if not <| isNull hasher then incrementalHashPool.Return(hasher)
+
+        //logToConsole $"In computeSha256ForFile (finally clause): relativeFilePath: {relativeFilePath}. Returned hasher to incrementalHashPool."
         }
 
     /// Computes the SHA-256 value for a given relative directory.

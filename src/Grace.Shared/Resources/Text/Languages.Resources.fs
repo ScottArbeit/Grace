@@ -45,6 +45,7 @@ module Text =
         | FailedCreatingInitialBranch
         | FailedRebasingInitialBranch
         | FailedCreatingInitialPromotion
+        | FailedToAddReference
         | FailedToGetUploadUrls
         | FailedToRetrieveBranch
         | FailedUploadingFilesToObjectStorage
@@ -68,6 +69,7 @@ module Text =
         | InvalidDirectoryVersionId
         | InvalidLogicalDeleteDaysValue
         | InvalidMaxCountValue
+        | InvalidNewName
         | InvalidObjectStorageProvider
         | InvalidOrganizationId
         | InvalidOrganizationName
@@ -143,6 +145,7 @@ module Text =
         | Sha256HashIsRequired
         | StringIsTooLong
         | TagIsDisabled
+        | TestFailed
         | UnknownObjectStorageProvider
         | UpdatingWorkingDirectory
         | UploadingFiles

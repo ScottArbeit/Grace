@@ -77,7 +77,7 @@ module Services =
 open Services
 open FSharpPlus
 open FSharp.Control
-open Grace.Shared.Types
+open Grace.Types.Types
 
 /// Defines the setup and teardown for all tests in the Grace.Server.Tests namespace.
 [<SetUpFixture>]

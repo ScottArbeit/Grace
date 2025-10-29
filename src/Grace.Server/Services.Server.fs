@@ -1,6 +1,5 @@
 namespace Grace.Server
 
-open Dapr.Actors
 open Giraffe
 open Grace.Actors
 open Grace.Actors.Constants
@@ -11,12 +10,13 @@ open Grace.Shared
 open Grace.Shared.Constants
 open Grace.Shared.Parameters.Common
 open Grace.Shared.Resources.Text
-open Grace.Shared.Types
+open Grace.Types.Types
 open Grace.Shared.Utilities
 open Microsoft.AspNetCore.Http
 open Microsoft.Extensions.Caching.Memory
 open Microsoft.Extensions.Logging
 open NodaTime
+open Orleans
 open System
 open System.Collections.Concurrent
 open System.Collections.Generic
@@ -33,16 +33,16 @@ module Services =
 
     /// Defines the type of all server queries in Grace.
     ///
-    /// Takes an HttpContext, the MaxCount of results to return, and the ActorProxy to use for the query, and returns a Task containing the return value.
-    type QueryResult<'T, 'U when 'T :> IActor> = HttpContext -> int -> 'T -> Task<'U>
+    /// Takes an HttpContext, the MaxCount of results to return, and the GrainProxy to use for the query, and returns a Task containing the return value.
+    type QueryResult<'T, 'U when 'T :> IGrain> = HttpContext -> int -> 'T -> Task<'U>
 
     /// Gets the CorrelationId from HttpContext.Items.
     let getCorrelationId (context: HttpContext) = (context.Items[Constants.CorrelationId] :?> CorrelationId)
 
     /// Gets the GraceIds record from HttpContext.Items.
     let getGraceIds (context: HttpContext) =
-        if context.Items.ContainsKey(nameof (GraceIds)) then
-            context.Items[nameof (GraceIds)] :?> GraceIds
+        if context.Items.ContainsKey(nameof GraceIds) then
+            context.Items[nameof GraceIds] :?> GraceIds
         else
             GraceIds.Default
 
@@ -51,7 +51,7 @@ module Services =
         { Timestamp = getCurrentInstant ()
           CorrelationId = context.Items[Constants.CorrelationId].ToString()
           Principal = context.User.Identity.Name
-          Properties = new Dictionary<string, string>() }
+          Properties = new Dictionary<string, obj>() }
 
     /// Parses the incoming request body into the specified type.
     let parse<'T when 'T :> CommonParameters> (context: HttpContext) =
@@ -89,9 +89,7 @@ module Services =
                 //log.LogDebug("{CurrentInstant}: In returnResult: StatusCode: {statusCode}; result: {result}", getCurrentInstantExtended(), statusCode, serialize result)
                 return! context.WriteJsonAsync(result) // .WriteJsonAsync() uses Grace's JsonSerializerOptions.
             with ex ->
-                let exceptionResponse = Utilities.ExceptionResponse.Create ex
-
-                return! context.WriteJsonAsync(GraceError.Create (serialize exceptionResponse) (getCorrelationId context))
+                return! context.WriteJsonAsync(GraceError.CreateWithException ex String.Empty (getCorrelationId context))
         }
 
     /// Adds common attributes to the current OpenTelemetry activity, and returns a 404 Not found status.

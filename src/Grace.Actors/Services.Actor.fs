@@ -3,30 +3,30 @@ namespace Grace.Actors
 open Azure.Storage
 open Azure.Storage.Blobs
 open Azure.Storage.Sas
-open Dapr.Actors
-open Dapr.Actors.Client
-open Dapr.Client
 open Grace.Actors.Constants
 open Grace.Actors.Context
 open Grace.Actors.Extensions.ActorProxy
 open Grace.Actors.Extensions.MemoryCache
-open Grace.Actors.Events
 open Grace.Actors.Interfaces
 open Grace.Actors.Timing
 open Grace.Actors.Types
 open Grace.Shared
 open Grace.Shared.Constants
-open Grace.Shared.Dto.Branch
-open Grace.Shared.Dto.Organization
-open Grace.Shared.Dto.Reference
-open Grace.Shared.Dto.Repository
-open Grace.Shared.Types
+open Grace.Types.Branch
+open Grace.Types.DirectoryVersion
+open Grace.Types.Reference
+open Grace.Types.Reminder
+open Grace.Types.Repository
+open Grace.Types.Organization
+open Grace.Types.Owner
+open Grace.Types.Types
 open Grace.Shared.Utilities
 open Microsoft.Azure.Cosmos
 open Microsoft.Azure.Cosmos.Linq
 open Microsoft.Extensions.Caching.Memory
 open Microsoft.Extensions.Logging
 open NodaTime
+open Orleans.Runtime
 open System
 open System.Collections.Concurrent
 open System.Collections.Generic
@@ -44,6 +44,7 @@ open System
 open Microsoft.Extensions.DependencyInjection
 open System.Runtime.Serialization
 open System.Reflection
+open System.Text.RegularExpressions
 
 module Services =
     type ServerGraceIndex = Dictionary<RelativePath, DirectoryVersion>
@@ -52,24 +53,58 @@ module Services =
     type RepositoryIdRecord = { repositoryId: string }
     type BranchIdRecord = { branchId: string }
 
+    type OrganizationDtoValue() =
+        member val public value = OrganizationDto.Default with get, set
+
+    type RepositoryDtoValue() =
+        member val public value = RepositoryDto.Default with get, set
+
+    type BranchDtoValue() =
+        member val public value = BranchDto.Default with get, set
+
+    type BranchIdValue() =
+        member val public branchId = BranchId.Empty with get, set
+
+    type OwnerEventValue() =
+        member val public State: OwnerEvent array = Array.Empty<OwnerEvent>() with get, set
+
+    type OrganizationEventValue() =
+        member val public State: OrganizationEvent array = Array.Empty<OrganizationEvent>() with get, set
+
+    type RepositoryEventValue() =
+        member val public State: RepositoryEvent array = Array.Empty<RepositoryEvent>() with get, set
+
+    type BranchEventValue() =
+        member val public State: BranchEvent array = Array.Empty<BranchEvent>() with get, set
+
+    type ReferenceEventValue() =
+        member val public State: ReferenceEvent array = Array.Empty<ReferenceEvent>() with get, set
+
+    type DirectoryVersionEventValue() =
+        member val public State: DirectoryVersionEvent array = Array.Empty<DirectoryVersionEvent>() with get, set
+
+    type DirectoryVersionValue() =
+        member val public value = DirectoryVersion.Default with get, set
+
+
     /// Dictionary for caching blob container clients
     let containerClients = new ConcurrentDictionary<string, BlobContainerClient>()
 
     /// Dapr HTTP endpoint retrieved from environment variables
-    let daprHttpEndpoint =
-        $"{Environment.GetEnvironmentVariable(EnvironmentVariables.DaprServerUri)}:{Environment.GetEnvironmentVariable(EnvironmentVariables.DaprHttpPort)}"
+    //let daprHttpEndpoint =
+    //    $"{Environment.GetEnvironmentVariable(EnvironmentVariables.DaprServerUri)}:{Environment.GetEnvironmentVariable(EnvironmentVariables.DaprHttpPort)}"
 
     /// Dapr gRPC endpoint retrieved from environment variables
-    let daprGrpcEndpoint =
-        $"{Environment.GetEnvironmentVariable(EnvironmentVariables.DaprServerUri)}:{Environment.GetEnvironmentVariable(EnvironmentVariables.DaprGrpcPort)}"
+    //let daprGrpcEndpoint =
+    //    $"{Environment.GetEnvironmentVariable(EnvironmentVariables.DaprServerUri)}:{Environment.GetEnvironmentVariable(EnvironmentVariables.DaprGrpcPort)}"
 
     /// Dapr client instance
-    let daprClient =
-        DaprClientBuilder()
-            .UseJsonSerializationOptions(JsonSerializerOptions)
-            .UseHttpEndpoint(daprHttpEndpoint)
-            .UseGrpcEndpoint(daprGrpcEndpoint)
-            .Build()
+    //let daprClient =
+    //    DaprClientBuilder()
+    //        .UseJsonSerializationOptions(JsonSerializerOptions)
+    //        .UseHttpEndpoint(daprHttpEndpoint)
+    //        .UseGrpcEndpoint(daprGrpcEndpoint)
+    //        .Build()
 
     /// Azure Storage connection string retrieved from environment variables
     let private azureStorageConnectionString = Environment.GetEnvironmentVariable(EnvironmentVariables.AzureStorageConnectionString)
@@ -81,16 +116,38 @@ module Services =
     let private sharedKeyCredential = StorageSharedKeyCredential(DefaultObjectStorageAccount, azureStorageKey)
 
     /// Logger instance for the Services.Actor module.
-    let log = loggerFactory.CreateLogger("Services.Actor")
+    let private log = loggerFactory.CreateLogger("Services.Actor")
 
-    /// Cosmos LINQ serializer options
-    let linqSerializerOptions = CosmosLinqSerializerOptions(PropertyNamingPolicy = CosmosPropertyNamingPolicy.CamelCase)
+    /// Prints a Cosmos DB QueryDefinition with parameters replaced for easier debugging.
+    let printQueryDefinition (queryDefinition: QueryDefinition) =
+        let sb = stringBuilderPool.Get()
+
+        try
+            sb.Append(queryDefinition.QueryText) |> ignore
+
+            queryDefinition.GetQueryParameters()
+            |> Seq.iter (fun struct (name, value: obj) ->
+                match value with
+                | :? int64 as intValue -> sb.Replace(name, $"{intValue}")
+                | :? int as intValue -> sb.Replace(name, $"{intValue}")
+                | :? double as doubleValue -> sb.Replace(name, $"{doubleValue}")
+                | :? bool as boolValue -> sb.Replace(name, $"{boolValue.ToString().ToLower()}")
+                | :? single as floatValue -> sb.Replace(name, $"{floatValue}")
+                | :? Guid as guidValue -> sb.Replace(name, $"\"{guidValue}\"")
+                | _ -> sb.Replace(name, $"\"{value}\"")
+                |> ignore)
+
+            // Replaces any leading spaces or tabs at the start of each line with four spaces (multiline) and then trims leading/trailing whitespace from the entire multi-line string.
+            let trimmedSql = Regex.Replace(sb.ToString(), @"(?m)^[ \t]+", "    ").Trim()
+            trimmedSql
+        finally
+            stringBuilderPool.Return sb
 
     /// Custom QueryRequestOptions that requests Index Metrics only in DEBUG build.
     let queryRequestOptions = QueryRequestOptions()
-    //#if DEBUG
-    //    queryRequestOptions.PopulateIndexMetrics <- true
-    //#endif
+#if DEBUG
+    queryRequestOptions.PopulateIndexMetrics <- true
+#endif
 
     /// Gets an Azure Blob Storage container client for the container that holds the object files for the given repository.
     let getContainerClient (repositoryDto: RepositoryDto) correlationId =
@@ -103,27 +160,27 @@ module Services =
                     key,
                     fun cacheEntry ->
                         task {
-                            // This can and should last in cache for longer than Grace's default expiration time.
-                            // StorageAccountNames and container names are stable.
-                            // However, we don't want to clog up memoryCache for too long with each client.
-                            // Not sure what the right balance is, but 10 minutes seems reasonable.
-                            cacheEntry.AbsoluteExpiration <- DateTimeOffset.UtcNow.Add(TimeSpan.FromMinutes(10.0))
-
                             let blobContainerClient = BlobContainerClient(azureStorageConnectionString, containerName)
                             let ownerActorProxy = Owner.CreateActorProxy repositoryDto.OwnerId CorrelationId.Empty
                             let! ownerDto = ownerActorProxy.Get correlationId
                             let organizationActorProxy = Organization.CreateActorProxy repositoryDto.OrganizationId CorrelationId.Empty
                             let! organizationDto = organizationActorProxy.Get correlationId
                             let metadata = Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) :> IDictionary<string, string>
-                            metadata[nameof (OwnerId)] <- $"{repositoryDto.OwnerId}"
-                            metadata[nameof (OwnerName)] <- $"{ownerDto.OwnerName}"
-                            metadata[nameof (OrganizationId)] <- $"{repositoryDto.OrganizationId}"
-                            metadata[nameof (OrganizationName)] <- $"{organizationDto.OrganizationName}"
-                            metadata[nameof (RepositoryId)] <- $"{repositoryDto.RepositoryId}"
-                            metadata[nameof (RepositoryName)] <- $"{repositoryDto.RepositoryName}"
+                            metadata[nameof OwnerId] <- $"{repositoryDto.OwnerId}"
+                            metadata[nameof OwnerName] <- $"{ownerDto.OwnerName}"
+                            metadata[nameof OrganizationId] <- $"{repositoryDto.OrganizationId}"
+                            metadata[nameof OrganizationName] <- $"{organizationDto.OrganizationName}"
+                            metadata[nameof RepositoryId] <- $"{repositoryDto.RepositoryId}"
+                            metadata[nameof RepositoryName] <- $"{repositoryDto.RepositoryName}"
 
                             let! azureResponse =
                                 blobContainerClient.CreateIfNotExistsAsync(publicAccessType = Models.PublicAccessType.None, metadata = metadata)
+
+                            // This cacheEntry can (and should) last for longer than Grace's default expiration time.
+                            // StorageAccountNames and container names are stable.
+                            // However, we don't want to clog up memoryCache for too long with each client.
+                            // Aiming for a good balance, so keeping it for 10 minutes seems reasonable.
+                            cacheEntry.AbsoluteExpiration <- DateTimeOffset.UtcNow.Add(TimeSpan.FromMinutes(10.0))
 
                             return blobContainerClient
                         }
@@ -231,49 +288,65 @@ module Services =
                 match actorStateStorageProvider with
                 | Unknown -> return false
                 | AzureCosmosDb ->
+                    let owners = List<OwnerDto>()
+
                     let queryDefinition =
                         QueryDefinition(
-                            """SELECT c["value"].OwnerId
+                            """
+                            SELECT c.State
                             FROM c
-                            WHERE c["value"].Class = @stateStorageName
-                                AND STRINGEQUALS(c["value"].OwnerName, @ownerName, true)"""
+                            WHERE (STRINGEQUALS(c.State[0].Event.created.ownerName, @ownerName, true)
+                                OR STRINGEQUALS(c.State[0].Event.setName.ownerName, @ownerName, true))
+                                AND c.GrainType = @grainType
+                                AND c.PartitionKey = @partitionKey
+                            """
                         )
                             .WithParameter("@ownerName", ownerName)
-                            .WithParameter("@stateStorageName", StateName.OwnerDto)
+                            .WithParameter("@grainType", StateName.Owner)
+                            .WithParameter("@partitionKey", StateName.Owner)
 
-                    let iterator = DefaultRetryPolicy.Execute(fun () -> cosmosContainer.GetItemQueryIterator<OwnerIdRecord>(queryDefinition))
-                    let mutable ownerGuid = OwnerId.Empty
+                    //logToConsole $"QueryDefinition in ownerNameExists:{Environment.NewLine}{printQueryDefinition queryDefinition}"
 
-                    if iterator.HasMoreResults then
-                        let! currentResultSet = iterator.ReadNextAsync()
-                        currentResultSet |> Seq.iter (fun owner -> logToConsole $"Owner: {owner}")
-                        let ownerId = currentResultSet.FirstOrDefault({ OwnerId = String.Empty }).OwnerId
+                    let iterator =
+                        DefaultRetryPolicy.Execute(fun () ->
+                            cosmosContainer.GetItemQueryIterator<OwnerEventValue>(queryDefinition, requestOptions = queryRequestOptions))
 
-                        if String.IsNullOrEmpty(ownerId) && cacheResultIfNotFound then
-                            logToConsole $"Did not find ownerId using OwnerName {ownerName}. cacheResultIfNotFound: {cacheResultIfNotFound}."
-                            // We didn't find the OwnerId, so add this OwnerName to the MemoryCache and indicate that we have already checked.
-                            //use newCacheEntry =
-                            //    memoryCache.CreateEntry(
-                            //        $"OwN:{ownerName}",
-                            //        Value = MemoryCache.EntityDoesNotExist,
-                            //        AbsoluteExpirationRelativeToNow = MemoryCache.DefaultExpirationTime
-                            //    )
+                    while iterator.HasMoreResults do
+                        let! result = iterator.ReadNextAsync()
+                        let ownersThatMatchName = result.Resource
 
-                            return false
-                        elif String.IsNullOrEmpty(ownerId) then
-                            // We didn't find the OwnerId, so return false.
-                            return false
-                        else
-                            // Add this OwnerName and OwnerId to the MemoryCache.
-                            ownerGuid <- Guid.Parse(ownerId)
-                            memoryCache.CreateOwnerNameEntry ownerName ownerGuid
-                            memoryCache.CreateOwnerIdEntry ownerGuid MemoryCache.ExistsValue
+                        ownersThatMatchName
+                        |> Seq.iter (fun eventsForOneOwner ->
+                            let ownerDto =
+                                eventsForOneOwner.State
+                                |> Seq.fold (fun ownerDto ownerEvent -> ownerDto |> OwnerDto.UpdateDto ownerEvent) OwnerDto.Default
 
-                            // Set the OwnerId in the OwnerName actor.
-                            do! ownerNameActorProxy.SetOwnerId ownerGuid correlationId
-                            return true
-                    else
+                            owners.Add(ownerDto))
+
+                    let ownerWithName =
+                        owners.FirstOrDefault(
+                            (fun owner -> String.Equals(owner.OwnerName, ownerName, StringComparison.InvariantCultureIgnoreCase)),
+                            OwnerDto.Default
+                        )
+
+                    if String.IsNullOrEmpty(ownerWithName.OwnerName) then
+                        logToConsole $"Did not find ownerId using OwnerName {ownerName}. cacheResultIfNotFound: {cacheResultIfNotFound}."
+                        // We didn't find the OwnerId, so add this OwnerName to the MemoryCache and indicate that we have already checked.
+                        //use newCacheEntry =
+                        //    memoryCache.CreateEntry(
+                        //        $"OwN:{ownerName}",
+                        //        Value = MemoryCache.EntityDoesNotExist,
+                        //        AbsoluteExpirationRelativeToNow = MemoryCache.DefaultExpirationTime
+                        //    )
                         return false
+                    else
+                        // Add this OwnerName and OwnerId to the MemoryCache.
+                        memoryCache.CreateOwnerNameEntry ownerName ownerWithName.OwnerId
+                        memoryCache.CreateOwnerIdEntry ownerWithName.OwnerId MemoryCache.ExistsValue
+
+                        // Set the OwnerId in the OwnerName actor.
+                        do! ownerNameActorProxy.SetOwnerId ownerWithName.OwnerId correlationId
+                        return true
                 | MongoDB -> return false
 
         }
@@ -396,7 +469,7 @@ module Services =
         }
 
     /// Gets the OrganizationId by either returning OrganizationId if provided, or searching by OrganizationName.
-    let resolveOrganizationId (ownerId: string) (ownerName: string) (organizationId: string) (organizationName: string) (correlationId: CorrelationId) =
+    let resolveOrganizationId (ownerId: OwnerId) (organizationId: string) (organizationName: string) (correlationId: CorrelationId) =
         task {
             let mutable organizationGuid = Guid.Empty
 
@@ -426,8 +499,7 @@ module Services =
                         return Some $"{organizationGuid}"
                 | None ->
                     // Check if we have an active OrganizationName actor with a cached result.
-                    let ownerGuid = Guid.Parse(ownerId)
-                    let organizationNameActorProxy = OrganizationName.CreateActorProxy ownerGuid organizationName correlationId
+                    let organizationNameActorProxy = OrganizationName.CreateActorProxy ownerId organizationName correlationId
 
                     match! organizationNameActorProxy.GetOrganizationId correlationId with
                     | Some organizationId ->
@@ -442,11 +514,19 @@ module Services =
                         | AzureCosmosDb ->
                             let queryDefinition =
                                 QueryDefinition(
-                                    """SELECT c["value"].OrganizationId FROM c WHERE STRINGEQUALS(c["value"].OrganizationName, @organizationName, true) AND c["value"].OwnerId = @ownerId AND c["value"].Class = @class"""
+                                    """
+                                    SELECT c.State[0].Event.created.organizationId AS OrganizationId
+                                    FROM c
+                                    WHERE STRINGEQUALS(c.State[0].Event.created.organizationName, @organizationName, true)
+                                        AND STRINGEQUALS(c.State[0].Event.created.ownerId, @ownerId, true)
+                                        AND c.GrainType = @grainType
+                                        AND c.PartitionKey = @partitionKey
+                                    """
                                 )
                                     .WithParameter("@organizationName", organizationName)
                                     .WithParameter("@ownerId", ownerId)
-                                    .WithParameter("@class", nameof (OrganizationDto))
+                                    .WithParameter("@grainType", StateName.Organization)
+                                    .WithParameter("@partitionKey", StateName.Organization)
 
                             let iterator = DefaultRetryPolicy.Execute(fun () -> cosmosContainer.GetItemQueryIterator<OrganizationIdRecord>(queryDefinition))
 
@@ -468,7 +548,7 @@ module Services =
                                     memoryCache.CreateOrganizationNameEntry organizationName organizationGuid
                                     memoryCache.CreateOrganizationIdEntry organizationGuid MemoryCache.ExistsValue
 
-                                    do! organizationNameActorProxy.SetOrganizationId organizationId correlationId
+                                    do! organizationNameActorProxy.SetOrganizationId organizationGuid correlationId
                                     return Some organizationId
                             else
                                 return None
@@ -476,11 +556,11 @@ module Services =
         }
 
     /// Checks whether a repository has been deleted by querying the actor, and updates the MemoryCache with the result.
-    let repositoryIsDeleted (repositoryId: string) correlationId =
+    let repositoryIsDeleted organizationId (repositoryId: string) correlationId =
         task {
             // Call the Repository actor to check if the repository is deleted.
             let repositoryGuid = Guid.Parse(repositoryId)
-            let repositoryActorProxy = Repository.CreateActorProxy repositoryGuid correlationId
+            let repositoryActorProxy = Repository.CreateActorProxy organizationId repositoryGuid correlationId
 
             let! isDeleted = repositoryActorProxy.IsDeleted correlationId
 
@@ -493,32 +573,24 @@ module Services =
         }
 
     /// Checks whether a repository exists by querying the actor, and updates the MemoryCache with the result.
-    let repositoryExists (repositoryId: string) correlationId =
+    let repositoryExists organizationId (repositoryId: string) correlationId =
         task {
             // Call the Repository actor to check if the repository exists.
             let repositoryGuid = Guid.Parse(repositoryId)
-            let repositoryActorProxy = Repository.CreateActorProxy repositoryGuid correlationId
+            let repositoryActorProxy = Repository.CreateActorProxy organizationId repositoryGuid correlationId
 
             let! exists = repositoryActorProxy.Exists correlationId
 
             if exists then
                 // Add this RepositoryId to the MemoryCache.
                 memoryCache.CreateRepositoryIdEntry repositoryGuid MemoryCache.ExistsValue
-                return Some repositoryId
+                return Some repositoryGuid
             else
                 return None
         }
 
     /// Gets the RepositoryId by returning RepositoryId if provided, or searching by RepositoryName within the provided owner and organization.
-    let resolveRepositoryId
-        (ownerId: string)
-        (ownerName: string)
-        (organizationId: string)
-        (organizationName: string)
-        (repositoryId: string)
-        (repositoryName: string)
-        (correlationId: CorrelationId)
-        =
+    let resolveRepositoryId (ownerId: OwnerId) (organizationId: OrganizationId) (repositoryId: string) (repositoryName: string) (correlationId: CorrelationId) =
         task {
             let mutable repositoryGuid = Guid.Empty
 
@@ -529,10 +601,10 @@ module Services =
                 match memoryCache.GetRepositoryIdEntry repositoryGuid with
                 | Some value ->
                     match value with
-                    | MemoryCache.ExistsValue -> return Some repositoryId
+                    | MemoryCache.ExistsValue -> return Some repositoryGuid
                     | MemoryCache.DoesNotExistValue -> return None
-                    | _ -> return! repositoryExists repositoryId correlationId
-                | None -> return! repositoryExists repositoryId correlationId
+                    | _ -> return! repositoryExists organizationId repositoryId correlationId
+                | None -> return! repositoryExists organizationId repositoryId correlationId
             elif String.IsNullOrEmpty(repositoryName) then
                 // We don't have a RepositoryId or RepositoryName, so we can't resolve the RepositoryId.
                 return None
@@ -545,18 +617,15 @@ module Services =
                     else
                         // We have already checked and the repository exists.
                         memoryCache.CreateRepositoryIdEntry repositoryGuid MemoryCache.ExistsValue
-                        return Some $"{repositoryGuid}"
+                        return Some repositoryGuid
                 | None ->
                     // Check if we have an active RepositoryName actor with a cached result.
-                    let ownerGuid = Guid.Parse(ownerId)
-                    let organizationGuid = Guid.Parse(organizationId)
-                    let repositoryNameActorProxy = RepositoryName.CreateActorProxy ownerGuid organizationGuid repositoryName correlationId
+                    let repositoryNameActorProxy = RepositoryName.CreateActorProxy ownerId organizationId repositoryName correlationId
 
                     match! repositoryNameActorProxy.GetRepositoryId correlationId with
                     | Some repositoryId ->
-                        repositoryGuid <- Guid.Parse(repositoryId)
-                        memoryCache.CreateRepositoryNameEntry repositoryName repositoryGuid
-                        memoryCache.CreateRepositoryIdEntry repositoryGuid MemoryCache.ExistsValue
+                        memoryCache.CreateRepositoryNameEntry repositoryName repositoryId
+                        memoryCache.CreateRepositoryIdEntry repositoryId MemoryCache.ExistsValue
                         return Some repositoryId
                     | None ->
                         // We have to call into Actor storage to get the RepositoryId.
@@ -565,29 +634,38 @@ module Services =
                         | AzureCosmosDb ->
                             let queryDefinition =
                                 QueryDefinition(
-                                    """SELECT c["value"].RepositoryId FROM c WHERE STRINGEQUALS(c["value"].RepositoryName, @repositoryName) AND c["value"].OwnerId = @ownerId AND c["value"].OrganizationId = @organizationId AND c["value"].Class = @class"""
+                                    """
+                                    SELECT c.State[0].Event.created.repositoryId AS RepositoryId
+                                    FROM c
+                                    WHERE STRINGEQUALS(c.State[0].Event.created.repositoryName, @repositoryName, true)
+                                        AND STRINGEQUALS(c.State[0].Event.created.organizationId, @organizationId, true)
+                                        AND STRINGEQUALS(c.State[0].Event.created.ownerId, @ownerId, true)
+                                        AND c.GrainType = @grainType
+                                        AND c.PartitionKey = @partitionKey
+                                   """
                                 )
                                     .WithParameter("@repositoryName", repositoryName)
                                     .WithParameter("@organizationId", organizationId)
                                     .WithParameter("@ownerId", ownerId)
-                                    .WithParameter("@class", nameof (RepositoryDto))
+                                    .WithParameter("@grainType", StateName.Repository)
+                                    .WithParameter("@partitionKey", organizationId)
 
                             let iterator = cosmosContainer.GetItemQueryIterator<RepositoryIdRecord>(queryDefinition)
 
                             if iterator.HasMoreResults then
                                 let! currentResultSet = iterator.ReadNextAsync()
 
-                                let repositoryId = currentResultSet.FirstOrDefault({ repositoryId = String.Empty }).repositoryId
+                                let repositoryIdString = currentResultSet.FirstOrDefault({ repositoryId = String.Empty }).repositoryId
 
-                                if String.IsNullOrEmpty(repositoryId) then
+                                if String.IsNullOrEmpty(repositoryIdString) then
                                     // We didn't find the RepositoryId, so add this RepositoryName to the MemoryCache and indicate that we have already checked.
                                     memoryCache.CreateRepositoryNameEntry repositoryName MemoryCache.EntityDoesNotExistGuid
                                     return None
                                 else
                                     // Add this RepositoryName and RepositoryId to the MemoryCache.
-                                    repositoryGuid <- Guid.Parse(repositoryId)
-                                    memoryCache.CreateRepositoryNameEntry repositoryName repositoryGuid
-                                    memoryCache.CreateRepositoryIdEntry repositoryGuid MemoryCache.ExistsValue
+                                    let repositoryId = Guid.Parse(repositoryIdString)
+                                    memoryCache.CreateRepositoryNameEntry repositoryName repositoryId
+                                    memoryCache.CreateRepositoryIdEntry repositoryId MemoryCache.ExistsValue
 
                                     // Set the RepositoryId in the RepositoryName actor.
                                     do! repositoryNameActorProxy.SetRepositoryId repositoryId correlationId
@@ -598,10 +676,10 @@ module Services =
         }
 
     /// Checks whether a branch has been deleted by querying the actor, and updates the MemoryCache with the result.
-    let branchIsDeleted (branchId: string) correlationId =
+    let branchIsDeleted (branchId: string) repositoryId correlationId =
         task {
             let branchGuid = Guid.Parse(branchId)
-            let branchActorProxy = Branch.CreateActorProxy branchGuid correlationId
+            let branchActorProxy = Branch.CreateActorProxy branchGuid repositoryId correlationId
 
             let! isDeleted = branchActorProxy.IsDeleted correlationId
 
@@ -614,23 +692,22 @@ module Services =
         }
 
     /// Checks whether a branch exists by querying the actor, and updates the MemoryCache with the result.
-    let branchExists (branchId: string) correlationId =
+    let branchExists (branchId: BranchId) repositoryId correlationId =
         task {
             // Call the Branch actor to check if the branch exists.
-            let branchGuid = Guid.Parse(branchId)
-            let branchActorProxy = Branch.CreateActorProxy branchGuid correlationId
+            let branchActorProxy = Branch.CreateActorProxy branchId repositoryId correlationId
             let! exists = branchActorProxy.Exists correlationId
 
             if exists then
                 // Add this BranchId to the MemoryCache.
-                memoryCache.CreateBranchIdEntry (BranchId.Parse(branchId)) MemoryCache.ExistsValue
+                memoryCache.CreateBranchIdEntry branchId MemoryCache.ExistsValue
                 return Some branchId
             else
                 return None
         }
 
     /// Gets the BranchId by returning BranchId if provided, or searching by BranchName within the provided repository.
-    let resolveBranchId (repositoryId: string) branchId branchName (correlationId: CorrelationId) =
+    let resolveBranchId ownerId organizationId repositoryId branchId branchName (correlationId: CorrelationId) =
         task {
             let mutable branchGuid = Guid.Empty
 
@@ -638,34 +715,33 @@ module Services =
                 match memoryCache.GetBranchIdEntry branchGuid with
                 | Some value ->
                     match value with
-                    | MemoryCache.ExistsValue -> return Some branchId
+                    | MemoryCache.ExistsValue -> return Some branchGuid
                     | MemoryCache.DoesNotExistValue -> return None
-                    | _ -> return! branchExists branchId correlationId
-                | None -> return! branchExists branchId correlationId
+                    | _ -> return! branchExists branchGuid repositoryId correlationId
+                | None -> return! branchExists branchGuid repositoryId correlationId
             elif String.IsNullOrEmpty(branchName) then
                 // We don't have a BranchId or BranchName, so we can't resolve the BranchId.
                 return None
             else
                 // Check if we have an active BranchName actor with a cached result.
-                match (memoryCache.GetBranchNameEntry repositoryId branchName) with
+                match memoryCache.GetBranchNameEntry(repositoryId, branchName) with
                 | Some branchGuid ->
                     if branchGuid.Equals(Constants.MemoryCache.EntityDoesNotExist) then
                         // We have already checked and the branch does not exist.
                         return None
                     else
                         // We have already checked and the branch exists.
-                        return Some $"{branchGuid}"
+                        return Some branchGuid
                 | None ->
                     // Check if we have an active BranchName actor with a cached result.
-                    let repositoryGuid = Guid.Parse(repositoryId)
-                    let branchNameActorProxy = BranchName.CreateActorProxy repositoryGuid branchName correlationId
+                    let branchNameActorProxy = BranchName.CreateActorProxy repositoryId branchName correlationId
 
                     match! branchNameActorProxy.GetBranchId correlationId with
                     | Some branchId ->
                         // Add this BranchName and BranchId to the MemoryCache.
-                        memoryCache.CreateBranchNameEntry repositoryId branchName branchId
+                        memoryCache.CreateBranchNameEntry(repositoryId, branchName, branchId)
                         memoryCache.CreateBranchIdEntry branchId MemoryCache.ExistsValue
-                        return Some $"{branchId}"
+                        return Some branchGuid
                     | None ->
                         // We have to call into Actor storage to get the BranchId.
                         match actorStateStorageProvider with
@@ -673,19 +749,24 @@ module Services =
                         | AzureCosmosDb ->
                             let queryDefinition =
                                 QueryDefinition(
-                                    """SELECT events.Event.created.branchId
-                            	       FROM c
-                            	       JOIN events IN c["value"]
-                            	       WHERE ENDSWITH(c.id, @stateName, true)
-                                           AND STRINGEQUALS(events.Event.created.branchName, @branchName, true)
-                                           AND STRINGEQUALS(events.Event.created.repositoryId, @repositoryId, true)
+                                    """
+                                    SELECT c.State[0].Event.created.branchId AS BranchId
+                                    FROM c
+                                    WHERE STRINGEQUALS(c.State[0].Event.created.branchName, @branchName, true)
+                                        AND STRINGEQUALS(c.State[0].Event.created.organizationId, @organizationId, true)
+                                        AND STRINGEQUALS(c.State[0].Event.created.ownerId, @ownerId, true)
+                                        AND c.GrainType = @grainType
+                                        AND c.PartitionKey = @partitionKey
                                     """
                                 )
-                                    .WithParameter("@repositoryId", repositoryId)
                                     .WithParameter("@branchName", branchName)
-                                    .WithParameter("@stateName", StateName.Branch)
+                                    .WithParameter("@organizationId", organizationId)
+                                    .WithParameter("@ownerId", ownerId)
+                                    .WithParameter("@grainType", StateName.Branch)
+                                    .WithParameter("@partitionKey", repositoryId)
 
                             let iterator = DefaultRetryPolicy.Execute(fun () -> cosmosContainer.GetItemQueryIterator<BranchIdRecord>(queryDefinition))
+                            //logToConsole $"QueryDefinition in resolveBranchId:{Environment.NewLine}{printQueryDefinition queryDefinition}"
 
                             if iterator.HasMoreResults then
                                 let! currentResultSet = iterator.ReadNextAsync()
@@ -693,57 +774,51 @@ module Services =
 
                                 if String.IsNullOrEmpty(branchId) then
                                     // We didn't find the BranchId.
-                                    logToConsole $"We didn't find the BranchId. BranchName: {branchName}; BranchId: none."
+                                    //logToConsole $"We didn't find the BranchId. BranchName: {branchName}; BranchId: none."
                                     return None
                                 else
                                     // Add this BranchName and BranchId to the MemoryCache.
                                     branchGuid <- Guid.Parse(branchId)
 
                                     // Add this BranchName and BranchId to the MemoryCache.
-                                    memoryCache.CreateBranchNameEntry repositoryId branchName branchGuid
+                                    memoryCache.CreateBranchNameEntry(repositoryId, branchName, branchGuid)
                                     memoryCache.CreateBranchIdEntry branchGuid MemoryCache.ExistsValue
 
                                     // Set the BranchId in the BranchName actor.
                                     do! branchNameActorProxy.SetBranchId branchGuid correlationId
-                                    logToConsole $"BranchName actor was not active. BranchName: {branchName}; BranchId: {branchGuid}."
-                                    return Some branchId
+                                    //logToConsole $"BranchName actor was not active. BranchName: {branchName}; BranchId: {branchGuid}."
+                                    return Some branchGuid
                             else
                                 return None
                         | MongoDB -> return None
         }
 
-    type OrganizationDtoValue() =
-        member val public value = OrganizationDto.Default with get, set
-
-    type RepositoryDtoValue() =
-        member val public value = RepositoryDto.Default with get, set
-
-    type BranchDtoValue() =
-        member val public value = BranchDto.Default with get, set
-
-    type BranchIdValue() =
-        member val public branchId = BranchId.Empty with get, set
-
-    type BranchEventValue() =
-        member val public event: Branch.BranchEvent =
-            { Event = Branch.BranchEventType.PhysicalDeleted; Metadata = (EventMetadata.New String.Empty String.Empty) } with get, set
-
-    type ReferenceEventValue() =
-        member val public event: Reference.ReferenceEvent =
-            { Event = Reference.ReferenceEventType.PhysicalDeleted; Metadata = (EventMetadata.New String.Empty String.Empty) } with get, set
-
-    type DirectoryVersionEventValue() =
-        member val public event: DirectoryVersion.DirectoryVersionEvent =
-            { Event = DirectoryVersion.DirectoryVersionEventType.PhysicalDeleted; Metadata = (EventMetadata.New String.Empty String.Empty) } with get, set
-
-    type DirectoryVersionValue() =
-        member val public value = DirectoryVersion.Default with get, set
-
+    /// Creates a CosmosDB SQL WHERE clause that includes or excludes deleted entities.
+    let includeDeletedEntitiesClause includeDeletedEntities =
+        if includeDeletedEntities then
+            // If includeDeletedEntities is true, we don't need to filter out deleted entities.
+            String.Empty
+        else
+            // We're checking to see if:
+            //  (count of logicalDeletes) = (count of undeletes)
+            //
+            //  Usually, of course, both counts are 0, but it's not as simple as checking if there's a delete event.
+            //  We can tell if an entity is deleted by checking those counts.
+            """
+            AND (
+            (SELECT VALUE COUNT(1)
+                FROM c
+                WHERE IS_DEFINED(c.State.Event.logicalDeleted)) =
+            (SELECT VALUE COUNT(1)
+                FROM c
+                WHERE IS_DEFINED(c.State.Event.undeleted))
+            )
+            """
 
     /// Gets a list of organizations for the specified owner.
     let getOrganizations (ownerId: OwnerId) (maxCount: int) includeDeleted =
         task {
-            let repositories = List<OrganizationDto>()
+            let organizations = List<OrganizationDto>()
 
             match actorStateStorageProvider with
             | Unknown -> ()
@@ -753,32 +828,50 @@ module Services =
 
                 try
                     try
-                        let includeDeletedClause =
-                            if includeDeleted then
-                                String.Empty
-                            else
-                                """ AND IS_NULL(c["value"].DeletedAt)"""
-
                         let queryDefinition =
                             QueryDefinition(
-                                $"""SELECT TOP @maxCount c["value"] FROM c WHERE c["value"].OwnerId = @ownerId AND c["value"].Class = @class {includeDeletedClause} ORDER BY c["value"].CreatedAt DESC"""
+                                $"""
+                                SELECT TOP @maxCount c.State
+                                FROM c
+                                WHERE STRINGEQUALS(c.State[0].Event.created.ownerId, @ownerId, true)
+                                    AND c.GrainType = @grainType
+                                    AND c.PartitionKey = @partitionKey
+                                    {includeDeletedEntitiesClause includeDeleted}
+                                """
                             )
-                                .WithParameter("@ownerId", ownerId)
                                 .WithParameter("@maxCount", maxCount)
-                                .WithParameter("@class", nameof (OrganizationDto))
+                                .WithParameter("@ownerId", ownerId)
+                                .WithParameter("@grainType", StateName.Organization)
+                                .WithParameter("@partitionKey", StateName.Organization)
 
-                        let iterator = cosmosContainer.GetItemQueryIterator<OrganizationDtoValue>(queryDefinition, requestOptions = queryRequestOptions)
+                        let iterator = cosmosContainer.GetItemQueryIterator<OrganizationEventValue>(queryDefinition, requestOptions = queryRequestOptions)
 
                         while iterator.HasMoreResults do
                             let! results = iterator.ReadNextAsync()
                             indexMetrics.Append($"{results.IndexMetrics}, ") |> ignore
-                            requestCharge.Append($"{results.RequestCharge}, ") |> ignore
-                            repositories.AddRange(results.Resource.Select(fun v -> v.value))
+                            requestCharge.Append($"{results.RequestCharge:F3}, ") |> ignore
 
-                        Activity.Current
-                            .SetTag("indexMetrics", $"{indexMetrics.Remove(indexMetrics.Length - 2, 2)}")
-                            .SetTag("requestCharge", $"{requestCharge.Remove(requestCharge.Length - 2, 2)}")
-                        |> ignore
+                            let eventsForAllOrganizations = results.Resource
+
+                            eventsForAllOrganizations
+                            |> Seq.iter (fun eventsForOneOrganization ->
+                                let organizationDto =
+                                    eventsForOneOrganization.State
+                                    |> Seq.fold
+                                        (fun organizationDto organizationEvent -> organizationDto |> OrganizationDto.UpdateDto organizationEvent)
+                                        OrganizationDto.Default
+
+                                organizations.Add(organizationDto))
+
+                        if
+                            (indexMetrics.Length >= 2)
+                            && (requestCharge.Length >= 2)
+                            && Activity.Current <> null
+                        then
+                            Activity.Current
+                                .SetTag("indexMetrics", $"{indexMetrics.Remove(indexMetrics.Length - 2, 2)}")
+                                .SetTag("requestCharge", $"{requestCharge.Remove(requestCharge.Length - 2, 2)}")
+                            |> ignore
                     with ex ->
                         logToConsole $"Got an exception."
                         logToConsole $"{ExceptionResponse.Create ex}"
@@ -787,7 +880,7 @@ module Services =
                     stringBuilderPool.Return(requestCharge)
             | MongoDB -> ()
 
-            return repositories
+            return organizations.OrderBy(fun o -> o.OrganizationName).ToArray()
         }
 
     /// Checks if the specified organization name is unique for the specified owner.
@@ -797,39 +890,53 @@ module Services =
             | Unknown -> return Ok false
             | AzureCosmosDb ->
                 try
+                    let organizations = List<OrganizationDto>()
+
                     let queryDefinition =
                         QueryDefinition(
-                            """SELECT c["value"].OrganizationId FROM c WHERE c["value"].OwnerId = @ownerId AND c["value"].OrganizationName = @organizationName AND c["value"].Class = @class"""
+                            """
+                            SELECT c.State
+                            FROM c
+                            WHERE (STRINGEQUALS(c.State[0].Event.created.organizationName, @organizationName, true)
+                                OR STRINGEQUALS(c.State[0].Event.setName.organizationName, @organizationName, true))
+                                AND STRINGEQUALS(c.State[0].Event.created.ownerId, @ownerId, true)
+                                AND c.GrainType = @grainType
+                                AND c.PartitionKey = @partitionKey
+                            """
                         )
-                            .WithParameter("@ownerId", ownerId)
                             .WithParameter("@organizationName", organizationName)
-                            .WithParameter("@class", nameof (OrganizationDto))
+                            .WithParameter("@ownerId", ownerId)
+                            .WithParameter("@grainType", StateName.Organization)
+                            .WithParameter("@partitionKey", StateName.Organization)
 
-                    //logToConsole (
-                    //    queryDefinition.QueryText
-                    //        .Replace("@ownerId", $"\"{ownerId}\"")
-                    //        .Replace("@organizationName", $"\"{organizationName}\"")
-                    //        .Replace("@class", "\"OrganizationDto\"")
-                    //)
+                    let iterator = cosmosContainer.GetItemQueryIterator<OrganizationEventValue>(queryDefinition, requestOptions = queryRequestOptions)
 
-                    let iterator = cosmosContainer.GetItemQueryIterator<OrganizationIdRecord>(queryDefinition, requestOptions = queryRequestOptions)
+                    while iterator.HasMoreResults do
+                        let! result = iterator.ReadNextAsync()
+                        let eventsForAllOrganizations = result.Resource
 
-                    if iterator.HasMoreResults then
-                        let! currentResultSet = iterator.ReadNextAsync()
-                        // If a row is returned, and organizationId gets a value, then the organization name is not unique.
-                        let organizationId =
-                            currentResultSet
-                                .FirstOrDefault({ organizationId = String.Empty })
-                                .organizationId
+                        eventsForAllOrganizations
+                        |> Seq.iter (fun eventsForOneOrganization ->
+                            let organizationDto =
+                                eventsForOneOrganization.State
+                                |> Seq.fold
+                                    (fun organizationDto organizationEvent -> organizationDto |> OrganizationDto.UpdateDto organizationEvent)
+                                    OrganizationDto.Default
 
-                        if String.IsNullOrEmpty(organizationId) then
-                            // The organization name is unique.
-                            return Ok true
-                        else
-                            // The organization name is not unique.
-                            return Ok false
+                            organizations.Add(organizationDto))
+
+                    let organizationWithName =
+                        organizations.FirstOrDefault(
+                            (fun o -> String.Equals(o.OrganizationName, organizationName, StringComparison.OrdinalIgnoreCase)),
+                            OrganizationDto.Default
+                        )
+
+                    if String.IsNullOrEmpty(organizationWithName.OrganizationName) then
+                        // The organization name is unique.
+                        return Ok true
                     else
-                        return Ok true // This else should never be hit.
+                        // The organization name is not unique.
+                        return Ok false
                 with ex ->
                     return Error $"{ExceptionResponse.Create ex}"
             | MongoDB -> return Ok false
@@ -842,29 +949,52 @@ module Services =
             | Unknown -> return Ok false
             | AzureCosmosDb ->
                 try
+                    let repositories = List<RepositoryDto>()
+
                     let queryDefinition =
                         QueryDefinition(
-                            """SELECT c["value"].RepositoryId FROM c WHERE c["value"].OwnerId = @ownerId AND c["value"].OrganizationId = @organizationId AND c["value"].RepositoryName = @repositoryName AND c["value"].Class = @class"""
+                            """
+                            SELECT c.State
+                            FROM c
+                            WHERE (STRINGEQUALS(c.State[0].Event.created.repositoryName, @repositoryName, true)
+                                OR STRINGEQUALS(c.State[0].Event.setName.repositoryName, @repositoryName, true))
+                                AND STRINGEQUALS(c.State[0].Event.created.organizationId, @organizationId, true)
+                                AND STRINGEQUALS(c.State[0].Event.created.ownerId, @ownerId, true)
+                                AND c.GrainType = @grainType
+                                AND c.PartitionKey = @partitionKey
+                            """
                         )
-                            .WithParameter("@ownerId", ownerId)
-                            .WithParameter("@organizationId", organizationId)
                             .WithParameter("@repositoryName", repositoryName)
-                            .WithParameter("@class", nameof (RepositoryDto))
-                    //logToConsole (queryDefinition.QueryText.Replace("@organizationId", $"\"{organizationId}\"").Replace("@repositoryName", $"\"{repositoryName}\""))
-                    let iterator = cosmosContainer.GetItemQueryIterator<RepositoryIdRecord>(queryDefinition, requestOptions = queryRequestOptions)
+                            .WithParameter("@organizationId", organizationId)
+                            .WithParameter("@ownerId", ownerId)
+                            .WithParameter("@grainType", StateName.Repository)
+                            .WithParameter("@partitionKey", organizationId)
 
-                    if iterator.HasMoreResults then
-                        let! currentResultSet = iterator.ReadNextAsync()
+                    let iterator = cosmosContainer.GetItemQueryIterator<RepositoryEventValue>(queryDefinition, requestOptions = queryRequestOptions)
 
-                        // If a row is returned, and repositoryId gets a value, then the repository name is not unique.
-                        let repositoryId = currentResultSet.FirstOrDefault({ repositoryId = String.Empty }).repositoryId
+                    while iterator.HasMoreResults do
+                        let! result = iterator.ReadNextAsync()
+                        let eventsForAllRepositories = result.Resource
 
-                        if String.IsNullOrEmpty(repositoryId) then
-                            // The repository name is unique.
-                            return Ok true
-                        else
-                            // The repository name is not unique.
-                            return Ok false
+                        eventsForAllRepositories
+                        |> Seq.iter (fun eventsForOneRepository ->
+                            let repositoryDto =
+                                eventsForOneRepository.State
+                                |> Seq.fold
+                                    (fun repositoryDto repositoryEvent -> repositoryDto |> RepositoryDto.UpdateDto repositoryEvent)
+                                    RepositoryDto.Default
+
+                            repositories.Add(repositoryDto))
+
+                    let repositoryWithName =
+                        repositories.FirstOrDefault(
+                            (fun o -> String.Equals(o.RepositoryName, repositoryName, StringComparison.OrdinalIgnoreCase)),
+                            RepositoryDto.Default
+                        )
+
+                    if String.IsNullOrEmpty(repositoryWithName.RepositoryName) then
+                        // The repository name is unique.
+                        return Ok true
                     else
                         return Ok true // This else should never be hit.
                 with ex ->
@@ -873,7 +1003,7 @@ module Services =
         }
 
     /// Gets a list of repositories for the specified organization.
-    let getRepositories (organizationId: OrganizationId) (maxCount: int) includeDeleted =
+    let getRepositories (ownerId: OwnerId) (organizationId: OrganizationId) (maxCount: int) includeDeleted =
         task {
             let repositories = List<RepositoryDto>()
 
@@ -885,110 +1015,52 @@ module Services =
 
                 try
                     try
-                        let includeDeletedClause =
-                            if includeDeleted then
-                                String.Empty
-                            else
-                                """ AND IS_NULL(c["value"].DeletedAt)"""
-
                         let queryDefinition =
                             QueryDefinition(
-                                $"""SELECT TOP @maxCount c["value"] FROM c WHERE c["value"].OrganizationId = @organizationId AND c["value"].Class = @class {includeDeletedClause} ORDER BY c["value"].CreatedAt DESC"""
+                                $"""
+                                SELECT TOP @maxCount c.State
+                                FROM c
+                                WHERE STRINGEQUALS(c.State[0].Event.created.organizationId, @organizationId, true)
+                                    AND STRINGEQUALS(c.State[0].Event.created.ownerId, @ownerId, true)
+                                    {includeDeletedEntitiesClause includeDeleted}
+                                    AND c.GrainType = @grainType
+                                    AND c.PartitionKey = @partitionKey
+                                """
                             )
+                                .WithParameter("@ownerId", ownerId)
                                 .WithParameter("@organizationId", organizationId)
                                 .WithParameter("@maxCount", maxCount)
-                                .WithParameter("@class", nameof (RepositoryDto))
+                                .WithParameter("@grainType", StateName.Repository)
+                                .WithParameter("@partitionKey", organizationId)
 
-                        let iterator = cosmosContainer.GetItemQueryIterator<RepositoryDtoValue>(queryDefinition, requestOptions = queryRequestOptions)
+                        let iterator = cosmosContainer.GetItemQueryIterator<RepositoryEventValue>(queryDefinition, requestOptions = queryRequestOptions)
 
                         while iterator.HasMoreResults do
                             let! results = iterator.ReadNextAsync()
                             indexMetrics.Append($"{results.IndexMetrics}, ") |> ignore
-                            requestCharge.Append($"{results.RequestCharge}, ") |> ignore
-                            repositories.AddRange(results.Resource.Select(fun v -> v.value))
+                            requestCharge.Append($"{results.RequestCharge:F3}, ") |> ignore
 
-                        Activity.Current
-                            .SetTag("indexMetrics", $"{indexMetrics.Remove(indexMetrics.Length - 2, 2)}")
-                            .SetTag("requestCharge", $"{requestCharge.Remove(requestCharge.Length - 2, 2)}")
-                        |> ignore
-                    with ex ->
-                        logToConsole $"Got an exception."
-                        logToConsole $"{ExceptionResponse.Create ex}"
-                finally
-                    stringBuilderPool.Return(indexMetrics)
-                    stringBuilderPool.Return(requestCharge)
-            | MongoDB -> ()
+                            let eventsForAllRepositories = results.Resource
 
-            return repositories
-        }
+                            eventsForAllRepositories
+                            |> Seq.iter (fun eventsForOneRepository ->
+                                let repositoryDto =
+                                    eventsForOneRepository.State
+                                    |> Array.fold
+                                        (fun repositoryDto repositoryEvent -> repositoryDto |> RepositoryDto.UpdateDto repositoryEvent)
+                                        RepositoryDto.Default
 
-    /// Gets a list of branches for a given repository.
-    let getBranches (repositoryId: RepositoryId) (maxCount: int) includeDeleted correlationId =
-        task {
-            let branches = ConcurrentBag<BranchDto>()
-            let branchIds = List<BranchId>()
+                                repositories.Add(repositoryDto))
 
-            match actorStateStorageProvider with
-            | Unknown -> ()
-            | AzureCosmosDb ->
-                let indexMetrics = stringBuilderPool.Get()
-                let requestCharge = stringBuilderPool.Get()
-
-                try
-                    try
-                        let includeDeletedClause =
-                            if includeDeleted then
-                                String.Empty
-                            else
-                                """ AND (
-                                    (SELECT VALUE COUNT(1)
-                                     FROM c JOIN subEvent IN c["value"]
-                                     WHERE IS_DEFINED(subEvent.Event.logicalDeleted)) =
-                                    (SELECT VALUE COUNT(1)
-                                     FROM c JOIN subEvent IN c["value"]
-                                     WHERE IS_DEFINED(subEvent.Event.undeleted))
-                                ) """
-
-                        let queryDefinition =
-                            QueryDefinition(
-                                $"""SELECT TOP @maxCount event.Event.created.branchId
-                                    FROM c JOIN event IN c["value"] 
-                                    WHERE event.Event.created.repositoryId = @repositoryId
-                                        AND LENGTH(event.Event.created.branchName) > 0 {includeDeletedClause}"""
-                            )
-                                .WithParameter("@maxCount", maxCount)
-                                .WithParameter("@repositoryId", $"{repositoryId}")
-
-                        let iterator = cosmosContainer.GetItemQueryIterator<BranchIdValue>(queryDefinition, requestOptions = queryRequestOptions)
-
-                        while iterator.HasMoreResults do
-                            addTiming TimingFlag.BeforeStorageQuery "getBranches" correlationId
-                            let! results = iterator.ReadNextAsync()
-                            addTiming TimingFlag.AfterStorageQuery "getBranches" correlationId
-                            indexMetrics.Append($"{results.IndexMetrics}, ") |> ignore
-                            requestCharge.Append($"{results.RequestCharge}, ") |> ignore
-                            results.Resource |> Seq.iter (fun r -> branchIds.Add(r.branchId))
-
-                        if indexMetrics.Length >= 2 && requestCharge.Length >= 2 then
+                        if
+                            (indexMetrics.Length >= 2)
+                            && (requestCharge.Length >= 2)
+                            && Activity.Current <> null
+                        then
                             Activity.Current
                                 .SetTag("indexMetrics", $"{indexMetrics.Remove(indexMetrics.Length - 2, 2)}")
                                 .SetTag("requestCharge", $"{requestCharge.Remove(requestCharge.Length - 2, 2)}")
                             |> ignore
-
-                        // Now we have the branchIds, let's get the BranchDto's. Right now the best way is just to get them as individual actors.
-                        do!
-                            Parallel.ForEachAsync(
-                                branchIds,
-                                Constants.ParallelOptions,
-                                (fun branchId ct ->
-                                    ValueTask(
-                                        task {
-                                            let branchActorProxy = Branch.CreateActorProxy branchId correlationId
-                                            let! branchDto = branchActorProxy.Get correlationId
-                                            branches.Add(branchDto)
-                                        }
-                                    ))
-                            )
                     with ex ->
                         logToConsole $"Got an exception."
                         logToConsole $"{ExceptionResponse.Create ex}"
@@ -997,11 +1069,11 @@ module Services =
                     stringBuilderPool.Return(requestCharge)
             | MongoDB -> ()
 
-            return branches.ToArray()
+            return repositories.OrderBy(fun r -> r.RepositoryName).ToArray()
         }
 
     /// Gets a list of references that match a provided SHA-256 hash.
-    let getReferencesBySha256Hash (branchId: BranchId) (sha256Hash: Sha256Hash) (maxCount: int) =
+    let getReferencesBySha256Hash (repositoryId: RepositoryId) (branchId: BranchId) (sha256Hash: Sha256Hash) (maxCount: int) =
         task {
             let references = List<ReferenceDto>()
 
@@ -1014,51 +1086,63 @@ module Services =
                 try
                     let queryDefinition =
                         QueryDefinition(
-                            """SELECT TOP @maxCount event FROM c JOIN event IN c["value"] 
-                                WHERE event.Event.created.BranchId = @branchId
-                                    AND STARTSWITH(event.Event.created.Sha256Hash, @sha256Hash, true)
-                                    AND event.Event.created.Class = @class
-                                ORDER BY c["value"].CreatedAt DESC"""
+                            """
+                            SELECT TOP @maxCount c.State
+                            FROM c
+                            WHERE STRINGEQUALS(c.State[0].Event.created.BranchId, @branchId, true)
+                                AND STARTSWITH(c.State[0].Event.created.Sha256Hash, @sha256Hash, true)
+                                AND c.GrainType = @grainType
+                                AND c.PartitionKey = @partitionKey
+                            """
                         )
                             .WithParameter("@maxCount", maxCount)
                             .WithParameter("@sha256Hash", sha256Hash)
                             .WithParameter("@branchId", branchId)
-                            .WithParameter("@class", nameof (ReferenceDto))
+                            .WithParameter("@grainType", StateName.Reference)
+                            .WithParameter("@partitionKey", repositoryId)
 
                     let iterator = cosmosContainer.GetItemQueryIterator<ReferenceEventValue>(queryDefinition, requestOptions = queryRequestOptions)
 
                     while iterator.HasMoreResults do
-                        let! results = DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> iterator.ReadNextAsync())
+                        let! results = iterator.ReadNextAsync()
                         indexMetrics.Append($"{results.IndexMetrics}, ") |> ignore
-                        requestCharge.Append($"{results.RequestCharge}, ") |> ignore
+                        requestCharge.Append($"{results.RequestCharge:F3}, ") |> ignore
+                        let eventsForAllReferences = results.Resource
 
-                        results.Resource
-                        |> Seq.iter (fun r ->
-                            match r.event.Event with
-                            | Reference.ReferenceEventType.Created refDto -> references.Add(refDto)
-                            | _ -> ())
+                        eventsForAllReferences
+                        |> Seq.iter (fun eventsForOneReference ->
+                            let referenceDto =
+                                eventsForOneReference.State
+                                |> Array.fold (fun referenceDto referenceEvent -> referenceDto |> ReferenceDto.UpdateDto referenceEvent) ReferenceDto.Default
 
-                    Activity.Current
-                        .SetTag("indexMetrics", $"{indexMetrics.Remove(indexMetrics.Length - 2, 2)}")
-                        .SetTag("requestCharge", $"{requestCharge.Remove(requestCharge.Length - 2, 2)}")
-                    |> ignore
+                            references.Add(referenceDto))
+
+                    if
+                        (indexMetrics.Length >= 2)
+                        && (requestCharge.Length >= 2)
+                        && Activity.Current <> null
+                    then
+                        Activity.Current
+                            .SetTag("indexMetrics", $"{indexMetrics.Remove(indexMetrics.Length - 2, 2)}")
+                            .SetTag("requestCharge", $"{requestCharge.Remove(requestCharge.Length - 2, 2)}")
+                        |> ignore
                 finally
                     stringBuilderPool.Return(indexMetrics)
                     stringBuilderPool.Return(requestCharge)
             | MongoDB -> ()
 
-            return references :> IReadOnlyList<ReferenceDto>
+            return references.OrderBy(fun reference -> reference.CreatedAt).ToArray()
         }
 
     /// Gets a reference by its SHA-256 hash.
-    let getReferenceBySha256Hash (branchId: BranchId) (sha256Hash: Sha256Hash) =
+    let getReferenceBySha256Hash (repositoryId: RepositoryId) (branchId: BranchId) (sha256Hash: Sha256Hash) =
         task {
-            let! references = getReferencesBySha256Hash branchId sha256Hash 1
-            if references.Count > 0 then return Some references[0] else return None
+            let! references = getReferencesBySha256Hash repositoryId branchId sha256Hash 1
+            if references.Length > 0 then return Some references[0] else return None
         }
 
     /// Gets a list of references for a given branch.
-    let getReferences (branchId: BranchId) (maxCount: int) (correlationId: CorrelationId) =
+    let getReferences (repositoryId: RepositoryId) (branchId: BranchId) (maxCount: int) (correlationId: CorrelationId) =
         task {
             let references = List<ReferenceDto>()
 
@@ -1071,46 +1155,64 @@ module Services =
                 try
                     let queryDefinition =
                         QueryDefinition(
-                            """SELECT TOP @maxCount event FROM c JOIN event IN c["value"] 
-                                WHERE event.Event.created.BranchId = @branchId
-                                    AND event.Event.created.Class = @class
-                                ORDER BY c["value"].CreatedAt DESC"""
+                            """
+                            SELECT TOP @maxCount c.State
+                            FROM c
+                            WHERE STRINGEQUALS(c.State[0].Event.created.BranchId, @branchId, true)
+                                AND c.GrainType = @grainType
+                                AND c.PartitionKey = @partitionKey
+                            ORDER BY c.State[0].Event.created.CreatedAt DESC
+                            """
                         )
                             .WithParameter("@maxCount", maxCount)
                             .WithParameter("@branchId", branchId)
-                            .WithParameter("@class", nameof (ReferenceDto))
+                            .WithParameter("@grainType", StateName.Reference)
+                            .WithParameter("@partitionKey", repositoryId)
 
                     let iterator = cosmosContainer.GetItemQueryIterator<ReferenceEventValue>(queryDefinition, requestOptions = queryRequestOptions)
 
                     while iterator.HasMoreResults do
                         addTiming TimingFlag.BeforeStorageQuery "getReferences" correlationId
-                        let! results = DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> iterator.ReadNextAsync())
-                        //let! results = iterator.ReadNextAsync()
+                        let! results = iterator.ReadNextAsync()
                         indexMetrics.Append($"{results.IndexMetrics}, ") |> ignore
-                        requestCharge.Append($"{results.RequestCharge}, ") |> ignore
+                        requestCharge.Append($"{results.RequestCharge:F3}, ") |> ignore
+                        let eventsForAllReferences = results.Resource
 
-                        results.Resource
-                        |> Seq.iter (fun r ->
-                            match r.event.Event with
-                            | Reference.ReferenceEventType.Created refDto -> references.Add(refDto)
-                            | _ -> ())
+                        eventsForAllReferences
+                        |> Seq.iter (fun eventsForOneReference ->
+                            let referenceDto =
+                                eventsForOneReference.State
+                                |> Array.fold (fun referenceDto referenceEvent -> referenceDto |> ReferenceDto.UpdateDto referenceEvent) ReferenceDto.Default
 
-                    if indexMetrics.Length >= 2 then
-                        Activity.Current
-                            .SetTag("indexMetrics", $"{indexMetrics.Remove(indexMetrics.Length - 2, 2)}")
-                            .SetTag("requestCharge", $"{requestCharge.Remove(requestCharge.Length - 2, 2)}")
+                            references.Add(referenceDto))
+
+                    //logToConsole
+                    //    $"In Services.Actor.getReferences: BranchId: {branchId}; RepositoryId: {repositoryId}; Retrieved {references.Count} references.{Environment.NewLine}{printQueryDefinition queryDefinition}{Environment.NewLine}{serialize references}"
+
+                    if
+                        indexMetrics.Length >= 2
+                        && requestCharge.Length >= 2
+                        && Activity.Current <> null
+                    then
+                        Activity.Current.SetTag("indexMetrics", $"{indexMetrics.Remove(indexMetrics.Length - 2, 2)}")
+                        |> ignore
+
+                        Activity.Current.SetTag("requestCharge", $"{requestCharge.Remove(requestCharge.Length - 2, 2)}")
                         |> ignore
                 finally
                     stringBuilderPool.Return(indexMetrics)
                     stringBuilderPool.Return(requestCharge)
             | MongoDB -> ()
 
-            return references.ToArray()
+            return references.OrderBy(fun reference -> reference.CreatedAt).ToArray()
         }
 
     type DocumentIdentifier() =
         member val id = String.Empty with get, set
-        member val partitionKey = String.Empty with get, set
+        member val PartitionKey = String.Empty with get, set
+
+    type PartitionKeyIdentifier() =
+        member val PartitionKey = String.Empty with get, set
 
     /// Deletes all documents from CosmosDb.
     ///
@@ -1121,56 +1223,55 @@ module Services =
             let failed = List<string>()
 
             try
-                // (MaxDegreeOfParallelism = 3) runs at 700 RU's, so it fits under the free 1,000 RU limit for CosmosDB, without getting throttled.
-                let parallelOptions = ParallelOptions(MaxDegreeOfParallelism = 2)
-
                 let itemRequestOptions =
                     ItemRequestOptions(AddRequestHeaders = fun headers -> headers.Add(Constants.CorrelationIdHeaderKey, "deleteAllFromCosmosDBThatMatch"))
 
                 let mutable totalRecordsDeleted = 0
                 let overallStartTime = getCurrentInstant ()
-                queryRequestOptions.MaxItemCount <- 1000
+                let deleteQueryRequestOptions = queryRequestOptions.ShallowCopy() :?> QueryRequestOptions
+                deleteQueryRequestOptions.MaxItemCount <- 1000
 
                 logToConsole
                     $"cosmosContainer.Id: {cosmosContainer.Id}; cosmosContainer.Database.Id: {cosmosContainer.Database.Id}; cosmosContainer.Database.Client.Endpoint: {cosmosContainer.Database.Client.Endpoint}."
 
-                let iterator = cosmosContainer.GetItemQueryIterator<DocumentIdentifier>(queryDefinition, requestOptions = queryRequestOptions)
+                let iterator = cosmosContainer.GetItemQueryIterator<PartitionKeyIdentifier>(queryDefinition, requestOptions = deleteQueryRequestOptions)
 
                 while iterator.HasMoreResults do
                     let batchStartTime = getCurrentInstant ()
                     let! batchResults = iterator.ReadNextAsync()
                     let mutable totalRequestCharge = 0L
 
-                    logToConsole $"In Services.deleteAllFromCosmosDB(): Current batch size: {batchResults.Resource.Count()}."
+                    //logToConsole $"In Services.deleteAllFromCosmosDB(): Current batch size: {batchResults.Resource.Count()}."
 
                     do!
                         Parallel.ForEachAsync(
                             batchResults,
-                            parallelOptions,
                             (fun document ct ->
                                 ValueTask(
                                     task {
-                                        let! deleteResponse =
-                                            cosmosContainer.DeleteItemAsync(document.id, PartitionKey(document.partitionKey), itemRequestOptions)
+                                        use! deleteResponse =
+                                            cosmosContainer.DeleteAllItemsByPartitionKeyStreamAsync(PartitionKey(document.PartitionKey), itemRequestOptions)
 
-                                        // Multiplying by 1000 because Interlocked.Add() expects an int64; we'll divide by 1000 when logging.
-                                        totalRequestCharge <- Interlocked.Add(&totalRequestCharge, int64 (deleteResponse.RequestCharge * 1000.0))
+                                        if deleteResponse.IsSuccessStatusCode then
+                                            logToConsole $"Request succeeded to delete all items with PartitionKey = {document.PartitionKey}."
+                                        else
+                                            failed.Add(document.PartitionKey)
 
-                                        if deleteResponse.StatusCode <> HttpStatusCode.NoContent then
-                                            failed.Add(document.id)
-                                            logToConsole $"Failed to delete id {document.id}."
+                                            logToConsole
+                                                $"Failed to delete PartitionKey {document.PartitionKey}. StatusCode: {deleteResponse.StatusCode}; Error: {deleteResponse.ErrorMessage}."
+
                                     }
                                 ))
                         )
 
-                    let duration_s = getCurrentInstant().Minus(batchStartTime).TotalSeconds
-                    let overall_duration_s = getCurrentInstant().Minus(overallStartTime).TotalSeconds
-                    let rps = float (batchResults.Resource.Count()) / duration_s
-                    totalRecordsDeleted <- totalRecordsDeleted + batchResults.Resource.Count()
-                    let overallRps = float totalRecordsDeleted / overall_duration_s
+                //let duration_s = getCurrentInstant().Minus(batchStartTime).TotalSeconds
+                //let overall_duration_s = getCurrentInstant().Minus(overallStartTime).TotalSeconds
+                //let rps = float (batchResults.Resource.Count()) / duration_s
+                //totalRecordsDeleted <- totalRecordsDeleted + batchResults.Resource.Count()
+                //let overallRps = float totalRecordsDeleted / overall_duration_s
 
-                    logToConsole
-                        $"In Services.deleteAllFromCosmosDBThatMatch(): batch duration (s): {duration_s:F3}; batch requests/second: {rps:F3}; failed.Count: {failed.Count}; totalRequestCharge: {float totalRequestCharge / 1000.0:F2}; totalRecordsDeleted: {totalRecordsDeleted}; overall duration (m): {overall_duration_s / 60.0:F3}; overall requests/second: {overallRps:F3}."
+                //logToConsole
+                //    $"In Services.deleteAllFromCosmosDBThatMatch(): batch duration (s): {duration_s:F3}; batch requests/second: {rps:F3}; failed.Count: {failed.Count}; totalRequestCharge: {float totalRequestCharge / 1000.0:F2}; totalRecordsDeleted: {totalRecordsDeleted}; overall duration (m): {overall_duration_s / 60.0:F3}; overall requests/second: {overallRps:F3}."
 
                 return failed
             with ex ->
@@ -1187,7 +1288,7 @@ module Services =
     let deleteAllFromCosmosDb () =
         task {
 #if DEBUG
-            let queryDefinition = QueryDefinition("""SELECT c.id, c.partitionKey FROM c ORDER BY c.partitionKey""")
+            let queryDefinition = QueryDefinition("""SELECT DISTINCT c.PartitionKey FROM c ORDER BY c.PartitionKey""")
             return! deleteAllFromCosmosDBThatMatch queryDefinition
 #else
             return List<string>([ "Not implemented" ])
@@ -1200,7 +1301,7 @@ module Services =
     let deleteAllRemindersFromCosmosDb () =
         task {
 #if DEBUG
-            let queryDefinition = QueryDefinition("""SELECT c.id, c.partitionKey FROM c WHERE ENDSWITH(c.id, "||Rmd") ORDER BY c.partitionKey""")
+            let queryDefinition = QueryDefinition("""SELECT c.id, c.PartitionKey FROM c WHERE c.GrainType = "Rmd" ORDER BY c.PartitionKey""")
             return! deleteAllFromCosmosDBThatMatch queryDefinition
 #else
             return List<string>([ "Not implemented" ])
@@ -1208,7 +1309,7 @@ module Services =
         }
 
     /// Gets a list of references of a given ReferenceType for a branch.
-    let getReferencesByType (referenceType: ReferenceType) (branchId: BranchId) (maxCount: int) (correlationId: CorrelationId) =
+    let getReferencesByType (referenceType: ReferenceType) (repositoryId: RepositoryId) (branchId: BranchId) (maxCount: int) (correlationId: CorrelationId) =
         task {
             let references = List<ReferenceDto>()
 
@@ -1221,34 +1322,45 @@ module Services =
                 try
                     let queryDefinition =
                         QueryDefinition(
-                            """SELECT TOP @maxCount event
-                                FROM c JOIN event IN c["value"] 
-                                WHERE event.Event.created.BranchId = @branchId
-                                    AND event.Event.created.Class = @class
-                                    AND STRINGEQUALS(event.Event.created.ReferenceType, @referenceType, true)
-                                ORDER BY c["value"].CreatedAt DESC"""
+                            """
+                            SELECT TOP @maxCount c.State
+                            FROM c
+                            WHERE STRINGEQUALS(c.State[0].Event.created.BranchId, @branchId, true)
+                                AND STRINGEQUALS(c.State[0].Event.created.ReferenceType, @referenceType, true)
+                                AND c.GrainType = @grainType
+                                AND c.PartitionKey = @partitionKey
+                            ORDER BY c.State[0].Event.created.CreatedAt DESC
+                            """
                         )
                             .WithParameter("@maxCount", maxCount)
                             .WithParameter("@branchId", branchId)
                             .WithParameter("@referenceType", getDiscriminatedUnionCaseName referenceType)
-                            .WithParameter("@class", nameof (ReferenceDto))
+                            .WithParameter("@grainType", StateName.Reference)
+                            .WithParameter("@partitionKey", repositoryId)
 
                     let iterator = cosmosContainer.GetItemQueryIterator<ReferenceEventValue>(queryDefinition, requestOptions = queryRequestOptions)
 
                     while iterator.HasMoreResults do
                         addTiming TimingFlag.BeforeStorageQuery "getReferencesByType" correlationId
-                        let! results = DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> iterator.ReadNextAsync())
+                        let! results = iterator.ReadNextAsync()
                         addTiming TimingFlag.AfterStorageQuery "getReferencesByType" correlationId
                         indexMetrics.Append($"{results.IndexMetrics}, ") |> ignore
-                        requestCharge.Append($"{results.RequestCharge}, ") |> ignore
+                        requestCharge.Append($"{results.RequestCharge:F3}, ") |> ignore
+                        let eventsForAllReferences = results.Resource
 
-                        results.Resource
-                        |> Seq.iter (fun r ->
-                            match r.event.Event with
-                            | Reference.ReferenceEventType.Created refDto -> references.Add(refDto)
-                            | _ -> ())
+                        eventsForAllReferences
+                        |> Seq.iter (fun eventsForOneReference ->
+                            let referenceDto =
+                                eventsForOneReference.State
+                                |> Array.fold (fun referenceDto referenceEvent -> referenceDto |> ReferenceDto.UpdateDto referenceEvent) ReferenceDto.Default
 
-                    if indexMetrics.Length >= 2 && requestCharge.Length >= 2 then
+                            references.Add(referenceDto))
+
+                    if
+                        indexMetrics.Length >= 2
+                        && requestCharge.Length >= 2
+                        && Activity.Current <> null
+                    then
                         Activity.Current
                             .SetTag("indexMetrics", $"{indexMetrics.Remove(indexMetrics.Length - 2, 2)}")
                             .SetTag("requestCharge", $"{requestCharge.Remove(requestCharge.Length - 2, 2)}")
@@ -1258,7 +1370,7 @@ module Services =
                     stringBuilderPool.Return(requestCharge)
             | MongoDB -> ()
 
-            return references :> IReadOnlyList<ReferenceDto>
+            return references.OrderBy(fun reference -> reference.CreatedAt).ToArray()
         }
 
     let getPromotions = getReferencesByType ReferenceType.Promotion
@@ -1269,7 +1381,7 @@ module Services =
     let getExternals = getReferencesByType ReferenceType.External
     let getRebases = getReferencesByType ReferenceType.Rebase
 
-    let getLatestReference branchId =
+    let getLatestReference repositoryId branchId =
         task {
             match actorStateStorageProvider with
             | Unknown -> return None
@@ -1278,42 +1390,50 @@ module Services =
                 let requestCharge = stringBuilderPool.Get()
 
                 try
+                    let references = List<ReferenceDto>()
+
                     let queryDefinition =
                         QueryDefinition(
-                            //"""SELECT TOP 1 c["value"] FROM c WHERE c["value"].BranchId = @branchId AND c["value"].Class = @class AND STRINGEQUALS(c["value"].ReferenceType, @referenceType, true) ORDER BY c["value"].CreatedAt DESC"""
-                            """SELECT TOP 1 event FROM c JOIN event IN c["value"] 
-                                        WHERE event.Event.created.BranchId = @branchId
-                                            AND event.Event.created.Class = @class
-                                            ORDER BY c["value"].CreatedAt DESC"""
+                            """
+                            SELECT TOP 1 c.State
+                            FROM c
+                            WHERE STRINGEQUALS(c.State[0].Event.created.BranchId, @branchId, true)
+                                AND c.GrainType = @grainType
+                                AND c.PartitionKey = @partitionKey
+                            ORDER BY c.State[0].Event.created.CreatedAt DESC
+                            """
                         )
-                            .WithParameter("@branchId", $"{branchId}")
-                            .WithParameter("@class", nameof (ReferenceDto))
+                            .WithParameter("@branchId", branchId)
+                            .WithParameter("@grainType", StateName.Reference)
+                            .WithParameter("@partitionKey", repositoryId)
 
                     let iterator = cosmosContainer.GetItemQueryIterator<ReferenceEventValue>(queryDefinition, requestOptions = queryRequestOptions)
-
-                    let mutable referenceDto = ReferenceDto.Default
 
                     while iterator.HasMoreResults do
                         let! results = iterator.ReadNextAsync()
                         indexMetrics.Append($"{results.IndexMetrics}, ") |> ignore
-                        requestCharge.Append($"{results.RequestCharge}, ") |> ignore
+                        requestCharge.Append($"{results.RequestCharge:F3}, ") |> ignore
+                        let eventsForAllReferences = results.Resource
 
-                        if results.Count > 0 then
-                            referenceDto <-
-                                match results.Resource.FirstOrDefault().event.Event with
-                                | Reference.ReferenceEventType.Created refDto -> refDto
-                                | _ -> ReferenceDto.Default
+                        eventsForAllReferences
+                        |> Seq.iter (fun eventsForOneReference ->
+                            let referenceDto =
+                                eventsForOneReference.State
+                                |> Array.fold (fun referenceDto referenceEvent -> referenceDto |> ReferenceDto.UpdateDto referenceEvent) ReferenceDto.Default
 
-                    if (indexMetrics.Length >= 2) && (requestCharge.Length >= 2) then
+                            references.Add(referenceDto))
+
+                    if
+                        (indexMetrics.Length >= 2)
+                        && (requestCharge.Length >= 2)
+                        && Activity.Current <> null
+                    then
                         Activity.Current
                             .SetTag("indexMetrics", $"{indexMetrics.Remove(indexMetrics.Length - 2, 2)}")
                             .SetTag("requestCharge", $"{requestCharge.Remove(requestCharge.Length - 2, 2)}")
                         |> ignore
 
-                    if referenceDto.ReferenceId <> ReferenceDto.Default.ReferenceId then
-                        return Some referenceDto
-                    else
-                        return None
+                    if references.Count > 0 then return Some references[0] else return None
                 finally
                     stringBuilderPool.Return(indexMetrics)
                     stringBuilderPool.Return(requestCharge)
@@ -1321,7 +1441,7 @@ module Services =
         }
 
     /// Gets the latest reference for a given ReferenceType in a branch.
-    let getLatestReferenceByReferenceTypes (referenceTypes: ReferenceType array) (branchId: BranchId) =
+    let getLatestReferenceByReferenceTypes (referenceTypes: ReferenceType array) (repositoryId: RepositoryId) (branchId: BranchId) =
         task {
             let referenceDtos = ConcurrentDictionary<ReferenceType, ReferenceDto>(referenceTypes.Length, referenceTypes.Length)
 
@@ -1332,9 +1452,9 @@ module Services =
                 let requestCharge = stringBuilderPool.Get()
 
                 try
-                    // CosmosDB SQL doesn't have a UNION clause. That means that the only way to get the latest reference for each ReferenceType is to do separate queries for each ReferenceType that gets passed in.
-                    // It's annoying, but at least let's do it in parallel.
-
+                    // CosmosDB SQL doesn't have a UNION clause. That means that the only way to get the latest reference
+                    //   for each ReferenceType is to do separate queries for each ReferenceType that gets passed in.
+                    //   It's annoying, but at least we can do it in parallel.
                     do!
                         Parallel.ForEachAsync(
                             referenceTypes,
@@ -1344,45 +1464,52 @@ module Services =
                                     task {
                                         let queryDefinition =
                                             QueryDefinition(
-                                                //"""SELECT TOP 1 c["value"] FROM c WHERE c["value"].BranchId = @branchId AND c["value"].Class = @class AND STRINGEQUALS(c["value"].ReferenceType, @referenceType, true) ORDER BY c["value"].CreatedAt DESC"""
-                                                """SELECT TOP 1 event FROM c JOIN event IN c["value"] 
-                                                        WHERE event.Event.created.BranchId = @branchId
-                                                            AND event.Event.created.Class = @class
-                                                            AND STRINGEQUALS(event.Event.created.ReferenceType, @referenceType, true)
-                                                            ORDER BY c["value"].CreatedAt DESC"""
+                                                """
+                                                SELECT TOP 1 c.State
+                                                FROM c
+                                                WHERE STRINGEQUALS(c.State[0].Event.created.BranchId, @branchId, true)
+                                                    AND STRINGEQUALS(c.State[0].Event.created.ReferenceType, @referenceType, true)
+                                                    AND c.GrainType = @grainType
+                                                    AND c.PartitionKey = @partitionKey
+                                                ORDER BY c.State[0].Event.created.CreatedAt DESC
+                                                """
                                             )
                                                 .WithParameter("@branchId", branchId)
                                                 .WithParameter("@referenceType", getDiscriminatedUnionCaseName referenceType)
-                                                .WithParameter("@class", nameof (ReferenceDto))
+                                                .WithParameter("@grainType", StateName.Reference)
+                                                .WithParameter("@partitionKey", repositoryId)
 
                                         let iterator =
                                             cosmosContainer.GetItemQueryIterator<ReferenceEventValue>(queryDefinition, requestOptions = queryRequestOptions)
 
-                                        let mutable referenceDto = ReferenceDto.Default
-
                                         while iterator.HasMoreResults do
-                                            let! results = DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> iterator.ReadNextAsync())
+                                            let! results = iterator.ReadNextAsync()
                                             indexMetrics.Append($"{results.IndexMetrics}, ") |> ignore
-                                            requestCharge.Append($"{results.RequestCharge}, ") |> ignore
+                                            requestCharge.Append($"{results.RequestCharge:F3}, ") |> ignore
+                                            let eventsForAllReferences = results.Resource
 
-                                            if results.Count > 0 then
-                                                referenceDto <-
-                                                    match results.Resource.FirstOrDefault().event.Event with
-                                                    | Reference.ReferenceEventType.Created refDto -> refDto
-                                                    | _ -> ReferenceDto.Default
+                                            eventsForAllReferences
+                                            |> Seq.iter (fun eventsForOneReference ->
+                                                let referenceDto =
+                                                    eventsForOneReference.State
+                                                    |> Array.fold
+                                                        (fun referenceDto referenceEvent -> referenceDto |> ReferenceDto.UpdateDto referenceEvent)
+                                                        ReferenceDto.Default
 
-                                        if referenceDto.ReferenceId <> ReferenceDto.Default.ReferenceId then
-                                            referenceDtos.TryAdd(referenceType, referenceDto) |> ignore
-
-                                    //logToConsole $"In getLatestReferenceByReferenceTypes:{Environment.NewLine}{referenceDto}."
+                                                referenceDtos.TryAdd(referenceType, referenceDto) |> ignore)
                                     }
                                 ))
                         )
 
-                    Activity.Current
-                        .SetTag("indexMetrics", $"{indexMetrics.Remove(indexMetrics.Length - 2, 2)}")
-                        .SetTag("requestCharge", $"{requestCharge.Remove(requestCharge.Length - 2, 2)}")
-                    |> ignore
+                    if
+                        (indexMetrics.Length >= 2)
+                        && (requestCharge.Length >= 2)
+                        && Activity.Current <> null
+                    then
+                        Activity.Current
+                            .SetTag("indexMetrics", $"{indexMetrics.Remove(indexMetrics.Length - 2, 2)}")
+                            .SetTag("requestCharge", $"{requestCharge.Remove(requestCharge.Length - 2, 2)}")
+                        |> ignore
                 finally
                     stringBuilderPool.Return(indexMetrics)
                     stringBuilderPool.Return(requestCharge)
@@ -1392,7 +1519,7 @@ module Services =
         }
 
     /// Gets the latest reference for a given ReferenceType in a branch.
-    let getLatestReferenceByType (referenceType: ReferenceType) (branchId: BranchId) =
+    let getLatestReferenceByType (referenceType: ReferenceType) (repositoryId: RepositoryId) (branchId: BranchId) =
         task {
             match actorStateStorageProvider with
             | Unknown -> return None
@@ -1403,41 +1530,50 @@ module Services =
                 try
                     let queryDefinition =
                         QueryDefinition(
-                            //"""SELECT TOP 1 c["value"] FROM c WHERE c["value"].BranchId = @branchId AND c["value"].Class = @class AND STRINGEQUALS(c["value"].ReferenceType, @referenceType, true) ORDER BY c["value"].CreatedAt DESC"""
-                            """SELECT TOP 1 event FROM c JOIN event IN c["value"] 
-                                        WHERE event.Event.created.BranchId = @branchId
-                                            AND event.Event.created.Class = @class
-                                            AND STRINGEQUALS(event.Event.created.ReferenceType, @referenceType, true)
-                                            ORDER BY c["value"].CreatedAt DESC"""
+                            """
+                            SELECT TOP 1 c.State
+                            FROM c
+                            WHERE STRINGEQUALS(c.State[0].Event.created.BranchId, @branchId, true)
+                                AND STRINGEQUALS(c.State[0].Event.created.ReferenceType, @referenceType, true)
+                                AND c.GrainType = @grainType
+                                AND c.PartitionKey = @partitionKey
+                            ORDER BY c.State[0].Event.created.CreatedAt DESC
+                            """
                         )
                             .WithParameter("@branchId", branchId)
                             .WithParameter("@referenceType", getDiscriminatedUnionCaseName referenceType)
-                            .WithParameter("@class", nameof (ReferenceDto))
+                            .WithParameter("@grainType", StateName.Reference)
+                            .WithParameter("@partitionKey", repositoryId)
 
                     let iterator = cosmosContainer.GetItemQueryIterator<ReferenceEventValue>(queryDefinition, requestOptions = queryRequestOptions)
 
-                    let mutable referenceDto = ReferenceDto.Default
+                    let references = List<ReferenceDto>()
 
                     while iterator.HasMoreResults do
                         let! results = DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> iterator.ReadNextAsync())
                         indexMetrics.Append($"{results.IndexMetrics}, ") |> ignore
-                        requestCharge.Append($"{results.RequestCharge}, ") |> ignore
+                        requestCharge.Append($"{results.RequestCharge:F3}, ") |> ignore
+                        let eventsForAllReferences = results.Resource
 
-                        if results.Count > 0 then
-                            referenceDto <-
-                                match results.Resource.FirstOrDefault().event.Event with
-                                | Reference.ReferenceEventType.Created refDto -> refDto
-                                | _ -> ReferenceDto.Default
+                        eventsForAllReferences
+                        |> Seq.iter (fun eventsForOneReference ->
+                            let referenceDto =
+                                eventsForOneReference.State
+                                |> Array.fold (fun referenceDto referenceEvent -> referenceDto |> ReferenceDto.UpdateDto referenceEvent) ReferenceDto.Default
 
-                    Activity.Current
-                        .SetTag("indexMetrics", $"{indexMetrics.Remove(indexMetrics.Length - 2, 2)}")
-                        .SetTag("requestCharge", $"{requestCharge.Remove(requestCharge.Length - 2, 2)}")
-                    |> ignore
+                            references.Add(referenceDto))
 
-                    if referenceDto.ReferenceId <> ReferenceDto.Default.ReferenceId then
-                        return Some referenceDto
-                    else
-                        return None
+                    if
+                        (indexMetrics.Length >= 2)
+                        && (requestCharge.Length >= 2)
+                        && Activity.Current <> null
+                    then
+                        Activity.Current
+                            .SetTag("indexMetrics", $"{indexMetrics.Remove(indexMetrics.Length - 2, 2)}")
+                            .SetTag("requestCharge", $"{requestCharge.Remove(requestCharge.Length - 2, 2)}")
+                        |> ignore
+
+                    if references.Count > 0 then return Some references[0] else return None
                 finally
                     stringBuilderPool.Return(indexMetrics)
                     stringBuilderPool.Return(requestCharge)
@@ -1465,6 +1601,87 @@ module Services =
     /// Gets the latest rebase from a branch.
     let getLatestRebase = getLatestReferenceByType ReferenceType.Rebase
 
+    /// Gets a list of branches for a given repository.
+    let getBranches (ownerId: OwnerId) (organizationId: OrganizationId) (repositoryId: RepositoryId) (maxCount: int) includeDeleted correlationId =
+        task {
+            let branches = ConcurrentDictionary<BranchId, BranchDto>()
+            let branchIds = List<BranchId>()
+
+            match actorStateStorageProvider with
+            | Unknown -> ()
+            | AzureCosmosDb ->
+                let indexMetrics = stringBuilderPool.Get()
+                let requestCharge = stringBuilderPool.Get()
+
+                try
+                    try
+                        // First, get all of the branches for the repository.
+                        let queryDefinition =
+                            QueryDefinition(
+                                $"""
+                                SELECT TOP @maxCount c.State[0].Event.created.branchId
+                                FROM c
+                                WHERE STRINGEQUALS(c.State[0].Event.created.ownerId, @ownerId, true)
+                                    AND STRINGEQUALS(c.State[0].Event.created.organizationId, @organizationId, true)
+                                    AND LENGTH(c.State[0].Event.created.branchName) > 0
+                                    {includeDeletedEntitiesClause includeDeleted}
+                                    AND c.GrainType = @grainType
+                                    AND c.PartitionKey = @partitionKey
+                                """
+                            )
+                                .WithParameter("@maxCount", maxCount)
+                                .WithParameter("@ownerId", ownerId)
+                                .WithParameter("@organizationId", organizationId)
+                                .WithParameter("@grainType", StateName.Branch)
+                                .WithParameter("@partitionKey", repositoryId)
+
+                        let iterator = cosmosContainer.GetItemQueryIterator<BranchIdValue>(queryDefinition, requestOptions = queryRequestOptions)
+
+                        while iterator.HasMoreResults do
+                            addTiming TimingFlag.BeforeStorageQuery "getBranches" correlationId
+                            let! results = iterator.ReadNextAsync()
+                            addTiming TimingFlag.AfterStorageQuery "getBranches" correlationId
+                            indexMetrics.Append($"{results.IndexMetrics}, ") |> ignore
+                            requestCharge.Append($"{results.RequestCharge:F3}, ") |> ignore
+
+                            let branchIdValues = results.Resource
+
+                            for branchIdValue in branchIdValues do
+                                branchIds.Add(branchIdValue.branchId)
+
+                        do!
+                            Parallel.ForEachAsync(
+                                branchIds,
+                                (fun branchId ct ->
+                                    ValueTask(
+                                        task {
+                                            let actorProxy = Branch.CreateActorProxy branchId repositoryId correlationId
+                                            let! branchDto = actorProxy.Get correlationId
+                                            branches[branchDto.BranchId] <- branchDto
+                                        }
+                                    ))
+                            )
+
+                        if
+                            indexMetrics.Length >= 2
+                            && requestCharge.Length >= 2
+                            && Activity.Current <> null
+                        then
+                            Activity.Current
+                                .SetTag("indexMetrics", $"{indexMetrics.Remove(indexMetrics.Length - 2, 2)}")
+                                .SetTag("requestCharge", $"{requestCharge.Remove(requestCharge.Length - 2, 2)}")
+                            |> ignore
+                    with ex ->
+                        logToConsole $"Got an exception."
+                        logToConsole $"{ExceptionResponse.Create ex}"
+                finally
+                    stringBuilderPool.Return(indexMetrics)
+                    stringBuilderPool.Return(requestCharge)
+            | MongoDB -> ()
+
+            return branches.Values.OrderBy(fun branchDto -> branchDto.UpdatedAt).ToArray()
+        }
+
     /// Gets a DirectoryVersion by searching using a Sha256Hash value.
     let getDirectoryBySha256Hash (repositoryId: RepositoryId) (sha256Hash: Sha256Hash) correlationId =
         task {
@@ -1479,33 +1696,51 @@ module Services =
                 try
                     let queryDefinition =
                         QueryDefinition(
-                            """SELECT TOP 1 event FROM c JOIN event IN c["value"] 
-                                WHERE STARTSWITH(event.Event.created.Sha256Hash, @sha256Hash, true)
-                                    AND event.Event.created.RepositoryId = @repositoryId
-                                    AND event.Event.created.Class = @class"""
+                            """
+                            SELECT TOP 1 c.State
+                            FROM c
+                            WHERE STARTSWITH(c.State[0].Event.created.Sha256Hash, @sha256Hash, true)
+                                AND c.GrainType = @grainType
+                                AND c.PartitionKey = @partitionKey
+                            """
                         )
                             .WithParameter("@sha256Hash", sha256Hash)
-                            .WithParameter("@repositoryId", repositoryId)
-                            .WithParameter("@class", nameof (DirectoryVersion))
+                            .WithParameter("@grainType", StateName.DirectoryVersion)
+                            .WithParameter("@partitionKey", repositoryId)
 
                     try
                         let iterator = cosmosContainer.GetItemQueryIterator<DirectoryVersionEventValue>(queryDefinition, requestOptions = queryRequestOptions)
 
+                        let directoryVersionDtos = List<DirectoryVersionDto>()
+
                         while iterator.HasMoreResults do
                             let! results = DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> iterator.ReadNextAsync())
                             indexMetrics.Append($"{results.IndexMetrics}, ") |> ignore
-                            requestCharge.Append($"{results.RequestCharge}, ") |> ignore
+                            requestCharge.Append($"{results.RequestCharge:F3}, ") |> ignore
+                            let eventsForAllDirectories = results.Resource
 
-                            if results.Resource.Count() > 0 then
-                                directoryVersion <-
-                                    match results.Resource.FirstOrDefault().event.Event with
-                                    | DirectoryVersion.DirectoryVersionEventType.Created directoryVersion -> directoryVersion
-                                    | _ -> DirectoryVersion.Default
+                            eventsForAllDirectories
+                            |> Seq.iter (fun eventsForOneDirectory ->
+                                let directoryVersionDto =
+                                    eventsForOneDirectory.State
+                                    |> Array.fold
+                                        (fun directoryVersionDto directoryEvent -> directoryVersionDto |> DirectoryVersionDto.UpdateDto directoryEvent)
+                                        DirectoryVersionDto.Default
 
-                        Activity.Current
-                            .SetTag("indexMetrics", $"{indexMetrics.Remove(indexMetrics.Length - 2, 2)}")
-                            .SetTag("requestCharge", $"{requestCharge.Remove(requestCharge.Length - 2, 2)}")
-                        |> ignore
+                                directoryVersionDtos.Add(directoryVersionDto))
+
+                            if directoryVersionDtos.Count > 0 then
+                                directoryVersion <- directoryVersionDtos[0].DirectoryVersion
+
+                        if
+                            (indexMetrics.Length >= 2)
+                            && (requestCharge.Length >= 2)
+                            && Activity.Current <> null
+                        then
+                            Activity.Current
+                                .SetTag("indexMetrics", $"{indexMetrics.Remove(indexMetrics.Length - 2, 2)}")
+                                .SetTag("requestCharge", $"{requestCharge.Remove(requestCharge.Length - 2, 2)}")
+                            |> ignore
                     with ex ->
                         log.LogError(
                             ex,
@@ -1541,35 +1776,50 @@ module Services =
                 try
                     let queryDefinition =
                         QueryDefinition(
-                            $"""SELECT TOP 1 event FROM c JOIN event in c["value"]
-                                                                WHERE STARTSWITH(event.Event.created.Sha256Hash, @sha256Hash, true)
-                                                                    AND event.Event.created.RepositoryId = @repositoryId
-                                                                    AND event.Event.created.RelativePath = @relativePath
-                                                                    AND event.Event.created.Class = @class"""
+                            $"""
+                            SELECT TOP 1 c.State
+                            FROM c
+                            WHERE STARTSWITH(c.State[0].Event.created.Sha256Hash, @sha256Hash, true)
+                                AND STRINGEQUALS(c.State[0].Event.created.RelativePath, @relativePath, true)                                
+                                AND c.GrainType = @grainType
+                                AND c.PartitionKey = @partitionKey
+                            """
                         )
                             .WithParameter("@sha256Hash", sha256Hash)
-                            .WithParameter("@repositoryId", repositoryId)
                             .WithParameter("@relativePath", Constants.RootDirectoryPath)
-                            .WithParameter("@class", nameof (DirectoryVersion))
+                            .WithParameter("@grainType", StateName.DirectoryVersion)
+                            .WithParameter("@partitionKey", repositoryId)
 
                     try
                         let iterator = cosmosContainer.GetItemQueryIterator<DirectoryVersionEventValue>(queryDefinition, requestOptions = queryRequestOptions)
 
+                        let directoryVersionDtos = List<DirectoryVersionDto>()
+
                         while iterator.HasMoreResults do
                             let! results = iterator.ReadNextAsync()
                             indexMetrics.Append($"{results.IndexMetrics}, ") |> ignore
-                            requestCharge.Append($"{results.RequestCharge}, ") |> ignore
+                            requestCharge.Append($"{results.RequestCharge:F3}, ") |> ignore
+                            let eventsForAllDirectories = results.Resource
 
-                            if results.Resource.Count() > 0 then
-                                directoryVersion <-
-                                    match results.Resource.FirstOrDefault().event.Event with
-                                    | DirectoryVersion.DirectoryVersionEventType.Created directoryVersion -> directoryVersion
-                                    | _ -> DirectoryVersion.Default
+                            eventsForAllDirectories
+                            |> Seq.iter (fun eventsForOneDirectory ->
+                                let directoryVersionDto =
+                                    eventsForOneDirectory.State
+                                    |> Array.fold
+                                        (fun directoryVersionDto directoryEvent -> directoryVersionDto |> DirectoryVersionDto.UpdateDto directoryEvent)
+                                        DirectoryVersionDto.Default
 
-                        Activity.Current
-                            .SetTag("indexMetrics", $"{indexMetrics.Remove(indexMetrics.Length - 2, 2)}")
-                            .SetTag("requestCharge", $"{requestCharge.Remove(requestCharge.Length - 2, 2)}")
-                        |> ignore
+                                directoryVersionDtos.Add(directoryVersionDto))
+
+                        if
+                            (indexMetrics.Length >= 2)
+                            && (requestCharge.Length >= 2)
+                            && Activity.Current <> null
+                        then
+                            Activity.Current
+                                .SetTag("indexMetrics", $"{indexMetrics.Remove(indexMetrics.Length - 2, 2)}")
+                                .SetTag("requestCharge", $"{requestCharge.Remove(requestCharge.Length - 2, 2)}")
+                            |> ignore
                     with ex ->
                         let parameters =
                             queryDefinition.GetQueryParameters()
@@ -1599,7 +1849,7 @@ module Services =
     /// Gets a Root DirectoryVersion by searching using a Sha256Hash value.
     let getRootDirectoryByReferenceId (repositoryId: RepositoryId) (referenceId: ReferenceId) correlationId =
         task {
-            let referenceActorProxy = Reference.CreateActorProxy referenceId correlationId
+            let referenceActorProxy = Reference.CreateActorProxy referenceId repositoryId correlationId
 
             let! referenceDto = referenceActorProxy.Get correlationId
 
@@ -1621,16 +1871,19 @@ module Services =
 
                     let queryDefinition =
                         QueryDefinition(
-                            """SELECT c FROM c 
-                                            WHERE c["value"].RepositoryId = @repositoryId 
-                                                AND c["value"].DirectoryId = @directoryId
-                                                AND c["value"].Class = @class"""
+                            """
+                            SELECT c.State
+                            FROM c
+                            WHERE STRINGEQUALS(c.State[0].Event.created.DirectoryId, @directoryId, true)
+                                AND c.GrainType = @grainType
+                                AND c.PartitionKey = @partitionKey
+                            """
                         )
-                            .WithParameter("@repositoryId", $"{repositoryId}")
                             .WithParameter("@directoryId", $"{directoryId}")
-                            .WithParameter("@class", nameof (DirectoryVersion))
+                            .WithParameter("@grainType", StateName.DirectoryVersion)
+                            .WithParameter("@partitionKey", repositoryId)
 
-                    let iterator = cosmosContainer.GetItemQueryIterator<DirectoryVersion>(queryDefinition, requestOptions = queryRequestOptions)
+                    let iterator = cosmosContainer.GetItemQueryIterator<DirectoryVersionEventValue>(queryDefinition, requestOptions = queryRequestOptions)
 
                     while iterator.HasMoreResults do
                         let! results = iterator.ReadNextAsync()
@@ -1648,97 +1901,107 @@ module Services =
         }
 
     /// Gets a list of ReferenceDtos based on ReferenceIds. The list is returned in the same order as the supplied ReferenceIds.
-    let getReferencesByReferenceId (referenceIds: IEnumerable<ReferenceId>) (maxCount: int) (correlationId: CorrelationId) =
+    let getReferencesByReferenceId (repositoryId: RepositoryId) (referenceIds: IEnumerable<ReferenceId>) (maxCount: int) (correlationId: CorrelationId) =
         task {
             let referenceDtos = List<ReferenceDto>()
 
-            match actorStateStorageProvider with
-            | Unknown -> ()
-            | AzureCosmosDb ->
-                let mutable requestCharge = 0.0
-                let mutable clientElapsedTime = TimeSpan.Zero
-                let queryText = stringBuilderPool.Get()
+            if referenceIds.Count() > 0 then
+                match actorStateStorageProvider with
+                | Unknown -> ()
+                | AzureCosmosDb ->
+                    let mutable requestCharge = 0.0
+                    let mutable clientElapsedTime = TimeSpan.Zero
+                    let queryText = stringBuilderPool.Get()
 
-                (*("""SELECT TOP 1 event FROM c JOIN event IN c["value"] 
-                    WHERE event.Event.created.BranchId = @branchId
-                        AND event.Event.created.Class = @class
-                        AND STRINGEQUALS(event.Event.created.ReferenceType, @referenceType, true)
-                        ORDER BY c["value"].CreatedAt DESC"""
-            )
-        .WithParameter("@branchId", $"{branchId}")
-        .WithParameter("@referenceType", $"{referenceType}")
-        .WithParameter("@class", "Reference")
-        *)
-                try
-                    // In order to build the IN clause, we need to create a parameter for each referenceId.
-                    //   (I tried just using string concatenation, it didn't work for some reason. Anyway...)
-                    // The query starts with:
-                    queryText.Append(
-                        @"SELECT TOP @maxCount event
-                                                    FROM c JOIN event IN c[""value""]
-                                                    WHERE event.Event.created.Class = @class
-                                                    AND event.Event.created.ReferenceId IN ("
-                    )
-                    |> ignore
-                    // Then we add a parameter for each referenceId.
-                    referenceIds
-                        .Where(fun referenceId -> not <| referenceId.Equals(ReferenceId.Empty))
-                        .Distinct()
-                    |> Seq.iteri (fun i referenceId -> queryText.Append($"@referenceId{i},") |> ignore)
-                    // Then we remove the last comma and close the parenthesis.
-                    queryText.Remove(queryText.Length - 1, 1).Append(")") |> ignore
+                    (*("""SELECT TOP 1 event FROM c JOIN event IN c["value"] 
+                        WHERE event.Event.created.BranchId = @branchId
+                            AND event.Event.created.Class = @class
+                            AND STRINGEQUALS(event.Event.created.ReferenceType, @referenceType, true)
+                            ORDER BY c["value"].CreatedAt DESC"""
+                )
+            .WithParameter("@branchId", $"{branchId}")
+            .WithParameter("@referenceType", $"{referenceType}")
+            .WithParameter("@class", "Reference")
+            *)
+                    try
+                        // In order to build the IN clause, we need to create a parameter for each referenceId.
+                        //   (I tried just using string concatenation, it didn't work for some reason. Anyway...)
+                        // The query starts with:
+                        queryText.Append(
+                            @"SELECT TOP @maxCount c.State
+                              FROM c
+                              WHERE c.GrainType = @grainType
+                                  AND c.PartitionKey = @partitionKey
+                                  AND c.State[0].Event.created.ReferenceId IN ("
+                        )
+                        |> ignore
+                        // Then we add a parameter for each referenceId.
+                        referenceIds
+                            .Where(fun referenceId -> not <| referenceId.Equals(ReferenceId.Empty))
+                            .Distinct()
+                        |> Seq.iteri (fun i referenceId -> queryText.Append($"@referenceId{i},") |> ignore)
+                        // Then we remove the last comma and close the parenthesis.
+                        queryText.Remove(queryText.Length - 1, 1).Append(")") |> ignore
 
-                    // Create the query definition.
-                    let queryDefinition =
-                        QueryDefinition(queryText.ToString())
-                            .WithParameter("@maxCount", referenceIds.Count())
-                            .WithParameter("@class", nameof (ReferenceDto))
+                        // Create the query definition.
+                        let queryDefinition =
+                            QueryDefinition(queryText.ToString())
+                                .WithParameter("@maxCount", referenceIds.Count())
+                                .WithParameter("@grainType", StateName.Reference)
+                                .WithParameter("@partitionKey", repositoryId)
 
-                    // Add a .WithParameter for each referenceId.
-                    referenceIds
-                        .Where(fun referenceId -> not <| referenceId.Equals(ReferenceId.Empty))
-                        .Distinct()
-                    |> Seq.iteri (fun i referenceId -> queryDefinition.WithParameter($"@referenceId{i}", $"{referenceId}") |> ignore)
+                        // Add a .WithParameter for each referenceId.
+                        referenceIds
+                            .Where(fun referenceId -> not <| referenceId.Equals(ReferenceId.Empty))
+                            .Distinct()
+                        |> Seq.iteri (fun i referenceId -> queryDefinition.WithParameter($"@referenceId{i}", $"{referenceId}") |> ignore)
 
-                    // Execute the query.
-                    let iterator = cosmosContainer.GetItemQueryIterator<ReferenceEventValue>(queryDefinition, requestOptions = queryRequestOptions)
+                        logToConsole $"In getReferencesByReferenceId(): QueryText:{Environment.NewLine}{printQueryDefinition queryDefinition}."
 
-                    // The query will return fewer results than the number of referenceIds if the supplied referenceIds have duplicates.
-                    //   This is normal for `grace status` (BasedOn and Latest Promotion are likely to be the same, for instance).
-                    //   We need to gather the query results, and then iterate through the referenceId's to return the dto's in the same order.
-                    let queryResults = Dictionary<ReferenceId, ReferenceDto>()
+                        // Execute the query.
+                        let iterator = cosmosContainer.GetItemQueryIterator<ReferenceEventValue>(queryDefinition, requestOptions = queryRequestOptions)
 
-                    while iterator.HasMoreResults do
-                        addTiming TimingFlag.BeforeStorageQuery "getReferencesByReferenceId" correlationId
-                        let! results = iterator.ReadNextAsync()
-                        addTiming TimingFlag.AfterStorageQuery "getReferencesByReferenceId" correlationId
-                        requestCharge <- requestCharge + results.RequestCharge
-                        clientElapsedTime <- clientElapsedTime + results.Diagnostics.GetClientElapsedTime()
+                        // The query will return fewer results than the number of referenceIds if the supplied referenceIds have duplicates.
+                        //   This is normal for `grace status` (BasedOn and Latest Promotion are likely to be the same, for instance).
+                        //   We need to gather the query results, and then iterate through the referenceId's to return the dto's in the same order.
+                        let queryResults = Dictionary<ReferenceId, ReferenceDto>()
 
-                        results.Resource
-                        |> Seq.iter (fun ev ->
-                            match ev.event.Event with
-                            | Reference.ReferenceEventType.Created refDto -> queryResults.Add(refDto.ReferenceId, refDto)
-                            | _ -> ())
+                        while iterator.HasMoreResults do
+                            addTiming TimingFlag.BeforeStorageQuery "getReferencesByReferenceId" correlationId
+                            let! results = iterator.ReadNextAsync()
+                            addTiming TimingFlag.AfterStorageQuery "getReferencesByReferenceId" correlationId
+                            requestCharge <- requestCharge + results.RequestCharge
+                            clientElapsedTime <- clientElapsedTime + results.Diagnostics.GetClientElapsedTime()
+                            let eventsForAllReferences = results.Resource
 
-                    // Add the results to the list in the same order as the supplied referenceIds.
-                    referenceIds
-                    |> Seq.iter (fun referenceId ->
-                        if referenceId <> ReferenceId.Empty then
-                            if queryResults.ContainsKey(referenceId) then
-                                referenceDtos.Add(queryResults[referenceId])
-                        else
-                            // In case the caller supplied an empty referenceId, add a default ReferenceDto.
-                            referenceDtos.Add(ReferenceDto.Default))
+                            eventsForAllReferences
+                            |> Seq.iter (fun eventsForOneReference ->
+                                let referenceDto =
+                                    eventsForOneReference.State
+                                    |> Array.fold
+                                        (fun referenceDto referenceEvent -> referenceDto |> ReferenceDto.UpdateDto referenceEvent)
+                                        ReferenceDto.Default
 
-                    Activity.Current
-                        .SetTag("referenceDtos.Count", $"{referenceDtos.Count}")
-                        .SetTag("clientElapsedTime", $"{clientElapsedTime}")
-                        .SetTag("totalRequestCharge", $"{requestCharge}")
-                    |> ignore
-                finally
-                    stringBuilderPool.Return(queryText)
-            | MongoDB -> ()
+                                queryResults.Add(referenceDto.ReferenceId, referenceDto))
+
+                        // Add the results to the list in the same order as the supplied referenceIds.
+                        referenceIds
+                        |> Seq.iter (fun referenceId ->
+                            if referenceId <> ReferenceId.Empty then
+                                if queryResults.ContainsKey(referenceId) then
+                                    referenceDtos.Add(queryResults[referenceId])
+                            else
+                                // In case the caller supplied an empty referenceId, add a default ReferenceDto.
+                                referenceDtos.Add(ReferenceDto.Default))
+
+                        Activity.Current
+                            .SetTag("referenceDtos.Count", $"{referenceDtos.Count}")
+                            .SetTag("clientElapsedTime", $"{clientElapsedTime}")
+                            .SetTag("totalRequestCharge", $"{requestCharge}")
+                        |> ignore
+                    finally
+                        stringBuilderPool.Return(queryText)
+                | MongoDB -> ()
 
             return referenceDtos
         }
@@ -1753,12 +2016,6 @@ module Services =
             | AzureCosmosDb ->
                 let mutable requestCharge = 0.0
 
-                let includeDeletedClause =
-                    if includeDeleted then
-                        String.Empty
-                    else
-                        """ AND IS_NULL(c["value"].DeletedAt)"""
-
                 let branchIdStack = Queue<ReferenceId>(branchIds)
 
                 while branchIdStack.Count > 0 do
@@ -1766,25 +2023,34 @@ module Services =
 
                     let queryDefinition =
                         QueryDefinition(
-                            $"""SELECT TOP @maxCount c["value"] FROM c 
-                                            WHERE c["value"].RepositoryId = @repositoryId 
-                                                AND c["value"].BranchId = @branchId
-                                                AND c["value"].Class = @class
-                                                {includeDeletedClause}"""
+                            $"""
+                            SELECT TOP @maxCount c.State
+                            FROM c
+                            WHERE STRINGEQUALS(c.State[0].Event.created.BranchId, @branchId, true)
+                                AND c.GrainType = @grainType
+                                AND c.PartitionKey = @partitionKey
+                                {includeDeletedEntitiesClause includeDeleted}
+                            """
                         )
                             .WithParameter("@maxCount", maxCount)
-                            .WithParameter("@repositoryId", $"{repositoryId}")
                             .WithParameter("@branchId", $"{branchId}")
-                            .WithParameter("@class", nameof (BranchDto))
+                            .WithParameter("@grainType", StateName.Branch)
+                            .WithParameter("@partitionKey", repositoryId)
 
-                    let iterator = cosmosContainer.GetItemQueryIterator<BranchDtoValue>(queryDefinition, requestOptions = queryRequestOptions)
+                    let iterator = cosmosContainer.GetItemQueryIterator<BranchEventValue>(queryDefinition, requestOptions = queryRequestOptions)
 
                     while iterator.HasMoreResults do
                         let! results = iterator.ReadNextAsync()
                         requestCharge <- requestCharge + results.RequestCharge
+                        let eventsForAllBranches = results.Resource
 
-                        if results.Resource.Count() > 0 then
-                            branchDtos.Add(results.Resource.First().value)
+                        eventsForAllBranches
+                        |> Seq.iter (fun eventsForOneBranch ->
+                            let branchDto =
+                                eventsForOneBranch.State
+                                |> Array.fold (fun branchDto branchEvent -> branchDto |> BranchDto.UpdateDto branchEvent) BranchDto.Default
+
+                            branchDtos.Add(branchDto))
 
                 Activity.Current
                     .SetTag("referenceDtos.Count", $"{branchDtos.Count}")
@@ -1792,33 +2058,58 @@ module Services =
                 |> ignore
             | MongoDB -> ()
 
-            return branchDtos
+            return branchDtos.OrderBy(fun branchDto -> branchDto.BranchName).ToArray()
         }
-
-    /// Gets a message that says whether an actor's state was retrieved from the database.
-    let getActorActivationMessage retrievedItem =
-        match retrievedItem with
-        | Some item -> "Retrieved from database"
-        | None -> "Not found in database"
-
-    /// Logs the activation of an actor.
-    let logActorActivation (log: ILogger) activateStartTime (correlationId: string) (actorName: string) (actorId: ActorId) (message: string) =
-        log.LogInformation(
-            "{CurrentInstant}: Node: {HostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Activated {ActorType} {ActorId}. {message}.",
-            getCurrentInstantExtended (),
-            getMachineName,
-            (getPaddedDuration_ms activateStartTime),
-            correlationId,
-            actorName,
-            actorId,
-            message
-        )
 
     /// Creates a new reminder actor instance.
-    let createReminder (reminder: ReminderDto) =
+    let createReminder (reminderDto: ReminderDto) =
         task {
-            let reminderActorProxy = Reminder.CreateActorProxy reminder.ReminderId reminder.CorrelationId
-
-            do! reminderActorProxy.Create reminder reminder.CorrelationId
+            let reminderActorProxy = Reminder.CreateActorProxy reminderDto.ReminderId reminderDto.CorrelationId
+            do! reminderActorProxy.Create reminderDto reminderDto.CorrelationId
         }
         :> Task
+
+    /// Gets the CorrelationId from an Orleans grain's RequestContext.
+    let getCorrelationId () =
+        match RequestContext.Get(Constants.CorrelationId) with
+        | :? string as s -> s
+        | _ -> String.Empty
+
+    /// Gets the ActorName from an Orleans grain's RequestContext.
+    let getActorName () =
+        match RequestContext.Get(Constants.ActorNameProperty) with
+        | :? string as s -> s
+        | _ -> String.Empty
+
+    /// Gets the CurrentCommand from an Orleans grain's RequestContext.
+    let getCurrentCommand () =
+        match RequestContext.Get(Constants.CurrentCommandProperty) with
+        | :? string as s -> s
+        | _ -> String.Empty
+
+    /// Gets the OrganizationId from an Orleans grain's RequestContext.
+    let getOrganizationId () =
+        match RequestContext.Get(nameof OrganizationId) with
+        | :? OrganizationId as organizationId -> organizationId
+        | _ -> Guid.Empty
+
+    /// Gets the RepositoryId from an Orleans grain's RequestContext.
+    let getRepositoryId () =
+        match RequestContext.Get(nameof RepositoryId) with
+        | :? RepositoryId as repositoryId -> repositoryId
+        | _ -> Guid.Empty
+
+    /// Gets a message that says whether an actor's state was retrieved from the database.
+    let getActorActivationMessage recordExists = if recordExists then "Retrieved from database" else "Not found in database"
+
+    /// Logs the activation of an actor.
+    let logActorActivation (log: ILogger) (grainIdentity: string) (activationStartTime: Instant) (message: string) =
+        log.LogInformation(
+            "{CurrentInstant}: Node: {HostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Activated {GrainIdentity}. {message}.",
+            getCurrentInstantExtended (),
+            getMachineName,
+            (getDurationRightAligned_ms activationStartTime),
+            getCorrelationId (),
+            grainIdentity,
+            message
+        )

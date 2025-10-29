@@ -2,8 +2,6 @@ namespace Grace.Actors
 
 open Azure.Storage.Blobs
 open Azure.Storage.Blobs.Specialized
-open Dapr.Actors
-open Dapr.Actors.Runtime
 open DiffPlex
 open DiffPlex.DiffBuilder.Model
 open FSharpPlus
@@ -16,14 +14,16 @@ open Grace.Actors.Interfaces
 open Grace.Actors.Services
 open Grace.Actors.Types
 open Grace.Shared
-open Grace.Shared.Constants
 open Grace.Shared.Diff
-open Grace.Shared.Dto.Diff
-open Grace.Shared.Dto.Repository
-open Grace.Shared.Types
+open Grace.Types.Reminder
+open Grace.Types.Repository
+open Grace.Types.Diff
+open Grace.Types.Types
 open Grace.Shared.Utilities
 open Microsoft.Extensions.Logging
 open NodaTime
+open Orleans
+open Orleans.Runtime
 open System
 open System.Collections.Concurrent
 open System.Collections.Generic
@@ -32,29 +32,18 @@ open System.Linq
 open System.IO
 open System.IO.Compression
 open System.Threading.Tasks
+open Grace.Actors.Extensions
 
 module Diff =
 
-    /// Deconstructs an ActorId of the form "{directoryVersionId1}*{directoryVersionId2}" into a tuple of the two DirectoryId values.
-    let deconstructActorId (id: ActorId) =
-        let directoryIds = id.GetId().Split("*")
-        (DirectoryVersionId directoryIds[0], DirectoryVersionId directoryIds[1])
-
-    /// The data types stored in physical deletion reminders.
-    type DeleteCachedStateReminderState = DeleteReason * CorrelationId
-
-    let log = loggerFactory.CreateLogger("Diff.Actor")
-
-    type DiffActor(host: ActorHost) =
-        inherit Actor(host)
+    type DiffActor([<PersistentState(StateName.Diff, Constants.GraceObjectStorage)>] state: IPersistentState<DiffDto>) =
+        inherit Grain()
 
         static let actorName = ActorName.Diff
-        static let dtoStateName = StateName.Diff
+
+        let log = loggerFactory.CreateLogger("Diff.Actor")
 
         let mutable diffDto: DiffDto = DiffDto.Default
-        let mutable actorStartTime = Instant.MinValue
-        let mutable logScope: IDisposable = null
-        let mutable stateManager = Unchecked.defaultof<IActorStateManager>
 
         /// Gets a Dictionary for indexed lookups by relative path.
         let getLookupCache (graceIndex: ServerGraceIndex) =
@@ -105,28 +94,29 @@ module Diff =
                 return differences
             }
 
+        /// Deconstructs an ActorId of the form "{directoryVersionId1}*{directoryVersionId2}" into a tuple of the two DirectoryId values.
+        let deconstructActorId (primaryKey: string) =
+            let directoryIds = primaryKey.Split("*")
+            (DirectoryVersionId directoryIds[0], DirectoryVersionId directoryIds[1])
+
         member val private correlationId: CorrelationId = String.Empty with get, set
 
         /// Builds a ServerGraceIndex from a root DirectoryId.
-        member private this.buildGraceIndex (directoryId: DirectoryVersionId) correlationId =
+        member private this.buildGraceIndex (directoryId: DirectoryVersionId) repositoryId correlationId =
             task {
                 this.correlationId <- correlationId
                 let graceIndex = ServerGraceIndex()
 
-                let directory =
-                    actorProxyFactory.CreateActorProxyWithCorrelationId<IDirectoryVersionActor>(
-                        DirectoryVersion.GetActorId(directoryId),
-                        ActorName.DirectoryVersion,
-                        correlationId
-                    )
+                let directoryVersionActorProxy = ActorProxy.DirectoryVersion.CreateActorProxy directoryId repositoryId correlationId
 
-                let! directoryCreatedAt = directory.GetCreatedAt correlationId
-                let! directoryContents = directory.GetRecursiveDirectoryVersions false correlationId
-                //logToConsole $"In DiffActor.buildGraceIndex(): directoryContents.Count: {directoryContents.Count}"
-                for directoryVersion in directoryContents do
+                let! directoryCreatedAt = directoryVersionActorProxy.GetCreatedAt correlationId
+                let! directoryVersionDtos = directoryVersionActorProxy.GetRecursiveDirectoryVersions false correlationId
+
+                for directoryVersionDto in directoryVersionDtos do
+                    let directoryVersion = directoryVersionDto.DirectoryVersion
                     graceIndex.TryAdd(directoryVersion.RelativePath, directoryVersion) |> ignore
 
-                return (graceIndex, directoryCreatedAt, directoryContents[0].RepositoryId)
+                return (graceIndex, directoryCreatedAt)
             }
 
         /// Gets a Stream from object storage for a specific FileVersion, using a generated Uri.
@@ -153,57 +143,10 @@ module Diff =
                 | ObjectStorageProvider.Unknown -> return new MemoryStream() :> Stream
             }
 
-        override this.OnActivateAsync() =
+        override this.OnActivateAsync(ct) =
             let activateStartTime = getCurrentInstant ()
-            stateManager <- this.StateManager
+            logActorActivation log this.IdentityString activateStartTime (getActorActivationMessage state.RecordExists)
 
-            task {
-                let correlationId =
-                    match memoryCache.GetCorrelationIdEntry this.Id with
-                    | Some correlationId -> correlationId
-                    | None -> String.Empty
-
-                try
-                    let! retrievedDto = Storage.RetrieveState<DiffDto> stateManager dtoStateName correlationId
-
-                    match retrievedDto with
-                    | Some retrievedDto -> diffDto <- retrievedDto
-                    | None -> diffDto <- DiffDto.Default
-
-                    logActorActivation log activateStartTime correlationId actorName this.Id (getActorActivationMessage retrievedDto)
-                with ex ->
-                    let exc = ExceptionResponse.Create ex
-                    log.LogError("{CurrentInstant} Error activating {ActorType} {ActorId}.", getCurrentInstantExtended (), this.GetType().Name, host.Id)
-                    log.LogError("{CurrentInstant} {ExceptionDetails}", getCurrentInstantExtended (), exc.ToString())
-                    logActorActivation log activateStartTime correlationId actorName this.Id "Exception occurred during activation."
-            }
-            :> Task
-
-        override this.OnPreActorMethodAsync(context) =
-            this.correlationId <- String.Empty
-            actorStartTime <- getCurrentInstant ()
-            logScope <- log.BeginScope("Actor {actorName}", actorName)
-
-            log.LogTrace("{CurrentInstant}: Started {ActorName}.{MethodName} Id: {Id}.", getCurrentInstantExtended (), actorName, context.MethodName, this.Id)
-
-            Task.CompletedTask
-
-        override this.OnPostActorMethodAsync(context) =
-            let duration_ms = (getCurrentInstant().Minus(actorStartTime).TotalMilliseconds).ToString("F3")
-
-            log.LogInformation(
-                "{CurrentInstant}: Node: {HostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {ActorName}.{MethodName}; DirectoryVersionId1: {DirectoryVersionId1}; DirectoryVersionId2: {DirectoryVersionId2}.",
-                getCurrentInstantExtended (),
-                getMachineName,
-                duration_ms,
-                this.correlationId,
-                actorName,
-                context.MethodName,
-                diffDto.DirectoryVersionId1,
-                diffDto.DirectoryVersionId2
-            )
-
-            logScope.Dispose()
             Task.CompletedTask
 
         member private this.GetDiffSimple() =
@@ -212,11 +155,22 @@ module Diff =
             else
                 Some diffDto |> returnValueTask
 
-        interface IGraceReminder with
+        interface IDiffActor with
             /// Sets a Grace reminder to perform a physical deletion of this actor.
             member this.ScheduleReminderAsync reminderType delay state correlationId =
                 task {
-                    let reminder = ReminderDto.Create actorName $"{this.Id}" reminderType (getFutureInstant delay) state correlationId
+                    let reminder =
+                        ReminderDto.Create
+                            actorName
+                            $"{this.IdentityString}"
+                            diffDto.OwnerId
+                            diffDto.OrganizationId
+                            diffDto.RepositoryId
+                            reminderType
+                            (getFutureInstant delay)
+                            state
+                            correlationId
+
                     do! createReminder reminder
                 }
                 :> Task
@@ -226,70 +180,71 @@ module Diff =
                 task {
                     this.correlationId <- reminder.CorrelationId
 
-                    match reminder.ReminderType with
-                    | ReminderTypes.DeleteCachedState ->
-                        // Get values from state.
-                        let (deleteReason, correlationId) = deserialize<DeleteCachedStateReminderState> reminder.State
-
-                        this.correlationId <- correlationId
+                    match reminder.ReminderType, reminder.State with
+                    | ReminderTypes.DeleteCachedState, ReminderState.DiffDeleteCachedState deleteCachedStateReminderState ->
+                        this.correlationId <- deleteCachedStateReminderState.CorrelationId
 
                         // Delete saved state for this actor.
-                        let! deleted = Storage.DeleteState stateManager dtoStateName
+                        do! state.ClearStateAsync()
 
-                        if deleted then
-                            log.LogInformation(
-                                "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; Deleted cache for diff; RepositoryId: {RepositoryId}; DirectoryVersionId1: {DirectoryVersionId1}; DirectoryVersionId2: {DirectoryVersionId2}; deleteReason: {deleteReason}.",
-                                getCurrentInstantExtended (),
-                                getMachineName,
-                                correlationId,
-                                diffDto.RepositoryId,
-                                diffDto.DirectoryVersionId1,
-                                diffDto.DirectoryVersionId2,
-                                deleteReason
-                            )
-                        else
-                            log.LogWarning(
-                                "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; Failed to delete cache for diff (it may have already been deleted); RepositoryId: {RepositoryId}; DirectoryVersionId1: {DirectoryVersionId1}; DirectoryVersionId2: {DirectoryVersionId2}; deleteReason: {deleteReason}.",
-                                getCurrentInstantExtended (),
-                                getMachineName,
-                                correlationId,
-                                diffDto.RepositoryId,
-                                diffDto.DirectoryVersionId1,
-                                diffDto.DirectoryVersionId2,
-                                deleteReason
-                            )
+                        log.LogInformation(
+                            "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; Deleted cache for diff; RepositoryId: {RepositoryId}; DirectoryVersionId1: {DirectoryVersionId1}; DirectoryVersionId2: {DirectoryVersionId2}; deleteReason: {deleteReason}.",
+                            getCurrentInstantExtended (),
+                            getMachineName,
+                            deleteCachedStateReminderState.CorrelationId,
+                            diffDto.RepositoryId,
+                            diffDto.DirectoryVersionId1,
+                            diffDto.DirectoryVersionId2,
+                            deleteCachedStateReminderState.DeleteReason
+                        )
 
+                        this.DeactivateOnIdle()
                         return Ok()
-                    | _ ->
+                    | reminderType, state ->
                         return
                             Error(
                                 (GraceError.Create
-                                    $"{actorName} does not process reminder type {getDiscriminatedUnionCaseName reminder.ReminderType}."
+                                    $"{actorName} does not process reminder type {getDiscriminatedUnionCaseName reminderType} with state {getDiscriminatedUnionCaseName state}."
                                     this.correlationId)
                                     .enhance ("IsRetryable", "false")
                             )
                 }
 
-        interface IDiffActor with
-            member this.Compute correlationId =
+            member this.Compute correlationId : Task<GraceResult<string>> =
                 this.correlationId <- correlationId
 
-                // If it's already populated, skip this.
-                if diffDto.DirectoryVersionId1 <> DiffDto.Default.DirectoryVersionId1 then
-                    (true |> returnTask)
-                else
-                    //let stateManager = this.StateManager
+                task {
+                    try
 
-                    task {
-                        let (directoryVersionId1, directoryVersionId2) = deconstructActorId this.Id
+                        // If it's already populated, skip this.
+                        if diffDto.DirectoryVersionId1 <> DiffDto.Default.DirectoryVersionId1 then
+                            return
+                                Ok(
+                                    (GraceReturnValue.Create<string> "DiffActor.Compute: already populated." correlationId)
+                                        .enhance("DirectoryVersionId1", $"{diffDto.DirectoryVersionId1}")
+                                        .enhance("DirectoryVersionId2", $"{diffDto.DirectoryVersionId2}")
+                                        .enhance("OwnerId", $"{diffDto.OwnerId}")
+                                        .enhance("OrganizationId", $"{diffDto.OrganizationId}")
+                                        .enhance("RepositoryId", $"{diffDto.RepositoryId}")
+                                        .enhance ("HasDifferences", $"{diffDto.HasDifferences}")
+                                )
+                        else
+                            let (directoryVersionId1, directoryVersionId2) = deconstructActorId ($"{this.GetGrainId().Key}")
 
-                        logToConsole $"In DiffActor.Populate(); DirectoryVersionId1: {directoryVersionId1}; DirectoryVersionId2: {directoryVersionId2}"
+                            logToConsole $"In DiffActor.Populate(); DirectoryVersionId1: {directoryVersionId1}; DirectoryVersionId2: {directoryVersionId2}"
 
-                        try
+                            let orleansContext = memoryCache.GetOrleansContextEntry(this.GetGrainId())
+                            let ownerId = orleansContext.Value[nameof OwnerId] :?> OwnerId
+                            let organizationId = orleansContext.Value[nameof OrganizationId] :?> OrganizationId
+                            let repositoryId = orleansContext.Value[nameof RepositoryId] :?> RepositoryId
+                            let repositoryActorProxy = Repository.CreateActorProxy organizationId repositoryId correlationId
+                            let! repositoryDto = repositoryActorProxy.Get correlationId
+
                             // Build a GraceIndex for each DirectoryId.
-                            let! (graceIndex1, createdAt1, repositoryId1) = this.buildGraceIndex directoryVersionId1 correlationId
+                            let! (graceIndex1, createdAt1) = this.buildGraceIndex directoryVersionId1 repositoryId correlationId
 
-                            let! (graceIndex2, createdAt2, repositoryId2) = this.buildGraceIndex directoryVersionId2 correlationId
+                            let! (graceIndex2, createdAt2) = this.buildGraceIndex directoryVersionId2 repositoryId correlationId
+
                             //logToConsole $"In DiffActor.Populate(); createdAt1: {createdAt1}; createdAt2: {createdAt2}."
 
                             // Compare the GraceIndices.
@@ -303,8 +258,7 @@ module Diff =
 
                             //logToConsole $"In Actor.Populate(); got differences."
 
-                            let repositoryActorProxy = Repository.CreateActorProxy repositoryId1 correlationId
-                            let! repositoryDto = repositoryActorProxy.Get correlationId
+                            diffDto <- { diffDto with OwnerId = ownerId; OrganizationId = organizationId; RepositoryId = repositoryDto.RepositoryId }
 
                             /// Gets a Stream for a given RelativePath.
                             let getFileStream (graceIndex: ServerGraceIndex) (relativePath: RelativePath) (repositoryDto: RepositoryDto) =
@@ -401,44 +355,71 @@ module Diff =
                                     Directory2CreatedAt = createdAt2
                                     Differences = differences }
 
-                            do! Storage.SaveState stateManager dtoStateName diffDto this.correlationId
+                            state.State <- diffDto
+                            do! state.WriteStateAsync()
 
-                            let (reminderState: DeleteCachedStateReminderState) = (getDiscriminatedUnionCaseName ReminderTypes.DeleteCachedState, correlationId)
+                            let (deleteCachedStateReminderState: DeleteCachedStateReminderState) =
+                                { DeleteReason = getDiscriminatedUnionCaseName ReminderTypes.DeleteCachedState; CorrelationId = correlationId }
 
                             do!
-                                (this :> IGraceReminder).ScheduleReminderAsync
+                                (this :> IDiffActor).ScheduleReminderAsync
                                     ReminderTypes.DeleteCachedState
                                     (Duration.FromDays(float repositoryDto.DiffCacheDays))
-                                    (serialize reminderState)
+                                    (ReminderState.DiffDeleteCachedState deleteCachedStateReminderState)
                                     correlationId
 
-                            return true
-                        with ex ->
-                            logToConsole $"Exception in DiffActor.Compute(): {ExceptionResponse.Create ex}"
-                            logToConsole $"directoryVersionId1: {directoryVersionId1}; directoryVersionId2: {directoryVersionId2}"
+                            return
+                                Ok(
+                                    (GraceReturnValue.Create<string> "DiffActor.Compute: populated." correlationId)
+                                        .enhance("DirectoryVersionId1", $"{diffDto.DirectoryVersionId1}")
+                                        .enhance("DirectoryVersionId2", $"{diffDto.DirectoryVersionId2}")
+                                        .enhance("OwnerId", $"{diffDto.OwnerId}")
+                                        .enhance("OrganizationId", $"{diffDto.OrganizationId}")
+                                        .enhance("RepositoryId", $"{diffDto.RepositoryId}")
+                                        .enhance ("HasDifferences", $"{diffDto.HasDifferences}")
+                                )
+                    with ex ->
+                        logToConsole $"Exception in DiffActor.Compute(): {ExceptionResponse.Create ex}"
+                        logToConsole $"directoryVersionId1: {diffDto.DirectoryVersionId1}; directoryVersionId2: {diffDto.DirectoryVersionId2}"
 
+                        if not <| isNull Activity.Current then
                             Activity.Current
                                 .SetStatus(ActivityStatusCode.Error, "Exception while creating diff.")
                                 .AddTag("ex.Message", ex.Message)
                                 .AddTag("ex.StackTrace", ex.StackTrace)
 
-                                .AddTag("directoryVersionId1", $"{directoryVersionId1}")
-                                .AddTag("directoryVersionId2", $"{directoryVersionId2}")
+                                .AddTag("directoryVersionId1", $"{diffDto.DirectoryVersionId1}")
+                                .AddTag("directoryVersionId2", $"{diffDto.DirectoryVersionId2}")
                             |> ignore
 
-                            return false
-                    }
+                        return
+                            Error(
+                                (GraceError.Create "Exception while creating diff." correlationId)
+                                    .enhance("DirectoryVersionId1", $"{diffDto.DirectoryVersionId1}")
+                                    .enhance("DirectoryVersionId2", $"{diffDto.DirectoryVersionId2}")
+                                    .enhance("OwnerId", $"{diffDto.OwnerId}")
+                                    .enhance("OrganizationId", $"{diffDto.OrganizationId}")
+                                    .enhance("RepositoryId", $"{diffDto.RepositoryId}")
+                                    .enhance ("HasDifferences", $"{diffDto.HasDifferences}")
+                            )
+                }
 
             member this.GetDiff correlationId =
                 task {
                     this.correlationId <- correlationId
 
                     if diffDto.DirectoryVersionId1.Equals(DiffDto.Default.DirectoryVersionId1) then
-                        logToConsole $"In Actor.GetDiff(), not yet populated."
                         let! populated = (this :> IDiffActor).Compute correlationId
-                        logToConsole $"In Actor.GetDiff(), now populated."
-                        return diffDto
+
+                        log.LogTrace(
+                            "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; In DiffActor.GetDiff(); was not previously computed.",
+                            getCurrentInstantExtended (),
+                            getMachineName,
+                            correlationId,
+                            populated
+                        )
                     else
                         logToConsole $"In Actor.GetDiff(), already populated."
-                        return diffDto
+
+                    return diffDto
                 }

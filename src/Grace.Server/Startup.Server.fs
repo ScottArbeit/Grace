@@ -1,9 +1,6 @@
 namespace Grace.Server
 
 open Azure.Monitor.OpenTelemetry.Exporter
-open Dapr
-open Dapr.Actors.Client
-open Dapr.Client
 open Giraffe
 open Giraffe.EndpointRouting
 open Grace.Actors
@@ -14,7 +11,7 @@ open Grace.Server.Middleware
 open Grace.Server.ReminderService
 open Grace.Shared.Converters
 open Grace.Shared.Parameters
-open Grace.Shared.Types
+open Grace.Types.Types
 open Microsoft.AspNetCore.Builder
 open Microsoft.AspNetCore.Hosting
 open Microsoft.AspNetCore.Http
@@ -26,7 +23,7 @@ open Microsoft.Extensions.Configuration
 open Microsoft.Extensions.DependencyInjection
 open Microsoft.Extensions.Hosting
 open Microsoft.Extensions.Hosting.Internal
-open Microsoft.OpenApi.Models
+open Microsoft.OpenApi
 open NodaTime
 open OpenTelemetry
 open OpenTelemetry.Exporter
@@ -34,8 +31,10 @@ open OpenTelemetry.Instrumentation.AspNetCore
 open OpenTelemetry.Metrics
 open OpenTelemetry.Resources
 open OpenTelemetry.Trace
+open Orleans
+open Orleans.Serialization
+open Orleans.Serialization.NodaTime
 open Swashbuckle.AspNetCore.Swagger
-open Swashbuckle.AspNetCore.SwaggerGen
 open System
 open System.Linq
 open System.Reflection
@@ -46,6 +45,10 @@ open System.Linq
 open System.Text
 open System.IO
 open FSharpPlus
+open Azure.Storage.Blobs
+open Azure.Storage.Blobs.Models
+open System.Threading
+open Orleans.Persistence.Cosmos
 
 module Application =
 
@@ -203,10 +206,7 @@ module Application =
 
                           route "/saveDirectoryVersions" DirectoryVersion.SaveDirectoryVersions
                           |> addMetadata typeof<DirectoryVersion.SaveDirectoryVersionsParameters> ] ]
-              subRoute
-                  "/notifications"
-                  [ GET []
-                    POST [ route "/receiveGraceEventStream" Notifications.ReceiveGraceEventStream ] ]
+              subRoute "/notifications" [ GET [] ]
               subRoute
                   "/organization"
                   [ POST
@@ -434,18 +434,6 @@ module Application =
             //    let value = Environment.GetEnvironmentVariable(key, EnvironmentVariableTarget.Process)
             //    logToConsole $"{key}: {value}"
 
-            // Set up the ActorProxyFactory for the application.
-            let actorProxyOptions = ActorProxyOptions() // DaprApiToken = Environment.GetEnvironmentVariable("DAPR_API_TOKEN")) (when we actually implement auth)
-
-            actorProxyOptions.HttpEndpoint <-
-                $"{Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.DaprServerUri)}:{Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.DaprHttpPort)}"
-
-            actorProxyOptions.JsonSerializerOptions <- Constants.JsonSerializerOptions
-            actorProxyOptions.RequestTimeout <- TimeSpan.FromSeconds(600.0)
-            services.AddSingleton(actorProxyOptions) |> ignore
-
-            let actorProxyFactory = new ActorProxyFactory(actorProxyOptions)
-            ApplicationContext.setActorProxyFactory actorProxyFactory
             ApplicationContext.setActorStateStorageProvider ActorStateStorageProvider.AzureCosmosDb
 
             let openApiInfo = new OpenApiInfo()
@@ -530,15 +518,24 @@ module Application =
                 .AddGiraffe()
                 // Next line adds the Json serializer that Giraffe uses internally.
                 .AddSingleton<Json.ISerializer>(Json.Serializer(Constants.JsonSerializerOptions))
+                .AddSingleton<IPartitionKeyProvider, GracePartitionKeyProvider>()
                 .AddRouting()
                 .AddLogging()
-
                 .AddHostedService<ReminderService>()
-
                 .AddHttpLogging()
-                .AddSingleton<ActorProxyOptions>(actorProxyOptions)
-                .AddSingleton<IActorProxyFactory>(actorProxyFactory)
+                .AddOrleans(fun siloBuilder ->
+                    siloBuilder.Services.AddSerializer(fun serializerBuilder -> serializerBuilder.AddNodaTimeSerializers() |> ignore)
+                    |> ignore)
             |> ignore
+
+            // Get a GrainFactory instance from Orleans.
+            //services.AddSingleton<IClusterClient>(fun serviceProvider -> serviceProvider.GetRequiredService<IClusterClient>()) |> ignore
+            //services.AddSingleton<IGrainFactory>(fun serviceProvider -> serviceProvider.GetRequiredService<IClusterClient>() :> IGrainFactory) |> ignore
+            //let orleansClient = services.FirstOrDefault(fun service -> service.ServiceType = typeof<IGrainFactory>).ImplementationInstance :?> IGrainFactory
+            //let clusterClient = services.FirstOrDefault(fun service -> service.ServiceType = typeof<IClusterClient>).ImplementationInstance :?> IClusterClient
+            //logToConsole $"Orleans client retrieved from services: {if not <| isNull orleansClient then orleansClient.GetType().FullName else String.Empty}."
+            //logToConsole $"clusterClient: {if not <| isNull clusterClient then clusterClient.GetType().FullName else String.Empty}."
+            //ApplicationContext.setOrleansClient orleansClient
 
             let apiVersioningBuilder =
                 services.AddApiVersioning(fun options ->
@@ -567,7 +564,7 @@ module Application =
             |> ignore
 
             // Configures the Dapr Actor subsystem.
-            services.AddActors(fun options ->
+            (*services.AddActors(fun options ->
                 options.JsonSerializerOptions <- Constants.JsonSerializerOptions
                 options.HttpEndpoint <- actorProxyOptions.HttpEndpoint
 
@@ -595,17 +592,46 @@ module Application =
                 options.DrainOngoingCallTimeout <- TimeSpan.FromSeconds(30.0) // Default is 60s
                 options.DrainRebalancedActors <- true // Default is false
                 options.RemindersStoragePartitions <- 0 // Default is 0 (which means all actors of a given type share the same reminder actor).
-            )
+            )*)
 
             services
                 .AddSignalR(fun options -> options.EnableDetailedErrors <- true)
                 .AddJsonProtocol(fun options -> options.PayloadSerializerOptions <- Constants.JsonSerializerOptions)
             |> ignore
 
+            logToConsole $"Exiting ConfigureServices."
+
         // List all services to the log.
         //services |> Seq.iter (fun service -> logToConsole $"Service: {service.ServiceType}.")
 
         member _.Configure(app: IApplicationBuilder, env: IWebHostEnvironment) =
+            let blobServiceClient = Context.blobServiceClient
+            let containers = blobServiceClient.GetBlobContainers()
+
+            let directoryVersionContainerName = Environment.GetEnvironmentVariable Constants.EnvironmentVariables.DirectoryVersionContainerName
+
+            if not <| containers.Any(fun c -> c.Name = directoryVersionContainerName) then
+                logToConsole $"Creating blob container: {directoryVersionContainerName}."
+
+                blobServiceClient.CreateBlobContainer(directoryVersionContainerName, PublicAccessType.None)
+                |> ignore
+
+            let diffContainerName = Environment.GetEnvironmentVariable Constants.EnvironmentVariables.DiffContainerName
+
+            if not <| containers.Any(fun c -> c.Name = diffContainerName) then
+                logToConsole $"Creating blob container: {diffContainerName}."
+
+                blobServiceClient.CreateBlobContainer(diffContainerName, PublicAccessType.None)
+                |> ignore
+
+            let zipFileContainerName = Environment.GetEnvironmentVariable Constants.EnvironmentVariables.ZipFileContainerName
+
+            if not <| containers.Any(fun c -> c.Name = zipFileContainerName) then
+                logToConsole $"Creating blob container: {zipFileContainerName}."
+
+                blobServiceClient.CreateBlobContainer(zipFileContainerName, PublicAccessType.None)
+                |> ignore
+
             if env.IsDevelopment() then
                 app //.UseSwagger()
                     //.UseSwaggerUI(fun config -> config.SwaggerEndpoint("/swagger", "Grace Server API"))
@@ -614,35 +640,34 @@ module Application =
 
             app
                 //.UseMiddleware<FakeMiddleware>()
-                .UseCloudEvents()
+                .UseMiddleware<HttpSecurityHeadersMiddleware>()
                 .UseW3CLogging()
-                .UseAuthentication()
-                .UseStatusCodePages()
+                .UseMiddleware<CorrelationIdMiddleware>()
+                .UseMiddleware<LogRequestHeadersMiddleware>()
                 .UseStaticFiles()
                 .UseRouting()
-                .UseMiddleware<CorrelationIdMiddleware>()
+                .UseAuthentication()
+                .UseAuthorization()
+                .UseStatusCodePages()
                 //.UseMiddleware<TimingMiddleware>()
-                .UseMiddleware<LogRequestHeadersMiddleware>()
-                .UseMiddleware<HttpSecurityHeadersMiddleware>()
                 .UseMiddleware<ValidateIdsMiddleware>()
                 .UseEndpoints(fun endpointBuilder ->
-                    // Add Dapr actor endpoints
-                    endpointBuilder.MapActorsHandlers() |> ignore
+                    // Add Giraffe (Web API) endpoints
+                    endpointBuilder.MapGiraffeEndpoints(endpoints)
 
-                    // Add Dapr pub/sub endpoints
-                    endpointBuilder.MapSubscribeHandler() |> ignore
-
+                    // Add Prometheus scraping endpoint
                     endpointBuilder.MapPrometheusScrapingEndpoint() |> ignore
 
                     // Add SignalR hub endpoints
                     endpointBuilder.MapHub<Notifications.NotificationHub>("/notifications")
-                    |> ignore
-
-                    // Add Giraffe (Web API) endpoints
-                    endpointBuilder.MapGiraffeEndpoints(endpoints))
+                    |> ignore)
 
                 // If we get here, we didn't find a route.
                 .UseGiraffe(notFoundHandler)
 
             // Set the global ApplicationContext.
             ApplicationContext.Set.Wait()
+
+            //app.ApplicationServices.GetService<IGrainFactory>() |> ApplicationContext.setOrleansClient
+
+            logToConsole $"Grace Server started successfully."

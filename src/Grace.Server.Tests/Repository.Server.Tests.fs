@@ -5,7 +5,7 @@ open FSharpPlus
 open Grace.Server.Tests.Services
 open Grace.Shared
 open Grace.Shared.Utilities
-open Grace.Shared.Validation.Errors.Repository
+open Grace.Shared.Validation.Errors
 open Microsoft.Extensions.Logging
 open NUnit.Framework
 open System
@@ -15,7 +15,7 @@ open System.Threading.Tasks
 open System.IO
 open System.Text
 open System.Diagnostics
-open Grace.Shared.Types
+open Grace.Types.Types
 open System.Net.Http
 open Grace.Shared.Validation
 
@@ -76,7 +76,7 @@ type Repository() =
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
             let! responseStream = response.Content.ReadAsStreamAsync()
             let! error = deserializeAsync<GraceError> responseStream
-            Assert.That(error.Error, Is.EqualTo(RepositoryError.getErrorMessage DescriptionIsRequired))
+            Assert.That(error.Error, Is.EqualTo(getErrorMessage RepositoryError.DescriptionIsRequired))
         }
 
     [<Test>]
@@ -109,7 +109,7 @@ type Repository() =
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
             let! responseStream = response.Content.ReadAsStreamAsync()
             let! error = deserializeAsync<GraceError> responseStream
-            Assert.That(error.Error, Is.EqualTo(RepositoryError.getErrorMessage InvalidSaveDaysValue))
+            Assert.That(error.Error, Is.EqualTo(getErrorMessage RepositoryError.InvalidSaveDaysValue))
         }
 
     [<Test>]
@@ -142,7 +142,7 @@ type Repository() =
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
             let! responseStream = response.Content.ReadAsStreamAsync()
             let! error = deserializeAsync<GraceError> responseStream
-            Assert.That(error.Error, Is.EqualTo(RepositoryError.getErrorMessage InvalidCheckpointDaysValue))
+            Assert.That(error.Error, Is.EqualTo(getErrorMessage RepositoryError.InvalidCheckpointDaysValue))
         }
 
     [<Test>]
@@ -172,7 +172,7 @@ type Repository() =
             let! response = Client.PostAsync("/repository/getBranches", createJsonContent parameters)
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
             let! error = deserializeContent<GraceError> response
-            Assert.That(error.Error, Is.EqualTo(RepositoryError.getErrorMessage InvalidOwnerId))
+            Assert.That(error.Error, Is.EqualTo(getErrorMessage RepositoryError.InvalidOwnerId))
         }
 
     [<Test>]
@@ -188,7 +188,7 @@ type Repository() =
             let! response = Client.PostAsync("/repository/setStatus", createJsonContent parameters)
             response.EnsureSuccessStatusCode() |> ignore
             let! returnValue = deserializeContent<GraceReturnValue<string>> response
-            Assert.That(returnValue.Properties[nameof (OwnerId)], Is.EqualTo(ownerId))
+            Assert.That(returnValue.Properties[nameof OwnerId], Is.EqualTo(ownerId))
         }
 
     [<Test>]
@@ -204,7 +204,7 @@ type Repository() =
             let! response = Client.PostAsync("/repository/setStatus", createJsonContent parameters)
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
             let! error = deserializeContent<GraceError> response
-            Assert.That(error.Error, Is.EqualTo(RepositoryError.getErrorMessage InvalidOrganizationId))
+            Assert.That(error.Error, Is.EqualTo(getErrorMessage RepositoryError.InvalidOrganizationId))
         }
 
     [<Test>]
@@ -221,7 +221,7 @@ type Repository() =
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
             let! responseStream = response.Content.ReadAsStreamAsync()
             let! error = deserializeAsync<GraceError> responseStream
-            Assert.That(error.Error, Is.EqualTo(RepositoryError.getErrorMessage InvalidRepositoryStatus))
+            Assert.That(error.Error, Is.EqualTo(getErrorMessage RepositoryError.InvalidRepositoryStatus))
         }
 
     [<Test>]

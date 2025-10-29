@@ -1,7 +1,7 @@
-﻿namespace Grace.SDK
+namespace Grace.SDK
 
 open Grace.SDK.Common
-open Grace.Shared.Dto.Organization
+open Grace.Types.Organization
 open Grace.Shared.Parameters.Organization
 open System
 

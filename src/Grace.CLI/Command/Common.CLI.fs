@@ -1,16 +1,20 @@
 namespace Grace.CLI
 
+open FSharpPlus
 open Grace.CLI.Services
+open Grace.CLI.Text
 open Grace.Shared
+open Grace.Shared.Validation.Errors
 open Grace.Shared.Client.Configuration
 open Grace.Shared.Resources.Text
-open Grace.Shared.Types
+open Grace.Types.Types
 open Grace.Shared.Utilities
 open Spectre.Console
 open System
 open System.CommandLine
 open System.CommandLine.Parsing
 open System.Globalization
+open System.Linq
 open System.Text.Json
 open System.Threading.Tasks
 open Spectre.Console.Rendering
@@ -34,7 +38,7 @@ module Common =
 
     /// Adds an option (i.e. parameter) to a command, so you can do cool stuff like `|> addOption Options.someOption |> addOption Options.anotherOption`.
     let addOption (option: Option) (command: Command) =
-        command.AddOption(option)
+        command.Options.Add(option)
         command
 
     let public Language = CultureInfo.CurrentCulture.TwoLetterISOLanguageName
@@ -45,29 +49,166 @@ module Common =
     module Options =
         let correlationId =
             new Option<String>(
-                [| "--correlationId"; "-c" |],
-                IsRequired = false,
+                OptionName.CorrelationId,
+                [| "-c" |],
+                Required = false,
                 Description = "CorrelationId for end-to-end tracking <String>.",
-                Arity = ArgumentArity.ExactlyOne
+                Arity = ArgumentArity.ExactlyOne,
+                Recursive = true,
+                DefaultValueFactory = (fun _ -> generateCorrelationId ())
             )
 
-        correlationId.SetDefaultValue(generateCorrelationId ())
-
         let output =
-            (new Option<String>([| "--output"; "-o" |], IsRequired = false, Description = "The style of output.", Arity = ArgumentArity.ExactlyOne))
-                .FromAmong(listCases<OutputFormat> ())
+            (new Option<String>(
+                OptionName.Output,
+                [| "-o" |],
+                Required = false,
+                Description = "The style of output.",
+                Arity = ArgumentArity.ExactlyOne,
+                Recursive = true,
+                DefaultValueFactory = (fun _ -> "Normal")
+            ))
+                .AcceptOnlyFromAmong(listCases<OutputFormat> ())
 
-        output.SetDefaultValue("Normal")
+    /// Gets the correlationId value from the command's ParseResult.
+    let getCorrelationId (parseResult: ParseResult) = parseResult.GetValue(Options.correlationId)
+
+    module Validations =
+        /// Checks that a given name option is a valid Grace name. If the option is not present, it does not return an error.
+        let mustBeAValidGraceName<'T when 'T :> IErrorDiscriminatedUnion> (parseResult: ParseResult) (optionName: string) (error: 'T) =
+            let result = parseResult.GetResult(optionName)
+            let value = parseResult.GetValue<string>(optionName)
+
+            if result <> null && not <| Constants.GraceNameRegex.IsMatch(value) then
+                Error(GraceError.Create (getErrorMessage error) (parseResult |> getCorrelationId))
+            else
+                Ok(parseResult)
+
+        let ``Option must be present`` (optionName: string) (error: IErrorDiscriminatedUnion) (parseResult: ParseResult) =
+            let result = parseResult.GetResult(optionName)
+
+            if isNull result then
+                Error(GraceError.Create (getErrorMessage error) (parseResult |> getCorrelationId))
+            else
+                Ok(parseResult)
+
+        let ``OwnerName must be a valid Grace name`` (parseResult: ParseResult) =
+            mustBeAValidGraceName parseResult OptionName.OwnerName OwnerError.InvalidOwnerName
+
+        let ``OrganizationName must be a valid Grace name`` (parseResult: ParseResult) =
+            mustBeAValidGraceName parseResult OptionName.OrganizationName OrganizationError.InvalidOrganizationName
+
+        let ``RepositoryName must be a valid Grace name`` (parseResult: ParseResult) =
+            mustBeAValidGraceName parseResult OptionName.RepositoryName RepositoryError.InvalidRepositoryName
+
+        let ``BranchName must be a valid Grace name`` (parseResult: ParseResult) =
+            mustBeAValidGraceName parseResult OptionName.BranchName BranchError.InvalidBranchName
+
+        let ``NewName must be a valid Grace name`` (parseResult: ParseResult) =
+            mustBeAValidGraceName parseResult OptionName.NewName RepositoryError.InvalidNewName
+
+        let ``Either OwnerId or OwnerName must be provided`` (parseResult: ParseResult) =
+            // Get the command that was invoked.
+            let command = parseResult.CommandResult.Command
+
+            // Only perform this validation if the command has an OwnerId option.
+            if command.Options.Any(fun option -> option.Name = OptionName.OwnerId) then
+                let ownerIdResult = parseResult.GetResult(OptionName.OwnerId) :?> OptionResult
+                let ownerId = parseResult.GetValue<Guid>(OptionName.OwnerId)
+                let ownerName = parseResult.GetValue<string>(OptionName.OwnerName)
+
+                let isOk =
+                    ownerIdResult.Implicit
+                    || ownerId <> Guid.Empty
+                    || not <| String.IsNullOrWhiteSpace(ownerName)
+
+                if isOk then
+                    Ok(parseResult)
+                else
+                    Error(GraceError.Create (getErrorMessage OwnerError.EitherOwnerIdOrOwnerNameRequired) (parseResult |> getCorrelationId))
+            else
+                Ok(parseResult)
+
+        let ``Either OrganizationId or OrganizationName must be provided`` (parseResult: ParseResult) =
+            // Get the command that was invoked.
+            let command = parseResult.CommandResult.Command
+            // Only perform this validation if the command has an OrganizationId option.
+            if command.Options.Any(fun option -> option.Name = OptionName.OrganizationId) then
+                let organizationId = parseResult.GetValue<Guid>(OptionName.OrganizationId)
+                let organizationName = parseResult.GetValue<string>(OptionName.OrganizationName)
+
+                if organizationId = Guid.Empty && String.IsNullOrWhiteSpace(organizationName) then
+                    Error(
+                        GraceError.Create (getErrorMessage OrganizationError.EitherOrganizationIdOrOrganizationNameRequired) (parseResult |> getCorrelationId)
+                    )
+                else
+                    Ok(parseResult)
+            else
+                Ok(parseResult)
+
+
+        let ``Either RepositoryId or RepositoryName must be provided`` (parseResult: ParseResult) =
+            // Get the command that was invoked.
+            let command = parseResult.CommandResult.Command
+            // Only perform this validation if the command has a RepositoryId option.
+            if command.Options.Any(fun option -> option.Name = OptionName.RepositoryId) then
+                let repositoryId = parseResult.GetValue<Guid>(OptionName.RepositoryId)
+                let repositoryName = parseResult.GetValue<string>(OptionName.RepositoryName)
+
+                if repositoryId = Guid.Empty && String.IsNullOrWhiteSpace(repositoryName) then
+                    Error(GraceError.Create (getErrorMessage RepositoryError.EitherRepositoryIdOrRepositoryNameRequired) (parseResult |> getCorrelationId))
+                else
+                    Ok(parseResult)
+            else
+                Ok(parseResult)
+
+        let ``Either BranchId or BranchName must be provided`` (parseResult: ParseResult) =
+            // Get the command that was invoked.
+            let command = parseResult.CommandResult.Command
+            // Only perform this validation if the command has a BranchId option.
+            if command.Options.Any(fun option -> option.Name = OptionName.BranchId) then
+                let branchId = parseResult.GetValue<Guid>(OptionName.BranchId)
+                let branchName = parseResult.GetValue<string>(OptionName.BranchName)
+
+                if branchId = Guid.Empty && String.IsNullOrWhiteSpace(branchName) then
+                    Error(GraceError.Create (getErrorMessage BranchError.EitherBranchIdOrBranchNameRequired) (parseResult |> getCorrelationId))
+                else
+                    Ok(parseResult)
+            else
+                Ok(parseResult)
+
+        let CommonValidations (parseResult: ParseResult) =
+            parseResult
+            |> ``OwnerName must be a valid Grace name``
+            >>= ``OrganizationName must be a valid Grace name``
+            >>= ``RepositoryName must be a valid Grace name``
+            >>= ``BranchName must be a valid Grace name``
+            >>= ``NewName must be a valid Grace name``
+
+    //>>= ``Either OwnerId or OwnerName must be provided``
+    //>>= ``Either OrganizationId or OrganizationName must be provided``
+    //>>= ``Either RepositoryId or RepositoryName must be provided``
+    //>>= ``Either BranchId or BranchName must be provided``
 
     /// Checks if the output format from the command line is a specific format.
     let isOutputFormat (outputFormat: OutputFormat) (parseResult: ParseResult) =
-        if parseResult.HasOption(Options.output) then
-            let format = parseResult.FindResultFor(Options.output).GetValueOrDefault<String>()
+        try
+            let outputOption = parseResult.GetValue(Options.output)
 
-            String.Equals(format, getDiscriminatedUnionCaseName (outputFormat), StringComparison.CurrentCultureIgnoreCase)
-        else if outputFormat = OutputFormat.Normal then
-            true
-        else
+            match outputOption with
+            | null ->
+                // The command didn't have an output option set, which means it defaults to Normal.
+                if outputFormat = OutputFormat.Normal then true else false
+            | _ ->
+                // The command had an output option set, so we check if it matches the expected output format.
+                let formatFromCommand = parseResult.GetValue<string>(Options.output)
+
+                if outputFormat = discriminatedUnionFromString<OutputFormat>(formatFromCommand).Value then
+                    true
+                else
+                    false
+        with ex ->
+            logToAnsiConsole Colors.Error $"Exception in isOutputFormat: {ExceptionResponse.Create ex}"
             false
 
     /// Checks if the output format from the command line is Json.
@@ -96,17 +237,38 @@ module Common =
 
     let emptyTask = ProgressTask(0, "Empty progress task", 0.0, autoStart = false)
 
-    /// Gets the correlationId parameter from the command line.
-    let getCorrelationId (parseResult: ParseResult) = parseResult.FindResultFor(Options.correlationId).GetValueOrDefault<String>()
-
     /// Rewrites "[" to "[[" and "]" to "]]".
     let escapeBrackets s = s.ToString().Replace("[", "[[").Replace("]", "]]")
 
     /// Prints the ParseResult with markup.
     let printParseResult (parseResult: ParseResult) =
         if not <| isNull parseResult then
-            AnsiConsole.MarkupLine($"[{Colors.Verbose}]{escapeBrackets parseResult}[/]")
-            AnsiConsole.WriteLine()
+            let sb = stringBuilderPool.Get()
+
+            try
+                // Gather all options from the root command and the invoked command.
+                let optionList =
+                    parseResult.RootCommandResult.Command.Options
+                    |> Seq.append parseResult.CommandResult.Command.Options
+                    |> Seq.sortBy (fun option -> option.Name)
+                    |> Seq.toIReadOnlyList
+
+                for option in optionList do
+                    let value = parseResult.GetValue(option.Name)
+
+                    if not (isNull value) then
+                        if option.ValueType.IsArray then
+                            sb.AppendLine($"{option.Name}: {serialize value}") |> ignore
+                        else
+                            sb.AppendLine($"{option.Name}: {value}") |> ignore
+
+                AnsiConsole.MarkupLine($"[{Colors.Verbose}]{escapeBrackets (parseResult.ToString())}[/]")
+                AnsiConsole.WriteLine()
+                AnsiConsole.MarkupLine($"[{Colors.Verbose}]Parameter values:[/]")
+                AnsiConsole.MarkupLine($"[{Colors.Verbose}]{escapeBrackets (sb.ToString())}[/]")
+                AnsiConsole.WriteLine()
+            finally
+                stringBuilderPool.Return sb
 
     /// Prints AnsiConsole markup to the console.
     let writeMarkup (markup: IRenderable) =
@@ -116,7 +278,7 @@ module Common =
     /// Prints output to the console, depending on the output format.
     let renderOutput (parseResult: ParseResult) (result: GraceResult<'T>) =
         let outputFormat =
-            discriminatedUnionFromString<OutputFormat>(parseResult.FindResultFor(Options.output).GetValueOrDefault<String>())
+            discriminatedUnionFromString<OutputFormat>(parseResult.GetValue(Options.output))
                 .Value
 
         match result with

@@ -3,11 +3,12 @@ namespace Grace.SDK
 open Grace.Shared
 open Grace.Shared.Client.Configuration
 open Grace.Shared.Services
-open Grace.Shared.Types
+open Grace.Types.Types
 open Grace.Shared.Parameters.Common
 open Grace.Shared.Utilities
 open Grace.Shared.Validation
 open NodaTime
+open Polly
 open System
 open System.Diagnostics
 open System.IO
@@ -26,12 +27,12 @@ open Microsoft.Extensions.Caching.Memory
 module Common =
 
     /// Checks to make sure the .NET MemoryCache is initialized. If not, it will create one.
-    let checkMemoryCache () =
-        if isNull memoryCache then
-            let memoryCacheOptions =
-                MemoryCacheOptions(TrackStatistics = false, TrackLinkedCacheEntries = false, ExpirationScanFrequency = TimeSpan.FromSeconds(30.0))
+    //let checkMemoryCache () =
+    //    if isNull memoryCache then
+    //        let memoryCacheOptions =
+    //            MemoryCacheOptions(TrackStatistics = false, TrackLinkedCacheEntries = false, ExpirationScanFrequency = TimeSpan.FromSeconds(30.0))
 
-            memoryCache <- new MemoryCache(memoryCacheOptions)
+    //        memoryCache <- new MemoryCache(memoryCacheOptions)
 
     /// <summary>
     /// Sends GET commands to Grace Server.
@@ -44,15 +45,15 @@ module Common =
     let getServer<'T, 'U when 'T :> CommonParameters> (parameters: 'T, route: string) =
         task {
             try
-                checkMemoryCache ()
+                //checkMemoryCache ()
                 use httpClient = getHttpClient parameters.CorrelationId
                 let startTime = getCurrentInstant ()
 
-                let daprServerUri = Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.DaprServerUri)
+                let graceServerUri = Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.GraceServerUri)
 
-                let graceServerPort = Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.DaprAppPort)
+                let graceServerPort = Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.GraceAppPort)
 
-                let serverUri = Uri($"{daprServerUri}:{graceServerPort}/{route}")
+                let serverUri = Uri($"{graceServerUri}:{graceServerPort}/{route}")
 
                 let! response = Constants.DefaultAsyncRetryPolicy.ExecuteAsync(fun _ -> httpClient.GetAsync(new Uri($"{serverUri}")))
 
@@ -83,10 +84,10 @@ module Common =
     /// <returns>A Task containing the result of the POST command.</returns>
     /// <typeparam name="'T">The type of the parameters to use when sending the POST command.</typeparam>
     /// <typeparam name="'U">The type of the result of the command.</typeparam>
-    let postServer<'T, 'U when 'T :> CommonParameters> (parameters: 'T, route: string) =
+    let postServer<'T, 'U when 'T :> CommonParameters> (parameters: 'T, route: string) : (Task<GraceResult<'U>>) =
         task {
             try
-                checkMemoryCache ()
+                //checkMemoryCache ()
                 use httpClient = getHttpClient parameters.CorrelationId
                 let serverUriWithRoute = Uri($"{Current().ServerUri}/{route}")
                 let startTime = getCurrentInstant ()

@@ -5,24 +5,25 @@ open DiffPlex.DiffBuilder.Model
 open FSharpPlus
 open Grace.CLI.Common
 open Grace.CLI.Services
+open Grace.CLI.Text
 open Grace.SDK
 open Grace.Shared
 open Grace.Shared.Client.Configuration
-open Grace.Shared.Dto.Branch
-open Grace.Shared.Dto.Diff
-open Grace.Shared.Dto.Reference
 open Grace.Shared.Parameters.Branch
 open Grace.Shared.Parameters.Diff
 open Grace.Shared.Parameters.DirectoryVersion
-open Grace.Shared.Types
 open Grace.Shared.Utilities
-open Grace.Shared.Validation.Errors.Diff
+open Grace.Types.Branch
+open Grace.Types.Diff
+open Grace.Types.Reference
+open Grace.Types.Types
+open Grace.Shared.Validation.Errors
 open Spectre.Console
 open System
 open System.Collections.Concurrent
 open System.Collections.Generic
 open System.CommandLine
-open System.CommandLine.NamingConventionBinder
+open System.CommandLine.Invocation
 open System.CommandLine.Parsing
 open System.Linq
 open System.IO
@@ -36,203 +37,150 @@ open Grace.Shared.Parameters.Storage
 
 module Diff =
 
-    type CommonParameters() =
-        inherit ParameterBase()
-        member val public OwnerId: string = String.Empty with get, set
-        member val public OwnerName: string = String.Empty with get, set
-        member val public OrganizationId: string = String.Empty with get, set
-        member val public OrganizationName: string = String.Empty with get, set
-        member val public RepositoryId: string = String.Empty with get, set
-        member val public RepositoryName: string = String.Empty with get, set
-        member val public DirectoryVersionId1: string = String.Empty with get, set
-        member val public DirectoryVersionId2: string = String.Empty with get, set
-
     module private Options =
         let ownerId =
-            new Option<string>(
-                "--ownerId",
-                IsRequired = false,
+            new Option<OwnerId>(
+                OptionName.OwnerId,
+                Required = false,
                 Description = "The repository's owner ID <Guid>.",
                 Arity = ArgumentArity.ZeroOrOne,
-                getDefaultValue = (fun _ -> $"{Current().OwnerId}")
+                DefaultValueFactory = (fun _ -> Current().OwnerId)
             )
 
         let ownerName =
             new Option<string>(
-                "--ownerName",
-                IsRequired = false,
+                OptionName.OwnerName,
+                Required = false,
                 Description = "The repository's owner name. [default: current owner]",
                 Arity = ArgumentArity.ExactlyOne
             )
 
         let organizationId =
-            new Option<string>(
-                "--organizationId",
-                IsRequired = false,
+            new Option<OrganizationId>(
+                OptionName.OrganizationId,
+                Required = false,
                 Description = "The repository's organization ID <Guid>.",
                 Arity = ArgumentArity.ZeroOrOne,
-                getDefaultValue = (fun _ -> $"{Current().OrganizationId}")
+                DefaultValueFactory = (fun _ -> Current().OrganizationId)
             )
 
         let organizationName =
             new Option<string>(
-                "--organizationName",
-                IsRequired = false,
+                OptionName.OrganizationName,
+                Required = false,
                 Description = "The repository's organization name. [default: current organization]",
                 Arity = ArgumentArity.ZeroOrOne
             )
 
         let repositoryId =
-            new Option<string>(
-                [| "--repositoryId"; "-r" |],
-                IsRequired = false,
+            new Option<RepositoryId>(
+                OptionName.RepositoryId,
+                [| "-r" |],
+                Required = false,
                 Description = "The repository's Id <Guid>.",
                 Arity = ArgumentArity.ExactlyOne,
-                getDefaultValue = (fun _ -> $"{Current().RepositoryId}")
+                DefaultValueFactory = (fun _ -> Current().RepositoryId)
             )
 
         let repositoryName =
             new Option<string>(
-                [| "--repositoryName"; "-n" |],
-                IsRequired = false,
+                OptionName.RepositoryName,
+                [| "-n" |],
+                Required = false,
                 Description = "The name of the repository. [default: current repository]",
                 Arity = ArgumentArity.ExactlyOne
             )
 
         let branchId =
-            new Option<string>(
-                [| "--branchId"; "-i" |],
-                IsRequired = false,
+            new Option<BranchId>(
+                OptionName.BranchId,
+                [| "-i" |],
+                Required = false,
                 Description = "The branch's ID <Guid>.",
                 Arity = ArgumentArity.ExactlyOne,
-                getDefaultValue = (fun _ -> $"{Current().BranchId}")
+                DefaultValueFactory = (fun _ -> Current().BranchId)
             )
 
         let branchName =
             new Option<string>(
-                [| "--branchName"; "-b" |],
-                IsRequired = false,
+                OptionName.BranchName,
+                [| "-b" |],
+                Required = false,
                 Description = "The name of the branch. [default: current branch]",
                 Arity = ArgumentArity.ExactlyOne
             )
 
         let directoryVersionId1 =
-            new Option<string>(
-                [| "--directoryVersionId1"; "--d1" |],
-                IsRequired = true,
+            new Option<DirectoryVersionId>(
+                OptionName.DirectoryVersionId1,
+                [| OptionName.D1 |],
+                Required = true,
                 Description = "The first DirectoryId to compare in the diff.",
                 Arity = ArgumentArity.ExactlyOne
             )
 
         let directoryVersionId2 =
-            new Option<string>(
-                [| "--directoryVersionId2"; "--d2" |],
-                IsRequired = false,
+            new Option<DirectoryVersionId>(
+                OptionName.DirectoryVersionId2,
+                [| OptionName.D2 |],
+                Required = false,
                 Description = "The second DirectoryId to compare in the diff.",
                 Arity = ArgumentArity.ExactlyOne
             )
 
         let sha256Hash1 =
             new Option<Sha256Hash>(
-                [| "--sha256Hash1"; "--s1" |],
-                IsRequired = true,
+                OptionName.Sha256Hash1,
+                [| OptionName.S1 |],
+                Required = true,
                 Description = "The first partial or full SHA-256 hash to compare in the diff.",
                 Arity = ArgumentArity.ExactlyOne
             )
 
         let sha256Hash2 =
             new Option<Sha256Hash>(
-                [| "--sha256Hash2"; "--s2" |],
-                IsRequired = false,
+                OptionName.Sha256Hash2,
+                [| OptionName.S2 |],
+                Required = false,
                 Description = "The second partial or full SHA-256 hash to compare in the diff.",
                 Arity = ArgumentArity.ExactlyOne
             )
 
-        let tag = new Option<string>("--tag", IsRequired = true, Description = "The tag to compare the current version to.", Arity = ArgumentArity.ExactlyOne)
+        let tag =
+            new Option<string>(OptionName.Tag, Required = true, Description = "The tag to compare the current version to.", Arity = ArgumentArity.ExactlyOne)
 
-    let mustBeAValidGuid (parseResult: ParseResult) (parameters: CommonParameters) (option: Option) (value: string) (error: DiffError) =
-        let mutable guid = Guid.Empty
+    let private sha256Validations parseResult =
+        let graceIds = getNormalizedIdsAndNames parseResult
 
-        if
-            parseResult.CommandResult.FindResultFor(option) <> null
-            && not <| String.IsNullOrEmpty(value)
-            && (Guid.TryParse(value, &guid) = false || guid = Guid.Empty)
-        then
-            Error(GraceError.Create (DiffError.getErrorMessage error) (parameters.CorrelationId))
-        else
-            Ok(parseResult, parameters)
-
-    let mustBeAValidGraceName (parseResult: ParseResult) (parameters: CommonParameters) (option: Option) (value: string) (error: DiffError) =
-        if
-            parseResult.CommandResult.FindResultFor(option) <> null
-            && not <| Constants.GraceNameRegex.IsMatch(value)
-        then
-            Error(GraceError.Create (DiffError.getErrorMessage error) (parameters.CorrelationId))
-        else
-            Ok(parseResult, parameters)
-
-    let private CommonValidations (parseResult, parameters) =
-        let ``OwnerId must be a Guid`` (parseResult: ParseResult, parameters: CommonParameters) =
-            mustBeAValidGuid parseResult parameters Options.ownerId parameters.OwnerId InvalidOwnerId
-
-        let ``OwnerName must be a valid Grace name`` (parseResult: ParseResult, parameters: CommonParameters) =
-            mustBeAValidGraceName parseResult parameters Options.ownerName parameters.OwnerName InvalidOwnerName
-
-        let ``OrganizationId must be a Guid`` (parseResult: ParseResult, parameters: CommonParameters) =
-            mustBeAValidGuid parseResult parameters Options.organizationId parameters.OrganizationId InvalidOrganizationId
-
-        let ``OrganizationName must be a valid Grace name`` (parseResult: ParseResult, parameters: CommonParameters) =
-            mustBeAValidGraceName parseResult parameters Options.organizationName parameters.OrganizationName InvalidOrganizationName
-
-        let ``RepositoryId must be a Guid`` (parseResult: ParseResult, parameters: CommonParameters) =
-            mustBeAValidGuid parseResult parameters Options.repositoryId parameters.RepositoryId InvalidRepositoryId
-
-        let ``RepositoryName must be a valid Grace name`` (parseResult: ParseResult, parameters: CommonParameters) =
-            mustBeAValidGraceName parseResult parameters Options.repositoryName parameters.RepositoryName InvalidRepositoryName
-
-        (parseResult, parameters)
-        |> ``OwnerId must be a Guid``
-        >>= ``OwnerName must be a valid Grace name``
-        >>= ``OrganizationId must be a Guid``
-        >>= ``OrganizationName must be a valid Grace name``
-        >>= ``RepositoryId must be a Guid``
-        >>= ``RepositoryName must be a valid Grace name``
-
-    let private DirectoryIdValidations (parseResult, parameters) =
-        let ``DirectoryVersionId1 must be a Guid`` (parseResult: ParseResult, parameters: CommonParameters) =
-            mustBeAValidGuid parseResult parameters Options.directoryVersionId1 parameters.DirectoryVersionId1 InvalidDirectoryId
-
-        let ``DirectoryVersionId2 must be a Guid`` (parseResult: ParseResult, parameters: CommonParameters) =
-            mustBeAValidGuid parseResult parameters Options.directoryVersionId2 parameters.DirectoryVersionId2 InvalidDirectoryId
-
-        (parseResult, parameters)
-        |> ``DirectoryVersionId1 must be a Guid``
-        >>= ``DirectoryVersionId2 must be a Guid``
-
-    let private sha256Validations (parseResult, parameters) =
-        let ``Sha256Hash1 must be a valid SHA-256 hash value`` (parseResult: ParseResult, (parameters: GetDiffBySha256HashParameters)) =
+        let ``Sha256Hash1 must be a valid SHA-256 hash value`` (parseResult: ParseResult) =
             if
-                parseResult.CommandResult.FindResultFor(Options.sha256Hash1) <> null
-                && not <| Constants.Sha256Regex.IsMatch(parameters.Sha256Hash1)
+                parseResult.GetResult(Options.sha256Hash1) <> null
+                && not <| Constants.Sha256Regex.IsMatch(parseResult.GetValue(Options.sha256Hash1))
             then
-                let properties = Dictionary<string, string>()
-                properties.Add("repositoryId", $"{parameters.RepositoryId}")
-                properties.Add("sha256Hash1", parameters.Sha256Hash1)
+                let properties = Dictionary<string, obj>()
+                properties.Add("repositoryId", graceIds.RepositoryId)
+                properties.Add("sha256Hash1", parseResult.GetValue(Options.sha256Hash1))
+                properties.Add("sha256Hash2", parseResult.GetValue(Options.sha256Hash2))
 
-                Error(GraceError.CreateWithMetadata (DiffError.getErrorMessage InvalidSha256Hash) (parameters.CorrelationId) properties)
+                Error(GraceError.CreateWithMetadata null (getErrorMessage DiffError.InvalidSha256Hash) (graceIds.CorrelationId) properties)
             else
-                Ok(parseResult, parameters)
+                Ok parseResult
 
-        let ``Sha256Hash2 must be a valid SHA-256 hash value`` (parseResult: ParseResult, (parameters: GetDiffBySha256HashParameters)) =
+        let ``Sha256Hash2 must be a valid SHA-256 hash value`` (parseResult: ParseResult) =
             if
-                parseResult.CommandResult.FindResultFor(Options.sha256Hash2) <> null
-                && not <| Constants.Sha256Regex.IsMatch(parameters.Sha256Hash2)
+                parseResult.GetResult(Options.sha256Hash2) <> null
+                && not <| Constants.Sha256Regex.IsMatch(parseResult.GetValue(Options.sha256Hash2))
             then
-                Error(GraceError.Create (DiffError.getErrorMessage InvalidSha256Hash) (parameters.CorrelationId))
-            else
-                Ok(parseResult, parameters)
+                let properties = Dictionary<string, obj>()
+                properties.Add("repositoryId", graceIds.RepositoryId)
+                properties.Add("sha256Hash1", parseResult.GetValue(Options.sha256Hash1))
+                properties.Add("sha256Hash2", parseResult.GetValue(Options.sha256Hash2))
 
-        (parseResult, parameters)
+                Error(GraceError.Create (getErrorMessage DiffError.InvalidSha256Hash) (graceIds.CorrelationId))
+            else
+                Ok parseResult
+
+        parseResult
         |> ``Sha256Hash1 must be a valid SHA-256 hash value``
         >>= ``Sha256Hash2 must be a valid SHA-256 hash value``
 
@@ -302,22 +250,23 @@ module Diff =
                 else
                     renderInlineDiff fileDiff.InlineDiff
         else
-            logToAnsiConsole Colors.Highlighted $"No differences found."
+            addToOutput (Markup($"[{Colors.Highlighted}]No differences found.[/]"))
 
     /// Creates the text output for a diff to the most recent specific ReferenceType.
     type GetDiffByReferenceTypeParameters() =
-        inherit CommonParameters()
         member val public BranchId = String.Empty with get, set
         member val public BranchName = BranchName String.Empty with get, set
 
-    let private diffToReferenceType (parseResult: ParseResult) (parameters: GetDiffByReferenceTypeParameters) (referenceType: ReferenceType) =
+    let private diffToReferenceType (parseResult: ParseResult) (referenceType: ReferenceType) =
         task {
             if parseResult |> verbose then printParseResult parseResult
 
-            let validateIncomingParameters = (parseResult, parameters) |> CommonValidations
+            let validateIncomingParameters = parseResult |> Validations.CommonValidations
 
             match validateIncomingParameters with
             | Ok _ ->
+                let graceIds = getNormalizedIdsAndNames parseResult
+
                 if parseResult |> hasOutput then
                     do!
                         progress
@@ -347,7 +296,6 @@ module Diff =
                                     let mutable rootDirectoryId = DirectoryVersionId.Empty
                                     let mutable rootDirectorySha256Hash = Sha256Hash String.Empty
                                     let mutable previousDirectoryIds: HashSet<DirectoryVersionId> = null
-                                    let repositoryId = RepositoryId.Parse(parameters.RepositoryId)
 
                                     // Check for latest commit and latest root directory version from grace watch. If it's running, we know GraceStatus is up-to-date.
                                     match! getGraceWatchStatus () with
@@ -363,7 +311,6 @@ module Diff =
                                         previousDirectoryIds <- graceWatchStatus.DirectoryIds
                                     | None ->
                                         let! previousGraceStatus = readGraceStatusFile ()
-                                        let mutable graceStatus = previousGraceStatus
                                         t0.Value <- 100.0
                                         t1.StartTask()
                                         let! differences = scanForDifferences previousGraceStatus
@@ -384,12 +331,12 @@ module Diff =
 
                                         let getUploadMetadataForFilesParameters =
                                             GetUploadMetadataForFilesParameters(
-                                                OwnerId = parameters.OwnerId,
-                                                OwnerName = parameters.OwnerName,
-                                                OrganizationId = parameters.OrganizationId,
-                                                OrganizationName = parameters.OrganizationName,
-                                                RepositoryId = parameters.RepositoryId,
-                                                RepositoryName = parameters.RepositoryName,
+                                                OwnerId = graceIds.OwnerIdString,
+                                                OwnerName = graceIds.OwnerName,
+                                                OrganizationId = graceIds.OrganizationIdString,
+                                                OrganizationName = graceIds.OrganizationName,
+                                                RepositoryId = graceIds.RepositoryIdString,
+                                                RepositoryName = graceIds.RepositoryName,
                                                 CorrelationId = getCorrelationId parseResult,
                                                 FileVersions =
                                                     (newFileVersions
@@ -408,12 +355,12 @@ module Diff =
                                         if (newDirectoryVersions.Count > 0) then
                                             (task {
                                                 let saveParameters = SaveDirectoryVersionsParameters()
-                                                saveParameters.OwnerId <- parameters.OwnerId
-                                                saveParameters.OwnerName <- parameters.OwnerName
-                                                saveParameters.OrganizationId <- parameters.OrganizationId
-                                                saveParameters.OrganizationName <- parameters.OrganizationName
-                                                saveParameters.RepositoryId <- parameters.RepositoryId
-                                                saveParameters.RepositoryName <- parameters.RepositoryName
+                                                saveParameters.OwnerId <- graceIds.OwnerIdString
+                                                saveParameters.OwnerName <- graceIds.OwnerName
+                                                saveParameters.OrganizationId <- graceIds.OrganizationIdString
+                                                saveParameters.OrganizationName <- graceIds.OrganizationName
+                                                saveParameters.RepositoryId <- graceIds.RepositoryIdString
+                                                saveParameters.RepositoryName <- graceIds.RepositoryName
                                                 saveParameters.CorrelationId <- getCorrelationId parseResult
 
                                                 saveParameters.DirectoryVersions <- newDirectoryVersions.Select(fun dv -> dv.ToDirectoryVersion).ToList()
@@ -448,16 +395,16 @@ module Diff =
 
                                     let getReferencesParameters =
                                         GetReferencesParameters(
-                                            OwnerId = parameters.OwnerId,
-                                            OwnerName = parameters.OwnerName,
-                                            OrganizationId = parameters.OrganizationId,
-                                            OrganizationName = parameters.OrganizationName,
-                                            RepositoryId = parameters.RepositoryId,
-                                            RepositoryName = parameters.RepositoryName,
-                                            BranchId = parameters.BranchId,
-                                            BranchName = parameters.BranchName,
+                                            OwnerId = graceIds.OwnerIdString,
+                                            OwnerName = graceIds.OwnerName,
+                                            OrganizationId = graceIds.OrganizationIdString,
+                                            OrganizationName = graceIds.OrganizationName,
+                                            RepositoryId = graceIds.RepositoryIdString,
+                                            RepositoryName = graceIds.RepositoryName,
+                                            BranchId = graceIds.BranchIdString,
+                                            BranchName = graceIds.BranchName,
                                             MaxCount = 1,
-                                            CorrelationId = parameters.CorrelationId
+                                            CorrelationId = graceIds.CorrelationId
                                         )
 
                                     let! getAReferenceResult =
@@ -476,15 +423,15 @@ module Diff =
 
                                                 let branchParameters =
                                                     Parameters.Branch.GetBranchParameters(
-                                                        OwnerId = parameters.OwnerId,
-                                                        OwnerName = parameters.OwnerName,
-                                                        OrganizationId = parameters.OrganizationId,
-                                                        OrganizationName = parameters.OrganizationName,
-                                                        RepositoryId = parameters.RepositoryId,
-                                                        RepositoryName = parameters.RepositoryName,
-                                                        BranchId = parameters.BranchId,
-                                                        BranchName = parameters.BranchName,
-                                                        CorrelationId = parameters.CorrelationId
+                                                        OwnerId = graceIds.OwnerIdString,
+                                                        OwnerName = graceIds.OwnerName,
+                                                        OrganizationId = graceIds.OrganizationIdString,
+                                                        OrganizationName = graceIds.OrganizationName,
+                                                        RepositoryId = graceIds.RepositoryIdString,
+                                                        RepositoryName = graceIds.RepositoryName,
+                                                        BranchId = graceIds.BranchIdString,
+                                                        BranchName = graceIds.BranchName,
+                                                        CorrelationId = graceIds.CorrelationId
                                                     )
 
                                                 match! Branch.Get(branchParameters) with
@@ -497,7 +444,7 @@ module Diff =
                                                     if parseResult |> json || parseResult |> verbose then
                                                         logToAnsiConsole Colors.Verbose (serialize error)
 
-                                                return Ok(GraceReturnValue.Create (promotions.ToArray()) parameters.CorrelationId)
+                                                return Ok(GraceReturnValue.Create (promotions.ToArray()) graceIds.CorrelationId)
                                         }
 
                                     let latestReference =
@@ -525,15 +472,15 @@ module Diff =
                                     //logToAnsiConsole Colors.Verbose $"latestReference.DirectoryId: {latestReference.DirectoryId}; rootDirectoryId: {rootDirectoryId}."
                                     let getDiffParameters =
                                         GetDiffParameters(
-                                            OwnerId = parameters.OwnerId,
-                                            OwnerName = parameters.OwnerName,
-                                            OrganizationId = parameters.OrganizationId,
-                                            OrganizationName = parameters.OrganizationName,
-                                            RepositoryId = parameters.RepositoryId,
-                                            RepositoryName = parameters.RepositoryName,
+                                            OwnerId = graceIds.OwnerIdString,
+                                            OwnerName = graceIds.OwnerName,
+                                            OrganizationId = graceIds.OrganizationIdString,
+                                            OrganizationName = graceIds.OrganizationName,
+                                            RepositoryId = graceIds.RepositoryIdString,
+                                            RepositoryName = graceIds.RepositoryName,
                                             DirectoryVersionId1 = latestReference.DirectoryId,
                                             DirectoryVersionId2 = rootDirectoryId,
-                                            CorrelationId = parameters.CorrelationId
+                                            CorrelationId = graceIds.CorrelationId
                                         )
 
                                     let! getDiffResult = Diff.GetDiff(getDiffParameters)
@@ -564,58 +511,64 @@ module Diff =
             | Error error -> return (Error error) |> renderOutput parseResult
         }
 
-    let private promotionHandler =
-        CommandHandler.Create(fun (parseResult: ParseResult) (parameters: GetDiffByReferenceTypeParameters) ->
-            task { return! diffToReferenceType parseResult parameters ReferenceType.Promotion } :> Task)
+    type PromotionHandler() =
+        inherit AsynchronousCommandLineAction()
 
-    let private commitHandler =
-        CommandHandler.Create(fun (parseResult: ParseResult) (parameters: GetDiffByReferenceTypeParameters) ->
-            task { return! diffToReferenceType parseResult parameters ReferenceType.Commit } :> Task)
+        override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Task<int> =
+            task { return! diffToReferenceType parseResult ReferenceType.Promotion }
 
-    let private checkpointHandler =
-        CommandHandler.Create(fun (parseResult: ParseResult) (parameters: GetDiffByReferenceTypeParameters) ->
-            task { return! diffToReferenceType parseResult parameters ReferenceType.Checkpoint } :> Task)
+    type CommitHandler() =
+        inherit AsynchronousCommandLineAction()
 
-    let private saveHandler =
-        CommandHandler.Create(fun (parseResult: ParseResult) (parameters: GetDiffByReferenceTypeParameters) ->
-            task { return! diffToReferenceType parseResult parameters ReferenceType.Save } :> Task)
+        override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Task<int> =
+            task { return! diffToReferenceType parseResult ReferenceType.Commit }
 
-    let private tagHandler =
-        CommandHandler.Create(fun (parseResult: ParseResult) (parameters: GetDiffByReferenceTypeParameters) ->
-            task { return! diffToReferenceType parseResult parameters ReferenceType.Tag } :> Task)
+    type CheckpointHandler() =
+        inherit AsynchronousCommandLineAction()
 
-    type DirectoryIdParameters() =
-        inherit CommonParameters()
-        member val public DirectoryVersionId1 = DirectoryVersionId.Empty with get, set
-        member val public DirectoryVersionId2 = DirectoryVersionId.Empty with get, set
+        override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Task<int> =
+            task { return! diffToReferenceType parseResult ReferenceType.Checkpoint }
 
-    let private DirectoryIdCommand =
-        CommandHandler.Create(fun (parseResult: ParseResult) (parameters: DirectoryIdParameters) ->
+
+    type SaveHandler() =
+        inherit AsynchronousCommandLineAction()
+
+        override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Task<int> =
+            task { return! diffToReferenceType parseResult ReferenceType.Save }
+
+    type TagHandler() =
+        inherit AsynchronousCommandLineAction()
+
+        override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Task<int> =
+            task { return! diffToReferenceType parseResult ReferenceType.Tag }
+
+    type DirectoryIdHandler() =
+        inherit AsynchronousCommandLineAction()
+
+        override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Task<int> =
             task {
                 if parseResult |> verbose then printParseResult parseResult
 
-                let validateIncomingParameters = (parseResult, parameters) |> CommonValidations >>= DirectoryIdValidations
+                let validateIncomingParameters = parseResult |> Validations.CommonValidations
 
                 match validateIncomingParameters with
                 | Ok _ -> return 0
                 | Error error -> return (Error error) |> renderOutput parseResult
             }
-            :> Task)
 
-    type ShaParameters() =
-        inherit CommonParameters()
-        member val public Sha256Hash1 = Sha256Hash String.Empty with get, set
-        member val public Sha256Hash2 = Sha256Hash String.Empty with get, set
+    type ShaHandler() =
+        inherit AsynchronousCommandLineAction()
 
-    let private shaHandler =
-        CommandHandler.Create(fun (parseResult: ParseResult) (parameters: ShaParameters) ->
+        override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Task<int> =
             task {
                 if parseResult |> verbose then printParseResult parseResult
 
-                let validateIncomingParameters = (parseResult, parameters) |> CommonValidations
+                let validateIncomingParameters = parseResult |> Validations.CommonValidations
 
                 match validateIncomingParameters with
                 | Ok _ ->
+                    let graceIds = getNormalizedIdsAndNames parseResult
+
                     if parseResult |> hasOutput then
                         do!
                             progress
@@ -624,8 +577,7 @@ module Diff =
                                     task {
                                         let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Reading Grace index file.[/]")
 
-                                        let t1 =
-                                            progressContext.AddTask($"[{Color.DodgerBlue1}]Scanning working directory for changes.[/]", autoStart = false)
+                                        let t1 = progressContext.AddTask($"[{Color.DodgerBlue1}]Scanning working directory for changes.[/]", autoStart = false)
 
                                         let t2 = progressContext.AddTask($"[{Color.DodgerBlue1}]Creating new directory verions.[/]", autoStart = false)
 
@@ -641,7 +593,6 @@ module Diff =
                                         let mutable rootDirectoryId = DirectoryVersionId.Empty
                                         let mutable rootDirectorySha256Hash = Sha256Hash String.Empty
                                         let mutable previousDirectoryIds: HashSet<DirectoryVersionId> = null
-                                        let repositoryId = RepositoryId.Parse(parameters.RepositoryId)
 
                                         // Check for latest commit and latest root directory version from grace watch. If it's running, we know GraceStatus is up-to-date.
                                         match! getGraceWatchStatus () with
@@ -679,12 +630,12 @@ module Diff =
 
                                             let getUploadMetadataForFilesParameters =
                                                 GetUploadMetadataForFilesParameters(
-                                                    OwnerId = parameters.OwnerId,
-                                                    OwnerName = parameters.OwnerName,
-                                                    OrganizationId = parameters.OrganizationId,
-                                                    OrganizationName = parameters.OrganizationName,
-                                                    RepositoryId = parameters.RepositoryId,
-                                                    RepositoryName = parameters.RepositoryName,
+                                                    OwnerId = graceIds.OwnerIdString,
+                                                    OwnerName = graceIds.OwnerName,
+                                                    OrganizationId = graceIds.OrganizationIdString,
+                                                    OrganizationName = graceIds.OrganizationName,
+                                                    RepositoryId = graceIds.RepositoryIdString,
+                                                    RepositoryName = graceIds.RepositoryName,
                                                     CorrelationId = getCorrelationId parseResult,
                                                     FileVersions =
                                                         (newFileVersions
@@ -703,12 +654,12 @@ module Diff =
                                             if (newDirectoryVersions.Count > 0) then
                                                 (task {
                                                     let saveParameters = SaveDirectoryVersionsParameters()
-                                                    saveParameters.OwnerId <- parameters.OwnerId
-                                                    saveParameters.OwnerName <- parameters.OwnerName
-                                                    saveParameters.OrganizationId <- parameters.OrganizationId
-                                                    saveParameters.OrganizationName <- parameters.OrganizationName
-                                                    saveParameters.RepositoryId <- parameters.RepositoryId
-                                                    saveParameters.RepositoryName <- parameters.RepositoryName
+                                                    saveParameters.OwnerId <- graceIds.OwnerIdString
+                                                    saveParameters.OwnerName <- graceIds.OwnerName
+                                                    saveParameters.OrganizationId <- graceIds.OrganizationIdString
+                                                    saveParameters.OrganizationName <- graceIds.OrganizationName
+                                                    saveParameters.RepositoryId <- graceIds.RepositoryIdString
+                                                    saveParameters.RepositoryName <- graceIds.RepositoryName
                                                     saveParameters.CorrelationId <- getCorrelationId parseResult
                                                     saveParameters.DirectoryVersions <- newDirectoryVersions.Select(fun dv -> dv.ToDirectoryVersion).ToList()
 
@@ -740,14 +691,20 @@ module Diff =
                                         // Check for latest reference of the given type from the server.
                                         t6.StartTask()
 
+                                        let sha256Hash1 = parseResult.GetValue(Options.sha256Hash1)
+                                        let sha256Hash2 = parseResult.GetValue(Options.sha256Hash2)
+
                                         let getDiffBySha256HashParameters =
                                             GetDiffBySha256HashParameters(
-                                                OwnerId = $"{Current().OwnerId}",
-                                                OrganizationId = $"{Current().OrganizationId}",
-                                                RepositoryId = $"{Current().RepositoryId}",
-                                                Sha256Hash1 = parameters.Sha256Hash1,
-                                                Sha256Hash2 = parameters.Sha256Hash2,
-                                                CorrelationId = parameters.CorrelationId
+                                                OwnerId = graceIds.OwnerIdString,
+                                                OwnerName = graceIds.OwnerName,
+                                                OrganizationId = graceIds.OrganizationIdString,
+                                                OrganizationName = graceIds.OrganizationName,
+                                                RepositoryId = graceIds.RepositoryIdString,
+                                                RepositoryName = graceIds.RepositoryName,
+                                                Sha256Hash1 = sha256Hash1,
+                                                Sha256Hash2 = sha256Hash2,
+                                                CorrelationId = graceIds.CorrelationId
                                             )
 
                                         match! Diff.GetDiffBySha256Hash(getDiffBySha256HashParameters) with
@@ -769,7 +726,6 @@ module Diff =
                         return 0
                 | Error error -> return (Error error) |> renderOutput parseResult
             }
-            :> Task)
 
     let Build =
         let addCommonOptions (command: Command) =
@@ -790,32 +746,32 @@ module Diff =
             |> addCommonOptions
             |> addBranchOptions
 
-        promotionCommand.Handler <- promotionHandler
-        diffCommand.AddCommand(promotionCommand)
+        promotionCommand.Action <- PromotionHandler()
+        diffCommand.Subcommands.Add(promotionCommand)
 
         let commitCommand =
             new Command("commit", Description = "Displays the difference between the most recent commit and your current version.")
             |> addCommonOptions
             |> addBranchOptions
 
-        commitCommand.Handler <- commitHandler
-        diffCommand.AddCommand(commitCommand)
+        commitCommand.Action <- CommitHandler()
+        diffCommand.Subcommands.Add(commitCommand)
 
         let checkpointCommand =
             new Command("checkpoint", Description = "Displays the difference between the most recent checkpoint and your current version.")
             |> addCommonOptions
             |> addBranchOptions
 
-        checkpointCommand.Handler <- checkpointHandler
-        diffCommand.AddCommand(checkpointCommand)
+        checkpointCommand.Action <- CheckpointHandler()
+        diffCommand.Subcommands.Add(checkpointCommand)
 
         let saveCommand =
             new Command("save", Description = "Displays the difference between the most recent save and your current version.")
             |> addCommonOptions
             |> addBranchOptions
 
-        saveCommand.Handler <- saveHandler
-        diffCommand.AddCommand(saveCommand)
+        saveCommand.Action <- SaveHandler()
+        diffCommand.Subcommands.Add(saveCommand)
 
         let tagCommand =
             new Command("tag", Description = "Displays the difference between the specified tag and your current version.")
@@ -823,8 +779,8 @@ module Diff =
             |> addBranchOptions
             |> addOption Options.tag
 
-        tagCommand.Handler <- tagHandler
-        diffCommand.AddCommand(tagCommand)
+        tagCommand.Action <- TagHandler()
+        diffCommand.Subcommands.Add(tagCommand)
 
         let directoryIdCommand =
             new Command(
@@ -836,8 +792,8 @@ module Diff =
             |> addOption Options.directoryVersionId1
             |> addOption Options.directoryVersionId2
 
-        directoryIdCommand.Handler <- DirectoryIdCommand
-        diffCommand.AddCommand(directoryIdCommand)
+        directoryIdCommand.Action <- DirectoryIdHandler()
+        diffCommand.Subcommands.Add(directoryIdCommand)
 
         let shaCommand =
             new Command(
@@ -849,7 +805,7 @@ module Diff =
             |> addOption Options.sha256Hash1
             |> addOption Options.sha256Hash2
 
-        shaCommand.Handler <- shaHandler
-        diffCommand.AddCommand(shaCommand)
+        shaCommand.Action <- ShaHandler()
+        diffCommand.Subcommands.Add(shaCommand)
 
         diffCommand

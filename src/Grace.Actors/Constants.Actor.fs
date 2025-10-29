@@ -1,12 +1,11 @@
 namespace Grace.Actors
 
 open Grace.Shared
-open Grace.Shared.Types
+open Grace.Types.Types
 open Grace.Shared.Utilities
 open NodaTime
 open System
 open System.Collections.Concurrent
-open System.Runtime.Serialization
 
 module Constants =
 
@@ -37,6 +36,9 @@ module Constants =
 
         [<Literal>]
         let GlobalLock = "GlobalLockActor"
+
+        [<Literal>]
+        let GrainRepository = "GrainRepository"
 
         [<Literal>]
         let Organization = "OrganizationActor"
@@ -76,16 +78,10 @@ module Constants =
         let Branch = "Branch"
 
         [<Literal>]
-        let ContainerName = "ContainerName"
-
-        [<Literal>]
         let Diff = "Diff"
 
         [<Literal>]
         let DirectoryAppearance = "DirApp"
-
-        [<Literal>]
-        let DirectoryVersionCache = "DirCache"
 
         [<Literal>]
         let DirectoryVersion = "Dir"
@@ -100,13 +96,7 @@ module Constants =
         let Organization = "Organization"
 
         [<Literal>]
-        let OrganizationDto = "OrganizationDto"
-
-        [<Literal>]
         let Owner = "Owner"
-
-        [<Literal>]
-        let OwnerDto = "OwnerDto"
 
         [<Literal>]
         let Reference = "Ref"
@@ -116,9 +106,6 @@ module Constants =
 
         [<Literal>]
         let Repository = "Repo"
-
-        [<Literal>]
-        let RepositoryDto = "RepoDto"
 
         [<Literal>]
         let RepositoryPermission = "RepoPermission"
@@ -141,8 +128,6 @@ module Constants =
         [<Literal>]
         let ReminderLock = "ReminderLock"
 
-    let DefaultObjectStorageProvider = ObjectStorageProvider.AzureBlobStorage
-    let DefaultObjectStorageAccount = "gracevcsdevelopment"
     let DefaultObjectStorageContainerName = "grace-objects"
 
     /// The time to wait between logical and physical deletion of an actor's state.

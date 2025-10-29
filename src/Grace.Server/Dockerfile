@@ -63,6 +63,8 @@ FROM mcr.microsoft.com/dotnet/sdk:10.0-preview AS build
 WORKDIR /src
 
 # Restoring individual projects to take advantage of layer caching.
+COPY ["nuget.config", "nuget.config"]
+
 COPY ["Grace.Aspire.ServiceDefaults/Grace.Aspire.ServiceDefaults.csproj", "Grace.Aspire.ServiceDefaults/"]
 RUN dotnet restore "Grace.Aspire.ServiceDefaults/Grace.Aspire.ServiceDefaults.csproj"
 COPY Grace.Aspire.ServiceDefaults/ Grace.Aspire.ServiceDefaults/
@@ -73,7 +75,13 @@ RUN dotnet restore "CosmosSerializer/CosmosJsonSerializer.csproj"
 COPY CosmosSerializer/ CosmosSerializer/
 RUN dotnet build "CosmosSerializer/CosmosJsonSerializer.csproj" --no-restore -c Debug /p:DebugType=full
 
+COPY ["Grace.Types/Grace.Types.fsproj", "Grace.Types/"]
 COPY ["Grace.Shared/Grace.Shared.fsproj", "Grace.Shared/"]
+RUN dotnet restore "Grace.Types/Grace.Types.fsproj"
+COPY Grace.Types/ Grace.Types/
+COPY Grace.Shared/ Grace.Shared/
+RUN dotnet build "Grace.Types/Grace.Types.fsproj" --no-restore -c Debug /p:DebugType=full
+
 RUN dotnet restore "Grace.Shared/Grace.Shared.fsproj"
 COPY Grace.Shared/ Grace.Shared/
 RUN dotnet build "Grace.Shared/Grace.Shared.fsproj" --no-restore -c Debug /p:DebugType=full
@@ -82,6 +90,11 @@ COPY ["Grace.Actors/Grace.Actors.fsproj", "Grace.Actors/"]
 RUN dotnet restore "Grace.Actors/Grace.Actors.fsproj"
 COPY Grace.Actors/ Grace.Actors/
 RUN dotnet build "Grace.Actors/Grace.Actors.fsproj" --no-restore -c Debug /p:DebugType=full
+
+COPY ["Grace.Orleans.CodeGen/Grace.Orleans.CodeGen.csproj", "Grace.Orleans.CodeGen/"]
+RUN dotnet restore "Grace.Orleans.CodeGen/Grace.Orleans.CodeGen.csproj"
+COPY Grace.Orleans.CodeGen/ Grace.Orleans.CodeGen/
+RUN dotnet build "Grace.Orleans.CodeGen/Grace.Orleans.CodeGen.csproj" --no-restore -c Debug /p:DebugType=full
 
 COPY ["Grace.Server/Grace.Server.fsproj", "Grace.Server/"]
 RUN dotnet restore "Grace.Server/Grace.Server.fsproj"

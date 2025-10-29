@@ -4,7 +4,7 @@ open FSharp.Control
 open FSharpPlus
 open Grace.Server.Tests.Services
 open Grace.Shared
-open Grace.Shared.Validation.Errors.Owner
+open Grace.Shared.Validation.Errors
 open Grace.Shared.Utilities
 open Microsoft.Extensions.Logging
 open NUnit.Framework
@@ -15,7 +15,7 @@ open System.Threading.Tasks
 open System.IO
 open System.Text
 open System.Diagnostics
-open Grace.Shared.Types
+open Grace.Types.Types
 open System.Net.Http
 
 [<Parallelizable(ParallelScope.All)>]
@@ -53,7 +53,7 @@ type Owner() =
             let! response = Client.PostAsync("/owner/setType", createJsonContent parameters)
             response.EnsureSuccessStatusCode() |> ignore
             let! returnValue = deserializeContent<GraceReturnValue<string>> response
-            Assert.That(returnValue.Properties[nameof (OwnerId)], Is.EqualTo(ownerId))
+            Assert.That(returnValue.Properties[nameof OwnerId], Is.EqualTo(ownerId))
         }
 
     [<Test>]
@@ -66,7 +66,7 @@ type Owner() =
             let! response = Client.PostAsync("/owner/setType", createJsonContent parameters)
             response.EnsureSuccessStatusCode() |> ignore
             let! returnValue = deserializeContent<GraceReturnValue<string>> response
-            Assert.That(returnValue.Properties[nameof (OwnerId)], Is.EqualTo(ownerId))
+            Assert.That(returnValue.Properties[nameof OwnerId], Is.EqualTo(ownerId))
         }
 
     [<Test>]
@@ -79,7 +79,7 @@ type Owner() =
             let! response = Client.PostAsync("/owner/setType", createJsonContent parameters)
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
             let! error = deserializeContent<GraceError> response
-            Assert.That(error.Error, Is.EqualTo(OwnerError.getErrorMessage InvalidOwnerType))
+            Assert.That(error.Error, Is.EqualTo(getErrorMessage OwnerError.InvalidOwnerType))
         }
 
     [<Test>]
@@ -92,7 +92,7 @@ type Owner() =
             let! response = Client.PostAsync("/owner/setType", createJsonContent parameters)
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
             let! error = deserializeContent<GraceError> response
-            Assert.That(error.Error, Is.EqualTo(OwnerError.getErrorMessage OwnerTypeIsRequired))
+            Assert.That(error.Error, Is.EqualTo(getErrorMessage OwnerError.OwnerTypeIsRequired))
         }
 
     [<Test>]
@@ -105,7 +105,7 @@ type Owner() =
             let! response = Client.PostAsync("/owner/setDescription", createJsonContent parameters)
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
             let! error = deserializeContent<GraceError> response
-            Assert.That(error.Error, Is.EqualTo(OwnerError.getErrorMessage DescriptionIsTooLong))
+            Assert.That(error.Error, Is.EqualTo(getErrorMessage OwnerError.DescriptionIsTooLong))
         }
 
     [<Test>]
@@ -120,7 +120,7 @@ type Owner() =
             let! response = Client.PostAsync("/owner/setDescription", createJsonContent parameters)
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
             let! error = deserializeContent<GraceError> response
-            Assert.That(error.Error, Is.EqualTo(OwnerError.getErrorMessage OwnerError.InvalidOwnerId))
+            Assert.That(error.Error, Is.EqualTo(getErrorMessage OwnerError.InvalidOwnerId))
         }
 
     [<Test>]
@@ -136,7 +136,7 @@ type Owner() =
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
             let! responseStream = response.Content.ReadAsStreamAsync()
             let! error = deserializeAsync<GraceError> responseStream
-            Assert.That(error.Error, Is.EqualTo(OwnerError.getErrorMessage DescriptionIsRequired))
+            Assert.That(error.Error, Is.EqualTo(getErrorMessage OwnerError.DescriptionIsRequired))
         }
 
     [<Test>]
@@ -150,7 +150,7 @@ type Owner() =
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
             let! responseStream = response.Content.ReadAsStreamAsync()
             let! error = deserializeAsync<GraceError> responseStream
-            Assert.That(error.Error, Is.EqualTo(OwnerError.getErrorMessage EitherOwnerIdOrOwnerNameRequired))
+            Assert.That(error.Error, Is.EqualTo(getErrorMessage OwnerError.EitherOwnerIdOrOwnerNameRequired))
         }
 
     [<Test>]
@@ -163,7 +163,7 @@ type Owner() =
             let! response = Client.PostAsync("/owner/setSearchVisibility", createJsonContent parameters)
             response.EnsureSuccessStatusCode() |> ignore
             let! returnValue = deserializeContent<GraceReturnValue<string>> response
-            Assert.That(returnValue.Properties[nameof (OwnerId)], Is.EqualTo(ownerId))
+            Assert.That(returnValue.Properties[nameof OwnerId], Is.EqualTo(ownerId))
         }
 
     [<Test>]
@@ -176,7 +176,7 @@ type Owner() =
             let! response = Client.PostAsync("/owner/setSearchVisibility", createJsonContent parameters)
             response.EnsureSuccessStatusCode() |> ignore
             let! returnValue = deserializeContent<GraceReturnValue<string>> response
-            Assert.That(returnValue.Properties[nameof (OwnerId)], Is.EqualTo(ownerId))
+            Assert.That(returnValue.Properties[nameof OwnerId], Is.EqualTo(ownerId))
         }
 
     [<Test>]
@@ -189,7 +189,7 @@ type Owner() =
             let! response = Client.PostAsync("/owner/setSearchVisibility", createJsonContent parameters)
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
             let! error = deserializeContent<GraceError> response
-            Assert.That(error.Error, Is.EqualTo(OwnerError.getErrorMessage InvalidSearchVisibility))
+            Assert.That(error.Error, Is.EqualTo(getErrorMessage OwnerError.InvalidSearchVisibility))
         }
 
     [<Test>]
@@ -202,7 +202,7 @@ type Owner() =
             let! response = Client.PostAsync("/owner/setSearchVisibility", createJsonContent parameters)
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
             let! error = deserializeContent<GraceError> response
-            Assert.That(error.Error, Is.EqualTo(OwnerError.getErrorMessage SearchVisibilityIsRequired))
+            Assert.That(error.Error, Is.EqualTo(getErrorMessage OwnerError.SearchVisibilityIsRequired))
         }
 
     [<Test>]
@@ -215,7 +215,7 @@ type Owner() =
             let! response = Client.PostAsync("/owner/setSearchVisibility", createJsonContent parameters)
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
             let! error = deserializeContent<GraceError> response
-            Assert.That(error.Error, Is.EqualTo(OwnerError.getErrorMessage InvalidOwnerId))
+            Assert.That(error.Error, Is.EqualTo(getErrorMessage OwnerError.InvalidOwnerId))
         }
 
     [<Test>]
@@ -229,7 +229,7 @@ type Owner() =
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
             let! responseStream = response.Content.ReadAsStreamAsync()
             let! error = deserializeAsync<GraceError> responseStream
-            Assert.That(error.Error, Is.EqualTo(OwnerError.getErrorMessage EitherOwnerIdOrOwnerNameRequired))
+            Assert.That(error.Error, Is.EqualTo(getErrorMessage OwnerError.EitherOwnerIdOrOwnerNameRequired))
         }
 
     [<Test>]
@@ -242,7 +242,7 @@ type Owner() =
             let! response = Client.PostAsync("/owner/setName", createJsonContent parameters)
             response.EnsureSuccessStatusCode() |> ignore
             let! returnValue = deserializeContent<GraceReturnValue<string>> response
-            Assert.That(returnValue.Properties[nameof (OwnerId)], Is.EqualTo(ownerId))
+            Assert.That(returnValue.Properties[nameof OwnerId], Is.EqualTo(ownerId))
         }
 
     [<Test>]
@@ -255,7 +255,7 @@ type Owner() =
             let! response = Client.PostAsync("/owner/setName", createJsonContent parameters)
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
             let! error = deserializeContent<GraceError> response
-            Assert.That(error.Error, Is.EqualTo(OwnerError.getErrorMessage InvalidOwnerName))
+            Assert.That(error.Error, Is.EqualTo(getErrorMessage OwnerError.InvalidOwnerName))
         }
 
     [<Test>]
@@ -268,7 +268,7 @@ type Owner() =
             let! response = Client.PostAsync("/owner/setName", createJsonContent parameters)
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
             let! error = deserializeContent<GraceError> response
-            Assert.That(error.Error, Is.EqualTo(OwnerError.getErrorMessage OwnerNameIsRequired))
+            Assert.That(error.Error, Is.EqualTo(getErrorMessage OwnerError.OwnerNameIsRequired))
         }
 
     [<Test>]
@@ -281,7 +281,7 @@ type Owner() =
             let! response = Client.PostAsync("/owner/setName", createJsonContent parameters)
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
             let! error = deserializeContent<GraceError> response
-            Assert.That(error.Error, Is.EqualTo(OwnerError.getErrorMessage InvalidOwnerId))
+            Assert.That(error.Error, Is.EqualTo(getErrorMessage OwnerError.InvalidOwnerId))
         }
 
     [<Test>]
@@ -294,5 +294,5 @@ type Owner() =
             let! response = Client.PostAsync("/owner/setName", createJsonContent parameters)
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
             let! error = deserializeContent<GraceError> response
-            Assert.That(error.Error, Is.EqualTo(OwnerError.getErrorMessage EitherOwnerIdOrOwnerNameRequired))
+            Assert.That(error.Error, Is.EqualTo(getErrorMessage OwnerError.EitherOwnerIdOrOwnerNameRequired))
         }

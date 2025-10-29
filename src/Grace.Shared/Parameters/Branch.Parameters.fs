@@ -1,7 +1,7 @@
 namespace Grace.Shared.Parameters
 
 open Grace.Shared.Parameters.Common
-open Grace.Shared.Types
+open Grace.Types.Types
 open System
 
 module Branch =
@@ -29,7 +29,7 @@ module Branch =
         inherit BranchParameters()
         member val public ParentBranchId = String.Empty with get, set
         member val public ParentBranchName: BranchName = String.Empty with get, set
-        member val public InitialPermissions: ReferenceType array = [| Commit; Checkpoint; Save; Tag |] with get, set
+        member val public InitialPermissions: ReferenceType seq = [ Commit; Checkpoint; Save; Tag ] with get, set
 
     /// Parameters for the /branch/assign endpoint.
     type AssignParameters() =

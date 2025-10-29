@@ -11,7 +11,8 @@
 		<Description>The command-line interface for Grace.</Description>
 		<GenerateDocumentationFile>true</GenerateDocumentationFile>
 		<AccelerateBuildsInVisualStudio>true</AccelerateBuildsInVisualStudio>
-		<WarningsAsErrors>FS0025</WarningsAsErrors>
+        <SuppressNETCoreSdkPreviewMessage>true</SuppressNETCoreSdkPreviewMessage>
+        <WarningsAsErrors>FS0025</WarningsAsErrors>
 		<NoWarn>67;1057,3391</NoWarn>
 		<Platforms>AnyCPU</Platforms>
 		<FSharpPreferNetFrameworkTools>False</FSharpPreferNetFrameworkTools>
@@ -20,6 +21,7 @@
 		<OtherFlags>--test:ParallelIlxGen</OtherFlags>
 	</PropertyGroup>
 	<ItemGroup>
+		<None Include="instructions.md" />
 		<Compile Include="Log.CLI.fs" />
 		<Compile Include="Text.CLI.fs" />
 		<Compile Include="Command\Services.CLI.fs" />
@@ -39,35 +41,34 @@
 	</ItemGroup>
 	<ItemGroup>
 		<PackageReference Include="Ben.Demystifier" Version="0.4.1" />
-		<PackageReference Include="MessagePack" Version="3.1.3" />
-		<PackageReference Include="MessagePack.Annotations" Version="3.1.3" />
+		<PackageReference Include="MessagePack" Version="3.1.4" />
+		<PackageReference Include="MessagePack.Annotations" Version="3.1.4" />
 		<PackageReference Include="MessagePack.FSharpExtensions" Version="4.0.0" />
-		<PackageReference Include="MessagePack.NodaTime" Version="3.4.3" />
-		<PackageReference Include="Microsoft.AspNetCore.SignalR.Client" Version="10.0.0-preview.3.25172.1" />
-		<PackageReference Include="Microsoft.AspNetCore.SignalR.Protocols.Json" Version="10.0.0-preview.3.25172.1" />
-		<PackageReference Include="Microsoft.Extensions.Logging.Configuration" Version="10.0.0-preview.3.25171.5" />
-		<PackageReference Include="Microsoft.Extensions.Logging.Console" Version="10.0.0-preview.3.25171.5" />
+		<PackageReference Include="MessagePack.NodaTime" Version="3.4.4" />
+		<PackageReference Include="Microsoft.AspNetCore.SignalR.Client" Version="10.0.0-rc.2.25502.107" />
+		<PackageReference Include="Microsoft.AspNetCore.SignalR.Protocols.Json" Version="10.0.0-rc.2.25502.107" />
+		<PackageReference Include="Microsoft.Extensions.Logging.Configuration" Version="10.0.0-rc.2.25502.107" />
+		<PackageReference Include="Microsoft.Extensions.Logging.Console" Version="10.0.0-rc.2.25502.107" />
 		<PackageReference Include="NodaTime" Version="3.2.2" />
 		<PackageReference Include="NodaTime.Serialization.SystemTextJson" Version="1.3.0" />
-		<PackageReference Include="OpenTelemetry" Version="1.11.2" />
-		<PackageReference Include="OpenTelemetry.Api" Version="1.11.2" />
-		<PackageReference Include="OpenTelemetry.Exporter.Console" Version="1.11.2" />
-		<PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.11.2" />
-		<PackageReference Include="OpenTelemetry.Exporter.Zipkin" Version="1.11.2" />
-		<PackageReference Include="Polly" Version="8.5.2" />
-		<PackageReference Include="Spectre.Console" Version="0.50.0" />
-		<PackageReference Include="Spectre.Console.ImageSharp" Version="0.50.0" />
-		<PackageReference Include="Spectre.Console.Json" Version="0.50.0" />
-		<PackageReference Include="System.CommandLine" Version="2.0.0-beta4.22272.1" />
-		<PackageReference Include="System.CommandLine.Hosting" Version="0.4.0-alpha.22272.1" />
-		<PackageReference Include="System.Diagnostics.DiagnosticSource" Version="10.0.0-preview.3.25171.5" />
-		<PackageReference Include="System.Reactive" Version="6.0.1" />
+		<PackageReference Include="OpenTelemetry" Version="1.14.0-rc.1" />
+		<PackageReference Include="OpenTelemetry.Api" Version="1.14.0-rc.1" />
+		<PackageReference Include="OpenTelemetry.Exporter.Console" Version="1.14.0-rc.1" />
+		<PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.14.0-rc.1" />
+		<PackageReference Include="OpenTelemetry.Exporter.Zipkin" Version="1.14.0-rc.1" />
+		<PackageReference Include="Polly" Version="8.6.4" />
+		<PackageReference Include="Spectre.Console" Version="0.53.0" />
+		<PackageReference Include="Spectre.Console.ImageSharp" Version="0.53.0" />
+		<PackageReference Include="Spectre.Console.Json" Version="0.53.0" />
+		<PackageReference Include="System.CommandLine" Version="2.0.0-rc.2.25502.107" />
+		<PackageReference Include="System.Reactive" Version="6.1.0" />
 	</ItemGroup>
 	<ItemGroup>
 		<ProjectReference Include="..\Grace.SDK\Grace.SDK.fsproj" />
 		<ProjectReference Include="..\Grace.Shared\Grace.Shared.fsproj" />
+		<ProjectReference Include="..\Grace.Types\Grace.Types.fsproj" />
 	</ItemGroup>
 	<ItemGroup>
-		<PackageReference Update="FSharp.Core" Version="9.0.202" />
+		<PackageReference Update="FSharp.Core" Version="10.0.100-rc2.25502.107" />
 	</ItemGroup>
 </Project>

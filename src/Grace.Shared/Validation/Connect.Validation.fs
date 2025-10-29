@@ -1,8 +1,8 @@
-﻿namespace Grace.Shared.Validation
+namespace Grace.Shared.Validation
 
 open Grace.Shared
-open Grace.Shared.Types
-open Grace.Shared.Validation.Errors.Connect
+open Grace.Types.Types
+open Grace.Shared.Validation.Errors
 open System
 
 module Connect =

@@ -1,0 +1,60 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <TargetFramework>net10.0</TargetFramework>
+        <LangVersion>Preview</LangVersion>
+        <PublishReadyToRun>true</PublishReadyToRun>
+        <Version>0.1</Version>
+        <Description>The shared types module for Grace.</Description>
+        <GenerateDocumentationFile>true</GenerateDocumentationFile>
+        <AccelerateBuildsInVisualStudio>true</AccelerateBuildsInVisualStudio>
+        <SuppressNETCoreSdkPreviewMessage>true</SuppressNETCoreSdkPreviewMessage>
+    </PropertyGroup>
+
+    <ItemGroup>
+      <EmbeddedResource Remove="Actors\**" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <None Include="instructions.md" />
+        <Compile Include="..\Grace.Shared\Constants.Shared.fs" Link="Constants.Shared.fs" />
+        <Compile Include="..\Grace.Shared\Utilities.Shared.fs" Link="Utilities.Shared.fs" />
+        <Compile Include="Types.Types.fs" />
+        <Compile Include="Owner.Types.fs" />
+        <Compile Include="Organization.Types.fs" />
+        <Compile Include="Repository.Types.fs" />
+        <Compile Include="Reference.Types.fs" />
+        <Compile Include="Branch.Types.fs" />
+        <Compile Include="Diff.Types.fs" />
+        <Compile Include="DirectoryVersion.Types.fs" />
+        <Compile Include="Reminder.Types.fs" />
+        <Compile Include="Events.Types.fs" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <PackageReference Include="Ben.Demystifier" Version="0.4.1" />
+        <PackageReference Include="DiffPlex" Version="1.9.0" />
+        <PackageReference Include="FSharp.Control.TaskSeq" Version="0.4.0" />
+        <PackageReference Include="FSharp.SystemTextJson" Version="1.4.36" />
+        <PackageReference Include="FSharpPlus" Version="1.7.0" />
+        <PackageReference Include="MessagePack" Version="3.1.4" />
+        <PackageReference Include="MessagePack.Annotations" Version="3.1.4" />
+        <PackageReference Include="MessagePack.FSharpExtensions" Version="4.0.0" />
+        <PackageReference Include="MessagePack.NodaTime" Version="3.4.4" />
+        <PackageReference Include="Microsoft.Extensions.Caching.Memory" Version="10.0.0-rc.2.25502.107" />
+        <PackageReference Include="Microsoft.Extensions.ObjectPool" Version="10.0.0-rc.2.25502.107" />
+        <PackageReference Include="MimeTypeMapOfficial" Version="1.0.17" />
+        <PackageReference Include="MimeTypes" Version="2.5.2" />
+        <PackageReference Include="Nanoid" Version="3.1.0" />
+        <PackageReference Include="NodaTime" Version="3.2.2" />
+        <PackageReference Include="NodaTime.Serialization.SystemTextJson" Version="1.3.0" />
+        <PackageReference Include="Orleans.Serialization.NodaTime" Version="0.0.4-beta" />
+        <PackageReference Include="Polly" Version="8.6.4" />
+        <PackageReference Include="Polly.Contrib.WaitAndRetry" Version="1.1.1" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <PackageReference Update="FSharp.Core" Version="10.0.100-rc2.25502.107" />
+    </ItemGroup>
+
+</Project>

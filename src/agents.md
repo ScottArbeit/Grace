@@ -1,0 +1,33 @@
+# Grace Repository Agents Guide
+
+Agents operating under `D:SourceGracesrc` should follow this playbook alongside the existing `agents.md` in the repo root. Treat this file as the canonical high-level brief; each project folder contains an `AGENTS.md` with deeper context.
+
+## Core Engineering Expectations
+
+-   Prefer read/inspect commands before mutating files; never revert changes introduced by others.
+-   Make a multi-step plan for non-trivial work, keep edits focused, and leave code cleaner than you found it.
+-   Validate changes with `dotnet build --configuration Release` and `dotnet test --no-build`; run `fantomas .` after touching F# source.
+-   Treat secrets with care, avoid logging PII, and preserve structured logging (including correlation IDs).
+-   Favor existing helpers in `Grace.Shared` before adding new utilities; when new helpers are required, keep them composable and well documented.
+
+## F# Coding Guidelines
+
+-   Default to F# for new code unless stakeholders specify another language; surface trade-offs if deviation seems necessary.
+-   Use `task { }` for asynchronous workflows and keep side effects isolated; ensure any awaited operations remain within the computation expression.
+-   Prefer a functional style with immutable data, small pure functions, and explicit dependencies passed as parameters.
+-   Apply the modern indexer syntax (`myList[0]`) for lists, arrays, and sequences; avoid the legacy `.[ ]` form.
+-   Structure modules so that domain types live in `Grace.Types`, shared helpers in `Grace.Shared`, and orchestration in the appropriate project-specific assembly.
+-   Add lightweight inline comments when control flow or transformations are non-obvious, and log key variable values in functions longer than ten lines to aid diagnostics.
+-   Format code with `fantomas` and include comprehensive, copy/paste-ready snippets when sharing examples.
+
+## Agent-Friendly Context Practices
+
+-   Start with the relevant `AGENTS.md` file(s) to load key patterns, dependencies, and test strategy before exploring the codebase. These files replace the old `instructions.md`.
+-   Use these summaries to decide which source files actually need inspection; open code only when context is missing or implementation verification is required.
+-   When documenting new behavior, update the closest `AGENTS.md` to keep future agents informed—living documentation reduces the need for broad code scans.
+
+## Collaboration & Communication
+
+-   Summarise modifications clearly, cite file paths with 1-based line numbers, and call out follow-up actions or tests that remain.
+-   Coordinate cross-project changes across `Grace.Types`, `Grace.Shared`, `Grace.Server`, `Grace.Actors`, and `Grace.SDK` to keep contracts aligned.
+-   When adding new capabilities, ensure matching tests exist and note any coverage gaps or risks in the final hand-off.

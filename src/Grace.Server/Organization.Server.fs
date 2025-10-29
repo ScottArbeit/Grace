@@ -1,9 +1,6 @@
 namespace Grace.Server
 
-open Dapr.Actors
-open Dapr.Actors.Client
 open Giraffe
-open Grace.Actors.Commands.Organization
 open Grace.Actors.Constants
 open Grace.Actors.Extensions.ActorProxy
 open Grace.Actors.Interfaces
@@ -15,9 +12,10 @@ open Grace.Shared.Extensions
 open Grace.Shared.Parameters.Organization
 open Grace.Shared.Utilities
 open Grace.Shared.Validation.Common
-open Grace.Shared.Validation.Errors.Organization
+open Grace.Shared.Validation.Errors
 open Grace.Shared.Validation.Utilities
-open Grace.Shared.Types
+open Grace.Types.Organization
+open Grace.Types.Types
 open Microsoft.AspNetCore.Http
 open Microsoft.Extensions.Logging
 open System
@@ -41,7 +39,7 @@ module Organization =
         task {
             let graceIds = getGraceIds context
             let correlationId = getCorrelationId context
-            let parameterDictionary = Dictionary<string, string>()
+            let parameterDictionary = Dictionary<string, obj>()
 
             try
                 use activity = activitySource.StartActivity("processCommand", ActivityKind.Server)
@@ -50,8 +48,8 @@ module Organization =
                 parameterDictionary.AddRange(getParametersAsDictionary parameters)
 
                 // We know these Id's from ValidateIds.Middleware, so let's set them so we never have to resolve them again.
-                parameters.OwnerId <- graceIds.OwnerId
-                parameters.OrganizationId <- graceIds.OrganizationId
+                parameters.OwnerId <- graceIds.OwnerIdString
+                parameters.OrganizationId <- graceIds.OrganizationIdString
 
                 let handleCommand (organizationId: string) cmd =
                     task {
@@ -62,20 +60,20 @@ module Organization =
                         | Ok graceReturnValue ->
                             graceReturnValue
                                 .enhance(parameterDictionary)
-                                .enhance(nameof (OwnerId), graceIds.OwnerId)
-                                .enhance(nameof (OrganizationId), graceIds.OrganizationId)
+                                .enhance(nameof OwnerId, graceIds.OwnerId)
+                                .enhance(nameof OrganizationId, graceIds.OrganizationId)
                                 .enhance("Command", commandName)
-                                .enhance ("Path", context.Request.Path)
+                                .enhance ("Path", context.Request.Path.Value)
                             |> ignore
 
                             return! context |> result200Ok graceReturnValue
                         | Error graceError ->
                             graceError
                                 .enhance(parameterDictionary)
-                                .enhance(nameof (OwnerId), graceIds.OwnerId)
-                                .enhance(nameof (OrganizationId), graceIds.OrganizationId)
+                                .enhance(nameof OwnerId, graceIds.OwnerId)
+                                .enhance(nameof OrganizationId, graceIds.OrganizationId)
                                 .enhance("Command", commandName)
-                                .enhance ("Path", context.Request.Path)
+                                .enhance ("Path", context.Request.Path.Value)
                             |> ignore
 
                             log.LogDebug(
@@ -98,7 +96,7 @@ module Organization =
 
                 if validationsPassed then
                     let! cmd = command parameters
-                    let! result = handleCommand graceIds.OrganizationId cmd
+                    let! result = handleCommand graceIds.OrganizationIdString cmd
 
                     log.LogInformation(
                         "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; Finished {path}; Status code: {statusCode}; OwnerId: {ownerId}; OrganizationId: {organizationId}.",
@@ -107,8 +105,8 @@ module Organization =
                         correlationId,
                         context.Request.Path,
                         context.Response.StatusCode,
-                        graceIds.OwnerId,
-                        graceIds.OrganizationId
+                        graceIds.OwnerIdString,
+                        graceIds.OrganizationIdString
                     )
 
                     return result
@@ -120,10 +118,10 @@ module Organization =
                     let graceError =
                         (GraceError.Create errorMessage (getCorrelationId context))
                             .enhance(parameterDictionary)
-                            .enhance(nameof (OwnerId), graceIds.OwnerId)
-                            .enhance(nameof (OrganizationId), graceIds.OrganizationId)
+                            .enhance(nameof OwnerId, graceIds.OwnerId)
+                            .enhance(nameof OrganizationId, graceIds.OrganizationId)
                             .enhance("Command", commandName)
-                            .enhance("Path", context.Request.Path)
+                            .enhance("Path", context.Request.Path.Value)
                             .enhance ("Error", errorMessage)
 
                     return! context |> result400BadRequest graceError
@@ -138,9 +136,9 @@ module Organization =
                 let graceError =
                     (GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (getCorrelationId context))
                         .enhance(parameterDictionary)
-                        .enhance(nameof (OwnerId), graceIds.OwnerId)
-                        .enhance(nameof (OrganizationId), graceIds.OrganizationId)
-                        .enhance ("Path", context.Request.Path)
+                        .enhance(nameof OwnerId, graceIds.OwnerId)
+                        .enhance(nameof OrganizationId, graceIds.OrganizationId)
+                        .enhance ("Path", context.Request.Path.Value)
 
                 return! context |> result500ServerError graceError
         }
@@ -165,7 +163,7 @@ module Organization =
 
                 if validationsPassed then
                     // Get the actor proxy for this organization.
-                    let organizationGuid = Guid.Parse(graceIds.OrganizationId)
+                    let organizationGuid = Guid.Parse(graceIds.OrganizationIdString)
                     let actorProxy = Organization.CreateActorProxy organizationGuid correlationId
 
                     // Execute the query.
@@ -175,9 +173,9 @@ module Organization =
                     let graceReturnValue =
                         (GraceReturnValue.Create queryResult correlationId)
                             .enhance(parameterDictionary)
-                            .enhance(nameof (OwnerId), graceIds.OwnerId)
-                            .enhance(nameof (OrganizationId), graceIds.OrganizationId)
-                            .enhance ("Path", context.Request.Path)
+                            .enhance(nameof OwnerId, graceIds.OwnerId)
+                            .enhance(nameof OrganizationId, graceIds.OrganizationId)
+                            .enhance ("Path", context.Request.Path.Value)
 
                     return! context |> result200Ok graceReturnValue
                 else
@@ -186,18 +184,18 @@ module Organization =
                     let graceError =
                         (GraceError.Create (OrganizationError.getErrorMessage error) correlationId)
                             .enhance(parameterDictionary)
-                            .enhance(nameof (OwnerId), graceIds.OwnerId)
-                            .enhance(nameof (OrganizationId), graceIds.OrganizationId)
-                            .enhance ("Path", context.Request.Path)
+                            .enhance(nameof OwnerId, graceIds.OwnerId)
+                            .enhance(nameof OrganizationId, graceIds.OrganizationId)
+                            .enhance ("Path", context.Request.Path.Value)
 
                     return! context |> result400BadRequest graceError
             with ex ->
                 let graceError =
                     (GraceError.Create $"{ExceptionResponse.Create ex}" correlationId)
                         .enhance(parameterDictionary)
-                        .enhance(nameof (OwnerId), graceIds.OwnerId)
-                        .enhance(nameof (OrganizationId), graceIds.OrganizationId)
-                        .enhance ("Path", context.Request.Path)
+                        .enhance(nameof OwnerId, graceIds.OwnerId)
+                        .enhance(nameof OrganizationId, graceIds.OrganizationId)
+                        .enhance ("Path", context.Request.Path.Value)
 
                 return! context |> result500ServerError graceError
         }
@@ -231,7 +229,7 @@ module Organization =
                     |> ValueTask<OrganizationCommand>
 
                 log.LogDebug("{CurrentInstant}: In Grace.Server.Create.", getCurrentInstantExtended ())
-                context.Items.Add("Command", nameof (Create))
+                context.Items.Add("Command", nameof Create)
                 return! processCommand context validations command
             }
 
@@ -240,13 +238,13 @@ module Organization =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let validations (parameters: SetOrganizationNameParameters) =
-                    [| String.isNotEmpty parameters.NewName OrganizationNameIsRequired
-                       String.isValidGraceName parameters.NewName InvalidOrganizationName
-                       Organization.organizationIsNotDeleted context parameters.CorrelationId OrganizationIsDeleted |]
+                    [| String.isNotEmpty parameters.NewName OrganizationError.OrganizationNameIsRequired
+                       String.isValidGraceName parameters.NewName OrganizationError.InvalidOrganizationName
+                       Organization.organizationIsNotDeleted context parameters.CorrelationId OrganizationError.OrganizationIsDeleted |]
 
                 let command (parameters: SetOrganizationNameParameters) = SetName(OrganizationName parameters.NewName) |> returnValueTask
 
-                context.Items.Add("Command", nameof (SetName))
+                context.Items.Add("Command", nameof SetName)
                 return! processCommand context validations command
             }
 
@@ -255,8 +253,8 @@ module Organization =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let validations (parameters: SetOrganizationTypeParameters) =
-                    [| DiscriminatedUnion.isMemberOf<OrganizationType, OrganizationError> parameters.OrganizationType InvalidOrganizationType
-                       Organization.organizationIsNotDeleted context parameters.CorrelationId OrganizationIsDeleted |]
+                    [| DiscriminatedUnion.isMemberOf<OrganizationType, OrganizationError> parameters.OrganizationType OrganizationError.InvalidOrganizationType
+                       Organization.organizationIsNotDeleted context parameters.CorrelationId OrganizationError.OrganizationIsDeleted |]
 
                 let command (parameters: SetOrganizationTypeParameters) =
                     SetType(
@@ -265,7 +263,7 @@ module Organization =
                     )
                     |> returnValueTask
 
-                context.Items.Add("Command", nameof (SetType))
+                context.Items.Add("Command", nameof SetType)
                 return! processCommand context validations command
             }
 
@@ -275,8 +273,8 @@ module Organization =
             task {
                 let validations (parameters: SetOrganizationSearchVisibilityParameters) =
                     [| String.isNotEmpty parameters.SearchVisibility SearchVisibilityIsRequired
-                       DiscriminatedUnion.isMemberOf<SearchVisibility, OrganizationError> parameters.SearchVisibility InvalidSearchVisibility
-                       Organization.organizationIsNotDeleted context parameters.CorrelationId OrganizationIsDeleted |]
+                       DiscriminatedUnion.isMemberOf<SearchVisibility, OrganizationError> parameters.SearchVisibility OrganizationError.InvalidSearchVisibility
+                       Organization.organizationIsNotDeleted context parameters.CorrelationId OrganizationError.OrganizationIsDeleted |]
 
                 let command (parameters: SetOrganizationSearchVisibilityParameters) =
                     SetSearchVisibility(
@@ -285,7 +283,7 @@ module Organization =
                     )
                     |> returnValueTask
 
-                context.Items.Add("Command", nameof (SetSearchVisibility))
+                context.Items.Add("Command", nameof SetSearchVisibility)
                 return! processCommand context validations command
             }
 
@@ -294,13 +292,13 @@ module Organization =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let validations (parameters: SetOrganizationDescriptionParameters) =
-                    [| String.isNotEmpty parameters.Description DescriptionIsRequired
-                       String.maxLength parameters.Description 2048 DescriptionIsTooLong
-                       Organization.organizationIsNotDeleted context parameters.CorrelationId OrganizationIsDeleted |]
+                    [| String.isNotEmpty parameters.Description OrganizationError.DescriptionIsRequired
+                       String.maxLength parameters.Description 2048 OrganizationError.DescriptionIsTooLong
+                       Organization.organizationIsNotDeleted context parameters.CorrelationId OrganizationError.OrganizationIsDeleted |]
 
                 let command (parameters: SetOrganizationDescriptionParameters) = SetDescription(parameters.Description) |> returnValueTask
 
-                context.Items.Add("Command", nameof (SetDescription))
+                context.Items.Add("Command", nameof SetDescription)
                 return! processCommand context validations command
             }
 
@@ -331,12 +329,12 @@ module Organization =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let validations (parameters: DeleteOrganizationParameters) =
-                    [| String.isNotEmpty parameters.DeleteReason DeleteReasonIsRequired
-                       Organization.organizationIsNotDeleted context parameters.CorrelationId OrganizationIsDeleted |]
+                    [| String.isNotEmpty parameters.DeleteReason OrganizationError.DeleteReasonIsRequired
+                       Organization.organizationIsNotDeleted context parameters.CorrelationId OrganizationError.OrganizationIsDeleted |]
 
                 let command (parameters: DeleteOrganizationParameters) = DeleteLogical(parameters.Force, parameters.DeleteReason) |> returnValueTask
 
-                context.Items.Add("Command", nameof (DeleteLogical))
+                context.Items.Add("Command", nameof DeleteLogical)
                 return! processCommand context validations command
             }
 
@@ -349,7 +347,7 @@ module Organization =
 
                 let command (parameters: OrganizationParameters) = Undelete |> returnValueTask
 
-                context.Items.Add("Command", nameof (Undelete))
+                context.Items.Add("Command", nameof Undelete)
                 return! processCommand context validations command
             }
 
@@ -370,7 +368,7 @@ module Organization =
                     let! parameters = context |> parse<GetOrganizationParameters>
                     let! result = processQuery context parameters validations 1 query
 
-                    let duration_ms = getPaddedDuration_ms startTime
+                    let duration_ms = getDurationRightAligned_ms startTime
 
                     log.LogInformation(
                         "{CurrentInstant}: Node: {HostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {path}; OwnerId: {ownerId}; OrganizationId: {organizationId}.",
@@ -379,19 +377,19 @@ module Organization =
                         duration_ms,
                         (getCorrelationId context),
                         context.Request.Path,
-                        graceIds.OwnerId,
-                        graceIds.OrganizationId
+                        graceIds.OwnerIdString,
+                        graceIds.OrganizationIdString
                     )
 
                     return result
                 with ex ->
-                    let duration_ms = getPaddedDuration_ms startTime
+                    let duration_ms = getDurationRightAligned_ms startTime
 
                     let graceError =
                         (GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId context))
-                            .enhance(nameof (OwnerId), graceIds.OwnerId)
-                            .enhance(nameof (OrganizationId), graceIds.OrganizationId)
-                            .enhance ("Path", context.Request.Path)
+                            .enhance(nameof OwnerId, graceIds.OwnerId)
+                            .enhance(nameof OrganizationId, graceIds.OrganizationId)
+                            .enhance ("Path", context.Request.Path.Value)
 
                     return! context |> result500ServerError graceError
             }

@@ -3,8 +3,9 @@ namespace Grace
 open Grace.SDK
 open Grace.Shared
 open Grace.Shared.Parameters
-open Grace.Shared.Types
+open Grace.Types.Types
 open Grace.Shared.Utilities
+open Spectre.Console
 open System
 open System.Collections.Concurrent
 open System.Collections.Generic
@@ -18,22 +19,24 @@ module Load =
 
     let numberOfRepositories = 10
     let numberOfBranches = 100
-    let numberOfEvents = 5000
+    let numberOfEvents = 50000
 
     let showResult<'T> (r: GraceResult<'T>) =
         match r with
         | Ok result -> () //logToConsole (sprintf "%s - CorrelationId: %s" (result.Properties["EventType"]) result.CorrelationId)
-        | Error error -> logToConsole $"{error}"
+        | Error error ->
+            if error.Exception <> ExceptionObject.Default then
+                AnsiConsole.MarkupLine($"[Red]Error: {Markup.Escape(serialize error.Exception)}[/]")
+            else
+                AnsiConsole.MarkupLine($"[Red]Error: {Markup.Escape(error.Error)}[/]")
 
-
-    let parallelOptions = ParallelOptions(MaxDegreeOfParallelism = Environment.ProcessorCount * 8)
+    let parallelOptions = ParallelOptions(MaxDegreeOfParallelism = Environment.ProcessorCount * 4)
 
     [<EntryPoint>]
     let main args =
         (task {
             let startTime = getCurrentInstant ()
             let cancellationToken = new CancellationToken()
-            //ThreadPool.SetMinThreads(200, 200) |> ignore
 
             let suffixes = ConcurrentDictionary<int, string>()
 
@@ -110,6 +113,7 @@ module Load =
                                             OrganizationId = $"{organizationId}",
                                             RepositoryId = $"{repositoryId}",
                                             RepositoryName = repositoryName,
+                                            ObjectStorageProvider = ObjectStorageProvider.DefaultObjectStorageProvider,
                                             CorrelationId = generateCorrelationId ()
                                         )
                                     )
@@ -126,7 +130,29 @@ module Load =
                                                 OwnerId = $"{ownerId}",
                                                 OrganizationId = $"{organizationId}",
                                                 RepositoryId = $"{repositoryId}",
-                                                LogicalDeleteDays = single (TimeSpan.FromSeconds(45.0).TotalDays),
+                                                LogicalDeleteDays = single (TimeSpan.FromSeconds(90.0).TotalDays),
+                                                CorrelationId = generateCorrelationId ()
+                                            )
+                                        )
+
+                                    let! rrrrr =
+                                        Repository.SetSaveDays(
+                                            Repository.SetSaveDaysParameters(
+                                                OwnerId = $"{ownerId}",
+                                                OrganizationId = $"{organizationId}",
+                                                RepositoryId = $"{repositoryId}",
+                                                SaveDays = single (TimeSpan.FromSeconds(90.0).TotalDays),
+                                                CorrelationId = generateCorrelationId ()
+                                            )
+                                        )
+
+                                    let! rrrrr =
+                                        Repository.SetCheckpointDays(
+                                            Repository.SetCheckpointDaysParameters(
+                                                OwnerId = $"{ownerId}",
+                                                OrganizationId = $"{organizationId}",
+                                                RepositoryId = $"{repositoryId}",
+                                                CheckpointDays = single (TimeSpan.FromSeconds(90.0).TotalDays),
                                                 CorrelationId = generateCorrelationId ()
                                             )
                                         )
@@ -433,10 +459,13 @@ module Load =
             logToConsole $"Transactions/sec: {float numberOfEvents / (mainProcessingTime - setupTime).TotalSeconds}"
             logToConsole "Starting tear down."
 
-            // Tear down
-            let deleteParallelOptions = ParallelOptions(MaxDegreeOfParallelism = 8)
+            // Tear down; delete branches and repositories, then delete organization and owner.
+
+            // Setting MaxDegreeOfParallelism to 4 to avoid 429 Too Many Requests errors.
+            let deleteParallelOptions = ParallelOptions(MaxDegreeOfParallelism = 4)
             let mutable deleteCount = 0
 
+            // Delete branches.
             do!
                 Parallel.ForEachAsync(
                     ids.Values,
@@ -469,6 +498,7 @@ module Load =
 
             deleteCount <- 0
 
+            // Delete repositories.
             do!
                 Parallel.ForEachAsync(
                     ids.Values
@@ -504,6 +534,7 @@ module Load =
 
             logToConsole $"Deleted {deleteCount} of {numberOfRepositories} repositories."
 
+            // Delete organization.
             let! r =
                 Organization.Delete(
                     Organization.DeleteOrganizationParameters(
@@ -516,11 +547,13 @@ module Load =
 
             showResult r
 
+            // Delete owner.
             let! r =
                 Owner.Delete(Owner.DeleteOwnerParameters(OwnerId = $"{ownerId}", DeleteReason = "performance test", CorrelationId = generateCorrelationId ()))
 
             showResult r
 
+            // Wrap up.
             let endTime = getCurrentInstant ()
             logToConsole "Tear down complete."
 
