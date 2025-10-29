@@ -178,7 +178,6 @@ module Owner =
                 try
                     if parseResult |> verbose then printParseResult parseResult
                     let graceIds = parseResult |> getNormalizedIdsAndNames
-                    logToAnsiConsole Colors.Verbose $"graceIds: {serialize graceIds}"
                     let validateIncomingParameters = parseResult |> ownerCommonValidations
 
                     match validateIncomingParameters with

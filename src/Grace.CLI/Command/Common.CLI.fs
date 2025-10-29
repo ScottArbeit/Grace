@@ -122,8 +122,6 @@ module Common =
                     || ownerId <> Guid.Empty
                     || not <| String.IsNullOrWhiteSpace(ownerName)
 
-                logToAnsiConsole Colors.Verbose $"OwnerId option implicit: {ownerIdResult.Implicit}; isOk: {isOk}; ownerId: {ownerId}."
-
                 if isOk then
                     Ok(parseResult)
                 else
