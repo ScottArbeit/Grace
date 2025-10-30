@@ -12,7 +12,7 @@
 /.vscode/
 **/[Cc]omponents
 **/dapr
-**/*Azurite*
+**/*[Aa]zurite*
 **/.env
 
 # Secrets file to configure Orleans persistence
