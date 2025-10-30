@@ -1,7 +1,7 @@
 ﻿
 Microsoft Visual Studio Solution File, Format Version 12.00
-# Visual Studio Version 17
-VisualStudioVersion = 17.1.31911.260
+# Visual Studio Version 18
+VisualStudioVersion = 18.0.11123.170 d18.0
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{6EC3EE1D-3C4E-46DD-8F32-0CC8E7565705}") = "Grace.Server", "Grace.Server\Grace.Server.fsproj", "{2CD13C60-F69F-4D94-8319-C3630F854356}"
 	ProjectSection(ProjectDependencies) = postProject
@@ -29,10 +29,6 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution items", "Solution 
 		agents.md = agents.md
 		Directory.Build.props = Directory.Build.props
 	EndProjectSection
-EndProject
-Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Grace.Aspire.AppHost", "Grace.Aspire.AppHost\Grace.Aspire.AppHost.csproj", "{02A981E8-7BAF-4EAE-B0B1-CD6619F119E9}"
-EndProject
-Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Grace.Aspire.ServiceDefaults", "Grace.Aspire.ServiceDefaults\Grace.Aspire.ServiceDefaults.csproj", "{6BAB5FC5-3501-4CAB-8507-4EAC4B9D2E5E}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Grace.Orleans.CodeGen", "Grace.Orleans.CodeGen\Grace.Orleans.CodeGen.csproj", "{70C75B35-D0BA-4355-914D-A41A99DCB9A2}"
 EndProject
@@ -78,13 +74,6 @@ Global
 		{B31CE180-594F-46CF-95FE-4A482EFEC24D}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{B31CE180-594F-46CF-95FE-4A482EFEC24D}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{B31CE180-594F-46CF-95FE-4A482EFEC24D}.Release|Any CPU.Build.0 = Release|Any CPU
-		{02A981E8-7BAF-4EAE-B0B1-CD6619F119E9}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{02A981E8-7BAF-4EAE-B0B1-CD6619F119E9}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{02A981E8-7BAF-4EAE-B0B1-CD6619F119E9}.Release|Any CPU.Build.0 = Release|Any CPU
-		{6BAB5FC5-3501-4CAB-8507-4EAC4B9D2E5E}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{6BAB5FC5-3501-4CAB-8507-4EAC4B9D2E5E}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{6BAB5FC5-3501-4CAB-8507-4EAC4B9D2E5E}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{6BAB5FC5-3501-4CAB-8507-4EAC4B9D2E5E}.Release|Any CPU.Build.0 = Release|Any CPU
 		{70C75B35-D0BA-4355-914D-A41A99DCB9A2}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
 		{70C75B35-D0BA-4355-914D-A41A99DCB9A2}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{70C75B35-D0BA-4355-914D-A41A99DCB9A2}.Release|Any CPU.ActiveCfg = Release|Any CPU

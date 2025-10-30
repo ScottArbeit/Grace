@@ -83,7 +83,6 @@
 		<ProjectReference Include="..\Grace.Types\Grace.Types.fsproj" />
 		<ProjectReference Include="..\CosmosSerializer\CosmosJsonSerializer.csproj" />
 		<ProjectReference Include="..\Grace.Actors\Grace.Actors.fsproj" />
-		<ProjectReference Include="..\Grace.Aspire.ServiceDefaults\Grace.Aspire.ServiceDefaults.csproj" />
 		<ProjectReference Include="..\Grace.Orleans.CodeGen\Grace.Orleans.CodeGen.csproj" />
 		<ProjectReference Include="..\Grace.Shared\Grace.Shared.fsproj" />
 	</ItemGroup>
