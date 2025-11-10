@@ -2,7 +2,6 @@ namespace Grace.Server
 
 open Azure.Data.Tables
 open Azure.Storage.Queues
-open CosmosJsonSerializer
 open dotenv.net
 open Grace.Actors.Interfaces
 open Grace.Server.ApplicationContext
@@ -30,10 +29,10 @@ open System.Collections.Concurrent
 open System.Collections.Generic
 open System.IO
 open System.Linq
+open System.Net.Http
 open System.Security.Authentication
 open System.Text.Json
 open System.Threading.Tasks
-open System.Net
 open Microsoft.Extensions.Logging
 open Grace.Actors
 open System.Runtime.CompilerServices
@@ -118,7 +117,20 @@ module Program =
                             options.ClientOptions.ApplicationName <- "Grace.Server"
                             options.ClientOptions.EnableContentResponseOnWrite <- true
                             options.ClientOptions.LimitToEndpoint <- false
-                            options.ClientOptions.Serializer <- new CosmosJsonSerializer(Grace.Shared.Constants.JsonSerializerOptions)),
+                            options.ClientOptions.ConnectionMode <- ConnectionMode.Gateway
+                            options.ClientOptions.UseSystemTextJsonSerializerWithOptions <- Grace.Shared.Constants.JsonSerializerOptions
+                            logToConsole "About to create custom HttpClient for Cosmos DB."
+
+                            options.ClientOptions.HttpClientFactory <-
+                                fun () ->
+                                    logToConsole "Creating custom HttpClient for Cosmos DB."
+
+                                    let handler =
+                                        new HttpClientHandler(
+                                            ServerCertificateCustomValidationCallback = HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
+                                        )
+
+                                    new HttpClient(handler)),
                         typeof<GracePartitionKeyProvider>
                     )
                     .AddAzureBlobGrainStorage(
@@ -137,6 +149,11 @@ module Program =
                                     azureQueueOptions.QueueNames <- List<string>([ GraceEventStreamTopic ])
                                     azureQueueOptions.QueueServiceClient <- QueueServiceClient(azureStorageConnectionString, QueueClientOptions()))
                                 |> ignore)
+
+                            siloAzureQueueStreamConfigurator.ConfigurePullingAgent(fun pullOptions ->
+                                pullOptions.Configure(fun streamPullingOptions -> streamPullingOptions.GetQueueMsgsTimerPeriod <- TimeSpan.FromSeconds(5.0))
+                                |> ignore)
+                            |> ignore
                     )
                     .AddAzureBlobGrainStorage(
                         GraceEventStreamProvider,
@@ -212,6 +229,9 @@ module Program =
 
         let loggerFactory = host.Services.GetService(typeof<ILoggerFactory>) :?> ILoggerFactory
         ApplicationContext.setLoggerFactory (loggerFactory)
+
+        logToConsole
+            $"""azurecosmosdbconnectionstring: ${config["azurecosmosdbconnectionstring"]}; cosmosdatabasename: ${config["cosmosdatabasename"]}; cosmoscontainername: ${config["cosmoscontainername"]}"""
 
         host.Run()
 

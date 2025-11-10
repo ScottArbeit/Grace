@@ -1,7 +1,6 @@
-﻿
 Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 18
-VisualStudioVersion = 18.0.11123.170 d18.0
+VisualStudioVersion = 18.0.11123.170
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{6EC3EE1D-3C4E-46DD-8F32-0CC8E7565705}") = "Grace.Server", "Grace.Server\Grace.Server.fsproj", "{2CD13C60-F69F-4D94-8319-C3630F854356}"
 	ProjectSection(ProjectDependencies) = postProject
@@ -18,10 +17,6 @@ Project("{6EC3EE1D-3C4E-46DD-8F32-0CC8E7565705}") = "Grace.SDK", "Grace.SDK\Grac
 EndProject
 Project("{6EC3EE1D-3C4E-46DD-8F32-0CC8E7565705}") = "Grace.Load", "Grace.Load\Grace.Load.fsproj", "{05E1442F-7263-459F-B726-80D7AE7A0DEC}"
 EndProject
-Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "CosmosJsonSerializer", "CosmosSerializer\CosmosJsonSerializer.csproj", "{72660935-7140-4D48-9BF2-020A790AC747}"
-EndProject
-Project("{E53339B2-1760-4266-BCC7-CA923CBCF16C}") = "docker-compose", "docker-compose.dcproj", "{17B590BA-543E-49B1-9EB7-262CE73D86FE}"
-EndProject
 Project("{6EC3EE1D-3C4E-46DD-8F32-0CC8E7565705}") = "Grace.Server.Tests", "Grace.Server.Tests\Grace.Server.Tests.fsproj", "{B31CE180-594F-46CF-95FE-4A482EFEC24D}"
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution items", "Solution items", "{40F2D935-0455-48D5-B8E1-BEC3020C4FF1}"
@@ -33,6 +28,8 @@ EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Grace.Orleans.CodeGen", "Grace.Orleans.CodeGen\Grace.Orleans.CodeGen.csproj", "{70C75B35-D0BA-4355-914D-A41A99DCB9A2}"
 EndProject
 Project("{F2A71F9B-5D33-465A-A702-920D77279786}") = "Grace.Types", "Grace.Types\Grace.Types.fsproj", "{95C2BE88-50BF-45C9-AEA5-A3914C3F5695}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Grace.Aspire.AppHost", "Grace.Aspire.AppHost\Grace.Aspire.AppHost.csproj", "{03F7B32A-125C-41E2-AE69-30B4A8E02D37}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -64,12 +61,6 @@ Global
 		{05E1442F-7263-459F-B726-80D7AE7A0DEC}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{05E1442F-7263-459F-B726-80D7AE7A0DEC}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{05E1442F-7263-459F-B726-80D7AE7A0DEC}.Release|Any CPU.Build.0 = Release|Any CPU
-		{72660935-7140-4D48-9BF2-020A790AC747}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{72660935-7140-4D48-9BF2-020A790AC747}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{72660935-7140-4D48-9BF2-020A790AC747}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{72660935-7140-4D48-9BF2-020A790AC747}.Release|Any CPU.Build.0 = Release|Any CPU
-		{17B590BA-543E-49B1-9EB7-262CE73D86FE}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{17B590BA-543E-49B1-9EB7-262CE73D86FE}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{B31CE180-594F-46CF-95FE-4A482EFEC24D}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
 		{B31CE180-594F-46CF-95FE-4A482EFEC24D}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{B31CE180-594F-46CF-95FE-4A482EFEC24D}.Release|Any CPU.ActiveCfg = Release|Any CPU
@@ -82,6 +73,10 @@ Global
 		{95C2BE88-50BF-45C9-AEA5-A3914C3F5695}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{95C2BE88-50BF-45C9-AEA5-A3914C3F5695}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{95C2BE88-50BF-45C9-AEA5-A3914C3F5695}.Release|Any CPU.Build.0 = Release|Any CPU
+		{03F7B32A-125C-41E2-AE69-30B4A8E02D37}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{03F7B32A-125C-41E2-AE69-30B4A8E02D37}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{03F7B32A-125C-41E2-AE69-30B4A8E02D37}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{03F7B32A-125C-41E2-AE69-30B4A8E02D37}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

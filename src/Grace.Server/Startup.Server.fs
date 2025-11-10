@@ -451,7 +451,6 @@ module Application =
             let graceServerAppId = "grace-server-integration-test"
 
             let tracingOtlpEndpoint = Environment.GetEnvironmentVariable("OTLP_ENDPOINT_URL")
-            let zipkinEndpoint = Environment.GetEnvironmentVariable("ZIPKIN_ENDPOINT_URL")
             let otel = services.AddOpenTelemetry()
 
             otel
@@ -468,24 +467,33 @@ module Application =
                         .AddMeter("Microsoft.AspNetCore.Hosting")
                         .AddMeter("Microsoft.AspNetCore.Server.Kestrel")
                         .AddPrometheusExporter(fun prometheusOptions -> prometheusOptions.ScrapeEndpointPath <- "/metrics")
-                    //.AddAzureMonitorMetricExporter(fun options -> options.ConnectionString <- azureMonitorConnectionString)
-                    |> ignore)
+                    |> ignore
+
+                    if not <| String.IsNullOrWhiteSpace(azureMonitorConnectionString) then
+                        logToConsole "OpenTelemetry: Configuring Azure Monitor metrics exporter"
+
+                        metricsBuilder.AddAzureMonitorMetricExporter(fun options -> options.ConnectionString <- azureMonitorConnectionString)
+                        |> ignore)
                 .WithTracing(fun traceBuilder ->
                     traceBuilder
                         .AddAspNetCoreInstrumentation()
                         .AddHttpClientInstrumentation()
                         .AddSource(graceServerAppId)
-                    //.AddZipkinExporter(fun zipkinOptions -> zipkinOptions.Endpoint <- Uri(zipkinEndpoint))
-                    //.AddAzureMonitorTraceExporter(fun options -> options.ConnectionString <- azureMonitorConnectionString)
                     |> ignore
 
-                    if tracingOtlpEndpoint <> null then
-                        logToConsole $"Added OpenTelemetry exporter endpoint: {tracingOtlpEndpoint}."
+                    if not <| String.IsNullOrWhiteSpace(tracingOtlpEndpoint) then
+                        logToConsole $"OpenTelemetry: Configuring OTLP exporter to {tracingOtlpEndpoint}"
 
                         traceBuilder.AddOtlpExporter(fun options -> options.Endpoint <- Uri(tracingOtlpEndpoint))
                         |> ignore
                     else
-                        traceBuilder.AddConsoleExporter() |> ignore)
+                        traceBuilder.AddConsoleExporter() |> ignore
+
+                    if not <| String.IsNullOrWhiteSpace(azureMonitorConnectionString) then
+                        logToConsole "OpenTelemetry: Configuring Azure Monitor trace exporter"
+
+                        traceBuilder.AddAzureMonitorTraceExporter(fun options -> options.ConnectionString <- azureMonitorConnectionString)
+                        |> ignore)
             |> ignore
 
             //services
