@@ -51,9 +51,7 @@ module Common =
 
                 let graceServerUri = Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.GraceServerUri)
 
-                let graceServerPort = Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.GraceAppPort)
-
-                let serverUri = Uri($"{graceServerUri}:{graceServerPort}/{route}")
+                let serverUri = Uri($"{graceServerUri}/{route}")
 
                 let! response = Constants.DefaultAsyncRetryPolicy.ExecuteAsync(fun _ -> httpClient.GetAsync(new Uri($"{serverUri}")))
 

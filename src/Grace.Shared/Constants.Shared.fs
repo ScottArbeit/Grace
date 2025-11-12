@@ -113,7 +113,7 @@ module Constants =
     [<Literal>]
     let GraceObjectStorage = "graceobjectstorage"
 
-    /// The name of the Dapr service for Grace event pub/sub.
+    /// The name of the service for Grace event pub/sub.
     [<Literal>]
     let GracePubSubService = "graceevents"
 
@@ -137,7 +137,7 @@ module Constants =
     [<Literal>]
     let GraceRemindersSubscription = "reminder-service"
 
-    /// The name of the Dapr service for retrieving application secrets.
+    /// The name of the service for retrieving application secrets.
     [<Literal>]
     let GraceSecretStoreName = "kubernetessecretstore"
 
@@ -194,6 +194,10 @@ module Constants =
 
     /// Environment variables used by Grace.
     module EnvironmentVariables =
+        /// The environment variable that contains the Application Insights connection string.
+        [<Literal>]
+        let ApplicationInsightsConnectionString = "application_insights_connection_string"
+
         /// The environment variable that contains the Azure Cosmos DB Connection String.
         [<Literal>]
         let AzureCosmosDBConnectionString = "azurecosmosdbconnectionstring"
@@ -214,13 +218,10 @@ module Constants =
         [<Literal>]
         let CosmosDatabaseName = "cosmosdatabasename"
 
-        /// The environment variable that contains the Dapr server Uri. The Uri should not include a port number.
+        /// The environment variable that contains the Grace server Uri. The Uri MUST include a port number,
+        /// and MUST NOT include a trailing slash.
         [<Literal>]
         let GraceServerUri = "GRACE_SERVER_URI"
-
-        /// The environment variable that contains the application's port.
-        [<Literal>]
-        let GraceAppPort = "GRACE_APP_PORT"
 
         /// The name of the container in object storage that holds memoized RecursiveDirectoryVersions.
         [<Literal>]

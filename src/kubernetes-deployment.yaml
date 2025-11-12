@@ -32,13 +32,8 @@ data:
   ASPNETCORE_URLS: https://+:5001;http://+:5000
   # ASPNETCORE_Kestrel__Certificates__Default__Path: /https/aspnetapp.pfx
   # ASPNETCORE_Kestrel__Certificates__Default__Password: CrypticPassword8=5
-  APPLICATIONINSIGHTS_CONNECTION_STRING: "InstrumentationKey=e0955eb4-1817-4a94-bf6e-d48f6ae54a8c;IngestionEndpoint=https://westus2-2.in.applicationinsights.azure.com/"
+  application_insights_connection_string: "InstrumentationKey=e0955eb4-1817-4a94-bf6e-d48f6ae54a8c;IngestionEndpoint=https://westus2-2.in.applicationinsights.azure.com/"
   # Azure_CosmosDB_Connection_String: "AccountEndpoint=https://localhost:8081/;AccountKey=C2y6yDjf5/R+ob0N8A7Cgv30VRDJIWEHLM+4QDU5DE2nQ9nDuVTqobD4b8mGGyPMbIZnqyMsEcaGQy67XIw/Jw==" # This is a well-known default key.
-  DAPR_APP_ID: "grace-server"
-  DAPR_APP_PORT: "5000"
-  DAPR_HTTP_PORT: "3500"
-  DAPR_GRPC_PORT: "50001"
-  DAPR_SERVER_URI: http://127.0.0.1
   directoryversion_container: "directoryversion"
   diff_container: "diff"
   InProcessFeatures__Enabled: "true"

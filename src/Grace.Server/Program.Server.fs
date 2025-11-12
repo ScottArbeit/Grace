@@ -12,6 +12,7 @@ open MessagePack
 open Microsoft.AspNetCore
 open Microsoft.AspNetCore.Hosting
 open Microsoft.AspNetCore.Server.Kestrel.Core
+open Microsoft.Azure.Cosmos
 open Microsoft.Extensions.Configuration
 open Microsoft.Extensions.Hosting
 open Microsoft.Extensions.Logging
@@ -30,15 +31,14 @@ open System.Collections.Generic
 open System.IO
 open System.Linq
 open System.Net.Http
+open System.Net.Security
 open System.Security.Authentication
 open System.Text.Json
-open System.Threading.Tasks
-open Microsoft.Extensions.Logging
 open Grace.Actors
 open System.Runtime.CompilerServices
 open Microsoft.AspNetCore.Builder
 open System.Diagnostics
-open Microsoft.Azure.Cosmos
+
 
 module OrleansFsharpFix =
     // Grace.Orleans.CodeGen is the name of the C# codegen project.
@@ -87,7 +87,6 @@ module Program =
 
     let createHostBuilder (args: string[]) : IHostBuilder =
         let builder = Host.CreateDefaultBuilder(args)
-        let graceAppPort = Environment.GetEnvironmentVariable "GRACE_APP_PORT" |> int
         let azureStorageConnectionString = Environment.GetEnvironmentVariable EnvironmentVariables.AzureStorageConnectionString
         let azureCosmosDBConnectionString = Environment.GetEnvironmentVariable EnvironmentVariables.AzureCosmosDBConnectionString
 
@@ -115,22 +114,29 @@ module Program =
                             options.DatabaseName <- Environment.GetEnvironmentVariable EnvironmentVariables.CosmosDatabaseName
                             options.IsResourceCreationEnabled <- true
                             options.ClientOptions.ApplicationName <- "Grace.Server"
-                            options.ClientOptions.EnableContentResponseOnWrite <- true
                             options.ClientOptions.LimitToEndpoint <- false
                             options.ClientOptions.ConnectionMode <- ConnectionMode.Gateway
                             options.ClientOptions.UseSystemTextJsonSerializerWithOptions <- Grace.Shared.Constants.JsonSerializerOptions
-                            logToConsole "About to create custom HttpClient for Cosmos DB."
+#if DEBUG
+                            options.ClientOptions.LimitToEndpoint <- true
+                            options.ClientOptions.EnableContentResponseOnWrite <- true
 
                             options.ClientOptions.HttpClientFactory <-
                                 fun () ->
                                     logToConsole "Creating custom HttpClient for Cosmos DB."
 
                                     let handler =
-                                        new HttpClientHandler(
-                                            ServerCertificateCustomValidationCallback = HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
+                                        new SocketsHttpHandler(
+                                            SslOptions =
+                                                new SslClientAuthenticationOptions(
+                                                    TargetHost = "localhost",
+                                                    RemoteCertificateValidationCallback = (fun _ _ _ _ -> true)
+                                                )
                                         )
 
-                                    new HttpClient(handler)),
+                                    new HttpClient(handler, disposeHandler = true)
+#endif
+                        ),
                         typeof<GracePartitionKeyProvider>
                     )
                     .AddAzureBlobGrainStorage(
@@ -200,12 +206,7 @@ module Program =
 
     [<EntryPoint>]
     let main args =
-        //let dir = new DirectoryInfo("/etc/certificates")
-        //let files = dir.EnumerateFiles()
-        //logToConsole $"In main. Contents of {dir.FullName} ({files.Count()} files):"
-        //files |> Seq.iter (fun file -> logToConsole $"{file.Name}: {file.Length} bytes")
-
-        logToConsole "-----------------------------------------------------------"
+        logToConsole "----------------------------- Starting Grace Server ------------------------------"
         let host = createHostBuilder(args).Build()
 
         // Build the configuration
@@ -217,7 +218,6 @@ module Program =
                 .AddJsonFile($"appsettings.{environment}.json", false, true) // Load environment-specific settings
                 .AddEnvironmentVariables() // Include environment variables
                 .Build()
-
 
         // for kvp in config.AsEnumerable().ToImmutableSortedDictionary() do
         //     Console.WriteLine($"{kvp.Key}: {kvp.Value}");
