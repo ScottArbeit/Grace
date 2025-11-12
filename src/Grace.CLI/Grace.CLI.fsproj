@@ -45,10 +45,10 @@
 		<PackageReference Include="MessagePack.Annotations" Version="3.1.4" />
 		<PackageReference Include="MessagePack.FSharpExtensions" Version="4.0.0" />
 		<PackageReference Include="MessagePack.NodaTime" Version="3.4.4" />
-		<PackageReference Include="Microsoft.AspNetCore.SignalR.Client" Version="10.0.0-rc.2.25502.107" />
-		<PackageReference Include="Microsoft.AspNetCore.SignalR.Protocols.Json" Version="10.0.0-rc.2.25502.107" />
-		<PackageReference Include="Microsoft.Extensions.Logging.Configuration" Version="10.0.0-rc.2.25502.107" />
-		<PackageReference Include="Microsoft.Extensions.Logging.Console" Version="10.0.0-rc.2.25502.107" />
+		<PackageReference Include="Microsoft.AspNetCore.SignalR.Client" Version="10.0.0" />
+		<PackageReference Include="Microsoft.AspNetCore.SignalR.Protocols.Json" Version="10.0.0" />
+		<PackageReference Include="Microsoft.Extensions.Logging.Configuration" Version="10.0.0" />
+		<PackageReference Include="Microsoft.Extensions.Logging.Console" Version="10.0.0" />
 		<PackageReference Include="NodaTime" Version="3.2.2" />
 		<PackageReference Include="NodaTime.Serialization.SystemTextJson" Version="1.3.0" />
 		<PackageReference Include="OpenTelemetry" Version="1.14.0-rc.1" />
@@ -60,7 +60,7 @@
 		<PackageReference Include="Spectre.Console" Version="0.53.0" />
 		<PackageReference Include="Spectre.Console.ImageSharp" Version="0.53.0" />
 		<PackageReference Include="Spectre.Console.Json" Version="0.53.0" />
-		<PackageReference Include="System.CommandLine" Version="2.0.0-rc.2.25502.107" />
+		<PackageReference Include="System.CommandLine" Version="2.0.0" />
 		<PackageReference Include="System.Reactive" Version="6.1.0" />
 	</ItemGroup>
 	<ItemGroup>
@@ -69,6 +69,6 @@
 		<ProjectReference Include="..\Grace.Types\Grace.Types.fsproj" />
 	</ItemGroup>
 	<ItemGroup>
-		<PackageReference Update="FSharp.Core" Version="10.0.100-rc2.25502.107" />
+		<PackageReference Update="FSharp.Core" Version="10.0.100" />
 	</ItemGroup>
 </Project>

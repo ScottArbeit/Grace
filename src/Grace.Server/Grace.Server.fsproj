@@ -99,7 +99,7 @@
 		<PackageReference Include="MessagePack.Annotations" Version="3.1.4" />
 		<PackageReference Include="MessagePack.NodaTime" Version="3.4.4" />
 		<PackageReference Include="Microsoft.Azure.Cosmos" Version="3.54.0" />
-		<PackageReference Include="Microsoft.OpenApi" Version="2.3.7" />
+		<PackageReference Include="Microsoft.OpenApi" Version="3.0.0" />
 		<PackageReference Include="Microsoft.Orleans.Clustering.AzureStorage" Version="9.2.1" />
 		<PackageReference Include="Microsoft.Orleans.Persistence.AzureStorage" Version="9.2.1" />
 		<PackageReference Include="Microsoft.Orleans.Persistence.Cosmos" Version="9.2.1" />
@@ -119,12 +119,12 @@
 		<PackageReference Include="OpenTelemetry.Instrumentation.Http" Version="1.13.0" />
 		<PackageReference Include="Orleans.Serialization.NodaTime" Version="0.0.4-beta" />
 		<PackageReference Include="OrleansDashboard" Version="8.2.0" />
-		<PackageReference Include="Swashbuckle.AspNetCore.Swagger" Version="9.0.6" />
-		<PackageReference Include="Swashbuckle.AspNetCore.SwaggerGen" Version="9.0.6" />
-		<PackageReference Include="Swashbuckle.AspNetCore.SwaggerUI" Version="9.0.6" />
+		<PackageReference Include="Swashbuckle.AspNetCore.Swagger" Version="10.0.0" />
+		<PackageReference Include="Swashbuckle.AspNetCore.SwaggerGen" Version="10.0.0" />
+		<PackageReference Include="Swashbuckle.AspNetCore.SwaggerUI" Version="10.0.0" />
 	</ItemGroup>
 	<ItemGroup>
-		<PackageReference Update="FSharp.Core" Version="10.0.100-rc2.25502.107" />
+		<PackageReference Update="FSharp.Core" Version="10.0.100" />
 	</ItemGroup>
 	<ItemGroup>
 		<InternalsVisibleTo Include="Grace.Server.Tests" />
