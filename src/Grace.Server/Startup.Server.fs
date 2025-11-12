@@ -432,13 +432,6 @@ module Application =
         member _.ConfigureServices(services: IServiceCollection) =
             Constants.JsonSerializerOptions.Converters.Add(BranchDtoConverter())
 
-            // Get the hosting environment.
-            let env =
-                (services
-                    .First(fun service -> service.ImplementationType = Type.GetType("IWebHostEnvironment"))
-                    .ImplementationInstance)
-                :?> HostingEnvironment
-
             let azureMonitorConnectionString = Environment.GetEnvironmentVariable Constants.EnvironmentVariables.ApplicationInsightsConnectionString
 
             ApplicationContext.setActorStateStorageProvider ActorStateStorageProvider.AzureCosmosDb
