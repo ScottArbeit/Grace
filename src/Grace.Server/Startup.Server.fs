@@ -1,6 +1,10 @@
 namespace Grace.Server
 
+open Asp.Versioning
+open Asp.Versioning.ApiExplorer
 open Azure.Monitor.OpenTelemetry.Exporter
+open Azure.Storage.Blobs
+open Azure.Storage.Blobs.Models
 open Giraffe
 open Giraffe.EndpointRouting
 open Grace.Actors
@@ -17,12 +21,12 @@ open Microsoft.AspNetCore.Hosting
 open Microsoft.AspNetCore.Http
 open Microsoft.AspNetCore.HttpLogging
 open Microsoft.AspNetCore.Mvc
-open Asp.Versioning
-open Asp.Versioning.ApiExplorer
+open Microsoft.Azure.Cosmos
 open Microsoft.Extensions.Configuration
 open Microsoft.Extensions.DependencyInjection
 open Microsoft.Extensions.Hosting
 open Microsoft.Extensions.Hosting.Internal
+open Microsoft.Extensions.Logging
 open Microsoft.OpenApi
 open NodaTime
 open OpenTelemetry
@@ -32,6 +36,7 @@ open OpenTelemetry.Metrics
 open OpenTelemetry.Resources
 open OpenTelemetry.Trace
 open Orleans
+open Orleans.Persistence.Cosmos
 open Orleans.Serialization
 open Orleans.Serialization.NodaTime
 open Swashbuckle.AspNetCore.Swagger
@@ -41,16 +46,40 @@ open System.Reflection
 open System.Text.Json
 open System.Collections.Generic
 open System.Diagnostics
+open System.IO
 open System.Linq
 open System.Text
-open System.IO
-open FSharpPlus
-open Azure.Storage.Blobs
-open Azure.Storage.Blobs.Models
 open System.Threading
-open Orleans.Persistence.Cosmos
+open System.Threading.Tasks
+open FSharpPlus
+open System.Net.Http
+open System.Net.Security
 
 module Application =
+
+    type CosmosWarmup(client: CosmosClient, log: ILogger<CosmosWarmup>) =
+        interface IHostedService with
+            member _.StartAsync(ct: CancellationToken) : Task =
+                let rec loop i =
+                    task {
+                        if i > 120 then
+                            log.LogError("Cosmos emulator was not ready in time.")
+                            return ()
+                        else
+                            try
+                                let! _ = client.ReadAccountAsync()
+                                log.LogInformation("Cosmos emulator ready.")
+                                return ()
+                            with ex ->
+                                log.LogWarning("Cosmos not ready, retry {Try}...", i)
+                                do! Task.Delay(1000, ct)
+                                return! loop (i + 1)
+                    }
+
+                log.LogInformation("The CosmosDB Emulator can take up to 2 minutes to be ready to receive https connections.")
+                loop 1 :> Task
+
+            member _.StopAsync(_ct: CancellationToken) : Task = Task.CompletedTask
 
     type Startup(configuration: IConfiguration) =
 
@@ -410,36 +439,20 @@ module Application =
                     .ImplementationInstance)
                 :?> HostingEnvironment
 
-            let azureMonitorConnectionString = Environment.GetEnvironmentVariable("APPLICATIONINSIGHTS_CONNECTION_STRING")
+            let azureMonitorConnectionString = Environment.GetEnvironmentVariable Constants.EnvironmentVariables.ApplicationInsightsConnectionString
+
+            ApplicationContext.setActorStateStorageProvider ActorStateStorageProvider.AzureCosmosDb
 
             // OpenTelemetry trace attribute specifications: https://github.com/open-telemetry/opentelemetry-specification/tree/main/specification/trace/semantic_conventions
             let globalOpenTelemetryAttributes = Dictionary<string, obj>()
             globalOpenTelemetryAttributes.Add("host.name", Environment.MachineName)
             globalOpenTelemetryAttributes.Add("process.pid", Environment.ProcessId)
-
             globalOpenTelemetryAttributes.Add("process.starttime", Process.GetCurrentProcess().StartTime.ToUniversalTime().ToString("u"))
-
             globalOpenTelemetryAttributes.Add("process.executable.name", Process.GetCurrentProcess().ProcessName)
-
             globalOpenTelemetryAttributes.Add("process.runtime.version", System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription)
 
-            //let environmentVariables = Environment.GetEnvironmentVariables()
-            //let sortedKeys = SortedSet<string>()
-
-            //for key in environmentVariables.Keys do
-            //    let k = key.ToString()
-            //    sortedKeys.Add(k) |> ignore
-
-            //for key in sortedKeys do
-            //    let value = Environment.GetEnvironmentVariable(key, EnvironmentVariableTarget.Process)
-            //    logToConsole $"{key}: {value}"
-
-            ApplicationContext.setActorStateStorageProvider ActorStateStorageProvider.AzureCosmosDb
-
             let openApiInfo = new OpenApiInfo()
-
             openApiInfo.Description <- "Grace is a version control system. Code and documentation can be found at https://gracevcs.com."
-
             openApiInfo.Title <- "Grace Server API"
             openApiInfo.Version <- "v0.1"
             openApiInfo.Contact <- new OpenApiContact()
@@ -451,7 +464,6 @@ module Application =
             let graceServerAppId = "grace-server-integration-test"
 
             let tracingOtlpEndpoint = Environment.GetEnvironmentVariable("OTLP_ENDPOINT_URL")
-            let zipkinEndpoint = Environment.GetEnvironmentVariable("ZIPKIN_ENDPOINT_URL")
             let otel = services.AddOpenTelemetry()
 
             otel
@@ -468,43 +480,34 @@ module Application =
                         .AddMeter("Microsoft.AspNetCore.Hosting")
                         .AddMeter("Microsoft.AspNetCore.Server.Kestrel")
                         .AddPrometheusExporter(fun prometheusOptions -> prometheusOptions.ScrapeEndpointPath <- "/metrics")
-                    //.AddAzureMonitorMetricExporter(fun options -> options.ConnectionString <- azureMonitorConnectionString)
-                    |> ignore)
+                    |> ignore
+
+                    if not <| String.IsNullOrWhiteSpace(azureMonitorConnectionString) then
+                        logToConsole "OpenTelemetry: Configuring Azure Monitor metrics exporter"
+
+                        metricsBuilder.AddAzureMonitorMetricExporter(fun options -> options.ConnectionString <- azureMonitorConnectionString)
+                        |> ignore)
                 .WithTracing(fun traceBuilder ->
                     traceBuilder
                         .AddAspNetCoreInstrumentation()
                         .AddHttpClientInstrumentation()
                         .AddSource(graceServerAppId)
-                    //.AddZipkinExporter(fun zipkinOptions -> zipkinOptions.Endpoint <- Uri(zipkinEndpoint))
-                    //.AddAzureMonitorTraceExporter(fun options -> options.ConnectionString <- azureMonitorConnectionString)
                     |> ignore
 
-                    if tracingOtlpEndpoint <> null then
-                        logToConsole $"Added OpenTelemetry exporter endpoint: {tracingOtlpEndpoint}."
+                    if not <| String.IsNullOrWhiteSpace(tracingOtlpEndpoint) then
+                        logToConsole $"OpenTelemetry: Configuring OTLP exporter to {tracingOtlpEndpoint}"
 
                         traceBuilder.AddOtlpExporter(fun options -> options.Endpoint <- Uri(tracingOtlpEndpoint))
                         |> ignore
                     else
-                        traceBuilder.AddConsoleExporter() |> ignore)
-            |> ignore
+                        traceBuilder.AddConsoleExporter() |> ignore
 
-            //services
-            //    .ConfigureOpenTelemetryTracerProvider(fun tracerProviderBuilder ->
-            //        tracerProviderBuilder
-            //            .AddSource(graceServerAppId)
-            //            .AddAspNetCoreInstrumentation(fun options -> options.EnrichWithHttpRequest <- enrichTelemetry)
-            //            .AddHttpClientInstrumentation()
-            //            .AddAzureMonitorTraceExporter(fun options -> options.ConnectionString <- azureMonitorConnectionString)
-            //            .AddOtlpExporter()
-            //        |> ignore)
-            //    .ConfigureOpenTelemetryMeterProvider(fun meterProviderBuilder ->
-            //        meterProviderBuilder
-            //            .AddAspNetCoreInstrumentation()
-            //            .AddHttpClientInstrumentation()
-            //            .AddAzureMonitorMetricExporter(fun options -> options.ConnectionString <- azureMonitorConnectionString)
-            //            .AddOtlpExporter()
-            //        |> ignore)
-            //|> ignore
+                    if not <| String.IsNullOrWhiteSpace(azureMonitorConnectionString) then
+                        logToConsole "OpenTelemetry: Configuring Azure Monitor trace exporter"
+
+                        traceBuilder.AddAzureMonitorTraceExporter(fun options -> options.ConnectionString <- azureMonitorConnectionString)
+                        |> ignore)
+            |> ignore
 
             services.AddAuthentication() |> ignore
 
@@ -517,6 +520,7 @@ module Application =
             services
                 .AddGiraffe()
                 // Next line adds the Json serializer that Giraffe uses internally.
+                .AddHostedService<CosmosWarmup>()
                 .AddSingleton<Json.ISerializer>(Json.Serializer(Constants.JsonSerializerOptions))
                 .AddSingleton<IPartitionKeyProvider, GracePartitionKeyProvider>()
                 .AddRouting()
@@ -528,14 +532,28 @@ module Application =
                     |> ignore)
             |> ignore
 
-            // Get a GrainFactory instance from Orleans.
-            //services.AddSingleton<IClusterClient>(fun serviceProvider -> serviceProvider.GetRequiredService<IClusterClient>()) |> ignore
-            //services.AddSingleton<IGrainFactory>(fun serviceProvider -> serviceProvider.GetRequiredService<IClusterClient>() :> IGrainFactory) |> ignore
-            //let orleansClient = services.FirstOrDefault(fun service -> service.ServiceType = typeof<IGrainFactory>).ImplementationInstance :?> IGrainFactory
-            //let clusterClient = services.FirstOrDefault(fun service -> service.ServiceType = typeof<IClusterClient>).ImplementationInstance :?> IClusterClient
-            //logToConsole $"Orleans client retrieved from services: {if not <| isNull orleansClient then orleansClient.GetType().FullName else String.Empty}."
-            //logToConsole $"clusterClient: {if not <| isNull clusterClient then clusterClient.GetType().FullName else String.Empty}."
-            //ApplicationContext.setOrleansClient orleansClient
+            services.AddSingleton<CosmosClient>(fun serviceProvider ->
+                let configuration = serviceProvider.GetRequiredService<IConfiguration>()
+                let cosmosConnectionString = configuration.GetValue<string>(Constants.EnvironmentVariables.AzureCosmosDBConnectionString) //?? throw new InvalidOperationException("Missing ConnectionStrings:cosmosdb");
+
+                // Force SNI = "localhost" while we connect to 127.0.0.1.
+                let httpHandler =
+                    // Create and configure SslClientAuthenticationOptions
+                    let sslOptions = SslClientAuthenticationOptions()
+                    sslOptions.TargetHost <- "localhost" // SNI host_name must be DNS per RFC 6066
+                    sslOptions.RemoteCertificateValidationCallback <- RemoteCertificateValidationCallback(fun _ _ _ _ -> true)
+                    new SocketsHttpHandler(SslOptions = sslOptions)
+
+                let options =
+                    new CosmosClientOptions(
+                        ConnectionMode = ConnectionMode.Gateway,
+                        UseSystemTextJsonSerializerWithOptions = Constants.JsonSerializerOptions,
+                        HttpClientFactory = (fun () -> new HttpClient(httpHandler, disposeHandler = true)),
+                        LimitToEndpoint = true // prevents discovery probes that can trigger TLS issues on emulator
+                    )
+
+                new CosmosClient(cosmosConnectionString, options))
+            |> ignore
 
             let apiVersioningBuilder =
                 services.AddApiVersioning(fun options ->
@@ -562,37 +580,6 @@ module Application =
                 // can also be used to control the format of the API version in route templates
                 options.SubstituteApiVersionInUrl <- true)
             |> ignore
-
-            // Configures the Dapr Actor subsystem.
-            (*services.AddActors(fun options ->
-                options.JsonSerializerOptions <- Constants.JsonSerializerOptions
-                options.HttpEndpoint <- actorProxyOptions.HttpEndpoint
-
-                // When you create a new actor type, register it here.
-                let actors = options.Actors
-                actors.RegisterActor<Branch.BranchActor>()
-                actors.RegisterActor<BranchName.BranchNameActor>()
-                actors.RegisterActor<Diff.DiffActor>()
-                actors.RegisterActor<DirectoryVersion.DirectoryVersionActor>()
-                actors.RegisterActor<DirectoryAppearance.DirectoryAppearanceActor>()
-                actors.RegisterActor<FileAppearance.FileAppearanceActor>()
-                actors.RegisterActor<GlobalLock.GlobalLockActor>()
-                actors.RegisterActor<Organization.OrganizationActor>()
-                actors.RegisterActor<OrganizationName.OrganizationNameActor>()
-                actors.RegisterActor<Owner.OwnerActor>()
-                actors.RegisterActor<OwnerName.OwnerNameActor>()
-                actors.RegisterActor<Reference.ReferenceActor>()
-                actors.RegisterActor<Reminder.ReminderActor>()
-                actors.RegisterActor<Repository.RepositoryActor>()
-                actors.RegisterActor<RepositoryName.RepositoryNameActor>()
-
-                // Default values for these options can be found at https://github.com/dapr/dapr/blob/master/pkg/actors/config.go.
-                options.ActorIdleTimeout <- TimeSpan.FromMinutes(10.0) // Default is 60m
-                options.ActorScanInterval <- TimeSpan.FromSeconds(60.0) // Default is 30s
-                options.DrainOngoingCallTimeout <- TimeSpan.FromSeconds(30.0) // Default is 60s
-                options.DrainRebalancedActors <- true // Default is false
-                options.RemindersStoragePartitions <- 0 // Default is 0 (which means all actors of a given type share the same reminder actor).
-            )*)
 
             services
                 .AddSignalR(fun options -> options.EnableDetailedErrors <- true)

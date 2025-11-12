@@ -56,9 +56,9 @@
 		<PackageReference Include="Azure.Storage.Blobs.Batch" Version="12.23.0" />
 		<PackageReference Include="Azure.Storage.Common" Version="12.25.0" />
 		<PackageReference Include="Ben.Demystifier" Version="0.4.1" />
-		<PackageReference Include="FSharpPlus" Version="1.7.0" />
+		<PackageReference Include="FSharpPlus" Version="1.8.0" />
 		<PackageReference Include="Microsoft.Azure.Cosmos" Version="3.54.0" />
-		<PackageReference Include="Microsoft.Extensions.Caching.Memory" Version="10.0.0-rc.2.25502.107" />
+		<PackageReference Include="Microsoft.Extensions.Caching.Memory" Version="10.0.0" />
 		<PackageReference Include="Microsoft.Orleans.Core" Version="9.2.1" />
 		<PackageReference Include="Microsoft.Orleans.Runtime" Version="9.2.1" />
 		<PackageReference Include="Microsoft.Orleans.Serialization.FSharp" Version="9.2.1" />
@@ -82,7 +82,7 @@
 	</ItemGroup>-->
 
 	<ItemGroup>
-		<PackageReference Update="FSharp.Core" Version="10.0.100-rc2.25502.107" />
+		<PackageReference Update="FSharp.Core" Version="10.0.100" />
 	</ItemGroup>
 
 </Project>

@@ -56,13 +56,13 @@
         <PackageReference Include="DiffPlex" Version="1.9.0" />
         <PackageReference Include="FSharp.Control.TaskSeq" Version="0.4.0" />
         <PackageReference Include="FSharp.SystemTextJson" Version="1.4.36" />
-        <PackageReference Include="FSharpPlus" Version="1.7.0" />
+        <PackageReference Include="FSharpPlus" Version="1.8.0" />
         <PackageReference Include="MessagePack" Version="3.1.4" />
         <PackageReference Include="MessagePack.Annotations" Version="3.1.4" />
         <PackageReference Include="MessagePack.FSharpExtensions" Version="4.0.0" />
         <PackageReference Include="MessagePack.NodaTime" Version="3.4.4" />
-        <PackageReference Include="Microsoft.Extensions.Caching.Memory" Version="10.0.0-rc.2.25502.107" />
-        <PackageReference Include="Microsoft.Extensions.ObjectPool" Version="10.0.0-rc.2.25502.107" />
+        <PackageReference Include="Microsoft.Extensions.Caching.Memory" Version="10.0.0" />
+        <PackageReference Include="Microsoft.Extensions.ObjectPool" Version="10.0.0" />
         <PackageReference Include="Microsoft.Orleans.Core" Version="9.2.1" />
         <PackageReference Include="Microsoft.Orleans.Sdk" Version="9.2.1" />
         <PackageReference Include="Microsoft.Orleans.Serialization.FSharp" Version="9.2.1" />
@@ -81,7 +81,7 @@
     </ItemGroup>
 
     <ItemGroup>
-        <PackageReference Update="FSharp.Core" Version="10.0.100-rc2.25502.107" />
+        <PackageReference Update="FSharp.Core" Version="10.0.100" />
     </ItemGroup>
 
 </Project>

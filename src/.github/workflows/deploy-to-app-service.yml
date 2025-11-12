@@ -1,0 +1,106 @@
+name: build-and-deploy-grace-server
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+  pull_request:
+    branches:
+      - main
+
+env:
+  DOTNET_VERSION: "10.0.x"
+  ASPNETCORE_ENVIRONMENT: Development
+  DOTNET_ENVIRONMENT: Development
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Restore
+        run: dotnet restore
+
+      - name: Build
+        run: dotnet build --configuration Release --no-restore
+
+      - name: Start Aspire host
+        run: |
+          set -e
+          export DOTNET_ENVIRONMENT=${{ env.DOTNET_ENVIRONMENT }}
+          nohup dotnet run --project Grace.Aspire.AppHost/Grace.Aspire.AppHost.csproj --no-build > aspire.log 2>&1 &
+          echo $! > aspire.pid
+          sleep 90
+
+      - name: Run tests
+        run: |
+          set -e
+          export DOTNET_ENVIRONMENT=${{ env.DOTNET_ENVIRONMENT }}
+          dotnet test Grace.Server.Tests/Grace.Server.Tests.fsproj --configuration Release --no-build
+
+      - name: Stop Aspire host
+        if: always()
+        run: |
+          if [ -f aspire.pid ]; then
+            kill $(cat aspire.pid) || true
+            rm aspire.pid
+          fi
+          docker container prune --force
+          docker volume prune --force
+
+      - name: Publish Grace.Server
+        run: dotnet publish Grace.Server/Grace.Server.csproj -c Release -o ${{ runner.temp }}/publish
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: grace-server-release
+          path: ${{ runner.temp }}/publish
+
+      - name: Upload Aspire log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: aspire-host-log
+          path: aspire.log
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: build
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    environment:
+      name: production
+
+    steps:
+      - name: Download artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: grace-server-release
+          path: ./publish
+
+      - name: Setup Azure CLI
+        uses: azure/login@v1
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Deploy to App Service
+        uses: azure/webapps-deploy@v2
+        with:
+          app-name: grace-server
+          package: ./publish
+
+      - name: Logout Azure CLI
+        if: always()
+        run: az logout
+

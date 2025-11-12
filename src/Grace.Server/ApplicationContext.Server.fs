@@ -2,7 +2,6 @@ namespace Grace.Server
 
 open Azure.Storage
 open Azure.Storage.Blobs
-open CosmosJsonSerializer
 open Grace.Actors.Constants
 open Grace.Actors.Context
 open Grace.Actors.Types
@@ -33,6 +32,7 @@ open System.Threading.Tasks
 open System.Diagnostics
 open Microsoft.AspNetCore.Hosting
 open Orleans.Serialization
+open System.Net.Security
 
 module ApplicationContext =
 
@@ -101,109 +101,123 @@ module ApplicationContext =
     /// Sets multiple values for the application. In functional programming, a global construct like this is used instead of dependency injection.
     let Set =
         task {
-            (*
-            let mutable isReady = false
+            try
+                (*
+                let mutable isReady = false
 
-            // Wait for the Dapr gRPC port to be ready.
-            logToConsole
-                $"""----------------------------------------------------------------------------------------------
-                                Pausing to check for an active gRPC connection with the Dapr sidecar.
-                                -----------------------------------------------------------------------------------------------
-                                Grace Server should not complete startup and accept requests until we know that we can
-                                talk to Dapr, so Grace Server will wait for {secondsToWaitForDaprToBeReady} seconds for Dapr to be ready.
-                                If no connection is made, that almost always means that something happened trying
-                                to start the Dapr sidecar, and Kubernetes is going to restart it. If that happens,
-                                Grace Server will exit to allow Kubernetes to restart it; by the time Grace Server
-                                restarts, the Dapr sidecar is usually up and running, and we should connect right away.
-                                -----------------------------------------------------------------------------------------------"""
+                // Wait for the Dapr gRPC port to be ready.
+                logToConsole
+                    $"""----------------------------------------------------------------------------------------------
+                                    Pausing to check for an active gRPC connection with the Dapr sidecar.
+                                    -----------------------------------------------------------------------------------------------
+                                    Grace Server should not complete startup and accept requests until we know that we can
+                                    talk to Dapr, so Grace Server will wait for {secondsToWaitForDaprToBeReady} seconds for Dapr to be ready.
+                                    If no connection is made, that almost always means that something happened trying
+                                    to start the Dapr sidecar, and Kubernetes is going to restart it. If that happens,
+                                    Grace Server will exit to allow Kubernetes to restart it; by the time Grace Server
+                                    restarts, the Dapr sidecar is usually up and running, and we should connect right away.
+                                    -----------------------------------------------------------------------------------------------"""
 
-            let mutable gRPCPort: int = 50001 // This is Dapr's default gRPC port.
+                let mutable gRPCPort: int = 50001 // This is Dapr's default gRPC port.
 
-            let grpcPortString = Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.DaprGrpcPort)
+                let grpcPortString = Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.DaprGrpcPort)
 
-            if Int32.TryParse(grpcPortString, &gRPCPort) then
-                let startTime = getCurrentInstant ()
+                if Int32.TryParse(grpcPortString, &gRPCPort) then
+                    let startTime = getCurrentInstant ()
 
-                while not <| isReady do
-                    do! Task.Delay(TimeSpan.FromSeconds(2.0))
-                    logToConsole $"Checking for an active TcpListner on gRPC port {gRPCPort}."
+                    while not <| isReady do
+                        do! Task.Delay(TimeSpan.FromSeconds(2.0))
+                        logToConsole $"Checking for an active TcpListner on gRPC port {gRPCPort}."
 
-                    let tcpListeners =
-                        Net.NetworkInformation.IPGlobalProperties
-                            .GetIPGlobalProperties()
-                            .GetActiveTcpListeners()
-                    //if tcpListeners.Length > 0 then logToConsole "Active TCP listeners:"
-                    //for t in tcpListeners do
-                    //    logToConsole $"{t.Address}:{t.Port} {t.AddressFamily}."
-                    if tcpListeners.Any(fun tcpListener -> tcpListener.Port = gRPCPort) then
-                        logToConsole $"gRPC port is ready."
-                        isReady <- true
-                    else if getCurrentInstant().Minus(startTime) > Duration.FromSeconds(secondsToWaitForDaprToBeReady) then
-                        logToConsole $"gRPC port is not ready after {secondsToWaitForDaprToBeReady} seconds. Exiting."
-                        Environment.Exit(-1)
-            else
-                logToConsole $"Could not parse gRPC port {grpcPortString} as a port number. Exiting."
-                Environment.Exit(-1)
-            *)
+                        let tcpListeners =
+                            Net.NetworkInformation.IPGlobalProperties
+                                .GetIPGlobalProperties()
+                                .GetActiveTcpListeners()
+                        //if tcpListeners.Length > 0 then logToConsole "Active TCP listeners:"
+                        //for t in tcpListeners do
+                        //    logToConsole $"{t.Address}:{t.Port} {t.AddressFamily}."
+                        if tcpListeners.Any(fun tcpListener -> tcpListener.Port = gRPCPort) then
+                            logToConsole $"gRPC port is ready."
+                            isReady <- true
+                        else if getCurrentInstant().Minus(startTime) > Duration.FromSeconds(secondsToWaitForDaprToBeReady) then
+                            logToConsole $"gRPC port is not ready after {secondsToWaitForDaprToBeReady} seconds. Exiting."
+                            Environment.Exit(-1)
+                else
+                    logToConsole $"Could not parse gRPC port {grpcPortString} as a port number. Exiting."
+                    Environment.Exit(-1)
+                *)
 
-            let storageKey = Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.AzureStorageKey)
+                let storageKey = Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.AzureStorageKey)
 
-            sharedKeyCredential <- StorageSharedKeyCredential(Constants.DefaultObjectStorageAccount, storageKey)
+                sharedKeyCredential <- StorageSharedKeyCredential(Constants.DefaultObjectStorageAccount, storageKey)
 
-            let cosmosDbConnectionString = Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.AzureCosmosDBConnectionString)
+                let cosmosDbConnectionString = Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.AzureCosmosDBConnectionString)
 
-            let cosmosDatabaseName = Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.CosmosDatabaseName)
+                let cosmosDatabaseName = Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.CosmosDatabaseName)
 
-            let cosmosContainerName = Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.CosmosContainerName)
+                let cosmosContainerName = Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.CosmosContainerName)
 
-            // Get a reference to the CosmosDB database.
-            let cosmosClientOptions =
-                CosmosClientOptions(
-                    ApplicationName = "Grace.Server",
-                    EnableContentResponseOnWrite = true,
-                    LimitToEndpoint = false,
-                    Serializer = new CosmosJsonSerializer(Constants.JsonSerializerOptions)
-                )
+                // Get a reference to the CosmosDB database.
+                let cosmosClientOptions =
+                    CosmosClientOptions(
+                        ApplicationName = "Grace.Server",
+                        LimitToEndpoint = false,
+                        UseSystemTextJsonSerializerWithOptions = Constants.JsonSerializerOptions
+                    )
 
 #if DEBUG
-            // The CosmosDB emulator uses a self-signed certificate, and, by default, HttpClient will refuse
-            //   to connect over https: if the certificate can't be traced back to a root.
-            // These settings allow Grace Server to access the CosmosDB Emulator by bypassing TLS.
-            // And none of this matters if Dapr won't bypass TLS as well. 🤷
-            //let httpClientFactory = fun () ->
-            //    let httpMessageHandler: HttpMessageHandler = new HttpClientHandler(
-            //        ServerCertificateCustomValidationCallback = (fun _ _ _ _ -> true))
-            //    new HttpClient(httpMessageHandler)
-            //cosmosClientOptions.HttpClientFactory <- httpClientFactory
-            //cosmosClientOptions.ConnectionMode <- ConnectionMode.Direct
+                // The CosmosDB emulator uses a self-signed certificate, and, by default, HttpClient will refuse
+                //   to connect over https: if the certificate can't be traced back to a root.
+                // These settings allow Grace Server to access the CosmosDB Emulator by bypassing TLS.
+
+                // Force SNI = "localhost" while we connect to 127.0.0.1.
+                let handler =
+                    new SocketsHttpHandler(
+                        SslOptions =
+                            new SslClientAuthenticationOptions(
+                                TargetHost = "localhost", // SNI host_name must be DNS per RFC 6066
+                                RemoteCertificateValidationCallback = (fun _ __ ___ ____ -> true) // emulator only
+                            )
+                    )
+
+                cosmosClientOptions.HttpClientFactory <- (fun () -> new HttpClient(handler, disposeHandler = true))
+
+                // During debugging, we might want to see the responses.
+                cosmosClientOptions.EnableContentResponseOnWrite <- true
+
+                // When using the CosmosDB Emulator, these settings help with connectivity.
+                cosmosClientOptions.LimitToEndpoint <- false
+                cosmosClientOptions.ConnectionMode <- ConnectionMode.Gateway
 #endif
-            cosmosClient <- new CosmosClient(cosmosDbConnectionString, cosmosClientOptions)
-            let! databaseResponse = cosmosClient.CreateDatabaseIfNotExistsAsync(cosmosDatabaseName)
-            let database = databaseResponse.Database
+                cosmosClient <- new CosmosClient(cosmosDbConnectionString, cosmosClientOptions)
+                let! databaseResponse = cosmosClient.CreateDatabaseIfNotExistsAsync(cosmosDatabaseName)
+                let database = databaseResponse.Database
 
-            // Get a reference to the CosmosDB container.
-            let containerProperties = ContainerProperties(Id = cosmosContainerName, PartitionKeyPath = "/PartitionKey", DefaultTimeToLive = 3600)
+                // Get a reference to the CosmosDB container.
+                let containerProperties = ContainerProperties(Id = cosmosContainerName, PartitionKeyPath = "/PartitionKey", DefaultTimeToLive = 3600)
 
-            let! containerResponse = database.CreateContainerIfNotExistsAsync(containerProperties)
-            cosmosContainer <- containerResponse.Container
+                let! containerResponse = database.CreateContainerIfNotExistsAsync(containerProperties)
+                cosmosContainer <- containerResponse.Container
 
-            logToConsole $"CosmosDB database '{cosmosDatabaseName}' and container '{cosmosContainer.Id}' are ready."
+                logToConsole $"CosmosDB database '{cosmosDatabaseName}' and container '{cosmosContainer.Id}' are ready."
 
-            // Create a MemoryCache instance.
-            let memoryCacheOptions =
-                MemoryCacheOptions(TrackStatistics = false, TrackLinkedCacheEntries = false, ExpirationScanFrequency = TimeSpan.FromSeconds(30.0))
-            //memoryCacheOptions.SizeLimit <- 100L * 1024L * 1024L
-            //memoryCache <- new MemoryCache(memoryCacheOptions, loggerFactory)
+                // Create a MemoryCache instance.
+                let memoryCacheOptions =
+                    MemoryCacheOptions(TrackStatistics = false, TrackLinkedCacheEntries = false, ExpirationScanFrequency = TimeSpan.FromSeconds(30.0))
+                //memoryCacheOptions.SizeLimit <- 100L * 1024L * 1024L
+                //memoryCache <- new MemoryCache(memoryCacheOptions, loggerFactory)
 
-            // Inject things into Grace.Shared.
-            //Utilities.memoryCache <- memoryCache
+                // Inject things into Grace.Shared.
+                //Utilities.memoryCache <- memoryCache
 
-            // Inject things into Actor Services.
-            setCosmosClient cosmosClient
-            setCosmosContainer cosmosContainer
-            //setMemoryCache memoryCache
-            setTimings timings
+                // Inject things into Actor Services.
+                setCosmosClient cosmosClient
+                setCosmosContainer cosmosContainer
+                //setMemoryCache memoryCache
+                setTimings timings
 
-            logToConsole "Grace Server is ready."
+                logToConsole "Grace Server is ready."
+            with ex ->
+                log.LogError(ex, "Exception in ApplicationContext.Set.")
         }
         :> Task

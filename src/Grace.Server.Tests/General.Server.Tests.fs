@@ -287,12 +287,12 @@ type Setup() =
             sbOutput.Clear() |> ignore
             sbError.Clear() |> ignore
 
-            let applicationInsightsConnectionString = Environment.GetEnvironmentVariable("APPLICATIONINSIGHTS_CONNECTION_STRING")
-            let azureStorageKey = Environment.GetEnvironmentVariable("azurestoragekey")
-            let azureStorageConnectionString = Environment.GetEnvironmentVariable("azurestorageconnectionstring")
-            let azureCosmosDbConnectionString = Environment.GetEnvironmentVariable("azurecosmosdbconnectionstring")
-            let cosmosDatabaseName = Environment.GetEnvironmentVariable("cosmosdatabasename")
-            let cosmosContainerName = Environment.GetEnvironmentVariable("cosmoscontainername")
+            let applicationInsightsConnectionString = Environment.GetEnvironmentVariable Constants.EnvironmentVariables.ApplicationInsightsConnectionString
+            let azureStorageKey = Environment.GetEnvironmentVariable Constants.EnvironmentVariables.AzureStorageKey
+            let azureStorageConnectionString = Environment.GetEnvironmentVariable Constants.EnvironmentVariables.AzureStorageConnectionString
+            let azureCosmosDbConnectionString = Environment.GetEnvironmentVariable Constants.EnvironmentVariables.AzureCosmosDBConnectionString
+            let cosmosDatabaseName = Environment.GetEnvironmentVariable Constants.EnvironmentVariables.CosmosDatabaseName
+            let cosmosContainerName = Environment.GetEnvironmentVariable Constants.EnvironmentVariables.CosmosContainerName
 
             let daprEnvironmentVariables =
                 dict
@@ -307,7 +307,7 @@ type Setup() =
                       "DAPR_PLACEMENT_HOST_ADDRESS", $"127.0.0.1:{daprPlacementPort}"
                       "DAPR_RESOURCES_PATH", daprComponentsPath
                       "DAPR_CONFIG", daprConfigFilePath
-                      "APPLICATIONINSIGHTS_CONNECTION_STRING", applicationInsightsConnectionString
+                      "application_insights_connection_string", applicationInsightsConnectionString
                       "azurestoragekey", azureStorageKey
                       "azurestorageconnectionstring", azureStorageConnectionString
                       "azurecosmosdbconnectionstring", azureCosmosDbConnectionString
