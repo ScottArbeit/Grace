@@ -41,6 +41,7 @@ open System.Text
 open System.Text.Json
 open Grace.Shared.Parameters
 open Grace.Shared.Client
+open System.Text.RegularExpressions
 
 module Branch =
     open Grace.Shared.Validation.Common.Input
@@ -348,9 +349,39 @@ module Branch =
             else
                 Ok(parseResult)
 
+        let ``Message must not be empty`` (parseResult: ParseResult) =
+            if
+                parseResult.CommandResult.Command.Options.FirstOrDefault(fun option -> option.Name = OptionName.Message)
+                <> null
+            then
+                let message = parseResult.GetValue<string>(OptionName.Message).Trim()
+
+                if not <| String.IsNullOrEmpty(message) then
+                    Ok(parseResult)
+                else
+                    Error(GraceError.Create (getErrorMessage BranchError.MessageIsRequired) (getCorrelationId parseResult))
+            else
+                Ok(parseResult)
+
+        let ``Message must be less than 2048 characters`` (parseResult: ParseResult) =
+            if
+                parseResult.CommandResult.Command.Options.FirstOrDefault(fun option -> option.Name = OptionName.Message)
+                <> null
+            then
+                let message = parseResult.GetValue<string>(OptionName.Message).Trim()
+
+                if message.Length <= 2048 then
+                    Ok(parseResult)
+                else
+                    Error(GraceError.Create (getErrorMessage BranchError.StringIsTooLong) (getCorrelationId parseResult))
+            else
+                Ok(parseResult)
+
         (parseResult)
         |> ``Grace index file must exist``
         >>= ``Grace object cache file must exist``
+        >>= ``Message must not be empty``
+        >>= ``Message must be less than 2048 characters``
 
     let private ``BranchName must not be empty`` (parseResult: ParseResult) =
         let graceIds = getNormalizedIdsAndNames parseResult
@@ -573,7 +604,7 @@ module Branch =
     type ListContents() =
         inherit AsynchronousCommandLineAction()
 
-        override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
+        override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Task<int> =
             task {
                 try
                     if parseResult |> verbose then printParseResult parseResult
@@ -781,6 +812,58 @@ module Branch =
                     return renderOutput parseResult (GraceResult.Error graceError)
             }
 
+    let private validateAndCleanMessage (message: string) (correlationId: CorrelationId) : Result<string, GraceError> =
+
+        // Helpers local to this function to keep things simple.
+        let fail msg = Error(GraceError.Create msg correlationId)
+
+        // Regexes: created per-call for simplicity;
+        // you can hoist them to module-level if you want them compiled once.
+        let disallowedControlChars = Regex("[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]", RegexOptions.Compiled)
+        let bidiControls = Regex("[\u202A-\u202E\u2066-\u2069]", RegexOptions.Compiled)
+        let nonWhitespace = Regex(@"\S", RegexOptions.Compiled)
+
+        // 1. Normalize newlines to '\n'
+        let step1 = message.Trim().Replace("\r\n", "\n").Replace("\r", "\n")
+
+        // 2. Trim trailing whitespace per line
+        let step2 =
+            let lines = step1.Split('\n')
+            let trimmedLines = lines |> Array.map (fun line -> line.TrimEnd())
+            String.concat "\n" trimmedLines
+
+        // 3. Remove leading / trailing *blank* lines (whitespace-only)
+        let step3 =
+            let lines = step2.Split('\n')
+
+            let mutable start = 0
+            let mutable finish = lines.Length - 1
+
+            while start <= finish && String.IsNullOrWhiteSpace lines[start] do
+                start <- start + 1
+
+            while finish >= start && String.IsNullOrWhiteSpace lines[finish] do
+                finish <- finish - 1
+
+            if start > finish then "" else String.concat "\n" lines[start..finish]
+
+        // 4. Unicode normalization to NFC
+        let cleaned = step3.Normalize(NormalizationForm.FormC)
+
+        // 5. Actual validations
+
+        // 5a. Must contain at least one non-whitespace character
+        if String.IsNullOrEmpty cleaned || not (nonWhitespace.IsMatch cleaned) then
+            fail "Message must contain at least one non-whitespace character."
+        // 5b. Disallow unwanted control characters
+        elif disallowedControlChars.IsMatch cleaned then
+            fail "Message contains disallowed control characters."
+        // 5c. Disallow bidi control characters
+        elif bidiControls.IsMatch cleaned then
+            fail "Message contains disallowed Unicode bidi control characters."
+        else
+            Ok cleaned
+
     type CreateReferenceCommand = CreateReferenceParameters -> Task<GraceResult<String>>
 
     let private createReferenceHandler (parseResult: ParseResult) (message: string) (command: CreateReferenceCommand) (commandType: string) =
@@ -789,10 +872,10 @@ module Branch =
                 if parseResult |> verbose then printParseResult parseResult
 
                 let validateIncomingParameters = parseResult |> CommonValidations
-                let sanitizedMessage = message.Trim()
+                let referenceMessage = validateAndCleanMessage message (getCorrelationId parseResult)
 
-                match validateIncomingParameters with
-                | Ok _ ->
+                match (validateIncomingParameters, referenceMessage) with
+                | Ok _, Ok referenceMessage ->
                     let graceIds = parseResult |> getNormalizedIdsAndNames
 
                     //let sha256Bytes = SHA256.HashData(Encoding.ASCII.GetBytes(rnd.NextInt64().ToString("x8")))
@@ -949,7 +1032,7 @@ module Branch =
                                                 RepositoryName = graceIds.RepositoryName,
                                                 DirectoryVersionId = rootDirectoryId,
                                                 Sha256Hash = rootDirectorySha256Hash,
-                                                Message = sanitizedMessage,
+                                                Message = referenceMessage,
                                                 CorrelationId = graceIds.CorrelationId
                                             )
 
@@ -1027,13 +1110,14 @@ module Branch =
                                 RepositoryName = graceIds.RepositoryName,
                                 DirectoryVersionId = rootDirectoryVersion.DirectoryVersionId,
                                 Sha256Hash = rootDirectoryVersion.Sha256Hash,
-                                Message = sanitizedMessage,
+                                Message = referenceMessage,
                                 CorrelationId = graceIds.CorrelationId
                             )
 
                         let! result = command sdkParameters
                         return result
-                | Error error -> return Error error
+                | Error error, _ -> return Error error
+                | _, Error error -> return Error error
             with ex ->
                 return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
         }

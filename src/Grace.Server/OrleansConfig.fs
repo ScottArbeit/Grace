@@ -22,22 +22,23 @@ module OrleansConfig =
                     siloBuilder.UseLocalhostClustering()
                 else
                     siloBuilder.UseAzureStorageClustering(fun options ->
-                        options.ConnectionString <- Environment.GetEnvironmentVariable("AZURE_STORAGE_CONNECTION_STRING")
-                    )
+                        options.ConnectionString <- Environment.GetEnvironmentVariable("AZURE_STORAGE_CONNECTION_STRING"))
 
                 // Configure state storage.
-                siloBuilder.AddAzureTableGrainStorage("Default", fun options ->
-                    options.ConnectionString <- Environment.GetEnvironmentVariable("AZURE_STORAGE_CONNECTION_STRING")
+                siloBuilder.AddAzureTableGrainStorage(
+                    "Default",
+                    fun options -> options.ConnectionString <- Environment.GetEnvironmentVariable("AZURE_STORAGE_CONNECTION_STRING")
                 )
 
-                siloBuilder.AddAzureBlobGrainStorage("BlobStorage", fun options ->
-                    options.ConnectionString <- Environment.GetEnvironmentVariable("AZURE_BLOB_CONNECTION_STRING")
+                siloBuilder.AddAzureBlobGrainStorage(
+                    "BlobStorage",
+                    fun options -> options.ConnectionString <- Environment.GetEnvironmentVariable("AZURE_BLOB_CONNECTION_STRING")
                 )
 
-                siloBuilder.AddCosmosDBGrainStorage("CosmosDB", fun options ->
-                    options.AccountEndpoint <- Environment.GetEnvironmentVariable("COSMOSDB_ENDPOINT")
-                    options.AccountKey <- Environment.GetEnvironmentVariable("COSMOSDB_KEY")
-                    options.DatabaseName <- Environment.GetEnvironmentVariable("COSMOSDB_DATABASE")
-                )
-            )
-        )
+                siloBuilder.AddCosmosDBGrainStorage(
+                    "CosmosDB",
+                    fun options ->
+                        options.AccountEndpoint <- Environment.GetEnvironmentVariable("COSMOSDB_ENDPOINT")
+                        options.AccountKey <- Environment.GetEnvironmentVariable("COSMOSDB_KEY")
+                        options.DatabaseName <- Environment.GetEnvironmentVariable("COSMOSDB_DATABASE")
+                )))

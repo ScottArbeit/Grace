@@ -190,10 +190,6 @@ module Program =
                 webBuilder
                     .UseStartup<Application.Startup>()
                     .UseKestrel(fun kestrelServerOptions ->
-                        //kestrelServerOptions.Listen(IPAddress.Any, graceAppPort)
-                        //kestrelServerOptions.Limits.MaxConcurrentConnections <- 1000
-                        //kestrelServerOptions.Limits.MaxConcurrentUpgradedConnections <- 1000
-                        //kestrelServerOptions.Listen(IPAddress.Any, 5001, (fun listenOptions -> listenOptions.UseHttps("/etc/certificates/gracedevcert.pfx", "GraceDevCert") |> ignore))
                         kestrelServerOptions.ConfigureEndpointDefaults(fun listenOptions -> listenOptions.Protocols <- HttpProtocols.Http1AndHttp2)
 
                         kestrelServerOptions.ConfigureHttpsDefaults(fun options ->
@@ -206,33 +202,34 @@ module Program =
 
     [<EntryPoint>]
     let main args =
-        logToConsole "----------------------------- Starting Grace Server ------------------------------"
-        let host = createHostBuilder(args).Build()
+        try
+            logToConsole "----------------------------- Starting Grace Server ------------------------------"
+            let host = createHostBuilder(args).Build()
 
-        // Build the configuration
-        let environment = Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT")
+            // Build the configuration
+            let environment = Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT")
 
-        let config =
-            ConfigurationBuilder()
-                .AddJsonFile("appsettings.json", true, true) // Load appsettings.json
-                .AddJsonFile($"appsettings.{environment}.json", false, true) // Load environment-specific settings
-                .AddEnvironmentVariables() // Include environment variables
-                .Build()
+            let config =
+                ConfigurationBuilder()
+                    .AddJsonFile("appsettings.json", true, true) // Load appsettings.json
+                    .AddJsonFile($"appsettings.{environment}.json", false, true) // Load environment-specific settings
+                    .AddEnvironmentVariables() // Include environment variables
+                    .Build()
 
-        // for kvp in config.AsEnumerable().ToImmutableSortedDictionary() do
-        //     Console.WriteLine($"{kvp.Key}: {kvp.Value}");
+            // Just placing some much-used services into ApplicationContext where they're easy to find.
+            Grace.Actors.Context.setHostServiceProvider host.Services
+            let grainFactory = host.Services.GetService(typeof<IGrainFactory>) :?> IGrainFactory
+            ApplicationContext.setGrainFactory grainFactory
 
-        // Just placing some much-used services into ApplicationContext where they're easy to find.
-        Grace.Actors.Context.setHostServiceProvider host.Services
-        let grainFactory = host.Services.GetService(typeof<IGrainFactory>) :?> IGrainFactory
-        ApplicationContext.setGrainFactory grainFactory
+            let loggerFactory = host.Services.GetService(typeof<ILoggerFactory>) :?> ILoggerFactory
+            ApplicationContext.setLoggerFactory (loggerFactory)
 
-        let loggerFactory = host.Services.GetService(typeof<ILoggerFactory>) :?> ILoggerFactory
-        ApplicationContext.setLoggerFactory (loggerFactory)
+            logToConsole
+                $"""azurecosmosdbconnectionstring: ${config["azurecosmosdbconnectionstring"]}; cosmosdatabasename: ${config["cosmosdatabasename"]}; cosmoscontainername: ${config["cosmoscontainername"]}"""
 
-        logToConsole
-            $"""azurecosmosdbconnectionstring: ${config["azurecosmosdbconnectionstring"]}; cosmosdatabasename: ${config["cosmosdatabasename"]}; cosmoscontainername: ${config["cosmoscontainername"]}"""
+            host.Run()
 
-        host.Run()
-
-        0 // Return an integer exit code
+            0 // Return an integer exit code
+        with ex ->
+            logToConsole $"Fatal error starting Grace Server.{Environment.NewLine}{ExceptionResponse.Create ex}"
+            -1

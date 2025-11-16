@@ -45,7 +45,7 @@ internal class Program
                     .WithEndpoint(targetPort: 10001, port: 10001, name: "queue", scheme: "http")
                     .WithEndpoint(targetPort: 10002, port: 10002, name: "table", scheme: "http");
 
-                var redis = builder.AddRedis("redis").WithContainerName("redis-grace");
+                //var redis = builder.AddRedis("redis").WithContainerName("redis-grace");
 
                 // This is a well-known default key.
                 const string cosmosKey = "C2y6yDjf5/R+ob0N8A7Cgv30VRDJIWEHLM+4QDU5DE2nQ9nDuVTqobD4b8mGGyPMbIZnqyMsEcaGQy67XIw/Jw==";
@@ -110,7 +110,7 @@ internal class Program
                     .WithEnvironment("orleans_cluster_id", configuration["Grace:Orleans:ClusterId"] ?? "local")
                     .WithEnvironment("orleans_service_id", configuration["Grace:Orleans:ServiceId"] ?? "grace-dev")
                     .WithEnvironment("OTLP_ENDPOINT_URL", otlpEndpoint)
-                    .WithReference(redis)
+                    .AsHttp2Service()
                     .WithOtlpExporter();
 
                 Console.WriteLine("Grace.Server local environment configured:");
