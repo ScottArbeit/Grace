@@ -10,6 +10,7 @@ open Grace.Types.Types
 open System
 open System.Collections.Generic
 open System.Threading.Tasks
+open Grace.Types.DirectoryVersion
 
 /// The Branch module provides a set of functions for interacting with branches in the Grace API.
 type Branch() =
@@ -147,7 +148,7 @@ type Branch() =
 
     /// Gets the DirectoryVersions for a specific version of a branch from the server.
     static member public ListContents(parameters: ListContentsParameters) =
-        postServer<ListContentsParameters, IEnumerable<DirectoryVersion>> (parameters |> ensureCorrelationIdIsSet, $"branch/{nameof (Branch.ListContents)}")
+        postServer<ListContentsParameters, IEnumerable<DirectoryVersionDto>> (parameters |> ensureCorrelationIdIsSet, $"branch/{nameof (Branch.ListContents)}")
 
     /// Gets the recursive size of a branch.
     static member public GetRecursiveSize(parameters: ListContentsParameters) =

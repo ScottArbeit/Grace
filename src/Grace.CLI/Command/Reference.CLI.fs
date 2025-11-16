@@ -386,7 +386,10 @@ module Reference =
                         | Ok returnValue ->
                             let! graceStatus = readGraceStatusFile ()
 
-                            let directoryVersions = returnValue.ReturnValue |> Seq.sortBy (fun dv -> dv.RelativePath)
+                            let directoryVersions =
+                                returnValue.ReturnValue
+                                    .Select(fun directoryVersionDto -> directoryVersionDto.DirectoryVersion)
+                                    .OrderBy(fun dv -> dv.RelativePath)
 
                             let directoryCount = directoryVersions.Count()
 

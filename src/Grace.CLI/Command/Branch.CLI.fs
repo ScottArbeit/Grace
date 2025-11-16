@@ -667,14 +667,14 @@ module Branch =
                         | Ok returnValue ->
                             let! _ = readGraceStatusFile ()
 
-                            let directoryVersions = returnValue.ReturnValue |> Seq.sortBy (fun dv -> dv.RelativePath)
+                            let directoryVersions =
+                                returnValue.ReturnValue
+                                    .Select(fun directoryVersionDto -> directoryVersionDto.DirectoryVersion)
+                                    .OrderBy(fun dv -> dv.RelativePath)
 
                             let directoryCount = directoryVersions.Count()
 
-                            let fileCount =
-                                directoryVersions
-                                    .Select(fun directoryVersion -> directoryVersion.Files.Count)
-                                    .Sum()
+                            let fileCount = directoryVersions.Sum(fun directoryVersion -> directoryVersion.Files.Count)
 
                             let totalFileSize = directoryVersions.Sum(fun directoryVersion -> directoryVersion.Files.Sum(fun f -> f.Size))
 
