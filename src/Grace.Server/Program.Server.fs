@@ -34,6 +34,7 @@ open System.Net.Http
 open System.Net.Security
 open System.Security.Authentication
 open System.Text.Json
+open System.Threading.Tasks
 open Grace.Actors
 open System.Runtime.CompilerServices
 open Microsoft.AspNetCore.Builder
@@ -109,34 +110,40 @@ module Program =
                     .AddCosmosGrainStorage(
                         GraceActorStorage,
                         (fun (options: CosmosGrainStorageOptions) ->
-                            options.ConfigureCosmosClient(azureCosmosDBConnectionString)
+                            //options.ConfigureCosmosClient(azureCosmosDBConnectionString)
                             options.ContainerName <- Environment.GetEnvironmentVariable EnvironmentVariables.CosmosContainerName
                             options.DatabaseName <- Environment.GetEnvironmentVariable EnvironmentVariables.CosmosDatabaseName
                             options.IsResourceCreationEnabled <- true
-                            options.ClientOptions.ApplicationName <- "Grace.Server"
-                            options.ClientOptions.LimitToEndpoint <- false
-                            options.ClientOptions.ConnectionMode <- ConnectionMode.Gateway
-                            options.ClientOptions.UseSystemTextJsonSerializerWithOptions <- Grace.Shared.Constants.JsonSerializerOptions
+
+                            options.ConfigureCosmosClient(fun (serviceProvider: IServiceProvider) ->
+                                let cosmosClientOptions = CosmosClientOptions()
+                                cosmosClientOptions.ApplicationName <- "Grace.Server"
+                                cosmosClientOptions.LimitToEndpoint <- false
+                                cosmosClientOptions.UseSystemTextJsonSerializerWithOptions <- Grace.Shared.Constants.JsonSerializerOptions
 #if DEBUG
-                            options.ClientOptions.LimitToEndpoint <- true
-                            options.ClientOptions.EnableContentResponseOnWrite <- true
+                                cosmosClientOptions.LimitToEndpoint <- true
+                                cosmosClientOptions.ConnectionMode <- ConnectionMode.Gateway
+                                cosmosClientOptions.EnableContentResponseOnWrite <- true
 
-                            options.ClientOptions.HttpClientFactory <-
-                                fun () ->
-                                    logToConsole "Creating custom HttpClient for Cosmos DB."
+                                cosmosClientOptions.HttpClientFactory <-
+                                    fun () ->
+                                        logToConsole "Creating custom HttpClient for Cosmos DB."
 
-                                    let handler =
-                                        new SocketsHttpHandler(
-                                            SslOptions =
-                                                new SslClientAuthenticationOptions(
-                                                    TargetHost = "localhost",
-                                                    RemoteCertificateValidationCallback = (fun _ _ _ _ -> true)
-                                                )
-                                        )
+                                        let handler =
+                                            new SocketsHttpHandler(
+                                                SslOptions =
+                                                    new SslClientAuthenticationOptions(
+                                                        TargetHost = "localhost",
+                                                        RemoteCertificateValidationCallback = (fun _ _ _ _ -> true)
+                                                    )
+                                            )
 
-                                    new HttpClient(handler, disposeHandler = true)
+                                        new HttpClient(handler, disposeHandler = true)
 #endif
-                        ),
+                                // When debugging, the Cosmos DB emulator takes a while to start up.
+                                // We're going to use a loop to wait until it's ready.
+                                let cosmosClient = new CosmosClient(azureCosmosDBConnectionString, cosmosClientOptions)
+                                ValueTask.FromResult(cosmosClient))),
                         typeof<GracePartitionKeyProvider>
                     )
                     .AddAzureBlobGrainStorage(

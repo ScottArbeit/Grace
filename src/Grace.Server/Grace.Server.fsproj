@@ -132,6 +132,7 @@
 	<ItemGroup>
 	  <None Include="instructions.md" />
 	  <None Include=".env" />
+	  <Folder Include="wwwroot\" />
 	  <Folder Include="Properties\PublishProfiles\" />
 	</ItemGroup>
 </Project>

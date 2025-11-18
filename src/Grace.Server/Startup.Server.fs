@@ -57,26 +57,27 @@ open System.Net.Security
 
 module Application =
 
-    type CosmosWarmup(client: CosmosClient, log: ILogger<CosmosWarmup>) =
+    type CosmosWarmup(cosmosClient: CosmosClient, log: ILogger<CosmosWarmup>) =
         interface IHostedService with
             member _.StartAsync(ct: CancellationToken) : Task =
+                log.LogInformation("Waiting for Cosmos DB emulator to be ready... it can take up to 2 minutes to be ready to receive https connections.")
+
                 let rec loop i =
                     task {
-                        if i > 120 then
-                            log.LogError("Cosmos emulator was not ready in time.")
+                        if i > 120 || ct.IsCancellationRequested then
+                            log.LogError("Cosmos DB emulator was not ready in time.")
                             return ()
                         else
                             try
-                                let! _ = client.ReadAccountAsync()
-                                log.LogInformation("Cosmos emulator ready.")
+                                let! _ = cosmosClient.ReadAccountAsync()
+                                log.LogInformation("Cosmos DB emulator ready.")
                                 return ()
                             with ex ->
-                                log.LogWarning("Cosmos not ready, retry {Try}...", i)
+                                log.LogWarning("Cosmos DB emulator not ready, retry {Try}...", i)
                                 do! Task.Delay(1000, ct)
                                 return! loop (i + 1)
                     }
 
-                log.LogInformation("The CosmosDB Emulator can take up to 2 minutes to be ready to receive https connections.")
                 loop 1 :> Task
 
             member _.StopAsync(_ct: CancellationToken) : Task = Task.CompletedTask
@@ -511,9 +512,9 @@ module Application =
             |> ignore
 
             services
+                .AddHostedService<CosmosWarmup>()
                 .AddGiraffe()
                 // Next line adds the Json serializer that Giraffe uses internally.
-                .AddHostedService<CosmosWarmup>()
                 .AddSingleton<Json.ISerializer>(Json.Serializer(Constants.JsonSerializerOptions))
                 .AddSingleton<IPartitionKeyProvider, GracePartitionKeyProvider>()
                 .AddRouting()

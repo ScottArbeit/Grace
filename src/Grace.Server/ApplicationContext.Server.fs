@@ -190,6 +190,19 @@ module ApplicationContext =
                 cosmosClientOptions.ConnectionMode <- ConnectionMode.Gateway
 #endif
                 cosmosClient <- new CosmosClient(cosmosDbConnectionString, cosmosClientOptions)
+
+                // When debugging, the Cosmos DB emulator takes a while to start. We're going to perform this
+                //   part in a loop with retries to make sure we've waited for the emulator to be ready.
+                let mutable connected = false
+
+                while not connected do
+                    try
+                        let! accountProperties = cosmosClient.ReadAccountAsync()
+                        connected <- true
+                    with ex ->
+                        log.LogWarning("Waiting for Cosmos DB emulator to be ready...")
+                        do! Task.Delay(1000)
+
                 let! databaseResponse = cosmosClient.CreateDatabaseIfNotExistsAsync(cosmosDatabaseName)
                 let database = databaseResponse.Database
 
