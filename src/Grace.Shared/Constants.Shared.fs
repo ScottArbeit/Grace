@@ -373,17 +373,17 @@ module Constants =
         /// A special Guid value that means "false" or "we know there's no value here". Used in places where the cache entry value is a Guid.
         let EntityDoesNotExist = box EntityDoesNotExistGuid
 
-        /// The default value to store in Grace's MemoryCache when an entity is known to exist. This is a one-character string because MemoryCache values are Objects, and constant string avoids boxing.
+        /// The default value to store in Grace's MemoryCache when an entity is known to exist. This is a one-character string because MemoryCache values are Objects, and a const string doesn't require boxing.
         [<Literal>]
-        let ExistsValue = "y"
+        let Exists = "y"
 
-        /// The default value to store in Grace's MemoryCache when a value is known not to exist. This is a one-character string because MemoryCache values are Objects, and constant string avoids boxing.
+        /// The default value to store in Grace's MemoryCache when a value is known not to exist. This is a one-character string because MemoryCache values are Objects, and a const string doesn't require boxing.
         [<Literal>]
-        let DoesNotExistValue = "n"
+        let DoesNotExist = "n"
 
         /// The default expiration time for a memory cache entry, in minutes.
 #if DEBUG
-        let DefaultExpirationTime = TimeSpan.FromMinutes(2.0)
+        let DefaultExpirationTime = TimeSpan.FromMinutes(0.5)
 #else
         let DefaultExpirationTime = TimeSpan.FromMinutes(2.0)
 #endif

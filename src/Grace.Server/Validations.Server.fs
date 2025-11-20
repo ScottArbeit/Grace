@@ -47,8 +47,8 @@ module Validations =
                     match memoryCache.GetOwnerIdEntry ownerGuid with
                     | Some value ->
                         match value with
-                        | MemoryCache.ExistsValue -> return Ok()
-                        | MemoryCache.DoesNotExistValue -> return Error error
+                        | MemoryCache.Exists -> return Ok()
+                        | MemoryCache.DoesNotExist -> return Error error
                         | _ -> return! ownerExists ownerId correlationId |> optionToResult error
                     | None -> return! ownerExists ownerId correlationId |> optionToResult error
                 else
@@ -96,8 +96,8 @@ module Validations =
                 match memoryCache.GetDeletedOwnerIdEntry ownerGuid with
                 | Some value ->
                     match value with
-                    | MemoryCache.DoesNotExistValue -> return Ok()
-                    | MemoryCache.ExistsValue -> return Error error
+                    | MemoryCache.DoesNotExist -> return Ok()
+                    | MemoryCache.Exists -> return Error error
                     | _ -> return! ownerIsDeleted graceIds.OwnerIdString correlationId |> optionToResult error
                 | None -> return! ownerIsDeleted graceIds.OwnerIdString correlationId |> optionToResult error
             }
@@ -138,8 +138,8 @@ module Validations =
                     match memoryCache.GetOrganizationIdEntry organizationGuid with
                     | Some value ->
                         match value with
-                        | MemoryCache.ExistsValue -> return Ok()
-                        | MemoryCache.DoesNotExistValue -> return Error error
+                        | MemoryCache.Exists -> return Ok()
+                        | MemoryCache.DoesNotExist -> return Error error
                         | _ -> return! organizationExists organizationId correlationId |> optionToResult error
                     | None -> return! organizationExists organizationId correlationId |> optionToResult error
                 else
@@ -199,8 +199,8 @@ module Validations =
                         match memoryCache.GetOrganizationIdEntry organizationGuid with
                         | Some value ->
                             match value with
-                            | MemoryCache.ExistsValue -> return Ok()
-                            | MemoryCache.DoesNotExistValue -> return Error error
+                            | MemoryCache.Exists -> return Ok()
+                            | MemoryCache.DoesNotExist -> return Error error
                             | _ -> return! organizationExists organizationId correlationId |> optionToResult error
                         | None -> return! organizationExists organizationId correlationId |> optionToResult error
                     else
@@ -230,8 +230,8 @@ module Validations =
                 match memoryCache.GetDeletedOrganizationIdEntry organizationGuid with
                 | Some value ->
                     match value with
-                    | MemoryCache.DoesNotExistValue -> return Ok()
-                    | MemoryCache.ExistsValue -> return Error error
+                    | MemoryCache.DoesNotExist -> return Ok()
+                    | MemoryCache.Exists -> return Error error
                     | _ ->
                         return!
                             organizationIsDeleted graceIds.OrganizationIdString correlationId
@@ -266,8 +266,8 @@ module Validations =
                     match memoryCache.GetRepositoryIdEntry repositoryGuid with
                     | Some value ->
                         match value with
-                        | MemoryCache.ExistsValue -> return Ok()
-                        | MemoryCache.DoesNotExistValue -> return Error error
+                        | MemoryCache.Exists -> return Ok()
+                        | MemoryCache.DoesNotExist -> return Error error
                         | _ ->
                             return!
                                 repositoryExists organizationId repositoryId correlationId
@@ -301,8 +301,8 @@ module Validations =
                     let exists = memoryCache.Get<string>(repositoryId)
 
                     match exists with
-                    | MemoryCache.ExistsValue -> return Ok()
-                    | MemoryCache.DoesNotExistValue -> return Error error
+                    | MemoryCache.Exists -> return Ok()
+                    | MemoryCache.DoesNotExist -> return Error error
                     | _ ->
                         let repositoryActorProxy = Repository.CreateActorProxy organizationId repositoryId correlationId
 
@@ -312,7 +312,7 @@ module Validations =
                             use newCacheEntry =
                                 memoryCache.CreateEntry(
                                     repositoryId,
-                                    Value = MemoryCache.ExistsValue,
+                                    Value = MemoryCache.Exists,
                                     AbsoluteExpirationRelativeToNow = MemoryCache.DefaultExpirationTime
                                 )
 
@@ -332,8 +332,8 @@ module Validations =
                 match memoryCache.GetDeletedRepositoryIdEntry repositoryGuid with
                 | Some value ->
                     match value with
-                    | MemoryCache.DoesNotExistValue -> return Ok()
-                    | MemoryCache.ExistsValue -> return Error error
+                    | MemoryCache.DoesNotExist -> return Ok()
+                    | MemoryCache.Exists -> return Error error
                     | _ ->
                         return!
                             repositoryIsDeleted graceIds.OrganizationId graceIds.RepositoryIdString correlationId
@@ -378,8 +378,8 @@ module Validations =
                     match memoryCache.GetBranchIdEntry branchGuid with
                     | Some value ->
                         match value with
-                        | MemoryCache.ExistsValue -> return Ok()
-                        | MemoryCache.DoesNotExistValue -> return Error error
+                        | MemoryCache.Exists -> return Ok()
+                        | MemoryCache.DoesNotExist -> return Error error
                         | _ -> return! branchExists branchGuid repositoryId correlationId |> optionToResult error
                     | None -> return! branchExists branchGuid repositoryId correlationId |> optionToResult error
                 else
@@ -410,8 +410,8 @@ module Validations =
                     let exists = memoryCache.Get<string>(branchId)
 
                     match exists with
-                    | MemoryCache.ExistsValue -> return Ok()
-                    | MemoryCache.DoesNotExistValue -> return Error error
+                    | MemoryCache.Exists -> return Ok()
+                    | MemoryCache.DoesNotExist -> return Error error
                     | _ ->
                         let branchActorProxy = Branch.CreateActorProxy branchId repositoryId correlationId
 
@@ -421,7 +421,7 @@ module Validations =
                             use newCacheEntry =
                                 memoryCache.CreateEntry(
                                     branchId,
-                                    Value = MemoryCache.ExistsValue,
+                                    Value = MemoryCache.Exists,
                                     AbsoluteExpirationRelativeToNow = MemoryCache.DefaultExpirationTime
                                 )
 
@@ -531,8 +531,8 @@ module Validations =
                 let exists = memoryCache.Get<string>(directoryId)
 
                 match exists with
-                | MemoryCache.ExistsValue -> return Ok()
-                | MemoryCache.DoesNotExistValue -> return Error error
+                | MemoryCache.Exists -> return Ok()
+                | MemoryCache.DoesNotExist -> return Error error
                 | _ ->
                     let directoryVersionActorProxy = DirectoryVersion.CreateActorProxy directoryId repositoryId correlationId
 
@@ -542,7 +542,7 @@ module Validations =
                         use newCacheEntry =
                             memoryCache.CreateEntry(
                                 directoryId,
-                                Value = MemoryCache.ExistsValue,
+                                Value = MemoryCache.Exists,
                                 AbsoluteExpirationRelativeToNow = MemoryCache.DefaultExpirationTime
                             )
 

@@ -342,7 +342,7 @@ module Services =
                     else
                         // Add this OwnerName and OwnerId to the MemoryCache.
                         memoryCache.CreateOwnerNameEntry ownerName ownerWithName.OwnerId
-                        memoryCache.CreateOwnerIdEntry ownerWithName.OwnerId MemoryCache.ExistsValue
+                        memoryCache.CreateOwnerIdEntry ownerWithName.OwnerId MemoryCache.Exists
 
                         // Set the OwnerId in the OwnerName actor.
                         do! ownerNameActorProxy.SetOwnerId ownerWithName.OwnerId correlationId
@@ -360,10 +360,10 @@ module Services =
             let! isDeleted = ownerActorProxy.IsDeleted correlationId
 
             if isDeleted then
-                memoryCache.CreateDeletedOwnerIdEntry ownerGuid MemoryCache.DoesNotExistValue
+                memoryCache.CreateDeletedOwnerIdEntry ownerGuid MemoryCache.DoesNotExist
                 return Some ownerId
             else
-                memoryCache.CreateDeletedOwnerIdEntry ownerGuid MemoryCache.ExistsValue
+                memoryCache.CreateDeletedOwnerIdEntry ownerGuid MemoryCache.Exists
                 return None
         }
 
@@ -378,7 +378,7 @@ module Services =
 
             if exists then
                 // Add this OwnerId to the MemoryCache.
-                memoryCache.CreateOwnerIdEntry ownerGuid MemoryCache.ExistsValue
+                memoryCache.CreateOwnerIdEntry ownerGuid MemoryCache.Exists
                 return Some ownerId
             else
                 return None
@@ -394,8 +394,8 @@ module Services =
                 match memoryCache.GetOwnerIdEntry ownerGuid with
                 | Some value ->
                     match value with
-                    | MemoryCache.ExistsValue -> return Some ownerId
-                    | MemoryCache.DoesNotExistValue -> return None
+                    | MemoryCache.Exists -> return Some ownerId
+                    | MemoryCache.DoesNotExist -> return None
                     | _ -> return! ownerExists ownerId correlationId
                 | None -> return! ownerExists ownerId correlationId
             elif String.IsNullOrEmpty(ownerName) then
@@ -406,7 +406,7 @@ module Services =
                 match memoryCache.GetOwnerNameEntry ownerName with
                 | Some ownerGuid ->
                     // We have already checked and the owner exists.
-                    memoryCache.CreateOwnerIdEntry ownerGuid MemoryCache.ExistsValue
+                    memoryCache.CreateOwnerIdEntry ownerGuid MemoryCache.Exists
                     return Some $"{ownerGuid}"
                 | None ->
                     // Check if we have an active OwnerName actor with a cached result.
@@ -416,7 +416,7 @@ module Services =
                     | Some ownerId ->
                         // Add this OwnerName and OwnerId to the MemoryCache.
                         memoryCache.CreateOwnerNameEntry ownerName ownerId
-                        memoryCache.CreateOwnerIdEntry ownerGuid MemoryCache.ExistsValue
+                        memoryCache.CreateOwnerIdEntry ownerGuid MemoryCache.Exists
 
                         return Some $"{ownerId}"
                     | None ->
@@ -444,10 +444,10 @@ module Services =
             let organizationGuid = OrganizationId.Parse(organizationId)
 
             if isDeleted then
-                memoryCache.CreateDeletedOrganizationIdEntry organizationGuid MemoryCache.DoesNotExistValue
+                memoryCache.CreateDeletedOrganizationIdEntry organizationGuid MemoryCache.DoesNotExist
                 return Some organizationId
             else
-                memoryCache.CreateDeletedOrganizationIdEntry organizationGuid MemoryCache.ExistsValue
+                memoryCache.CreateDeletedOrganizationIdEntry organizationGuid MemoryCache.Exists
                 return None
         }
 
@@ -462,7 +462,7 @@ module Services =
 
             if exists then
                 // Add this OrganizationId to the MemoryCache.
-                memoryCache.CreateOrganizationIdEntry (OrganizationId.Parse(organizationId)) MemoryCache.ExistsValue
+                memoryCache.CreateOrganizationIdEntry (OrganizationId.Parse(organizationId)) MemoryCache.Exists
                 return Some organizationId
             else
                 return None
@@ -480,8 +480,8 @@ module Services =
                 match memoryCache.GetOrganizationIdEntry organizationGuid with
                 | Some value ->
                     match value with
-                    | MemoryCache.ExistsValue -> return Some organizationId
-                    | MemoryCache.DoesNotExistValue -> return None
+                    | MemoryCache.Exists -> return Some organizationId
+                    | MemoryCache.DoesNotExist -> return None
                     | _ -> return! organizationExists organizationId correlationId
                 | None -> return! organizationExists organizationId correlationId
             elif String.IsNullOrEmpty(organizationName) then
@@ -495,7 +495,7 @@ module Services =
                         // We have already checked and the organization does not exist.
                         return None
                     else
-                        memoryCache.CreateOrganizationIdEntry organizationGuid MemoryCache.ExistsValue
+                        memoryCache.CreateOrganizationIdEntry organizationGuid MemoryCache.Exists
                         return Some $"{organizationGuid}"
                 | None ->
                     // Check if we have an active OrganizationName actor with a cached result.
@@ -505,7 +505,7 @@ module Services =
                     | Some organizationId ->
                         // Add this OrganizationName and OrganizationId to the MemoryCache.
                         memoryCache.CreateOrganizationNameEntry organizationName organizationId
-                        memoryCache.CreateOrganizationIdEntry organizationId MemoryCache.ExistsValue
+                        memoryCache.CreateOrganizationIdEntry organizationId MemoryCache.Exists
                         return Some $"{organizationId}"
                     | None ->
                         // We have to call into Actor storage to get the OrganizationId.
@@ -546,7 +546,7 @@ module Services =
                                     // Add this OrganizationName and OrganizationId to the MemoryCache.
                                     organizationGuid <- Guid.Parse(organizationId)
                                     memoryCache.CreateOrganizationNameEntry organizationName organizationGuid
-                                    memoryCache.CreateOrganizationIdEntry organizationGuid MemoryCache.ExistsValue
+                                    memoryCache.CreateOrganizationIdEntry organizationGuid MemoryCache.Exists
 
                                     do! organizationNameActorProxy.SetOrganizationId organizationGuid correlationId
                                     return Some organizationId
@@ -565,10 +565,10 @@ module Services =
             let! isDeleted = repositoryActorProxy.IsDeleted correlationId
 
             if isDeleted then
-                memoryCache.CreateDeletedRepositoryIdEntry repositoryGuid MemoryCache.DoesNotExistValue
+                memoryCache.CreateDeletedRepositoryIdEntry repositoryGuid MemoryCache.DoesNotExist
                 return Some repositoryId
             else
-                memoryCache.CreateDeletedRepositoryIdEntry repositoryGuid MemoryCache.ExistsValue
+                memoryCache.CreateDeletedRepositoryIdEntry repositoryGuid MemoryCache.Exists
                 return None
         }
 
@@ -583,7 +583,7 @@ module Services =
 
             if exists then
                 // Add this RepositoryId to the MemoryCache.
-                memoryCache.CreateRepositoryIdEntry repositoryGuid MemoryCache.ExistsValue
+                memoryCache.CreateRepositoryIdEntry repositoryGuid MemoryCache.Exists
                 return Some repositoryGuid
             else
                 return None
@@ -601,8 +601,8 @@ module Services =
                 match memoryCache.GetRepositoryIdEntry repositoryGuid with
                 | Some value ->
                     match value with
-                    | MemoryCache.ExistsValue -> return Some repositoryGuid
-                    | MemoryCache.DoesNotExistValue -> return None
+                    | MemoryCache.Exists -> return Some repositoryGuid
+                    | MemoryCache.DoesNotExist -> return None
                     | _ -> return! repositoryExists organizationId repositoryId correlationId
                 | None -> return! repositoryExists organizationId repositoryId correlationId
             elif String.IsNullOrEmpty(repositoryName) then
@@ -616,7 +616,7 @@ module Services =
                         return None
                     else
                         // We have already checked and the repository exists.
-                        memoryCache.CreateRepositoryIdEntry repositoryGuid MemoryCache.ExistsValue
+                        memoryCache.CreateRepositoryIdEntry repositoryGuid MemoryCache.Exists
                         return Some repositoryGuid
                 | None ->
                     // Check if we have an active RepositoryName actor with a cached result.
@@ -625,7 +625,7 @@ module Services =
                     match! repositoryNameActorProxy.GetRepositoryId correlationId with
                     | Some repositoryId ->
                         memoryCache.CreateRepositoryNameEntry repositoryName repositoryId
-                        memoryCache.CreateRepositoryIdEntry repositoryId MemoryCache.ExistsValue
+                        memoryCache.CreateRepositoryIdEntry repositoryId MemoryCache.Exists
                         return Some repositoryId
                     | None ->
                         // We have to call into Actor storage to get the RepositoryId.
@@ -665,7 +665,7 @@ module Services =
                                     // Add this RepositoryName and RepositoryId to the MemoryCache.
                                     let repositoryId = Guid.Parse(repositoryIdString)
                                     memoryCache.CreateRepositoryNameEntry repositoryName repositoryId
-                                    memoryCache.CreateRepositoryIdEntry repositoryId MemoryCache.ExistsValue
+                                    memoryCache.CreateRepositoryIdEntry repositoryId MemoryCache.Exists
 
                                     // Set the RepositoryId in the RepositoryName actor.
                                     do! repositoryNameActorProxy.SetRepositoryId repositoryId correlationId
@@ -684,10 +684,10 @@ module Services =
             let! isDeleted = branchActorProxy.IsDeleted correlationId
 
             if isDeleted then
-                memoryCache.CreateDeletedBranchIdEntry branchGuid MemoryCache.DoesNotExistValue
+                memoryCache.CreateDeletedBranchIdEntry branchGuid MemoryCache.DoesNotExist
                 return Some branchId
             else
-                memoryCache.CreateDeletedBranchIdEntry branchGuid MemoryCache.ExistsValue
+                memoryCache.CreateDeletedBranchIdEntry branchGuid MemoryCache.Exists
                 return None
         }
 
@@ -700,32 +700,38 @@ module Services =
 
             if exists then
                 // Add this BranchId to the MemoryCache.
-                memoryCache.CreateBranchIdEntry branchId MemoryCache.ExistsValue
+                memoryCache.CreateBranchIdEntry branchId MemoryCache.Exists
                 return Some branchId
             else
                 return None
         }
 
     /// Gets the BranchId by returning BranchId if provided, or searching by BranchName within the provided repository.
-    let resolveBranchId ownerId organizationId repositoryId branchId branchName (correlationId: CorrelationId) =
+    let resolveBranchId ownerId organizationId (repositoryId: RepositoryId) branchIdString branchName (correlationId: CorrelationId) =
         task {
             let mutable branchGuid = Guid.Empty
 
-            if not <| String.IsNullOrEmpty(branchId) && Guid.TryParse(branchId, &branchGuid) then
+            if
+                not <| String.IsNullOrEmpty(branchIdString)
+                && Guid.TryParse(branchIdString, &branchGuid)
+            then
+                // We have a BranchId, so check if it exists.
                 match memoryCache.GetBranchIdEntry branchGuid with
                 | Some value ->
                     match value with
-                    | MemoryCache.ExistsValue -> return Some branchGuid
-                    | MemoryCache.DoesNotExistValue -> return None
+                    | MemoryCache.Exists -> return Some branchGuid
+                    | MemoryCache.DoesNotExist -> return None
                     | _ -> return! branchExists branchGuid repositoryId correlationId
                 | None -> return! branchExists branchGuid repositoryId correlationId
             elif String.IsNullOrEmpty(branchName) then
                 // We don't have a BranchId or BranchName, so we can't resolve the BranchId.
                 return None
             else
+                // We have no BranchId, but we do have a BranchName.
                 // Check if we have an active BranchName actor with a cached result.
                 match memoryCache.GetBranchNameEntry(repositoryId, branchName) with
                 | Some branchGuid ->
+                    // We have a cached result.
                     if branchGuid.Equals(Constants.MemoryCache.EntityDoesNotExist) then
                         // We have already checked and the branch does not exist.
                         return None
@@ -733,17 +739,17 @@ module Services =
                         // We have already checked and the branch exists.
                         return Some branchGuid
                 | None ->
-                    // Check if we have an active BranchName actor with a cached result.
+                    // The BranchName was not in the MemoryCache on this node, but we may have it in a BranchName actor.
                     let branchNameActorProxy = BranchName.CreateActorProxy repositoryId branchName correlationId
 
                     match! branchNameActorProxy.GetBranchId correlationId with
                     | Some branchId ->
-                        // Add this BranchName and BranchId to the MemoryCache.
+                        // We have an active BranchName actor with the BranchId cached.
                         memoryCache.CreateBranchNameEntry(repositoryId, branchName, branchId)
-                        memoryCache.CreateBranchIdEntry branchId MemoryCache.ExistsValue
-                        return Some branchGuid
+                        memoryCache.CreateBranchIdEntry branchId MemoryCache.Exists
+                        return Some branchId
                     | None ->
-                        // We have to call into Actor storage to get the BranchId.
+                        // The BranchName actor was not active, so we have to search the database.
                         match actorStateStorageProvider with
                         | Unknown -> return None
                         | AzureCosmosDb ->
@@ -774,7 +780,6 @@ module Services =
 
                                 if String.IsNullOrEmpty(branchId) then
                                     // We didn't find the BranchId.
-                                    //logToConsole $"We didn't find the BranchId. BranchName: {branchName}; BranchId: none."
                                     return None
                                 else
                                     // Add this BranchName and BranchId to the MemoryCache.
@@ -782,7 +787,7 @@ module Services =
 
                                     // Add this BranchName and BranchId to the MemoryCache.
                                     memoryCache.CreateBranchNameEntry(repositoryId, branchName, branchGuid)
-                                    memoryCache.CreateBranchIdEntry branchGuid MemoryCache.ExistsValue
+                                    memoryCache.CreateBranchIdEntry branchGuid MemoryCache.Exists
 
                                     // Set the BranchId in the BranchName actor.
                                     do! branchNameActorProxy.SetBranchId branchGuid correlationId

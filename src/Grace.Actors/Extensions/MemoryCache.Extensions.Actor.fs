@@ -7,6 +7,7 @@ open Microsoft.Extensions.Caching.Memory
 open System
 open System.Collections.Generic
 open Grace.Shared
+open Grace.Shared.Validation
 
 module MemoryCache =
     [<Literal>]
@@ -153,7 +154,7 @@ module MemoryCache =
             this.CreateWithDefaultExpirationTime $"{ownerNamePrefix}:{ownerName}" ownerId
 
         /// Check if we have an entry in MemoryCache for an OwnerName, and return the OwnerId if we have it.
-        member this.GetOwnerNameEntry(ownerName: string) = this.GetFromCache<Guid> $"{ownerNamePrefix}:{ownerName}"
+        member this.GetOwnerNameEntry(ownerName: string) = this.GetFromCache<OwnerId> $"{ownerNamePrefix}:{ownerName}"
 
         /// Remove an entry in MemoryCache for an OwnerName.
         member this.RemoveOwnerNameEntry(ownerName: string) = this.Remove($"{ownerNamePrefix}:{ownerName}")
@@ -164,7 +165,7 @@ module MemoryCache =
             this.CreateWithDefaultExpirationTime $"{organizationNamePrefix}:{organizationName}" organizationId
 
         /// Check if we have an entry in MemoryCache for an OrganizationName, and return the OrganizationId if we have it.
-        member this.GetOrganizationNameEntry(organizationName: string) = this.GetFromCache<Guid> $"{organizationNamePrefix}:{organizationName}"
+        member this.GetOrganizationNameEntry(organizationName: string) = this.GetFromCache<OrganizationId> $"{organizationNamePrefix}:{organizationName}"
 
         /// Remove an entry in MemoryCache for an OrganizationName.
         member this.RemoveOrganizationNameEntry(organizationName: string) = this.Remove($"{organizationNamePrefix}:{organizationName}")
@@ -175,7 +176,7 @@ module MemoryCache =
             this.CreateWithDefaultExpirationTime $"{repositoryNamePrefix}:{repositoryName}" repositoryId
 
         /// Check if we have an entry in MemoryCache for a RepositoryName, and return the RepositoryId if we have it.
-        member this.GetRepositoryNameEntry(repositoryName: string) = this.GetFromCache<Guid> $"{repositoryNamePrefix}:{repositoryName}"
+        member this.GetRepositoryNameEntry(repositoryName: string) = this.GetFromCache<RepositoryId> $"{repositoryNamePrefix}:{repositoryName}"
 
         /// Remove an entry in MemoryCache for a RepositoryName.
         member this.RemoveRepositoryNameEntry(repositoryName: string) = this.Remove($"{repositoryNamePrefix}:{repositoryName}")
@@ -186,20 +187,21 @@ module MemoryCache =
             this.CreateWithDefaultExpirationTime $"{branchNamePrefix}:{repositoryId}-{branchName}" branchId
 
         /// Create a new entry in MemoryCache to link a BranchName with a BranchId.
-        member this.CreateBranchNameEntry(repositoryId: Guid, branchName: string, branchId: BranchId) =
+        member this.CreateBranchNameEntry(repositoryId: RepositoryId, branchName: string, branchId: BranchId) =
             this.CreateWithDefaultExpirationTime $"{branchNamePrefix}:{repositoryId}-{branchName}" branchId
 
         /// Check if we have an entry in MemoryCache for a BranchName, and return the BranchId if we have it.
-        member this.GetBranchNameEntry(repositoryId: string, branchName: string) = this.GetFromCache<Guid> $"{branchNamePrefix}:{repositoryId}-{branchName}"
+        member this.GetBranchNameEntry(repositoryId: string, branchName: string) = this.GetFromCache<BranchId> $"{branchNamePrefix}:{repositoryId}-{branchName}"
 
         /// Check if we have an entry in MemoryCache for a BranchName, and return the BranchId if we have it.
-        member this.GetBranchNameEntry(repositoryId: Guid, branchName: string) = this.GetFromCache<Guid> $"{branchNamePrefix}:{repositoryId}-{branchName}"
+        member this.GetBranchNameEntry(repositoryId: RepositoryId, branchName: string) =
+            this.GetFromCache<BranchId> $"{branchNamePrefix}:{repositoryId}-{branchName}"
 
         /// Remove an entry in MemoryCache for a BranchName.
         member this.RemoveBranchNameEntry(repositoryId: string, branchName: string) = this.Remove($"{branchNamePrefix}:{repositoryId}-{branchName}")
 
         /// Remove an entry in MemoryCache for a BranchName.
-        member this.RemoveBranchNameEntry(repositoryId: Guid, branchName: string) = this.Remove($"{branchNamePrefix}:{repositoryId}-{branchName}")
+        member this.RemoveBranchNameEntry(repositoryId: RepositoryId, branchName: string) = this.Remove($"{branchNamePrefix}:{repositoryId}-{branchName}")
 
 
         /// Create a new entry in MemoryCache to store the current thread count information.

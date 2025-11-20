@@ -1726,54 +1726,55 @@ module Branch =
 
                 let validateIncomingParameters = parseResult |> CommonValidations
                 let graceIds = parseResult |> getNormalizedIdsAndNames
+                logToConsole $"In getReferenceHandler: graceIds: {serialize graceIds}"
 
                 match validateIncomingParameters with
                 | Ok _ ->
                     let getBranchParameters =
                         GetBranchParameters(
-                            BranchId = graceIds.BranchIdString,
-                            BranchName = graceIds.BranchName,
                             OwnerId = graceIds.OwnerIdString,
                             OwnerName = graceIds.OwnerName,
                             OrganizationId = graceIds.OrganizationIdString,
                             OrganizationName = graceIds.OrganizationName,
                             RepositoryId = graceIds.RepositoryIdString,
                             RepositoryName = graceIds.RepositoryName,
+                            BranchId = graceIds.BranchIdString,
+                            BranchName = graceIds.BranchName,
                             CorrelationId = graceIds.CorrelationId
                         )
 
                     let getReferencesParameters =
                         GetReferencesParameters(
-                            BranchId = graceIds.BranchIdString,
-                            BranchName = graceIds.BranchName,
                             OwnerId = graceIds.OwnerIdString,
                             OwnerName = graceIds.OwnerName,
                             OrganizationId = graceIds.OrganizationIdString,
                             OrganizationName = graceIds.OrganizationName,
                             RepositoryId = graceIds.RepositoryIdString,
                             RepositoryName = graceIds.RepositoryName,
+                            BranchId = graceIds.BranchIdString,
+                            BranchName = graceIds.BranchName,
                             MaxCount = maxCount,
                             CorrelationId = graceIds.CorrelationId
                         )
 
+                    logToConsole $"In getReferenceHandler: getBranchParameters: {serialize getBranchParameters}"
+                    logToConsole $"In getReferenceHandler: getReferencesParameters: {serialize getReferencesParameters}"
+
                     let fetchReferences () =
                         task {
                             let! branchResult = Branch.Get(getBranchParameters)
+                            let! referencesResult = query getReferencesParameters
 
-                            match branchResult with
-                            | Ok branchValue ->
-                                let! referencesResult = query getReferencesParameters
+                            match (branchResult, referencesResult) with
+                            | (Ok branchValue, Ok referencesValue) ->
+                                let graceReturnValue = GraceReturnValue.Create (branchValue.ReturnValue, referencesValue.ReturnValue) graceIds.CorrelationId
 
-                                match referencesResult with
-                                | Ok referencesValue ->
-                                    let graceReturnValue = GraceReturnValue.Create (branchValue.ReturnValue, referencesValue.ReturnValue) graceIds.CorrelationId
+                                referencesValue.Properties
+                                |> Seq.iter (fun kvp -> graceReturnValue.Properties.Add(kvp.Key, kvp.Value))
 
-                                    referencesValue.Properties
-                                    |> Seq.iter (fun kvp -> graceReturnValue.Properties.Add(kvp.Key, kvp.Value))
-
-                                    return Ok graceReturnValue
-                                | Error error -> return Error error
-                            | Error error -> return Error error
+                                return Ok graceReturnValue
+                            | (_, Error error)
+                            | (Error error, _) -> return Error error
                         }
 
                     if parseResult |> hasOutput then
