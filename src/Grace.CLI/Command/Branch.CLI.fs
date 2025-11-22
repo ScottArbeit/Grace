@@ -425,17 +425,17 @@ module Branch =
                             graceIds <- { graceIds with BranchId = branchId; BranchIdString = $"{branchId}" }
 
                         let parentBranchId = parseResult.GetValue(Options.parentBranchId)
+                        let parentBranchName = parseResult.GetValue(Options.parentBranchName) |> valueOrEmpty
 
                         let parentBranchIdString =
-                            if parentBranchId = Guid.Empty then
+                            match parentBranchId, parentBranchName with
+                            | parentBranchId, parentBranchName when parentBranchId <> Guid.Empty -> parentBranchId.ToString()
+                            | parentBranchId, parentBranchName when parentBranchName <> String.Empty -> String.Empty
+                            | _ ->
                                 if parseResult.GetResult(Options.branchId).Implicit then
                                     parseResult.GetValue(Options.branchId).ToString()
                                 else
                                     String.Empty
-                            else
-                                parentBranchId.ToString()
-
-                        let parentBranchName = parseResult.GetValue(Options.parentBranchName) |> valueOrEmpty
 
                         let initialPermissions =
                             match parseResult.GetValue(Options.initialPermissions) with
