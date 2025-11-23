@@ -235,6 +235,14 @@ module Branch =
                            parameters.ParentBranchName
                            parameters.CorrelationId
                            BranchError.ParentBranchDoesNotExist
+                       Branch.parentBranchAllowsPromotions
+                           graceIds.OwnerId
+                           graceIds.OrganizationId
+                           graceIds.RepositoryId
+                           parameters.ParentBranchId
+                           parameters.ParentBranchName
+                           parameters.CorrelationId
+                           BranchError.ParentBranchDoesNotAllowPromotions
                        Branch.branchNameDoesNotExist
                            graceIds.OwnerId
                            graceIds.OrganizationId
@@ -689,7 +697,15 @@ module Branch =
                            parameters.NewParentBranchId
                            parameters.NewParentBranchName
                            parameters.CorrelationId
-                           BranchError.ParentBranchDoesNotExist |]
+                           BranchError.ParentBranchDoesNotExist
+                       Branch.parentBranchAllowsPromotions
+                           graceIds.OwnerId
+                           graceIds.OrganizationId
+                           graceIds.RepositoryId
+                           parameters.NewParentBranchId
+                           parameters.NewParentBranchName
+                           parameters.CorrelationId
+                           BranchError.ParentBranchDoesNotAllowPromotions |]
 
                 let command (parameters: UpdateParentBranchParameters) =
                     task {

@@ -502,6 +502,34 @@ module Validations =
             }
             |> ValidationResult
 
+        /// Validates that a parent branch allows promotions.
+        let parentBranchAllowsPromotions<'T> ownerId organizationId repositoryId parentBranchId parentBranchName correlationId (error: 'T) =
+            task {
+                match! resolveBranchId ownerId organizationId repositoryId parentBranchId parentBranchName correlationId with
+                | Some resolvedParentBranchId ->
+                    let mutable allowed = new obj ()
+
+                    if memoryCache.TryGetValue($"{resolvedParentBranchId}PromotionAllowed", &allowed) then
+                        let allowed = allowed :?> bool
+                        if allowed then return Ok() else return Error error
+                    else
+                        let branchActorProxy = Branch.CreateActorProxy resolvedParentBranchId repositoryId correlationId
+
+                        let! branchDto = branchActorProxy.Get correlationId
+                        let allowed = branchDto.PromotionEnabled
+
+                        use newCacheEntry =
+                            memoryCache.CreateEntry(
+                                $"{resolvedParentBranchId}PromotionAllowed",
+                                Value = allowed,
+                                AbsoluteExpirationRelativeToNow = MemoryCache.DefaultExpirationTime
+                            )
+
+                        if allowed then return Ok() else return Error error
+                | None -> return Error error
+            }
+            |> ValidationResult
+
         /// Validates that the given branchName does not exist in the database.
         let branchNameDoesNotExist<'T> ownerId organizationId repositoryId branchName correlationId (error: 'T) =
             task {
