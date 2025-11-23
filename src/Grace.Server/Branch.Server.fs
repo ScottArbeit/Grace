@@ -634,11 +634,76 @@ module Branch =
     let Delete: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
-                let validations (parameters: DeleteBranchParameters) = [||]
+                let graceIds = getGraceIds context
 
-                let command (parameters: DeleteBranchParameters) = DeleteLogical(parameters.Force, parameters.DeleteReason) |> returnValueTask
+                let validations (parameters: DeleteBranchParameters) = [||] // No validations needed; actor will handle child branch checks
+
+                let command (parameters: DeleteBranchParameters) =
+                    task {
+                        let! newParentBranchIdOption =
+                            task {
+                                if parameters.ReassignChildBranches then
+                                    if not <| String.IsNullOrEmpty(parameters.NewParentBranchId) || not <| String.IsNullOrEmpty(parameters.NewParentBranchName) then
+                                        match!
+                                            resolveBranchId
+                                                graceIds.OwnerId
+                                                graceIds.OrganizationId
+                                                graceIds.RepositoryId
+                                                parameters.NewParentBranchId
+                                                parameters.NewParentBranchName
+                                                parameters.CorrelationId
+                                        with
+                                        | Some branchId -> return Some branchId
+                                        | None -> return None
+                                    else
+                                        return None
+                                else
+                                    return None
+                            }
+
+                        return DeleteLogical(parameters.Force, parameters.DeleteReason, parameters.ReassignChildBranches, newParentBranchIdOption)
+                    }
+                    |> ValueTask<BranchCommand>
 
                 context.Items.Add("Command", nameof DeleteLogical)
+                return! processCommand context validations command
+            }
+
+    /// Updates the parent branch of the provided branch.
+    let UpdateParentBranch: HttpHandler =
+        fun (next: HttpFunc) (context: HttpContext) ->
+            task {
+                let graceIds = getGraceIds context
+
+                let validations (parameters: UpdateParentBranchParameters) =
+                    [| Guid.isValidAndNotEmptyGuid parameters.NewParentBranchId BranchError.InvalidBranchId
+                       String.isValidGraceName parameters.NewParentBranchName BranchError.InvalidBranchName
+                       Branch.branchExists
+                           graceIds.OwnerId
+                           graceIds.OrganizationId
+                           graceIds.RepositoryId
+                           parameters.NewParentBranchId
+                           parameters.NewParentBranchName
+                           parameters.CorrelationId
+                           BranchError.ParentBranchDoesNotExist |]
+
+                let command (parameters: UpdateParentBranchParameters) =
+                    task {
+                        match!
+                            resolveBranchId
+                                graceIds.OwnerId
+                                graceIds.OrganizationId
+                                graceIds.RepositoryId
+                                parameters.NewParentBranchId
+                                parameters.NewParentBranchName
+                                parameters.CorrelationId
+                        with
+                        | Some newParentBranchId -> return BranchCommand.UpdateParentBranch newParentBranchId
+                        | None -> return BranchCommand.UpdateParentBranch Guid.Empty // This should never happen due to validations
+                    }
+                    |> ValueTask<BranchCommand>
+
+                context.Items.Add("Command", nameof UpdateParentBranch)
                 return! processCommand context validations command
             }
 

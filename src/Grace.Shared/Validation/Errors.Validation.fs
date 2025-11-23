@@ -18,6 +18,7 @@ module Errors =
         | BranchIsNotBasedOnLatestPromotion
         | BranchNameAlreadyExists
         | BranchNameIsRequired
+        | CannotDeleteBranchesWithChildrenWithoutReassigningChildren
         | CheckpointIsDisabled
         | CommitIsDisabled
         | DuplicateCorrelationId
@@ -72,6 +73,8 @@ module Errors =
             | BranchIsNotBasedOnLatestPromotion -> getLocalizedString StringResourceName.BranchIsNotBasedOnLatestPromotion
             | BranchNameAlreadyExists -> getLocalizedString StringResourceName.BranchNameAlreadyExists
             | BranchNameIsRequired -> getLocalizedString StringResourceName.BranchNameIsRequired
+            | CannotDeleteBranchesWithChildrenWithoutReassigningChildren ->
+                "You cannot delete a branch with children, unless you reassign the child branches to another branch."
             | CheckpointIsDisabled -> getLocalizedString StringResourceName.CheckpointIsDisabled
             | CommitIsDisabled -> getLocalizedString StringResourceName.CommitIsDisabled
             | DuplicateCorrelationId -> getLocalizedString StringResourceName.DuplicateCorrelationId

@@ -2066,6 +2066,66 @@ module Services =
             return branchDtos.OrderBy(fun branchDto -> branchDto.BranchName).ToArray()
         }
 
+    /// Gets a list of child BranchDtos for a given parent branch.
+    let getChildBranches (repositoryId: RepositoryId) (parentBranchId: BranchId) (maxCount: int) includeDeleted correlationId =
+        task {
+            let childBranches = List<BranchDto>()
+
+            match actorStateStorageProvider with
+            | Unknown -> ()
+            | AzureCosmosDb ->
+                let mutable requestCharge = 0.0
+
+                try
+                    let queryDefinition =
+                        QueryDefinition(
+                            $"""
+                            SELECT TOP @maxCount c.State
+                            FROM c
+                            WHERE STRINGEQUALS(c.State[0].Event.created.parentBranchId, @parentBranchId, true)
+                                AND c.GrainType = @grainType
+                                AND c.PartitionKey = @partitionKey
+                                {includeDeletedEntitiesClause includeDeleted}
+                            """
+                        )
+                            .WithParameter("@maxCount", maxCount)
+                            .WithParameter("@parentBranchId", $"{parentBranchId}")
+                            .WithParameter("@grainType", StateName.Branch)
+                            .WithParameter("@partitionKey", repositoryId)
+
+                    let iterator = cosmosContainer.GetItemQueryIterator<BranchEventValue>(queryDefinition, requestOptions = queryRequestOptions)
+
+                    while iterator.HasMoreResults do
+                        addTiming TimingFlag.BeforeStorageQuery "getChildBranches" correlationId
+                        let! results = iterator.ReadNextAsync()
+                        addTiming TimingFlag.AfterStorageQuery "getChildBranches" correlationId
+                        requestCharge <- requestCharge + results.RequestCharge
+                        let eventsForAllBranches = results.Resource
+
+                        eventsForAllBranches
+                        |> Seq.iter (fun eventsForOneBranch ->
+                            let branchDto =
+                                eventsForOneBranch.State
+                                |> Array.fold (fun branchDto branchEvent -> branchDto |> BranchDto.UpdateDto branchEvent) BranchDto.Default
+
+                            childBranches.Add(branchDto))
+
+                    Activity.Current
+                        .SetTag("childBranches.Count", $"{childBranches.Count}")
+                        .SetTag("totalRequestCharge", $"{requestCharge}")
+                    |> ignore
+                with ex ->
+                    log.LogError(
+                        ex,
+                        "{CurrentInstant}: Error in getChildBranches. CorrelationId: {correlationId}.",
+                        getCurrentInstantExtended (),
+                        correlationId
+                    )
+            | MongoDB -> ()
+
+            return childBranches.OrderBy(fun branchDto -> branchDto.BranchName).ToArray()
+        }
+
     /// Creates a new reminder actor instance.
     let createReminder (reminderDto: ReminderDto) =
         task {

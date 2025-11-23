@@ -65,6 +65,15 @@ module Branch =
         inherit BranchParameters()
         member val public Force: bool = false with get, set
         member val public DeleteReason: DeleteReason = String.Empty with get, set
+        member val public ReassignChildBranches: bool = false with get, set
+        member val public NewParentBranchId: string = String.Empty with get, set
+        member val public NewParentBranchName: string = String.Empty with get, set
+
+    /// Parameters for the /branch/updateParentBranch endpoint.
+    type UpdateParentBranchParameters() =
+        inherit BranchParameters()
+        member val public NewParentBranchId: string = String.Empty with get, set
+        member val public NewParentBranchName: string = String.Empty with get, set
 
     /// Parameters for the /branch/getReference endpoint.
     type GetReferenceParameters() =

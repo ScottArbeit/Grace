@@ -203,7 +203,10 @@ module Application =
                           route "/save" Branch.Save
                           |> addMetadata typeof<Branch.CreateReferenceParameters>
 
-                          route "/tag" Branch.Tag |> addMetadata typeof<Branch.CreateReferenceParameters> ] ]
+                          route "/tag" Branch.Tag |> addMetadata typeof<Branch.CreateReferenceParameters>
+
+                          route "/updateParentBranch" Branch.UpdateParentBranch
+                          |> addMetadata typeof<Branch.UpdateParentBranchParameters> ] ]
               subRoute
                   "/diff"
                   [ POST
