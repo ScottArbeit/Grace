@@ -157,3 +157,7 @@ type Branch() =
     /// Delete the branch.
     static member public Delete(parameters: DeleteBranchParameters) =
         postServer<DeleteBranchParameters, string> (parameters |> ensureCorrelationIdIsSet, $"branch/{nameof (Branch.Delete)}")
+
+    /// Update the parent branch of a branch.
+    static member public UpdateParentBranch(parameters: UpdateParentBranchParameters) =
+        postServer<UpdateParentBranchParameters, string> (parameters |> ensureCorrelationIdIsSet, $"branch/{nameof (Branch.UpdateParentBranch)}")

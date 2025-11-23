@@ -133,6 +133,15 @@ module Text =
         let RecordSaves = "--record-saves"
 
         [<Literal>]
+        let ReassignChildBranches = "--reassign-child-branches"
+
+        [<Literal>]
+        let NewParentBranchId = "--new-parent-branch-id"
+
+        [<Literal>]
+        let NewParentBranchName = "--new-parent-branch-name"
+
+        [<Literal>]
         let ReferenceId = "--reference-id"
 
         [<Literal>]

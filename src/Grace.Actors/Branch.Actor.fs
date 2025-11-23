@@ -408,6 +408,7 @@ module Branch =
                                     | EnableTag enabled -> return Ok(EnabledTag enabled)
                                     | EnableExternal enabled -> return Ok(EnabledExternal enabled)
                                     | EnableAutoRebase enabled -> return Ok(EnabledAutoRebase enabled)
+                                    | UpdateParentBranch newParentBranchId -> return Ok(ParentBranchUpdated newParentBranchId)
                                     | BranchCommand.Assign(directoryVersionId, sha256Hash, referenceText) ->
                                         match! addReferenceToCurrentBranch directoryVersionId sha256Hash referenceText ReferenceType.Promotion List.empty with
                                         | Ok returnValue -> return Ok(Assigned(returnValue.ReturnValue, directoryVersionId, sha256Hash, referenceText))
@@ -437,60 +438,119 @@ module Branch =
                                         | Ok returnValue -> return Ok(ExternalCreated(returnValue.ReturnValue, directoryVersionId, sha256Hash, referenceText))
                                         | Error error -> return Error error
                                     | RemoveReference referenceId -> return Ok(ReferenceRemoved referenceId)
-                                    | DeleteLogical(force, deleteReason) ->
-                                        let repositoryActorProxy =
-                                            Repository.CreateActorProxy branchDto.OrganizationId branchDto.RepositoryId metadata.CorrelationId
+                                    | DeleteLogical(force, deleteReason, reassignChildBranches, newParentBranchId) ->
+                                        // Check for child branches
+                                        let! childBranches =
+                                            getChildBranches branchDto.RepositoryId branchDto.BranchId Int32.MaxValue false metadata.CorrelationId
 
-                                        let! repositoryDto = repositoryActorProxy.Get(metadata.CorrelationId)
+                                        if childBranches.Length > 0 && not reassignChildBranches then
+                                            // Cannot delete branch with children without reassigning them
+                                            return
+                                                Error(
+                                                    GraceError.Create
+                                                        (BranchError.getErrorMessage BranchError.CannotDeleteBranchesWithChildrenWithoutReassigningChildren)
+                                                        metadata.CorrelationId
+                                                )
+                                        else
+                                            // If reassigning children, determine the new parent and update them
+                                            if reassignChildBranches && childBranches.Length > 0 then
+                                                let targetParentBranchId =
+                                                    match newParentBranchId with
+                                                    | Some id -> id
+                                                    | None -> branchDto.ParentBranchId // Use the deleted branch's parent
 
-                                        // Delete the references for this branch.
-                                        let! references = getReferences branchDto.RepositoryId branchDto.BranchId Int32.MaxValue metadata.CorrelationId
+                                                // Reassign all child branches to the new parent
+                                                do!
+                                                    Parallel.ForEachAsync(
+                                                        childBranches,
+                                                        Constants.ParallelOptions,
+                                                        (fun childBranch ct ->
+                                                            ValueTask(
+                                                                task {
+                                                                    let childBranchActorProxy =
+                                                                        Branch.CreateActorProxy
+                                                                            childBranch.BranchId
+                                                                            branchDto.RepositoryId
+                                                                            metadata.CorrelationId
 
-                                        do!
-                                            Parallel.ForEachAsync(
-                                                references,
-                                                Constants.ParallelOptions,
-                                                (fun reference ct ->
-                                                    ValueTask(
-                                                        task {
-                                                            let referenceActorProxy =
-                                                                Reference.CreateActorProxy reference.ReferenceId branchDto.RepositoryId metadata.CorrelationId
+                                                                    let metadata = EventMetadata.New metadata.CorrelationId GraceSystemUser
 
-                                                            let metadata = EventMetadata.New metadata.CorrelationId GraceSystemUser
+                                                                    match! childBranchActorProxy.Handle (UpdateParentBranch targetParentBranchId) metadata with
+                                                                    | Ok _ -> ()
+                                                                    | Error error ->
+                                                                        log.LogError(
+                                                                            "{CurrentInstant}: Error updating parent branch for child {ChildBranchId}: {Error}",
+                                                                            getCurrentInstantExtended (),
+                                                                            childBranch.BranchId,
+                                                                            error
+                                                                        )
+                                                                }
+                                                                :> Task
+                                                            ))
+                                                    )
 
-                                                            match!
-                                                                referenceActorProxy.Handle (ReferenceCommand.DeleteLogical(true, deleteReason)) metadata
-                                                            with
-                                                            | Ok _ -> ()
-                                                            | Error error ->
-                                                                log.LogError(
-                                                                    "{CurrentInstant}: Error deleting reference {ReferenceId}: {Error}",
-                                                                    getCurrentInstantExtended (),
-                                                                    reference.ReferenceId,
-                                                                    error
-                                                                )
+                                            // Now proceed with the deletion regardless of reassignment
+                                            let repositoryActorProxy =
+                                                Repository.CreateActorProxy branchDto.OrganizationId branchDto.RepositoryId metadata.CorrelationId
 
-                                                        }
-                                                        :> Task
-                                                    ))
-                                            )
+                                            let! repositoryDto = repositoryActorProxy.Get(metadata.CorrelationId)
 
-                                        let (physicalDeletionReminderState: PhysicalDeletionReminderState) =
-                                            { RepositoryId = branchDto.RepositoryId
-                                              BranchId = branchDto.BranchId
-                                              BranchName = branchDto.BranchName
-                                              ParentBranchId = branchDto.ParentBranchId
-                                              DeleteReason = deleteReason
-                                              CorrelationId = metadata.CorrelationId }
+                                            // Delete the references for this branch.
+                                            let! references = getReferences branchDto.RepositoryId branchDto.BranchId Int32.MaxValue metadata.CorrelationId
 
-                                        do!
-                                            (this :> IGraceReminderWithGuidKey).ScheduleReminderAsync
-                                                ReminderTypes.PhysicalDeletion
-                                                (Duration.FromDays(float repositoryDto.LogicalDeleteDays))
-                                                (ReminderState.BranchPhysicalDeletion physicalDeletionReminderState)
-                                                metadata.CorrelationId
+                                            do!
+                                                Parallel.ForEachAsync(
+                                                    references,
+                                                    Constants.ParallelOptions,
+                                                    (fun reference ct ->
+                                                        ValueTask(
+                                                            task {
+                                                                let referenceActorProxy =
+                                                                    Reference.CreateActorProxy
+                                                                        reference.ReferenceId
+                                                                        branchDto.RepositoryId
+                                                                        metadata.CorrelationId
 
-                                        return Ok(LogicalDeleted(force, deleteReason))
+                                                                let metadata = EventMetadata.New metadata.CorrelationId GraceSystemUser
+
+                                                                match!
+                                                                    referenceActorProxy.Handle
+                                                                        (ReferenceCommand.DeleteLogical(
+                                                                            true,
+                                                                            $"Branch {branchDto.BranchName} is being deleted."
+                                                                        ))
+                                                                        metadata
+                                                                with
+                                                                | Ok _ -> ()
+                                                                | Error error ->
+                                                                    log.LogError(
+                                                                        "{CurrentInstant}: Error deleting reference {ReferenceId}: {Error}",
+                                                                        getCurrentInstantExtended (),
+                                                                        reference.ReferenceId,
+                                                                        error
+                                                                    )
+
+                                                            }
+                                                            :> Task
+                                                        ))
+                                                )
+
+                                            let (physicalDeletionReminderState: PhysicalDeletionReminderState) =
+                                                { RepositoryId = branchDto.RepositoryId
+                                                  BranchId = branchDto.BranchId
+                                                  BranchName = branchDto.BranchName
+                                                  ParentBranchId = branchDto.ParentBranchId
+                                                  DeleteReason = deleteReason
+                                                  CorrelationId = metadata.CorrelationId }
+
+                                            do!
+                                                (this :> IGraceReminderWithGuidKey).ScheduleReminderAsync
+                                                    ReminderTypes.PhysicalDeletion
+                                                    (Duration.FromDays(float repositoryDto.LogicalDeleteDays))
+                                                    (ReminderState.BranchPhysicalDeletion physicalDeletionReminderState)
+                                                    metadata.CorrelationId
+
+                                            return Ok(LogicalDeleted(force, deleteReason, reassignChildBranches, newParentBranchId))
                                     | DeletePhysical ->
                                         // Delete the state from storage, and deactivate the actor.
                                         do! state.ClearStateAsync()
