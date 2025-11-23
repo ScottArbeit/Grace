@@ -2057,10 +2057,11 @@ module Services =
 
                             branchDtos.Add(branchDto))
 
-                Activity.Current
-                    .SetTag("referenceDtos.Count", $"{branchDtos.Count}")
-                    .SetTag("totalRequestCharge", $"{requestCharge}")
-                |> ignore
+                if Activity.Current <> null then
+                    Activity.Current
+                        .SetTag("referenceDtos.Count", $"{branchDtos.Count}")
+                        .SetTag("totalRequestCharge", $"{requestCharge}")
+                    |> ignore
             | MongoDB -> ()
 
             return branchDtos.OrderBy(fun branchDto -> branchDto.BranchName).ToArray()
@@ -2110,10 +2111,11 @@ module Services =
 
                             childBranches.Add(branchDto))
 
-                    Activity.Current
-                        .SetTag("childBranches.Count", $"{childBranches.Count}")
-                        .SetTag("totalRequestCharge", $"{requestCharge}")
-                    |> ignore
+                    if (Activity.Current <> null) then
+                        Activity.Current
+                            .SetTag("childBranches.Count", $"{childBranches.Count}")
+                            .SetTag("totalRequestCharge", $"{requestCharge}")
+                        |> ignore
                 with ex ->
                     log.LogError(
                         ex,

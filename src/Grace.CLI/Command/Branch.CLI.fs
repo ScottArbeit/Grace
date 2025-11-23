@@ -228,9 +228,10 @@ module Branch =
         let enabled =
             new Option<bool>(
                 OptionName.Enabled,
+                [||],
                 Required = false,
                 Description = "True to enable the feature; false to disable it.",
-                Arity = ArgumentArity.ZeroOrOne
+                DefaultValueFactory = (fun _ -> false)
             )
 
         let includeDeleted =
