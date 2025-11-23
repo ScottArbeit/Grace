@@ -1754,7 +1754,6 @@ module Branch =
 
                 let validateIncomingParameters = parseResult |> CommonValidations
                 let graceIds = parseResult |> getNormalizedIdsAndNames
-                logToConsole $"In getReferenceHandler: graceIds: {serialize graceIds}"
 
                 match validateIncomingParameters with
                 | Ok _ ->
@@ -1784,9 +1783,6 @@ module Branch =
                             MaxCount = maxCount,
                             CorrelationId = graceIds.CorrelationId
                         )
-
-                    logToConsole $"In getReferenceHandler: getBranchParameters: {serialize getBranchParameters}"
-                    logToConsole $"In getReferenceHandler: getReferencesParameters: {serialize getReferencesParameters}"
 
                     let fetchReferences () =
                         task {
@@ -2726,16 +2722,18 @@ module Branch =
     let rebaseHandler (parseResult: ParseResult) (graceStatus: GraceStatus) =
         task {
             // --------------------------------------------------------------------------------------------------------------------------------------
+            // Algorithm:
+            //
             // Get a diff between the promotion from the parent branch that the current branch is based on, and the latest promotion from the parent branch.
             //   These are the changes that we expect to apply to the current branch.
-
+            //
             // Get a diff between the latest reference on this branch and the promotion that it's based on from the parent branch.
             //   This will be what's changed in the current branch since it was last rebased.
-
+            //
             // If a file has changed in the first diff, but not in the second diff, cool, we can automatically copy them.
             // If a file has changed in the second diff, but not in the first diff, cool, we can keep those changes.
-            // If a file has changed in both, we have to check the two diffs at the line-level to see if there are any conflicts.
-
+            // If a file has changed in both, we have a promotion conflict, so we'll call an LLM to suggest a resolution.
+            //
             // Then we call Branch.Rebase() to actually record the update.
             // --------------------------------------------------------------------------------------------------------------------------------------
 
@@ -2874,6 +2872,8 @@ module Branch =
 
                                 let getParentLatestPromotionDirectoryParameters =
                                     Parameters.DirectoryVersion.GetParameters(
+                                        OwnerId = $"{branchDto.OwnerId}",
+                                        OrganizationId = $"{branchDto.OrganizationId}",
                                         RepositoryId = $"{branchDto.RepositoryId}",
                                         DirectoryVersionId = $"{parentLatestPromotion.DirectoryId}",
                                         CorrelationId = graceIds.CorrelationId
@@ -2881,6 +2881,8 @@ module Branch =
 
                                 let getLatestReferenceDirectoryParameters =
                                     Parameters.DirectoryVersion.GetParameters(
+                                        OwnerId = $"{branchDto.OwnerId}",
+                                        OrganizationId = $"{branchDto.OrganizationId}",
                                         RepositoryId = $"{branchDto.RepositoryId}",
                                         DirectoryVersionId = $"{latestReference.DirectoryId}",
                                         CorrelationId = graceIds.CorrelationId

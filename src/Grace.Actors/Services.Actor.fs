@@ -1961,7 +1961,7 @@ module Services =
                             .Distinct()
                         |> Seq.iteri (fun i referenceId -> queryDefinition.WithParameter($"@referenceId{i}", $"{referenceId}") |> ignore)
 
-                        logToConsole $"In getReferencesByReferenceId(): QueryText:{Environment.NewLine}{printQueryDefinition queryDefinition}."
+                        //logToConsole $"In getReferencesByReferenceId(): QueryText:{Environment.NewLine}{printQueryDefinition queryDefinition}."
 
                         // Execute the query.
                         let iterator = cosmosContainer.GetItemQueryIterator<ReferenceEventValue>(queryDefinition, requestOptions = queryRequestOptions)
