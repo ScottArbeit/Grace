@@ -440,11 +440,17 @@ module Branch =
                                     | RemoveReference referenceId -> return Ok(ReferenceRemoved referenceId)
                                     | DeleteLogical(force, deleteReason, reassignChildBranches, newParentBranchId) ->
                                         // Check for child branches
-                                        let! childBranches = getChildBranches branchDto.RepositoryId branchDto.BranchId Int32.MaxValue false metadata.CorrelationId
+                                        let! childBranches =
+                                            getChildBranches branchDto.RepositoryId branchDto.BranchId Int32.MaxValue false metadata.CorrelationId
 
                                         if childBranches.Length > 0 && not reassignChildBranches then
                                             // Cannot delete branch with children without reassigning them
-                                            return Error(GraceError.Create (BranchError.getErrorMessage BranchError.CannotDeleteBranchesWithChildrenWithoutReassigningChildren) metadata.CorrelationId)
+                                            return
+                                                Error(
+                                                    GraceError.Create
+                                                        (BranchError.getErrorMessage BranchError.CannotDeleteBranchesWithChildrenWithoutReassigningChildren)
+                                                        metadata.CorrelationId
+                                                )
                                         else
                                             // If reassigning children, determine the new parent and update them
                                             if reassignChildBranches && childBranches.Length > 0 then
@@ -462,13 +468,14 @@ module Branch =
                                                             ValueTask(
                                                                 task {
                                                                     let childBranchActorProxy =
-                                                                        Branch.CreateActorProxy childBranch.BranchId branchDto.RepositoryId metadata.CorrelationId
+                                                                        Branch.CreateActorProxy
+                                                                            childBranch.BranchId
+                                                                            branchDto.RepositoryId
+                                                                            metadata.CorrelationId
 
                                                                     let metadata = EventMetadata.New metadata.CorrelationId GraceSystemUser
 
-                                                                    match!
-                                                                        childBranchActorProxy.Handle (UpdateParentBranch targetParentBranchId) metadata
-                                                                    with
+                                                                    match! childBranchActorProxy.Handle (UpdateParentBranch targetParentBranchId) metadata with
                                                                     | Ok _ -> ()
                                                                     | Error error ->
                                                                         log.LogError(
@@ -499,12 +506,20 @@ module Branch =
                                                         ValueTask(
                                                             task {
                                                                 let referenceActorProxy =
-                                                                    Reference.CreateActorProxy reference.ReferenceId branchDto.RepositoryId metadata.CorrelationId
+                                                                    Reference.CreateActorProxy
+                                                                        reference.ReferenceId
+                                                                        branchDto.RepositoryId
+                                                                        metadata.CorrelationId
 
                                                                 let metadata = EventMetadata.New metadata.CorrelationId GraceSystemUser
 
                                                                 match!
-                                                                    referenceActorProxy.Handle (ReferenceCommand.DeleteLogical(true, deleteReason)) metadata
+                                                                    referenceActorProxy.Handle
+                                                                        (ReferenceCommand.DeleteLogical(
+                                                                            true,
+                                                                            $"Branch {branchDto.BranchName} is being deleted."
+                                                                        ))
+                                                                        metadata
                                                                 with
                                                                 | Ok _ -> ()
                                                                 | Error error ->

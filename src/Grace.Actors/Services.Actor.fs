@@ -812,11 +812,11 @@ module Services =
             """
             AND (
             (SELECT VALUE COUNT(1)
-                FROM c
-                WHERE IS_DEFINED(c.State.Event.logicalDeleted)) =
+                FROM c JOIN e in c.State
+                WHERE IS_DEFINED(e.Event.logicalDeleted)) <=
             (SELECT VALUE COUNT(1)
-                FROM c
-                WHERE IS_DEFINED(c.State.Event.undeleted))
+                FROM c JOIN e in c.State
+                WHERE IS_DEFINED(e.Event.undeleted))
             )
             """
 
