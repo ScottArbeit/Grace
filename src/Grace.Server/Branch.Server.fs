@@ -636,7 +636,10 @@ module Branch =
             task {
                 let graceIds = getGraceIds context
 
-                let validations (parameters: DeleteBranchParameters) = [||] // No validations needed; actor will handle child branch checks
+                let validations (parameters: DeleteBranchParameters) =
+                    [| // If reassigning child branches, validate that at least one parent is provided OR let it default to the deleted branch's parent
+                       // No validation needed here since None is valid (uses deleted branch's parent)
+                    |]
 
                 let command (parameters: DeleteBranchParameters) =
                     task {
@@ -701,8 +704,14 @@ module Branch =
                         with
                         | Some newParentBranchId -> return BranchCommand.UpdateParentBranch newParentBranchId
                         | None ->
-                            // This should not happen due to validations, but return a safe default
-                            // that will be caught by the system
+                            // This should never happen due to validations, log error for debugging
+                            log.LogError(
+                                "{CurrentInstant}: Failed to resolve new parent branch ID after validations passed. NewParentBranchId: {NewParentBranchId}, NewParentBranchName: {NewParentBranchName}",
+                                getCurrentInstantExtended (),
+                                parameters.NewParentBranchId,
+                                parameters.NewParentBranchName
+                            )
+                            // Return Guid.Empty which will be caught by the actor or cause a validation error
                             return BranchCommand.UpdateParentBranch Guid.Empty
                     }
                     |> ValueTask<BranchCommand>
