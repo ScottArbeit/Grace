@@ -1,6 +1,6 @@
 # Grace Repository Agents Guide
 
-Agents operating under `D:SourceGracesrc` should follow this playbook alongside the existing `agents.md` in the repo root. Treat this file as the canonical high-level brief; each project folder contains an `AGENTS.md` with deeper context.
+Agents operating under `D:\Source\Grace\src` should follow this playbook alongside the existing `agents.md` in the repo root. Treat this file as the canonical high-level brief; each project folder contains an `AGENTS.md` with deeper context.
 
 ## Core Engineering Expectations
 

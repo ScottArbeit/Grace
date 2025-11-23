@@ -1702,7 +1702,6 @@ module Services =
             isOptionPresent parseResult OptionName.BranchId
             || isOptionPresent parseResult OptionName.BranchName
         then
-            logToAnsiConsole Colors.Verbose $"In getNormalizedIdsAndNames: Has either BranchId or BranchName."
             let branchId = getNormalizedId OptionName.BranchId OptionName.BranchName
 
             graceIds <-

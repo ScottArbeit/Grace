@@ -868,6 +868,7 @@ module Repository =
                                 |> ignore
 
                                 let allBranches = returnValue.ReturnValue
+                                logToAnsiConsole Colors.Deemphasized $"In Repository.CLI.GetBranches: {serialize allBranches}"
 
                                 // Get the parent branch names and latest promotions for all branches
                                 let parents =
