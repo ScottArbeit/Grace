@@ -446,7 +446,7 @@ module Branch =
                                             // Cannot delete branch with children without reassigning them
                                             return Error(GraceError.Create (BranchError.getErrorMessage BranchError.CannotDeleteBranchesWithChildrenWithoutReassigningChildren) metadata.CorrelationId)
                                         else
-                                            // If reassigning children, determine the new parent
+                                            // If reassigning children, determine the new parent and update them
                                             if reassignChildBranches && childBranches.Length > 0 then
                                                 let targetParentBranchId =
                                                     match newParentBranchId with
@@ -482,6 +482,7 @@ module Branch =
                                                             ))
                                                     )
 
+                                            // Now proceed with the deletion regardless of reassignment
                                             let repositoryActorProxy =
                                                 Repository.CreateActorProxy branchDto.OrganizationId branchDto.RepositoryId metadata.CorrelationId
 

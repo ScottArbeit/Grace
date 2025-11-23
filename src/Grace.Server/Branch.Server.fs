@@ -676,7 +676,8 @@ module Branch =
                 let graceIds = getGraceIds context
 
                 let validations (parameters: UpdateParentBranchParameters) =
-                    [| Guid.isValidAndNotEmptyGuid parameters.NewParentBranchId BranchError.InvalidBranchId
+                    [| Input.eitherIdOrNameMustBeProvided parameters.NewParentBranchId parameters.NewParentBranchName BranchError.EitherBranchIdOrBranchNameRequired
+                       Guid.isValidAndNotEmptyGuid parameters.NewParentBranchId BranchError.InvalidBranchId
                        String.isValidGraceName parameters.NewParentBranchName BranchError.InvalidBranchName
                        Branch.branchExists
                            graceIds.OwnerId
@@ -699,7 +700,10 @@ module Branch =
                                 parameters.CorrelationId
                         with
                         | Some newParentBranchId -> return BranchCommand.UpdateParentBranch newParentBranchId
-                        | None -> return BranchCommand.UpdateParentBranch Guid.Empty // This should never happen due to validations
+                        | None ->
+                            // This should not happen due to validations, but return a safe default
+                            // that will be caught by the system
+                            return BranchCommand.UpdateParentBranch Guid.Empty
                     }
                     |> ValueTask<BranchCommand>
 
