@@ -109,7 +109,7 @@ module Errors =
             | OrganizationDoesNotExist -> getLocalizedString StringResourceName.OrganizationDoesNotExist
             | OwnerDoesNotExist -> getLocalizedString StringResourceName.OwnerDoesNotExist
             | ParentBranchDoesNotExist -> getLocalizedString StringResourceName.ParentBranchDoesNotExist
-            | ParentBranchDoesNotAllowPromotions -> "The parent branch does not allow promotions. Child branches must have a parent branch that supports promotions."
+            | ParentBranchDoesNotAllowPromotions -> getLocalizedString StringResourceName.ParentBranchDoesNotAllowPromotions
             | ReferenceIdDoesNotExist -> getLocalizedString StringResourceName.ReferenceIdDoesNotExist
             | ReferenceTypeMustBeProvided -> getLocalizedString StringResourceName.ReferenceTypeMustBeProvided
             | RepositoryDoesNotExist -> getLocalizedString StringResourceName.RepositoryDoesNotExist
