@@ -277,6 +277,16 @@ module Branch =
                 Arity = ArgumentArity.ExactlyOne
             )
 
+        let force =
+            new Option<bool>(
+                OptionName.Force,
+                [| "-f"; "--force" |],
+                Required = false,
+                Description = "Force delete all child branches before deleting this branch.",
+                Arity = ArgumentArity.ZeroOrOne,
+                DefaultValueFactory = (fun _ -> false)
+            )
+
         let toBranchId =
             new Option<BranchId>(
                 OptionName.ToBranchId,
@@ -3409,40 +3419,46 @@ module Branch =
 
                 match validateIncomingParameters with
                 | Ok _ ->
+                    let force = parseResult.GetValue(Options.force)
                     let reassignChildBranches = parseResult.GetValue(Options.reassignChildBranches)
                     let newParentBranchId = parseResult.GetValue(Options.newParentBranchId) |> valueOrEmpty
                     let newParentBranchName = parseResult.GetValue(Options.newParentBranchName) |> valueOrEmpty
 
-                    let deleteParameters =
-                        Parameters.Branch.DeleteBranchParameters(
-                            BranchId = graceIds.BranchIdString,
-                            BranchName = graceIds.BranchName,
-                            OwnerId = graceIds.OwnerIdString,
-                            OwnerName = graceIds.OwnerName,
-                            OrganizationId = graceIds.OrganizationIdString,
-                            OrganizationName = graceIds.OrganizationName,
-                            RepositoryId = graceIds.RepositoryIdString,
-                            RepositoryName = graceIds.RepositoryName,
-                            ReassignChildBranches = reassignChildBranches,
-                            NewParentBranchId = newParentBranchId,
-                            NewParentBranchName = newParentBranchName,
-                            CorrelationId = graceIds.CorrelationId
-                        )
-
-                    if parseResult |> hasOutput then
-                        return!
-                            progress
-                                .Columns(progressColumns)
-                                .StartAsync(fun progressContext ->
-                                    task {
-                                        let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
-
-                                        let! result = Branch.Delete(deleteParameters)
-                                        t0.Increment(100.0)
-                                        return result
-                                    })
+                    // Validate that --force and --reassign-child-branches are not both specified
+                    if force && reassignChildBranches then
+                        return Error(GraceError.Create (BranchError.getErrorMessage BranchError.CannotSpecifyBothForceAndReassignChildBranches) graceIds.CorrelationId)
                     else
-                        return! Branch.Delete(deleteParameters)
+                        let deleteParameters =
+                            Parameters.Branch.DeleteBranchParameters(
+                                BranchId = graceIds.BranchIdString,
+                                BranchName = graceIds.BranchName,
+                                OwnerId = graceIds.OwnerIdString,
+                                OwnerName = graceIds.OwnerName,
+                                OrganizationId = graceIds.OrganizationIdString,
+                                OrganizationName = graceIds.OrganizationName,
+                                RepositoryId = graceIds.RepositoryIdString,
+                                RepositoryName = graceIds.RepositoryName,
+                                Force = force,
+                                ReassignChildBranches = reassignChildBranches,
+                                NewParentBranchId = newParentBranchId,
+                                NewParentBranchName = newParentBranchName,
+                                CorrelationId = graceIds.CorrelationId
+                            )
+
+                        if parseResult |> hasOutput then
+                            return!
+                                progress
+                                    .Columns(progressColumns)
+                                    .StartAsync(fun progressContext ->
+                                        task {
+                                            let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
+
+                                            let! result = Branch.Delete(deleteParameters)
+                                            t0.Increment(100.0)
+                                            return result
+                                        })
+                        else
+                            return! Branch.Delete(deleteParameters)
                 | Error error -> return Error error
             with ex ->
                 return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
@@ -3836,6 +3852,7 @@ module Branch =
 
         let deleteCommand =
             new Command("delete", Description = "Delete the branch.")
+            |> addOption Options.force
             |> addOption Options.reassignChildBranches
             |> addOption Options.newParentBranchId
             |> addOption Options.newParentBranchName

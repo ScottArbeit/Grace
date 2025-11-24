@@ -19,6 +19,7 @@ module Errors =
         | BranchNameAlreadyExists
         | BranchNameIsRequired
         | CannotDeleteBranchesWithChildrenWithoutReassigningChildren
+        | CannotSpecifyBothForceAndReassignChildBranches
         | CheckpointIsDisabled
         | CommitIsDisabled
         | DuplicateCorrelationId
@@ -75,7 +76,9 @@ module Errors =
             | BranchNameAlreadyExists -> getLocalizedString StringResourceName.BranchNameAlreadyExists
             | BranchNameIsRequired -> getLocalizedString StringResourceName.BranchNameIsRequired
             | CannotDeleteBranchesWithChildrenWithoutReassigningChildren ->
-                "You cannot delete a branch with children, unless you reassign the child branches to another branch."
+                "You cannot delete a branch with children. Use --reassign-child-branches to reassign them to another parent, or --force to delete all child branches."
+            | CannotSpecifyBothForceAndReassignChildBranches ->
+                "You cannot specify both --force and --reassign-child-branches. Use --force to delete child branches, or --reassign-child-branches to move them to a new parent."
             | CheckpointIsDisabled -> getLocalizedString StringResourceName.CheckpointIsDisabled
             | CommitIsDisabled -> getLocalizedString StringResourceName.CommitIsDisabled
             | DuplicateCorrelationId -> getLocalizedString StringResourceName.DuplicateCorrelationId
