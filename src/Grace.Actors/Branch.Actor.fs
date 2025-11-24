@@ -98,11 +98,13 @@ module Branch =
                             kvp.Value.Links
                             |> Seq.find (fun link ->
                                 match link with
-                                | ReferenceLinkType.BasedOn _ -> true)
+                                | ReferenceLinkType.BasedOn _ -> true
+                                | ReferenceLinkType.IncludedInPromotionGroup _ -> false)
 
                         let basedOnReferenceId =
                             match basedOnLink with
                             | ReferenceLinkType.BasedOn referenceId -> referenceId
+                            | _ -> ReferenceId.Empty
 
                         let basedOnReferenceActorProxy = Reference.CreateActorProxy basedOnReferenceId branchDto.RepositoryId correlationId
                         let! basedOnReferenceDto = basedOnReferenceActorProxy.Get correlationId
