@@ -456,15 +456,49 @@ module Branch =
                         let parentBranchId = parseResult.GetValue(Options.parentBranchId)
                         let parentBranchName = parseResult.GetValue(Options.parentBranchName) |> valueOrEmpty
 
-                        let parentBranchIdString =
-                            match parentBranchId, parentBranchName with
-                            | parentBranchId, parentBranchName when parentBranchId <> Guid.Empty -> parentBranchId.ToString()
-                            | parentBranchId, parentBranchName when parentBranchName <> String.Empty -> String.Empty
-                            | _ ->
-                                if parseResult.GetResult(Options.branchId).Implicit then
-                                    parseResult.GetValue(Options.branchId).ToString()
-                                else
-                                    String.Empty
+                        let! parentBranchIdString =
+                            task {
+                                match parentBranchId, parentBranchName with
+                                | parentBranchId, parentBranchName when parentBranchId <> Guid.Empty -> return parentBranchId.ToString()
+                                | parentBranchId, parentBranchName when parentBranchName <> String.Empty -> return String.Empty
+                                | _ ->
+                                    // No parent specified, determine based on current branch's promotion support
+                                    if parseResult.GetResult(Options.branchId).Implicit then
+                                        // Get the current branch (before we changed graceIds.BranchId to the new branch)
+                                        let currentBranchId = Current().BranchId
+                                        
+                                        if currentBranchId <> Guid.Empty then
+                                            // Get current branch details to check if it supports promotions
+                                            let currentBranchParameters =
+                                                GetBranchParameters(
+                                                    OwnerId = graceIds.OwnerIdString,
+                                                    OwnerName = graceIds.OwnerName,
+                                                    OrganizationId = graceIds.OrganizationIdString,
+                                                    OrganizationName = graceIds.OrganizationName,
+                                                    RepositoryId = graceIds.RepositoryIdString,
+                                                    RepositoryName = graceIds.RepositoryName,
+                                                    BranchId = $"{currentBranchId}",
+                                                    BranchName = String.Empty,
+                                                    CorrelationId = graceIds.CorrelationId
+                                                )
+                                            
+                                            match! Branch.Get(currentBranchParameters) with
+                                            | Ok returnValue ->
+                                                let currentBranch = returnValue.ReturnValue
+                                                // If current branch supports promotions, use it as parent
+                                                // Otherwise, use current branch's parent as the parent for new branch
+                                                if currentBranch.PromotionEnabled then
+                                                    return $"{currentBranchId}"
+                                                else
+                                                    return $"{currentBranch.ParentBranchId}"
+                                            | Error _ ->
+                                                // If we can't get current branch info, fall back to using current branch
+                                                return $"{currentBranchId}"
+                                        else
+                                            return String.Empty
+                                    else
+                                        return String.Empty
+                            }
 
                         let initialPermissions =
                             match parseResult.GetValue(Options.initialPermissions) with
