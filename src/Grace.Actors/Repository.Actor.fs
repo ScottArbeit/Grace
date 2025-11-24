@@ -236,7 +236,9 @@ module Repository =
                                             branchActor.Handle
                                                 (BranchCommand.DeleteLogical(
                                                     true,
-                                                    $"Cascaded from deleting repository. ownerId: {repositoryDto.OwnerId}; organizationId: {repositoryDto.OrganizationId}; repositoryId: {repositoryDto.RepositoryId}; repositoryName: {repositoryDto.RepositoryName}; deleteReason: {deleteReason}"
+                                                    $"Cascaded from deleting repository. ownerId: {repositoryDto.OwnerId}; organizationId: {repositoryDto.OrganizationId}; repositoryId: {repositoryDto.RepositoryId}; repositoryName: {repositoryDto.RepositoryName}; deleteReason: {deleteReason}",
+                                                    false,
+                                                    None
                                                 ))
                                                 metadata
 

@@ -516,6 +516,7 @@ module Types =
     [<KnownType("GetKnownTypes"); GenerateSerializer>]
     type ReferenceLinkType =
         | BasedOn of ReferenceId
+        | IncludedInPromotionGroup of Guid
 
         static member GetKnownTypes() = GetKnownTypes<ReferenceLinkType>()
 

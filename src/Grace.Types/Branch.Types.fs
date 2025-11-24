@@ -52,7 +52,12 @@ module Branch =
         | EnableExternal of enabled: bool
         | EnableAutoRebase of enabled: bool
         | RemoveReference of referenceId: ReferenceId
-        | DeleteLogical of force: bool * DeleteReason: DeleteReason
+        | UpdateParentBranch of newParentBranchId: BranchId
+        | DeleteLogical of
+            force: bool *
+            DeleteReason: DeleteReason *
+            reassignChildBranches: bool *
+            newParentBranchId: BranchId option
         | DeletePhysical
         | Undelete
 
@@ -88,7 +93,12 @@ module Branch =
         | EnabledExternal of enabled: bool
         | EnabledAutoRebase of enabled: bool
         | ReferenceRemoved of referenceId: ReferenceId
-        | LogicalDeleted of force: bool * DeleteReason: DeleteReason
+        | ParentBranchUpdated of newParentBranchId: BranchId
+        | LogicalDeleted of
+            force: bool *
+            DeleteReason: DeleteReason *
+            reassignedChildBranches: bool *
+            childrenReassignedTo: BranchId option
         | PhysicalDeleted
         | Undeleted
 
@@ -223,7 +233,9 @@ module Branch =
                 | EnabledExternal enabled -> { currentBranchDto with ExternalEnabled = enabled }
                 | EnabledAutoRebase enabled -> { currentBranchDto with AutoRebaseEnabled = enabled }
                 | ReferenceRemoved _ -> currentBranchDto
-                | LogicalDeleted(force, deleteReason) -> { currentBranchDto with DeletedAt = Some(getCurrentInstant ()); DeleteReason = deleteReason }
+                | ParentBranchUpdated newParentBranchId -> { currentBranchDto with ParentBranchId = newParentBranchId }
+                | LogicalDeleted(force, deleteReason, reassignedChildBranches, childrenReassignedTo) ->
+                    { currentBranchDto with DeletedAt = Some(getCurrentInstant ()); DeleteReason = deleteReason }
 
                 | PhysicalDeleted -> currentBranchDto // Do nothing because it's about to be deleted anyway.
                 | Undeleted -> { currentBranchDto with DeletedAt = None; DeleteReason = String.Empty }
