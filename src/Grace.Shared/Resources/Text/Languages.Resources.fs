@@ -116,6 +116,7 @@ module Text =
         | OwnerNameAlreadyExists
         | OwnerNameIsRequired
         | OwnerTypeIsRequired
+        | ParentBranchDoesNotAllowPromotions
         | ParentBranchDoesNotExist
         | ReadingGraceStatus
         | ReferenceAlreadyExists

@@ -277,6 +277,16 @@ module Branch =
                 Arity = ArgumentArity.ExactlyOne
             )
 
+        let force =
+            new Option<bool>(
+                OptionName.Force,
+                [| "-f"; "--force" |],
+                Required = false,
+                Description = "Force delete all child branches before deleting this branch.",
+                Arity = ArgumentArity.ZeroOrOne,
+                DefaultValueFactory = (fun _ -> false)
+            )
+
         let toBranchId =
             new Option<BranchId>(
                 OptionName.ToBranchId,
@@ -456,15 +466,52 @@ module Branch =
                         let parentBranchId = parseResult.GetValue(Options.parentBranchId)
                         let parentBranchName = parseResult.GetValue(Options.parentBranchName) |> valueOrEmpty
 
-                        let parentBranchIdString =
-                            match parentBranchId, parentBranchName with
-                            | parentBranchId, parentBranchName when parentBranchId <> Guid.Empty -> parentBranchId.ToString()
-                            | parentBranchId, parentBranchName when parentBranchName <> String.Empty -> String.Empty
-                            | _ ->
-                                if parseResult.GetResult(Options.branchId).Implicit then
-                                    parseResult.GetValue(Options.branchId).ToString()
-                                else
-                                    String.Empty
+                        let! parentBranchIdString =
+                            task {
+                                match parentBranchId, parentBranchName with
+                                | parentBranchId, parentBranchName when parentBranchId <> Guid.Empty -> return parentBranchId.ToString()
+                                | parentBranchId, parentBranchName when parentBranchName <> String.Empty -> return String.Empty
+                                | _ ->
+                                    // No parent specified, determine based on current branch's promotion support
+                                    if parseResult.GetResult(Options.branchId).Implicit then
+                                        // Get the current branch (before we changed graceIds.BranchId to the new branch)
+                                        let currentBranchId = Current().BranchId
+                                        
+                                        if currentBranchId <> Guid.Empty then
+                                            // Get current branch details to check if it supports promotions
+                                            let currentBranchParameters =
+                                                GetBranchParameters(
+                                                    OwnerId = graceIds.OwnerIdString,
+                                                    OwnerName = graceIds.OwnerName,
+                                                    OrganizationId = graceIds.OrganizationIdString,
+                                                    OrganizationName = graceIds.OrganizationName,
+                                                    RepositoryId = graceIds.RepositoryIdString,
+                                                    RepositoryName = graceIds.RepositoryName,
+                                                    BranchId = $"{currentBranchId}",
+                                                    BranchName = String.Empty,
+                                                    CorrelationId = graceIds.CorrelationId
+                                                )
+                                            
+                                            match! Branch.Get(currentBranchParameters) with
+                                            | Ok returnValue ->
+                                                let currentBranch = returnValue.ReturnValue
+                                                // If current branch supports promotions, use it as parent
+                                                if currentBranch.PromotionEnabled then
+                                                    return $"{currentBranchId}"
+                                                // If current branch doesn't support promotions, use its parent (if valid)
+                                                elif currentBranch.ParentBranchId <> Guid.Empty then
+                                                    return $"{currentBranch.ParentBranchId}"
+                                                else
+                                                    // Current branch has no valid parent, let server handle the error
+                                                    return String.Empty
+                                            | Error _ ->
+                                                // If we can't get current branch info, let server handle validation
+                                                return String.Empty
+                                        else
+                                            return String.Empty
+                                    else
+                                        return String.Empty
+                            }
 
                         let initialPermissions =
                             match parseResult.GetValue(Options.initialPermissions) with
@@ -3372,40 +3419,46 @@ module Branch =
 
                 match validateIncomingParameters with
                 | Ok _ ->
+                    let force = parseResult.GetValue(Options.force)
                     let reassignChildBranches = parseResult.GetValue(Options.reassignChildBranches)
                     let newParentBranchId = parseResult.GetValue(Options.newParentBranchId) |> valueOrEmpty
                     let newParentBranchName = parseResult.GetValue(Options.newParentBranchName) |> valueOrEmpty
 
-                    let deleteParameters =
-                        Parameters.Branch.DeleteBranchParameters(
-                            BranchId = graceIds.BranchIdString,
-                            BranchName = graceIds.BranchName,
-                            OwnerId = graceIds.OwnerIdString,
-                            OwnerName = graceIds.OwnerName,
-                            OrganizationId = graceIds.OrganizationIdString,
-                            OrganizationName = graceIds.OrganizationName,
-                            RepositoryId = graceIds.RepositoryIdString,
-                            RepositoryName = graceIds.RepositoryName,
-                            ReassignChildBranches = reassignChildBranches,
-                            NewParentBranchId = newParentBranchId,
-                            NewParentBranchName = newParentBranchName,
-                            CorrelationId = graceIds.CorrelationId
-                        )
-
-                    if parseResult |> hasOutput then
-                        return!
-                            progress
-                                .Columns(progressColumns)
-                                .StartAsync(fun progressContext ->
-                                    task {
-                                        let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
-
-                                        let! result = Branch.Delete(deleteParameters)
-                                        t0.Increment(100.0)
-                                        return result
-                                    })
+                    // Validate that --force and --reassign-child-branches are not both specified
+                    if force && reassignChildBranches then
+                        return Error(GraceError.Create (BranchError.getErrorMessage BranchError.CannotSpecifyBothForceAndReassignChildBranches) graceIds.CorrelationId)
                     else
-                        return! Branch.Delete(deleteParameters)
+                        let deleteParameters =
+                            Parameters.Branch.DeleteBranchParameters(
+                                BranchId = graceIds.BranchIdString,
+                                BranchName = graceIds.BranchName,
+                                OwnerId = graceIds.OwnerIdString,
+                                OwnerName = graceIds.OwnerName,
+                                OrganizationId = graceIds.OrganizationIdString,
+                                OrganizationName = graceIds.OrganizationName,
+                                RepositoryId = graceIds.RepositoryIdString,
+                                RepositoryName = graceIds.RepositoryName,
+                                Force = force,
+                                ReassignChildBranches = reassignChildBranches,
+                                NewParentBranchId = newParentBranchId,
+                                NewParentBranchName = newParentBranchName,
+                                CorrelationId = graceIds.CorrelationId
+                            )
+
+                        if parseResult |> hasOutput then
+                            return!
+                                progress
+                                    .Columns(progressColumns)
+                                    .StartAsync(fun progressContext ->
+                                        task {
+                                            let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
+
+                                            let! result = Branch.Delete(deleteParameters)
+                                            t0.Increment(100.0)
+                                            return result
+                                        })
+                        else
+                            return! Branch.Delete(deleteParameters)
                 | Error error -> return Error error
             with ex ->
                 return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
@@ -3799,6 +3852,7 @@ module Branch =
 
         let deleteCommand =
             new Command("delete", Description = "Delete the branch.")
+            |> addOption Options.force
             |> addOption Options.reassignChildBranches
             |> addOption Options.newParentBranchId
             |> addOption Options.newParentBranchName

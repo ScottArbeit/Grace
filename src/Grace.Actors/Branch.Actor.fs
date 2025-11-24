@@ -98,11 +98,13 @@ module Branch =
                             kvp.Value.Links
                             |> Seq.find (fun link ->
                                 match link with
-                                | ReferenceLinkType.BasedOn _ -> true)
+                                | ReferenceLinkType.BasedOn _ -> true
+                                | ReferenceLinkType.IncludedInPromotionGroup _ -> false)
 
                         let basedOnReferenceId =
                             match basedOnLink with
                             | ReferenceLinkType.BasedOn referenceId -> referenceId
+                            | _ -> ReferenceId.Empty
 
                         let basedOnReferenceActorProxy = Reference.CreateActorProxy basedOnReferenceId branchDto.RepositoryId correlationId
                         let! basedOnReferenceDto = basedOnReferenceActorProxy.Get correlationId
@@ -188,6 +190,10 @@ module Branch =
                     // If the event has a referenceId, add it to the return properties.
                     if branchEvent.Metadata.Properties.ContainsKey(nameof ReferenceId) then
                         returnValue.Properties.Add(nameof ReferenceId, branchEvent.Metadata.Properties[nameof ReferenceId] :?> Guid)
+
+                    // If there are child branch results, add them to the return properties.
+                    if branchEvent.Metadata.Properties.ContainsKey("ChildBranchResults") then
+                        returnValue.Properties.Add("ChildBranchResults", branchEvent.Metadata.Properties["ChildBranchResults"])
 
                     return Ok returnValue
                 with ex ->
@@ -443,8 +449,8 @@ module Branch =
                                         let! childBranches =
                                             getChildBranches branchDto.RepositoryId branchDto.BranchId Int32.MaxValue false metadata.CorrelationId
 
-                                        if childBranches.Length > 0 && not reassignChildBranches then
-                                            // Cannot delete branch with children without reassigning them
+                                        if childBranches.Length > 0 && not reassignChildBranches && not force then
+                                            // Cannot delete branch with children without reassigning or forcing deletion
                                             return
                                                 Error(
                                                     GraceError.Create
@@ -452,6 +458,43 @@ module Branch =
                                                         metadata.CorrelationId
                                                 )
                                         else
+                                            // Track results for child branch operations
+                                            let childBranchResults = System.Collections.Concurrent.ConcurrentBag<string>()
+
+                                            // If force is set and there are child branches, delete them recursively
+                                            if force && childBranches.Length > 0 then
+                                                do!
+                                                    Parallel.ForEachAsync(
+                                                        childBranches,
+                                                        Constants.ParallelOptions,
+                                                        (fun childBranch ct ->
+                                                            ValueTask(
+                                                                task {
+                                                                    let childBranchActorProxy =
+                                                                        Branch.CreateActorProxy
+                                                                            childBranch.BranchId
+                                                                            branchDto.RepositoryId
+                                                                            metadata.CorrelationId
+
+                                                                    let childMetadata = EventMetadata.New metadata.CorrelationId GraceSystemUser
+
+                                                                    // Recursively delete child branch with force
+                                                                    match! childBranchActorProxy.Handle (DeleteLogical(true, $"Parent branch {branchDto.BranchName} is being deleted.", false, None)) childMetadata with
+                                                                    | Ok _ ->
+                                                                        childBranchResults.Add($"Deleted child branch: {childBranch.BranchName}")
+                                                                    | Error error ->
+                                                                        log.LogError(
+                                                                            "{CurrentInstant}: Error deleting child branch {ChildBranchId}: {Error}",
+                                                                            getCurrentInstantExtended (),
+                                                                            childBranch.BranchId,
+                                                                            error
+                                                                        )
+                                                                        childBranchResults.Add($"Failed to delete child branch: {childBranch.BranchName}")
+                                                                }
+                                                                :> Task
+                                                            ))
+                                                    )
+
                                             // If reassigning children, determine the new parent and update them
                                             if reassignChildBranches && childBranches.Length > 0 then
                                                 let targetParentBranchId =
@@ -473,10 +516,11 @@ module Branch =
                                                                             branchDto.RepositoryId
                                                                             metadata.CorrelationId
 
-                                                                    let metadata = EventMetadata.New metadata.CorrelationId GraceSystemUser
+                                                                    let childMetadata = EventMetadata.New metadata.CorrelationId GraceSystemUser
 
-                                                                    match! childBranchActorProxy.Handle (UpdateParentBranch targetParentBranchId) metadata with
-                                                                    | Ok _ -> ()
+                                                                    match! childBranchActorProxy.Handle (UpdateParentBranch targetParentBranchId) childMetadata with
+                                                                    | Ok _ ->
+                                                                        childBranchResults.Add($"Reassigned child branch: {childBranch.BranchName}")
                                                                     | Error error ->
                                                                         log.LogError(
                                                                             "{CurrentInstant}: Error updating parent branch for child {ChildBranchId}: {Error}",
@@ -484,6 +528,7 @@ module Branch =
                                                                             childBranch.BranchId,
                                                                             error
                                                                         )
+                                                                        childBranchResults.Add($"Failed to reassign child branch: {childBranch.BranchName}")
                                                                 }
                                                                 :> Task
                                                             ))
@@ -549,6 +594,10 @@ module Branch =
                                                     (Duration.FromDays(float repositoryDto.LogicalDeleteDays))
                                                     (ReminderState.BranchPhysicalDeletion physicalDeletionReminderState)
                                                     metadata.CorrelationId
+
+                                            // Add child branch results to metadata for output
+                                            if childBranchResults.Count > 0 then
+                                                metadata.Properties["ChildBranchResults"] <- childBranchResults.ToArray() |> String.concat Environment.NewLine
 
                                             return Ok(LogicalDeleted(force, deleteReason, reassignChildBranches, newParentBranchId))
                                     | DeletePhysical ->
