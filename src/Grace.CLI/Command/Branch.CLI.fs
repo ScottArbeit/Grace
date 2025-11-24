@@ -486,14 +486,17 @@ module Branch =
                                             | Ok returnValue ->
                                                 let currentBranch = returnValue.ReturnValue
                                                 // If current branch supports promotions, use it as parent
-                                                // Otherwise, use current branch's parent as the parent for new branch
                                                 if currentBranch.PromotionEnabled then
                                                     return $"{currentBranchId}"
-                                                else
+                                                // If current branch doesn't support promotions, use its parent (if valid)
+                                                elif currentBranch.ParentBranchId <> Guid.Empty then
                                                     return $"{currentBranch.ParentBranchId}"
+                                                else
+                                                    // Current branch has no valid parent, let server handle the error
+                                                    return String.Empty
                                             | Error _ ->
-                                                // If we can't get current branch info, fall back to using current branch
-                                                return $"{currentBranchId}"
+                                                // If we can't get current branch info, let server handle validation
+                                                return String.Empty
                                         else
                                             return String.Empty
                                     else
