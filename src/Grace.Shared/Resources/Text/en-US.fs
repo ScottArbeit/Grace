@@ -131,6 +131,7 @@ module en_US =
         | OwnerNameAlreadyExists -> "An Owner with the provided OwnerName already exists."
         | OwnerNameIsRequired -> "The OwnerName must be provided."
         | OwnerTypeIsRequired -> "The OwnerType must be provided."
+        | ParentBranchDoesNotAllowPromotions -> "The new parent branch must allow promotions."
         | ParentBranchDoesNotExist -> "The parent branch provided does not exist."
         | ReadingGraceStatus -> "Reading the Grace status file."
         | ReferenceAlreadyExists -> "A reference with this ReferenceId already exists."
