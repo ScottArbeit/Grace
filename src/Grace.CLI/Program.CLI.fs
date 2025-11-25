@@ -55,6 +55,7 @@ module GraceCommand =
         aliases.Add("dir", [ "maint"; "list-contents" ])
         aliases.Add("ls", [ "maint"; "list-contents" ])
         aliases.Add("promote", [ "branch"; "promote" ])
+        aliases.Add("promotion-group", [ "branch"; "promotion-group" ])
         aliases.Add("promotions", [ "branch"; "get-promotions" ])
         aliases.Add("rebase", [ "branch"; "rebase" ])
         aliases.Add("refs", [ "branch"; "get-references" ])

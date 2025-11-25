@@ -79,6 +79,9 @@ module Text =
         let IncludeDeleted = "--include-deleted"
 
         [<Literal>]
+        let Individual = "--individual"
+
+        [<Literal>]
         let InitialPermissions = "--initial-permissions"
 
         [<Literal>]

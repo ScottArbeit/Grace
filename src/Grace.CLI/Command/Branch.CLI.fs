@@ -287,6 +287,16 @@ module Branch =
                 DefaultValueFactory = (fun _ -> false)
             )
 
+        let individual =
+            new Option<bool>(
+                OptionName.Individual,
+                [| "--individual" |],
+                Required = false,
+                Description = "Force an individual promotion, bypassing any promotion group on a Hybrid branch.",
+                Arity = ArgumentArity.ZeroOrOne,
+                DefaultValueFactory = (fun _ -> false)
+            )
+
         let toBranchId =
             new Option<BranchId>(
                 OptionName.ToBranchId,
@@ -3635,6 +3645,7 @@ module Branch =
         let promoteCommand =
             new Command("promote", Description = "Promotes a commit into the parent branch.")
             |> addOption Options.message
+            |> addOption Options.individual
             |> addCommonOptions
 
         promoteCommand.Action <- new Promote()
