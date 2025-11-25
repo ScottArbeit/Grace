@@ -364,6 +364,44 @@ module Application =
                           route "/undelete" Repository.Undelete
                           |> addMetadata typeof<Repository.UndeleteRepositoryParameters> ] ]
               subRoute
+                  "/promotionGroup"
+                  [ POST
+                        [ route "/create" PromotionGroup.Create
+                          |> addMetadata typeof<PromotionGroup.CreatePromotionGroupParameters>
+
+                          route "/get" PromotionGroup.Get
+                          |> addMetadata typeof<PromotionGroup.GetPromotionGroupParameters>
+
+                          route "/getEvents" PromotionGroup.GetEvents
+                          |> addMetadata typeof<PromotionGroup.GetPromotionGroupParameters>
+
+                          route "/addPromotion" PromotionGroup.AddPromotion
+                          |> addMetadata typeof<PromotionGroup.AddPromotionParameters>
+
+                          route "/removePromotion" PromotionGroup.RemovePromotion
+                          |> addMetadata typeof<PromotionGroup.RemovePromotionParameters>
+
+                          route "/reorderPromotions" PromotionGroup.ReorderPromotions
+                          |> addMetadata typeof<PromotionGroup.ReorderPromotionsParameters>
+
+                          route "/schedule" PromotionGroup.Schedule
+                          |> addMetadata typeof<PromotionGroup.ScheduleParameters>
+
+                          route "/markReady" PromotionGroup.MarkReady
+                          |> addMetadata typeof<PromotionGroup.MarkReadyParameters>
+
+                          route "/start" PromotionGroup.Start
+                          |> addMetadata typeof<PromotionGroup.StartParameters>
+
+                          route "/complete" PromotionGroup.Complete
+                          |> addMetadata typeof<PromotionGroup.CompleteParameters>
+
+                          route "/block" PromotionGroup.Block
+                          |> addMetadata typeof<PromotionGroup.BlockParameters>
+
+                          route "/delete" PromotionGroup.Delete
+                          |> addMetadata typeof<PromotionGroup.DeletePromotionGroupParameters> ] ]
+              subRoute
                   "/storage"
                   [ POST
                         [ route "/getUploadMetadataForFiles" Storage.GetUploadMetadataForFiles

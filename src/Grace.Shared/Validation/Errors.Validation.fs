@@ -614,6 +614,8 @@ module Errors =
         | PromotionGroupCannotBeDeleted
         | PromotionGroupIsEmpty
         | InvalidPromotionGroupId
+        | InvalidTargetBranchId
+        | InvalidPromotionId
         | PromotionNotInGroup
 
         interface IErrorDiscriminatedUnion
@@ -632,6 +634,8 @@ module Errors =
             | PromotionGroupCannotBeDeleted -> "The promotion group cannot be deleted (it is running or has already succeeded)."
             | PromotionGroupIsEmpty -> "The promotion group has no promotions to apply."
             | InvalidPromotionGroupId -> "The promotion group ID is invalid."
+            | InvalidTargetBranchId -> "The target branch ID is invalid."
+            | InvalidPromotionId -> "The promotion ID is invalid."
             | PromotionNotInGroup -> "The specified promotion is not in this promotion group."
 
         static member getErrorMessage(promotionGroupError: PromotionGroupError option) : string =
