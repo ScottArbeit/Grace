@@ -173,9 +173,10 @@ module PromotionGroup =
                         else
                             match command with
                             | Create(promotionGroupId, ownerId, organizationId, repositoryId, targetBranchId, description, scheduledAt) ->
-                                match promotionGroupDto.UpdatedAt with
-                                | Some _ -> return Error(GraceError.Create (PromotionGroupError.getErrorMessage PromotionGroupError.PromotionGroupAlreadyExists) metadata.CorrelationId)
-                                | None -> return Ok command
+                                if promotionGroupDto.PromotionGroupId <> PromotionGroupId.Empty then
+                                    return Error(GraceError.Create (PromotionGroupError.getErrorMessage PromotionGroupError.PromotionGroupAlreadyExists) metadata.CorrelationId)
+                                else
+                                    return Ok command
                             | AddPromotion promotionId ->
                                 match promotionGroupDto.Status with
                                 | Draft | Ready -> return Ok command

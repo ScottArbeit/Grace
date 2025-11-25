@@ -183,6 +183,7 @@ module PromotionGroup =
                         TargetBranchId = targetBranchId
                         Description = description
                         ScheduledAt = scheduledAt
+                        CreatedBy = UserId promotionGroupEvent.Metadata.Principal
                         CreatedAt = promotionGroupEvent.Metadata.Timestamp }
                 | PromotionAdded(promotionId, order) ->
                     let newPromotion = { PromotionId = promotionId; Order = order; Conflicts = None }
