@@ -517,6 +517,7 @@ module Types =
     type ReferenceLinkType =
         | BasedOn of ReferenceId
         | IncludedInPromotionGroup of Guid
+        | PromotionGroupTerminal of Guid  // Marks the final promotion in a promotion group.
 
         static member GetKnownTypes() = GetKnownTypes<ReferenceLinkType>()
 
@@ -780,6 +781,27 @@ module Types =
         | Complex
 
         static member GetKnownTypes() = GetKnownTypes<PromotionType>()
+
+        override this.ToString() = getDiscriminatedUnionFullName this
+
+    /// Defines how promotions are handled for a branch.
+    [<KnownType("GetKnownTypes"); GenerateSerializer>]
+    type BranchPromotionMode =
+        | IndividualOnly   // Current behavior: promotions always applied individually.
+        | GroupOnly        // Promotions to this branch must go through a promotion group.
+        | Hybrid           // Promotions can be grouped by default, with an opt-out flag.
+
+        static member GetKnownTypes() = GetKnownTypes<BranchPromotionMode>()
+
+        override this.ToString() = getDiscriminatedUnionFullName this
+
+    /// Defines the conflict resolution policy for a repository.
+    [<KnownType("GetKnownTypes"); GenerateSerializer>]
+    type ConflictResolutionPolicy =
+        | NoConflicts of unit                         // Any conflict blocks the promotion group.
+        | ConflictsAllowedWithConfidence of float     // Conflicts allowed if model confidence >= threshold (0.0 to 1.0).
+
+        static member GetKnownTypes() = GetKnownTypes<ConflictResolutionPolicy>()
 
         override this.ToString() = getDiscriminatedUnionFullName this
 

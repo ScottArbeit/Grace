@@ -99,7 +99,8 @@ module Branch =
                             |> Seq.find (fun link ->
                                 match link with
                                 | ReferenceLinkType.BasedOn _ -> true
-                                | ReferenceLinkType.IncludedInPromotionGroup _ -> false)
+                                | ReferenceLinkType.IncludedInPromotionGroup _ -> false
+                                | ReferenceLinkType.PromotionGroupTerminal _ -> false)
 
                         let basedOnReferenceId =
                             match basedOnLink with
@@ -414,6 +415,7 @@ module Branch =
                                     | EnableTag enabled -> return Ok(EnabledTag enabled)
                                     | EnableExternal enabled -> return Ok(EnabledExternal enabled)
                                     | EnableAutoRebase enabled -> return Ok(EnabledAutoRebase enabled)
+                                    | SetPromotionMode promotionMode -> return Ok(PromotionModeSet promotionMode)
                                     | UpdateParentBranch newParentBranchId -> return Ok(ParentBranchUpdated newParentBranchId)
                                     | BranchCommand.Assign(directoryVersionId, sha256Hash, referenceText) ->
                                         match! addReferenceToCurrentBranch directoryVersionId sha256Hash referenceText ReferenceType.Promotion List.empty with

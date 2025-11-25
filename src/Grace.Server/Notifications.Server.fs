@@ -398,6 +398,15 @@ module Notifications =
 
                         logToConsole
                             $"Received RepositoryEvent: {getDiscriminatedUnionFullName repositoryEvent.Event} {Environment.NewLine}{repositoryEvent.Metadata}"
+                    | PromotionGroupEvent promotionGroupEvent ->
+                        let correlationId = promotionGroupEvent.Metadata.CorrelationId
+
+                        log.LogInformation(
+                            "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; Received PromotionGroupEvent notification.",
+                            getCurrentInstantExtended (),
+                            getMachineName,
+                            correlationId
+                        )
 
                 //return! setStatusCode StatusCodes.Status204NoContent next context
                 }
