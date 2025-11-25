@@ -857,6 +857,8 @@ module Types =
         | DeleteCachedState
         /// DeleteZipFile reminders are used to remind the DirectoryVersion actor to delete the directory version contents .zip file after the time set in the repository has expired.
         | DeleteZipFile
+        /// ScheduledPromotionGroup reminders are used to trigger a promotion group to start at a scheduled time.
+        | ScheduledPromotionGroup
 
         static member GetKnownTypes() = GetKnownTypes<ReminderTypes>()
 
