@@ -2128,6 +2128,135 @@ module Services =
             return childBranches.OrderBy(fun branchDto -> branchDto.BranchName).ToArray()
         }
 
+    /// Value type for holding reminder query results from CosmosDB.
+    type ReminderValue() =
+        member val public Reminder: ReminderDto = ReminderDto.Default with get, set
+
+    /// Gets a list of reminders for a repository, with optional filtering.
+    let getReminders
+        (repositoryId: RepositoryId)
+        (maxCount: int)
+        (reminderTypeFilter: string option)
+        (actorNameFilter: string option)
+        (dueAfter: Instant option)
+        (dueBefore: Instant option)
+        (correlationId: CorrelationId)
+        =
+        task {
+            let reminders = List<ReminderDto>()
+
+            match actorStateStorageProvider with
+            | Unknown -> ()
+            | AzureCosmosDb ->
+                let indexMetrics = stringBuilderPool.Get()
+                let requestCharge = stringBuilderPool.Get()
+
+                try
+                    try
+                        // Build the query dynamically based on provided filters
+                        let queryBuilder = StringBuilder()
+
+                        queryBuilder.Append(
+                            """
+                            SELECT TOP @maxCount c.Reminder
+                            FROM c
+                            WHERE STRINGEQUALS(c.Reminder.RepositoryId, @repositoryId, true)
+                                AND c.GrainType = @grainType
+                            """
+                        )
+                        |> ignore
+
+                        // Add optional filters
+                        if reminderTypeFilter.IsSome && not (String.IsNullOrEmpty(reminderTypeFilter.Value)) then
+                            queryBuilder.Append(" AND STRINGEQUALS(c.Reminder.ReminderType, @reminderType, true)") |> ignore
+
+                        if actorNameFilter.IsSome && not (String.IsNullOrEmpty(actorNameFilter.Value)) then
+                            queryBuilder.Append(" AND STRINGEQUALS(c.Reminder.ActorName, @actorName, true)") |> ignore
+
+                        if dueAfter.IsSome then
+                            queryBuilder.Append(" AND c.Reminder.ReminderTime >= @dueAfter") |> ignore
+
+                        if dueBefore.IsSome then
+                            queryBuilder.Append(" AND c.Reminder.ReminderTime <= @dueBefore") |> ignore
+
+                        queryBuilder.Append(" ORDER BY c.Reminder.ReminderTime ASC") |> ignore
+
+                        let queryDefinition =
+                            QueryDefinition(queryBuilder.ToString())
+                                .WithParameter("@maxCount", maxCount)
+                                .WithParameter("@repositoryId", $"{repositoryId}")
+                                .WithParameter("@grainType", StateName.Reminder)
+
+                        // Add optional parameters
+                        if reminderTypeFilter.IsSome && not (String.IsNullOrEmpty(reminderTypeFilter.Value)) then
+                            queryDefinition.WithParameter("@reminderType", reminderTypeFilter.Value) |> ignore
+
+                        if actorNameFilter.IsSome && not (String.IsNullOrEmpty(actorNameFilter.Value)) then
+                            queryDefinition.WithParameter("@actorName", actorNameFilter.Value) |> ignore
+
+                        if dueAfter.IsSome then
+                            queryDefinition.WithParameter("@dueAfter", dueAfter.Value.ToUnixTimeTicks()) |> ignore
+
+                        if dueBefore.IsSome then
+                            queryDefinition.WithParameter("@dueBefore", dueBefore.Value.ToUnixTimeTicks()) |> ignore
+
+                        let iterator = cosmosContainer.GetItemQueryIterator<ReminderValue>(queryDefinition, requestOptions = queryRequestOptions)
+
+                        while iterator.HasMoreResults do
+                            let! results = iterator.ReadNextAsync()
+                            indexMetrics.Append($"{results.IndexMetrics}, ") |> ignore
+                            requestCharge.Append($"{results.RequestCharge:F3}, ") |> ignore
+
+                            let reminderValues = results.Resource
+
+                            reminderValues |> Seq.iter (fun reminderValue -> reminders.Add(reminderValue.Reminder))
+
+                        if (indexMetrics.Length >= 2) && (requestCharge.Length >= 2) && Activity.Current <> null then
+                            Activity.Current
+                                .SetTag("indexMetrics", $"{indexMetrics.Remove(indexMetrics.Length - 2, 2)}")
+                                .SetTag("requestCharge", $"{requestCharge.Remove(requestCharge.Length - 2, 2)}")
+                            |> ignore
+                    with ex ->
+                        log.LogError(
+                            ex,
+                            "{CurrentInstant}: Error in getReminders. CorrelationId: {correlationId}.",
+                            getCurrentInstantExtended (),
+                            correlationId
+                        )
+                finally
+                    stringBuilderPool.Return(indexMetrics)
+                    stringBuilderPool.Return(requestCharge)
+            | MongoDB -> ()
+
+            return reminders.ToArray()
+        }
+
+    /// Gets a single reminder by its ID.
+    let getReminderById (reminderId: ReminderId) (correlationId: CorrelationId) =
+        task {
+            let reminderActorProxy = Reminder.CreateActorProxy reminderId correlationId
+            let! exists = reminderActorProxy.Exists correlationId
+
+            if exists then
+                let! reminderDto = reminderActorProxy.Get correlationId
+                return Some reminderDto
+            else
+                return None
+        }
+
+    /// Deletes a reminder by its ID.
+    let deleteReminder (reminderId: ReminderId) (correlationId: CorrelationId) =
+        task {
+            let reminderActorProxy = Reminder.CreateActorProxy reminderId correlationId
+            let! exists = reminderActorProxy.Exists correlationId
+
+            if exists then
+                do! reminderActorProxy.Delete correlationId
+                return Ok()
+            else
+                return Error "Reminder not found."
+        }
+
     /// Creates a new reminder actor instance.
     let createReminder (reminderDto: ReminderDto) =
         task {
