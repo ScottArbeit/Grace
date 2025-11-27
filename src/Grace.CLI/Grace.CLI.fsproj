@@ -37,6 +37,7 @@
 		<Compile Include="Command\DirectoryVersion.CLI.fs" />
 		<Compile Include="Command\Watch.CLI.fs" />
 		<Compile Include="Command\Maintenance.CLI.fs" />
+		<Compile Include="Command\Admin.CLI.fs" />
 		<Compile Include="Program.CLI.fs" />
 	</ItemGroup>
 	<ItemGroup>

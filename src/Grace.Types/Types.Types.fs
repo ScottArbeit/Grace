@@ -840,6 +840,22 @@ module Types =
 
         override this.ToString() = getDiscriminatedUnionFullName this
 
+    /// Defines the different statuses of a reminder.
+    [<KnownType("GetKnownTypes"); GenerateSerializer>]
+    type ReminderStatus =
+        /// The reminder is pending and has not yet been dispatched.
+        | Pending
+        /// The reminder has been dispatched to the target actor.
+        | Dispatched
+        /// The reminder failed to execute.
+        | Failed
+        /// The reminder has been cancelled.
+        | Cancelled
+
+        static member GetKnownTypes() = GetKnownTypes<ReminderStatus>()
+
+        override this.ToString() = getDiscriminatedUnionFullName this
+
     /// Defines the different statuses of a .zip file.
     [<KnownType("GetKnownTypes"); GenerateSerializer>]
     type ZipFileStatus =
