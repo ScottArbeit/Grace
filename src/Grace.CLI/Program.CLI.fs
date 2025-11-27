@@ -55,7 +55,6 @@ module GraceCommand =
         aliases.Add("dir", [ "maint"; "list-contents" ])
         aliases.Add("ls", [ "maint"; "list-contents" ])
         aliases.Add("promote", [ "branch"; "promote" ])
-        aliases.Add("promotion-group", [ "branch"; "promotion-group" ])
         aliases.Add("promotions", [ "branch"; "get-promotions" ])
         aliases.Add("rebase", [ "branch"; "rebase" ])
         aliases.Add("refs", [ "branch"; "get-references" ])
@@ -125,6 +124,7 @@ module GraceCommand =
         rootCommand.Subcommands.Add(Owner.Build)
         rootCommand.Subcommands.Add(Config.Build)
         rootCommand.Subcommands.Add(Maintenance.Build)
+        rootCommand.Subcommands.Add(PromotionGroupCommand.Build)
 
         let Alias = Command("alias", "Display aliases for Grace commands.")
         let ListAliases = Command("list", "Display aliases for Grace commands.")

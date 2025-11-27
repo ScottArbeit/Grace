@@ -25,6 +25,7 @@
 		<Compile Include="Repository.SDK.fs" />
 		<Compile Include="DirectoryVersion.SDK.fs" />
 		<Compile Include="Diff.SDK.fs" />
+		<Compile Include="PromotionGroup.SDK.fs" />
 	</ItemGroup>
 
 	<ItemGroup>
