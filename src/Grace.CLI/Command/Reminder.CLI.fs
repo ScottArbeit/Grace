@@ -104,9 +104,9 @@ module Reminder =
             new Option<int>(
                 "--max-count",
                 Required = false,
-                Description = "Maximum number of reminders to return.",
+                Description = $"Maximum number of reminders to return. [default: {Constants.DefaultReminderMaxCount}]",
                 Arity = ArgumentArity.ExactlyOne,
-                DefaultValueFactory = (fun _ -> 100)
+                DefaultValueFactory = (fun _ -> Constants.DefaultReminderMaxCount)
             )
 
         let reminderType =
@@ -239,10 +239,17 @@ module Reminder =
                                     |> ignore
 
                                     for reminder in reminders do
+                                        let actorIdDisplay = 
+                                            if String.IsNullOrEmpty(reminder.ActorId) then 
+                                                "(empty)"
+                                            elif reminder.ActorId.Length > 8 then 
+                                                reminder.ActorId.Substring(0, 8) + "..."
+                                            else 
+                                                reminder.ActorId
                                         table.AddRow(
                                             $"[{Colors.Deemphasized}]{reminder.ReminderId}[/]",
                                             $"{reminder.ReminderType}",
-                                            $"{reminder.ActorName}:{reminder.ActorId.Substring(0, min 8 reminder.ActorId.Length)}",
+                                            $"{reminder.ActorName}:{actorIdDisplay}",
                                             instantToLocalTime reminder.ReminderTime,
                                             instantToLocalTime reminder.CreatedAt
                                         )

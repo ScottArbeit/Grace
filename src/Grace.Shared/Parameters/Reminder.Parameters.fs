@@ -1,6 +1,7 @@
 namespace Grace.Shared.Parameters
 
 open Grace.Shared.Parameters.Common
+open Grace.Shared
 open Grace.Types.Types
 open NodaTime
 open System
@@ -22,7 +23,7 @@ module Reminder =
     type ListRemindersParameters() =
         inherit ReminderParameters()
         /// Maximum number of reminders to return.
-        member val public MaxCount: int = 100 with get, set
+        member val public MaxCount: int = Constants.DefaultReminderMaxCount with get, set
         /// Filter by reminder type (e.g., Maintenance, PhysicalDeletion).
         member val public ReminderType = String.Empty with get, set
         /// Filter by actor name (e.g., Branch, Repository).
