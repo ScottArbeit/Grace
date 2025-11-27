@@ -25,7 +25,7 @@
 		<Compile Include="Repository.SDK.fs" />
 		<Compile Include="DirectoryVersion.SDK.fs" />
 		<Compile Include="Diff.SDK.fs" />
-		<Compile Include="Reminder.SDK.fs" />
+		<Compile Include="Admin.SDK.fs" />
 	</ItemGroup>
 
 	<ItemGroup>

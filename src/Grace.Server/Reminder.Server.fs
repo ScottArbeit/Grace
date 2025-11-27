@@ -220,7 +220,7 @@ module Reminder =
 
                             return!
                                 getReminders
-                                    graceIds.RepositoryId
+                                    graceIds
                                     parameters.MaxCount
                                     reminderTypeFilter
                                     actorNameFilter

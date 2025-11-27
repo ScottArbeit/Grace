@@ -86,6 +86,8 @@ module Services =
     type DirectoryVersionValue() =
         member val public value = DirectoryVersion.Default with get, set
 
+    type ReminderValue() =
+        member val public Reminder: ReminderDto = ReminderDto.Default with get, set
 
     /// Dictionary for caching blob container clients
     let containerClients = new ConcurrentDictionary<string, BlobContainerClient>()
@@ -1918,16 +1920,6 @@ module Services =
                     let mutable clientElapsedTime = TimeSpan.Zero
                     let queryText = stringBuilderPool.Get()
 
-                    (*("""SELECT TOP 1 event FROM c JOIN event IN c["value"] 
-                        WHERE event.Event.created.BranchId = @branchId
-                            AND event.Event.created.Class = @class
-                            AND STRINGEQUALS(event.Event.created.ReferenceType, @referenceType, true)
-                            ORDER BY c["value"].CreatedAt DESC"""
-                )
-            .WithParameter("@branchId", $"{branchId}")
-            .WithParameter("@referenceType", $"{referenceType}")
-            .WithParameter("@class", "Reference")
-            *)
                     try
                         // In order to build the IN clause, we need to create a parameter for each referenceId.
                         //   (I tried just using string concatenation, it didn't work for some reason. Anyway...)
@@ -2128,13 +2120,9 @@ module Services =
             return childBranches.OrderBy(fun branchDto -> branchDto.BranchName).ToArray()
         }
 
-    /// Value type for holding reminder query results from CosmosDB.
-    type ReminderValue() =
-        member val public Reminder: ReminderDto = ReminderDto.Default with get, set
-
     /// Gets a list of reminders for a repository, with optional filtering.
     let getReminders
-        (repositoryId: RepositoryId)
+        (graceIds: GraceIds)
         (maxCount: int)
         (reminderTypeFilter: string option)
         (actorNameFilter: string option)
@@ -2158,34 +2146,40 @@ module Services =
 
                         queryBuilder.Append(
                             """
-                            SELECT TOP @maxCount c.Reminder
+                            SELECT TOP @maxCount c.State.Reminder
                             FROM c
-                            WHERE STRINGEQUALS(c.Reminder.RepositoryId, @repositoryId, true)
+                            WHERE STRINGEQUALS(c.State.Reminder.OwnerId, @ownerId, true)
+                                AND STRINGEQUALS(c.State.Reminder.OrganizationId, @organizationId, true)
+                                AND STRINGEQUALS(c.State.Reminder.RepositoryId, @repositoryId, true)
                                 AND c.GrainType = @grainType
+                                AND c.PartitionKey = @partitionKey
                             """
                         )
                         |> ignore
 
                         // Add optional filters
                         if reminderTypeFilter.IsSome && not (String.IsNullOrEmpty(reminderTypeFilter.Value)) then
-                            queryBuilder.Append(" AND STRINGEQUALS(c.Reminder.ReminderType, @reminderType, true)") |> ignore
+                            queryBuilder.Append(" AND STRINGEQUALS(c.State.Reminder.ReminderType, @reminderType, true)") |> ignore
 
                         if actorNameFilter.IsSome && not (String.IsNullOrEmpty(actorNameFilter.Value)) then
-                            queryBuilder.Append(" AND STRINGEQUALS(c.Reminder.ActorName, @actorName, true)") |> ignore
+                            queryBuilder.Append(" AND STRINGEQUALS(c.State.Reminder.ActorName, @actorName, true)") |> ignore
 
                         if dueAfter.IsSome then
-                            queryBuilder.Append(" AND c.Reminder.ReminderTime >= @dueAfter") |> ignore
+                            queryBuilder.Append(" AND c.State.Reminder.ReminderTime >= @dueAfter") |> ignore
 
                         if dueBefore.IsSome then
-                            queryBuilder.Append(" AND c.Reminder.ReminderTime <= @dueBefore") |> ignore
+                            queryBuilder.Append(" AND c.State.Reminder.ReminderTime <= @dueBefore") |> ignore
 
-                        queryBuilder.Append(" ORDER BY c.Reminder.ReminderTime ASC") |> ignore
+                        queryBuilder.Append(" ORDER BY c.State.Reminder.ReminderTime ASC") |> ignore
 
                         let queryDefinition =
                             QueryDefinition(queryBuilder.ToString())
                                 .WithParameter("@maxCount", maxCount)
-                                .WithParameter("@repositoryId", $"{repositoryId}")
+                                .WithParameter("@ownerId", graceIds.OwnerIdString)
+                                .WithParameter("@organizationId", graceIds.OrganizationIdString)
+                                .WithParameter("@repositoryId", graceIds.RepositoryIdString)
                                 .WithParameter("@grainType", StateName.Reminder)
+                                .WithParameter("@partitionKey", StateName.Reminder)
 
                         // Add optional parameters
                         if reminderTypeFilter.IsSome && not (String.IsNullOrEmpty(reminderTypeFilter.Value)) then
@@ -2228,6 +2222,8 @@ module Services =
                     stringBuilderPool.Return(requestCharge)
             | MongoDB -> ()
 
+            logToConsole $"Found {reminders.Count} reminders for RepositoryId {graceIds.RepositoryIdString}."
+            logToConsole $"Reminders: {serialize reminders}."
             return reminders.ToArray()
         }
 

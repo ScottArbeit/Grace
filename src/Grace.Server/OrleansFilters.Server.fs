@@ -24,6 +24,7 @@ open Grace.Shared.Parameters
 
 module Orleans =
 
+    /// Provides partition keys for grains based on their type and context when Orleans is used with Cosmos DB.
     type GracePartitionKeyProvider() =
         let log = loggerFactory.CreateLogger("OrleansFilters.Server")
 
