@@ -39,6 +39,7 @@
         <Compile Include="Parameters\Diff.Parameters.fs" />
         <Compile Include="Parameters\Storage.Parameters.fs" />
         <Compile Include="Parameters\PromotionGroup.Parameters.fs" />
+        <Compile Include="Parameters\Reminder.Parameters.fs" />
         <Compile Include="Validation\Errors.Validation.fs" />
         <Compile Include="Validation\Common.Validation.fs" />
         <Compile Include="Validation\Utilities.Validation.fs" />

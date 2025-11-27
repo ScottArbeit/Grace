@@ -657,6 +657,32 @@ module Errors =
             | Some error -> TestError.getErrorMessage error
             | None -> String.Empty
 
+    type ReminderError =
+        | InvalidReminderDuration
+        | InvalidReminderTime
+        | InvalidReminderType
+        | ReminderActorIdIsRequired
+        | ReminderActorNameIsRequired
+        | ReminderDoesNotExist
+        | ReminderIdIsRequired
+
+        interface IErrorDiscriminatedUnion
+
+        static member getErrorMessage(reminderError: ReminderError) : string =
+            match reminderError with
+            | InvalidReminderDuration -> "Invalid reminder duration. Use formats like '+15m', '+1h', '+1d'."
+            | InvalidReminderTime -> "Invalid reminder time. Use ISO8601 format."
+            | InvalidReminderType -> "Invalid reminder type. Valid types: Maintenance, PhysicalDeletion, DeleteCachedState, DeleteZipFile."
+            | ReminderActorIdIsRequired -> "Actor ID is required for creating a reminder."
+            | ReminderActorNameIsRequired -> "Actor name is required for creating a reminder."
+            | ReminderDoesNotExist -> "The specified reminder does not exist."
+            | ReminderIdIsRequired -> "Reminder ID is required."
+
+        static member getErrorMessage(reminderError: ReminderError option) : string =
+            match reminderError with
+            | Some error -> ReminderError.getErrorMessage error
+            | None -> String.Empty
+
     /// Given an error object, returns the corresponding error message string.
     let getErrorMessage<'T when 'T :> IErrorDiscriminatedUnion> (error: 'T) : string =
         match box error with
@@ -668,6 +694,7 @@ module Errors =
         | :? OrganizationError as organizationError -> OrganizationError.getErrorMessage organizationError
         | :? PromotionGroupError as promotionGroupError -> PromotionGroupError.getErrorMessage promotionGroupError
         | :? ReferenceError as referenceError -> ReferenceError.getErrorMessage referenceError
+        | :? ReminderError as reminderError -> ReminderError.getErrorMessage reminderError
         | :? RepositoryError as repositoryError -> RepositoryError.getErrorMessage repositoryError
         | :? StorageError as storageError -> StorageError.getErrorMessage storageError
         | :? TestError as testError -> TestError.getErrorMessage testError

@@ -265,6 +265,10 @@ module Constants =
     /// The expiration time for a Shared Access Signature token, in minutes.
     let SharedAccessSignatureExpiration = 15.0
 
+    /// The default maximum number of reminders to return in list queries.
+    [<Literal>]
+    let DefaultReminderMaxCount = 100
+
     /// The path that indicates the root directory of the repository.
     [<Literal>]
     let RootDirectoryPath = "."

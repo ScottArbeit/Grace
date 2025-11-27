@@ -413,6 +413,26 @@ module Application =
                           route "/getUploadUri" Storage.GetUploadUris
                           |> addMetadata typeof<Storage.GetUploadUriParameters> ] ]
               subRoute
+                  "/reminder"
+                  [ POST
+                        [ route "/list" Reminder.List
+                          |> addMetadata typeof<Reminder.ListRemindersParameters>
+
+                          route "/get" Reminder.Get
+                          |> addMetadata typeof<Reminder.GetReminderParameters>
+
+                          route "/delete" Reminder.Delete
+                          |> addMetadata typeof<Reminder.DeleteReminderParameters>
+
+                          route "/updateTime" Reminder.UpdateTime
+                          |> addMetadata typeof<Reminder.UpdateReminderTimeParameters>
+
+                          route "/reschedule" Reminder.Reschedule
+                          |> addMetadata typeof<Reminder.RescheduleReminderParameters>
+
+                          route "/create" Reminder.Create
+                          |> addMetadata typeof<Reminder.CreateReminderParameters> ] ]
+              subRoute
                   "/admin"
                   [ POST
                         [
