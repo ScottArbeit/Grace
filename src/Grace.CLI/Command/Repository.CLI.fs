@@ -246,22 +246,27 @@ module Repository =
                 Arity = ArgumentArity.ExactlyOne
             )
 
-        let policyType =
+        let conflictResolutionPolicy =
             (new Option<String>(
-                "--policy-type",
+                "--conflict-resolution-policy",
                 Required = true,
-                Description = "The conflict resolution policy type: NoConflicts or ConflictsAllowedWithConfidence.",
+                Description = "The repository's resolution conflict policy when conflicts are detected in a PromotionGroup.",
                 Arity = ArgumentArity.ExactlyOne
             )).AcceptOnlyFromAmong(listCases<ConflictResolutionPolicy> ())
 
         let confidenceThreshold =
-            new Option<float>(
+            new Option<float32>(
                 "--confidence-threshold",
                 Required = false,
                 Description = "The confidence threshold for auto-accepting conflict resolutions (0.0 to 1.0). Required when policy is ConflictsAllowedWithConfidence.",
                 Arity = ArgumentArity.ExactlyOne,
-                DefaultValueFactory = (fun _ -> 0.0)
+                DefaultValueFactory = (fun _ -> 0.8f)
             )
+
+        confidenceThreshold.Validators.Add(fun optionResult ->
+            let parseResult = optionResult.GetValueOrDefault<float32>()
+            if parseResult < 0.0f || parseResult > 1.0f then
+                optionResult.AddError("The confidence threshold must be between 0.0 and 1.0."))
 
     // Create subcommand.
     type Create() =
@@ -1583,7 +1588,7 @@ module Repository =
                                 RepositoryId = graceIds.RepositoryIdString,
                                 RepositoryName = graceIds.RepositoryName,
                                 CorrelationId = getCorrelationId parseResult,
-                                PolicyType = parseResult.GetValue(Options.policyType),
+                                ConflictResolutionPolicy = parseResult.GetValue(Options.conflictResolutionPolicy),
                                 ConfidenceThreshold = parseResult.GetValue(Options.confidenceThreshold)
                             )
 
@@ -1983,7 +1988,7 @@ module Repository =
 
         let setConflictResolutionPolicyCommand =
             new Command("set-conflict-resolution-policy", Description = "Sets the conflict resolution policy for the repository.")
-            |> addOption Options.policyType
+            |> addOption Options.conflictResolutionPolicy
             |> addOption Options.confidenceThreshold
             |> addCommonOptions
 

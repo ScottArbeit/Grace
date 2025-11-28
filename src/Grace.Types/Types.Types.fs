@@ -787,7 +787,7 @@ module Types =
     /// Defines how promotions are handled for a branch.
     [<KnownType("GetKnownTypes"); GenerateSerializer>]
     type BranchPromotionMode =
-        | IndividualOnly   // Current behavior: promotions always applied individually.
+        | IndividualOnly   // Default behavior: promotions always applied individually.
         | GroupOnly        // Promotions to this branch must go through a promotion group.
         | Hybrid           // Promotions can be grouped by default, with an opt-out flag.
 
@@ -798,8 +798,8 @@ module Types =
     /// Defines the conflict resolution policy for a repository.
     [<KnownType("GetKnownTypes"); GenerateSerializer>]
     type ConflictResolutionPolicy =
-        | NoConflicts of unit                         // Any conflict blocks the promotion group.
-        | ConflictsAllowedWithConfidence of float     // Conflicts allowed if model confidence >= threshold (0.0 to 1.0).
+        | NoConflicts of unit           // Any conflict blocks the promotion group.
+        | ConflictsAllowed of float32     // Conflicts allowed if model confidence >= threshold (0.0 to 1.0).
 
         static member GetKnownTypes() = GetKnownTypes<ConflictResolutionPolicy>()
 

@@ -136,5 +136,5 @@ module Repository =
     /// Parameters for the /repository/setConflictResolutionPolicy endpoint.
     type SetConflictResolutionPolicyParameters() =
         inherit RepositoryParameters()
-        member val public PolicyType = String.Empty with get, set
-        member val public ConfidenceThreshold: float = 0.0 with get, set
+        member val public ConflictResolutionPolicy = String.Empty with get, set
+        member val public ConfidenceThreshold: float32 = 0.8f with get, set

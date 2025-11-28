@@ -484,6 +484,7 @@ module Errors =
         | FailedWhileSavingEvent
         | FailedWhileApplyingEvent
         | InvalidCheckpointDaysValue
+        | InvalidConflictResolutionPolicy
         | InvalidDiffCacheDaysValue
         | InvalidDirectory
         | InvalidDirectoryVersionCacheDaysValue
@@ -536,6 +537,7 @@ module Errors =
             | FailedWhileSavingEvent -> getLocalizedString StringResourceName.FailedWhileSavingEvent
             | FailedWhileApplyingEvent -> getLocalizedString StringResourceName.FailedWhileApplyingEvent
             | InvalidCheckpointDaysValue -> getLocalizedString StringResourceName.InvalidCheckpointDaysValue
+            | InvalidConflictResolutionPolicy -> getLocalizedString StringResourceName.InvalidConflictResolutionPolicy
             | InvalidDiffCacheDaysValue -> getLocalizedString StringResourceName.InvalidDiffCacheDaysValue
             | InvalidDirectory -> getLocalizedString StringResourceName.InvalidDirectoryPath
             | InvalidDirectoryVersionCacheDaysValue -> getLocalizedString StringResourceName.InvalidDirectoryVersionCacheDaysValue
