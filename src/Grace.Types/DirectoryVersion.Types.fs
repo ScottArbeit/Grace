@@ -30,6 +30,7 @@ module DirectoryVersion =
     type DirectoryVersionEventType =
         | Created of directoryVersion: DirectoryVersion
         | RecursiveSizeSet of recursiveSize: int64
+        | HashesValidated
         | LogicalDeleted of DeleteReason: DeleteReason
         | PhysicalDeleted
         | Undeleted
@@ -46,17 +47,26 @@ module DirectoryVersion =
     /// The DirectoryVersionDto is a data transfer object that represents a directory version in the system.
     [<MessagePackObject>]
     type DirectoryVersionDto =
-        { [<Key(0)>]
-          DirectoryVersion: DirectoryVersion
-          [<Key(1)>]
-          RecursiveSize: int64
-          [<Key(2)>]
-          DeletedAt: Instant option
-          [<Key(3)>]
-          DeleteReason: DeleteReason }
+        {
+            [<Key(0)>]
+            DirectoryVersion: DirectoryVersion
+            [<Key(1)>]
+            RecursiveSize: int64
+            [<Key(2)>]
+            DeletedAt: Instant option
+            [<Key(3)>]
+            DeleteReason: DeleteReason
+            /// Indicates whether all file SHA-256 hashes have been validated by the server.
+            [<Key(4)>]
+            HashesValidated: bool
+        }
 
         static member Default =
-            { DirectoryVersion = DirectoryVersion.Default; RecursiveSize = Constants.InitialDirectorySize; DeletedAt = None; DeleteReason = String.Empty }
+            { DirectoryVersion = DirectoryVersion.Default
+              RecursiveSize = Constants.InitialDirectorySize
+              DeletedAt = None
+              DeleteReason = String.Empty
+              HashesValidated = false }
 
         static member UpdateDto directoryVersionEvent currentDirectoryVersionDto =
             let directoryVersionEventType = directoryVersionEvent.Event
@@ -64,6 +74,7 @@ module DirectoryVersion =
             match directoryVersionEventType with
             | Created directoryVersion -> { currentDirectoryVersionDto with DirectoryVersion = directoryVersion }
             | RecursiveSizeSet recursiveSize -> { currentDirectoryVersionDto with RecursiveSize = recursiveSize }
+            | HashesValidated -> { currentDirectoryVersionDto with HashesValidated = true }
             | LogicalDeleted deleteReason -> { currentDirectoryVersionDto with DeletedAt = Some(getCurrentInstant ()); DeleteReason = deleteReason }
             | PhysicalDeleted -> currentDirectoryVersionDto // Do nothing because it's about to be deleted anyway.
             | Undeleted -> { currentDirectoryVersionDto with DeletedAt = None; DeleteReason = String.Empty }
