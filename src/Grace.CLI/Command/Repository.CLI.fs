@@ -247,12 +247,12 @@ module Repository =
             )
 
         let policyType =
-            new Option<String>(
+            (new Option<String>(
                 "--policy-type",
                 Required = true,
                 Description = "The conflict resolution policy type: NoConflicts or ConflictsAllowedWithConfidence.",
                 Arity = ArgumentArity.ExactlyOne
-            )
+            )).AcceptOnlyFromAmong(listCases<ConflictResolutionPolicy> ())
 
         let confidenceThreshold =
             new Option<float>(

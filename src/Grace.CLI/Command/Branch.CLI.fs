@@ -42,6 +42,7 @@ open System.Text.Json
 open Grace.Shared.Parameters
 open Grace.Shared.Client
 open System.Text.RegularExpressions
+open System.CommandLine.Completions
 
 module Branch =
     open Grace.Shared.Validation.Common.Input
@@ -298,13 +299,13 @@ module Branch =
             )
 
         let promotionMode =
-            new Option<String>(
+            (new Option<String>(
                 "--promotion-mode",
                 [| "-pm" |],
                 Required = true,
                 Description = "The promotion mode for the branch: IndividualOnly, GroupOnly, or Hybrid.",
                 Arity = ArgumentArity.ExactlyOne
-            )
+            )).AcceptOnlyFromAmong(listCases<BranchPromotionMode>())
 
         let toBranchId =
             new Option<BranchId>(

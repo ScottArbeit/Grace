@@ -146,13 +146,13 @@ module PromotionGroupCommand =
             )
 
         let status =
-            new Option<String>(
+            (new Option<String>(
                 "--status",
                 [| "-s" |],
                 Required = false,
                 Description = "Filter by status: Draft, Ready, Running, Succeeded, Failed, or Blocked.",
                 Arity = ArgumentArity.ExactlyOne
-            )
+            )).AcceptOnlyFromAmong(listCases<PromotionGroupStatus>())
 
         let maxCount =
             new Option<int>(
