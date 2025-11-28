@@ -45,16 +45,6 @@ module DirectoryVersion =
         | MissingInStorage of fileVersion: FileVersion * elapsedMs: float
         | ValidationError of fileVersion: FileVersion * errorMessage: string * elapsedMs: float
 
-    /// Summary of SHA-256 validation for a DirectoryVersion.
-    type ValidationSummary =
-        { TotalFiles: int
-          FilesValidated: int
-          FilesSkipped: int
-          Failures: FileValidationResult list
-          TotalElapsedMs: float }
-
-        static member Empty = { TotalFiles = 0; FilesValidated = 0; FilesSkipped = 0; Failures = []; TotalElapsedMs = 0.0 }
-
     /// Validates a single file's SHA-256 hash by downloading from storage and computing.
     let validateFileSha256 (repositoryDto: RepositoryDto) (fileVersion: FileVersion) (correlationId: CorrelationId) =
         task {
@@ -70,9 +60,6 @@ module DirectoryVersion =
                 else
                     // Download and compute SHA-256 using streaming
                     use! blobStream = blobClient.OpenReadAsync()
-
-                    // Reset stream position
-                    if blobStream.CanSeek then blobStream.Position <- 0L
 
                     // Use the existing computeSha256ForFile function
                     let! computedHash = computeSha256ForFile blobStream fileVersion.RelativePath
@@ -600,8 +587,7 @@ module DirectoryVersion =
                                         let! repositoryDto = repositoryActorProxy.Get metadata.CorrelationId
 
                                         // Perform SHA-256 validation for all files
-                                        let filesToValidate = directoryVersion.Files |> Seq.toList
-                                        let validationStartTime = getCurrentInstant ()
+                                        let filesToValidate = directoryVersion.Files
 
                                         log.LogInformation(
                                             "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; Starting SHA-256 validation for DirectoryVersion; DirectoryVersionId: {DirectoryVersionId}; RelativePath: {RelativePath}; FileCount: {FileCount}.",
@@ -610,7 +596,7 @@ module DirectoryVersion =
                                             metadata.CorrelationId,
                                             directoryVersion.DirectoryVersionId,
                                             directoryVersion.RelativePath,
-                                            filesToValidate.Length
+                                            filesToValidate.Count
                                         )
 
                                         // Validate all files in parallel
