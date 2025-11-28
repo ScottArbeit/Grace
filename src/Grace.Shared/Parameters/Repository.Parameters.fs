@@ -132,3 +132,9 @@ module Repository =
     /// Parameters for the /repository/undelete endpoint.
     type UndeleteRepositoryParameters() =
         inherit RepositoryParameters()
+
+    /// Parameters for the /repository/setConflictResolutionPolicy endpoint.
+    type SetConflictResolutionPolicyParameters() =
+        inherit RepositoryParameters()
+        member val public PolicyType = String.Empty with get, set
+        member val public ConfidenceThreshold: float = 0.0 with get, set

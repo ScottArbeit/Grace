@@ -161,3 +161,7 @@ type Branch() =
     /// Update the parent branch of a branch.
     static member public UpdateParentBranch(parameters: UpdateParentBranchParameters) =
         postServer<UpdateParentBranchParameters, string> (parameters |> ensureCorrelationIdIsSet, $"branch/{nameof (Branch.UpdateParentBranch)}")
+
+    /// Sets the promotion mode for a branch.
+    static member public SetPromotionMode(parameters: SetPromotionModeParameters) =
+        postServer<SetPromotionModeParameters, string> (parameters |> ensureCorrelationIdIsSet, $"branch/{nameof (Branch.SetPromotionMode)}")

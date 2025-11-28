@@ -145,6 +145,24 @@ module PromotionGroupCommand =
                 Arity = ArgumentArity.ExactlyOne
             )
 
+        let status =
+            new Option<String>(
+                "--status",
+                [| "-s" |],
+                Required = false,
+                Description = "Filter by status: Draft, Ready, Running, Succeeded, Failed, or Blocked.",
+                Arity = ArgumentArity.ExactlyOne
+            )
+
+        let maxCount =
+            new Option<int>(
+                "--max-count",
+                Required = false,
+                Description = "Maximum number of promotion groups to return.",
+                Arity = ArgumentArity.ExactlyOne,
+                DefaultValueFactory = (fun _ -> 30)
+            )
+
         let ownerId =
             new Option<String>(
                 "--owner-id",
@@ -666,6 +684,57 @@ module PromotionGroupCommand =
                 return result |> renderOutput parseResult
             }
 
+    let private listHandler (parseResult: ParseResult) =
+        task {
+            try
+                if parseResult |> verbose then printParseResult parseResult
+                let graceIds = parseResult |> getNormalizedIdsAndNames
+                let targetBranchId = parseResult.GetValue(Options.targetBranchId) |> Option.ofObj |> Option.defaultValue String.Empty
+                let targetBranchName = parseResult.GetValue(Options.targetBranchName) |> Option.ofObj |> Option.defaultValue String.Empty
+                let status = parseResult.GetValue(Options.status) |> Option.ofObj |> Option.defaultValue String.Empty
+                let maxCount = parseResult.GetValue(Options.maxCount)
+
+                let parameters =
+                    ListPromotionGroupsParameters(
+                        TargetBranchId = targetBranchId,
+                        TargetBranchName = targetBranchName,
+                        Status = status,
+                        MaxCount = maxCount,
+                        OwnerId = graceIds.OwnerIdString,
+                        OwnerName = graceIds.OwnerName,
+                        OrganizationId = graceIds.OrganizationIdString,
+                        OrganizationName = graceIds.OrganizationName,
+                        RepositoryId = graceIds.RepositoryIdString,
+                        RepositoryName = graceIds.RepositoryName,
+                        CorrelationId = graceIds.CorrelationId
+                    )
+
+                if parseResult |> hasOutput then
+                    return!
+                        progress
+                            .Columns(progressColumns)
+                            .StartAsync(fun progressContext ->
+                                task {
+                                    let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
+                                    let! result = PromotionGroup.List(parameters)
+                                    t0.Increment(100.0)
+                                    return result
+                                })
+                else
+                    return! PromotionGroup.List(parameters)
+            with ex ->
+                return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
+        }
+
+    type List() =
+        inherit AsynchronousCommandLineAction()
+
+        override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
+            task {
+                let! result = listHandler parseResult
+                return result |> renderOutput parseResult
+            }
+
     let Build =
         let addCommonOptions (command: Command) =
             command
@@ -772,5 +841,16 @@ module PromotionGroupCommand =
 
         deleteCommand.Action <- new Delete()
         promotionGroupCommand.Subcommands.Add(deleteCommand)
+
+        let listCommand =
+            new Command("list", Description = "List promotion groups for a target branch.")
+            |> addOption Options.targetBranchId
+            |> addOption Options.targetBranchName
+            |> addOption Options.status
+            |> addOption Options.maxCount
+            |> addCommonOptions
+
+        listCommand.Action <- new List()
+        promotionGroupCommand.Subcommands.Add(listCommand)
 
         promotionGroupCommand

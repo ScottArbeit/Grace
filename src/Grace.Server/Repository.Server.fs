@@ -411,6 +411,25 @@ module Repository =
                 return! processCommand context validations command
             }
 
+    /// Sets the conflict resolution policy for the repository.
+    let SetConflictResolutionPolicy: HttpHandler =
+        fun (next: HttpFunc) (context: HttpContext) ->
+            task {
+                let validations (parameters: SetConflictResolutionPolicyParameters) =
+                    [| Repository.repositoryIsNotDeleted context parameters.CorrelationId RepositoryIsDeleted |]
+
+                let command (parameters: SetConflictResolutionPolicyParameters) =
+                    let policy =
+                        match parameters.PolicyType.ToLowerInvariant() with
+                        | "noconflicts" -> ConflictResolutionPolicy.NoConflicts ()
+                        | "conflictsallowedwithconfidence" -> ConflictResolutionPolicy.ConflictsAllowedWithConfidence parameters.ConfidenceThreshold
+                        | _ -> ConflictResolutionPolicy.NoConflicts ()
+                    RepositoryCommand.SetConflictResolutionPolicy(policy) |> returnValueTask
+
+                context.Items.Add("Command", nameof SetConflictResolutionPolicy)
+                return! processCommand context validations command
+            }
+
     /// Sets whether or not to keep saves in the repository.
     let SetRecordSaves: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->

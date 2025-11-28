@@ -297,6 +297,15 @@ module Branch =
                 DefaultValueFactory = (fun _ -> false)
             )
 
+        let promotionMode =
+            new Option<String>(
+                "--promotion-mode",
+                [| "-pm" |],
+                Required = true,
+                Description = "The promotion mode for the branch: IndividualOnly, GroupOnly, or Hybrid.",
+                Arity = ArgumentArity.ExactlyOne
+            )
+
         let toBranchId =
             new Option<BranchId>(
                 OptionName.ToBranchId,
@@ -1692,6 +1701,56 @@ module Branch =
 
                     let! result = enableFeatureHandler parseResult enabled command
                     return result |> renderOutput parseResult
+                with ex ->
+                    let graceError = GraceError.Create $"{ExceptionResponse.Create ex}" (parseResult |> getCorrelationId)
+                    return renderOutput parseResult (GraceResult.Error graceError)
+            }
+
+    type SetPromotionMode() =
+        inherit AsynchronousCommandLineAction()
+
+        override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
+            task {
+                try
+                    if parseResult |> verbose then printParseResult parseResult
+
+                    let validateIncomingParameters = parseResult |> CommonValidations
+
+                    match validateIncomingParameters with
+                    | Ok _ ->
+                        let graceIds = parseResult |> getNormalizedIdsAndNames
+                        let promotionMode = parseResult.GetValue(Options.promotionMode)
+
+                        let parameters =
+                            Parameters.Branch.SetPromotionModeParameters(
+                                BranchId = graceIds.BranchIdString,
+                                BranchName = graceIds.BranchName,
+                                OwnerId = graceIds.OwnerIdString,
+                                OwnerName = graceIds.OwnerName,
+                                OrganizationId = graceIds.OrganizationIdString,
+                                OrganizationName = graceIds.OrganizationName,
+                                RepositoryId = graceIds.RepositoryIdString,
+                                RepositoryName = graceIds.RepositoryName,
+                                PromotionMode = promotionMode,
+                                CorrelationId = graceIds.CorrelationId
+                            )
+
+                        let! result =
+                            if parseResult |> hasOutput then
+                                progress
+                                    .Columns(progressColumns)
+                                    .StartAsync(fun progressContext ->
+                                        task {
+                                            let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
+                                            let! response = Branch.SetPromotionMode(parameters)
+                                            t0.Increment(100.0)
+                                            return response
+                                        })
+                            else
+                                Branch.SetPromotionMode(parameters)
+
+                        return result |> renderOutput parseResult
+                    | Error error -> return Error error |> renderOutput parseResult
                 with ex ->
                     let graceError = GraceError.Create $"{ExceptionResponse.Create ex}" (parseResult |> getCorrelationId)
                     return renderOutput parseResult (GraceResult.Error graceError)
@@ -3780,6 +3839,14 @@ module Branch =
 
         enableAutoRebaseCommand.Action <- new EnableAutoRebase()
         branchCommand.Subcommands.Add(enableAutoRebaseCommand)
+
+        let setPromotionModeCommand =
+            new Command("set-promotion-mode", Description = "Set the promotion mode for the branch (IndividualOnly, GroupOnly, or Hybrid).")
+            |> addOption Options.promotionMode
+            |> addCommonOptions
+
+        setPromotionModeCommand.Action <- new SetPromotionMode()
+        branchCommand.Subcommands.Add(setPromotionModeCommand)
 
         let setNameCommand =
             new Command("set-name", Description = "Change the name of the branch.")

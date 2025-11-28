@@ -638,6 +638,25 @@ module Branch =
                 return! processCommand context validations command
             }
 
+    /// Sets the promotion mode for the provided branch.
+    let SetPromotionMode: HttpHandler =
+        fun (next: HttpFunc) (context: HttpContext) ->
+            task {
+                let validations (parameters: SetPromotionModeParameters) = [||]
+
+                let command (parameters: SetPromotionModeParameters) =
+                    let promotionMode =
+                        match parameters.PromotionMode.ToLowerInvariant() with
+                        | "individualonly" -> BranchPromotionMode.IndividualOnly
+                        | "grouponly" -> BranchPromotionMode.GroupOnly
+                        | "hybrid" -> BranchPromotionMode.Hybrid
+                        | _ -> BranchPromotionMode.IndividualOnly
+                    SetPromotionMode(promotionMode) |> returnValueTask
+
+                context.Items.Add("Command", nameof SetPromotionMode)
+                return! processCommand context validations command
+            }
+
     /// Deletes the provided branch.
     let Delete: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->

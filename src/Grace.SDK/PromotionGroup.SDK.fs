@@ -58,3 +58,7 @@ type PromotionGroup() =
     /// Deletes the promotion group.
     static member public Delete(parameters: DeletePromotionGroupParameters) =
         postServer<DeletePromotionGroupParameters, string> (parameters |> ensureCorrelationIdIsSet, $"promotionGroup/delete")
+
+    /// Lists promotion groups for a target branch.
+    static member public List(parameters: ListPromotionGroupsParameters) =
+        postServer<ListPromotionGroupsParameters, IReadOnlyList<PromotionGroupDto>> (parameters |> ensureCorrelationIdIsSet, $"promotionGroup/list")

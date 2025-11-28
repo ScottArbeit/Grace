@@ -149,3 +149,10 @@ type Repository() =
             parameters |> ensureCorrelationIdIsSet,
             $"repository/{nameof (Repository.GetReferencesByReferenceId)}"
         )
+
+    /// Sets the conflict resolution policy for the repository.
+    static member public SetConflictResolutionPolicy(parameters: SetConflictResolutionPolicyParameters) =
+        postServer<SetConflictResolutionPolicyParameters, String> (
+            parameters |> ensureCorrelationIdIsSet,
+            $"repository/{nameof (Repository.SetConflictResolutionPolicy)}"
+        )

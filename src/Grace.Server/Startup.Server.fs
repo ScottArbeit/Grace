@@ -151,6 +151,9 @@ module Application =
                           route "/enableTag" Branch.EnableTag
                           |> addMetadata typeof<Branch.EnableFeatureParameters>
 
+                          route "/setPromotionMode" Branch.SetPromotionMode
+                          |> addMetadata typeof<Branch.SetPromotionModeParameters>
+
                           route "/get" Branch.Get |> addMetadata typeof<Branch.GetBranchParameters>
 
                           route "/getEvents" Branch.GetEvents
@@ -377,6 +380,9 @@ module Application =
 
                           route "/setDefaultServerApiVersion" Repository.SetDefaultServerApiVersion
                           |> addMetadata typeof<Repository.SetDefaultServerApiVersionParameters>
+
+                          route "/setConflictResolutionPolicy" Repository.SetConflictResolutionPolicy
+                          |> addMetadata typeof<Repository.SetConflictResolutionPolicyParameters>
 
                           route "/setDescription" Repository.SetDescription
                           |> addMetadata typeof<Repository.SetRepositoryDescriptionParameters>
