@@ -46,6 +46,7 @@ module DirectoryVersion =
         | ValidationError of fileVersion: FileVersion * errorMessage: string * elapsedMs: float
 
     /// Validates a single file's SHA-256 hash by downloading from storage and computing.
+    /// Note: Non-binary files are stored as GZip-compressed streams, so we need to decompress them first.
     let validateFileSha256 (repositoryDto: RepositoryDto) (fileVersion: FileVersion) (correlationId: CorrelationId) =
         task {
             let stopwatch = Stopwatch.StartNew()
@@ -58,9 +59,18 @@ module DirectoryVersion =
                     stopwatch.Stop()
                     return MissingInStorage(fileVersion, stopwatch.Elapsed.TotalMilliseconds)
                 else
-                    // Download and compute SHA-256 using streaming
-                    use! blobStream = blobClient.OpenReadAsync()
-                    let! computedHash = computeSha256ForFile blobStream fileVersion.RelativePath
+                    // Download the stream from blob storage
+                    use! blobStream = blobClient.OpenReadAsync(position = 0, bufferSize = (64 * 1024))
+
+                    // If the file is not binary, it's stored as a GZip stream and needs decompression
+                    let streamToHash: Stream =
+                        if fileVersion.IsBinary then
+                            blobStream
+                        else
+                            new GZipStream(stream = blobStream, mode = CompressionMode.Decompress, leaveOpen = false)
+
+                    // Compute SHA-256 hash using the (possibly decompressed) stream
+                    let! computedHash = computeSha256ForFile streamToHash fileVersion.RelativePath
                     stopwatch.Stop()
 
                     if computedHash = fileVersion.Sha256Hash then
@@ -548,7 +558,7 @@ module DirectoryVersion =
                 let isValid command (metadata: EventMetadata) =
                     task {
                         match command with
-                        | DirectoryVersionCommand.Create (directoryVersion, repositoryDto) ->
+                        | DirectoryVersionCommand.Create(directoryVersion, repositoryDto) ->
                             if
                                 state.State.Any(fun e ->
                                     match e.Event with
@@ -577,21 +587,25 @@ module DirectoryVersion =
                             let! event =
                                 task {
                                     match command with
-                                    | Create (directoryVersion, repositoryDto) ->
-                                        // Perform SHA-256 validation for all files
-                                        let filesToValidate = directoryVersion.Files
+                                    | Create(directoryVersion, repositoryDto) ->
+                                        // Determine which files need validation using incremental validation logic.
+                                        // For now, we pass None for previouslyValidatedFiles since we don't yet
+                                        // query for the last validated DirectoryVersion with the same RelativePath.
+                                        // This means all files will be validated (conservative approach).
+                                        let filesToValidate = getFilesToValidate directoryVersion.Files None
 
                                         log.LogInformation(
-                                            "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; Starting SHA-256 validation for DirectoryVersion; DirectoryVersionId: {DirectoryVersionId}; RelativePath: {RelativePath}; FileCount: {FileCount}.",
+                                            "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; Starting SHA-256 validation for DirectoryVersion; DirectoryVersionId: {DirectoryVersionId}; RelativePath: {RelativePath}; FileCount: {FileCount}; FilesToValidate: {FilesToValidate}.",
                                             getCurrentInstantExtended (),
                                             getMachineName,
                                             metadata.CorrelationId,
                                             directoryVersion.DirectoryVersionId,
                                             directoryVersion.RelativePath,
-                                            filesToValidate.Count
+                                            directoryVersion.Files.Count,
+                                            filesToValidate.Length
                                         )
 
-                                        // Validate all files in parallel
+                                        // Validate files in parallel
                                         let! validationResults =
                                             filesToValidate
                                             |> Seq.map (fun fileVersion -> validateFileSha256 repositoryDto fileVersion metadata.CorrelationId)
@@ -734,7 +748,7 @@ module DirectoryVersion =
                                                 totalElapsedMs
                                             )
 
-                                            let newDirectoryVersion = {directoryVersion with HashesValidated = true }
+                                            let newDirectoryVersion = { directoryVersion with HashesValidated = true }
                                             return Ok(Created newDirectoryVersion)
                                     | SetRecursiveSize recursiveSize -> return Ok(RecursiveSizeSet recursiveSize)
                                     | DeleteLogical deleteReason ->
@@ -765,7 +779,7 @@ module DirectoryVersion =
                                 }
 
                             match event with
-                            | Ok event  -> return! this.ApplyEvent { Event = event; Metadata = metadata }
+                            | Ok event -> return! this.ApplyEvent { Event = event; Metadata = metadata }
                             | Error error -> return Error error
                         with ex ->
                             return Error(GraceError.CreateWithMetadata ex String.Empty metadata.CorrelationId metadata.Properties)
