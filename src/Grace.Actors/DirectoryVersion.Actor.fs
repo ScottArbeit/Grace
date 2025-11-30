@@ -62,15 +62,16 @@ module DirectoryVersion =
                     // Download the stream from blob storage
                     use! blobStream = blobClient.OpenReadAsync(position = 0, bufferSize = (64 * 1024))
 
-                    // If the file is not binary, it's stored as a GZip stream and needs decompression
-                    let streamToHash: Stream =
+                    // Compute SHA-256 hash. Non-binary files are stored as GZip streams and need decompression.
+                    let! computedHash =
                         if fileVersion.IsBinary then
-                            blobStream
+                            computeSha256ForFile blobStream fileVersion.RelativePath
                         else
-                            new GZipStream(stream = blobStream, mode = CompressionMode.Decompress, leaveOpen = false)
+                            task {
+                                use gzStream = new GZipStream(stream = blobStream, mode = CompressionMode.Decompress, leaveOpen = false)
+                                return! computeSha256ForFile gzStream fileVersion.RelativePath
+                            }
 
-                    // Compute SHA-256 hash using the (possibly decompressed) stream
-                    let! computedHash = computeSha256ForFile streamToHash fileVersion.RelativePath
                     stopwatch.Stop()
 
                     if computedHash = fileVersion.Sha256Hash then
