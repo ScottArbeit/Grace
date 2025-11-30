@@ -116,7 +116,6 @@ module DirectoryVersion =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let graceIds = getGraceIds context
-                let repositoryId = Guid.Parse(graceIds.RepositoryIdString)
 
                 let validations (parameters: CreateParameters) =
                     [| String.isNotEmpty $"{parameters.DirectoryVersion.DirectoryVersionId}" DirectoryVersionError.InvalidDirectoryVersionId
@@ -134,10 +133,14 @@ module DirectoryVersion =
 
                 let command (parameters: CreateParameters) (context: HttpContext) =
                     task {
-                        let actorProxy =
-                            DirectoryVersion.CreateActorProxy parameters.DirectoryVersion.DirectoryVersionId repositoryId (getCorrelationId context)
+                        let repositoryActorProxy =
+                            Repository.CreateActorProxy graceIds.OrganizationId graceIds.RepositoryId (getCorrelationId context)
 
-                        return! actorProxy.Handle (DirectoryVersionCommand.Create parameters.DirectoryVersion) (Services.createMetadata context)
+                        let! repositoryDto = repositoryActorProxy.Get(getCorrelationId context)
+
+                        let actorProxy = DirectoryVersion.CreateActorProxy parameters.DirectoryVersion.DirectoryVersionId graceIds.RepositoryId (getCorrelationId context)
+
+                        return! actorProxy.Handle (DirectoryVersionCommand.Create (parameters.DirectoryVersion, repositoryDto)) (Services.createMetadata context)
                     }
 
                 return! processCommand context validations command
@@ -343,6 +346,10 @@ module DirectoryVersion =
                         let correlationId = getCorrelationId context
                         let results = ConcurrentQueue<GraceResult<string>>()
 
+                        let repositoryActorProxy =
+                            Repository.CreateActorProxy graceIds.OrganizationId graceIds.RepositoryId correlationId
+                        let! repositoryDto = repositoryActorProxy.Get(correlationId)
+
                         do!
                             Parallel.ForEachAsync(
                                 parameters.DirectoryVersions,
@@ -359,7 +366,7 @@ module DirectoryVersion =
                                                 //logToConsole $"In SaveDirectoryVersions: {dv.DirectoryId} exists: {exists}"
                                                 if not <| exists then
                                                     let! createResult =
-                                                        directoryVersionActor.Handle (DirectoryVersionCommand.Create directoryVersion) (createMetadata context)
+                                                        directoryVersionActor.Handle (DirectoryVersionCommand.Create (directoryVersion, repositoryDto)) (createMetadata context)
 
                                                     results.Enqueue(createResult)
                                             with ex ->

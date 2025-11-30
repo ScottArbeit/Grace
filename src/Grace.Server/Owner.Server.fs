@@ -65,18 +65,12 @@ module Owner =
 
                         match! actorProxy.Handle cmd metadata with
                         | Ok graceReturnValue ->
-                            logToConsole $"In Owner.Server.processCommand: graceReturnValue.ReturnValue: {graceReturnValue.ReturnValue}"
-                            logToConsole $"In Owner.Server.processCommand: graceReturnValue.CorrelationId: {graceReturnValue.CorrelationId}."
-                            logToConsole $"In Owner.Server.processCommand: graceReturnValue.EventTime: {graceReturnValue.EventTime}."
-                            logToConsole $"In Owner.Server.processCommand: graceReturnValue.Properties: {serialize graceReturnValue.Properties}."
-
                             graceReturnValue
                                 .enhance(parameterDictionary :> IReadOnlyDictionary<string, obj>)
                                 .enhance(nameof OwnerId, graceIds.OwnerId)
                                 .enhance("Command", commandName)
                                 .enhance ("Path", context.Request.Path.Value)
                             |> ignore
-
 
                             return! context |> result200Ok graceReturnValue
                         | Error graceError ->

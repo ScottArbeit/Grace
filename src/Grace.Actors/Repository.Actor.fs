@@ -126,7 +126,7 @@ module Repository =
                                             0L
 
                                     let! directoryResult =
-                                        directoryVersionActorProxy.Handle (DirectoryVersionCommand.Create(emptyDirectoryVersion)) repositoryEvent.Metadata
+                                        directoryVersionActorProxy.Handle (DirectoryVersionCommand.Create(emptyDirectoryVersion, repositoryDto)) repositoryEvent.Metadata
 
                                     logToConsole $"In Repository.Actor.handleEvent: Successfully created the empty directory version."
 

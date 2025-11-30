@@ -60,8 +60,6 @@ module DirectoryVersion =
                 else
                     // Download and compute SHA-256 using streaming
                     use! blobStream = blobClient.OpenReadAsync()
-
-                    // Use the existing computeSha256ForFile function
                     let! computedHash = computeSha256ForFile blobStream fileVersion.RelativePath
                     stopwatch.Stop()
 
@@ -550,7 +548,7 @@ module DirectoryVersion =
                 let isValid command (metadata: EventMetadata) =
                     task {
                         match command with
-                        | DirectoryVersionCommand.Create directoryVersion ->
+                        | DirectoryVersionCommand.Create (directoryVersion, repositoryDto) ->
                             if
                                 state.State.Any(fun e ->
                                     match e.Event with
@@ -576,16 +574,10 @@ module DirectoryVersion =
                 let processCommand (command: DirectoryVersionCommand) (metadata: EventMetadata) =
                     task {
                         try
-                            let! eventResult =
+                            let! event =
                                 task {
                                     match command with
-                                    | Create directoryVersion ->
-                                        // Get repository information for storage access
-                                        let repositoryActorProxy =
-                                            Repository.CreateActorProxy directoryVersion.OrganizationId directoryVersion.RepositoryId metadata.CorrelationId
-
-                                        let! repositoryDto = repositoryActorProxy.Get metadata.CorrelationId
-
+                                    | Create (directoryVersion, repositoryDto) ->
                                         // Perform SHA-256 validation for all files
                                         let filesToValidate = directoryVersion.Files
 
@@ -742,7 +734,8 @@ module DirectoryVersion =
                                                 totalElapsedMs
                                             )
 
-                                            return Ok(Created directoryVersion)
+                                            let newDirectoryVersion = {directoryVersion with HashesValidated = true }
+                                            return Ok(Created newDirectoryVersion)
                                     | SetRecursiveSize recursiveSize -> return Ok(RecursiveSizeSet recursiveSize)
                                     | DeleteLogical deleteReason ->
                                         let repositoryActorProxy =
@@ -771,20 +764,8 @@ module DirectoryVersion =
                                     | Undelete -> return Ok(Undeleted)
                                 }
 
-                            match eventResult with
-                            | Ok event ->
-                                // Apply the main event
-                                let! result = this.ApplyEvent { Event = event; Metadata = metadata }
-
-                                // If creation was successful, also emit HashesValidated event
-                                match result, event with
-                                | Ok returnValue, Created _ ->
-                                    let! hashValidatedResult = this.ApplyEvent { Event = DirectoryVersionEventType.HashesValidated; Metadata = metadata }
-
-                                    match hashValidatedResult with
-                                    | Ok _ -> return Ok returnValue
-                                    | Error err -> return Error err
-                                | _ -> return result
+                            match event with
+                            | Ok event  -> return! this.ApplyEvent { Event = event; Metadata = metadata }
                             | Error error -> return Error error
                         with ex ->
                             return Error(GraceError.CreateWithMetadata ex String.Empty metadata.CorrelationId metadata.Properties)

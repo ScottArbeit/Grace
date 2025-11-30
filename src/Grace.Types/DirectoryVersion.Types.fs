@@ -2,6 +2,7 @@ namespace Grace.Types
 
 open Grace.Shared
 open Grace.Shared.Utilities
+open Grace.Types.Repository
 open Grace.Types.Types
 open NodaTime
 open MessagePack
@@ -17,7 +18,7 @@ module DirectoryVersion =
 
     [<KnownType("GetKnownTypes")>]
     type DirectoryVersionCommand =
-        | Create of directoryVersion: DirectoryVersion
+        | Create of directoryVersion: DirectoryVersion * repositoryDto: RepositoryDto
         | SetRecursiveSize of recursizeSize: int64
         | DeleteLogical of DeleteReason: DeleteReason
         | DeletePhysical
@@ -30,7 +31,6 @@ module DirectoryVersion =
     type DirectoryVersionEventType =
         | Created of directoryVersion: DirectoryVersion
         | RecursiveSizeSet of recursiveSize: int64
-        | HashesValidated
         | LogicalDeleted of DeleteReason: DeleteReason
         | PhysicalDeleted
         | Undeleted
@@ -56,7 +56,6 @@ module DirectoryVersion =
             DeletedAt: Instant option
             [<Key(3)>]
             DeleteReason: DeleteReason
-            /// Indicates whether all file SHA-256 hashes have been validated by the server.
             [<Key(4)>]
             HashesValidated: bool
         }
@@ -74,7 +73,6 @@ module DirectoryVersion =
             match directoryVersionEventType with
             | Created directoryVersion -> { currentDirectoryVersionDto with DirectoryVersion = directoryVersion }
             | RecursiveSizeSet recursiveSize -> { currentDirectoryVersionDto with RecursiveSize = recursiveSize }
-            | HashesValidated -> { currentDirectoryVersionDto with HashesValidated = true }
             | LogicalDeleted deleteReason -> { currentDirectoryVersionDto with DeletedAt = Some(getCurrentInstant ()); DeleteReason = deleteReason }
             | PhysicalDeleted -> currentDirectoryVersionDto // Do nothing because it's about to be deleted anyway.
             | Undeleted -> { currentDirectoryVersionDto with DeletedAt = None; DeleteReason = String.Empty }

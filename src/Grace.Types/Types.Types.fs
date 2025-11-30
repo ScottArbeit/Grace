@@ -318,7 +318,10 @@ module Types =
           [<Key(9)>]
           Size: int64
           [<Key(10)>]
-          CreatedAt: Instant }
+          CreatedAt: Instant
+          [<Key(11)>]
+          HashesValidated: bool
+        }
 
         static member GetKnownTypes() = GetKnownTypes<DirectoryVersion>()
 
@@ -333,7 +336,9 @@ module Types =
               Directories = List<DirectoryVersionId>()
               Files = List<FileVersion>()
               Size = InitialDirectorySize
-              CreatedAt = DefaultTimestamp }
+              CreatedAt = DefaultTimestamp
+              HashesValidated = false
+            }
 
         static member Create
             (directoryVersionId: DirectoryVersionId)
@@ -356,7 +361,9 @@ module Types =
               Directories = directories
               Files = files
               Size = size
-              CreatedAt = getCurrentInstant () }
+              CreatedAt = getCurrentInstant ()
+              HashesValidated = false
+            }
 
         member this.ToLocalDirectoryVersion lastWriteTimeUtc =
             LocalDirectoryVersion.Create
