@@ -38,6 +38,7 @@
 		<Compile Include="Reference.Actor.fs" />
 		<Compile Include="Branch.Actor.fs" />
 		<Compile Include="BranchName.Actor.fs" />
+		<Compile Include="PromotionGroup.Actor.fs" />
 		<Compile Include="Repository.Actor.fs" />
 		<Compile Include="RepositoryName.Actor.fs" />
 		<Compile Include="RepositoryPermission.Actor.fs" />

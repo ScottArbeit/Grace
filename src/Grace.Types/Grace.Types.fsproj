@@ -25,6 +25,7 @@
         <Compile Include="Repository.Types.fs" />
         <Compile Include="Reference.Types.fs" />
         <Compile Include="Branch.Types.fs" />
+        <Compile Include="PromotionGroup.Types.fs" />
         <Compile Include="Diff.Types.fs" />
         <Compile Include="DirectoryVersion.Types.fs" />
         <Compile Include="Reminder.Types.fs" />

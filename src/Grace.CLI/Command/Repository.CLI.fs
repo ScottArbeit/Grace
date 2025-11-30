@@ -246,6 +246,28 @@ module Repository =
                 Arity = ArgumentArity.ExactlyOne
             )
 
+        let conflictResolutionPolicy =
+            (new Option<String>(
+                "--conflict-resolution-policy",
+                Required = true,
+                Description = "The repository's resolution conflict policy when conflicts are detected in a PromotionGroup.",
+                Arity = ArgumentArity.ExactlyOne
+            )).AcceptOnlyFromAmong(listCases<ConflictResolutionPolicy> ())
+
+        let confidenceThreshold =
+            new Option<float32>(
+                "--confidence-threshold",
+                Required = false,
+                Description = "The confidence threshold for auto-accepting conflict resolutions (0.0 to 1.0). Required when policy is ConflictsAllowedWithConfidence.",
+                Arity = ArgumentArity.ExactlyOne,
+                DefaultValueFactory = (fun _ -> 0.8f)
+            )
+
+        confidenceThreshold.Validators.Add(fun optionResult ->
+            let parseResult = optionResult.GetValueOrDefault<float32>()
+            if parseResult < 0.0f || parseResult > 1.0f then
+                optionResult.AddError("The confidence threshold must be between 0.0 and 1.0."))
+
     // Create subcommand.
     type Create() =
         inherit AsynchronousCommandLineAction()
@@ -1544,6 +1566,57 @@ module Repository =
                             (GraceResult.Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId)))
             }
 
+    /// Repository.SetConflictResolutionPolicy subcommand definition
+    type SetConflictResolutionPolicy() =
+        inherit AsynchronousCommandLineAction()
+
+        override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
+            task {
+                try
+                    if parseResult |> verbose then printParseResult parseResult
+                    let graceIds = parseResult |> getNormalizedIdsAndNames
+                    let validateIncomingParameters = parseResult |> Grace.CLI.Common.Validations.CommonValidations
+
+                    match validateIncomingParameters with
+                    | Ok _ ->
+                        let parameters =
+                            Repository.SetConflictResolutionPolicyParameters(
+                                OwnerId = graceIds.OwnerIdString,
+                                OwnerName = graceIds.OwnerName,
+                                OrganizationId = graceIds.OrganizationIdString,
+                                OrganizationName = graceIds.OrganizationName,
+                                RepositoryId = graceIds.RepositoryIdString,
+                                RepositoryName = graceIds.RepositoryName,
+                                CorrelationId = getCorrelationId parseResult,
+                                ConflictResolutionPolicy = parseResult.GetValue(Options.conflictResolutionPolicy),
+                                ConfidenceThreshold = parseResult.GetValue(Options.confidenceThreshold)
+                            )
+
+                        let! result =
+                            if parseResult |> hasOutput then
+                                progress
+                                    .Columns(progressColumns)
+                                    .StartAsync(fun progressContext ->
+                                        task {
+                                            let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
+
+                                            let! response = Grace.SDK.Repository.SetConflictResolutionPolicy(parameters)
+                                            t0.Increment(100.0)
+                                            return response
+                                        })
+                            else
+                                Grace.SDK.Repository.SetConflictResolutionPolicy(parameters)
+
+                        return result |> renderOutput parseResult
+                    | Error error -> return Error error |> renderOutput parseResult
+
+                with ex ->
+                    return
+                        renderOutput
+                            parseResult
+                            (GraceResult.Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId)))
+            }
+
     /// Repository.Delete subcommand definition
     type Delete() =
         inherit AsynchronousCommandLineAction()
@@ -1912,6 +1985,15 @@ module Repository =
 
         setDescriptionCommand.Action <- new SetDescription()
         repositoryCommand.Subcommands.Add(setDescriptionCommand)
+
+        let setConflictResolutionPolicyCommand =
+            new Command("set-conflict-resolution-policy", Description = "Sets the conflict resolution policy for the repository.")
+            |> addOption Options.conflictResolutionPolicy
+            |> addOption Options.confidenceThreshold
+            |> addCommonOptions
+
+        setConflictResolutionPolicyCommand.Action <- new SetConflictResolutionPolicy()
+        repositoryCommand.Subcommands.Add(setConflictResolutionPolicyCommand)
 
         let deleteCommand =
             new Command("delete", Description = "Deletes a repository.")

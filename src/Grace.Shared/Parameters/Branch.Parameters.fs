@@ -60,6 +60,11 @@ module Branch =
         inherit BranchParameters()
         member val public Enabled = false with get, set
 
+    /// Parameters for the /branch/setPromotionMode endpoint.
+    type SetPromotionModeParameters() =
+        inherit BranchParameters()
+        member val public PromotionMode = String.Empty with get, set
+
     /// Parameters for the /branch/delete endpoint.
     type DeleteBranchParameters() =
         inherit BranchParameters()

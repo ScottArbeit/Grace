@@ -56,6 +56,9 @@ module Constants =
         let NamedSection = "NamedSectionActor"
 
         [<Literal>]
+        let PromotionGroup = "PromotionGroupActor"
+
+        [<Literal>]
         let Reference = "ReferenceActor"
 
         [<Literal>]
@@ -97,6 +100,9 @@ module Constants =
 
         [<Literal>]
         let Owner = "Owner"
+
+        [<Literal>]
+        let PromotionGroup = "PromotionGroup"
 
         [<Literal>]
         let Reference = "Ref"

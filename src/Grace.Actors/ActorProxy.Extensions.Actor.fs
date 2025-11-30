@@ -212,3 +212,16 @@ module ActorProxy =
             orleansContext.Add(Constants.ActorNameProperty, ActorName.RepositoryName)
             memoryCache.CreateOrleansContextEntry(grain.GetGrainId(), orleansContext)
             grain
+
+    module PromotionGroup =
+        open Grace.Types.PromotionGroup
+
+        /// Creates an ActorProxy for a PromotionGroup actor, and adds the correlationId to the server's MemoryCache so
+        ///   it's available in the OnActivateAsync() method.
+        let CreateActorProxy (promotionGroupId: PromotionGroupId) (repositoryId: RepositoryId) (correlationId: string) =
+            let grain = orleansClient.CreateActorProxyWithCorrelationId<IPromotionGroupActor>(promotionGroupId, correlationId)
+            let orleansContext = Dictionary<string, obj>()
+            orleansContext.Add(nameof RepositoryId, repositoryId)
+            orleansContext.Add(Constants.ActorNameProperty, ActorName.PromotionGroup)
+            memoryCache.CreateOrleansContextEntry(grain.GetGrainId(), orleansContext)
+            grain

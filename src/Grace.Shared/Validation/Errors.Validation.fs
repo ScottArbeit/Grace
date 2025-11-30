@@ -484,6 +484,7 @@ module Errors =
         | FailedWhileSavingEvent
         | FailedWhileApplyingEvent
         | InvalidCheckpointDaysValue
+        | InvalidConflictResolutionPolicy
         | InvalidDiffCacheDaysValue
         | InvalidDirectory
         | InvalidDirectoryVersionCacheDaysValue
@@ -536,6 +537,7 @@ module Errors =
             | FailedWhileSavingEvent -> getLocalizedString StringResourceName.FailedWhileSavingEvent
             | FailedWhileApplyingEvent -> getLocalizedString StringResourceName.FailedWhileApplyingEvent
             | InvalidCheckpointDaysValue -> getLocalizedString StringResourceName.InvalidCheckpointDaysValue
+            | InvalidConflictResolutionPolicy -> getLocalizedString StringResourceName.InvalidConflictResolutionPolicy
             | InvalidDiffCacheDaysValue -> getLocalizedString StringResourceName.InvalidDiffCacheDaysValue
             | InvalidDirectory -> getLocalizedString StringResourceName.InvalidDirectoryPath
             | InvalidDirectoryVersionCacheDaysValue -> getLocalizedString StringResourceName.InvalidDirectoryVersionCacheDaysValue
@@ -601,6 +603,48 @@ module Errors =
             | Some error -> StorageError.getErrorMessage error
             | None -> String.Empty
 
+    type PromotionGroupError =
+        | DuplicateCorrelationId
+        | FailedWhileApplyingEvent
+        | PromotionGroupAlreadyExists
+        | PromotionGroupDoesNotExist
+        | PromotionGroupNotInEditableState
+        | PromotionGroupNotInDraftState
+        | PromotionGroupNotInReadyState
+        | PromotionGroupNotRunning
+        | PromotionGroupCannotBeBlocked
+        | PromotionGroupCannotBeDeleted
+        | PromotionGroupIsEmpty
+        | InvalidPromotionGroupId
+        | InvalidTargetBranchId
+        | InvalidPromotionId
+        | PromotionNotInGroup
+
+        interface IErrorDiscriminatedUnion
+
+        static member getErrorMessage(promotionGroupError: PromotionGroupError) : string =
+            match promotionGroupError with
+            | DuplicateCorrelationId -> "A command with this correlation ID has already been processed."
+            | FailedWhileApplyingEvent -> "An error occurred while processing the promotion group event."
+            | PromotionGroupAlreadyExists -> "A promotion group with this ID already exists."
+            | PromotionGroupDoesNotExist -> "The specified promotion group does not exist."
+            | PromotionGroupNotInEditableState -> "The promotion group is not in an editable state (must be Draft or Ready)."
+            | PromotionGroupNotInDraftState -> "The promotion group must be in Draft state to perform this operation."
+            | PromotionGroupNotInReadyState -> "The promotion group must be in Ready state to start execution."
+            | PromotionGroupNotRunning -> "The promotion group is not currently running."
+            | PromotionGroupCannotBeBlocked -> "The promotion group cannot be blocked in its current state."
+            | PromotionGroupCannotBeDeleted -> "The promotion group cannot be deleted (it is running or has already succeeded)."
+            | PromotionGroupIsEmpty -> "The promotion group has no promotions to apply."
+            | InvalidPromotionGroupId -> "The promotion group ID is invalid."
+            | InvalidTargetBranchId -> "The target branch ID is invalid."
+            | InvalidPromotionId -> "The promotion ID is invalid."
+            | PromotionNotInGroup -> "The specified promotion is not in this promotion group."
+
+        static member getErrorMessage(promotionGroupError: PromotionGroupError option) : string =
+            match promotionGroupError with
+            | Some error -> PromotionGroupError.getErrorMessage error
+            | None -> String.Empty
+
     type TestError =
         | TestFailed
 
@@ -650,6 +694,7 @@ module Errors =
         | :? DirectoryVersionError as directoryVersionError -> DirectoryVersionError.getErrorMessage directoryVersionError
         | :? OwnerError as ownerError -> OwnerError.getErrorMessage ownerError
         | :? OrganizationError as organizationError -> OrganizationError.getErrorMessage organizationError
+        | :? PromotionGroupError as promotionGroupError -> PromotionGroupError.getErrorMessage promotionGroupError
         | :? ReferenceError as referenceError -> ReferenceError.getErrorMessage referenceError
         | :? ReminderError as reminderError -> ReminderError.getErrorMessage reminderError
         | :? RepositoryError as repositoryError -> RepositoryError.getErrorMessage repositoryError

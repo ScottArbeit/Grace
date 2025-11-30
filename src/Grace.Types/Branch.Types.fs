@@ -51,6 +51,7 @@ module Branch =
         | EnableTag of enabled: bool
         | EnableExternal of enabled: bool
         | EnableAutoRebase of enabled: bool
+        | SetPromotionMode of promotionMode: BranchPromotionMode
         | RemoveReference of referenceId: ReferenceId
         | UpdateParentBranch of newParentBranchId: BranchId
         | DeleteLogical of
@@ -92,6 +93,7 @@ module Branch =
         | EnabledTag of enabled: bool
         | EnabledExternal of enabled: bool
         | EnabledAutoRebase of enabled: bool
+        | PromotionModeSet of promotionMode: BranchPromotionMode
         | ReferenceRemoved of referenceId: ReferenceId
         | ParentBranchUpdated of newParentBranchId: BranchId
         | LogicalDeleted of
@@ -132,6 +134,7 @@ module Branch =
           TagEnabled: bool
           ExternalEnabled: bool
           AutoRebaseEnabled: bool
+          PromotionMode: BranchPromotionMode
           LatestReference: ReferenceDto
           LatestPromotion: ReferenceDto
           LatestCommit: ReferenceDto
@@ -161,6 +164,7 @@ module Branch =
               TagEnabled = false
               ExternalEnabled = false
               AutoRebaseEnabled = true
+              PromotionMode = BranchPromotionMode.IndividualOnly
               LatestReference = ReferenceDto.Default
               LatestPromotion = ReferenceDto.Default
               LatestCommit = ReferenceDto.Default
@@ -232,6 +236,7 @@ module Branch =
                 | EnabledTag enabled -> { currentBranchDto with TagEnabled = enabled }
                 | EnabledExternal enabled -> { currentBranchDto with ExternalEnabled = enabled }
                 | EnabledAutoRebase enabled -> { currentBranchDto with AutoRebaseEnabled = enabled }
+                | PromotionModeSet promotionMode -> { currentBranchDto with PromotionMode = promotionMode }
                 | ReferenceRemoved _ -> currentBranchDto
                 | ParentBranchUpdated newParentBranchId -> { currentBranchDto with ParentBranchId = newParentBranchId }
                 | LogicalDeleted(force, deleteReason, reassignedChildBranches, childrenReassignedTo) ->

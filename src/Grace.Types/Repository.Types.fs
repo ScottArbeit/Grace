@@ -40,6 +40,7 @@ module Repository =
         | SetDiffCacheDays of duration: single
         | SetName of repositoryName: RepositoryName
         | SetDescription of description: string
+        | SetConflictResolutionPolicy of conflictResolutionPolicy: ConflictResolutionPolicy
         | DeleteLogical of force: bool * DeleteReason: DeleteReason
         | DeletePhysical
         | Undelete
@@ -73,6 +74,7 @@ module Repository =
         | DiffCacheDaysSet of duration: single
         | NameSet of repositoryName: RepositoryName
         | DescriptionSet of description: string
+        | ConflictResolutionPolicySet of conflictResolutionPolicy: ConflictResolutionPolicy
         | LogicalDeleted of force: bool * DeleteReason: DeleteReason
         | PhysicalDeleted
         | Undeleted
@@ -111,6 +113,7 @@ module Repository =
           DiffCacheDays: single
           Description: string
           RecordSaves: bool
+          ConflictResolutionPolicy: ConflictResolutionPolicy
           CreatedAt: Instant
           InitializedAt: Instant option
           UpdatedAt: Instant option
@@ -139,6 +142,7 @@ module Repository =
               DiffCacheDays = 1.0f
               Description = String.Empty
               RecordSaves = true
+              ConflictResolutionPolicy = ConflictResolutionPolicy.ConflictsAllowed 0.8f
               CreatedAt = Constants.DefaultTimestamp
               InitializedAt = None
               UpdatedAt = None
@@ -175,6 +179,7 @@ module Repository =
                 | DiffCacheDaysSet days -> { currentRepositoryDto with DiffCacheDays = days }
                 | NameSet repositoryName -> { currentRepositoryDto with RepositoryName = repositoryName }
                 | DescriptionSet description -> { currentRepositoryDto with Description = description }
+                | ConflictResolutionPolicySet policy -> { currentRepositoryDto with ConflictResolutionPolicy = policy }
                 | LogicalDeleted _ -> { currentRepositoryDto with DeletedAt = Some(getCurrentInstant ()) }
                 | PhysicalDeleted -> currentRepositoryDto // Do nothing because it's about to be deleted anyway.
                 | Undeleted -> { currentRepositoryDto with DeletedAt = None; DeleteReason = String.Empty }

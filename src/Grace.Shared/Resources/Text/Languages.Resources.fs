@@ -2,6 +2,7 @@ namespace Grace.Shared.Resources
 
 open NodaTime
 open System
+open Microsoft.FSharp.Reflection
 
 module Text =
 
@@ -63,6 +64,7 @@ module Text =
         | InvalidBranchId
         | InvalidBranchName
         | InvalidCheckpointDaysValue
+        | InvalidConflictResolutionPolicy
         | InvalidDiffCacheDaysValue
         | InvalidDirectoryVersionCacheDaysValue
         | InvalidDirectoryPath
@@ -616,3 +618,9 @@ module Text =
             elif totalDays < 365.25 then $"{Math.Floor(totalDays / 30.0):F0} months apart"
             elif totalDays < 730.5 then $"1 year apart"
             else $"{Math.Floor(totalDays / 365.25):F0} years apart"
+
+    let listCases<'T> () = FSharpType.GetUnionCases typeof<'T> |> Array.map (fun c -> c.Name)
+
+    let listCasesAsString<'T> () =
+        let cases = listCases<'T> () |> String.concat ", "
+        if cases.Length > 2 then cases[..^2] else String.Empty

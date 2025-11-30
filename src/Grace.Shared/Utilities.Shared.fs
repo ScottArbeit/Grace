@@ -155,15 +155,39 @@ module Utilities =
         let (case, _) = FSharpValue.GetUnionFields(x, discriminatedUnionType)
         $"{case.Name}"
 
+    let defaultForType (t: Type) : obj =
+        if t.IsValueType then
+            Activator.CreateInstance t
+        else
+            null
+
+
     /// Converts a string into the corresponding case of a discriminated union type.
     ///
-    /// Example: discriminatedUnionFromString<Animal> "Dog" -> Animal.Dog
+    /// If the case has fields, they will be initialized to their default values (null for reference types, zero/false for value types).
+    ///
+    /// Examples:
+    ///
+    ///   discriminatedUnionFromString<Animal> "Dog" -> Animal.Dog
+    ///
+    ///   discriminatedUnionFromString<Status> "InProgress" (where InProgress has a PercentDone field) -> Status.InProgress 0
     let discriminatedUnionFromString<'T> (s: string) =
         match
             FSharpType.GetUnionCases typeof<'T>
             |> Array.filter (fun case -> String.Compare(case.Name, s, ignoreCase = true) = 0)
         with
-        | [| case |] -> Some(FSharpValue.MakeUnion(case, [||]) :?> 'T)
+        | [| case |] ->
+            let fieldCount = case.GetFields().Length
+            if fieldCount = 0 then
+                Some(FSharpValue.MakeUnion(case, [||]) :?> 'T)
+            else
+                let fields = case.GetFields()
+                let unionCaseParameters = List<objnull>(fieldCount)
+                for i in 0..fieldCount-1 do
+                    let propertyType = fields[i].PropertyType
+                    unionCaseParameters.Add(defaultForType(propertyType))
+
+                Some(FSharpValue.MakeUnion(case, unionCaseParameters.ToArray()) :?> 'T)
         | _ -> None
 
     /// Gets the cases of a discriminated union as an array of strings.
