@@ -37,6 +37,7 @@
 		<Compile Include="Command\DirectoryVersion.CLI.fs" />
 		<Compile Include="Command\Watch.CLI.fs" />
 		<Compile Include="Command\Maintenance.CLI.fs" />
+		<Compile Include="Command\PromotionGroup.CLI.fs" />
 		<Compile Include="Command\Admin.CLI.fs" />
 		<Compile Include="Program.CLI.fs" />
 	</ItemGroup>
@@ -45,22 +46,22 @@
 		<PackageReference Include="MessagePack" Version="3.1.4" />
 		<PackageReference Include="MessagePack.Annotations" Version="3.1.4" />
 		<PackageReference Include="MessagePack.FSharpExtensions" Version="4.0.0" />
-		<PackageReference Include="MessagePack.NodaTime" Version="3.4.4" />
+		<PackageReference Include="MessagePack.NodaTime" Version="3.5.0" />
 		<PackageReference Include="Microsoft.AspNetCore.SignalR.Client" Version="10.0.0" />
 		<PackageReference Include="Microsoft.AspNetCore.SignalR.Protocols.Json" Version="10.0.0" />
 		<PackageReference Include="Microsoft.Extensions.Logging.Configuration" Version="10.0.0" />
 		<PackageReference Include="Microsoft.Extensions.Logging.Console" Version="10.0.0" />
 		<PackageReference Include="NodaTime" Version="3.2.2" />
 		<PackageReference Include="NodaTime.Serialization.SystemTextJson" Version="1.3.0" />
-		<PackageReference Include="OpenTelemetry" Version="1.14.0-rc.1" />
-		<PackageReference Include="OpenTelemetry.Api" Version="1.14.0-rc.1" />
-		<PackageReference Include="OpenTelemetry.Exporter.Console" Version="1.14.0-rc.1" />
-		<PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.14.0-rc.1" />
-		<PackageReference Include="OpenTelemetry.Exporter.Zipkin" Version="1.14.0-rc.1" />
-		<PackageReference Include="Polly" Version="8.6.4" />
-		<PackageReference Include="Spectre.Console" Version="0.53.0" />
-		<PackageReference Include="Spectre.Console.ImageSharp" Version="0.53.0" />
-		<PackageReference Include="Spectre.Console.Json" Version="0.53.0" />
+		<PackageReference Include="OpenTelemetry" Version="1.14.0" />
+		<PackageReference Include="OpenTelemetry.Api" Version="1.14.0" />
+		<PackageReference Include="OpenTelemetry.Exporter.Console" Version="1.14.0" />
+		<PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.14.0" />
+		<PackageReference Include="OpenTelemetry.Exporter.Zipkin" Version="1.14.0" />
+		<PackageReference Include="Polly" Version="8.6.5" />
+		<PackageReference Include="Spectre.Console" Version="0.54.0" />
+		<PackageReference Include="Spectre.Console.ImageSharp" Version="0.54.0" />
+		<PackageReference Include="Spectre.Console.Json" Version="0.54.0" />
 		<PackageReference Include="System.CommandLine" Version="2.0.0" />
 		<PackageReference Include="System.Reactive" Version="6.1.0" />
 	</ItemGroup>

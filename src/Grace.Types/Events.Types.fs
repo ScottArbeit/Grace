@@ -16,6 +16,7 @@ module Events =
         | DirectoryVersionEvent of DirectoryVersion.DirectoryVersionEvent
         | OrganizationEvent of Organization.OrganizationEvent
         | OwnerEvent of Owner.OwnerEvent
+        | PromotionGroupEvent of PromotionGroup.PromotionGroupEvent
         | ReferenceEvent of Reference.ReferenceEvent
         | RepositoryEvent of Repository.RepositoryEvent
 

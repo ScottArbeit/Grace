@@ -38,6 +38,7 @@
 		<Compile Include="Reference.Actor.fs" />
 		<Compile Include="Branch.Actor.fs" />
 		<Compile Include="BranchName.Actor.fs" />
+		<Compile Include="PromotionGroup.Actor.fs" />
 		<Compile Include="Repository.Actor.fs" />
 		<Compile Include="RepositoryName.Actor.fs" />
 		<Compile Include="RepositoryPermission.Actor.fs" />
@@ -57,7 +58,7 @@
 		<PackageReference Include="Azure.Storage.Common" Version="12.25.0" />
 		<PackageReference Include="Ben.Demystifier" Version="0.4.1" />
 		<PackageReference Include="FSharpPlus" Version="1.8.0" />
-		<PackageReference Include="Microsoft.Azure.Cosmos" Version="3.54.0" />
+		<PackageReference Include="Microsoft.Azure.Cosmos" Version="3.56.0" />
 		<PackageReference Include="Microsoft.Extensions.Caching.Memory" Version="10.0.0" />
 		<PackageReference Include="Microsoft.Orleans.Core" Version="9.2.1" />
 		<PackageReference Include="Microsoft.Orleans.Runtime" Version="9.2.1" />

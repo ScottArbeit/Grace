@@ -68,6 +68,7 @@
 		<Compile Include="Organization.Server.fs" />
 		<Compile Include="Repository.Server.fs" />
 		<Compile Include="Branch.Server.fs" />
+		<Compile Include="PromotionGroup.Server.fs" />
 		<Compile Include="DirectoryVersion.Server.fs" />
 		<Compile Include="Diff.Server.fs" />
 		<Compile Include="Storage.Server.fs" />
@@ -89,18 +90,18 @@
 	<ItemGroup>
 		<PackageReference Include="Asp.Versioning.Mvc" Version="8.1.0" />
 		<PackageReference Include="Asp.Versioning.Mvc.ApiExplorer" Version="8.1.0" />
-		<PackageReference Include="Azure.Monitor.OpenTelemetry.Exporter" Version="1.4.0" />
+		<PackageReference Include="Azure.Monitor.OpenTelemetry.Exporter" Version="1.5.0" />
 		<PackageReference Include="Azure.Storage.Blobs" Version="12.26.0" />
 		<PackageReference Include="Azure.Storage.Blobs.Batch" Version="12.23.0" />
 		<PackageReference Include="Ben.Demystifier" Version="0.4.1" />
 		<PackageReference Include="dotenv.net" Version="4.0.0" />
         <PackageReference Include="FSharp.SystemTextJson" Version="1.4.36" />
-		<PackageReference Include="Giraffe" Version="7.0.2" />
+		<PackageReference Include="Giraffe" Version="8.2.0" />
 		<PackageReference Include="MessagePack" Version="3.1.4" />
 		<PackageReference Include="MessagePack.Annotations" Version="3.1.4" />
-		<PackageReference Include="MessagePack.NodaTime" Version="3.4.4" />
-		<PackageReference Include="Microsoft.Azure.Cosmos" Version="3.54.0" />
-		<PackageReference Include="Microsoft.OpenApi" Version="3.0.0" />
+		<PackageReference Include="MessagePack.NodaTime" Version="3.5.0" />
+		<PackageReference Include="Microsoft.Azure.Cosmos" Version="3.56.0" />
+		<PackageReference Include="Microsoft.OpenApi" Version="3.0.1" />
 		<PackageReference Include="Microsoft.Orleans.Clustering.AzureStorage" Version="9.2.1" />
 		<PackageReference Include="Microsoft.Orleans.Persistence.AzureStorage" Version="9.2.1" />
 		<PackageReference Include="Microsoft.Orleans.Persistence.Cosmos" Version="9.2.1" />
@@ -110,19 +111,19 @@
 		<PackageReference Include="Microsoft.Orleans.Serialization.SystemTextJson" Version="9.2.1" />
 		<PackageReference Include="Microsoft.Orleans.Server" Version="9.2.1" />
 		<PackageReference Include="Microsoft.Orleans.Streaming.AzureStorage" Version="9.2.1" />
-		<PackageReference Include="OpenTelemetry" Version="1.14.0-rc.1" />
-		<PackageReference Include="OpenTelemetry.Exporter.Console" Version="1.14.0-rc.1" />
-		<PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.14.0-rc.1" />
+		<PackageReference Include="OpenTelemetry" Version="1.14.0" />
+		<PackageReference Include="OpenTelemetry.Exporter.Console" Version="1.14.0" />
+		<PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.14.0" />
 		<PackageReference Include="OpenTelemetry.Exporter.Prometheus.AspNetCore" Version="1.13.1-beta.1" />
-		<PackageReference Include="OpenTelemetry.Exporter.Zipkin" Version="1.14.0-rc.1" />
-		<PackageReference Include="OpenTelemetry.Extensions.Hosting" Version="1.14.0-rc.1" />
-		<PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.13.0" />
-		<PackageReference Include="OpenTelemetry.Instrumentation.Http" Version="1.13.0" />
+		<PackageReference Include="OpenTelemetry.Exporter.Zipkin" Version="1.14.0" />
+		<PackageReference Include="OpenTelemetry.Extensions.Hosting" Version="1.14.0" />
+		<PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.14.0" />
+		<PackageReference Include="OpenTelemetry.Instrumentation.Http" Version="1.14.0" />
 		<PackageReference Include="Orleans.Serialization.NodaTime" Version="0.0.4-beta" />
 		<PackageReference Include="OrleansDashboard" Version="8.2.0" />
-		<PackageReference Include="Swashbuckle.AspNetCore.Swagger" Version="10.0.0" />
-		<PackageReference Include="Swashbuckle.AspNetCore.SwaggerGen" Version="10.0.0" />
-		<PackageReference Include="Swashbuckle.AspNetCore.SwaggerUI" Version="10.0.0" />
+		<PackageReference Include="Swashbuckle.AspNetCore.Swagger" Version="10.0.1" />
+		<PackageReference Include="Swashbuckle.AspNetCore.SwaggerGen" Version="10.0.1" />
+		<PackageReference Include="Swashbuckle.AspNetCore.SwaggerUI" Version="10.0.1" />
 	</ItemGroup>
 	<ItemGroup>
 		<PackageReference Update="FSharp.Core" Version="10.0.100" />

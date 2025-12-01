@@ -18,8 +18,8 @@
 
 	<ItemGroup>
 	  <PackageReference Include="Ben.Demystifier" Version="0.4.1" />
-	  <PackageReference Include="Spectre.Console" Version="0.53.0" />
-	  <PackageReference Include="Spectre.Console.Json" Version="0.53.0" />
+	  <PackageReference Include="Spectre.Console" Version="0.54.0" />
+	  <PackageReference Include="Spectre.Console.Json" Version="0.54.0" />
 	</ItemGroup>
 
 	<ItemGroup>

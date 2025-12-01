@@ -466,6 +466,7 @@ module Repository =
                                     | SetDiffCacheDays days -> return DiffCacheDaysSet days
                                     | SetName repositoryName -> return NameSet repositoryName
                                     | SetDescription description -> return DescriptionSet description
+                                    | SetConflictResolutionPolicy policy -> return ConflictResolutionPolicySet policy
                                     | DeleteLogical(force, deleteReason) ->
                                         // Get the list of branches that aren't already deleted.
                                         let! branches =

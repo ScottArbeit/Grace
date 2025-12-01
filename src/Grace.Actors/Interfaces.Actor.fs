@@ -5,6 +5,7 @@ open Grace.Shared
 open Grace.Types.Branch
 open Grace.Types.Diff
 open Grace.Types.DirectoryVersion
+open Grace.Types.PromotionGroup
 open Grace.Types.Reference
 open Grace.Types.Reminder
 open Grace.Types.Repository
@@ -337,6 +338,26 @@ module Interfaces =
 
         /// Sends the reminder to the source actor.
         abstract member Remind: correlationId: CorrelationId -> Task<Result<unit, GraceError>>
+
+    /// Defines the operations for the PromotionGroup actor.
+    [<Interface>]
+    type IPromotionGroupActor =
+        inherit IGraceReminderWithGuidKey
+
+        /// Returns true if this promotion group already exists in the database.
+        abstract member Exists: correlationId: CorrelationId -> Task<bool>
+
+        /// Returns true if this promotion group has been deleted.
+        abstract member IsDeleted: correlationId: CorrelationId -> Task<bool>
+
+        /// Returns the current state of the promotion group.
+        abstract member Get: correlationId: CorrelationId -> Task<PromotionGroupDto>
+
+        /// Returns the list of events handled by this promotion group.
+        abstract member GetEvents: correlationId: CorrelationId -> Task<IReadOnlyList<PromotionGroupEvent>>
+
+        /// Validates incoming commands and converts them to events that are stored in the database.
+        abstract member Handle: command: PromotionGroupCommand -> eventMetadata: EventMetadata -> Task<GraceResult<string>>
 
     /// Defines the operations for the Repository actor.
     [<Interface>]

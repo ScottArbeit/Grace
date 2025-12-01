@@ -32,6 +32,7 @@ open System.Linq
 open System.Threading.Tasks
 open System.Text
 open System.Text.Json
+open Microsoft.AspNetCore.Http.HttpResults
 
 module Repository =
 
@@ -408,6 +409,21 @@ module Repository =
                     |> returnValueTask
 
                 context.Items.Add("Command", nameof SetDefaultServerApiVersion)
+                return! processCommand context validations command
+            }
+
+    /// Sets the conflict resolution policy for the repository.
+    let SetConflictResolutionPolicy: HttpHandler =
+        fun (next: HttpFunc) (context: HttpContext) ->
+            task {
+                let validations (parameters: SetConflictResolutionPolicyParameters) =
+                    [| Repository.repositoryIsNotDeleted context parameters.CorrelationId RepositoryIsDeleted
+                       DiscriminatedUnion.isMemberOf<ConflictResolutionPolicy, RepositoryError> parameters.ConflictResolutionPolicy InvalidConflictResolutionPolicy |]
+
+                let command (parameters: SetConflictResolutionPolicyParameters) =
+                    SetConflictResolutionPolicy(discriminatedUnionFromString<ConflictResolutionPolicy>(parameters.ConflictResolutionPolicy).Value) |> returnValueTask
+
+                context.Items.Add("Command", nameof SetConflictResolutionPolicy)
                 return! processCommand context validations command
             }
 

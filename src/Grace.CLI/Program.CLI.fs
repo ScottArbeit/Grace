@@ -124,6 +124,7 @@ module GraceCommand =
         rootCommand.Subcommands.Add(Owner.Build)
         rootCommand.Subcommands.Add(Config.Build)
         rootCommand.Subcommands.Add(Maintenance.Build)
+        rootCommand.Subcommands.Add(PromotionGroupCommand.Build)
         rootCommand.Subcommands.Add(Admin.Build)
 
         let Alias = Command("alias", "Display aliases for Grace commands.")

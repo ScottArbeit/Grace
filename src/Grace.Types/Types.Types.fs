@@ -524,6 +524,7 @@ module Types =
     type ReferenceLinkType =
         | BasedOn of ReferenceId
         | IncludedInPromotionGroup of Guid
+        | PromotionGroupTerminal of Guid  // Marks the final promotion in a promotion group.
 
         static member GetKnownTypes() = GetKnownTypes<ReferenceLinkType>()
 
@@ -790,6 +791,27 @@ module Types =
 
         override this.ToString() = getDiscriminatedUnionFullName this
 
+    /// Defines how promotions are handled for a branch.
+    [<KnownType("GetKnownTypes"); GenerateSerializer>]
+    type BranchPromotionMode =
+        | IndividualOnly   // Default behavior: promotions always applied individually.
+        | GroupOnly        // Promotions to this branch must go through a promotion group.
+        | Hybrid           // Promotions can be grouped by default, with an opt-out flag.
+
+        static member GetKnownTypes() = GetKnownTypes<BranchPromotionMode>()
+
+        override this.ToString() = getDiscriminatedUnionFullName this
+
+    /// Defines the conflict resolution policy for a repository.
+    [<KnownType("GetKnownTypes"); GenerateSerializer>]
+    type ConflictResolutionPolicy =
+        | NoConflicts of unit           // Any conflict blocks the promotion group.
+        | ConflictsAllowed of float32     // Conflicts allowed if model confidence >= threshold (0.0 to 1.0).
+
+        static member GetKnownTypes() = GetKnownTypes<ConflictResolutionPolicy>()
+
+        override this.ToString() = getDiscriminatedUnionFullName this
+
     /// Holds the entity Id's involved in an API call. It's populated in ValidateIds.Middleware.fs.
     type GraceIds =
         { OwnerId: OwnerId
@@ -842,6 +864,8 @@ module Types =
         | DeleteCachedState
         /// DeleteZipFile reminders are used to remind the DirectoryVersion actor to delete the directory version contents .zip file after the time set in the repository has expired.
         | DeleteZipFile
+        /// ScheduledPromotionGroup reminders are used to trigger a promotion group to start at a scheduled time.
+        | ScheduledPromotionGroup
 
         static member GetKnownTypes() = GetKnownTypes<ReminderTypes>()
 
