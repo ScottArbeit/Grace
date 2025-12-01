@@ -49,46 +49,6 @@ module DirectoryVersion =
         | MissingInStorage of fileVersion: FileVersion * elapsedMs: float
         | ValidationError of fileVersion: FileVersion * errorMessage: string * elapsedMs: float
 
-    /// Computes the SHA-256 hash for server-side validation.
-    /// This mirrors the client-side computeSha256ForFile but uses the known file size from FileVersion
-    /// instead of stream.Length (which isn't supported by GZipStream).
-    let private computeSha256ForValidationXXX (stream: Stream) (relativeFilePath: RelativePath) (fileSize: int64) =
-        task {
-            let bufferLength = 64 * 1024
-            let buffer = ArrayPool<byte>.Shared.Rent(bufferLength)
-            let hasher = incrementalHashPool.Get()
-
-            try
-                // 1. Read bytes from the stream and feed them into the hasher.
-                let mutable moreToRead = true
-
-                while moreToRead do
-                    let! bytesRead = stream.ReadAsync(buffer, 0, bufferLength)
-
-                    if bytesRead > 0 then
-                        hasher.AppendData(buffer, 0, bytesRead)
-                    else
-                        moreToRead <- false
-
-                // 2. Append the relative path to the hasher.
-                hasher.AppendData(Encoding.UTF8.GetBytes(relativeFilePath))
-
-                // 3. Append the file size (using the known size from FileVersion, not stream.Length).
-                hasher.AppendData(BitConverter.GetBytes(fileSize))
-
-                // 4. Get the SHA-256 hash.
-                let sha256Bytes = stackalloc<byte> SHA256.HashSizeInBytes
-                hasher.GetCurrentHash(sha256Bytes) |> ignore
-
-                // 5. Convert to string.
-                return Sha256Hash(byteArrayToString sha256Bytes)
-            finally
-                if not <| isNull buffer then
-                    ArrayPool<byte>.Shared.Return(buffer, clearArray = true)
-
-                if not <| isNull hasher then incrementalHashPool.Return(hasher)
-        }
-
     /// Validates a single file's SHA-256 hash by downloading from storage and computing.
     /// Note: Non-binary files are stored as GZip-compressed streams, so we need to decompress them first.
     let validateFileSha256 (repositoryDto: RepositoryDto) (fileVersion: FileVersion) (correlationId: CorrelationId) =
