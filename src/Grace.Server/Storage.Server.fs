@@ -146,7 +146,7 @@ module Storage =
                                             let! blobUriWithSasToken =
                                                 getUriWithWriteSharedAccessSignatureForFileVersion repositoryDto fileVersion correlationId
 
-                                            uploadMetadata.Enqueue({ BlobUriWithSasToken = blobUriWithSasToken; Sha256Hash = fileVersion.Sha256Hash })
+                                            uploadMetadata.Enqueue({ RelativePath = fileVersion.RelativePath; BlobUriWithSasToken = blobUriWithSasToken; Sha256Hash = fileVersion.Sha256Hash })
                                         }
                                     ))
                             )

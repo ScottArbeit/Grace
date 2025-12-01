@@ -228,7 +228,7 @@ module Maintenance =
                                         if parseResult |> verbose then
                                             logToAnsiConsole Colors.Verbose "Uploading files to Azure Blob Storage."
 
-                                        // Breaking the uploads into chunks allows us to interleave checking to see if files are already uploaded with actually uploading them when they don't.
+                                        // Breaking the uploads into chunks allows us to interleave checking to see if files are already uploaded with actually uploading them when they haven't been.
                                         let chunkSize = 32
                                         let fileVersionGroups = fileVersions.Chunk(chunkSize)
                                         let succeeded = ConcurrentQueue<GraceReturnValue<string>>()
@@ -251,8 +251,7 @@ module Maintenance =
                                                                     RepositoryId = graceIds.RepositoryIdString,
                                                                     RepositoryName = graceIds.RepositoryName,
                                                                     CorrelationId = getCorrelationId parseResult,
-                                                                    FileVersions =
-                                                                        (fileVersions |> Seq.map (fun kvp -> kvp.Value.ToFileVersion) |> Seq.toArray)
+                                                                    FileVersions = fileVersions.Select(fun kvp -> kvp.Value.ToFileVersion).ToArray()
                                                                 )
 
                                                             match! Storage.GetUploadMetadataForFiles getUploadMetadataForFilesParameters with
@@ -262,9 +261,9 @@ module Maintenance =
                                                                 t5.Increment(incrementAmount * double (fileVersions.Count() - uploadMetadata.Count))
 
                                                                 // Index all of the file versions by their SHA256 hash; we'll look up the files to upload with it.
-                                                                let filesIndexedBySha256Hash =
-                                                                    Dictionary<Sha256Hash, LocalFileVersion>(
-                                                                        fileVersions.Select(fun kvp -> KeyValuePair(kvp.Value.Sha256Hash, kvp.Value))
+                                                                let filesIndexedByRelativePath =
+                                                                    Dictionary<RelativePath, LocalFileVersion>(
+                                                                        fileVersions.Select(fun kvp -> KeyValuePair(kvp.Value.RelativePath, kvp.Value))
                                                                     )
 
                                                                 // Upload the files in this chunk to object storage.
@@ -276,7 +275,7 @@ module Maintenance =
                                                                             ValueTask(
                                                                                 task {
                                                                                     let fileVersion =
-                                                                                        filesIndexedBySha256Hash[upload.Sha256Hash].ToFileVersion
+                                                                                        filesIndexedByRelativePath[upload.RelativePath].ToFileVersion
 
                                                                                     let! result =
                                                                                         Storage.SaveFileToObjectStorage

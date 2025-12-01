@@ -2,6 +2,7 @@ namespace Grace.Shared
 
 open Grace.Types.Types
 open Grace.Shared.Utilities
+open Microsoft.Extensions.Logging
 open Microsoft.Extensions.ObjectPool
 open System
 open System.Buffers
@@ -87,21 +88,18 @@ module Services =
 
     /// Computes the SHA-256 value for a given file, presented as a stream.
     ///
-    /// Sha256Hash values for files are computed by hashing the file's contents, and then appending the relative path of the file, and the file length.
+    /// Sha256Hash values for files are computed by hashing the file's contents.
     let computeSha256ForFile (stream: Stream) (relativeFilePath: RelativePath) =
         task {
-            //logToConsole $"In computeSha256ForFile: relativeFilePath: {relativeFilePath}."
-
-            // Did some informal perf testing on large files, this size was best, larger didn't help, and 64K keeps it on the small object heap.
+            // I did some informal perf testing on large files. This size was best, larger didn't help, and 64K keeps it on the small object heap.
             let bufferLength = 64 * 1024
 
             // Using object pooling for both of these.
             let buffer = ArrayPool<byte>.Shared.Rent(bufferLength)
             let hasher = incrementalHashPool.Get()
-            //logToConsole $"In computeSha256ForFile: relativeFilePath: {relativeFilePath}. Got hasher."
 
             try
-                // 1. Read bytes from the file and feed them into the hasher.
+                // Read bytes from the file and feed them into the hasher.
                 let mutable moreToRead = true
 
                 while moreToRead do
@@ -111,32 +109,22 @@ module Services =
                         hasher.AppendData(buffer, 0, bytesRead)
                     else
                         moreToRead <- false
-                // 2. Convert the relative path of the file to a byte array, and add it to the hasher.
-                hasher.AppendData(Encoding.UTF8.GetBytes(relativeFilePath))
-                // 3. Convert the Int64 file length into a byte array, and add it to the hasher.
-                hasher.AppendData(BitConverter.GetBytes(stream.Length))
-                // 4. Get the SHA-256 hash as a byte array.
+
+                // Get the SHA-256 hash as a byte array.
                 let sha256Bytes = stackalloc<byte> SHA256.HashSizeInBytes
-                hasher.GetCurrentHash(sha256Bytes) |> ignore
-                // 5. Convert the SHA-256 value from a byte[] to a string, and return it.
+                hasher.GetHashAndReset(sha256Bytes) |> ignore
+
+                // Convert the SHA-256 value from a byte[] to a string, and return it.
                 //    Example: byte[]{0x43, 0x2a, 0x01, 0xfa} -> "432a01fa"
 
                 let sha256Hash = byteArrayToString (sha256Bytes)
-                //logToConsole $"In computeSha256ForFile: relativeFilePath: {relativeFilePath}. sha256Hash: {sha256Hash}."
 
                 return Sha256Hash sha256Hash
             finally
-                //logToConsole $"In computeSha256ForFile (finally clause): relativeFilePath: {relativeFilePath}. About to return buffer to ArrayPool."
-
                 if not <| isNull buffer then
                     ArrayPool<byte>.Shared.Return(buffer, clearArray = true)
 
-                //logToConsole
-                //    $"In computeSha256ForFile (finally clause): relativeFilePath: {relativeFilePath}. Returned buffer to ArrayPool. About to return hasher to incrementalHashPool."
-
                 if not <| isNull hasher then incrementalHashPool.Return(hasher)
-
-        //logToConsole $"In computeSha256ForFile (finally clause): relativeFilePath: {relativeFilePath}. Returned hasher to incrementalHashPool."
         }
 
     /// Computes the SHA-256 value for a given relative directory.

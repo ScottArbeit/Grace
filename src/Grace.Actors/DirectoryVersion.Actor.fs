@@ -52,7 +52,7 @@ module DirectoryVersion =
     /// Computes the SHA-256 hash for server-side validation.
     /// This mirrors the client-side computeSha256ForFile but uses the known file size from FileVersion
     /// instead of stream.Length (which isn't supported by GZipStream).
-    let private computeSha256ForValidation (stream: Stream) (relativeFilePath: RelativePath) (fileSize: int64) =
+    let private computeSha256ForValidationXXX (stream: Stream) (relativeFilePath: RelativePath) (fileSize: int64) =
         task {
             let bufferLength = 64 * 1024
             let buffer = ArrayPool<byte>.Shared.Rent(bufferLength)
@@ -110,11 +110,11 @@ module DirectoryVersion =
                     // Non-binary files are stored as GZip streams and need decompression.
                     let! computedHash =
                         if fileVersion.IsBinary then
-                            computeSha256ForValidation blobStream fileVersion.RelativePath fileVersion.Size
+                            computeSha256ForFile blobStream fileVersion.RelativePath
                         else
                             task {
                                 use gzStream = new GZipStream(stream = blobStream, mode = CompressionMode.Decompress, leaveOpen = false)
-                                return! computeSha256ForValidation gzStream fileVersion.RelativePath fileVersion.Size
+                                return! computeSha256ForFile gzStream fileVersion.RelativePath
                             }
 
                     stopwatch.Stop()
