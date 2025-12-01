@@ -67,7 +67,7 @@ module DirectoryVersion =
                     use! blobStream = blobClient.OpenReadAsync(position = 0, bufferSize = (64 * 1024))
 
                     // Compute SHA-256 hash using the server-specific validation function.
-                    // Non-binary files are stored as GZip streams and need decompression.
+                    // Text files are stored as GZip streams and need decompression.
                     let! computedHash =
                         if fileVersion.IsBinary then
                             computeSha256ForFile blobStream fileVersion.RelativePath
@@ -599,7 +599,7 @@ module DirectoryVersion =
                                             | Some previousDirectoryVersion -> getFilesToValidate directoryVersion.Files previousDirectoryVersion.Files
                                             | None -> getFilesToValidate directoryVersion.Files (List<FileVersion>())
 
-                                        log.LogInformation(
+                                        log.LogDebug(
                                             "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; Starting SHA-256 validation for DirectoryVersion; DirectoryVersionId: {DirectoryVersionId}; RelativePath: {RelativePath}; FileCount: {FileCount}; FilesToValidate: {FilesToValidate}.",
                                             getCurrentInstantExtended (),
                                             getMachineName,
@@ -610,11 +610,23 @@ module DirectoryVersion =
                                             filesToValidate.Length
                                         )
 
+                                        let validationResults = ConcurrentQueue<FileValidationResult>()
+
                                         // Validate files in parallel
-                                        let! validationResults =
-                                            filesToValidate
-                                            |> Seq.map (fun fileVersion -> validateFileSha256 repositoryDto fileVersion metadata.CorrelationId)
-                                            |> Task.WhenAll
+                                        do! Parallel.ForEachAsync(
+                                                filesToValidate,
+                                                Constants.ParallelOptions,
+                                                (fun fileVersion ct ->
+                                                    ValueTask(
+                                                        task {
+                                                            let! result = validateFileSha256 repositoryDto fileVersion metadata.CorrelationId
+                                                            validationResults.Enqueue result
+                                                        }
+                                                    )
+                                                )
+                                            )
+
+                                        let validationResults = validationResults.ToArray()
 
                                         // Collect failures
                                         let failures =
