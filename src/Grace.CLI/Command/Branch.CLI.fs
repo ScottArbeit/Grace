@@ -3060,13 +3060,12 @@ module Branch =
                                         //logToAnsiConsole Colors.Verbose $"Succeeded in downloadFilesFromObjectStorage."
                                         fileVersionsToDownload
                                         |> Seq.iter (fun file ->
-                                            logToAnsiConsole Colors.Verbose $"Copying {file.RelativePath} from {file.FullObjectPath} to {file.FullName}."
                                             // Delete the existing file in the working directory.
                                             File.Delete(file.FullName)
                                             // Copy the version from the object cache to the working directory.
                                             File.Copy(file.FullObjectPath, file.FullName))
 
-                                        logToAnsiConsole Colors.Verbose $"Copied files into place."
+                                        //logToAnsiConsole Colors.Verbose $"Copied files into place."
                                     | Error error -> AnsiConsole.WriteLine($"[{Colors.Error}]{Markup.Escape(error)}[/]")
 
                                     // If a file has changed in the second diff, but not in the first diff, cool, we can keep those changes, nothing to be done.
@@ -3205,9 +3204,6 @@ module Branch =
                                             match! Branch.Rebase(rebaseParameters) with
                                             | Ok returnValue ->
                                                 AnsiConsole.MarkupLine($"[{Colors.Important}]Rebase succeeded.[/]")
-
-                                                AnsiConsole.MarkupLine($"[{Colors.Verbose}]({serialize returnValue})[/]")
-
                                                 return 0
                                             | Error error ->
                                                 logToAnsiConsole Colors.Error (Markup.Escape($"{error}"))
