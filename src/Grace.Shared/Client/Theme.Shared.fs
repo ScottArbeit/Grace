@@ -48,7 +48,7 @@ module Theme =
            Color.Red
            Color.White
            Color.FromArgb(0xe5, 0xc0, 0x7b)
-           Color.Magenta |]
+           Color.FromArgb(0xff, 0x7e, 0x00) |]
 
     /// Default color theme, with green for adds, red for deletes, etc.
     let DefaultTheme = Theme.Create "Default" defaultColors

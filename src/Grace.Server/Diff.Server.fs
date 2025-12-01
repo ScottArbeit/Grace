@@ -222,8 +222,8 @@ module Diff =
 
                     let graceIds = getGraceIds context
                     let repositoryId = Guid.Parse(graceIds.RepositoryIdString)
-                    let! directoryVersionId1 = getDirectoryBySha256Hash repositoryId parameters.Sha256Hash1 (getCorrelationId context)
-                    let! directoryVersionId2 = getDirectoryBySha256Hash repositoryId parameters.Sha256Hash2 (getCorrelationId context)
+                    let! directoryVersionId1 = getDirectoryVersionBySha256Hash repositoryId parameters.Sha256Hash1 (getCorrelationId context)
+                    let! directoryVersionId2 = getDirectoryVersionBySha256Hash repositoryId parameters.Sha256Hash2 (getCorrelationId context)
 
                     match directoryVersionId1, directoryVersionId2 with
                     | Some directoryVersionId1, Some directoryVersionId2 ->

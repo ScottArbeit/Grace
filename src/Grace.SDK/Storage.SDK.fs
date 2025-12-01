@@ -31,6 +31,7 @@ open Azure
 
 module Storage =
 
+    /// Gets a file from object storage and saves it to the local object directory.
     let GetFileFromObjectStorage (getDownloadUriParameters: GetDownloadUriParameters) correlationId =
         task {
             let fileVersion = getDownloadUriParameters.FileVersion
@@ -101,6 +102,7 @@ module Storage =
                 return Error(GraceError.Create (getErrorMessage StorageError.ObjectStorageException) correlationId)
         }
 
+    /// Gets upload metadata (including upload URLs with SAS tokens) for a list of files to be uploaded to object storage.
     let GetUploadMetadataForFiles (parameters: GetUploadMetadataForFilesParameters) =
         task {
             let correlationId = parameters.CorrelationId
@@ -141,6 +143,7 @@ module Storage =
 
     let storageTransferOptions = StorageTransferOptions(MaximumConcurrency = Constants.ParallelOptions.MaxDegreeOfParallelism)
 
+    /// Saves a file to object storage with the specified metadata.
     let SaveFileToObjectStorageWithMetadata
         (repositoryId: RepositoryId)
         (fileVersion: FileVersion)
@@ -280,9 +283,11 @@ module Storage =
                 return Error(GraceError.Create (exceptionResponse.ToString()) correlationId)
         }
 
+    /// Saves a file to object storage.
     let SaveFileToObjectStorage (repositoryId: RepositoryId) (fileVersion: FileVersion) (blobUriWithSasToken: Uri) correlationId =
         SaveFileToObjectStorageWithMetadata repositoryId fileVersion blobUriWithSasToken (Dictionary<string, string>()) correlationId
 
+    /// Gets an upload URI with a SAS token for uploading a file to object storage.
     let GetUploadUri (parameters: GetUploadUriParameters) =
         task {
             try
@@ -305,6 +310,7 @@ module Storage =
                 return Error(GraceError.Create (exceptionResponse.ToString()) parameters.CorrelationId)
         }
 
+    /// Gets a download URI with a SAS token for downloading a file from object storage.
     let GetDownloadUri (parameters: GetDownloadUriParameters) =
         task {
             try

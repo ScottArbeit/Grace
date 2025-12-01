@@ -354,7 +354,7 @@ module Branch =
                             return
                                 Some(Assign(parameters.DirectoryVersionId, directoryVersionDto.DirectoryVersion.Sha256Hash, ReferenceText parameters.Message))
                         elif not <| String.IsNullOrEmpty(parameters.Sha256Hash) then
-                            match! getDirectoryBySha256Hash (Guid.Parse(graceIds.RepositoryIdString)) parameters.Sha256Hash parameters.CorrelationId with
+                            match! getDirectoryVersionBySha256Hash (Guid.Parse(graceIds.RepositoryIdString)) parameters.Sha256Hash parameters.CorrelationId with
                             | Some directoryVersion ->
                                 return Some(Assign(directoryVersion.DirectoryVersionId, directoryVersion.Sha256Hash, ReferenceText parameters.Message))
                             | None -> return None
@@ -1529,7 +1529,7 @@ module Branch =
                                 return recursiveSize
                             else
                                 // By process of elimination, we have a Sha256Hash, so we'll retrieve the DirectoryVersion using that..
-                                match! Services.getDirectoryBySha256Hash graceIds.RepositoryId listContentsParameters.Sha256Hash correlationId with
+                                match! Services.getDirectoryVersionBySha256Hash graceIds.RepositoryId listContentsParameters.Sha256Hash correlationId with
                                 | Some directoryVersion ->
                                     let directoryActorProxy = DirectoryVersion.CreateActorProxy directoryVersion.DirectoryVersionId repositoryId correlationId
 
@@ -1623,7 +1623,7 @@ module Branch =
                             else
                                 // By process of elimination, we have a Sha256Hash, so we'll retrieve the DirectoryVersion using that..
                                 match!
-                                    getRootDirectoryBySha256Hash (Guid.Parse(graceIds.RepositoryIdString)) listContentsParameters.Sha256Hash correlationId
+                                    getRootDirectoryVersionBySha256Hash (Guid.Parse(graceIds.RepositoryIdString)) listContentsParameters.Sha256Hash correlationId
                                 with
                                 | Some directoryVersion ->
                                     let directoryActorProxy = DirectoryVersion.CreateActorProxy directoryVersion.DirectoryVersionId repositoryId correlationId
@@ -1692,15 +1692,15 @@ module Branch =
                             let! rootDirectoryVersion =
                                 task {
                                     if not <| String.IsNullOrEmpty(parameters.Sha256Hash) then
-                                        return! getRootDirectoryBySha256Hash repositoryId parameters.Sha256Hash correlationId
+                                        return! getRootDirectoryVersionBySha256Hash repositoryId parameters.Sha256Hash correlationId
                                     elif not <| String.IsNullOrEmpty(parameters.ReferenceId) then
-                                        return! getRootDirectoryByReferenceId repositoryId (Guid.Parse(parameters.ReferenceId)) correlationId
+                                        return! getRootDirectoryVersionByReferenceId repositoryId (Guid.Parse(parameters.ReferenceId)) correlationId
                                     else
                                         let! branchDto = actorProxy.Get(getCorrelationId context)
                                         let! latestReference = getLatestReference branchDto.RepositoryId branchDto.BranchId
 
                                         match latestReference with
-                                        | Some referenceDto -> return! getRootDirectoryBySha256Hash repositoryId referenceDto.Sha256Hash correlationId
+                                        | Some referenceDto -> return! getRootDirectoryVersionBySha256Hash repositoryId referenceDto.Sha256Hash correlationId
                                         | None -> return None
                                 }
 

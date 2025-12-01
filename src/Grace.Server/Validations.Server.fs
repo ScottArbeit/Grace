@@ -602,7 +602,7 @@ module Validations =
             task {
                 let repositoryActorProxy = Repository.CreateActorProxy repositoryId correlationId
 
-                match! getDirectoryBySha256Hash repositoryId sha256Hash correlationId with
+                match! getDirectoryVersionBySha256Hash repositoryId sha256Hash correlationId with
                 | Some directoryVersion -> return Ok()
                 | None -> return Error error
             }

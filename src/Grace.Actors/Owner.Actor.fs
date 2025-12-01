@@ -59,8 +59,6 @@ module Owner =
                 try
                     state.State.Add(ownerEvent)
 
-                    //logToConsole $"In Owner.Actor.ApplyEvent(): Writing state. ownerEvent: {serialize ownerEvent}; state: {serialize state}."
-
                     do! state.WriteStateAsync()
 
                     // Update the Dto based on the current event.
@@ -74,7 +72,6 @@ module Owner =
                     do! stream.OnNextAsync(graceEvent)
 
                     let returnValue = GraceReturnValue.Create "Owner command succeeded." ownerEvent.Metadata.CorrelationId
-                    logToConsole $"In Owner.Actor.ApplyEvent(): GraceReturnValue: {returnValue}"
 
                     returnValue
                         .enhance(nameof OwnerId, ownerDto.OwnerId)
@@ -248,9 +245,6 @@ module Owner =
                 let processCommand (command: OwnerCommand) (metadata: EventMetadata) =
                     task {
                         try
-                            logToConsole
-                                $"In Owner.Actor.ProcessCommand(): command.AssemblyQualifiedName: {command.GetType().AssemblyQualifiedName}; command.Assembly.Location: {command.GetType().Assembly.Location}; Command: {serialize command}; metadata.AssemblyQualifiedName: {metadata.GetType().AssemblyQualifiedName}; metadata.Assembly.Location: {metadata.GetType().Assembly.Location}; metadata.GetType().Attributes: {metadata.GetType().Attributes}; metadata: {serialize metadata}"
-
                             let! eventResult =
                                 task {
                                     match command with

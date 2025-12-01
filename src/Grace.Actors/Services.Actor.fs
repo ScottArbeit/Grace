@@ -1690,7 +1690,7 @@ module Services =
         }
 
     /// Gets a DirectoryVersion by searching using a Sha256Hash value.
-    let getDirectoryBySha256Hash (repositoryId: RepositoryId) (sha256Hash: Sha256Hash) correlationId =
+    let getDirectoryVersionBySha256Hash (repositoryId: RepositoryId) (sha256Hash: Sha256Hash) correlationId =
         task {
             let mutable directoryVersion = DirectoryVersion.Default
 
@@ -1769,8 +1769,70 @@ module Services =
                 return None
         }
 
+    /// Gets the most recent DirectoryVersion with HashesValidated = true by RelativePath.
+    let getMostRecentDirectoryVersionByRelativePath (repositoryId: RepositoryId) (relativePath: RelativePath) correlationId =
+        task {
+            let mutable directoryVersion = DirectoryVersion.Default
+            match actorStateStorageProvider with
+            | Unknown -> ()
+            | AzureCosmosDb ->
+                let indexMetrics = stringBuilderPool.Get()
+                let requestCharge = stringBuilderPool.Get()
+                try
+                    let queryDefinition =
+                        QueryDefinition(
+                            """
+                            SELECT TOP 1 c.State
+                            FROM c
+                            WHERE STRINGEQUALS(c.State[0].Event.created.RelativePath, @relativePath, true)
+                                AND c.State[0].Event.created.HashesValidated = true
+                                AND c.GrainType = @grainType
+                                AND c.PartitionKey = @partitionKey
+                            ORDER BY c.State[0].Event.created.CreatedAt DESC
+                            """
+                        )
+                            .WithParameter("@relativePath", relativePath)
+                            .WithParameter("@grainType", StateName.DirectoryVersion)
+                            .WithParameter("@partitionKey", repositoryId)
+                    let iterator = cosmosContainer.GetItemQueryIterator<DirectoryVersionEventValue>(queryDefinition, requestOptions = queryRequestOptions)
+                    while iterator.HasMoreResults do
+                        let! results = iterator.ReadNextAsync()
+                        indexMetrics.Append($"{results.IndexMetrics}, ") |> ignore
+                        requestCharge.Append($"{results.RequestCharge:F3}, ") |> ignore
+                        let eventsForAllDirectories = results.Resource
+                        eventsForAllDirectories
+                        |> Seq.iter (fun eventsForOneDirectory ->
+                            let directoryVersionDto =
+                                eventsForOneDirectory.State
+                                |> Array.fold
+                                    (fun directoryVersionDto directoryEvent -> directoryVersionDto |> DirectoryVersionDto.UpdateDto directoryEvent)
+                                    DirectoryVersionDto.Default
+                            directoryVersion <- directoryVersionDto.DirectoryVersion)
+                    if
+                        (indexMetrics.Length >= 2)
+                        && (requestCharge.Length >= 2)
+                        && Activity.Current <> null
+                    then
+                        Activity.Current
+                            .SetTag("indexMetrics", $"{indexMetrics.Remove(indexMetrics.Length - 2, 2)}")
+                            .SetTag("requestCharge", $"{requestCharge.Remove(requestCharge.Length - 2, 2)}")
+                        |> ignore
+                finally
+                    stringBuilderPool.Return(indexMetrics)
+                    stringBuilderPool.Return(requestCharge)
+            | MongoDB -> ()
+
+            if
+                directoryVersion.DirectoryVersionId
+                <> DirectoryVersion.Default.DirectoryVersionId
+            then
+                return Some directoryVersion
+            else
+                return None
+        }
+
     /// Gets a Root DirectoryVersion by searching using a Sha256Hash value.
-    let getRootDirectoryBySha256Hash (repositoryId: RepositoryId) (sha256Hash: Sha256Hash) correlationId =
+    let getRootDirectoryVersionBySha256Hash (repositoryId: RepositoryId) (sha256Hash: Sha256Hash) correlationId =
         task {
             let mutable directoryVersion = DirectoryVersion.Default
 
@@ -1854,17 +1916,17 @@ module Services =
         }
 
     /// Gets a Root DirectoryVersion by searching using a Sha256Hash value.
-    let getRootDirectoryByReferenceId (repositoryId: RepositoryId) (referenceId: ReferenceId) correlationId =
+    let getRootDirectoryVersionByReferenceId (repositoryId: RepositoryId) (referenceId: ReferenceId) correlationId =
         task {
             let referenceActorProxy = Reference.CreateActorProxy referenceId repositoryId correlationId
 
             let! referenceDto = referenceActorProxy.Get correlationId
 
-            return! getRootDirectoryBySha256Hash repositoryId referenceDto.Sha256Hash correlationId
+            return! getRootDirectoryVersionBySha256Hash repositoryId referenceDto.Sha256Hash correlationId
         }
 
-    /// Checks if all of the supplied DirectoryIds exist.
-    let directoryIdsExist (repositoryId: RepositoryId) (directoryIds: IEnumerable<DirectoryVersionId>) correlationId =
+    /// Checks if all of the supplied DirectoryVersionIds exist.
+    let directoryVersionIdsExist (repositoryId: RepositoryId) (directoryIds: IEnumerable<DirectoryVersionId>) correlationId =
         task {
             match actorStateStorageProvider with
             | Unknown -> return false
