@@ -269,7 +269,7 @@ module DirectoryVersion =
                     task {
                         let parameters = context.Items[nameof GetBySha256HashParameters] :?> GetBySha256HashParameters
 
-                        match! getDirectoryBySha256Hash (Guid.Parse(parameters.RepositoryId)) (Sha256Hash parameters.Sha256Hash) (getCorrelationId context) with
+                        match! getDirectoryVersionBySha256Hash (Guid.Parse(parameters.RepositoryId)) (Sha256Hash parameters.Sha256Hash) (getCorrelationId context) with
                         | Some directoryVersion -> return directoryVersion
                         | None -> return DirectoryVersion.Default
                     }

@@ -90,19 +90,16 @@ module DirectoryVersion =
 
     /// Determines which files need validation by comparing with a previously validated DirectoryVersion.
     /// Returns the list of files that need to be validated.
-    let getFilesToValidate (newFiles: List<FileVersion>) (previouslyValidatedFiles: List<FileVersion> option) : FileVersion list =
-        match previouslyValidatedFiles with
-        | None ->
-            // No prior validated directory - validate all files
-            newFiles |> Seq.toList
-        | Some oldFiles ->
+    let getFilesToValidate (newFiles: List<FileVersion>) (previouslyValidatedFiles: List<FileVersion>) : FileVersion array =
+        if previouslyValidatedFiles.Count > 0 then
             // Create a set of (RelativePath, Sha256Hash) pairs from the old files
-            let oldFileSet = oldFiles |> Seq.map (fun f -> (f.RelativePath, f.Sha256Hash)) |> Set.ofSeq
+            let previousFilesLookup = Dictionary<RelativePath, Sha256Hash>()
+            previouslyValidatedFiles |> Seq.iter (fun previousFile -> previousFilesLookup.Add(previousFile.RelativePath, previousFile.Sha256Hash))
 
             // Return files that are not in the old set (new or changed)
-            newFiles
-            |> Seq.filter (fun f -> not (oldFileSet.Contains((f.RelativePath, f.Sha256Hash))))
-            |> Seq.toList
+            newFiles.Where(fun f -> not (previousFilesLookup.Contains(KeyValuePair(f.RelativePath, f.Sha256Hash)))).ToArray()
+        else
+            newFiles.ToArray()
 
     type DirectoryVersionActor
         ([<PersistentState(StateName.DirectoryVersion, Constants.GraceActorStorage)>] state: IPersistentState<List<DirectoryVersionEvent>>) =
@@ -595,10 +592,12 @@ module DirectoryVersion =
                                     match command with
                                     | Create(directoryVersion, repositoryDto) ->
                                         // Determine which files need validation using incremental validation logic.
-                                        // For now, we pass None for previouslyValidatedFiles since we don't yet
-                                        // query for the last validated DirectoryVersion with the same RelativePath.
-                                        // This means all files will be validated (conservative approach).
-                                        let filesToValidate = getFilesToValidate directoryVersion.Files None
+                                        let! mostRecentDirectoryVersion = getMostRecentDirectoryVersionByRelativePath repositoryDto.RepositoryId directoryVersion.RelativePath metadata.CorrelationId
+
+                                        let filesToValidate =
+                                            match mostRecentDirectoryVersion with
+                                            | Some previousDirectoryVersion -> getFilesToValidate directoryVersion.Files previousDirectoryVersion.Files
+                                            | None -> getFilesToValidate directoryVersion.Files (List<FileVersion>())
 
                                         log.LogInformation(
                                             "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; Starting SHA-256 validation for DirectoryVersion; DirectoryVersionId: {DirectoryVersionId}; RelativePath: {RelativePath}; FileCount: {FileCount}; FilesToValidate: {FilesToValidate}.",
