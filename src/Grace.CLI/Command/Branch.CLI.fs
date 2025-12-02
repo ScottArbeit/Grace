@@ -305,7 +305,8 @@ module Branch =
                 Required = true,
                 Description = "The promotion mode for the branch: IndividualOnly, GroupOnly, or Hybrid.",
                 Arity = ArgumentArity.ExactlyOne
-            )).AcceptOnlyFromAmong(listCases<BranchPromotionMode>())
+            ))
+                .AcceptOnlyFromAmong(listCases<BranchPromotionMode> ())
 
         let toBranchId =
             new Option<BranchId>(
@@ -496,7 +497,7 @@ module Branch =
                                     if parseResult.GetResult(Options.branchId).Implicit then
                                         // Get the current branch (before we changed graceIds.BranchId to the new branch)
                                         let currentBranchId = Current().BranchId
-                                        
+
                                         if currentBranchId <> Guid.Empty then
                                             // Get current branch details to check if it supports promotions
                                             let currentBranchParameters =
@@ -511,7 +512,7 @@ module Branch =
                                                     BranchName = String.Empty,
                                                     CorrelationId = graceIds.CorrelationId
                                                 )
-                                            
+
                                             match! Branch.Get(currentBranchParameters) with
                                             | Ok returnValue ->
                                                 let currentBranch = returnValue.ReturnValue
@@ -1941,7 +1942,7 @@ module Branch =
     let private createReferenceTable (parseResult: ParseResult) (references: ReferenceDto array) =
         let sortedResults = references |> Array.sortByDescending (fun row -> row.CreatedAt)
 
-        let table = Table(Border = TableBorder.DoubleEdge, ShowHeaders = true)
+        let table = Table(Border = TableBorder.Rounded, ShowHeaders = true)
 
         table.AddColumns(
             [| TableColumn($"[{Colors.Important}]Type[/]")
@@ -2583,10 +2584,7 @@ module Branch =
                         task {
                             t |> startProgressTask showOutput
 
-                            let missingDirectoryIds =
-                                directoryIds
-                                    .Where(fun directoryId -> not <| directoryIdsInNewGraceStatus.Contains(directoryId))
-                                    .ToList()
+                            let missingDirectoryIds = directoryIds.Where(fun directoryId -> not <| directoryIdsInNewGraceStatus.Contains(directoryId)).ToList()
 
                             if parseResult |> verbose then
                                 logToAnsiConsole Colors.Verbose $"In updateWorkingDirectory: missingDirectoryIds.Count: {missingDirectoryIds.Count()}."
@@ -3065,7 +3063,7 @@ module Branch =
                                             // Copy the version from the object cache to the working directory.
                                             File.Copy(file.FullObjectPath, file.FullName))
 
-                                        //logToAnsiConsole Colors.Verbose $"Copied files into place."
+                                    //logToAnsiConsole Colors.Verbose $"Copied files into place."
                                     | Error error -> AnsiConsole.WriteLine($"[{Colors.Error}]{Markup.Escape(error)}[/]")
 
                                     // If a file has changed in the second diff, but not in the first diff, cool, we can keep those changes, nothing to be done.
@@ -3346,11 +3344,11 @@ module Branch =
                             OrganizationName = graceIds.OrganizationName,
                             RepositoryId = graceIds.RepositoryIdString,
                             RepositoryName = graceIds.RepositoryName,
-                            MaxCount = 5,
+                            MaxCount = 10,
                             CorrelationId = graceIds.CorrelationId
                         )
 
-                    let! lastFiveReferences =
+                    let! mostRecentReferences =
                         task {
                             match! Branch.GetReferences(getReferencesParameters) with
                             | Ok returnValue -> return returnValue.ReturnValue
@@ -3362,11 +3360,11 @@ module Branch =
                             branchDto.BasedOn.ReferenceId = parentBranchDto.LatestPromotion.ReferenceId
                             || branchDto.ParentBranchId = Constants.DefaultParentBranchId
                         then
-                            $"[{Colors.Added}]Based on latest promotion.[/]"
+                            $"[{Colors.Added}]Based on latest promotion[/]"
                         else
-                            $"[{Colors.Important}]Not based on latest promotion.[/]"
+                            $"[{Colors.Important}]Not based on latest promotion[/]"
 
-                    let referenceTable = (createReferenceTable parseResult lastFiveReferences).Expand()
+                    let referenceTable = (createReferenceTable parseResult mostRecentReferences).Expand()
 
                     let ownerOrgRepoHeader =
                         if parseResult |> verbose then
@@ -3376,15 +3374,15 @@ module Branch =
 
                     let branchHeader =
                         if parseResult |> verbose then
-                            $"[{Colors.Important}]{branchLabel}:[/] {branchDto.BranchName} [{Colors.Deemphasized}]─ Allows {permissions branchDto} ─ {branchDto.BranchId}[/]"
+                            $"[{Colors.Important}] {branchLabel}:[/] {branchDto.BranchName} [{Colors.Deemphasized}]─[/] {basedOnMessage} [{Colors.Deemphasized}]─ Allows {permissions branchDto} ─ {branchDto.BranchId} [/]"
                         else
-                            $"[{Colors.Important}]{branchLabel}:[/] {branchDto.BranchName} [{Colors.Deemphasized}]─ Allows {permissions branchDto}[/]"
+                            $"[{Colors.Important}] {branchLabel}:[/] {branchDto.BranchName} [{Colors.Deemphasized}]─[/] {basedOnMessage} [{Colors.Deemphasized}]─ Allows {permissions branchDto} [/]"
 
                     let parentBranchHeader =
                         if parseResult |> verbose then
-                            $"[{Colors.Important}]Parent branch:[/] {parentBranchDto.BranchName} [{Colors.Deemphasized}]─ Allows {permissions parentBranchDto} ─ {parentBranchDto.BranchId}[/]"
+                            $"[{Colors.Important}] Parent branch:[/] {parentBranchDto.BranchName} [{Colors.Deemphasized}]─ Allows {permissions parentBranchDto} ─ {parentBranchDto.BranchId} [/]"
                         else
-                            $"[{Colors.Important}]Parent branch:[/] {parentBranchDto.BranchName} [{Colors.Deemphasized}]─ Allows {permissions parentBranchDto}[/]"
+                            $"[{Colors.Important}] Parent branch:[/] {parentBranchDto.BranchName} [{Colors.Deemphasized}]─ Allows {permissions parentBranchDto} [/]"
 
                     let commitReferenceTable =
                         let sortedReferences =
@@ -3399,18 +3397,11 @@ module Branch =
 
                     branchTable
                         .AddColumn(column1)
-                        .AddRow(basedOnMessage)
                         .AddEmptyRow()
                         .AddRow($"[{Colors.Important}] Most recent references:[/]")
                         .AddRow(Padder(referenceTable).Padding(1, 0, 0, 0))
                         .AddEmptyRow()
                     |> ignore
-
-                    if branchDto.CheckpointEnabled || branchDto.CommitEnabled then
-                        branchTable
-                            .AddRow($"[{Colors.Important}] Most recent checkpoint and commit:[/]")
-                            .AddRow(Padder(commitReferenceTable).Padding(1, 0, 0, 0))
-                        |> ignore
 
                     let branchPanel = Panel(branchTable, Expand = true)
                     branchPanel.Header <- PanelHeader(branchHeader, Justify.Left)
@@ -3492,7 +3483,12 @@ module Branch =
 
                     // Validate that --force and --reassign-child-branches are not both specified
                     if force && reassignChildBranches then
-                        return Error(GraceError.Create (BranchError.getErrorMessage BranchError.CannotSpecifyBothForceAndReassignChildBranches) graceIds.CorrelationId)
+                        return
+                            Error(
+                                GraceError.Create
+                                    (BranchError.getErrorMessage BranchError.CannotSpecifyBothForceAndReassignChildBranches)
+                                    graceIds.CorrelationId
+                            )
                     else
                         let deleteParameters =
                             Parameters.Branch.DeleteBranchParameters(

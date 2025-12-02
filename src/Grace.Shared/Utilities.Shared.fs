@@ -133,7 +133,6 @@ module Utilities =
     let getDurationRightAligned_ms (time: Instant) =
         let milliseconds = $"{getCurrentInstant().Minus(time).TotalMilliseconds:F3}"
         let result = (String.replicate (Math.Max(7 - milliseconds.Length, 0)) " ") + milliseconds // Right-align, 7 characters.
-        //logToConsole $"milliseconds: {milliseconds}; Math.Max(7 - milliseconds.Length, 0): {Math.Max(7 - milliseconds.Length, 0)}; result: |{result}|"
         result
 
     /// Gets the first eight characters of a SHA256 hash.

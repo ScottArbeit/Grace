@@ -331,14 +331,10 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
                             match! getFirstError validations with
                             | Some error -> badRequest <- Some(GraceError.Create (BranchError.getErrorMessage error) correlationId)
                             | None ->
+                                // If we're creating a new Branch, we don't need to resolve the Id.
                                 if path.Equals("/branch/create", StringComparison.InvariantCultureIgnoreCase) then
-                                    // If we're creating a new Branch, we don't need to resolve the Id.
                                     let mutable branchId = Guid.Empty
                                     Guid.TryParse(branchIdString, &branchId) |> ignore
-
-                                    logToConsole
-                                        $"********** In ValidateIdsMiddleware: branchId: {branchId}; branchIdString: {branchIdString}; CorrelationId: {correlationId}."
-
                                     graceIds <- { graceIds with BranchId = branchId; BranchIdString = branchIdString; HasBranch = true }
                                 else
                                     // Resolve the BranchId based on the provided Id and Name.
@@ -357,7 +353,7 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
                     // Add the parsed Id's and Names to the HttpContext.
                     context.Items.Add(nameof GraceIds, graceIds)
 
-                    // Reset the Body to the beginning so that it can be read again later in the pipeline.
+                    // Reset Request.Body to position 0 so it can be read again by endpoints.
                     context.Request.Body.Seek(0L, IO.SeekOrigin.Begin) |> ignore
 
                 let duration_ms = getDurationRightAligned_ms startTime
