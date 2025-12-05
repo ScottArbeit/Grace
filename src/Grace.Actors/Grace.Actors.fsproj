@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
 	<PropertyGroup>
 		<TargetFramework>net10.0</TargetFramework>
@@ -45,6 +45,7 @@
 		<Compile Include="Diff.Actor.fs" />
 		<Compile Include="FileAppearance.Actor.fs" />
 		<Compile Include="DirectoryAppearance.Actor.fs" />
+		<Compile Include="Notification.Actor.fs" />
 		<Compile Include="CodeGenAttribute.Actor.fs" />
 	</ItemGroup>
 
@@ -58,6 +59,7 @@
 		<PackageReference Include="Azure.Storage.Common" Version="12.25.0" />
 		<PackageReference Include="Ben.Demystifier" Version="0.4.1" />
 		<PackageReference Include="FSharpPlus" Version="1.8.0" />
+		<PackageReference Include="Microsoft.AspNetCore.SignalR" Version="1.2.0" />
 		<PackageReference Include="Microsoft.Azure.Cosmos" Version="3.56.0" />
 		<PackageReference Include="Microsoft.Extensions.Caching.Memory" Version="10.0.0" />
 		<PackageReference Include="Microsoft.Orleans.Core" Version="9.2.1" />

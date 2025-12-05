@@ -102,11 +102,7 @@ module Utilities =
     let getCurrentInstantGeneral () = getCurrentInstant () |> formatInstantGeneral
 
     /// Converts an Instant to local time, and produces a string in short date/time format, using the CurrentUICulture.
-    let instantToLocalTime (instant: Instant) =
-        instant
-            .ToDateTimeUtc()
-            .ToLocalTime()
-            .ToString("g", CultureInfo.CurrentUICulture)
+    let instantToLocalTime (instant: Instant) = instant.ToDateTimeUtc().ToLocalTime().ToString("g", CultureInfo.CurrentUICulture)
 
     /// Gets the current instant in local time as a string in short date/time format, using the CurrentUICulture.
     let getCurrentInstantLocal () = getCurrentInstant () |> instantToLocalTime
@@ -154,12 +150,7 @@ module Utilities =
         let (case, _) = FSharpValue.GetUnionFields(x, discriminatedUnionType)
         $"{case.Name}"
 
-    let defaultForType (t: Type) : obj =
-        if t.IsValueType then
-            Activator.CreateInstance t
-        else
-            null
-
+    let defaultForType (t: Type) : obj = if t.IsValueType then Activator.CreateInstance t else null
 
     /// Converts a string into the corresponding case of a discriminated union type.
     ///
@@ -177,14 +168,16 @@ module Utilities =
         with
         | [| case |] ->
             let fieldCount = case.GetFields().Length
+
             if fieldCount = 0 then
                 Some(FSharpValue.MakeUnion(case, [||]) :?> 'T)
             else
                 let fields = case.GetFields()
                 let unionCaseParameters = List<objnull>(fieldCount)
-                for i in 0..fieldCount-1 do
+
+                for i in 0 .. fieldCount - 1 do
                     let propertyType = fields[i].PropertyType
-                    unionCaseParameters.Add(defaultForType(propertyType))
+                    unionCaseParameters.Add(defaultForType (propertyType))
 
                 Some(FSharpValue.MakeUnion(case, unionCaseParameters.ToArray()) :?> 'T)
         | _ -> None

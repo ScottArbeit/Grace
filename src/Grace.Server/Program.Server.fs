@@ -23,6 +23,7 @@ open Orleans.Configuration
 open Orleans.Persistence
 open Orleans.Persistence.Cosmos
 open Orleans.Runtime
+open Orleans.Hosting
 open Orleans.Serialization
 open Orleans.Storage
 open System
@@ -39,6 +40,7 @@ open Grace.Actors
 open System.Runtime.CompilerServices
 open Microsoft.AspNetCore.Builder
 open System.Diagnostics
+open Orleans.Streams
 
 
 module OrleansFsharpFix =
@@ -156,11 +158,13 @@ module Program =
                     .AddAzureQueueStreams(
                         GraceEventStreamProvider,
                         fun (siloAzureQueueStreamConfigurator: SiloAzureQueueStreamConfigurator) ->
+                            siloAzureQueueStreamConfigurator.ConfigureStreamPubSub(StreamPubSubType.ExplicitGrainBasedAndImplicit)
+
                             siloAzureQueueStreamConfigurator.ConfigureAzureQueue(fun optionsBuilder ->
                                 optionsBuilder.Configure(fun azureQueueOptions ->
                                     azureQueueOptions.MessageVisibilityTimeout <- TimeSpan.FromMinutes(5.0)
                                     azureQueueOptions.QueueNames <- List<string>([ GraceEventStreamTopic ])
-                                    azureQueueOptions.QueueServiceClient <- QueueServiceClient(azureStorageConnectionString, QueueClientOptions()))
+                                    azureQueueOptions.QueueServiceClient <- QueueServiceClient(azureStorageConnectionString))
                                 |> ignore)
 
                             siloAzureQueueStreamConfigurator.ConfigurePullingAgent(fun pullOptions ->
@@ -170,6 +174,7 @@ module Program =
                     )
                     .AddAzureBlobGrainStorage(
                         GraceEventStreamProvider,
+
                         (fun (options: AzureBlobStorageOptions) ->
                             options.BlobServiceClient <- Context.blobServiceClient
                             options.ContainerName <- GraceEventStreamProvider)
@@ -191,6 +196,13 @@ module Program =
                     |> ignore)
                 |> ignore)
             .ConfigureLogging(fun logConfig ->
+                logConfig
+                    .SetMinimumLevel(LogLevel.Debug)
+                    .AddFilter("Orleans", LogLevel.Information)
+                    .AddFilter("Orleans.Streams", LogLevel.Debug)
+                    .AddFilter("Orleans.Providers", LogLevel.Debug)
+                |> ignore
+
                 logConfig.AddOpenTelemetry(fun openTelemetryOptions -> openTelemetryOptions.IncludeScopes <- true)
                 |> ignore)
             .ConfigureWebHostDefaults(fun webBuilder ->

@@ -90,10 +90,7 @@ module Application =
 
         let mustBeLoggedIn = requiresAuthentication notLoggedIn
 
-        let graceServerVersion =
-            FileVersionInfo
-                .GetVersionInfo(Assembly.GetExecutingAssembly().Location)
-                .FileVersion
+        let graceServerVersion = FileVersionInfo.GetVersionInfo(Assembly.GetExecutingAssembly().Location).FileVersion
 
         let endpoints =
             [ GET
@@ -424,8 +421,7 @@ module Application =
                         [ route "/list" Reminder.List
                           |> addMetadata typeof<Reminder.ListRemindersParameters>
 
-                          route "/get" Reminder.Get
-                          |> addMetadata typeof<Reminder.GetReminderParameters>
+                          route "/get" Reminder.Get |> addMetadata typeof<Reminder.GetReminderParameters>
 
                           route "/delete" Reminder.Delete
                           |> addMetadata typeof<Reminder.DeleteReminderParameters>
@@ -478,9 +474,7 @@ module Application =
                     if claimsList.Length > 1 then
                         claimsList.Remove(claimsList.Length - 1, 1) |> ignore
 
-                    activity
-                        .AddTag("enduser.id", user.Identity.Name)
-                        .AddTag("enduser.claims", claimsList.ToString())
+                    activity.AddTag("enduser.id", user.Identity.Name).AddTag("enduser.claims", claimsList.ToString())
                     |> ignore
                 finally
                     stringBuilderPool.Return(claimsList)
@@ -529,10 +523,7 @@ module Application =
 
             otel
                 .ConfigureResource(fun resourceBuilder ->
-                    resourceBuilder
-                        .AddService(graceServerAppId)
-                        .AddTelemetrySdk()
-                        .AddAttributes(globalOpenTelemetryAttributes)
+                    resourceBuilder.AddService(graceServerAppId).AddTelemetrySdk().AddAttributes(globalOpenTelemetryAttributes)
                     |> ignore)
 
                 .WithMetrics(fun metricsBuilder ->
@@ -549,10 +540,7 @@ module Application =
                         metricsBuilder.AddAzureMonitorMetricExporter(fun options -> options.ConnectionString <- azureMonitorConnectionString)
                         |> ignore)
                 .WithTracing(fun traceBuilder ->
-                    traceBuilder
-                        .AddAspNetCoreInstrumentation()
-                        .AddHttpClientInstrumentation()
-                        .AddSource(graceServerAppId)
+                    traceBuilder.AddAspNetCoreInstrumentation().AddHttpClientInstrumentation().AddSource(graceServerAppId)
                     |> ignore
 
                     if not <| String.IsNullOrWhiteSpace(tracingOtlpEndpoint) then
@@ -707,8 +695,7 @@ module Application =
                     endpointBuilder.MapPrometheusScrapingEndpoint() |> ignore
 
                     // Add SignalR hub endpoints
-                    endpointBuilder.MapHub<Notifications.NotificationHub>("/notifications")
-                    |> ignore)
+                    endpointBuilder.MapHub<Notification.NotificationHub>("/notifications") |> ignore)
 
                 // If we get here, we didn't find a route.
                 .UseGiraffe(notFoundHandler)

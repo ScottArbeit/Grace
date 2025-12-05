@@ -1,29 +1,40 @@
-namespace Grace.Server
+namespace Grace.Actors
 
-open Giraffe
-open Grace.Actors
+open FSharp.Control
 open Grace.Actors.Constants
+open Grace.Actors.Context
 open Grace.Actors.Extensions.ActorProxy
+open Grace.Actors.Extensions.MemoryCache
 open Grace.Actors.Services
-open Grace.Server.Services
+open Grace.Actors.Types
+open Grace.Actors.Interfaces
 open Grace.Shared
 open Grace.Shared.Constants
 open Grace.Shared.Utilities
+open Grace.Shared.Validation.Errors
 open Grace.Types
-open Grace.Types.Events
+open Grace.Types.Organization
+open Grace.Types.Owner
+open Grace.Types.Reminder
 open Grace.Types.Types
 open Microsoft.AspNetCore.Http
 open Microsoft.AspNetCore.SignalR
 open Microsoft.Extensions.Logging
+open NodaTime
 open Orleans
 open Orleans.Runtime
-open Orleans.Streams
+open Orleans.Streaming
 open System
-open System.Net.Http
+open System.Collections.Concurrent
+open System.Collections.Generic
+open System.Linq
+open System.Runtime.Serialization
 open System.Text.Json
 open System.Threading.Tasks
+open Grace.Types.Events
+open Orleans.Streams
 
-module Notifications =
+module Notification =
 
     type IGraceClientConnection =
         abstract member RegisterParentBranch: BranchId -> BranchId -> Task
@@ -55,10 +66,7 @@ module Notifications =
             task {
                 logToConsole $"In NotifyOnPromotion. branchName: {branchName}; referenceId: {referenceId}."
 
-                do!
-                    this.Clients
-                        .Group($"{branchId}")
-                        .NotifyOnPromotion(branchId, branchName, referenceId)
+                do! this.Clients.Group($"{branchId}").NotifyOnPromotion(branchId, branchName, referenceId)
             }
             :> Task
 
@@ -67,10 +75,7 @@ module Notifications =
                 logToConsole
                     $"In NotifyOnSave. branchName: {branchName}, parentBranchName: {parentBranchName}. parentBranchId: {parentBranchId}; referenceId: {referenceId}."
 
-                do!
-                    this.Clients
-                        .Group($"{parentBranchId}")
-                        .NotifyOnSave(branchName, parentBranchName, parentBranchId, referenceId)
+                do! this.Clients.Group($"{parentBranchId}").NotifyOnSave(branchName, parentBranchName, parentBranchId, referenceId)
 
                 ()
             }
@@ -81,10 +86,7 @@ module Notifications =
                 logToConsole
                     $"In NotifyOnCheckpoint. branchName: {branchName}, parentBranchName: {parentBranchName}. parentBranchId: {parentBranchId}; referenceId: {referenceId}."
 
-                do!
-                    this.Clients
-                        .Group($"{parentBranchId}")
-                        .NotifyOnCheckpoint(branchName, parentBranchName, parentBranchId, referenceId)
+                do! this.Clients.Group($"{parentBranchId}").NotifyOnCheckpoint(branchName, parentBranchName, parentBranchId, referenceId)
             }
             :> Task
 
@@ -93,10 +95,7 @@ module Notifications =
                 logToConsole
                     $"In NotifyOnCommit. branchName: {branchName}, parentBranchName: {parentBranchName}. parentBranchId: {parentBranchId}; referenceId: {referenceId}."
 
-                do!
-                    this.Clients
-                        .Group($"{parentBranchId}")
-                        .NotifyOnCommit(branchName, parentBranchName, parentBranchId, referenceId)
+                do! this.Clients.Group($"{parentBranchId}").NotifyOnCommit(branchName, parentBranchName, parentBranchId, referenceId)
             }
             :> Task
 
@@ -109,25 +108,48 @@ module Notifications =
             }
             :> Task
 
-    /// Gets the ReferenceDto for the given ReferenceId.
-    let getReferenceDto referenceId repositoryId correlationId =
-        task {
-            let referenceActorProxy = Reference.CreateActorProxy referenceId repositoryId correlationId
-
-            return! referenceActorProxy.Get correlationId
-        }
-
-    /// Gets the BranchDto for the given BranchId.
-    let getBranchDto branchId repositoryId correlationId =
-        task {
-            let branchActorProxy = Branch.CreateActorProxy branchId repositoryId correlationId
-
-            return! branchActorProxy.Get correlationId
-        }
+    // Add a typed grain interface so Orleans can implicitly activate grains by GUID key.
+    type INotificationActor =
+        interface
+            inherit IGrainWithGuidKey
+        end
 
     [<ImplicitStreamSubscription(GraceEventStreamTopic)>]
-    type GraceEventActor(hubContext: IHubContext<NotificationHub, IGraceClientConnection>) =
+    type NotificationActor(hubContext: IHubContext<NotificationHub, IGraceClientConnection>) =
         inherit Grain()
+
+        let mutable subscriptionHandles: StreamSubscriptionHandle<GraceEvent> list = List.empty
+
+        let subscribeToStream (observer: IAsyncObserver<GraceEvent>) (stream: IAsyncStream<GraceEvent>) =
+            task {
+                let! existingHandles = stream.GetAllSubscriptionHandles()
+
+                if existingHandles.Count > 0 then
+                    for handle in existingHandles do
+                        let! resumedHandle = handle.ResumeAsync(observer)
+                        subscriptionHandles <- resumedHandle :: subscriptionHandles
+                else
+                    let! handle = stream.SubscribeAsync(observer)
+                    subscriptionHandles <- handle :: subscriptionHandles
+            }
+
+        /// Gets the ReferenceDto for the given ReferenceId.
+        let getReferenceDto referenceId repositoryId correlationId =
+            task {
+                let referenceActorProxy = Reference.CreateActorProxy referenceId repositoryId correlationId
+
+                return! referenceActorProxy.Get correlationId
+            }
+
+        /// Gets the BranchDto for the given BranchId.
+        let getBranchDto branchId repositoryId correlationId =
+            task {
+                let branchActorProxy = Branch.CreateActorProxy branchId repositoryId correlationId
+
+                return! branchActorProxy.Get correlationId
+            }
+
+        let log = loggerFactory.CreateLogger(ActorName.Notification)
 
         let diffTwoDirectoryVersions directoryVersionId1 directoryVersionId2 ownerId organizationId repositoryId correlationId =
             task {
@@ -137,7 +159,7 @@ module Notifications =
                 | Ok result -> return ()
                 | Error graceError ->
                     log.LogError(
-                        "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; In GraceEventActor.diffTwoDirectoryVersions: Error computing diff between DirectoryVersionId {DirectoryVersionId1} and {DirectoryVersionId2}:\n{GraceError}",
+                        "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; In NotificationActor.diffTwoDirectoryVersions: Error computing diff between DirectoryVersionId {DirectoryVersionId1} and {DirectoryVersionId2}:\n{GraceError}",
                         getCurrentInstantExtended (),
                         getMachineName,
                         correlationId,
@@ -151,28 +173,50 @@ module Notifications =
 
         override this.OnActivateAsync(ct) =
             task {
-                let streamProvider = this.GetStreamProvider(GraceEventStreamProvider)
-                let streamId = StreamId.Create(GraceEventStreamTopic, this.GetPrimaryKey())
-                let stream = streamProvider.GetStream<GraceEvent>(streamId)
+                try
+                    let primaryKey = this.GetPrimaryKey()
+                    logToConsole $"NotificationActor.OnActivateAsync: PrimaryKey: {primaryKey}"
 
-                //let hubContext = context.GetService<IHubContext<NotificationHub, IGraceClientConnection>>()
-                //let! graceEvent = context.BindJsonAsync<GraceEvent>()
-                let! handle = stream.SubscribeAsync(this :> IAsyncObserver<GraceEvent>)
-                return ()
+                    // Verify we're using the expected GUID
+                    if primaryKey <> Constants.GraceEventActorId then
+                        logToConsole $"WARNING: NotificationActor activated with unexpected key: {primaryKey}"
+
+                    let streamProvider = this.GetStreamProvider(GraceEventStreamProvider)
+                    logToConsole $"NotificationActor.OnActivateAsync: Using stream provider: {GraceEventStreamProvider}"
+
+                    // Subscribe to the stream with THIS grain's GUID as the stream key
+                    let streamId = StreamId.Create(GraceEventStreamTopic, primaryKey)
+                    logToConsole $"NotificationActor.OnActivateAsync: Subscribing to stream: Topic: {GraceEventStreamTopic}; Key: {primaryKey}"
+
+                    let stream = streamProvider.GetStream<GraceEvent>(streamId)
+
+                    do! subscribeToStream (this :> IAsyncObserver<GraceEvent>) stream
+                    logToConsole "NotificationActor.OnActivateAsync: Stream subscription established."
+
+                    return ()
+                with ex ->
+                    logToConsole $"NotificationActor.OnActivateAsync: exception: {ExceptionResponse.Create ex}"
+                    return ()
             }
+
+        interface INotificationActor
 
         interface IAsyncObserver<GraceEvent> with
 
             member this.OnErrorAsync(ex: exn) =
-                log.LogError(ex, "Error in GraceEventActor.OnErrorAsync")
+                log.LogError(ex, "Error in NotificationActor.OnErrorAsync")
                 Task.CompletedTask
 
             member this.OnCompletedAsync() =
-                log.LogInformation("GraceEventActor.OnCompletedAsync called.")
+                log.LogInformation("NotificationActor.OnCompletedAsync called.")
                 Task.CompletedTask
 
             member this.OnNextAsync(graceEvent, token: StreamSequenceToken) =
                 task {
+                    let myEvent = graceEvent.GetType().FullName
+                    logToConsole $"NotificationActor.OnNextAsync: graceEvent: {graceEvent}; graceEvent.GetType: {myEvent}."
+                    //logToConsole $"In NotificationActor.OnNextAsync; received GraceEvent of type {getDiscriminatedUnionFullName graceEvent}."
+
                     match graceEvent with
                     | BranchEvent branchEvent ->
                         let correlationId = branchEvent.Metadata.CorrelationId

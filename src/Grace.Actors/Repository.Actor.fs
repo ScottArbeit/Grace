@@ -126,7 +126,9 @@ module Repository =
                                             0L
 
                                     let! directoryResult =
-                                        directoryVersionActorProxy.Handle (DirectoryVersionCommand.Create(emptyDirectoryVersion, repositoryDto)) repositoryEvent.Metadata
+                                        directoryVersionActorProxy.Handle
+                                            (DirectoryVersionCommand.Create(emptyDirectoryVersion, repositoryDto))
+                                            repositoryEvent.Metadata
 
                                     logToConsole $"In Repository.Actor.handleEvent: Successfully created the empty directory version."
 
@@ -175,7 +177,7 @@ module Repository =
                         let graceEvent = GraceEvent.RepositoryEvent repositoryEvent
 
                         let streamProvider = this.GetStreamProvider GraceEventStreamProvider
-                        let stream = streamProvider.GetStream<GraceEvent>(StreamId.Create(Constants.GraceEventStreamTopic, repositoryDto.RepositoryId))
+                        let stream = streamProvider.GetStream<GraceEvent>(StreamId.Create(Constants.GraceEventStreamTopic, GraceEventActorId))
                         do! stream.OnNextAsync(graceEvent)
 
                         let returnValue = GraceReturnValue.Create $"Repository command succeeded." repositoryEvent.Metadata.CorrelationId

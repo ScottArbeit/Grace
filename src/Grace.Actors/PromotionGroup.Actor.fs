@@ -85,6 +85,7 @@ module PromotionGroup =
                             reminder.CorrelationId,
                             promotionGroupDto.PromotionGroupId
                         )
+
                         return Ok()
                     | reminderType, reminderState ->
                         return
@@ -112,7 +113,7 @@ module PromotionGroup =
                     let graceEvent = GraceEvent.PromotionGroupEvent promotionGroupEvent
 
                     let streamProvider = this.GetStreamProvider GraceEventStreamProvider
-                    let stream = streamProvider.GetStream<GraceEvent>(StreamId.Create(GraceEventStreamTopic, promotionGroupDto.PromotionGroupId))
+                    let stream = streamProvider.GetStream<GraceEvent>(StreamId.Create(GraceEventStreamTopic, GraceEventActorId))
                     do! stream.OnNextAsync(graceEvent)
 
                     let graceReturnValue =
@@ -150,7 +151,8 @@ module PromotionGroup =
             member this.Exists correlationId =
                 this.correlationId <- correlationId
 
-                not <| promotionGroupDto.PromotionGroupId.Equals(PromotionGroupDto.Default.PromotionGroupId)
+                not
+                <| promotionGroupDto.PromotionGroupId.Equals(PromotionGroupDto.Default.PromotionGroupId)
                 |> returnTask
 
             member this.Get correlationId =
@@ -169,49 +171,116 @@ module PromotionGroup =
                 let isValid (command: PromotionGroupCommand) (metadata: EventMetadata) =
                     task {
                         if state.State.Exists(fun ev -> ev.Metadata.CorrelationId = metadata.CorrelationId) then
-                            return Error(GraceError.Create (PromotionGroupError.getErrorMessage PromotionGroupError.DuplicateCorrelationId) metadata.CorrelationId)
+                            return
+                                Error(GraceError.Create (PromotionGroupError.getErrorMessage PromotionGroupError.DuplicateCorrelationId) metadata.CorrelationId)
                         else
                             match command with
                             | Create(promotionGroupId, ownerId, organizationId, repositoryId, targetBranchId, description, scheduledAt) ->
                                 if promotionGroupDto.PromotionGroupId <> PromotionGroupId.Empty then
-                                    return Error(GraceError.Create (PromotionGroupError.getErrorMessage PromotionGroupError.PromotionGroupAlreadyExists) metadata.CorrelationId)
+                                    return
+                                        Error(
+                                            GraceError.Create
+                                                (PromotionGroupError.getErrorMessage PromotionGroupError.PromotionGroupAlreadyExists)
+                                                metadata.CorrelationId
+                                        )
                                 else
                                     return Ok command
                             | AddPromotion promotionId ->
                                 match promotionGroupDto.Status with
-                                | Draft | Ready -> return Ok command
-                                | _ -> return Error(GraceError.Create (PromotionGroupError.getErrorMessage PromotionGroupError.PromotionGroupNotInEditableState) metadata.CorrelationId)
+                                | Draft
+                                | Ready -> return Ok command
+                                | _ ->
+                                    return
+                                        Error(
+                                            GraceError.Create
+                                                (PromotionGroupError.getErrorMessage PromotionGroupError.PromotionGroupNotInEditableState)
+                                                metadata.CorrelationId
+                                        )
                             | RemovePromotion promotionId ->
                                 match promotionGroupDto.Status with
-                                | Draft | Ready -> return Ok command
-                                | _ -> return Error(GraceError.Create (PromotionGroupError.getErrorMessage PromotionGroupError.PromotionGroupNotInEditableState) metadata.CorrelationId)
+                                | Draft
+                                | Ready -> return Ok command
+                                | _ ->
+                                    return
+                                        Error(
+                                            GraceError.Create
+                                                (PromotionGroupError.getErrorMessage PromotionGroupError.PromotionGroupNotInEditableState)
+                                                metadata.CorrelationId
+                                        )
                             | ReorderPromotions promotionIds ->
                                 match promotionGroupDto.Status with
-                                | Draft | Ready -> return Ok command
-                                | _ -> return Error(GraceError.Create (PromotionGroupError.getErrorMessage PromotionGroupError.PromotionGroupNotInEditableState) metadata.CorrelationId)
+                                | Draft
+                                | Ready -> return Ok command
+                                | _ ->
+                                    return
+                                        Error(
+                                            GraceError.Create
+                                                (PromotionGroupError.getErrorMessage PromotionGroupError.PromotionGroupNotInEditableState)
+                                                metadata.CorrelationId
+                                        )
                             | Schedule scheduledAt ->
                                 match promotionGroupDto.Status with
-                                | Draft | Ready -> return Ok command
-                                | _ -> return Error(GraceError.Create (PromotionGroupError.getErrorMessage PromotionGroupError.PromotionGroupNotInEditableState) metadata.CorrelationId)
+                                | Draft
+                                | Ready -> return Ok command
+                                | _ ->
+                                    return
+                                        Error(
+                                            GraceError.Create
+                                                (PromotionGroupError.getErrorMessage PromotionGroupError.PromotionGroupNotInEditableState)
+                                                metadata.CorrelationId
+                                        )
                             | MarkReady ->
                                 match promotionGroupDto.Status with
                                 | Draft -> return Ok command
-                                | _ -> return Error(GraceError.Create (PromotionGroupError.getErrorMessage PromotionGroupError.PromotionGroupNotInDraftState) metadata.CorrelationId)
+                                | _ ->
+                                    return
+                                        Error(
+                                            GraceError.Create
+                                                (PromotionGroupError.getErrorMessage PromotionGroupError.PromotionGroupNotInDraftState)
+                                                metadata.CorrelationId
+                                        )
                             | Start ->
                                 match promotionGroupDto.Status with
                                 | Ready -> return Ok command
-                                | _ -> return Error(GraceError.Create (PromotionGroupError.getErrorMessage PromotionGroupError.PromotionGroupNotInReadyState) metadata.CorrelationId)
+                                | _ ->
+                                    return
+                                        Error(
+                                            GraceError.Create
+                                                (PromotionGroupError.getErrorMessage PromotionGroupError.PromotionGroupNotInReadyState)
+                                                metadata.CorrelationId
+                                        )
                             | Complete success ->
                                 match promotionGroupDto.Status with
                                 | Running -> return Ok command
-                                | _ -> return Error(GraceError.Create (PromotionGroupError.getErrorMessage PromotionGroupError.PromotionGroupNotRunning) metadata.CorrelationId)
+                                | _ ->
+                                    return
+                                        Error(
+                                            GraceError.Create
+                                                (PromotionGroupError.getErrorMessage PromotionGroupError.PromotionGroupNotRunning)
+                                                metadata.CorrelationId
+                                        )
                             | Block reason ->
                                 match promotionGroupDto.Status with
-                                | Draft | Ready | Running -> return Ok command
-                                | _ -> return Error(GraceError.Create (PromotionGroupError.getErrorMessage PromotionGroupError.PromotionGroupCannotBeBlocked) metadata.CorrelationId)
+                                | Draft
+                                | Ready
+                                | Running -> return Ok command
+                                | _ ->
+                                    return
+                                        Error(
+                                            GraceError.Create
+                                                (PromotionGroupError.getErrorMessage PromotionGroupError.PromotionGroupCannotBeBlocked)
+                                                metadata.CorrelationId
+                                        )
                             | DeleteLogical(force, deleteReason) ->
                                 match promotionGroupDto.Status with
-                                | Running | Succeeded -> return Error(GraceError.Create (PromotionGroupError.getErrorMessage PromotionGroupError.PromotionGroupCannotBeDeleted) metadata.CorrelationId)
+                                | Running
+                                | Succeeded ->
+                                    return
+                                        Error(
+                                            GraceError.Create
+                                                (PromotionGroupError.getErrorMessage PromotionGroupError.PromotionGroupCannotBeDeleted)
+                                                metadata.CorrelationId
+                                        )
                                 | _ -> return Ok command
                     }
 
@@ -225,22 +294,14 @@ module PromotionGroup =
                                 | AddPromotion promotionId ->
                                     let order = promotionGroupDto.Promotions.Length
                                     return PromotionAdded(promotionId, order)
-                                | RemovePromotion promotionId ->
-                                    return PromotionRemoved promotionId
-                                | ReorderPromotions promotionIds ->
-                                    return PromotionsReordered promotionIds
-                                | Schedule scheduledAt ->
-                                    return Scheduled scheduledAt
-                                | MarkReady ->
-                                    return MarkedReady
-                                | Start ->
-                                    return Started
-                                | Complete success ->
-                                    return Completed success
-                                | Block reason ->
-                                    return Blocked reason
-                                | DeleteLogical(force, deleteReason) ->
-                                    return LogicalDeleted(force, deleteReason)
+                                | RemovePromotion promotionId -> return PromotionRemoved promotionId
+                                | ReorderPromotions promotionIds -> return PromotionsReordered promotionIds
+                                | Schedule scheduledAt -> return Scheduled scheduledAt
+                                | MarkReady -> return MarkedReady
+                                | Start -> return Started
+                                | Complete success -> return Completed success
+                                | Block reason -> return Blocked reason
+                                | DeleteLogical(force, deleteReason) -> return LogicalDeleted(force, deleteReason)
                             }
 
                         let promotionGroupEvent = { Event = promotionGroupEventType; Metadata = metadata }

@@ -66,7 +66,7 @@ module Organization =
                     let graceEvent = OrganizationEvent organizationEvent
 
                     let streamProvider = this.GetStreamProvider GraceEventStreamProvider
-                    let stream = streamProvider.GetStream<GraceEvent>(StreamId.Create(Constants.GraceEventStreamTopic, organizationDto.OrganizationId))
+                    let stream = streamProvider.GetStream<GraceEvent>(StreamId.Create(Constants.GraceEventStreamTopic, GraceEventActorId))
                     do! stream.OnNextAsync(graceEvent)
 
                     let returnValue =

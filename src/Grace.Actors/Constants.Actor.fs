@@ -41,6 +41,9 @@ module Constants =
         let GrainRepository = "GrainRepository"
 
         [<Literal>]
+        let Notification = "NotificationActor"
+
+        [<Literal>]
         let Organization = "OrganizationActor"
 
         [<Literal>]

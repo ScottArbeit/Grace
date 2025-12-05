@@ -94,7 +94,9 @@ module DirectoryVersion =
         if previouslyValidatedFiles.Count > 0 then
             // Create a set of (RelativePath, Sha256Hash) pairs from the old files
             let previousFilesLookup = Dictionary<RelativePath, Sha256Hash>()
-            previouslyValidatedFiles |> Seq.iter (fun previousFile -> previousFilesLookup.Add(previousFile.RelativePath, previousFile.Sha256Hash))
+
+            previouslyValidatedFiles
+            |> Seq.iter (fun previousFile -> previousFilesLookup.Add(previousFile.RelativePath, previousFile.Sha256Hash))
 
             // Return files that are not in the old set (new or changed)
             newFiles.Where(fun f -> not (previousFilesLookup.Contains(KeyValuePair(f.RelativePath, f.Sha256Hash)))).ToArray()
@@ -264,19 +266,10 @@ module DirectoryVersion =
                     // Update the Dto with the event.
                     directoryVersionDto <- directoryVersionDto |> DirectoryVersionDto.UpdateDto directoryVersionEvent
 
-                    //logToConsole
-                    //    $"In ApplyEvent(): directoryVersion.DirectoryVersionId: {directoryVersionDto.DirectoryVersion.DirectoryVersionId}; directoryVersion.RelativePath: {directoryVersionDto.DirectoryVersion.RelativePath}."
-
                     // Publish the event to the rest of the world.
                     let graceEvent = GraceEvent.DirectoryVersionEvent directoryVersionEvent
-
                     let streamProvider = this.GetStreamProvider GraceEventStreamProvider
-
-                    let stream =
-                        streamProvider.GetStream<GraceEvent>(
-                            StreamId.Create(Constants.GraceEventStreamTopic, directoryVersionDto.DirectoryVersion.DirectoryVersionId)
-                        )
-
+                    let stream = streamProvider.GetStream<GraceEvent>(StreamId.Create(GraceEventStreamTopic, GraceEventActorId))
                     do! stream.OnNextAsync(graceEvent)
 
                     let returnValue = GraceReturnValue.Create "Directory version command succeeded." directoryVersionEvent.Metadata.CorrelationId
@@ -592,7 +585,11 @@ module DirectoryVersion =
                                     match command with
                                     | Create(directoryVersion, repositoryDto) ->
                                         // Determine which files need validation using incremental validation logic.
-                                        let! mostRecentDirectoryVersion = getMostRecentDirectoryVersionByRelativePath repositoryDto.RepositoryId directoryVersion.RelativePath metadata.CorrelationId
+                                        let! mostRecentDirectoryVersion =
+                                            getMostRecentDirectoryVersionByRelativePath
+                                                repositoryDto.RepositoryId
+                                                directoryVersion.RelativePath
+                                                metadata.CorrelationId
 
                                         let filesToValidate =
                                             match mostRecentDirectoryVersion with
@@ -613,7 +610,8 @@ module DirectoryVersion =
                                         let validationResults = ConcurrentQueue<FileValidationResult>()
 
                                         // Validate files in parallel
-                                        do! Parallel.ForEachAsync(
+                                        do!
+                                            Parallel.ForEachAsync(
                                                 filesToValidate,
                                                 Constants.ParallelOptions,
                                                 (fun fileVersion ct ->
@@ -622,8 +620,7 @@ module DirectoryVersion =
                                                             let! result = validateFileSha256 repositoryDto fileVersion metadata.CorrelationId
                                                             validationResults.Enqueue result
                                                         }
-                                                    )
-                                                )
+                                                    ))
                                             )
 
                                         let validationResults = validationResults.ToArray()

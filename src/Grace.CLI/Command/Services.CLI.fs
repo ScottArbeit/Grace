@@ -830,11 +830,7 @@ module Services =
     let isFileChange difference = not <| isDirectoryChange difference
 
     /// Processes directory additions or changes
-    let private processDirectoryChange
-        (newGraceStatus: GraceStatus)
-        (previousGraceStatus: GraceStatus)
-        (difference: FileSystemDifference)
-        : LocalDirectoryVersion option =
+    let private processDirectoryChange (newGraceStatus: GraceStatus) (previousGraceStatus: GraceStatus) (difference: FileSystemDifference) =
 
         let previousRootVersion = getRootDirectoryVersion previousGraceStatus
 
@@ -932,7 +928,7 @@ module Services =
         (changedDirectoryVersions: ConcurrentDictionary<RelativePath, LocalDirectoryVersion>)
         (newGraceStatus: GraceStatus)
         (difference: FileSystemDifference)
-        : unit =
+        =
 
         let fileInfo = FileInfo(Path.Combine(Current().RootDirectory, difference.RelativePath))
         let relativeDirectoryPath = getLocalRelativeDirectory fileInfo.DirectoryName (Current().RootDirectory)
@@ -956,7 +952,7 @@ module Services =
         (newGraceStatus: GraceStatus)
         (changedDirectoryVersions: ConcurrentDictionary<RelativePath, LocalDirectoryVersion>)
         (newDirectoryVersions: List<LocalDirectoryVersion>)
-        : unit =
+        =
 
         if changedDirectoryVersions.IsEmpty then
             ()
@@ -999,7 +995,6 @@ module Services =
 
     /// Main refactored function
     let getNewGraceStatusAndDirectoryVersions (previousGraceStatus: GraceStatus) (differences: IEnumerable<FileSystemDifference>) =
-
         task {
             if parseResult |> isOutputFormat "Verbose" then
                 logToAnsiConsole Colors.Verbose $"In getNewGraceStatusAndDirectoryVersions: differences:{Environment.NewLine}{serialize differences}"
@@ -1078,11 +1073,6 @@ module Services =
         saveParameters.DirectoryVersions <- directoryVersions
 
         DirectoryVersion.SaveDirectoryVersions saveParameters
-
-    //let updateObjectCacheFromWorkingDirectory (graceIndex: GraceIndex) =
-    //    task {
-    //        Parallel.ForEachAsync(graceIndex.Values,
-    //    }
 
     /// The full path of the inter-process communication file that grace watch uses to communicate with other invocations of Grace.
     let IpcFileName () = Path.Combine(Path.GetTempPath(), "Grace", Current().BranchName, Constants.IpcFileName)

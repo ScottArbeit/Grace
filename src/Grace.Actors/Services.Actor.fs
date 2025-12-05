@@ -535,10 +535,7 @@ module Services =
                             if iterator.HasMoreResults then
                                 let! currentResultSet = iterator.ReadNextAsync()
 
-                                let organizationId =
-                                    currentResultSet
-                                        .FirstOrDefault({ organizationId = String.Empty })
-                                        .organizationId
+                                let organizationId = currentResultSet.FirstOrDefault({ organizationId = String.Empty }).organizationId
 
                                 if String.IsNullOrEmpty(organizationId) then
                                     // We didn't find the OrganizationId, so add this OrganizationName to the MemoryCache and indicate that we have already checked.
@@ -1455,13 +1452,12 @@ module Services =
             match actorStateStorageProvider with
             | Unknown -> ()
             | AzureCosmosDb ->
-                let indexMetrics = stringBuilderPool.Get()
-                let requestCharge = stringBuilderPool.Get()
+                // Collect per-task metrics in thread-safe bags to avoid concurrent mutation of a single StringBuilder.
+                let indexMetricsBag = ConcurrentBag<string>()
+                let requestChargeBag = ConcurrentBag<string>()
 
                 try
-                    // CosmosDB SQL doesn't have a UNION clause. That means that the only way to get the latest reference
-                    //   for each ReferenceType is to do separate queries for each ReferenceType that gets passed in.
-                    //   It's annoying, but at least we can do it in parallel.
+                    // Run queries in parallel; each task adds metrics to the concurrent bags.
                     do!
                         Parallel.ForEachAsync(
                             referenceTypes,
@@ -1491,8 +1487,10 @@ module Services =
 
                                         while iterator.HasMoreResults do
                                             let! results = iterator.ReadNextAsync()
-                                            indexMetrics.Append($"{results.IndexMetrics}, ") |> ignore
-                                            requestCharge.Append($"{results.RequestCharge:F3}, ") |> ignore
+                                            // Save metrics into concurrent bags (thread-safe).
+                                            indexMetricsBag.Add(results.IndexMetrics)
+                                            requestChargeBag.Add($"{results.RequestCharge:F3}")
+
                                             let eventsForAllReferences = results.Resource
 
                                             eventsForAllReferences
@@ -1508,18 +1506,31 @@ module Services =
                                 ))
                         )
 
-                    if
-                        (indexMetrics.Length >= 2)
-                        && (requestCharge.Length >= 2)
-                        && Activity.Current <> null
-                    then
-                        Activity.Current
-                            .SetTag("indexMetrics", $"{indexMetrics.Remove(indexMetrics.Length - 2, 2)}")
-                            .SetTag("requestCharge", $"{requestCharge.Remove(requestCharge.Length - 2, 2)}")
-                        |> ignore
+                    // Merge collected metrics after parallel work and set Activity tags.
+                    let indexMetricsSb = stringBuilderPool.Get()
+                    let requestChargeSb = stringBuilderPool.Get()
+
+                    try
+                        for m in indexMetricsBag do
+                            indexMetricsSb.Append($"{m}, ") |> ignore
+
+                        for r in requestChargeBag do
+                            requestChargeSb.Append($"{r}, ") |> ignore
+
+                        if
+                            (indexMetricsSb.Length >= 2)
+                            && (requestChargeSb.Length >= 2)
+                            && Activity.Current <> null
+                        then
+                            Activity.Current
+                                .SetTag("indexMetrics", $"{indexMetricsSb.Remove(indexMetricsSb.Length - 2, 2)}")
+                                .SetTag("requestCharge", $"{requestChargeSb.Remove(requestChargeSb.Length - 2, 2)}")
+                            |> ignore
+                    finally
+                        stringBuilderPool.Return(indexMetricsSb)
+                        stringBuilderPool.Return(requestChargeSb)
                 finally
-                    stringBuilderPool.Return(indexMetrics)
-                    stringBuilderPool.Return(requestCharge)
+                    ()
             | MongoDB -> ()
 
             return referenceDtos :> IReadOnlyDictionary<ReferenceType, ReferenceDto>
@@ -1773,11 +1784,13 @@ module Services =
     let getMostRecentDirectoryVersionByRelativePath (repositoryId: RepositoryId) (relativePath: RelativePath) correlationId =
         task {
             let mutable directoryVersion = DirectoryVersion.Default
+
             match actorStateStorageProvider with
             | Unknown -> ()
             | AzureCosmosDb ->
                 let indexMetrics = stringBuilderPool.Get()
                 let requestCharge = stringBuilderPool.Get()
+
                 try
                     let queryDefinition =
                         QueryDefinition(
@@ -1794,12 +1807,15 @@ module Services =
                             .WithParameter("@relativePath", relativePath)
                             .WithParameter("@grainType", StateName.DirectoryVersion)
                             .WithParameter("@partitionKey", repositoryId)
+
                     let iterator = cosmosContainer.GetItemQueryIterator<DirectoryVersionEventValue>(queryDefinition, requestOptions = queryRequestOptions)
+
                     while iterator.HasMoreResults do
                         let! results = iterator.ReadNextAsync()
                         indexMetrics.Append($"{results.IndexMetrics}, ") |> ignore
                         requestCharge.Append($"{results.RequestCharge:F3}, ") |> ignore
                         let eventsForAllDirectories = results.Resource
+
                         eventsForAllDirectories
                         |> Seq.iter (fun eventsForOneDirectory ->
                             let directoryVersionDto =
@@ -1807,7 +1823,9 @@ module Services =
                                 |> Array.fold
                                     (fun directoryVersionDto directoryEvent -> directoryVersionDto |> DirectoryVersionDto.UpdateDto directoryEvent)
                                     DirectoryVersionDto.Default
+
                             directoryVersion <- directoryVersionDto.DirectoryVersion)
+
                     if
                         (indexMetrics.Length >= 2)
                         && (requestCharge.Length >= 2)
@@ -1960,9 +1978,7 @@ module Services =
 
                         if not <| results.Resource.Any() then allExist <- false
 
-                Activity.Current
-                    .SetTag("allExist", $"{allExist}")
-                    .SetTag("totalRequestCharge", $"{requestCharge}")
+                Activity.Current.SetTag("allExist", $"{allExist}").SetTag("totalRequestCharge", $"{requestCharge}")
                 |> ignore
 
                 return allExist
@@ -1995,9 +2011,7 @@ module Services =
                         )
                         |> ignore
                         // Then we add a parameter for each referenceId.
-                        referenceIds
-                            .Where(fun referenceId -> not <| referenceId.Equals(ReferenceId.Empty))
-                            .Distinct()
+                        referenceIds.Where(fun referenceId -> not <| referenceId.Equals(ReferenceId.Empty)).Distinct()
                         |> Seq.iteri (fun i referenceId -> queryText.Append($"@referenceId{i},") |> ignore)
                         // Then we remove the last comma and close the parenthesis.
                         queryText.Remove(queryText.Length - 1, 1).Append(")") |> ignore
@@ -2010,9 +2024,7 @@ module Services =
                                 .WithParameter("@partitionKey", repositoryId)
 
                         // Add a .WithParameter for each referenceId.
-                        referenceIds
-                            .Where(fun referenceId -> not <| referenceId.Equals(ReferenceId.Empty))
-                            .Distinct()
+                        referenceIds.Where(fun referenceId -> not <| referenceId.Equals(ReferenceId.Empty)).Distinct()
                         |> Seq.iteri (fun i referenceId -> queryDefinition.WithParameter($"@referenceId{i}", $"{referenceId}") |> ignore)
 
                         //logToConsole $"In getReferencesByReferenceId(): QueryText:{Environment.NewLine}{printQueryDefinition queryDefinition}."
@@ -2112,9 +2124,7 @@ module Services =
                             branchDtos.Add(branchDto))
 
                 if Activity.Current <> null then
-                    Activity.Current
-                        .SetTag("referenceDtos.Count", $"{branchDtos.Count}")
-                        .SetTag("totalRequestCharge", $"{requestCharge}")
+                    Activity.Current.SetTag("referenceDtos.Count", $"{branchDtos.Count}").SetTag("totalRequestCharge", $"{requestCharge}")
                     |> ignore
             | MongoDB -> ()
 
@@ -2166,9 +2176,7 @@ module Services =
                             childBranches.Add(branchDto))
 
                     if (Activity.Current <> null) then
-                        Activity.Current
-                            .SetTag("childBranches.Count", $"{childBranches.Count}")
-                            .SetTag("totalRequestCharge", $"{requestCharge}")
+                        Activity.Current.SetTag("childBranches.Count", $"{childBranches.Count}").SetTag("totalRequestCharge", $"{requestCharge}")
                         |> ignore
                 with ex ->
                     log.LogError(
@@ -2220,17 +2228,23 @@ module Services =
                         |> ignore
 
                         // Add optional filters
-                        if reminderTypeFilter.IsSome && not (String.IsNullOrEmpty(reminderTypeFilter.Value)) then
-                            queryBuilder.Append(" AND STRINGEQUALS(c.State.Reminder.ReminderType, @reminderType, true)") |> ignore
+                        if
+                            reminderTypeFilter.IsSome
+                            && not (String.IsNullOrEmpty(reminderTypeFilter.Value))
+                        then
+                            queryBuilder.Append(" AND STRINGEQUALS(c.State.Reminder.ReminderType, @reminderType, true)")
+                            |> ignore
 
                         if actorNameFilter.IsSome && not (String.IsNullOrEmpty(actorNameFilter.Value)) then
-                            queryBuilder.Append(" AND STRINGEQUALS(c.State.Reminder.ActorName, @actorName, true)") |> ignore
+                            queryBuilder.Append(" AND STRINGEQUALS(c.State.Reminder.ActorName, @actorName, true)")
+                            |> ignore
 
                         if dueAfter.IsSome then
                             queryBuilder.Append(" AND c.State.Reminder.ReminderTime >= @dueAfter") |> ignore
 
                         if dueBefore.IsSome then
-                            queryBuilder.Append(" AND c.State.Reminder.ReminderTime <= @dueBefore") |> ignore
+                            queryBuilder.Append(" AND c.State.Reminder.ReminderTime <= @dueBefore")
+                            |> ignore
 
                         queryBuilder.Append(" ORDER BY c.State.Reminder.ReminderTime ASC") |> ignore
 
@@ -2244,17 +2258,23 @@ module Services =
                                 .WithParameter("@partitionKey", StateName.Reminder)
 
                         // Add optional parameters
-                        if reminderTypeFilter.IsSome && not (String.IsNullOrEmpty(reminderTypeFilter.Value)) then
-                            queryDefinition.WithParameter("@reminderType", reminderTypeFilter.Value) |> ignore
+                        if
+                            reminderTypeFilter.IsSome
+                            && not (String.IsNullOrEmpty(reminderTypeFilter.Value))
+                        then
+                            queryDefinition.WithParameter("@reminderType", reminderTypeFilter.Value)
+                            |> ignore
 
                         if actorNameFilter.IsSome && not (String.IsNullOrEmpty(actorNameFilter.Value)) then
                             queryDefinition.WithParameter("@actorName", actorNameFilter.Value) |> ignore
 
                         if dueAfter.IsSome then
-                            queryDefinition.WithParameter("@dueAfter", dueAfter.Value.ToUnixTimeTicks()) |> ignore
+                            queryDefinition.WithParameter("@dueAfter", dueAfter.Value.ToUnixTimeTicks())
+                            |> ignore
 
                         if dueBefore.IsSome then
-                            queryDefinition.WithParameter("@dueBefore", dueBefore.Value.ToUnixTimeTicks()) |> ignore
+                            queryDefinition.WithParameter("@dueBefore", dueBefore.Value.ToUnixTimeTicks())
+                            |> ignore
 
                         let iterator = cosmosContainer.GetItemQueryIterator<ReminderValue>(queryDefinition, requestOptions = queryRequestOptions)
 
@@ -2265,9 +2285,14 @@ module Services =
 
                             let reminderValues = results.Resource
 
-                            reminderValues |> Seq.iter (fun reminderValue -> reminders.Add(reminderValue.Reminder))
+                            reminderValues
+                            |> Seq.iter (fun reminderValue -> reminders.Add(reminderValue.Reminder))
 
-                        if (indexMetrics.Length >= 2) && (requestCharge.Length >= 2) && Activity.Current <> null then
+                        if
+                            (indexMetrics.Length >= 2)
+                            && (requestCharge.Length >= 2)
+                            && Activity.Current <> null
+                        then
                             Activity.Current
                                 .SetTag("indexMetrics", $"{indexMetrics.Remove(indexMetrics.Length - 2, 2)}")
                                 .SetTag("requestCharge", $"{requestCharge.Remove(requestCharge.Length - 2, 2)}")

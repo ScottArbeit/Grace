@@ -81,21 +81,39 @@ module Constants =
             .WithCompression(MessagePackCompression.Lz4BlockArray)
             .WithSecurity(MessagePackSecurity.UntrustedData)
 
+    /// Attempts to locate the union type from a runtime instance, even when the
+    /// value is represented by the compiler-generated nested case type.
+    let private tryGetUnionType (runtimeType: Type) =
+        let rec loop currentType =
+            if isNull currentType then None
+            elif FSharpType.IsUnion currentType then Some currentType
+            else loop currentType.DeclaringType
+
+        loop runtimeType
+
     /// Converts both the type name and case name of a discriminated union to a string.
     ///
     /// Example: Animal.Dog -> "Animal.Dog"
     let getDiscriminatedUnionFullName (x: 'T) =
-        let discriminatedUnionType = typeof<'T>
-        let (case, _) = FSharpValue.GetUnionFields(x, discriminatedUnionType)
-        $"{discriminatedUnionType.Name}.{case.Name}"
+        let runtimeType = x.GetType()
+
+        match tryGetUnionType runtimeType with
+        | Some unionType ->
+            let (case, _) = FSharpValue.GetUnionFields(x, unionType)
+            $"{unionType.Name}.{case.Name}"
+        | None -> runtimeType.Name
 
     /// Converts just the case name of a discriminated union to a string.
     ///
     /// Example: Animal.Dog -> "Dog"
     let getDiscriminatedUnionCaseName (x: 'T) =
-        let discriminatedUnionType = typeof<'T>
-        let (case, _) = FSharpValue.GetUnionFields(x, discriminatedUnionType)
-        $"{case.Name}"
+        let runtimeType = x.GetType()
+
+        match tryGetUnionType runtimeType with
+        | Some unionType ->
+            let (case, _) = FSharpValue.GetUnionFields(x, unionType)
+            $"{case.Name}"
+        | None -> runtimeType.Name
 
     /// The name of the Grace System user.
     [<Literal>]
@@ -318,26 +336,17 @@ module Constants =
     let private backoffWithJitter = Backoff.DecorrelatedJitterBackoffV2(medianFirstRetryDelay = (TimeSpan.FromSeconds(0.25)), retryCount = 7, fastFirst = false)
 
     /// An exponential retry policy, with backoffs starting at 0.25s, and retrying 8 times.
-    let DefaultRetryPolicy =
-        Policy
-            .Handle<Exception>(fun ex -> ex.GetType() <> typeof<KeyNotFoundException>)
-            .WaitAndRetry(backoffWithJitter)
+    let DefaultRetryPolicy = Policy.Handle<Exception>(fun ex -> ex.GetType() <> typeof<KeyNotFoundException>).WaitAndRetry(backoffWithJitter)
 
     /// An exponential retry policy, with backoffs starting at 0.25s, and retrying 8 times.
-    let DefaultAsyncRetryPolicy =
-        Policy
-            .Handle<Exception>(fun ex -> ex.GetType() <> typeof<KeyNotFoundException>)
-            .WaitAndRetryAsync(backoffWithJitter)
+    let DefaultAsyncRetryPolicy = Policy.Handle<Exception>(fun ex -> ex.GetType() <> typeof<KeyNotFoundException>).WaitAndRetryAsync(backoffWithJitter)
 
     let private fileCopyBackoff = Backoff.LinearBackoff(initialDelay = (TimeSpan.FromSeconds(1.0)), retryCount = 16, factor = 1.5, fastFirst = false)
 
     /// A linear retry policy for copying files locally, with backoffs starting at 1s and retrying 16 times.
     // This retry policy helps with large files. `grace watch` will see that the file is arriving, but if that file takes longer to be written than the next tick,
     // we get an IOException when we try to compute the Sha256Hash and copy it to the object directory. This policy allows us to wait until the file is complete.
-    let DefaultFileCopyRetryPolicy =
-        Policy
-            .Handle<IOException>(fun ex -> ex.GetType() <> typeof<KeyNotFoundException>)
-            .WaitAndRetry(fileCopyBackoff)
+    let DefaultFileCopyRetryPolicy = Policy.Handle<IOException>(fun ex -> ex.GetType() <> typeof<KeyNotFoundException>).WaitAndRetry(fileCopyBackoff)
 
     /// Grace's global settings for Parallel.ForEach/ForEachAsync expressions; sets MaxDegreeofParallelism to maximize performance.
     // I'm choosing a higher-than-usual number here because these parallel loops are used in code where most of the time is spent on network
@@ -347,8 +356,11 @@ module Constants =
     /// Default directory size magic value.
     let InitialDirectorySize = int64 -1
 
-    /// The default root branch Id for a repository.
+    /// The default root branch Id for a repository. Value: 38EC9A98-00B0-4FA3-8CC5-ACFB04E445A7.
     let DefaultParentBranchId = Guid("38EC9A98-00B0-4FA3-8CC5-ACFB04E445A7") // There's nothing special about this Guid. I just generated it one day.
+
+    /// A special Grace Event Actor Id used for publishing events in Grace.Server. Value: 63097EF4-9D67-4CFB-8010-938484668E4A.
+    let GraceEventActorId = Guid("63097EF4-9D67-4CFB-8010-938484668E4A") // There's nothing special about this Guid. I just generated it one day.
 
     /// The name of the inter-process communication file used by grace watch to share status with other invocations of Grace.
     [<Literal>]

@@ -68,7 +68,7 @@ module Owner =
                     let graceEvent = Events.GraceEvent.OwnerEvent ownerEvent
 
                     let streamProvider = this.GetStreamProvider GraceEventStreamProvider
-                    let stream = streamProvider.GetStream<Events.GraceEvent>(StreamId.Create(Constants.GraceEventStreamTopic, ownerDto.OwnerId))
+                    let stream = streamProvider.GetStream<Events.GraceEvent>(StreamId.Create(Constants.GraceEventStreamTopic, GraceEventActorId))
                     do! stream.OnNextAsync(graceEvent)
 
                     let returnValue = GraceReturnValue.Create "Owner command succeeded." ownerEvent.Metadata.CorrelationId

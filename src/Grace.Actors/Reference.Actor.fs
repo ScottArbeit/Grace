@@ -129,7 +129,7 @@ module Reference =
                     let graceEvent = GraceEvent.ReferenceEvent referenceEvent
 
                     let streamProvider = this.GetStreamProvider GraceEventStreamProvider
-                    let stream = streamProvider.GetStream<GraceEvent>(StreamId.Create(GraceEventStreamTopic, referenceDto.ReferenceId))
+                    let stream = streamProvider.GetStream<GraceEvent>(StreamId.Create(GraceEventStreamTopic, GraceEventActorId))
                     do! stream.OnNextAsync(graceEvent)
 
                     // If this is a Save or Checkpoint reference, schedule a physical deletion based on the default delays from the repository.

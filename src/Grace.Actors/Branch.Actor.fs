@@ -77,10 +77,7 @@ module Branch =
                 let! latestReferences = getLatestReferenceByReferenceTypes referenceTypes branchDto.RepositoryId branchDto.BranchId
 
                 // Get the latest reference of any type.
-                let latestReference =
-                    latestReferences.Values
-                        .OrderByDescending(fun referenceDto -> referenceDto.UpdatedAt)
-                        .FirstOrDefault(ReferenceDto.Default)
+                let latestReference = latestReferences.Values.OrderByDescending(fun referenceDto -> referenceDto.UpdatedAt).FirstOrDefault(ReferenceDto.Default)
 
                 newBranchDto <- { newBranchDto with LatestReference = latestReference }
 
@@ -175,7 +172,7 @@ module Branch =
                         // Publish the event to the rest of the world.
                         let graceEvent = GraceEvent.BranchEvent branchEvent
                         let streamProvider = this.GetStreamProvider GraceEventStreamProvider
-                        let stream = streamProvider.GetStream<GraceEvent>(StreamId.Create(GraceEventStreamTopic, branchDto.BranchId))
+                        let stream = streamProvider.GetStream<GraceEvent>(StreamId.Create(GraceEventStreamTopic, GraceEventActorId))
                         do! stream.OnNextAsync(graceEvent)
 
                     let returnValue = GraceReturnValue.Create "Branch command succeeded." branchEvent.Metadata.CorrelationId
@@ -481,9 +478,17 @@ module Branch =
                                                                     let childMetadata = EventMetadata.New metadata.CorrelationId GraceSystemUser
 
                                                                     // Recursively delete child branch with force
-                                                                    match! childBranchActorProxy.Handle (DeleteLogical(true, $"Parent branch {branchDto.BranchName} is being deleted.", false, None)) childMetadata with
-                                                                    | Ok _ ->
-                                                                        childBranchResults.Add($"Deleted child branch: {childBranch.BranchName}")
+                                                                    match!
+                                                                        childBranchActorProxy.Handle
+                                                                            (DeleteLogical(
+                                                                                true,
+                                                                                $"Parent branch {branchDto.BranchName} is being deleted.",
+                                                                                false,
+                                                                                None
+                                                                            ))
+                                                                            childMetadata
+                                                                    with
+                                                                    | Ok _ -> childBranchResults.Add($"Deleted child branch: {childBranch.BranchName}")
                                                                     | Error error ->
                                                                         log.LogError(
                                                                             "{CurrentInstant}: Error deleting child branch {ChildBranchId}: {Error}",
@@ -491,6 +496,7 @@ module Branch =
                                                                             childBranch.BranchId,
                                                                             error
                                                                         )
+
                                                                         childBranchResults.Add($"Failed to delete child branch: {childBranch.BranchName}")
                                                                 }
                                                                 :> Task
@@ -520,9 +526,10 @@ module Branch =
 
                                                                     let childMetadata = EventMetadata.New metadata.CorrelationId GraceSystemUser
 
-                                                                    match! childBranchActorProxy.Handle (UpdateParentBranch targetParentBranchId) childMetadata with
-                                                                    | Ok _ ->
-                                                                        childBranchResults.Add($"Reassigned child branch: {childBranch.BranchName}")
+                                                                    match!
+                                                                        childBranchActorProxy.Handle (UpdateParentBranch targetParentBranchId) childMetadata
+                                                                    with
+                                                                    | Ok _ -> childBranchResults.Add($"Reassigned child branch: {childBranch.BranchName}")
                                                                     | Error error ->
                                                                         log.LogError(
                                                                             "{CurrentInstant}: Error updating parent branch for child {ChildBranchId}: {Error}",
@@ -530,6 +537,7 @@ module Branch =
                                                                             childBranch.BranchId,
                                                                             error
                                                                         )
+
                                                                         childBranchResults.Add($"Failed to reassign child branch: {childBranch.BranchName}")
                                                                 }
                                                                 :> Task
