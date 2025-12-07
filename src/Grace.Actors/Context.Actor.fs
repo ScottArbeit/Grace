@@ -3,6 +3,7 @@ namespace Grace.Actors
 open Azure.Storage.Blobs
 open Grace.Actors.Types
 open Grace.Shared
+open Grace.Shared.Constants
 open Grace.Types.Types
 open Microsoft.Azure.Cosmos
 open Microsoft.Extensions.Caching.Memory
@@ -60,11 +61,9 @@ module Context =
     /// Setter for logger factory
     let setLoggerFactory (factory: ILoggerFactory) = loggerFactory <- factory
 
-    /// Grace Server's universal .NET memory cache
-    //let mutable internal memoryCache: IMemoryCache = null
-
-    /// Setter for memory cache
-    //let setMemoryCache (cache: IMemoryCache) = memoryCache <- cache
+    /// Pub-sub settings for Grace.
+    let mutable internal pubSubSettings: GracePubSubSettings = GracePubSubSettings.Empty
+    let setPubSubSettings (settings: GracePubSubSettings) = pubSubSettings <- settings
 
     let mutable internal timings = ConcurrentDictionary<CorrelationId, List<Timing>>()
     let setTimings (timing: ConcurrentDictionary<CorrelationId, List<Timing>>) = timings <- timing

@@ -268,9 +268,7 @@ module DirectoryVersion =
 
                     // Publish the event to the rest of the world.
                     let graceEvent = GraceEvent.DirectoryVersionEvent directoryVersionEvent
-                    let streamProvider = this.GetStreamProvider GraceEventStreamProvider
-                    let stream = streamProvider.GetStream<GraceEvent>(StreamId.Create(GraceEventStreamTopic, GraceEventActorId))
-                    do! stream.OnNextAsync(graceEvent)
+                    do! publishGraceEvent graceEvent directoryVersionEvent.Metadata
 
                     let returnValue = GraceReturnValue.Create "Directory version command succeeded." directoryVersionEvent.Metadata.CorrelationId
 
@@ -847,8 +845,6 @@ module DirectoryVersion =
                         let zipFileName = $"{directoryVersionId}.zip"
                         let tempZipPath = Path.Combine(Path.GetTempPath(), zipFileName)
 
-                        //logToConsole $"In createDirectoryZipAsync: directoryVersionId: {directoryVersionId}; relativePath: {directoryVersion.RelativePath}; zipFileName: {zipFileName}; tempZipPath: {tempZipPath}."
-
                         try
                             // Step 1: Create the ZIP archive.
                             use zipToCreate = new FileStream(tempZipPath, FileMode.Create, FileAccess.Write, FileShare.None, (64 * 1024))
@@ -899,7 +895,6 @@ module DirectoryVersion =
 
                             // Step 4: Process the files in the current directory.
                             for fileVersion in fileVersions do
-                                //logToConsole $"In createDirectoryZipAsync: Processing file version: {Path.Combine(directoryVersion.RelativePath, fileVersion.GetObjectFileName)}."
 
                                 let! fileBlobClient = getAzureBlobClientForFileVersion repositoryDto fileVersion correlationId
                                 let! existsResult = fileBlobClient.ExistsAsync()
@@ -916,9 +911,6 @@ module DirectoryVersion =
                             let! zipFileBlobClient = getAzureBlobClient repositoryDto zipFileBlobName correlationId
                             use tempZipFileStream = File.OpenRead(tempZipPath)
                             let! response = zipFileBlobClient.UploadAsync(tempZipFileStream, overwrite = true)
-
-                            //logToConsole $"In createDirectoryZipAsync: Successfully uploaded {zipFileName} for relative path {directoryVersion.RelativePath} to Azure Blob Storage."
-
                             ()
                         finally
                             // Step 5: Delete the local ZIP file
@@ -926,7 +918,7 @@ module DirectoryVersion =
                     }
 
                 task {
-                    logToConsole $"In GetZipFileUri: directoryVersion: {serialize directoryVersion}."
+                    //logToConsole $"In GetZipFileUri: directoryVersion: {serialize directoryVersion}."
                     let repositoryActorProxy = Repository.CreateActorProxy directoryVersion.OrganizationId directoryVersion.RepositoryId correlationId
                     let! repositoryDto = repositoryActorProxy.Get correlationId
 

@@ -74,6 +74,7 @@
 		<Compile Include="Storage.Server.fs" />
 		<Compile Include="Reminder.Server.fs" />
 		<Compile Include="ReminderService.Server.fs" />
+		<Compile Include="Notification.Server.fs" />
 		<Compile Include="Startup.Server.fs" />
 		<Compile Include="Program.Server.fs" />
 		<None Include="Dockerfile" />
@@ -89,6 +90,7 @@
 	<ItemGroup>
 		<PackageReference Include="Asp.Versioning.Mvc" Version="8.1.0" />
 		<PackageReference Include="Asp.Versioning.Mvc.ApiExplorer" Version="8.1.0" />
+		<PackageReference Include="Azure.Messaging.ServiceBus" Version="7.20.1" />
 		<PackageReference Include="Azure.Monitor.OpenTelemetry.Exporter" Version="1.5.0" />
 		<PackageReference Include="Azure.Storage.Blobs" Version="12.26.0" />
 		<PackageReference Include="Azure.Storage.Blobs.Batch" Version="12.23.0" />

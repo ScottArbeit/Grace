@@ -558,7 +558,7 @@ module Utilities =
         httpClient.DefaultRequestHeaders.Add(Constants.Traceparent, $"00-{traceId}-{parentId}-01")
         httpClient.DefaultRequestHeaders.Add(Constants.Tracestate, $"graceserver-{parentId}")
         httpClient.DefaultRequestHeaders.Add(Constants.CorrelationIdHeaderKey, $"{correlationId}")
-        httpClient.DefaultRequestHeaders.Add(Constants.ServerApiVersionHeaderKey, $"{Constants.ServerApiVersions.Edge}")
+        httpClient.DefaultRequestHeaders.Add(Constants.ServerApiVersionHeaderKey, "Edge")
         //httpClient.DefaultVersionPolicy <- HttpVersionPolicy.RequestVersionOrHigher
 #if DEBUG
         httpClient.Timeout <- TimeSpan.FromSeconds(1800.0) // Keeps client commands open while debugging.

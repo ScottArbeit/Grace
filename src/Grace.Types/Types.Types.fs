@@ -320,8 +320,7 @@ module Types =
           [<Key(10)>]
           CreatedAt: Instant
           [<Key(11)>]
-          HashesValidated: bool
-        }
+          HashesValidated: bool }
 
         static member GetKnownTypes() = GetKnownTypes<DirectoryVersion>()
 
@@ -337,8 +336,7 @@ module Types =
               Files = List<FileVersion>()
               Size = InitialDirectorySize
               CreatedAt = DefaultTimestamp
-              HashesValidated = false
-            }
+              HashesValidated = false }
 
         static member Create
             (directoryVersionId: DirectoryVersionId)
@@ -362,8 +360,7 @@ module Types =
               Files = files
               Size = size
               CreatedAt = getCurrentInstant ()
-              HashesValidated = false
-            }
+              HashesValidated = false }
 
         member this.ToLocalDirectoryVersion lastWriteTimeUtc =
             LocalDirectoryVersion.Create
@@ -524,7 +521,7 @@ module Types =
     type ReferenceLinkType =
         | BasedOn of ReferenceId
         | IncludedInPromotionGroup of Guid
-        | PromotionGroupTerminal of Guid  // Marks the final promotion in a promotion group.
+        | PromotionGroupTerminal of Guid // Marks the final promotion in a promotion group.
 
         static member GetKnownTypes() = GetKnownTypes<ReferenceLinkType>()
 
@@ -541,11 +538,7 @@ module Types =
     type PathPermission = { Path: RelativePath; Permissions: List<ClaimPermission> }
 
     /// Cleans up extra backslashes (escape characters) and converts \r\n to Environment.NewLine.
-    let cleanJson (s: string) =
-        s
-            .Replace("\\\\\\\\", @"\")
-            .Replace("\\\\", @"\")
-            .Replace(@"\r\n", Environment.NewLine)
+    let cleanJson (s: string) = s.Replace("\\\\\\\\", @"\").Replace("\\\\", @"\").Replace(@"\r\n", Environment.NewLine)
 
     /// A serializable view of a .NET Exception
     type ExceptionObject =
@@ -794,9 +787,9 @@ module Types =
     /// Defines how promotions are handled for a branch.
     [<KnownType("GetKnownTypes"); GenerateSerializer>]
     type BranchPromotionMode =
-        | IndividualOnly   // Default behavior: promotions always applied individually.
-        | GroupOnly        // Promotions to this branch must go through a promotion group.
-        | Hybrid           // Promotions can be grouped by default, with an opt-out flag.
+        | IndividualOnly // Default behavior: promotions always applied individually.
+        | GroupOnly // Promotions to this branch must go through a promotion group.
+        | Hybrid // Promotions can be grouped by default, with an opt-out flag.
 
         static member GetKnownTypes() = GetKnownTypes<BranchPromotionMode>()
 
@@ -805,8 +798,8 @@ module Types =
     /// Defines the conflict resolution policy for a repository.
     [<KnownType("GetKnownTypes"); GenerateSerializer>]
     type ConflictResolutionPolicy =
-        | NoConflicts of unit           // Any conflict blocks the promotion group.
-        | ConflictsAllowed of float32     // Conflicts allowed if model confidence >= threshold (0.0 to 1.0).
+        | NoConflicts of unit // Any conflict blocks the promotion group.
+        | ConflictsAllowed of float32 // Conflicts allowed if model confidence >= threshold (0.0 to 1.0).
 
         static member GetKnownTypes() = GetKnownTypes<ConflictResolutionPolicy>()
 
@@ -894,5 +887,41 @@ module Types =
         | Creating
         | Exists
 
+        static member GetKnownTypes() = GetKnownTypes<ReminderStatus>()
+
     [<GenerateSerializer>]
     type Appearance = { Root: DirectoryVersionId; Parent: DirectoryVersionId; Created: Instant }
+
+    /// A list of known Grace Server API version strings.
+    [<KnownType("GetKnownTypes"); GenerateSerializer>]
+    type ServerApiVersions =
+        | ``V2022-02-01``
+        | Latest
+        | Edge
+
+        static member GetKnownTypes() = GetKnownTypes<ServerApiVersions>()
+
+        override this.ToString() = getDiscriminatedUnionFullName this
+
+    /// Supported outbound pub-sub providers for Grace.
+    [<KnownType("GetKnownTypes"); GenerateSerializer>]
+    type GracePubSubSystem =
+        | UnknownPubSubProvider
+        | AzureEventHubs
+        | AzureServiceBus
+        | AwsSqs
+        | GoogleCloudPubSub
+
+        static member GetKnownTypes() = GetKnownTypes<GracePubSubSystem>()
+
+        override this.ToString() = getDiscriminatedUnionFullName this
+
+    [<GenerateSerializer>]
+    type AzureServiceBusPubSubSettings = { ConnectionString: string; FullyQualifiedNamespace: string; TopicName: string; SubscriptionName: string }
+
+    [<GenerateSerializer>]
+    type GracePubSubSettings =
+        { System: GracePubSubSystem
+          AzureServiceBus: AzureServiceBusPubSubSettings option }
+
+        static member Empty: GracePubSubSettings = { System = GracePubSubSystem.UnknownPubSubProvider; AzureServiceBus = None }

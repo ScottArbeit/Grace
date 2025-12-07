@@ -155,30 +155,30 @@ module Program =
                             options.ContainerName <- Environment.GetEnvironmentVariable EnvironmentVariables.DiffContainerName
                             options.GrainStorageSerializer <- SystemTextJsonGrainStorageSerializer(Grace.Shared.Constants.JsonSerializerOptions))
                     )
-                    .AddAzureQueueStreams(
-                        GraceEventStreamProvider,
-                        fun (siloAzureQueueStreamConfigurator: SiloAzureQueueStreamConfigurator) ->
-                            siloAzureQueueStreamConfigurator.ConfigureStreamPubSub(StreamPubSubType.ExplicitGrainBasedAndImplicit)
+                    //.AddAzureQueueStreams(
+                    //    GraceEventStreamProvider,
+                    //    fun (siloAzureQueueStreamConfigurator: SiloAzureQueueStreamConfigurator) ->
+                    //        siloAzureQueueStreamConfigurator.ConfigureStreamPubSub(StreamPubSubType.ExplicitGrainBasedAndImplicit)
 
-                            siloAzureQueueStreamConfigurator.ConfigureAzureQueue(fun optionsBuilder ->
-                                optionsBuilder.Configure(fun azureQueueOptions ->
-                                    azureQueueOptions.MessageVisibilityTimeout <- TimeSpan.FromMinutes(5.0)
-                                    azureQueueOptions.QueueNames <- List<string>([ GraceEventStreamTopic ])
-                                    azureQueueOptions.QueueServiceClient <- QueueServiceClient(azureStorageConnectionString))
-                                |> ignore)
+                    //        siloAzureQueueStreamConfigurator.ConfigureAzureQueue(fun optionsBuilder ->
+                    //            optionsBuilder.Configure(fun azureQueueOptions ->
+                    //                azureQueueOptions.MessageVisibilityTimeout <- TimeSpan.FromMinutes(5.0)
+                    //                azureQueueOptions.QueueNames <- List<string>([ GraceEventStreamTopic ])
+                    //                azureQueueOptions.QueueServiceClient <- QueueServiceClient(azureStorageConnectionString))
+                    //            |> ignore)
 
-                            siloAzureQueueStreamConfigurator.ConfigurePullingAgent(fun pullOptions ->
-                                pullOptions.Configure(fun streamPullingOptions -> streamPullingOptions.GetQueueMsgsTimerPeriod <- TimeSpan.FromSeconds(5.0))
-                                |> ignore)
-                            |> ignore
-                    )
-                    .AddAzureBlobGrainStorage(
-                        GraceEventStreamProvider,
+                    //        siloAzureQueueStreamConfigurator.ConfigurePullingAgent(fun pullOptions ->
+                    //            pullOptions.Configure(fun streamPullingOptions -> streamPullingOptions.GetQueueMsgsTimerPeriod <- TimeSpan.FromSeconds(5.0))
+                    //            |> ignore)
+                    //        |> ignore
+                    //)
+                    //.AddAzureBlobGrainStorage(
+                    //    GraceEventStreamProvider,
 
-                        (fun (options: AzureBlobStorageOptions) ->
-                            options.BlobServiceClient <- Context.blobServiceClient
-                            options.ContainerName <- GraceEventStreamProvider)
-                    )
+                    //    (fun (options: AzureBlobStorageOptions) ->
+                    //        options.BlobServiceClient <- Context.blobServiceClient
+                    //        options.ContainerName <- GraceEventStreamProvider)
+                    //)
                     .AddActivityPropagation()
 
                 |> ignore
@@ -235,7 +235,7 @@ module Program =
                     .AddEnvironmentVariables() // Include environment variables
                     .Build()
 
-            // Just placing some much-used services into ApplicationContext where they're easy to find.
+            // Placing some much-used services into ApplicationContext where they're easy to find.
             Grace.Actors.Context.setHostServiceProvider host.Services
             let grainFactory = host.Services.GetService(typeof<IGrainFactory>) :?> IGrainFactory
             ApplicationContext.setGrainFactory grainFactory

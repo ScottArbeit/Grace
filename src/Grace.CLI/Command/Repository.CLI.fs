@@ -135,7 +135,7 @@ module Repository =
                 Description = "The default version of the server API that clients should use when accessing this repository.",
                 Arity = ArgumentArity.ExactlyOne
             ))
-                .AcceptOnlyFromAmong(listCases<Constants.ServerApiVersions> ())
+                .AcceptOnlyFromAmong(listCases<ServerApiVersions> ())
 
         let saveDays =
             new Option<single>(

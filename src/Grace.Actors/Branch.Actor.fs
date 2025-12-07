@@ -171,9 +171,7 @@ module Branch =
 
                         // Publish the event to the rest of the world.
                         let graceEvent = GraceEvent.BranchEvent branchEvent
-                        let streamProvider = this.GetStreamProvider GraceEventStreamProvider
-                        let stream = streamProvider.GetStream<GraceEvent>(StreamId.Create(GraceEventStreamTopic, GraceEventActorId))
-                        do! stream.OnNextAsync(graceEvent)
+                        do! publishGraceEvent graceEvent branchEvent.Metadata
 
                     let returnValue = GraceReturnValue.Create "Branch command succeeded." branchEvent.Metadata.CorrelationId
 

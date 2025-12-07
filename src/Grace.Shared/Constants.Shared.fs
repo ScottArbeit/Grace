@@ -202,14 +202,6 @@ module Constants =
     [<Literal>]
     let ServerApiVersionHeaderKey = "X-Api-Version"
 
-    /// A list of known Grace Server API version strings.
-    type ServerApiVersions =
-        | ``V2022-02-01``
-        | Latest
-        | Edge
-
-        override this.ToString() = getDiscriminatedUnionFullName this
-
     /// Environment variables used by Grace.
     module EnvironmentVariables =
         /// The environment variable that contains the Application Insights connection string.
@@ -275,6 +267,46 @@ module Constants =
 
         [<Literal>]
         let UseLocalHostClustering = "use_orleans_localhost_configuration"
+
+        /// The environment variable that selects the pub-sub provider.
+        [<Literal>]
+        let GracePubSubSystem = "grace_pub_sub_system"
+
+        /// Azure Service Bus connection string
+        [<Literal>]
+        let AzureServiceBusConnectionString = "grace_azure_service_bus_connection_string"
+
+        /// Azure Service Bus fully qualified namespace (e.g., sb://foo.servicebus.windows.net ).
+        [<Literal>]
+        let AzureServiceBusNamespace = "grace_azure_service_bus_namespace"
+
+        /// Azure Service Bus topic name for Grace events.
+        [<Literal>]
+        let AzureServiceBusTopic = "grace_azure_service_bus_topic"
+
+        /// Azure Service Bus subscription name for Grace events.
+        [<Literal>]
+        let AzureServiceBusSubscription = "grace_azure_service_bus_subscription"
+
+        /// AWS SQS queue URL placeholder for future support.
+        [<Literal>]
+        let AwsSqsQueueUrl = "GRACE_AWS_SQS_QUEUE_URL"
+
+        /// AWS region for SQS (future use).
+        [<Literal>]
+        let AwsRegion = "GRACE_AWS_REGION"
+
+        /// Google Cloud Pub/Sub project identifier (future use).
+        [<Literal>]
+        let GooglePubSubProjectId = "GRACE_GCP_PROJECT_ID"
+
+        /// Google Cloud Pub/Sub topic name (future use).
+        [<Literal>]
+        let GooglePubSubTopic = "GRACE_GCP_TOPIC"
+
+        /// Google Cloud Pub/Sub subscription name (future use).
+        [<Literal>]
+        let GooglePubSubSubscription = "GRACE_GCP_SUBSCRIPTION"
 
     /// The default CacheControl header for object storage.
     [<Literal>]
@@ -370,7 +402,7 @@ module Constants =
     [<Literal>]
     let UpdateInProgressFileName = "graceUpdateInProgress.txt"
 
-    /// The custom alphabet to use when generating a CorrelationId. This alphabet is URL-safe. Consists of "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz._-".
+    /// The custom alphabet to use when generating a NanoId for a CorrelationId. This alphabet is URL-safe. Consists of "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz._-".
     [<Literal>]
     let CorrelationIdAlphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz._-"
 

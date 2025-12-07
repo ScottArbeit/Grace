@@ -6,6 +6,7 @@ open Grace.Actors.Constants
 open Grace.Actors.Context
 open Grace.Actors.Types
 open Grace.Shared
+open Grace.Shared.Constants
 open Grace.Types.Types
 open Grace.Shared.Utilities
 open Microsoft.Azure.Cosmos
@@ -33,6 +34,7 @@ open System.Diagnostics
 open Microsoft.AspNetCore.Hosting
 open Orleans.Serialization
 open System.Net.Security
+open Microsoft.AspNetCore.SignalR
 
 module ApplicationContext =
 
@@ -47,7 +49,9 @@ module ApplicationContext =
     let mutable grainFactory: IGrainFactory = null
     //let orleansClient = ServiceCollection().FirstOrDefault(fun service -> service.ServiceType = typeof<IGrainFactory>).ImplementationInstance :?> IGrainFactory
 
-    /// Dapr actor state storage provider instance
+    let mutable serviceProvider: IServiceProvider = null
+
+    /// Actor state storage provider instance
     let mutable actorStateStorageProvider: ActorStateStorageProvider = ActorStateStorageProvider.Unknown
 
     /// Logger factory instance
@@ -61,6 +65,9 @@ module ApplicationContext =
 
     /// CosmosDB container client instance
     let mutable cosmosContainer: Container = null
+
+    /// Pub-sub settings for the application.
+    let mutable pubSubSettings: GracePubSubSettings = GracePubSubSettings.Empty
 
     /// Sets the Application global configuration.
     let setConfiguration (config: IConfiguration) =
@@ -88,6 +95,10 @@ module ApplicationContext =
         loggerFactory <- logFactory
         log <- loggerFactory.CreateLogger("ApplicationContext.Server")
         setLoggerFactory loggerFactory
+
+    let setPubSubSettings settings =
+        pubSubSettings <- settings
+        setPubSubSettings settings
 
     /// Holds information about each Azure Storage Account used by the application.
     type StorageAccount = { StorageAccountName: string; StorageAccountConnectionString: string }
@@ -147,15 +158,15 @@ module ApplicationContext =
                     Environment.Exit(-1)
                 *)
 
-                let storageKey = Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.AzureStorageKey)
+                let storageKey = Environment.GetEnvironmentVariable(EnvironmentVariables.AzureStorageKey)
 
-                sharedKeyCredential <- StorageSharedKeyCredential(Constants.DefaultObjectStorageAccount, storageKey)
+                sharedKeyCredential <- StorageSharedKeyCredential(DefaultObjectStorageAccount, storageKey)
 
-                let cosmosDbConnectionString = Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.AzureCosmosDBConnectionString)
+                let cosmosDbConnectionString = Environment.GetEnvironmentVariable(EnvironmentVariables.AzureCosmosDBConnectionString)
 
-                let cosmosDatabaseName = Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.CosmosDatabaseName)
+                let cosmosDatabaseName = Environment.GetEnvironmentVariable(EnvironmentVariables.CosmosDatabaseName)
 
-                let cosmosContainerName = Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.CosmosContainerName)
+                let cosmosContainerName = Environment.GetEnvironmentVariable(EnvironmentVariables.CosmosContainerName)
 
                 // Get a reference to the CosmosDB database.
                 let cosmosClientOptions =
@@ -228,6 +239,62 @@ module ApplicationContext =
                 setCosmosContainer cosmosContainer
                 //setMemoryCache memoryCache
                 setTimings timings
+
+                let configurePubSubSettings () =
+                    let rawSystem = Environment.GetEnvironmentVariable(EnvironmentVariables.GracePubSubSystem)
+
+                    let system =
+                        match rawSystem with
+                        | value when value.Equals("AzureEventHubs", StringComparison.OrdinalIgnoreCase) -> GracePubSubSystem.AzureEventHubs
+                        | value when value.Equals("AzureServiceBus", StringComparison.OrdinalIgnoreCase) -> GracePubSubSystem.AzureServiceBus
+                        | value when value.Equals("AWS_SQS", StringComparison.OrdinalIgnoreCase) -> GracePubSubSystem.AwsSqs
+                        | value when value.Equals("AWS-SQS", StringComparison.OrdinalIgnoreCase) -> GracePubSubSystem.AwsSqs
+                        | value when value.Equals("AWS", StringComparison.OrdinalIgnoreCase) -> GracePubSubSystem.AwsSqs
+                        | value when value.Equals("AWS SQS", StringComparison.OrdinalIgnoreCase) -> GracePubSubSystem.AwsSqs
+                        | value when value.Equals("GCP", StringComparison.OrdinalIgnoreCase) -> GracePubSubSystem.GoogleCloudPubSub
+                        | value when value.Equals("GOOGLE_CLOUD_PUBSUB", StringComparison.OrdinalIgnoreCase) -> GracePubSubSystem.GoogleCloudPubSub
+                        | value when value.Equals("GOOGLECLOUDPUBSUB", StringComparison.OrdinalIgnoreCase) -> GracePubSubSystem.GoogleCloudPubSub
+                        | _ -> GracePubSubSystem.UnknownPubSubProvider
+
+                    let azureServiceBusSettings =
+                        if system = GracePubSubSystem.AzureServiceBus then
+                            let serviceBusConnectionString = Environment.GetEnvironmentVariable(EnvironmentVariables.AzureServiceBusConnectionString)
+
+                            if String.IsNullOrWhiteSpace(serviceBusConnectionString) then
+                                invalidOp
+                                    $"Environment variable '{EnvironmentVariables.AzureServiceBusConnectionString}' must be set when {EnvironmentVariables.GracePubSubSystem} is {GracePubSubSystem.AzureServiceBus}."
+
+                            let sb_namespace = Environment.GetEnvironmentVariable(EnvironmentVariables.AzureServiceBusNamespace)
+
+                            if String.IsNullOrWhiteSpace(sb_namespace) then
+                                invalidOp
+                                    $"Environment variable '{EnvironmentVariables.AzureServiceBusNamespace}' must be set when {EnvironmentVariables.GracePubSubSystem} is {GracePubSubSystem.AzureServiceBus}."
+
+                            let topic = Environment.GetEnvironmentVariable(EnvironmentVariables.AzureServiceBusTopic)
+
+                            if String.IsNullOrWhiteSpace(topic) then
+                                invalidOp
+                                    $"Environment variable '{EnvironmentVariables.AzureServiceBusTopic}' must be set when {EnvironmentVariables.GracePubSubSystem} is {GracePubSubSystem.AzureServiceBus}."
+
+                            let subscription = Environment.GetEnvironmentVariable(EnvironmentVariables.AzureServiceBusSubscription)
+
+                            if String.IsNullOrWhiteSpace(subscription) then
+                                invalidOp
+                                    $"Environment variable '{EnvironmentVariables.AzureServiceBusSubscription}' must be set when {EnvironmentVariables.GracePubSubSystem} is {GracePubSubSystem.AzureServiceBus}."
+
+                            Some
+                                { ConnectionString = serviceBusConnectionString
+                                  FullyQualifiedNamespace = sb_namespace
+                                  TopicName = topic
+                                  SubscriptionName = subscription }
+                        else
+                            None
+
+                    { System = system; AzureServiceBus = azureServiceBusSettings }
+
+                configurePubSubSettings () |> setPubSubSettings
+
+                logToConsole $"Grace pub-sub configured as:{Environment.NewLine}{serialize pubSubSettings}"
 
                 logToConsole "Grace Server is ready."
             with ex ->

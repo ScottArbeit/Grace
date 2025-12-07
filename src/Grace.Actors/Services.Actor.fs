@@ -1,5 +1,7 @@
 namespace Grace.Actors
 
+open Azure.Identity
+open Azure.Messaging.ServiceBus
 open Azure.Storage
 open Azure.Storage.Blobs
 open Azure.Storage.Sas
@@ -14,6 +16,7 @@ open Grace.Shared
 open Grace.Shared.Constants
 open Grace.Types.Branch
 open Grace.Types.DirectoryVersion
+open Grace.Types.Events
 open Grace.Types.Reference
 open Grace.Types.Reminder
 open Grace.Types.Repository
@@ -38,6 +41,7 @@ open System.Net.Http
 open System.Net.Http.Json
 open System.Net.Security
 open System.Text
+open System.Text.Json
 open System.Threading.Tasks
 open System.Threading
 open System
@@ -92,22 +96,6 @@ module Services =
     /// Dictionary for caching blob container clients
     let containerClients = new ConcurrentDictionary<string, BlobContainerClient>()
 
-    /// Dapr HTTP endpoint retrieved from environment variables
-    //let daprHttpEndpoint =
-    //    $"{Environment.GetEnvironmentVariable(EnvironmentVariables.DaprServerUri)}:{Environment.GetEnvironmentVariable(EnvironmentVariables.DaprHttpPort)}"
-
-    /// Dapr gRPC endpoint retrieved from environment variables
-    //let daprGrpcEndpoint =
-    //    $"{Environment.GetEnvironmentVariable(EnvironmentVariables.DaprServerUri)}:{Environment.GetEnvironmentVariable(EnvironmentVariables.DaprGrpcPort)}"
-
-    /// Dapr client instance
-    //let daprClient =
-    //    DaprClientBuilder()
-    //        .UseJsonSerializationOptions(JsonSerializerOptions)
-    //        .UseHttpEndpoint(daprHttpEndpoint)
-    //        .UseGrpcEndpoint(daprGrpcEndpoint)
-    //        .Build()
-
     /// Azure Storage connection string retrieved from environment variables
     let private azureStorageConnectionString = Environment.GetEnvironmentVariable(EnvironmentVariables.AzureStorageConnectionString)
 
@@ -119,6 +107,59 @@ module Services =
 
     /// Logger instance for the Services.Actor module.
     let private log = loggerFactory.CreateLogger("Services.Actor")
+
+    let private azureCredential = lazy (DefaultAzureCredential())
+    let private serviceBusClient = lazy (ServiceBusClient(pubSubSettings.AzureServiceBus.Value.ConnectionString))
+    let private serviceBusSender = lazy (serviceBusClient.Value.CreateSender(pubSubSettings.AzureServiceBus.Value.TopicName))
+
+    /// Publishes a GraceEvent to the configured pub-sub system.
+    let publishGraceEvent (graceEvent: GraceEvent) (metadata: EventMetadata) =
+        task {
+            match pubSubSettings.System with
+            | GracePubSubSystem.AzureServiceBus ->
+                match pubSubSettings.AzureServiceBus with
+                | Some sbSettings ->
+                    try
+                        let payload = JsonSerializer.SerializeToUtf8Bytes(graceEvent, Constants.JsonSerializerOptions)
+                        let message = ServiceBusMessage(payload)
+                        message.ContentType <- "application/json"
+                        message.Subject <- "GraceEvent"
+                        message.CorrelationId <- metadata.CorrelationId
+                        message.MessageId <- Guid.NewGuid().ToString("N")
+                        message.ApplicationProperties["graceEventType"] <- getDiscriminatedUnionFullName graceEvent
+
+                        for kvp in metadata.Properties do
+                            message.ApplicationProperties[kvp.Key] <- kvp.Value
+
+                        do! serviceBusSender.Value.SendMessageAsync(message)
+                    with ex ->
+                        log.LogError(
+                            ex,
+                            "{CurrentInstant}: Failed publishing GraceEvent via Azure Service Bus. CorrelationId: {CorrelationId}; EventType: {EventType}.",
+                            getCurrentInstantExtended (),
+                            metadata.CorrelationId,
+                            getDiscriminatedUnionCaseName graceEvent
+                        )
+                | None ->
+                    log.LogWarning(
+                        "Azure Service Bus selected but settings were not provided; dropping GraceEvent {EventType}.",
+                        getDiscriminatedUnionCaseName graceEvent
+                    )
+            | GracePubSubSystem.UnknownPubSubProvider ->
+                log.LogDebug(
+                    "Pub-sub system disabled; dropping GraceEvent {EventType} with CorrelationId: {CorrelationId}.",
+                    getDiscriminatedUnionCaseName graceEvent,
+                    metadata.CorrelationId
+                )
+            | otherSystem ->
+                log.LogWarning(
+                    "Grace pub-sub system {System} not yet implemented; dropping GraceEvent {EventType} with CorrelationId: {CorrelationId}.",
+                    getDiscriminatedUnionCaseName otherSystem,
+                    getDiscriminatedUnionCaseName graceEvent,
+                    metadata.CorrelationId
+                )
+        }
+        :> Task
 
     /// Prints a Cosmos DB QueryDefinition with parameters replaced for easier debugging.
     let printQueryDefinition (queryDefinition: QueryDefinition) =
@@ -1867,7 +1908,7 @@ module Services =
                             SELECT TOP 1 c.State
                             FROM c
                             WHERE STARTSWITH(c.State[0].Event.created.Sha256Hash, @sha256Hash, true)
-                                AND STRINGEQUALS(c.State[0].Event.created.RelativePath, @relativePath, true)                                
+                                AND STRINGEQUALS(c.State[0].Event.created.RelativePath, @relativePath, true)
                                 AND c.GrainType = @grainType
                                 AND c.PartitionKey = @partitionKey
                             """

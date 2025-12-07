@@ -21,7 +21,6 @@ open Microsoft.Extensions.Logging
 open NodaTime
 open Orleans
 open Orleans.Runtime
-open Orleans.Streaming
 open System
 open System.Collections.Concurrent
 open System.Collections.Generic
@@ -67,9 +66,7 @@ module Owner =
                     // Publish the event to the rest of the world.
                     let graceEvent = Events.GraceEvent.OwnerEvent ownerEvent
 
-                    let streamProvider = this.GetStreamProvider GraceEventStreamProvider
-                    let stream = streamProvider.GetStream<Events.GraceEvent>(StreamId.Create(Constants.GraceEventStreamTopic, GraceEventActorId))
-                    do! stream.OnNextAsync(graceEvent)
+                    do! publishGraceEvent graceEvent ownerEvent.Metadata
 
                     let returnValue = GraceReturnValue.Create "Owner command succeeded." ownerEvent.Metadata.CorrelationId
 

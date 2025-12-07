@@ -45,7 +45,6 @@
 		<Compile Include="Diff.Actor.fs" />
 		<Compile Include="FileAppearance.Actor.fs" />
 		<Compile Include="DirectoryAppearance.Actor.fs" />
-		<Compile Include="Notification.Actor.fs" />
 		<Compile Include="CodeGenAttribute.Actor.fs" />
 	</ItemGroup>
 
@@ -54,6 +53,7 @@
 	</ItemGroup>
 
 	<ItemGroup>
+		<PackageReference Include="Azure.Messaging.ServiceBus" Version="7.20.1" />
 		<PackageReference Include="Azure.Storage.Blobs" Version="12.26.0" />
 		<PackageReference Include="Azure.Storage.Blobs.Batch" Version="12.23.0" />
 		<PackageReference Include="Azure.Storage.Common" Version="12.25.0" />

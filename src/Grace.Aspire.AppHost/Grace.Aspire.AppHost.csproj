@@ -19,6 +19,9 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Grace.Server\Grace.Server.fsproj" />
+    <ProjectReference Include="..\Grace.Shared\Grace.Shared.fsproj" IsAspireProjectResource="false">
+        <Aliases>Shared</Aliases>
+    </ProjectReference>
   </ItemGroup>
 
 </Project>

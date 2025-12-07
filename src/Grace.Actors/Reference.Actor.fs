@@ -127,10 +127,7 @@ module Reference =
 
                     // Publish the event to the rest of the world.
                     let graceEvent = GraceEvent.ReferenceEvent referenceEvent
-
-                    let streamProvider = this.GetStreamProvider GraceEventStreamProvider
-                    let stream = streamProvider.GetStream<GraceEvent>(StreamId.Create(GraceEventStreamTopic, GraceEventActorId))
-                    do! stream.OnNextAsync(graceEvent)
+                    do! publishGraceEvent graceEvent referenceEvent.Metadata
 
                     // If this is a Save or Checkpoint reference, schedule a physical deletion based on the default delays from the repository.
                     match referenceEvent.Event with

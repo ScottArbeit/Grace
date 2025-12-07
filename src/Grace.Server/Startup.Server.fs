@@ -575,6 +575,7 @@ module Application =
                 .AddRouting()
                 .AddLogging()
                 .AddHostedService<ReminderService>()
+                .AddHostedService<Notification.Subscriber.GraceEventSubscriptionService>()
                 .AddHttpLogging()
                 .AddOrleans(fun siloBuilder ->
                     siloBuilder.Services.AddSerializer(fun serializerBuilder -> serializerBuilder.AddNodaTimeSerializers() |> ignore)
@@ -702,6 +703,8 @@ module Application =
 
             // Set the global ApplicationContext.
             ApplicationContext.Set.Wait()
+
+            ApplicationContext.serviceProvider <- app.ApplicationServices
 
             //app.ApplicationServices.GetService<IGrainFactory>() |> ApplicationContext.setOrleansClient
 

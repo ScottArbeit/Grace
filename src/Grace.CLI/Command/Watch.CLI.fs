@@ -191,10 +191,7 @@ module Watch =
             | Ok returnValue ->
                 do! updateObjectCacheFile newDirectoryVersions
 
-                let fileDifferences =
-                    differences
-                        .Where(fun diff -> diff.FileSystemEntryType = FileSystemEntryType.File)
-                        .ToList()
+                let fileDifferences = differences.Where(fun diff -> diff.FileSystemEntryType = FileSystemEntryType.File).ToList()
 
                 let message =
                     if fileDifferences |> Seq.isEmpty then
@@ -330,6 +327,7 @@ module Watch =
 
                     // Reset the in-memory Grace Status to empty to minimize memory usage.
                     graceStatus <- GraceStatus.Default
+                    GC.Collect(2, GCCollectionMode.Forced, blocking = true, compacting = true)
                 with ex ->
                     logToAnsiConsole
                         Colors.Error
@@ -338,6 +336,7 @@ module Watch =
             elif graceWatchStatusUpdateTime < getCurrentInstant().Minus(Duration.FromMinutes(4.8)) then
                 let! graceStatusFromDisk = readGraceStatusFile ()
                 do! updateGraceWatchInterprocessFile graceStatusFromDisk
+                GC.Collect(2, GCCollectionMode.Forced, blocking = true, compacting = true)
         }
 
     type Watch() =
@@ -374,10 +373,7 @@ module Watch =
                             .Subscribe(OnRenamed)
 
                     use errored =
-                        Observable
-                            .FromEventPattern<ErrorEventArgs>(rootDirectoryFileSystemWatcher, "Error")
-                            .Select(fun e -> e.EventArgs)
-                            .Subscribe(OnError) // I want all of the errors.
+                        Observable.FromEventPattern<ErrorEventArgs>(rootDirectoryFileSystemWatcher, "Error").Select(fun e -> e.EventArgs).Subscribe(OnError) // I want all of the errors.
 
                     Directory.CreateDirectory(Path.GetDirectoryName(updateInProgressFileName))
                     |> ignore
@@ -415,11 +411,14 @@ module Watch =
                     let signalRUrl = Uri($"{Current().ServerUri}/notifications")
                     logToConsole $"signalRUrl: {signalRUrl}."
 
-                    use signalRConnection =
-                        HubConnectionBuilder()
-                            .WithAutomaticReconnect()
-                            .WithUrl(signalRUrl, HttpTransportType.ServerSentEvents)
-                            .Build()
+                    use signalRConnection = HubConnectionBuilder().WithAutomaticReconnect().WithUrl(signalRUrl, HttpTransportType.ServerSentEvents).Build()
+
+                    use notifyRepository =
+                        signalRConnection.On<RepositoryId, ReferenceId>(
+                            "NotifyRepository",
+                            fun repositoryId referenceId ->
+                                (task { logToAnsiConsole Colors.Highlighted $"ReferenceId {referenceId} was created in repository {repositoryId}." }) :> Task
+                        )
 
                     use serverToClient =
                         signalRConnection.On<string>(
@@ -488,6 +487,13 @@ module Watch =
                                 :> Task
                         )
 
+                    signalRConnection.add_Closed (fun ex -> task { logToAnsiConsole Colors.Error $"SignalR connection closed: {ex.Message}." })
+
+                    signalRConnection.add_Reconnecting (fun ex -> task { logToAnsiConsole Colors.Important $"SignalR connection reconnecting: {ex.Message}." })
+
+                    signalRConnection.add_Reconnected (fun connectionId ->
+                        task { logToAnsiConsole Colors.Important $"SignalR connection reconnected: {connectionId}." })
+
                     do! signalRConnection.StartAsync(cancellationToken)
 
                     // Get the parent BranchId so we can tell SignalR what to notify us about.
@@ -554,13 +560,13 @@ module Watch =
 
                         // About once a minute, do a full GC to be kind with our memory usage. This is for looks, not for function.
                         //
-                        //   In .NET, when a computer has lots of available memory, and there's no signal from the OS that there's any memory pressure, GC doesn't happen much, if at all.
+                        // In .NET, when a computer has lots of available memory, and there's no memory pressure signal from the OS, GC doesn't happen much, if at all.
                         //   With no memory pressure, `grace watch` wouldn't bother releasing its unused heap after handling events like saves and auto-rebases.
                         //   Seeing that kind of memory usage could lead to uninformed people saying things like, "OMG, `grace watch` takes up so much memory!"
-                        //   `grace watch` needs more memory only momentarily to handle events. We deliberately release the memory back to the OS as quickly as possible.
-                        //   That means forcing a full GC.
+                        //   Actually, `grace watch` only grabs a lot of memory at the moment of processing events. As soon as we're done, we want to release that
+                        //   memory back to the OS, that means forcing a full GC.
                         //
-                        //   Because of DATAS (see https://learn.microsoft.com/en-us/dotnet/standard/garbage-collection/datas), it may take more than one GC.Collect()
+                        // Because of DATAS (see https://learn.microsoft.com/en-us/dotnet/standard/garbage-collection/datas), it may take more than one GC.Collect()
                         //   call to fully compact the heap (and that's OK). If we weren't being so aggressive about memory usage, we would just let DATAS compute
                         //   a close-to-optimal heap size on its own over time.
                         if previousGC < getCurrentInstant().Minus(Duration.FromMinutes(1.0)) then
