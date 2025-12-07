@@ -702,10 +702,7 @@ module Application =
                 .UseGiraffe(notFoundHandler)
 
             // Set the global ApplicationContext.
-            ApplicationContext.Set.Wait()
-
             ApplicationContext.serviceProvider <- app.ApplicationServices
-
-            //app.ApplicationServices.GetService<IGrainFactory>() |> ApplicationContext.setOrleansClient
+            ApplicationContext.Set.Wait()
 
             logToConsole $"Grace Server started successfully."

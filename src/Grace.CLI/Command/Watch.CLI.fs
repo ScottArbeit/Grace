@@ -495,6 +495,11 @@ module Watch =
                         task { logToAnsiConsole Colors.Important $"SignalR connection reconnected: {connectionId}." })
 
                     do! signalRConnection.StartAsync(cancellationToken)
+                    do! signalRConnection.InvokeAsync("RegisterRepository", Current().RepositoryId, cancellationToken)
+
+                    logToAnsiConsole
+                        Colors.Highlighted
+                        $"SignalR Hub connection state: {signalRConnection.State}. Listening for changes in repository {Current().RepositoryName} ({Current().RepositoryId}); connectionId: {signalRConnection.ConnectionId}."
 
                     // Get the parent BranchId so we can tell SignalR what to notify us about.
                     let branchGetParameters =
@@ -513,7 +518,7 @@ module Watch =
 
                         logToAnsiConsole
                             Colors.Highlighted
-                            $"Connected to SignalR Hub. Listening for changes in parent branch {parentBranchDto.BranchName} ({parentBranchDto.BranchId}); connectionId: {signalRConnection.ConnectionId}."
+                            $"SignalR Hub connection state: {signalRConnection.State}. Listening for changes in parent branch {parentBranchDto.BranchName} ({parentBranchDto.BranchId}); connectionId: {signalRConnection.ConnectionId}."
                     | Error error ->
                         logToAnsiConsole Colors.Error $"Failed to retrieve branch metadata. Cannot connect to SignalR Hub."
 

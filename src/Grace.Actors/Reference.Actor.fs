@@ -144,7 +144,7 @@ module Reference =
                                           BranchId = referenceDto.BranchId
                                           DirectoryVersionId = referenceDto.DirectoryId
                                           Sha256Hash = referenceDto.Sha256Hash
-                                          DeleteReason = $"Save: automatic deletion after {repositoryDto.SaveDays} days."
+                                          DeleteReason = $"Save: automatic deletion after {repositoryDto.SaveDays} days"
                                           CorrelationId = correlationId }
 
                                     do!
@@ -164,7 +164,7 @@ module Reference =
                                           BranchId = referenceDto.BranchId
                                           DirectoryVersionId = referenceDto.DirectoryId
                                           Sha256Hash = referenceDto.Sha256Hash
-                                          DeleteReason = $"Checkpoint: automatic deletion after {repositoryDto.CheckpointDays} days."
+                                          DeleteReason = $"Checkpoint: automatic deletion after {repositoryDto.CheckpointDays} days"
                                           CorrelationId = correlationId }
 
                                     do!

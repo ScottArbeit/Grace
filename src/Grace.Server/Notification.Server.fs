@@ -41,40 +41,82 @@ module Notification =
     type NotificationHub() =
         inherit Hub<IGraceClientConnection>()
 
-        override this.OnConnectedAsync() = task { logToConsole $"NotificationHub ConnectionId {this.Context.ConnectionId} established." }
+        override this.OnConnectedAsync() =
+            task {
+                log.LogInformation(
+                    "{CurrentInstant}: Node: {HostName}; ConnectionId: {ConnectionId} established.",
+                    getCurrentInstantExtended (),
+                    getMachineName,
+                    this.Context.ConnectionId
+                )
+            }
 
         member this.RegisterRepository(repositoryId: RepositoryId) =
             task {
-                logToConsole $"In NotificationHub.RegisterRepository; repositoryId: {repositoryId}; ConnectionId: {this.Context.ConnectionId}."
+                log.LogInformation(
+                    "{CurrentInstant}: Node: {HostName}; ConnectionId: {ConnectionId} registering for RepositoryId: {RepositoryId}.",
+                    getCurrentInstantExtended (),
+                    getMachineName,
+                    this.Context.ConnectionId,
+                    repositoryId
+                )
+
                 do! this.Groups.AddToGroupAsync(this.Context.ConnectionId, $"{repositoryId}")
             }
 
         member this.RegisterParentBranch(branchId: BranchId, parentBranchId: BranchId) =
             task {
-                logToConsole
-                    $"In NotificationHub.RegisterParentBranch; branchId: {branchId}; parentBranchId: {parentBranchId}; ConnectionId: {this.Context.ConnectionId}."
+                log.LogInformation(
+                    "{CurrentInstant}: Node: {HostName}; ConnectionId: {ConnectionId} registering for ParentBranchId: {ParentBranchId}.",
+                    getCurrentInstantExtended (),
+                    getMachineName,
+                    this.Context.ConnectionId,
+                    parentBranchId
+                )
 
                 do! this.Groups.AddToGroupAsync(this.Context.ConnectionId, $"{parentBranchId}")
             }
 
         member this.NotifyRepository((repositoryId: RepositoryId), (referenceId: ReferenceId)) =
             task {
-                logToConsole $"In NotifyRepository. repositoryId: {repositoryId}; referenceId: {referenceId}."
+                log.LogInformation(
+                    "{CurrentInstant}: Node: {HostName}; Notifying clients in RepositoryId group: {RepositoryId} of ReferenceId: {ReferenceId}.",
+                    getCurrentInstantExtended (),
+                    getMachineName,
+                    repositoryId,
+                    referenceId
+                )
+
                 do! this.Clients.Group($"{repositoryId}").NotifyRepository(repositoryId, referenceId)
             }
             :> Task
 
         member this.NotifyOnPromotion((branchId: BranchId), (branchName: BranchName), (referenceId: ReferenceId)) =
             task {
-                logToConsole $"In NotifyOnPromotion. branchName: {branchName}; referenceId: {referenceId}."
+                log.LogInformation(
+                    "{CurrentInstant}: Node: {HostName}; Notifying clients in Branch: '{BranchName}' ({BranchId}) of promotion ReferenceId: {ReferenceId}.",
+                    getCurrentInstantExtended (),
+                    getMachineName,
+                    branchName,
+                    branchId,
+                    referenceId
+                )
+
                 do! this.Clients.Group($"{branchId}").NotifyOnPromotion(branchId, branchName, referenceId)
             }
             :> Task
 
         member this.NotifyOnSave((branchName: BranchName), (parentBranchName: BranchName), (parentBranchId: BranchId), (referenceId: ReferenceId)) =
             task {
-                logToConsole
-                    $"In NotifyOnSave. branchName: {branchName}, parentBranchName: {parentBranchName}. parentBranchId: {parentBranchId}; referenceId: {referenceId}."
+                log.LogInformation(
+                    "{CurrentInstant}: Node: {HostName}; Notifying clients with ParentBranch '{ParentBranchName}' ({ParentBranchId}) of save ReferenceId: {ReferenceId} in branch '{BranchName}'.",
+                    getCurrentInstantExtended (),
+                    getMachineName,
+                    parentBranchName,
+                    parentBranchId,
+                    referenceId,
+                    branchName
+                )
 
                 do! this.Clients.Group($"{parentBranchId}").NotifyOnSave(branchName, parentBranchName, parentBranchId, referenceId)
 
@@ -84,8 +126,15 @@ module Notification =
 
         member this.NotifyOnCheckpoint((branchName: BranchName), (parentBranchName: BranchName), (parentBranchId: BranchId), (referenceId: ReferenceId)) =
             task {
-                logToConsole
-                    $"In NotifyOnCheckpoint. branchName: {branchName}, parentBranchName: {parentBranchName}. parentBranchId: {parentBranchId}; referenceId: {referenceId}."
+                log.LogInformation(
+                    "{CurrentInstant}: Node: {HostName}; Notifying clients with ParentBranch '{ParentBranchName}' ({ParentBranchId}) of checkpoint ReferenceId: {ReferenceId} in branch '{branchName}'.",
+                    getCurrentInstantExtended (),
+                    getMachineName,
+                    parentBranchName,
+                    parentBranchId,
+                    referenceId,
+                    branchName
+                )
 
                 do! this.Clients.Group($"{parentBranchId}").NotifyOnCheckpoint(branchName, parentBranchName, parentBranchId, referenceId)
             }
@@ -93,8 +142,15 @@ module Notification =
 
         member this.NotifyOnCommit((branchName: BranchName), (parentBranchName: BranchName), (parentBranchId: BranchId), (referenceId: ReferenceId)) =
             task {
-                logToConsole
-                    $"In NotifyOnCommit. branchName: {branchName}, parentBranchName: {parentBranchName}. parentBranchId: {parentBranchId}; referenceId: {referenceId}."
+                log.LogInformation(
+                    "{CurrentInstant}: Node: {HostName}; Notifying clients with ParentBranch '{ParentBranchName}' ({ParentBranchId}) of commit ReferenceId: {ReferenceId} in branch '{branchName}'.",
+                    getCurrentInstantExtended (),
+                    getMachineName,
+                    parentBranchName,
+                    parentBranchId,
+                    referenceId,
+                    branchName
+                )
 
                 do! this.Clients.Group($"{parentBranchId}").NotifyOnCommit(branchName, parentBranchName, parentBranchId, referenceId)
             }
@@ -146,25 +202,35 @@ module Notification =
                     return ()
             }
 
-        let mutable private hubContext: IHubContext<NotificationHub, IGraceClientConnection> = null
+        let hubContext = lazy (serviceProvider.GetService<IHubContext<NotificationHub, IGraceClientConnection>>())
 
-        let private ensureHubContext () =
-            if isNull hubContext then
-                if isNull serviceProvider then
-                    log.LogWarning("NotificationHub context requested before the service provider was initialized.")
-                else
-                    hubContext <- serviceProvider.GetService<IHubContext<NotificationHub, IGraceClientConnection>>()
+        //let private getHubContextOld () =
+        //    if isNull hubContext then
+        //        if isNull serviceProvider then
+        //            log.LogWarning("NotificationHub context requested before the service provider was initialized.")
+        //        else
+        //            hubContext <- serviceProvider.GetService<IHubContext<NotificationHub, IGraceClientConnection>>()
 
-                    if isNull hubContext then
-                        log.LogWarning("NotificationHub context could not be resolved from the service provider.")
+        //            if isNull hubContext then
+        //                log.LogWarning("NotificationHub context could not be resolved from the service provider.")
 
-            hubContext
+        //    hubContext
 
+        //let private getHubContext () =
+        //    if isNull hubContext then
+        //        hubContext <- serviceProvider.GetService<IHubContext<NotificationHub, IGraceClientConnection>>()
+
+        //        if isNull hubContext then
+        //            log.LogWarning("NotificationHub context could not be resolved from the service provider.")
+
+        //    hubContext
+
+        /// Main processing for asynchronous event notifications received from the pub-sub system.
         let handleEvent (graceEvent: GraceEvent) =
             task {
-                let myEvent = graceEvent.GetType().FullName
-                logToConsole $"Notification.Server.handleEvent: graceEvent: {graceEvent}; graceEvent.GetType: {myEvent}."
-                let hub = ensureHubContext ()
+                let myEvent = graceEvent.GetType().Name
+                logToConsole $"Notification.Server.handleEvent: graceEvent.GetType: {myEvent}{Environment.NewLine}graceEvent: {graceEvent}."
+                let hubContext = hubContext.Value
 
                 match graceEvent with
                 | BranchEvent branchEvent ->
@@ -182,8 +248,11 @@ module Notification =
                     | Branch.Promoted(referenceDto, directoryVersionId, sha256Hash, referenceText) ->
                         let! branchDto = getBranchDto referenceDto.BranchId repositoryId correlationId
 
-                        if not <| isNull hub then
-                            do! hub.Clients.Group($"{branchDto.BranchId}").NotifyOnPromotion(branchDto.BranchId, branchDto.BranchName, referenceDto.ReferenceId)
+                        if not <| isNull hubContext then
+                            do!
+                                hubContext.Clients
+                                    .Group($"{branchDto.BranchId}")
+                                    .NotifyOnPromotion(branchDto.BranchId, branchDto.BranchName, referenceDto.ReferenceId)
 
                         // Create the diff between the new promotion and previous promotion.
                         let! latestTwoPromotions = getPromotions referenceDto.RepositoryId referenceDto.BranchId 2 branchEvent.Metadata.CorrelationId
@@ -202,11 +271,13 @@ module Notification =
                         let! branchDto = getBranchDto referenceDto.BranchId repositoryId correlationId
                         let! parentBranchDto = getBranchDto branchDto.ParentBranchId repositoryId correlationId
 
-                        if not <| isNull hub then
+                        if not <| isNull hubContext then
                             do!
-                                hub.Clients
+                                hubContext.Clients
                                     .Group($"{branchDto.ParentBranchId}")
                                     .NotifyOnCommit(branchDto.BranchName, parentBranchDto.BranchName, parentBranchDto.ParentBranchId, referenceDto.ReferenceId)
+                        else
+                            log.LogWarning("No SignalR hub context available; cannot notify clients of commit.")
 
                         // Create the diff between the new commit and the previous commit.
                         let! latestTwoCommits = getCommits referenceDto.RepositoryId referenceDto.BranchId 2 branchEvent.Metadata.CorrelationId
@@ -237,9 +308,9 @@ module Notification =
                         let! branchDto = getBranchDto referenceDto.BranchId repositoryId correlationId
                         let! parentBranchDto = getBranchDto branchDto.ParentBranchId repositoryId correlationId
 
-                        if not <| isNull hub then
+                        if not <| isNull hubContext then
                             do!
-                                hub.Clients
+                                hubContext.Clients
                                     .Group($"{branchDto.ParentBranchId}")
                                     .NotifyOnCheckpoint(
                                         branchDto.BranchName,
@@ -278,11 +349,13 @@ module Notification =
                         let! branchDto = getBranchDto referenceDto.BranchId repositoryId correlationId
                         let! parentBranchDto = getBranchDto branchDto.ParentBranchId repositoryId correlationId
 
-                        if not <| isNull hub then
+                        if not <| isNull hubContext then
                             do!
-                                hub.Clients
+                                hubContext.Clients
                                     .Group($"{branchDto.ParentBranchId}")
                                     .NotifyOnSave(branchDto.BranchName, parentBranchDto.BranchName, parentBranchDto.ParentBranchId, referenceDto.ReferenceId)
+                        else
+                            log.LogWarning("No SignalR hub context available; cannot notify clients of save.")
 
                         // Create the diff between the new save and the previous save.
                         let! latestTwoSaves = getSaves branchDto.RepositoryId referenceDto.BranchId 2 branchEvent.Metadata.CorrelationId
@@ -387,7 +460,7 @@ module Notification =
                                 let! zipFileUri = directoryVersionActorProxy.GetZipFileUri correlationId
                                 ()
 
-                        do! hub.Clients.Group($"{repositoryId}").NotifyRepository(repositoryId, referenceId)
+                        do! hubContext.Clients.Group($"{repositoryId}").NotifyRepository(repositoryId, referenceId)
                     | _ -> ()
                 | RepositoryEvent repositoryEvent ->
                     let correlationId = repositoryEvent.Metadata.CorrelationId
