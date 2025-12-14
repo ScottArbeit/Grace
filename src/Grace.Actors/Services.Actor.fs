@@ -49,6 +49,8 @@ open Microsoft.Extensions.DependencyInjection
 open System.Runtime.Serialization
 open System.Reflection
 open System.Text.RegularExpressions
+open Microsoft.Azure.Amqp
+open Azure.Core.Amqp
 
 module Services =
     type ServerGraceIndex = Dictionary<RelativePath, DirectoryVersion>
@@ -125,7 +127,7 @@ module Services =
                         message.ContentType <- "application/json"
                         message.Subject <- "GraceEvent"
                         message.CorrelationId <- metadata.CorrelationId
-                        message.MessageId <- Guid.NewGuid().ToString("N")
+                        message.MessageId <- $"{metadata.CorrelationId}-{getCurrentInstant().ToUnixTimeMilliseconds}" //Guid.NewGuid().ToString("N")
                         message.ApplicationProperties["graceEventType"] <- getDiscriminatedUnionFullName graceEvent
 
                         for kvp in metadata.Properties do
@@ -1138,6 +1140,7 @@ module Services =
                                 AND STARTSWITH(c.State[0].Event.created.Sha256Hash, @sha256Hash, true)
                                 AND c.GrainType = @grainType
                                 AND c.PartitionKey = @partitionKey
+                            ORDER BY c.State[0].Event.created.CreatedAt DESC
                             """
                         )
                             .WithParameter("@maxCount", maxCount)
@@ -1298,12 +1301,20 @@ module Services =
                                             cosmosContainer.DeleteAllItemsByPartitionKeyStreamAsync(PartitionKey(document.PartitionKey), itemRequestOptions)
 
                                         if deleteResponse.IsSuccessStatusCode then
-                                            logToConsole $"Request succeeded to delete all items with PartitionKey = {document.PartitionKey}."
+                                            log.LogInformation(
+                                                "Succeeded to delete PartitionKey {PartitionKey}. StatusCode: {statusCode}.",
+                                                document.PartitionKey,
+                                                deleteResponse.StatusCode
+                                            )
                                         else
                                             failed.Add(document.PartitionKey)
 
-                                            logToConsole
-                                                $"Failed to delete PartitionKey {document.PartitionKey}. StatusCode: {deleteResponse.StatusCode}; Error: {deleteResponse.ErrorMessage}."
+                                            log.LogError(
+                                                "Failed to delete PartitionKey {PartitionKey}. StatusCode: {statusCode}; Error: {ErrorMessage}.",
+                                                document.PartitionKey,
+                                                deleteResponse.StatusCode,
+                                                deleteResponse.ErrorMessage
+                                            )
 
                                     }
                                 ))
@@ -1761,6 +1772,7 @@ module Services =
                             WHERE STARTSWITH(c.State[0].Event.created.Sha256Hash, @sha256Hash, true)
                                 AND c.GrainType = @grainType
                                 AND c.PartitionKey = @partitionKey
+                            ORDER BY c.State[0].Event.created.CreatedAt DESC
                             """
                         )
                             .WithParameter("@sha256Hash", sha256Hash)
@@ -1911,6 +1923,7 @@ module Services =
                                 AND STRINGEQUALS(c.State[0].Event.created.RelativePath, @relativePath, true)
                                 AND c.GrainType = @grainType
                                 AND c.PartitionKey = @partitionKey
+                            ORDER BY c.State[0].Event.created.CreatedAt DESC
                             """
                         )
                             .WithParameter("@sha256Hash", sha256Hash)
@@ -1920,7 +1933,6 @@ module Services =
 
                     try
                         let iterator = cosmosContainer.GetItemQueryIterator<DirectoryVersionEventValue>(queryDefinition, requestOptions = queryRequestOptions)
-
                         let directoryVersionDtos = List<DirectoryVersionDto>()
 
                         while iterator.HasMoreResults do
@@ -1938,6 +1950,9 @@ module Services =
                                         DirectoryVersionDto.Default
 
                                 directoryVersionDtos.Add(directoryVersionDto))
+
+                        if directoryVersionDtos.Count > 0 then
+                            directoryVersion <- directoryVersionDtos[0].DirectoryVersion
 
                         if
                             (indexMetrics.Length >= 2)
@@ -1985,29 +2000,29 @@ module Services =
         }
 
     /// Checks if all of the supplied DirectoryVersionIds exist.
-    let directoryVersionIdsExist (repositoryId: RepositoryId) (directoryIds: IEnumerable<DirectoryVersionId>) correlationId =
+    let directoryVersionIdsExist (repositoryId: RepositoryId) (directoryVersionIds: IEnumerable<DirectoryVersionId>) correlationId =
         task {
             match actorStateStorageProvider with
             | Unknown -> return false
             | AzureCosmosDb ->
                 let mutable requestCharge = 0.0
                 let mutable allExist = true
-                let directoryIdQueue = Queue<DirectoryVersionId>(directoryIds)
+                let directoryVersionIdQueue = Queue<DirectoryVersionId>(directoryVersionIds)
 
-                while directoryIdQueue.Count > 0 && allExist do
-                    let directoryId = directoryIdQueue.Dequeue()
+                while directoryVersionIdQueue.Count > 0 && allExist do
+                    let directoryVersionId = directoryVersionIdQueue.Dequeue()
 
                     let queryDefinition =
                         QueryDefinition(
                             """
                             SELECT c.State
                             FROM c
-                            WHERE STRINGEQUALS(c.State[0].Event.created.DirectoryId, @directoryId, true)
+                            WHERE STRINGEQUALS(c.State[0].Event.created.DirectoryVersionId, @directoryVersionId, true)
                                 AND c.GrainType = @grainType
                                 AND c.PartitionKey = @partitionKey
                             """
                         )
-                            .WithParameter("@directoryId", $"{directoryId}")
+                            .WithParameter("@directoryVersionId", $"{directoryVersionId}")
                             .WithParameter("@grainType", StateName.DirectoryVersion)
                             .WithParameter("@partitionKey", repositoryId)
 

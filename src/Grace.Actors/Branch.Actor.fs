@@ -151,7 +151,7 @@ module Branch =
 
                     // Update the branchDto with the event.
                     branchDto <- branchDto |> BranchDto.UpdateDto branchEvent
-                    branchEvent.Metadata.Properties[nameof RepositoryId] <- branchDto.RepositoryId
+                    branchEvent.Metadata.Properties[nameof RepositoryId] <- $"{branchDto.RepositoryId}"
 
                     match branchEvent.Event with
                     // Don't save these reference creation events, and don't send them as events; that was done by the Reference actor when the reference was created.
@@ -161,8 +161,8 @@ module Branch =
                     | Checkpointed(referenceDto, _, _, _)
                     | Saved(referenceDto, _, _, _)
                     | Tagged(referenceDto, _, _, _)
-                    | ExternalCreated(referenceDto, _, _, _) -> branchEvent.Metadata.Properties[nameof ReferenceId] <- referenceDto.ReferenceId
-                    | Rebased referenceId -> branchEvent.Metadata.Properties[nameof ReferenceId] <- referenceId
+                    | ExternalCreated(referenceDto, _, _, _) -> branchEvent.Metadata.Properties[nameof ReferenceId] <- $"{referenceDto.ReferenceId}"
+                    | Rebased referenceId -> branchEvent.Metadata.Properties[nameof ReferenceId] <- $"{referenceId}"
                     // Save the rest of the events.
                     | _ ->
                         // For all other events, add the event to the branchEvents list, and save it to actor state.
@@ -185,7 +185,7 @@ module Branch =
 
                     // If the event has a referenceId, add it to the return properties.
                     if branchEvent.Metadata.Properties.ContainsKey(nameof ReferenceId) then
-                        returnValue.Properties.Add(nameof ReferenceId, branchEvent.Metadata.Properties[nameof ReferenceId] :?> Guid)
+                        returnValue.Properties.Add(nameof ReferenceId, Guid.Parse(branchEvent.Metadata.Properties[nameof ReferenceId]))
 
                     // If there are child branch results, add them to the return properties.
                     if branchEvent.Metadata.Properties.ContainsKey("ChildBranchResults") then
@@ -324,6 +324,7 @@ module Branch =
                                 links
                             )
 
+                        metadata.Properties[nameof (RepositoryId)] <- $"{repositoryId}"
                         return! referenceActor.Handle referenceCommand metadata
                     }
 
@@ -565,6 +566,7 @@ module Branch =
                                                                         metadata.CorrelationId
 
                                                                 let metadata = EventMetadata.New metadata.CorrelationId GraceSystemUser
+                                                                metadata.Properties[nameof (RepositoryId)] <- $"{branchDto.RepositoryId}"
 
                                                                 match!
                                                                     referenceActorProxy.Handle

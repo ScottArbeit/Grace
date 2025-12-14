@@ -88,6 +88,7 @@ module ApplicationContext =
     /// Sets the ActorStateStorageProvider for the application.
     let setActorStateStorageProvider actorStateStorage =
         actorStateStorageProvider <- actorStateStorage
+        logToConsole $"In ApplicationContext.Server.setActorStateStorageProvider: Setting actor state storage provider to {actorStateStorageProvider}."
         setActorStateStorageProvider actorStateStorageProvider
 
     /// Sets the ILoggerFactory for the application.

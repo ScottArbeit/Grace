@@ -37,8 +37,92 @@ open System.Collections.Concurrent
 open Spectre.Console
 open System.Text
 open Grace.Shared.Parameters.Storage
+open Grace.CLI.Text
 
 module Watch =
+
+    module private Options =
+        let ownerId =
+            new Option<OwnerId>(
+                OptionName.OwnerId,
+                Required = false,
+                Description = "The repository's owner ID <Guid>.",
+                Arity = ArgumentArity.ZeroOrOne,
+                DefaultValueFactory = (fun _ -> if Current().OwnerId = Guid.Empty then Guid.NewGuid() else Current().OwnerId)
+            )
+
+        let ownerName =
+            new Option<String>(
+                OptionName.OwnerName,
+                Required = false,
+                Description = "The repository's owner name. [default: current owner]",
+                Arity = ArgumentArity.ExactlyOne
+            )
+
+        let organizationId =
+            new Option<OrganizationId>(
+                OptionName.OrganizationId,
+                Required = false,
+                Description = "The repository's organization ID <Guid>.",
+                Arity = ArgumentArity.ExactlyOne,
+                DefaultValueFactory =
+                    (fun _ ->
+                        if Current().OrganizationId = Guid.Empty then
+                            Guid.NewGuid()
+                        else
+                            Current().OrganizationId)
+            )
+
+        let organizationName =
+            new Option<String>(
+                OptionName.OrganizationName,
+                Required = false,
+                Description = "The repository's organization name. [default: current organization]",
+                Arity = ArgumentArity.ZeroOrOne
+            )
+
+        let repositoryId =
+            new Option<RepositoryId>(
+                OptionName.RepositoryId,
+                [| "-r" |],
+                Required = false,
+                Description = "The repository's ID <Guid>.",
+                Arity = ArgumentArity.ExactlyOne,
+                DefaultValueFactory =
+                    (fun _ ->
+                        if Current().RepositoryId = Guid.Empty then
+                            Guid.NewGuid()
+                        else
+                            Current().RepositoryId)
+            )
+
+        let repositoryName =
+            new Option<String>(
+                OptionName.RepositoryName,
+                [| "-n" |],
+                Required = false,
+                Description = "The name of the repository. [default: current repository]",
+                Arity = ArgumentArity.ExactlyOne
+            )
+
+        let branchId =
+            new Option<BranchId>(
+                OptionName.BranchId,
+                [| "-i" |],
+                Required = false,
+                Description = "The branch's ID <Guid>.",
+                Arity = ArgumentArity.ExactlyOne,
+                DefaultValueFactory = (fun _ -> if Current().BranchId = Guid.Empty then Guid.NewGuid() else Current().BranchId)
+            )
+
+        let branchName =
+            new Option<String>(
+                OptionName.BranchName,
+                [| "-b" |],
+                Required = false,
+                Description = "The name of the branch. [default: current branch]",
+                Arity = ArgumentArity.ExactlyOne
+            )
 
     /// Holds a list of the created or changed files that we need to process, as determined by the FileSystemWatcher.
     ///
@@ -434,18 +518,7 @@ module Watch =
                                     logToAnsiConsole Colors.Highlighted $"Parent branch {parentBranchName} has a new promotion; referenceId: {referenceId}."
 
                                     let! graceStatus = readGraceStatusFile ()
-
-                                    let rebaseParameters =
-                                        RebaseParameters(
-                                            OwnerId = $"{Current().OwnerId}",
-                                            OrganizationId = $"{Current().OrganizationId}",
-                                            RepositoryId = $"{Current().RepositoryId}",
-                                            BranchId = $"{Current().BranchId}",
-                                            BasedOn = referenceId,
-                                            CorrelationId = (parseResult |> getCorrelationId)
-                                        )
-
-                                    let! x = Branch.rebaseHandler parseResult graceStatus
+                                    let! x = Branch.rebaseHandler (parseResult |> getNormalizedIdsAndNames) graceStatus
                                     ()
                                 })
                                 :> Task
@@ -592,8 +665,21 @@ module Watch =
             }
 
     let Build =
+        let addCommonOptions (command: Command) =
+            command
+            |> addOption Options.ownerName
+            |> addOption Options.ownerId
+            |> addOption Options.organizationName
+            |> addOption Options.organizationId
+            |> addOption Options.repositoryName
+            |> addOption Options.repositoryId
+            |> addOption Options.branchName
+            |> addOption Options.branchId
+
         // Create main command and aliases, if any.
-        let watchCommand = new Command("watch", Description = "Watches your repo for changes, and uploads new versions of your files.")
+        let watchCommand =
+            new Command("watch", Description = "Watches your repo for changes, and uploads new versions of your files.")
+            |> addCommonOptions
 
         watchCommand.Aliases.Add("w")
         watchCommand.Action <- Watch()

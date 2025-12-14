@@ -143,22 +143,6 @@ module Constants =
     [<Literal>]
     let GraceEventStreamTopic = "graceeventstream"
 
-    /// The name of the reminders topic to publish to.
-    [<Literal>]
-    let GraceRemindersStorage = "actorstorage" // For now, keeping reminders in the same storage as actors.
-
-    /// The name of the reminders topic to publish to.
-    [<Literal>]
-    let GraceRemindersTopic = "gracereminders"
-
-    /// The name of the reminders subscription to subscribe to.
-    [<Literal>]
-    let GraceRemindersSubscription = "reminder-service"
-
-    /// The name of the service for retrieving application secrets.
-    [<Literal>]
-    let GraceSecretStoreName = "kubernetessecretstore"
-
     /// The name of the directory that holds Grace information in a repository.
     [<Literal>]
     let GraceConfigDirectory = ".grace"
@@ -206,27 +190,27 @@ module Constants =
     module EnvironmentVariables =
         /// The environment variable that contains the Application Insights connection string.
         [<Literal>]
-        let ApplicationInsightsConnectionString = "application_insights_connection_string"
+        let ApplicationInsightsConnectionString = "grace__application_insights_connection_string"
 
         /// The environment variable that contains the Azure Cosmos DB Connection String.
         [<Literal>]
-        let AzureCosmosDBConnectionString = "azurecosmosdbconnectionstring"
+        let AzureCosmosDBConnectionString = "grace__cosmosdb__connectionstring"
 
         /// The environment variable that contains the Azure Storage Connection String.
         [<Literal>]
-        let AzureStorageConnectionString = "azurestorageconnectionstring"
+        let AzureStorageConnectionString = "grace__azure_storage__connectionstring"
 
         /// The environment variable that contains the Azure Storage Key.
         [<Literal>]
-        let AzureStorageKey = "azurestoragekey"
+        let AzureStorageKey = "grace__azure_storage__key"
 
         /// The environment variable that contains the name of the CosmosDB container to use for Grace.
         [<Literal>]
-        let CosmosContainerName = "cosmoscontainername"
+        let CosmosContainerName = "grace__cosmosdb__container_name"
 
         /// The environment variable that contains the name of the CosmosDB database to use for Grace.
         [<Literal>]
-        let CosmosDatabaseName = "cosmosdatabasename"
+        let CosmosDatabaseName = "grace__cosmosdb__database_name"
 
         /// The environment variable that contains the Grace server Uri. The Uri MUST include a port number,
         /// and MUST NOT include a trailing slash.
@@ -235,19 +219,19 @@ module Constants =
 
         /// The name of the container in object storage that holds memoized RecursiveDirectoryVersions.
         [<Literal>]
-        let DirectoryVersionContainerName = "directoryversion_container"
+        let DirectoryVersionContainerName = "grace__azure_storage__directoryversion_container_name"
 
         /// The name of the container in object storage that holds cached Diff contents.
         [<Literal>]
-        let DiffContainerName = "diff_container"
+        let DiffContainerName = "grace__azure_storage__diff_container_name"
 
         /// The name of the container in object storage that holds memoized RecursiveDirectoryVersions.
         [<Literal>]
-        let ZipFileContainerName = "zipfile_container"
+        let ZipFileContainerName = "grace__azure_storage__zipfile_container_name"
 
         /// The environment variable that contains the maximum number of reminders that each Grace instance should retrieve from the database and publish for processing.
         [<Literal>]
-        let GraceReminderBatchSize = "gracereminderbatchsize"
+        let GraceReminderBatchSize = "grace__reminder__batch__size"
 
         /// The environment variable that contains the name of the Orleans cluster to use.
         [<Literal>]
@@ -259,54 +243,51 @@ module Constants =
 
         /// The environment variable that contains the Redis host name.
         [<Literal>]
-        let RedisHost = "redis_host"
+        let RedisHost = "grace__redis__host"
 
         /// The environment variable that contains the Redis port number.
         [<Literal>]
-        let RedisPort = "redis_port"
-
-        [<Literal>]
-        let UseLocalHostClustering = "use_orleans_localhost_configuration"
+        let RedisPort = "grace__redis__port"
 
         /// The environment variable that selects the pub-sub provider.
         [<Literal>]
-        let GracePubSubSystem = "grace_pub_sub_system"
+        let GracePubSubSystem = "grace__pubsub__system"
 
         /// Azure Service Bus connection string
         [<Literal>]
-        let AzureServiceBusConnectionString = "grace_azure_service_bus_connection_string"
+        let AzureServiceBusConnectionString = "grace__azure_service_bus__connectionstring"
 
         /// Azure Service Bus fully qualified namespace (e.g., sb://foo.servicebus.windows.net ).
         [<Literal>]
-        let AzureServiceBusNamespace = "grace_azure_service_bus_namespace"
+        let AzureServiceBusNamespace = "grace__azure_service_bus__namespace"
 
         /// Azure Service Bus topic name for Grace events.
         [<Literal>]
-        let AzureServiceBusTopic = "grace_azure_service_bus_topic"
+        let AzureServiceBusTopic = "grace__azure_service_bus__topic"
 
         /// Azure Service Bus subscription name for Grace events.
         [<Literal>]
-        let AzureServiceBusSubscription = "grace_azure_service_bus_subscription"
+        let AzureServiceBusSubscription = "grace__azure_service_bus__subscription"
 
         /// AWS SQS queue URL placeholder for future support.
         [<Literal>]
-        let AwsSqsQueueUrl = "GRACE_AWS_SQS_QUEUE_URL"
+        let AwsSqsQueueUrl = "grace__aws_sqs__queue_url"
 
         /// AWS region for SQS (future use).
         [<Literal>]
-        let AwsRegion = "GRACE_AWS_REGION"
+        let AwsRegion = "grace__aws_sqs__region"
 
         /// Google Cloud Pub/Sub project identifier (future use).
         [<Literal>]
-        let GooglePubSubProjectId = "GRACE_GCP_PROJECT_ID"
+        let GooglePubSubProjectId = "grace__gcp__projectid"
 
         /// Google Cloud Pub/Sub topic name (future use).
         [<Literal>]
-        let GooglePubSubTopic = "GRACE_GCP_TOPIC"
+        let GooglePubSubTopic = "grace__gcp__topic"
 
         /// Google Cloud Pub/Sub subscription name (future use).
         [<Literal>]
-        let GooglePubSubSubscription = "GRACE_GCP_SUBSCRIPTION"
+        let GooglePubSubSubscription = "grace__gcp__subscription"
 
     /// The default CacheControl header for object storage.
     [<Literal>]

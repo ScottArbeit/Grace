@@ -149,12 +149,6 @@ module Diff =
 
             Task.CompletedTask
 
-        member private this.GetDiffSimple() =
-            if diffDto.DirectoryVersionId1 = DiffDto.Default.DirectoryVersionId1 then
-                None |> returnValueTask
-            else
-                Some diffDto |> returnValueTask
-
         interface IDiffActor with
             /// Sets a Grace reminder to perform a physical deletion of this actor.
             member this.ScheduleReminderAsync reminderType delay state correlationId =
@@ -245,7 +239,7 @@ module Diff =
 
                             let! (graceIndex2, createdAt2) = this.buildGraceIndex directoryVersionId2 repositoryId correlationId
 
-                            //logToConsole $"In DiffActor.Populate(); createdAt1: {createdAt1}; createdAt2: {createdAt2}."
+                            logToConsole $"In DiffActor.Populate(); createdAt1: {createdAt1}; createdAt2: {createdAt2}."
 
                             // Compare the GraceIndices.
                             let! differences =

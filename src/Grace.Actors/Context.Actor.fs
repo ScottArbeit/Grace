@@ -4,6 +4,7 @@ open Azure.Storage.Blobs
 open Grace.Actors.Types
 open Grace.Shared
 open Grace.Shared.Constants
+open Grace.Shared.Utilities
 open Grace.Types.Types
 open Microsoft.Azure.Cosmos
 open Microsoft.Extensions.Caching.Memory
@@ -22,14 +23,15 @@ open MessagePack.FSharp
 open MessagePack.NodaTime
 open MessagePack.Resolvers
 
-
 module Context =
 
     /// Actor state storage provider instance
     let mutable internal actorStateStorageProvider = ActorStateStorageProvider.Unknown
 
     /// Setter for actor state storage provider
-    let setActorStateStorageProvider storageProvider = actorStateStorageProvider <- storageProvider
+    let setActorStateStorageProvider storageProvider =
+        logToConsole $"In Context.Actor.setActorStateStorageProvider: Setting actor state storage provider to {storageProvider}."
+        actorStateStorageProvider <- storageProvider
 
     /// Orleans client instance for the application.
     let mutable internal orleansClient: IGrainFactory = null

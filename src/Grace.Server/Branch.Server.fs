@@ -651,6 +651,7 @@ module Branch =
                         | "grouponly" -> BranchPromotionMode.GroupOnly
                         | "hybrid" -> BranchPromotionMode.Hybrid
                         | _ -> BranchPromotionMode.IndividualOnly
+
                     SetPromotionMode(promotionMode) |> returnValueTask
 
                 context.Items.Add("Command", nameof SetPromotionMode)
@@ -665,7 +666,7 @@ module Branch =
 
                 let validations (parameters: DeleteBranchParameters) =
                     [| // If reassigning child branches, validate that at least one parent is provided OR let it default to the deleted branch's parent
-                       // No validation needed here since None is valid (uses deleted branch's parent)
+                    // No validation needed here since None is valid (uses deleted branch's parent)
                     |]
 
                 let command (parameters: DeleteBranchParameters) =
@@ -673,7 +674,10 @@ module Branch =
                         let! newParentBranchIdOption =
                             task {
                                 if parameters.ReassignChildBranches then
-                                    if not <| String.IsNullOrEmpty(parameters.NewParentBranchId) || not <| String.IsNullOrEmpty(parameters.NewParentBranchName) then
+                                    if
+                                        not <| String.IsNullOrEmpty(parameters.NewParentBranchId)
+                                        || not <| String.IsNullOrEmpty(parameters.NewParentBranchName)
+                                    then
                                         match!
                                             resolveBranchId
                                                 graceIds.OwnerId
@@ -706,7 +710,10 @@ module Branch =
                 let graceIds = getGraceIds context
 
                 let validations (parameters: UpdateParentBranchParameters) =
-                    [| Input.eitherIdOrNameMustBeProvided parameters.NewParentBranchId parameters.NewParentBranchName BranchError.EitherBranchIdOrBranchNameRequired
+                    [| Input.eitherIdOrNameMustBeProvided
+                           parameters.NewParentBranchId
+                           parameters.NewParentBranchName
+                           BranchError.EitherBranchIdOrBranchNameRequired
                        Guid.isValidAndNotEmptyGuid parameters.NewParentBranchId BranchError.InvalidBranchId
                        String.isValidGraceName parameters.NewParentBranchName BranchError.InvalidBranchName
                        Branch.branchExists
@@ -1099,10 +1106,7 @@ module Branch =
                             let! references =
                                 getReferencesByType referenceType.Value branchDto.RepositoryId branchDto.BranchId maxCount (getCorrelationId context)
 
-                            let sortedRefs =
-                                references
-                                    .OrderByDescending(fun referenceDto -> referenceDto.CreatedAt)
-                                    .ToList()
+                            let sortedRefs = references.OrderByDescending(fun referenceDto -> referenceDto.CreatedAt).ToList()
 
                             // Take pairs of references and get the diffs between them.
                             do!
@@ -1622,9 +1626,7 @@ module Branch =
                                 return contents
                             else
                                 // By process of elimination, we have a Sha256Hash, so we'll retrieve the DirectoryVersion using that..
-                                match!
-                                    getRootDirectoryVersionBySha256Hash (Guid.Parse(graceIds.RepositoryIdString)) listContentsParameters.Sha256Hash correlationId
-                                with
+                                match! getRootDirectoryVersionBySha256Hash graceIds.RepositoryId listContentsParameters.Sha256Hash correlationId with
                                 | Some directoryVersion ->
                                     let directoryActorProxy = DirectoryVersion.CreateActorProxy directoryVersion.DirectoryVersionId repositoryId correlationId
 
@@ -1711,10 +1713,7 @@ module Branch =
 
                                 let! directoryVersionDtos = directoryVersionActorProxy.GetRecursiveDirectoryVersions false correlationId
 
-                                let directoryIds =
-                                    directoryVersionDtos
-                                        .Select(fun dv -> dv.DirectoryVersion.DirectoryVersionId)
-                                        .ToList()
+                                let directoryIds = directoryVersionDtos.Select(fun dv -> dv.DirectoryVersion.DirectoryVersionId).ToList()
 
                                 return directoryIds
                             | None -> return List<DirectoryVersionId>()

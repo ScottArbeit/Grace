@@ -51,7 +51,7 @@ module Services =
         { Timestamp = getCurrentInstant ()
           CorrelationId = context.Items[Constants.CorrelationId].ToString()
           Principal = context.User.Identity.Name
-          Properties = new Dictionary<string, obj>() }
+          Properties = new Dictionary<string, string>() }
 
     /// Parses the incoming request body into the specified type.
     let parse<'T when 'T :> CommonParameters> (context: HttpContext) =
@@ -79,9 +79,7 @@ module Services =
     let returnResult<'T> (statusCode: int) (result: 'T) (context: HttpContext) =
         task {
             try
-                Activity.Current
-                    .AddTag("correlation_id", getCorrelationId context)
-                    .AddTag("http.status_code", statusCode)
+                Activity.Current.AddTag("correlation_id", getCorrelationId context).AddTag("http.status_code", statusCode)
                 |> ignore
 
                 context.SetStatusCode(statusCode)
@@ -95,9 +93,7 @@ module Services =
     /// Adds common attributes to the current OpenTelemetry activity, and returns a 404 Not found status.
     let result404NotFound (context: HttpContext) =
         task {
-            Activity.Current
-                .AddTag("correlation_id", getCorrelationId context)
-                .AddTag("http.status_code", StatusCodes.Status404NotFound)
+            Activity.Current.AddTag("correlation_id", getCorrelationId context).AddTag("http.status_code", StatusCodes.Status404NotFound)
             |> ignore
 
             context.SetStatusCode(StatusCodes.Status404NotFound)

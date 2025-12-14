@@ -39,6 +39,7 @@ open System.Threading.Tasks
 open System.Reflection.Metadata
 open MessagePack
 open System.Threading
+open Azure.Storage
 
 module DirectoryVersion =
 
@@ -385,9 +386,9 @@ module DirectoryVersion =
                                 forceRegenerate
                             )
 
-                            let subdirectoryVersionDtos = ConcurrentDictionary<DirectoryVersionId, DirectoryVersionDto>()
+                            let subdirectoryVersionDtos = ConcurrentDictionary<RelativePath, DirectoryVersionDto>()
 
-                            // First, add the current directory version to the queue.
+                            // First, add the current directory version to the dictionary.
                             log.LogTrace(
                                 "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; In DirectoryVersionActor.GetRecursiveDirectoryVersions({id}): Adding current directory version. RelativePath: {relativePath}",
                                 getCurrentInstantExtended (),
@@ -397,7 +398,7 @@ module DirectoryVersion =
                                 directoryVersionDto.DirectoryVersion.RelativePath
                             )
 
-                            subdirectoryVersionDtos.TryAdd(directoryVersionDto.DirectoryVersion.DirectoryVersionId, directoryVersionDto)
+                            subdirectoryVersionDtos.TryAdd(directoryVersionDto.DirectoryVersion.RelativePath, directoryVersionDto)
                             |> ignore
 
                             // Then, get the subdirectory versions in parallel and add them to the dictionary.
@@ -415,6 +416,7 @@ module DirectoryVersion =
                                                             directoryVersionDto.DirectoryVersion.RepositoryId
                                                             correlationId
 
+                                                    // Get the contents of the subdirectory itself.
                                                     let! subdirectoryVersion = subdirectoryActor.Get correlationId
 
                                                     log.LogTrace(
@@ -428,6 +430,7 @@ module DirectoryVersion =
                                                         serialize subdirectoryVersion
                                                     )
 
+                                                    // Get the full recursive contents of the subdirectory.
                                                     let! subdirectoryContents = subdirectoryActor.GetRecursiveDirectoryVersions forceRegenerate correlationId
 
                                                     log.LogTrace(
@@ -455,15 +458,12 @@ module DirectoryVersion =
                                                             directoryVersion.RelativePath
                                                         )
 
-                                                        if not (subdirectoryVersionDtos.TryAdd(directoryVersion.DirectoryVersionId, directoryVersionDto)) then
-                                                            logToConsole
-                                                                $"Warning: In DirectoryVersionActor.GetRecursiveDirectoryVersions({this.GetPrimaryKey()}); Failed to add subdirectory version {directoryVersion.DirectoryVersionId} with relative path {directoryVersion.RelativePath} to the dictionary because it already exists."
-
-                                                            logToConsole $"Current dictionary contents: {serialize subdirectoryVersionDtos}"
-
-                                                            logToConsole $"Attempted to add: {serialize directoryVersionDto}"
-
-                                                            Environment.Exit(-99)
+                                                        subdirectoryVersionDtos.AddOrUpdate(
+                                                            directoryVersion.RelativePath,
+                                                            directoryVersionDto,
+                                                            (fun _ _ -> directoryVersionDto)
+                                                        )
+                                                        |> ignore
                                                 with ex ->
                                                     log.LogError(
                                                         "{CurrentInstant}: Error in {methodName}; DirectoryId: {directoryId}; Exception: {exception}",
@@ -481,15 +481,6 @@ module DirectoryVersion =
                                 subdirectoryVersionDtos.Values.OrderBy(fun directoryVersionDto -> directoryVersionDto.DirectoryVersion.RelativePath).ToArray()
 
                             // Save the recursive results to Azure Blob Storage.
-                            //use memoryStream = new MemoryStream()
-                            //use compressedStream = new GZipStream(memoryStream, CompressionMode.Compress)
-                            //use writer = new StreamWriter(compressedStream)
-                            //let json = serialize subdirectoryVersionsList
-                            //writer.Write(json)
-                            //writer.Flush()
-                            //compressedStream.Flush()
-                            //memoryStream.Position <- 0
-                            //let! uploadResponse = blobClient.UploadAsync(memoryStream, overwrite = true)
                             let repositoryActorProxy =
                                 Repository.CreateActorProxy
                                     directoryVersionDto.DirectoryVersion.OrganizationId
@@ -499,20 +490,19 @@ module DirectoryVersion =
                             let! repositoryDto = repositoryActorProxy.Get correlationId
 
                             let tags = Dictionary<string, string>()
-                            tags.Add(nameof DirectoryVersionId, $"{directoryVersionDto.DirectoryVersion.DirectoryVersionId}")
-                            tags.Add(nameof RepositoryId, $"{directoryVersionDto.DirectoryVersion.RepositoryId}")
-                            tags.Add(nameof RelativePath, $"{directoryVersionDto.DirectoryVersion.RelativePath}")
-                            tags.Add(nameof Sha256Hash, $"{directoryVersionDto.DirectoryVersion.Sha256Hash}")
                             tags.Add(nameof OwnerId, $"{repositoryDto.OwnerId}")
                             tags.Add(nameof OrganizationId, $"{repositoryDto.OrganizationId}")
+                            tags.Add(nameof RepositoryId, $"{repositoryDto.RepositoryId}")
+                            tags.Add(nameof DirectoryVersionId, $"{directoryVersionDto.DirectoryVersion.DirectoryVersionId}")
+                            tags.Add(nameof RelativePath, $"{directoryVersionDto.DirectoryVersion.RelativePath}")
+                            tags.Add(nameof Sha256Hash, $"{directoryVersionDto.DirectoryVersion.Sha256Hash}")
+                            tags.Add("RecursiveSize", $"{directoryVersionDto.RecursiveSize}")
 
                             // Write the JSON using MessagePack serialization for efficiency.
-                            use! blobStream = directoryVersionBlobClient.OpenWriteAsync(overwrite = true)
+                            let blockBlobOpenWriteOptions = BlockBlobOpenWriteOptions(Tags = tags)
+                            use! blobStream = directoryVersionBlobClient.OpenWriteAsync(overwrite = true, options = blockBlobOpenWriteOptions)
                             do! MessagePackSerializer.SerializeAsync(blobStream, subdirectoryVersionsList, messagePackSerializerOptions)
                             do! blobStream.DisposeAsync()
-
-                            // Set the tags for the blob.
-                            let! azureResponse = directoryVersionBlobClient.SetTagsAsync(tags)
 
                             log.LogDebug(
                                 "In DirectoryVersionActor.GetRecursiveDirectoryVersions({id}); Saving cached list of directory versions. RelativePath: {relativePath}.",
@@ -794,7 +784,8 @@ module DirectoryVersion =
                             | Ok event -> return! this.ApplyEvent { Event = event; Metadata = metadata }
                             | Error error -> return Error error
                         with ex ->
-                            return Error(GraceError.CreateWithMetadata ex String.Empty metadata.CorrelationId metadata.Properties)
+                            let metadataObj = Dictionary<string, obj>(metadata.Properties.Select(fun kvp -> KeyValuePair<string, obj>(kvp.Key, kvp.Value)))
+                            return Error(GraceError.CreateWithMetadata ex String.Empty metadata.CorrelationId metadataObj)
                     }
 
                 task {

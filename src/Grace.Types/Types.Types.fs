@@ -178,12 +178,12 @@ module Types =
         { Timestamp: Instant
           CorrelationId: CorrelationId
           Principal: string
-          Properties: Dictionary<string, obj> }
+          Properties: Dictionary<string, string> }
 
         override this.ToString() = serialize this
 
         static member New correlationId principal =
-            { Timestamp = getCurrentInstant (); CorrelationId = correlationId; Principal = principal; Properties = Dictionary<string, obj>() }
+            { Timestamp = getCurrentInstant (); CorrelationId = correlationId; Principal = principal; Properties = Dictionary<string, string>() }
 
     /// A FileVersion represents a version of a file in a repository with unique contents, and therefore with a unique SHA-256 hash. It is immutable.
     ///
@@ -639,7 +639,7 @@ module Types =
         /// Adds a key-value pair to GraceError's Properties dictionary.
         member this.enhance(key: string, value: obj) =
             match String.IsNullOrEmpty(key), isNull (value) with
-            | false, false -> this.Properties[key] <- value
+            | false, false -> this.Properties[key] <- $"{value}"
             | false, true -> this.Properties[key] <- null
             | true, _ -> ()
 
@@ -647,7 +647,7 @@ module Types =
 
         /// Adds a set of key-value pairs from a Dictionary to GraceError's Properties dictionary.
         member this.enhance(dict: IReadOnlyDictionary<string, obj>) =
-            dict |> Seq.iter (fun kvp -> this.Properties[kvp.Key] <- kvp.Value)
+            dict |> Seq.iter (fun kvp -> this.Properties[kvp.Key] <- $"{kvp.Value}")
             this
 
         override this.ToString() =

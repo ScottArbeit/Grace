@@ -1009,6 +1009,19 @@ module Services =
                 | Change ->
                     match processDirectoryChange newGraceStatus previousGraceStatus difference with
                     | Some newDirectoryVersion ->
+                        let previousDirectoryVersions = newGraceStatus.Index.Values.Where(fun dv -> dv.RelativePath = difference.RelativePath)
+
+                        logToAnsiConsole
+                            Colors.Verbose
+                            $"Processing directory {difference.DifferenceType} for path: {difference.RelativePath}. Previous versions: {serialize previousDirectoryVersions}."
+
+                        let mutable previous = LocalDirectoryVersion.Default
+                        // Remove the previous directory version from the index.
+                        for previousDirectoryVersion in previousDirectoryVersions do
+                            newGraceStatus.Index.TryRemove(previousDirectoryVersion.DirectoryVersionId, &previous)
+                            |> ignore
+
+                        // Add the new directory version to the index.
                         newGraceStatus.Index.AddOrUpdate(
                             newDirectoryVersion.DirectoryVersionId,
                             (fun _ -> newDirectoryVersion),

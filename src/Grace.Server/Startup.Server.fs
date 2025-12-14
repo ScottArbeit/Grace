@@ -633,6 +633,12 @@ module Application =
 
             services
                 .AddSignalR(fun options -> options.EnableDetailedErrors <- true)
+                //.AddStackExchangeRedis(
+                //    "localhost:6379",
+                //    fun options ->
+                //        options.Configuration.ChannelPrefix <- StackExchange.Redis.RedisChannel.Literal("grace-server")
+                //        options.Configuration.AbortOnConnectFail <- false
+                //)
                 .AddJsonProtocol(fun options -> options.PayloadSerializerOptions <- Constants.JsonSerializerOptions)
             |> ignore
 

@@ -45,7 +45,6 @@ open System.Text.RegularExpressions
 open System.CommandLine.Completions
 
 module Branch =
-    open Grace.Shared.Validation.Common.Input
 
     type CommonParameters() =
         inherit ParameterBase()
@@ -59,28 +58,6 @@ module Branch =
         member val public RepositoryName: string = String.Empty with get, set
 
     module private Options =
-
-        let branchId =
-            new Option<BranchId>(
-                OptionName.BranchId,
-                [| "-i" |],
-                Required = false,
-                Description = "The branch's ID <Guid>.",
-                Arity = ArgumentArity.ExactlyOne,
-                DefaultValueFactory = (fun _ -> if Current().BranchId = Guid.Empty then Guid.NewGuid() else Current().BranchId)
-            )
-
-        let branchName =
-            new Option<String>(
-                OptionName.BranchName,
-                [| "-b" |],
-                Required = false,
-                Description = "The name of the branch. [default: current branch]",
-                Arity = ArgumentArity.ExactlyOne
-            )
-
-        let branchNameRequired =
-            new Option<String>(OptionName.BranchName, [| "-b" |], Required = true, Description = "The name of the branch.", Arity = ArgumentArity.ExactlyOne)
 
         let ownerId =
             new Option<OwnerId>(
@@ -144,6 +121,28 @@ module Branch =
                 Description = "The name of the repository. [default: current repository]",
                 Arity = ArgumentArity.ExactlyOne
             )
+
+        let branchId =
+            new Option<BranchId>(
+                OptionName.BranchId,
+                [| "-i" |],
+                Required = false,
+                Description = "The branch's ID <Guid>.",
+                Arity = ArgumentArity.ExactlyOne,
+                DefaultValueFactory = (fun _ -> if Current().BranchId = Guid.Empty then Guid.NewGuid() else Current().BranchId)
+            )
+
+        let branchName =
+            new Option<String>(
+                OptionName.BranchName,
+                [| "-b" |],
+                Required = false,
+                Description = "The name of the branch. [default: current branch]",
+                Arity = ArgumentArity.ExactlyOne
+            )
+
+        let branchNameRequired =
+            new Option<String>(OptionName.BranchName, [| "-b" |], Required = true, Description = "The name of the branch.", Arity = ArgumentArity.ExactlyOne)
 
         let parentBranchId =
             new Option<Guid>(
@@ -2636,7 +2635,7 @@ module Branch =
 
                                             // Write the UpdatesInProgress file to let grace watch know to ignore these changes.
                                             // This file is deleted in the finally clause.
-                                            do! File.WriteAllTextAsync(updateInProgressFileName, "This file won't exist for long.")
+                                            do! File.WriteAllTextAsync(updateInProgressFileName, "`grace switch` is in progress.")
 
                                             // Update working directory based on new GraceStatus.Index
                                             do!
@@ -2835,7 +2834,7 @@ module Branch =
                         File.Delete(updateInProgressFileName)
             }
 
-    let rebaseHandler (parseResult: ParseResult) (graceStatus: GraceStatus) =
+    let rebaseHandler (graceIds: GraceIds) (graceStatus: GraceStatus) =
         task {
             // --------------------------------------------------------------------------------------------------------------------------------------
             // Algorithm:
@@ -2853,7 +2852,7 @@ module Branch =
             // Then we call Branch.Rebase() to actually record the update.
             // --------------------------------------------------------------------------------------------------------------------------------------
 
-            let graceIds = parseResult |> getNormalizedIdsAndNames
+            logToAnsiConsole Colors.Verbose $"In Branch.CLI.rebaseHandler: GraceIds:{Environment.NewLine}{serialize graceIds}"
 
             // First, get the current branchDto so we have the latest promotion that it's based on.
             let branchGetParameters =
@@ -2892,10 +2891,10 @@ module Branch =
                         // Get the latest reference from the current branch.
                         let getReferencesParameters =
                             Parameters.Branch.GetReferencesParameters(
-                                OwnerId = $"{branchDto.OwnerId}",
-                                OrganizationId = $"{branchDto.OrganizationId}",
-                                RepositoryId = $"{branchDto.RepositoryId}",
-                                BranchId = $"{branchDto.BranchId}",
+                                OwnerId = graceIds.OwnerIdString,
+                                OrganizationId = graceIds.OrganizationIdString,
+                                RepositoryId = graceIds.RepositoryIdString,
+                                BranchId = graceIds.BranchIdString,
                                 MaxCount = 1,
                                 CorrelationId = graceIds.CorrelationId
                             )
@@ -2917,9 +2916,7 @@ module Branch =
                                         let diffParameters =
                                             Parameters.Diff.GetDiffParameters(
                                                 OwnerId = graceIds.OwnerIdString,
-                                                OwnerName = graceIds.OwnerName,
                                                 OrganizationId = graceIds.OrganizationIdString,
-                                                OrganizationName = graceIds.OrganizationName,
                                                 RepositoryId = $"{branchDto.RepositoryId}",
                                                 DirectoryVersionId1 = basedOn.DirectoryId,
                                                 DirectoryVersionId2 = parentLatestPromotion.DirectoryId,
@@ -2932,9 +2929,7 @@ module Branch =
                                         let diffParameters =
                                             Parameters.Diff.GetDiffParameters(
                                                 OwnerId = graceIds.OwnerIdString,
-                                                OwnerName = graceIds.OwnerName,
                                                 OrganizationId = graceIds.OrganizationIdString,
-                                                OrganizationName = graceIds.OrganizationName,
                                                 RepositoryId = $"{branchDto.RepositoryId}",
                                                 DirectoryVersionId1 = latestReference.DirectoryId,
                                                 DirectoryVersionId2 = basedOn.DirectoryId,
@@ -2951,9 +2946,7 @@ module Branch =
                                         let diffParameters =
                                             Parameters.Diff.GetDiffParameters(
                                                 OwnerId = graceIds.OwnerIdString,
-                                                OwnerName = graceIds.OwnerName,
                                                 OrganizationId = graceIds.OrganizationIdString,
-                                                OrganizationName = graceIds.OrganizationName,
                                                 RepositoryId = $"{branchDto.RepositoryId}",
                                                 DirectoryVersionId1 = latestReference.DirectoryId,
                                                 DirectoryVersionId2 = parentLatestPromotion.DirectoryId,
@@ -3017,7 +3010,9 @@ module Branch =
                                     |> Seq.map (fun dv -> dv.ToLocalDirectoryVersion(dv.CreatedAt.ToDateTimeUtc()))
                                     |> Seq.map (fun dv -> dv.Files)
                                     |> Seq.concat
-                                    |> Seq.iter (fun file -> lookup.Add(file.RelativePath, file))
+                                    |> Seq.iter (fun file ->
+                                        //logToConsole $"In Branch.CLI.createFileVersionLookupDictionary: Adding to lookup: {file.RelativePath}."
+                                        lookup.TryAdd(file.RelativePath, file) |> ignore)
 
                                     //lookup.GetAlternateLookup()
                                     lookup
@@ -3045,11 +3040,8 @@ module Branch =
                                     let getDownloadUriParameters =
                                         Storage.GetDownloadUriParameters(
                                             OwnerId = graceIds.OwnerIdString,
-                                            OwnerName = graceIds.OwnerName,
                                             OrganizationId = graceIds.OrganizationIdString,
-                                            OrganizationName = graceIds.OrganizationName,
                                             RepositoryId = graceIds.RepositoryIdString,
-                                            RepositoryName = graceIds.RepositoryName,
                                             CorrelationId = graceIds.CorrelationId
                                         )
 
@@ -3126,12 +3118,9 @@ module Branch =
                                             if currentBranch.SaveEnabled && newDirectoryVersions.Any() then
                                                 let saveParameters = SaveDirectoryVersionsParameters()
                                                 saveParameters.OwnerId <- graceIds.OwnerIdString
-                                                saveParameters.OwnerName <- graceIds.OwnerName
                                                 saveParameters.OrganizationId <- graceIds.OrganizationIdString
-                                                saveParameters.OrganizationName <- graceIds.OrganizationName
                                                 saveParameters.RepositoryId <- graceIds.RepositoryIdString
-                                                saveParameters.RepositoryName <- graceIds.RepositoryName
-                                                saveParameters.CorrelationId <- getCorrelationId parseResult
+                                                saveParameters.CorrelationId <- graceIds.CorrelationId
                                                 saveParameters.DirectoryVersions <- newDirectoryVersions.Select(fun dv -> dv.ToDirectoryVersion).ToList()
 
                                                 match! DirectoryVersion.SaveDirectoryVersions saveParameters with
@@ -3147,7 +3136,7 @@ module Branch =
 
                                         // Update the GraceStatus file with the new file versions (and therefore new LocalDirectoryVersion's) we just put in place.
                                         // filesToDownload is, conveniently, the list of files we're changing in the rebase.
-                                        match! getNewGraceStatusAndDirectoryVersions (parseResult |> hasOutput, graceStatus, branchDto, filesToDownload) with
+                                        match! getNewGraceStatusAndDirectoryVersions (true, graceStatus, branchDto, filesToDownload) with
                                         | Ok(updatedGraceStatus, newDirectoryVersions) ->
                                             // Ensure that previous DirectoryVersions for a given path are deleted from GraceStatus.
                                             newDirectoryVersions
@@ -3177,10 +3166,10 @@ module Branch =
 
                                         let saveReferenceParameters =
                                             Parameters.Branch.CreateReferenceParameters(
-                                                BranchId = $"{branchDto.BranchId}",
-                                                RepositoryId = $"{branchDto.RepositoryId}",
-                                                OwnerId = $"{branchDto.OwnerId}",
-                                                OrganizationId = $"{branchDto.OrganizationId}",
+                                                OwnerId = graceIds.OwnerIdString,
+                                                OrganizationId = graceIds.OrganizationIdString,
+                                                RepositoryId = graceIds.RepositoryIdString,
+                                                BranchId = graceIds.BranchIdString,
                                                 Sha256Hash = rootDirectoryVersion.Sha256Hash,
                                                 DirectoryVersionId = rootDirectoryVersion.DirectoryVersionId,
                                                 Message =
@@ -3192,10 +3181,10 @@ module Branch =
                                             // Add a rebase event to the branch.
                                             let rebaseParameters =
                                                 Parameters.Branch.RebaseParameters(
-                                                    BranchId = $"{branchDto.BranchId}",
-                                                    RepositoryId = $"{branchDto.RepositoryId}",
-                                                    OwnerId = $"{branchDto.OwnerId}",
-                                                    OrganizationId = $"{branchDto.OrganizationId}",
+                                                    OwnerId = graceIds.OwnerIdString,
+                                                    OrganizationId = graceIds.OrganizationIdString,
+                                                    RepositoryId = graceIds.RepositoryIdString,
+                                                    BranchId = graceIds.BranchIdString,
                                                     BasedOn = parentLatestPromotion.ReferenceId
                                                 )
 
@@ -3246,7 +3235,7 @@ module Branch =
                     let graceIds = parseResult |> getNormalizedIdsAndNames
                     let! graceStatus = readGraceStatusFile ()
 
-                    let! result = rebaseHandler parseResult graceStatus
+                    let! result = rebaseHandler graceIds graceStatus
                     return result
                 finally
                     if File.Exists(updateInProgressFileName) then

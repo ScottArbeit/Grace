@@ -243,9 +243,6 @@ module Program =
             let loggerFactory = host.Services.GetService(typeof<ILoggerFactory>) :?> ILoggerFactory
             ApplicationContext.setLoggerFactory (loggerFactory)
 
-            logToConsole
-                $"""azurecosmosdbconnectionstring: ${config["azurecosmosdbconnectionstring"]}; cosmosdatabasename: ${config["cosmosdatabasename"]}; cosmoscontainername: ${config["cosmoscontainername"]}"""
-
             host.Run()
 
             0 // Return an integer exit code

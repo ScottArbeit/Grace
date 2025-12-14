@@ -271,13 +271,16 @@ module Owner =
                                             && organizations.Length > 0
                                             && organizations.Any(fun organization -> organization.DeletedAt |> Option.isNone)
                                         then
+                                            let metadataObj =
+                                                Dictionary<string, obj>(metadata.Properties.Select(fun kvp -> KeyValuePair<string, obj>(kvp.Key, kvp.Value)))
+
                                             return
                                                 Error(
                                                     GraceError.CreateWithMetadata
                                                         null
                                                         (OwnerError.getErrorMessage OwnerContainsOrganizations)
                                                         metadata.CorrelationId
-                                                        metadata.Properties
+                                                        metadataObj
                                                 )
                                         else
                                             // Delete the organizations.
@@ -311,7 +314,8 @@ module Owner =
                                 return! this.ApplyEvent { Event = event; Metadata = metadata }
                             | Error error -> return Error error
                         with ex ->
-                            return Error(GraceError.CreateWithMetadata ex String.Empty metadata.CorrelationId metadata.Properties)
+                            let metadataObj = Dictionary<string, obj>(metadata.Properties.Select(fun kvp -> KeyValuePair<string, obj>(kvp.Key, kvp.Value)))
+                            return Error(GraceError.CreateWithMetadata ex String.Empty metadata.CorrelationId metadataObj)
                     }
 
                 task {
