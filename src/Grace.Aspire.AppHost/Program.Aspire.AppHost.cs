@@ -178,7 +178,8 @@ internal class Program
                         .WithEnvironment(EnvironmentVariables.AzureServiceBusConnectionString, serviceBusConnectionString)
                         .WithEnvironment(EnvironmentVariables.AzureServiceBusNamespace, "sbemulatorns")
                         .WithEnvironment(EnvironmentVariables.AzureServiceBusTopic, "graceeventstream")
-                        .WithEnvironment(EnvironmentVariables.AzureServiceBusSubscription, "grace-server");
+                        .WithEnvironment(EnvironmentVariables.AzureServiceBusSubscription, "grace-server")
+                        .WithEnvironment(EnvironmentVariables.DebugEnvironment, "Local");
 
                     Console.WriteLine("Grace.Server DebugLocal environment configured:");
                     Console.WriteLine("  - Azurite at http://localhost:10000-10002");
@@ -223,7 +224,8 @@ internal class Program
                         .WithEnvironment(EnvironmentVariables.AzureServiceBusConnectionString, serviceBusConn)
                         .WithEnvironment(EnvironmentVariables.AzureServiceBusNamespace, serviceBusNamespace)
                         .WithEnvironment(EnvironmentVariables.AzureServiceBusTopic, serviceBusTopic)
-                        .WithEnvironment(EnvironmentVariables.AzureServiceBusSubscription, serviceBusSub);
+                        .WithEnvironment(EnvironmentVariables.AzureServiceBusSubscription, serviceBusSub)
+                        .WithEnvironment(EnvironmentVariables.DebugEnvironment, "Azure");
 
                     Console.WriteLine("Grace.Server DebugAzure environment configured (no emulators started):");
                     Console.WriteLine("  - Azure Storage: from ConnectionStrings:AzureStorage (or Grace:AzureStorageConnectionString)");

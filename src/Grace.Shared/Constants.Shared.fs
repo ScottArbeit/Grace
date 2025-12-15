@@ -188,6 +188,10 @@ module Constants =
 
     /// Environment variables used by Grace.
     module EnvironmentVariables =
+        /// The environment variable that contains the debug environment flag.
+        [<Literal>]
+        let DebugEnvironment = "grace__debug_environment"
+
         /// The environment variable that contains the Application Insights connection string.
         [<Literal>]
         let ApplicationInsightsConnectionString = "grace__application_insights_connection_string"

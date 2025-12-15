@@ -917,7 +917,8 @@ module Types =
         override this.ToString() = getDiscriminatedUnionFullName this
 
     [<GenerateSerializer>]
-    type AzureServiceBusPubSubSettings = { ConnectionString: string; FullyQualifiedNamespace: string; TopicName: string; SubscriptionName: string }
+    type AzureServiceBusPubSubSettings =
+        { ConnectionString: string; FullyQualifiedNamespace: string; TopicName: string; SubscriptionName: string; UseManagedIdentity: bool }
 
     [<GenerateSerializer>]
     type GracePubSubSettings =

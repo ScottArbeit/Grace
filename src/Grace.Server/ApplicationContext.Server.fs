@@ -259,35 +259,46 @@ module ApplicationContext =
 
                     let azureServiceBusSettings =
                         if system = GracePubSubSystem.AzureServiceBus then
-                            let serviceBusConnectionString = Environment.GetEnvironmentVariable(EnvironmentVariables.AzureServiceBusConnectionString)
+                            let serviceBusConnectionString = Environment.GetEnvironmentVariable EnvironmentVariables.AzureServiceBusConnectionString
 
                             if String.IsNullOrWhiteSpace(serviceBusConnectionString) then
                                 invalidOp
                                     $"Environment variable '{EnvironmentVariables.AzureServiceBusConnectionString}' must be set when {EnvironmentVariables.GracePubSubSystem} is {GracePubSubSystem.AzureServiceBus}."
 
-                            let sb_namespace = Environment.GetEnvironmentVariable(EnvironmentVariables.AzureServiceBusNamespace)
+                            let sb_namespace = Environment.GetEnvironmentVariable EnvironmentVariables.AzureServiceBusNamespace
 
                             if String.IsNullOrWhiteSpace(sb_namespace) then
                                 invalidOp
                                     $"Environment variable '{EnvironmentVariables.AzureServiceBusNamespace}' must be set when {EnvironmentVariables.GracePubSubSystem} is {GracePubSubSystem.AzureServiceBus}."
 
-                            let topic = Environment.GetEnvironmentVariable(EnvironmentVariables.AzureServiceBusTopic)
+                            let topic = Environment.GetEnvironmentVariable EnvironmentVariables.AzureServiceBusTopic
 
                             if String.IsNullOrWhiteSpace(topic) then
                                 invalidOp
                                     $"Environment variable '{EnvironmentVariables.AzureServiceBusTopic}' must be set when {EnvironmentVariables.GracePubSubSystem} is {GracePubSubSystem.AzureServiceBus}."
 
-                            let subscription = Environment.GetEnvironmentVariable(EnvironmentVariables.AzureServiceBusSubscription)
+                            let subscription = Environment.GetEnvironmentVariable EnvironmentVariables.AzureServiceBusSubscription
 
                             if String.IsNullOrWhiteSpace(subscription) then
                                 invalidOp
                                     $"Environment variable '{EnvironmentVariables.AzureServiceBusSubscription}' must be set when {EnvironmentVariables.GracePubSubSystem} is {GracePubSubSystem.AzureServiceBus}."
 
+                            let debugEnvironment = Environment.GetEnvironmentVariable EnvironmentVariables.DebugEnvironment
+
+                            let useManagedIdentity =
+                                if String.IsNullOrWhiteSpace(debugEnvironment) then
+                                    true // Default to true in production
+                                elif debugEnvironment.Equals("Azure", StringComparison.OrdinalIgnoreCase) then
+                                    true // Use managed identity in Azure
+                                else
+                                    false // In local dev, use connection string
+
                             Some
                                 { ConnectionString = serviceBusConnectionString
                                   FullyQualifiedNamespace = sb_namespace
                                   TopicName = topic
-                                  SubscriptionName = subscription }
+                                  SubscriptionName = subscription
+                                  UseManagedIdentity = useManagedIdentity }
                         else
                             None
 
