@@ -4,7 +4,6 @@ Agents operating under `D:\Source\Grace\src` should follow this playbook alongsi
 
 ## Core Engineering Expectations
 
--   Prefer read/inspect commands before mutating files; never revert changes introduced by others.
 -   Make a multi-step plan for non-trivial work, keep edits focused, and leave code cleaner than you found it.
 -   Validate changes with `dotnet build --configuration Release` and `dotnet test --no-build`; run `fantomas .` after touching F# source.
 -   Treat secrets with care, avoid logging PII, and preserve structured logging (including correlation IDs).
