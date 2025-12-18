@@ -49,17 +49,6 @@ open System.Diagnostics
 module OrleansFsharpFix =
     // Grace.Orleans.CodeGen is the name of the C# codegen project.
     [<assembly: Orleans.ApplicationPartAttribute("Grace.Orleans.CodeGen")>]
-
-    // other assemblies matching NuGet packages
-    [<assembly: Orleans.ApplicationPartAttribute("Orleans.Core.Abstractions")>]
-    [<assembly: Orleans.ApplicationPartAttribute("Orleans.Serialization")>]
-    [<assembly: Orleans.ApplicationPartAttribute("Orleans.Core")>]
-    [<assembly: Orleans.ApplicationPartAttribute("Orleans.Persistence.Memory")>]
-    [<assembly: Orleans.ApplicationPartAttribute("Orleans.Runtime")>]
-    [<assembly: Orleans.ApplicationPartAttribute("OrleansDashboard.Core")>]
-    [<assembly: Orleans.ApplicationPartAttribute("OrleansDashboard")>]
-    [<assembly: Orleans.ApplicationPartAttribute("Orleans.Serialization.Abstractions")>]
-    [<assembly: Orleans.ApplicationPartAttribute("Orleans.Serialization")>]
     do ()
 
 module Program =
@@ -247,6 +236,7 @@ module Program =
                     .AddUserSecrets() // Use `dotnet user-secrets` to store sensitive settings during development
                     .Build()
 
+            // Store the configuration in memory cache for easy access throughout the application.
             use configurationEntry = memoryCache.CreateEntry(MemoryCache.GraceConfiguration)
             configurationEntry.Value <- configuration
             configurationEntry.Priority <- CacheItemPriority.NeverRemove
@@ -254,7 +244,7 @@ module Program =
 
             logToConsole "Configuration settings saved in memory cache."
 
-            let host = createHostBuilder(args).Build()
+            use host = createHostBuilder(args).Build()
 
             // Placing some much-used services into ApplicationContext where they're easy to find.
             Grace.Actors.Context.setHostServiceProvider host.Services
@@ -274,5 +264,5 @@ module Program =
 
             0 // Return an integer exit code
         with ex ->
-            logToConsole $"Fatal error starting Grace Server.{Environment.NewLine}{ExceptionResponse.Create ex}"
+            logToConsole $"Fatal error starting Grace Server.{Environment.NewLine}{ex.ToStringDemystified()}"
             -1
