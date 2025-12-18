@@ -1,31 +1,45 @@
 # http://editorconfig.org
 
 root = true
+
+[*]
 end_of_line = lf
+charset = utf-8
 insert_final_newline = true
 trim_trailing_whitespace = true
 
-[*.{fs,fsi,fsproj,cs,csproj}]
-charset = utf-8
+[*.{fs,fsi,fsproj}]
+indent_size = 4
+indent_style = space
+insert_final_newline = true
+trim_trailing_whitespace = true
+max_line_length = 160
 fsharp_max_function_binding_width = 160
 fsharp_max_if_then_short_width = 80
 fsharp_max_if_then_else_short_width = 80
 fsharp_max_record_width = 160
 fsharp_max_value_binding_width = 160
+fsharp_multiline_block_brackets_on_same_column = true
+fsharp_experimental_keep_indent_in_branch = true
+fsharp_align_function_signature_to_indentation = true
+
+[*.{cs,csproj}]
 indent_size = 4
 indent_style = space
 insert_final_newline = true
-max_line_length = 160
 trim_trailing_whitespace = true
+max_line_length = 120
 
 [*.hbs]
 insert_final_newline = false
 
-[{package}.json]
+[*.json]
 indent_size = 2
 
 [*.md]
 trim_trailing_whitespace = false
+max_line_length = off
 
 [*.{yml,yaml}]
 indent_size = 2
+insert_final_newline = true

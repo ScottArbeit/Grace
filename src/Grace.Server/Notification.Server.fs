@@ -1,5 +1,6 @@
 namespace Grace.Server
 
+open Azure.Core
 open Azure.Identity
 open Azure.Messaging.ServiceBus
 open FSharp.Control
@@ -7,6 +8,7 @@ open Grace.Actors.Extensions.ActorProxy
 open Grace.Actors.Services
 open Grace.Server.ApplicationContext
 open Grace.Shared
+open Grace.Shared.AzureEnvironment
 open Grace.Shared.Constants
 open Grace.Shared.Utilities
 open Grace.Types
@@ -27,6 +29,7 @@ open System.Threading.Tasks
 module Notification =
 
     let log = loggerFactory.CreateLogger("Notification.Server")
+    let private defaultAzureCredential = lazy (DefaultAzureCredential())
 
     type IGraceClientConnection =
         abstract member RegisterRepository: RepositoryId -> Task
@@ -518,7 +521,20 @@ module Notification =
 
                         while not ready && not cancellationToken.IsCancellationRequested do
                             try
-                                let serviceBusClient = new ServiceBusClient(settings.ConnectionString)
+                                let serviceBusClient =
+                                    if settings.UseManagedIdentity then
+                                        let fullyQualifiedNamespace =
+                                            if not (String.IsNullOrWhiteSpace settings.FullyQualifiedNamespace) then
+                                                settings.FullyQualifiedNamespace
+                                            else
+                                                AzureEnvironment.tryGetServiceBusFullyQualifiedNamespace ()
+                                                |> Option.defaultWith (fun () ->
+                                                    invalidOp
+                                                        "Azure Service Bus namespace must be configured when using a managed identity.")
+
+                                        ServiceBusClient(fullyQualifiedNamespace, defaultAzureCredential.Value)
+                                    else
+                                        ServiceBusClient(settings.ConnectionString)
 
                                 let serviceBusProcessorOptions =
                                     ServiceBusProcessorOptions(

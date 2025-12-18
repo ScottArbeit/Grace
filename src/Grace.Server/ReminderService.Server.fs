@@ -213,12 +213,12 @@ module ReminderService =
                         "{CurrentInstant}: Node: {HostName}; In ReminderService.ExecuteAsync. Pausing for {DelaySeconds} seconds before processing reminders.",
                         getCurrentInstantExtended (),
                         getMachineName,
-                        secondsToWaitForDaprToBeReady
+                        secondsToDelayReminderProcessing
                     )
 
                     // Initial delay before processing reminders; I'm using the same delay time we use to wait for Dapr to be ready, because
                     //   Grace.Server will shut down if Dapr isn't ready before this delay finishes.
-                    do! Task.Delay(TimeSpan.FromSeconds(secondsToWaitForDaprToBeReady), stoppingToken)
+                    do! Task.Delay(TimeSpan.FromSeconds(secondsToDelayReminderProcessing), stoppingToken)
 
                     log.LogInformation(
                         "{CurrentInstant}: Node: {HostName}; In ReminderService.ExecuteAsync. Starting reminder timer; checking for reminders every {ReminderTimer} seconds.",

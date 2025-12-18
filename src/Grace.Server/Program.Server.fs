@@ -1,10 +1,14 @@
 namespace Grace.Server
 
+open Azure.Core
 open Azure.Data.Tables
+open Azure.Identity
 open Azure.Storage.Queues
 open dotenv.net
 open Grace.Actors.Interfaces
 open Grace.Server.ApplicationContext
+open Grace.Shared
+open Grace.Shared.AzureEnvironment
 open Grace.Shared.Constants
 open Grace.Types.Types
 open Grace.Shared.Utilities
@@ -16,6 +20,7 @@ open Microsoft.Azure.Cosmos
 open Microsoft.Extensions.Configuration
 open Microsoft.Extensions.Hosting
 open Microsoft.Extensions.Logging
+open Microsoft.Extensions.Caching.Memory
 open Orleans
 open Orleans.Clustering.AzureStorage
 open Orleans.Hosting
@@ -40,8 +45,6 @@ open Grace.Actors
 open System.Runtime.CompilerServices
 open Microsoft.AspNetCore.Builder
 open System.Diagnostics
-open Orleans.Streams
-
 
 module OrleansFsharpFix =
     // Grace.Orleans.CodeGen is the name of the C# codegen project.
@@ -75,6 +78,8 @@ module Program =
                 use stream = data.ToStream()
                 JsonSerializer.Deserialize<'T>(stream, options)
 
+    let private defaultAzureCredential = lazy (DefaultAzureCredential())
+
     // Load environment variables from .env file, if it exists.
     let envPaths =
         [| Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".env") // during debug
@@ -90,8 +95,19 @@ module Program =
 
     let createHostBuilder (args: string[]) : IHostBuilder =
         let builder = Host.CreateDefaultBuilder(args)
-        let azureStorageConnectionString = Environment.GetEnvironmentVariable EnvironmentVariables.AzureStorageConnectionString
-        let azureCosmosDBConnectionString = Environment.GetEnvironmentVariable EnvironmentVariables.AzureCosmosDBConnectionString
+        let storageEndpoints = AzureEnvironment.storageEndpoints
+
+        let azureStorageConnectionString =
+            match storageEndpoints.ConnectionString with
+            | Some value -> value
+            | None -> Environment.GetEnvironmentVariable EnvironmentVariables.AzureStorageConnectionString
+
+        let azureCosmosDBConnectionString =
+            match AzureEnvironment.cosmosConnectionString with
+            | Some value -> value
+            | None -> Environment.GetEnvironmentVariable EnvironmentVariables.AzureCosmosDBConnectionString
+
+        let useManagedIdentity = AzureEnvironment.useManagedIdentity
 
         builder
             .UseContentRoot(Directory.GetCurrentDirectory())
@@ -107,15 +123,22 @@ module Program =
                         options.CollectionAge <- TimeSpan.FromMinutes(15.0)
                         options.ClassSpecificCollectionAge[$"{(typeof<GrainRepository.GrainRepositoryActor>).FullName}"] <- TimeSpan.FromMinutes(5.0))
                     .UseAzureStorageClustering(fun (options: AzureStorageClusteringOptions) ->
-                        let tableServiceClient = TableServiceClient(azureStorageConnectionString)
+                        let tableServiceClient =
+                            if useManagedIdentity then
+                                TableServiceClient(storageEndpoints.TableEndpoint, defaultAzureCredential.Value)
+                            else if String.IsNullOrWhiteSpace azureStorageConnectionString then
+                                invalidOp "Azure Storage connection string must be configured for clustering when managed identity is disabled."
+                            else
+                                TableServiceClient(azureStorageConnectionString)
+
                         options.TableServiceClient <- tableServiceClient)
                     .AddCosmosGrainStorage(
                         GraceActorStorage,
                         (fun (options: CosmosGrainStorageOptions) ->
                             //options.ConfigureCosmosClient(azureCosmosDBConnectionString)
-                            options.ContainerName <- Environment.GetEnvironmentVariable EnvironmentVariables.CosmosContainerName
-                            options.DatabaseName <- Environment.GetEnvironmentVariable EnvironmentVariables.CosmosDatabaseName
-                            options.IsResourceCreationEnabled <- true
+                            options.ContainerName <- Environment.GetEnvironmentVariable EnvironmentVariables.AzureCosmosDBContainerName
+                            options.DatabaseName <- Environment.GetEnvironmentVariable EnvironmentVariables.AzureCosmosDBDatabaseName
+                            options.IsResourceCreationEnabled <- false
 
                             options.ConfigureCosmosClient(fun (serviceProvider: IServiceProvider) ->
                                 let cosmosClientOptions = CosmosClientOptions()
@@ -144,41 +167,30 @@ module Program =
 #endif
                                 // When debugging, the Cosmos DB emulator takes a while to start up.
                                 // We're going to use a loop to wait until it's ready.
-                                let cosmosClient = new CosmosClient(azureCosmosDBConnectionString, cosmosClientOptions)
+                                let cosmosClient =
+                                    if useManagedIdentity then
+                                        let endpoint =
+                                            AzureEnvironment.tryGetCosmosEndpointUri ()
+                                            |> Option.defaultWith (fun () ->
+                                                invalidOp "Azure Cosmos DB endpoint must be configured when using a managed identity.")
+
+                                        new CosmosClient(endpoint.AbsoluteUri, defaultAzureCredential.Value, cosmosClientOptions)
+                                    else
+                                        if String.IsNullOrWhiteSpace azureCosmosDBConnectionString then
+                                            invalidOp "Cosmos DB connection string must be configured when managed identity is disabled."
+
+                                        new CosmosClient(azureCosmosDBConnectionString, cosmosClientOptions)
+
                                 ValueTask.FromResult(cosmosClient))),
                         typeof<GracePartitionKeyProvider>
                     )
                     .AddAzureBlobGrainStorage(
-                        GraceObjectStorage,
+                        GraceDiffStorage,
                         (fun (options: AzureBlobStorageOptions) ->
                             options.BlobServiceClient <- Context.blobServiceClient
                             options.ContainerName <- Environment.GetEnvironmentVariable EnvironmentVariables.DiffContainerName
                             options.GrainStorageSerializer <- SystemTextJsonGrainStorageSerializer(Grace.Shared.Constants.JsonSerializerOptions))
                     )
-                    //.AddAzureQueueStreams(
-                    //    GraceEventStreamProvider,
-                    //    fun (siloAzureQueueStreamConfigurator: SiloAzureQueueStreamConfigurator) ->
-                    //        siloAzureQueueStreamConfigurator.ConfigureStreamPubSub(StreamPubSubType.ExplicitGrainBasedAndImplicit)
-
-                    //        siloAzureQueueStreamConfigurator.ConfigureAzureQueue(fun optionsBuilder ->
-                    //            optionsBuilder.Configure(fun azureQueueOptions ->
-                    //                azureQueueOptions.MessageVisibilityTimeout <- TimeSpan.FromMinutes(5.0)
-                    //                azureQueueOptions.QueueNames <- List<string>([ GraceEventStreamTopic ])
-                    //                azureQueueOptions.QueueServiceClient <- QueueServiceClient(azureStorageConnectionString))
-                    //            |> ignore)
-
-                    //        siloAzureQueueStreamConfigurator.ConfigurePullingAgent(fun pullOptions ->
-                    //            pullOptions.Configure(fun streamPullingOptions -> streamPullingOptions.GetQueueMsgsTimerPeriod <- TimeSpan.FromSeconds(5.0))
-                    //            |> ignore)
-                    //        |> ignore
-                    //)
-                    //.AddAzureBlobGrainStorage(
-                    //    GraceEventStreamProvider,
-
-                    //    (fun (options: AzureBlobStorageOptions) ->
-                    //        options.BlobServiceClient <- Context.blobServiceClient
-                    //        options.ContainerName <- GraceEventStreamProvider)
-                    //)
                     .AddActivityPropagation()
 
                 |> ignore
@@ -223,25 +235,40 @@ module Program =
     let main args =
         try
             logToConsole "----------------------------- Starting Grace Server ------------------------------"
-            let host = createHostBuilder(args).Build()
 
             // Build the configuration
             let environment = Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT")
 
-            let config =
+            let configuration =
                 ConfigurationBuilder()
                     .AddJsonFile("appsettings.json", true, true) // Load appsettings.json
                     .AddJsonFile($"appsettings.{environment}.json", false, true) // Load environment-specific settings
-                    .AddEnvironmentVariables() // Include environment variables
+                    .AddEnvironmentVariables()
+                    .AddUserSecrets() // Use `dotnet user-secrets` to store sensitive settings during development
                     .Build()
+
+            use configurationEntry = memoryCache.CreateEntry(MemoryCache.GraceConfiguration)
+            configurationEntry.Value <- configuration
+            configurationEntry.Priority <- CacheItemPriority.NeverRemove
+            configurationEntry.Dispose()
+
+            logToConsole "Configuration settings saved in memory cache."
+
+            let host = createHostBuilder(args).Build()
 
             // Placing some much-used services into ApplicationContext where they're easy to find.
             Grace.Actors.Context.setHostServiceProvider host.Services
+
             let grainFactory = host.Services.GetService(typeof<IGrainFactory>) :?> IGrainFactory
             ApplicationContext.setGrainFactory grainFactory
 
             let loggerFactory = host.Services.GetService(typeof<ILoggerFactory>) :?> ILoggerFactory
             ApplicationContext.setLoggerFactory (loggerFactory)
+
+            // Dump out configuration settings at startup for debugging purposes.
+            //logToConsole "Configuration settings:"
+            //for pair in config.AsEnumerable() do
+            //    logToConsole $"  {pair.Key} = {pair.Value}"
 
             host.Run()
 

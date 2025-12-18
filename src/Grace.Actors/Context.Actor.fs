@@ -1,5 +1,7 @@
 namespace Grace.Actors
 
+open Azure.Core
+open Azure.Identity
 open Azure.Storage.Blobs
 open Grace.Actors.Types
 open Grace.Shared
@@ -22,6 +24,8 @@ open MessagePack.Resolvers
 open MessagePack.FSharp
 open MessagePack.NodaTime
 open MessagePack.Resolvers
+
+open Grace.Shared.AzureEnvironment
 
 module Context =
 
@@ -70,9 +74,18 @@ module Context =
     let mutable internal timings = ConcurrentDictionary<CorrelationId, List<Timing>>()
     let setTimings (timing: ConcurrentDictionary<CorrelationId, List<Timing>>) = timings <- timing
 
+    let private defaultAzureCredential = lazy (DefaultAzureCredential())
+
     /// Azure Blob Storage client
-    let azureStorageConnectionString = Environment.GetEnvironmentVariable Constants.EnvironmentVariables.AzureStorageConnectionString
-    let blobServiceClient = BlobServiceClient(azureStorageConnectionString)
+    let blobServiceClient =
+        if AzureEnvironment.useManagedIdentityForStorage then
+            BlobServiceClient(AzureEnvironment.storageEndpoints.BlobEndpoint, defaultAzureCredential.Value)
+        else
+            match AzureEnvironment.storageEndpoints.ConnectionString with
+            | Some connectionString -> BlobServiceClient(connectionString)
+            | None ->
+                invalidOp
+                    "Azure Storage connection string must be configured when running in local debug mode without a managed identity."
 
     /// Diff cache container client
     let diffCacheContainerClient = blobServiceClient.GetBlobContainerClient(Environment.GetEnvironmentVariable Constants.EnvironmentVariables.DiffContainerName)

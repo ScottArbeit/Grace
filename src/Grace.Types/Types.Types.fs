@@ -916,10 +916,12 @@ module Types =
 
         override this.ToString() = getDiscriminatedUnionFullName this
 
+    /// Settings for Azure Service Bus pub-sub integration.
     [<GenerateSerializer>]
     type AzureServiceBusPubSubSettings =
         { ConnectionString: string; FullyQualifiedNamespace: string; TopicName: string; SubscriptionName: string; UseManagedIdentity: bool }
 
+    /// Settings for Grace pub-sub integration.
     [<GenerateSerializer>]
     type GracePubSubSettings =
         { System: GracePubSubSystem

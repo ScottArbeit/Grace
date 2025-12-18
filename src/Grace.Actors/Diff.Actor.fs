@@ -36,7 +36,7 @@ open Grace.Actors.Extensions
 
 module Diff =
 
-    type DiffActor([<PersistentState(StateName.Diff, Constants.GraceObjectStorage)>] state: IPersistentState<DiffDto>) =
+    type DiffActor([<PersistentState(StateName.Diff, Constants.GraceDiffStorage)>] state: IPersistentState<DiffDto>) =
         inherit Grain()
 
         static let actorName = ActorName.Diff

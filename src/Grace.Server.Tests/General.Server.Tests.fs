@@ -291,8 +291,8 @@ type Setup() =
             let azureStorageKey = Environment.GetEnvironmentVariable Constants.EnvironmentVariables.AzureStorageKey
             let azureStorageConnectionString = Environment.GetEnvironmentVariable Constants.EnvironmentVariables.AzureStorageConnectionString
             let azureCosmosDbConnectionString = Environment.GetEnvironmentVariable Constants.EnvironmentVariables.AzureCosmosDBConnectionString
-            let cosmosDatabaseName = Environment.GetEnvironmentVariable Constants.EnvironmentVariables.CosmosDatabaseName
-            let cosmosContainerName = Environment.GetEnvironmentVariable Constants.EnvironmentVariables.CosmosContainerName
+            let cosmosDatabaseName = Environment.GetEnvironmentVariable Constants.EnvironmentVariables.AzureCosmosDBDatabaseName
+            let cosmosContainerName = Environment.GetEnvironmentVariable Constants.EnvironmentVariables.AzureCosmosDBContainerName
 
             let daprEnvironmentVariables =
                 dict

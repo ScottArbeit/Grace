@@ -1,0 +1,15 @@
+{
+  "version": 3,
+  "indentSize": 4,
+  "maxLineLength": 160,
+  "endOfLine": "lf",
+  "insertFinalNewline": true,
+  "trimTrailingWhitespace": true,
+  "maxFunctionBindingWidth": 160,
+  "maxValueBindingWidth": 160,
+  "maxRecordWidth": 160,
+  "maxIfThenElseShortWidth": 80,
+  "maxIfThenShortWidth": 80,
+  "multilineBlockBracketsOnSameColumn": true,
+  "alignFunctionSignatureToIndentation": true
+}

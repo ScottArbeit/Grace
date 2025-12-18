@@ -2,6 +2,8 @@ namespace Grace.Server
 
 open Asp.Versioning
 open Asp.Versioning.ApiExplorer
+open Azure.Core
+open Azure.Identity
 open Azure.Monitor.OpenTelemetry.Exporter
 open Azure.Storage.Blobs
 open Azure.Storage.Blobs.Models
@@ -9,6 +11,7 @@ open Giraffe
 open Giraffe.EndpointRouting
 open Grace.Actors
 open Grace.Shared
+open Grace.Shared.AzureEnvironment
 open Grace.Shared.Utilities
 open Grace.Server
 open Grace.Server.Middleware
@@ -60,7 +63,7 @@ module Application =
     type CosmosWarmup(cosmosClient: CosmosClient, log: ILogger<CosmosWarmup>) =
         interface IHostedService with
             member _.StartAsync(ct: CancellationToken) : Task =
-                log.LogInformation("Waiting for Cosmos DB emulator to be ready... it can take up to 2 minutes to be ready to receive https connections.")
+                log.LogInformation("Waiting for Cosmos DB emulator to be ready...")
 
                 let rec loop i =
                     task {
@@ -81,6 +84,8 @@ module Application =
                 loop 1 :> Task
 
             member _.StopAsync(_ct: CancellationToken) : Task = Task.CompletedTask
+
+    let private defaultAzureCredential = lazy (DefaultAzureCredential())
 
     type Startup(configuration: IConfiguration) =
 
@@ -492,9 +497,23 @@ module Application =
         //| _ -> activity.AddTag("eventName", eventName) |> ignore
 
         member _.ConfigureServices(services: IServiceCollection) =
-            Constants.JsonSerializerOptions.Converters.Add(BranchDtoConverter())
+            let mutable configurationObj: obj = null
 
-            let azureMonitorConnectionString = Environment.GetEnvironmentVariable Constants.EnvironmentVariables.ApplicationInsightsConnectionString
+            if
+                not
+                <| memoryCache.TryGetValue(Constants.MemoryCache.GraceConfiguration, &configurationObj)
+            then
+                invalidOp "Grace configuration not found in memory cache."
+
+            let configuration = configurationObj :?> IConfigurationRoot
+
+            let azureMonitorConnectionString =
+                let connectionString = Environment.GetEnvironmentVariable Constants.EnvironmentVariables.ApplicationInsightsConnectionString
+
+                if String.IsNullOrWhiteSpace connectionString then
+                    configuration["Grace:ApplicationInsightsConnectionString"]
+                else
+                    connectionString
 
             ApplicationContext.setActorStateStorageProvider ActorStateStorageProvider.AzureCosmosDb
 
@@ -509,7 +528,7 @@ module Application =
             let openApiInfo = new OpenApiInfo()
             openApiInfo.Description <- "Grace is a version control system. Code and documentation can be found at https://gracevcs.com."
             openApiInfo.Title <- "Grace Server API"
-            openApiInfo.Version <- "v0.1"
+            openApiInfo.Version <- "v0.2"
             openApiInfo.Contact <- new OpenApiContact()
             openApiInfo.Contact.Name <- "Scott Arbeit"
             openApiInfo.Contact.Email <- "scott.arbeit@outlook.com"
@@ -602,7 +621,17 @@ module Application =
                         LimitToEndpoint = true // prevents discovery probes that can trigger TLS issues on emulator
                     )
 
-                new CosmosClient(cosmosConnectionString, options))
+                if AzureEnvironment.useManagedIdentity then
+                    let endpoint =
+                        AzureEnvironment.tryGetCosmosEndpointUri ()
+                        |> Option.defaultWith (fun () -> invalidOp "Azure Cosmos DB endpoint must be configured when using a managed identity.")
+
+                    new CosmosClient(endpoint.AbsoluteUri, defaultAzureCredential.Value, options)
+                else
+                    if String.IsNullOrWhiteSpace cosmosConnectionString then
+                        invalidOp "Azure Cosmos DB connection string is required when managed identity is disabled."
+
+                    new CosmosClient(cosmosConnectionString, options))
             |> ignore
 
             let apiVersioningBuilder =

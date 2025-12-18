@@ -1,9 +1,11 @@
 namespace Grace.Actors
 
+open Azure.Core
 open Azure.Identity
 open Azure.Messaging.ServiceBus
 open Azure.Storage
 open Azure.Storage.Blobs
+open Azure.Storage.Blobs.Specialized
 open Azure.Storage.Sas
 open Grace.Actors.Constants
 open Grace.Actors.Context
@@ -13,6 +15,7 @@ open Grace.Actors.Interfaces
 open Grace.Actors.Timing
 open Grace.Actors.Types
 open Grace.Shared
+open Grace.Shared.AzureEnvironment
 open Grace.Shared.Constants
 open Grace.Types.Branch
 open Grace.Types.DirectoryVersion
@@ -98,25 +101,43 @@ module Services =
     /// Dictionary for caching blob container clients
     let containerClients = new ConcurrentDictionary<string, BlobContainerClient>()
 
-    /// Azure Storage connection string retrieved from environment variables
-    let private azureStorageConnectionString = Environment.GetEnvironmentVariable(EnvironmentVariables.AzureStorageConnectionString)
-
     /// Azure Storage key retrieved from environment variables
     let private azureStorageKey = Environment.GetEnvironmentVariable(EnvironmentVariables.AzureStorageKey)
 
     /// Shared key credential for Azure Storage
-    let private sharedKeyCredential = StorageSharedKeyCredential(DefaultObjectStorageAccount, azureStorageKey)
+    let private sharedKeyCredential = lazy (StorageSharedKeyCredential(DefaultObjectStorageAccount, azureStorageKey))
 
     /// Logger instance for the Services.Actor module.
     let private log = loggerFactory.CreateLogger("Services.Actor")
 
-    let private azureCredential = lazy (DefaultAzureCredential())
-    let private serviceBusClient = lazy (ServiceBusClient(pubSubSettings.AzureServiceBus.Value.ConnectionString))
+    let private defaultAzureCredential = lazy (DefaultAzureCredential())
+
+    let private serviceBusClient =
+        lazy
+            let settings = pubSubSettings.AzureServiceBus.Value
+
+            if settings.UseManagedIdentity then
+                let fullyQualifiedNamespace =
+                    if not (String.IsNullOrWhiteSpace settings.FullyQualifiedNamespace) then
+                        settings.FullyQualifiedNamespace
+                    else
+                        AzureEnvironment.tryGetServiceBusFullyQualifiedNamespace ()
+                        |> Option.defaultWith (fun () -> invalidOp "Azure Service Bus namespace is required for managed identity.")
+
+                logToConsole $"Creating ServiceBusClient with Managed Identity for namespace: {fullyQualifiedNamespace}."
+                ServiceBusClient(fullyQualifiedNamespace, defaultAzureCredential.Value)
+            else
+                logToConsole "Creating ServiceBusClient with connection string."
+                ServiceBusClient(settings.ConnectionString)
+
     let private serviceBusSender = lazy (serviceBusClient.Value.CreateSender(pubSubSettings.AzureServiceBus.Value.TopicName))
 
     /// Publishes a GraceEvent to the configured pub-sub system.
     let publishGraceEvent (graceEvent: GraceEvent) (metadata: EventMetadata) =
         task {
+            logToConsole
+                $"In publishGraceEvent; graceEvent: {getDiscriminatedUnionCaseName graceEvent}; CorrelationId: {metadata.CorrelationId}; pubSubSettings:{Environment.NewLine}{serialize pubSubSettings}."
+
             match pubSubSettings.System with
             | GracePubSubSystem.AzureServiceBus ->
                 match pubSubSettings.AzureServiceBus with
@@ -134,6 +155,13 @@ module Services =
                             message.ApplicationProperties[kvp.Key] <- kvp.Value
 
                         do! serviceBusSender.Value.SendMessageAsync(message)
+
+                        log.LogInformation(
+                            "{CurrentInstant}: Published GraceEvent via Azure Service Bus. CorrelationId: {CorrelationId}; EventType: {EventType}.",
+                            getCurrentInstantExtended (),
+                            metadata.CorrelationId,
+                            getDiscriminatedUnionCaseName graceEvent
+                        )
                     with ex ->
                         log.LogError(
                             ex,
@@ -205,7 +233,7 @@ module Services =
                     key,
                     fun cacheEntry ->
                         task {
-                            let blobContainerClient = BlobContainerClient(azureStorageConnectionString, containerName)
+                            let blobContainerClient = Context.blobServiceClient.GetBlobContainerClient(containerName)
                             let ownerActorProxy = Owner.CreateActorProxy repositoryDto.OwnerId CorrelationId.Empty
                             let! ownerDto = ownerActorProxy.Get correlationId
                             let organizationActorProxy = Organization.CreateActorProxy repositoryDto.OrganizationId CorrelationId.Empty
@@ -252,7 +280,6 @@ module Services =
     /// Creates a full URI for a specific file version.
     let private createAzureBlobSasUri (repositoryDto: RepositoryDto) (blobName: string) (permission: BlobSasPermissions) (correlationId: CorrelationId) =
         task {
-            //logToConsole $"In createAzureBlobSasUri; fileVersion.RelativePath: {fileVersion.RelativePath}."
             let! blobContainerClient = getContainerClient repositoryDto correlationId
 
             let blobSasBuilder =
@@ -261,22 +288,39 @@ module Services =
                     expiresOn = DateTimeOffset.UtcNow.Add(TimeSpan.FromMinutes(SharedAccessSignatureExpiration)),
                     StartsOn = DateTimeOffset.UtcNow.Subtract(TimeSpan.FromSeconds(15.0)),
                     BlobContainerName = blobContainerClient.Name,
-                    BlobName = blobName,
-                    CorrelationId = correlationId
+                    BlobName = blobName
                 )
 
-            let sasUriParameters = blobSasBuilder.ToSasQueryParameters(sharedKeyCredential)
+            let! sasUriParameters =
+                if AzureEnvironment.useManagedIdentity then
+                    task {
+                        // For managed identity, we need to get a user delegation key first
+                        let blobServiceClient = blobContainerClient.GetParentBlobServiceClient()
+
+                        let! userDelegationKey =
+                            blobServiceClient.GetUserDelegationKeyAsync(
+                                DateTimeOffset.UtcNow,
+                                DateTimeOffset.UtcNow.Add(TimeSpan.FromMinutes(SharedAccessSignatureExpiration))
+                            )
+
+                        let sasQueryParameters = blobSasBuilder.ToSasQueryParameters(userDelegationKey.Value, blobServiceClient.AccountName)
+
+                        return sasQueryParameters
+                    }
+                else
+                    task { return blobSasBuilder.ToSasQueryParameters(sharedKeyCredential.Value) }
 
             return UriWithSharedAccessSignature($"{blobContainerClient.Uri}/{blobName}?{sasUriParameters}")
         }
+
+    let azureBlobReadPermissions = (BlobSasPermissions.Read ||| BlobSasPermissions.List) // These are the minimum permissions needed to read a file.
 
     /// Gets a full Uri, including shared access signature, for reading from the object storage provider.
     let getUriWithReadSharedAccessSignature (repositoryDto: RepositoryDto) (blobName: string) (correlationId: CorrelationId) =
         task {
             match repositoryDto.ObjectStorageProvider with
             | AzureBlobStorage ->
-                let permissions = (BlobSasPermissions.Read ||| BlobSasPermissions.List) // These are the minimum permissions needed to read a file.
-                let! sas = createAzureBlobSasUri repositoryDto blobName permissions correlationId
+                let! sas = createAzureBlobSasUri repositoryDto blobName azureBlobReadPermissions correlationId
                 return sas
             | AWSS3 -> return UriWithSharedAccessSignature(String.Empty)
             | GoogleCloudStorage -> return UriWithSharedAccessSignature(String.Empty)
@@ -290,22 +334,20 @@ module Services =
             return! getUriWithReadSharedAccessSignature repositoryDto blobName correlationId
         }
 
+    /// The permissions we need to create, write, or tag blobs. Includes read permission to allow for calls to .ExistsAsync().
+    let azureBlobWritePermissions =
+        (BlobSasPermissions.Create
+         ||| BlobSasPermissions.Write
+         ||| BlobSasPermissions.Tag
+         ||| BlobSasPermissions.Read)
+
     /// Gets a full Uri, including shared access signature, for writing from the object storage provider.
     let getUriWithWriteSharedAccessSignature (repositoryDto: RepositoryDto) (blobName: string) (correlationId: CorrelationId) =
         task {
             match repositoryDto.ObjectStorageProvider with
             | AWSS3 -> return UriWithSharedAccessSignature(String.Empty)
             | AzureBlobStorage ->
-                // Adding read permission to allow for calls to .ExistsAsync().
-                let permissions =
-                    (BlobSasPermissions.Create
-                     ||| BlobSasPermissions.Write
-                     ||| BlobSasPermissions.Move
-                     ||| BlobSasPermissions.Tag
-                     ||| BlobSasPermissions.Read)
-
-                let! sas = createAzureBlobSasUri repositoryDto blobName permissions correlationId
-
+                let! sas = createAzureBlobSasUri repositoryDto blobName azureBlobWritePermissions correlationId
                 return sas
             | GoogleCloudStorage -> return UriWithSharedAccessSignature(String.Empty)
             | ObjectStorageProvider.Unknown -> return UriWithSharedAccessSignature(String.Empty)

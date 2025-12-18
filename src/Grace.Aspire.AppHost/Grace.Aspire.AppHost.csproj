@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <Sdk Name="Aspire.AppHost.Sdk" Version="13.0.2" />
 
@@ -23,6 +23,12 @@
     <ProjectReference Include="..\Grace.Shared\Grace.Shared.fsproj" IsAspireProjectResource="false">
         <Aliases>Shared</Aliases>
     </ProjectReference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Update="appsettings.Development.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
   </ItemGroup>
 
 </Project>

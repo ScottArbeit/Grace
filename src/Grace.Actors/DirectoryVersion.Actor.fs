@@ -115,7 +115,8 @@ module DirectoryVersion =
         let mutable directoryVersionDto = DirectoryVersionDto.Default
         let mutable currentCommand = String.Empty
 
-        let recursiveDirectoryVersionsCacheFileName directoryVersionId = $"{directoryVersionId}.msgpack"
+        /// Gets the name of the blob file that holds the cached recursive directory version list.
+        let getRecursiveDirectoryVersionsCacheFileName (directoryVersionId: DirectoryVersionId) = $"{directoryVersionId}.msgpack"
 
         member val private correlationId: CorrelationId = String.Empty with get, set
 
@@ -165,7 +166,7 @@ module DirectoryVersion =
                         // Delete cached state for this actor.
                         let directoryVersionBlobClient =
                             directoryVersionContainerClient.GetBlobClient(
-                                recursiveDirectoryVersionsCacheFileName directoryVersionDto.DirectoryVersion.DirectoryVersionId
+                                getRecursiveDirectoryVersionsCacheFileName directoryVersionDto.DirectoryVersion.DirectoryVersionId
                             )
 
                         let! deleted = directoryVersionBlobClient.DeleteIfExistsAsync()
@@ -344,9 +345,10 @@ module DirectoryVersion =
 
                 task {
                     try
+                        // Get the blob client for the cached recursive directory versions file.
                         let directoryVersionBlobClient =
                             directoryVersionContainerClient.GetBlockBlobClient(
-                                recursiveDirectoryVersionsCacheFileName directoryVersionDto.DirectoryVersion.DirectoryVersionId
+                                getRecursiveDirectoryVersionsCacheFileName directoryVersionDto.DirectoryVersion.DirectoryVersionId
                             )
 
                         // Check if the subdirectory versions have already been generated and cached.
@@ -388,7 +390,6 @@ module DirectoryVersion =
 
                             let subdirectoryVersionDtos = ConcurrentDictionary<RelativePath, DirectoryVersionDto>()
 
-                            // First, add the current directory version to the dictionary.
                             log.LogTrace(
                                 "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; In DirectoryVersionActor.GetRecursiveDirectoryVersions({id}): Adding current directory version. RelativePath: {relativePath}",
                                 getCurrentInstantExtended (),
@@ -398,6 +399,7 @@ module DirectoryVersion =
                                 directoryVersionDto.DirectoryVersion.RelativePath
                             )
 
+                            // First, add the current directory version to the dictionary.
                             subdirectoryVersionDtos.TryAdd(directoryVersionDto.DirectoryVersion.RelativePath, directoryVersionDto)
                             |> ignore
 

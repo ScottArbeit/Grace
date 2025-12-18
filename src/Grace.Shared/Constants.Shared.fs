@@ -129,7 +129,7 @@ module Constants =
 
     /// The name of the service for Grace object storage.
     [<Literal>]
-    let GraceObjectStorage = "graceobjectstorage"
+    let GraceDiffStorage = "gracediffstorage"
 
     /// The name of the service for Grace event pub/sub.
     [<Literal>]
@@ -194,27 +194,39 @@ module Constants =
 
         /// The environment variable that contains the Application Insights connection string.
         [<Literal>]
-        let ApplicationInsightsConnectionString = "grace__application_insights_connection_string"
+        let ApplicationInsightsConnectionString = "grace__applicationinsightsconnectionstring"
 
         /// The environment variable that contains the Azure Cosmos DB Connection String.
         [<Literal>]
-        let AzureCosmosDBConnectionString = "grace__cosmosdb__connectionstring"
+        let AzureCosmosDBConnectionString = "grace__azurecosmosdb__connectionstring"
+
+        /// The environment variable that contains the name of the CosmosDB container to use for Grace.
+        [<Literal>]
+        let AzureCosmosDBContainerName = "grace__azurecosmosdb__container_name"
+
+        /// The environment variable that contains the name of the CosmosDB database to use for Grace.
+        [<Literal>]
+        let AzureCosmosDBDatabaseName = "grace__azurecosmosdb__database_name"
+
+        /// The environment variable that exposes the Cosmos DB endpoint when using managed identity.
+        [<Literal>]
+        let AzureCosmosDBEndpoint = "grace__azurecosmosdb__endpoint"
 
         /// The environment variable that contains the Azure Storage Connection String.
         [<Literal>]
         let AzureStorageConnectionString = "grace__azure_storage__connectionstring"
 
+        /// The environment variable that overrides the Azure Storage account name used for managed identity.
+        [<Literal>]
+        let AzureStorageAccountName = "grace__azure_storage__account_name"
+
+        /// The environment variable that overrides the Azure Storage endpoint suffix (default: core.windows.net).
+        [<Literal>]
+        let AzureStorageEndpointSuffix = "grace__azure_storage__endpoint_suffix"
+
         /// The environment variable that contains the Azure Storage Key.
         [<Literal>]
         let AzureStorageKey = "grace__azure_storage__key"
-
-        /// The environment variable that contains the name of the CosmosDB container to use for Grace.
-        [<Literal>]
-        let CosmosContainerName = "grace__cosmosdb__container_name"
-
-        /// The environment variable that contains the name of the CosmosDB database to use for Grace.
-        [<Literal>]
-        let CosmosDatabaseName = "grace__cosmosdb__database_name"
 
         /// The environment variable that contains the Grace server Uri. The Uri MUST include a port number,
         /// and MUST NOT include a trailing slash.
@@ -414,9 +426,13 @@ module Constants =
         [<Literal>]
         let DoesNotExist = "n"
 
+        /// The key name for Grace's configuration in the MemoryCache.
+        [<Literal>]
+        let GraceConfiguration = "GraceConfiguration"
+
         /// The default expiration time for a memory cache entry, in minutes.
 #if DEBUG
-        let DefaultExpirationTime = TimeSpan.FromMinutes(0.5)
+        let DefaultExpirationTime = TimeSpan.FromMinutes(2.0)
 #else
         let DefaultExpirationTime = TimeSpan.FromMinutes(2.0)
 #endif

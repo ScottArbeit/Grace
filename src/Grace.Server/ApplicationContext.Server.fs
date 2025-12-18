@@ -1,11 +1,14 @@
 namespace Grace.Server
 
+open Azure.Core
+open Azure.Identity
 open Azure.Storage
 open Azure.Storage.Blobs
 open Grace.Actors.Constants
 open Grace.Actors.Context
 open Grace.Actors.Types
 open Grace.Shared
+open Grace.Shared.AzureEnvironment
 open Grace.Shared.Constants
 open Grace.Types.Types
 open Grace.Shared.Utilities
@@ -61,13 +64,12 @@ module ApplicationContext =
     let mutable memoryCache: IMemoryCache = null
 
     /// CosmosDB client instance
-    let mutable cosmosClient: CosmosClient = null
-
-    /// CosmosDB container client instance
-    let mutable cosmosContainer: Container = null
+    //let mutable cosmosClient: CosmosClient = null
 
     /// Pub-sub settings for the application.
     let mutable pubSubSettings: GracePubSubSettings = GracePubSubSettings.Empty
+
+    let private defaultAzureCredential = lazy (DefaultAzureCredential())
 
     /// Sets the Application global configuration.
     let setConfiguration (config: IConfiguration) =
@@ -106,143 +108,82 @@ module ApplicationContext =
 
     let mutable sharedKeyCredential: StorageSharedKeyCredential = null
     let mutable grpcPortListener: TcpListener = null
-    let secondsToWaitForDaprToBeReady = 30.0
+    let secondsToDelayReminderProcessing = 30.0
+
+    let useManagedIdentity = AzureEnvironment.useManagedIdentity
+
+    if not useManagedIdentity then
+        let storageKey = Environment.GetEnvironmentVariable(EnvironmentVariables.AzureStorageKey)
+        sharedKeyCredential <- StorageSharedKeyCredential(DefaultObjectStorageAccount, storageKey)
 
     let defaultObjectStorageProvider = ObjectStorageProvider.AzureBlobStorage
+
+    let cosmosDbConnectionString = Environment.GetEnvironmentVariable EnvironmentVariables.AzureCosmosDBConnectionString
+
+    let cosmosDatabaseName = Environment.GetEnvironmentVariable EnvironmentVariables.AzureCosmosDBDatabaseName
+
+    let cosmosContainerName = Environment.GetEnvironmentVariable EnvironmentVariables.AzureCosmosDBContainerName
+
+    // Get a reference to the CosmosDB database.
+    let cosmosClientOptions =
+        CosmosClientOptions(ApplicationName = "Grace.Server", LimitToEndpoint = false, UseSystemTextJsonSerializerWithOptions = Constants.JsonSerializerOptions)
+
+#if DEBUG
+    // The CosmosDB emulator uses a self-signed certificate, and, by default, HttpClient will refuse
+    //   to connect over https: if the certificate can't be traced back to a root.
+    // These settings allow Grace Server to access the CosmosDB Emulator by bypassing TLS.
+
+    if not useManagedIdentity then
+        // Force SNI = "localhost" while we connect to 127.0.0.1.
+        let handler =
+            new SocketsHttpHandler(
+                SslOptions =
+                    new SslClientAuthenticationOptions(
+                        TargetHost = "localhost", // SNI host_name must be DNS per RFC 6066
+                        RemoteCertificateValidationCallback = (fun _ __ ___ ____ -> true) // emulator only
+                    )
+            )
+
+        cosmosClientOptions.HttpClientFactory <- (fun () -> new HttpClient(handler, disposeHandler = true))
+
+        // During debugging, we might want to see the responses.
+        cosmosClientOptions.EnableContentResponseOnWrite <- true
+
+        // When using the CosmosDB Emulator, these settings help with connectivity.
+        cosmosClientOptions.LimitToEndpoint <- false
+        cosmosClientOptions.ConnectionMode <- ConnectionMode.Gateway
+#endif
+
+    let cosmosClient =
+        if useManagedIdentity then
+            let endpoint =
+                AzureEnvironment.tryGetCosmosEndpointUri ()
+                |> Option.defaultWith (fun () -> invalidOp "Azure Cosmos DB endpoint must be configured when using a managed identity.")
+
+            new CosmosClient(endpoint.AbsoluteUri, defaultAzureCredential.Value, cosmosClientOptions)
+        else
+            if String.IsNullOrWhiteSpace cosmosDbConnectionString then
+                invalidOp "Cosmos DB connection string must be configured when managed identity is disabled."
+
+            new CosmosClient(cosmosDbConnectionString, cosmosClientOptions)
+
+    // Get a reference to the CosmosDB database and container.
+    let database = cosmosClient.GetDatabase(cosmosDatabaseName)
+    let cosmosContainer = database.GetContainer(cosmosContainerName)
 
     /// Sets multiple values for the application. In functional programming, a global construct like this is used instead of dependency injection.
     let Set =
         task {
             try
-                (*
-                let mutable isReady = false
-
-                // Wait for the Dapr gRPC port to be ready.
-                logToConsole
-                    $"""----------------------------------------------------------------------------------------------
-                                    Pausing to check for an active gRPC connection with the Dapr sidecar.
-                                    -----------------------------------------------------------------------------------------------
-                                    Grace Server should not complete startup and accept requests until we know that we can
-                                    talk to Dapr, so Grace Server will wait for {secondsToWaitForDaprToBeReady} seconds for Dapr to be ready.
-                                    If no connection is made, that almost always means that something happened trying
-                                    to start the Dapr sidecar, and Kubernetes is going to restart it. If that happens,
-                                    Grace Server will exit to allow Kubernetes to restart it; by the time Grace Server
-                                    restarts, the Dapr sidecar is usually up and running, and we should connect right away.
-                                    -----------------------------------------------------------------------------------------------"""
-
-                let mutable gRPCPort: int = 50001 // This is Dapr's default gRPC port.
-
-                let grpcPortString = Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.DaprGrpcPort)
-
-                if Int32.TryParse(grpcPortString, &gRPCPort) then
-                    let startTime = getCurrentInstant ()
-
-                    while not <| isReady do
-                        do! Task.Delay(TimeSpan.FromSeconds(2.0))
-                        logToConsole $"Checking for an active TcpListner on gRPC port {gRPCPort}."
-
-                        let tcpListeners =
-                            Net.NetworkInformation.IPGlobalProperties
-                                .GetIPGlobalProperties()
-                                .GetActiveTcpListeners()
-                        //if tcpListeners.Length > 0 then logToConsole "Active TCP listeners:"
-                        //for t in tcpListeners do
-                        //    logToConsole $"{t.Address}:{t.Port} {t.AddressFamily}."
-                        if tcpListeners.Any(fun tcpListener -> tcpListener.Port = gRPCPort) then
-                            logToConsole $"gRPC port is ready."
-                            isReady <- true
-                        else if getCurrentInstant().Minus(startTime) > Duration.FromSeconds(secondsToWaitForDaprToBeReady) then
-                            logToConsole $"gRPC port is not ready after {secondsToWaitForDaprToBeReady} seconds. Exiting."
-                            Environment.Exit(-1)
-                else
-                    logToConsole $"Could not parse gRPC port {grpcPortString} as a port number. Exiting."
-                    Environment.Exit(-1)
-                *)
-
-                let storageKey = Environment.GetEnvironmentVariable(EnvironmentVariables.AzureStorageKey)
-
-                sharedKeyCredential <- StorageSharedKeyCredential(DefaultObjectStorageAccount, storageKey)
-
-                let cosmosDbConnectionString = Environment.GetEnvironmentVariable(EnvironmentVariables.AzureCosmosDBConnectionString)
-
-                let cosmosDatabaseName = Environment.GetEnvironmentVariable(EnvironmentVariables.CosmosDatabaseName)
-
-                let cosmosContainerName = Environment.GetEnvironmentVariable(EnvironmentVariables.CosmosContainerName)
-
-                // Get a reference to the CosmosDB database.
-                let cosmosClientOptions =
-                    CosmosClientOptions(
-                        ApplicationName = "Grace.Server",
-                        LimitToEndpoint = false,
-                        UseSystemTextJsonSerializerWithOptions = Constants.JsonSerializerOptions
-                    )
-
-#if DEBUG
-                // The CosmosDB emulator uses a self-signed certificate, and, by default, HttpClient will refuse
-                //   to connect over https: if the certificate can't be traced back to a root.
-                // These settings allow Grace Server to access the CosmosDB Emulator by bypassing TLS.
-
-                // Force SNI = "localhost" while we connect to 127.0.0.1.
-                let handler =
-                    new SocketsHttpHandler(
-                        SslOptions =
-                            new SslClientAuthenticationOptions(
-                                TargetHost = "localhost", // SNI host_name must be DNS per RFC 6066
-                                RemoteCertificateValidationCallback = (fun _ __ ___ ____ -> true) // emulator only
-                            )
-                    )
-
-                cosmosClientOptions.HttpClientFactory <- (fun () -> new HttpClient(handler, disposeHandler = true))
-
-                // During debugging, we might want to see the responses.
-                cosmosClientOptions.EnableContentResponseOnWrite <- true
-
-                // When using the CosmosDB Emulator, these settings help with connectivity.
-                cosmosClientOptions.LimitToEndpoint <- false
-                cosmosClientOptions.ConnectionMode <- ConnectionMode.Gateway
-#endif
-                cosmosClient <- new CosmosClient(cosmosDbConnectionString, cosmosClientOptions)
-
-                // When debugging, the Cosmos DB emulator takes a while to start. We're going to perform this
-                //   part in a loop with retries to make sure we've waited for the emulator to be ready.
-                let mutable connected = false
-
-                while not connected do
-                    try
-                        let! accountProperties = cosmosClient.ReadAccountAsync()
-                        connected <- true
-                    with ex ->
-                        log.LogWarning("Waiting for Cosmos DB emulator to be ready...")
-                        do! Task.Delay(1000)
-
-                let! databaseResponse = cosmosClient.CreateDatabaseIfNotExistsAsync(cosmosDatabaseName)
-                let database = databaseResponse.Database
-
-                // Get a reference to the CosmosDB container.
-                let containerProperties = ContainerProperties(Id = cosmosContainerName, PartitionKeyPath = "/PartitionKey", DefaultTimeToLive = 3600)
-
-                let! containerResponse = database.CreateContainerIfNotExistsAsync(containerProperties)
-                cosmosContainer <- containerResponse.Container
-
-                logToConsole $"CosmosDB database '{cosmosDatabaseName}' and container '{cosmosContainer.Id}' are ready."
-
-                // Create a MemoryCache instance.
-                let memoryCacheOptions =
-                    MemoryCacheOptions(TrackStatistics = false, TrackLinkedCacheEntries = false, ExpirationScanFrequency = TimeSpan.FromSeconds(30.0))
-                //memoryCacheOptions.SizeLimit <- 100L * 1024L * 1024L
-                //memoryCache <- new MemoryCache(memoryCacheOptions, loggerFactory)
-
-                // Inject things into Grace.Shared.
-                //Utilities.memoryCache <- memoryCache
+                logToConsole $"Using CosmosDB database '{cosmosDatabaseName}' and container '{cosmosContainer.Id}'."
 
                 // Inject things into Actor Services.
                 setCosmosClient cosmosClient
                 setCosmosContainer cosmosContainer
-                //setMemoryCache memoryCache
                 setTimings timings
 
                 let configurePubSubSettings () =
-                    let rawSystem = Environment.GetEnvironmentVariable(EnvironmentVariables.GracePubSubSystem)
+                    let rawSystem = Environment.GetEnvironmentVariable EnvironmentVariables.GracePubSubSystem
 
                     let system =
                         match rawSystem with
@@ -261,9 +202,10 @@ module ApplicationContext =
                         if system = GracePubSubSystem.AzureServiceBus then
                             let serviceBusConnectionString = Environment.GetEnvironmentVariable EnvironmentVariables.AzureServiceBusConnectionString
 
-                            if String.IsNullOrWhiteSpace(serviceBusConnectionString) then
-                                invalidOp
-                                    $"Environment variable '{EnvironmentVariables.AzureServiceBusConnectionString}' must be set when {EnvironmentVariables.GracePubSubSystem} is {GracePubSubSystem.AzureServiceBus}."
+                            if not <| AzureEnvironment.useManagedIdentity then
+                                if String.IsNullOrWhiteSpace(serviceBusConnectionString) then
+                                    invalidOp
+                                        $"Environment variable '{EnvironmentVariables.AzureServiceBusConnectionString}' must be set when {EnvironmentVariables.GracePubSubSystem} is {GracePubSubSystem.AzureServiceBus} and you're not using a managed identity."
 
                             let sb_namespace = Environment.GetEnvironmentVariable EnvironmentVariables.AzureServiceBusNamespace
 
@@ -283,19 +225,21 @@ module ApplicationContext =
                                 invalidOp
                                     $"Environment variable '{EnvironmentVariables.AzureServiceBusSubscription}' must be set when {EnvironmentVariables.GracePubSubSystem} is {GracePubSubSystem.AzureServiceBus}."
 
-                            let debugEnvironment = Environment.GetEnvironmentVariable EnvironmentVariables.DebugEnvironment
+                            let fullyQualifiedNamespace =
+                                AzureEnvironment.tryGetServiceBusFullyQualifiedNamespace ()
+                                |> Option.defaultWith (fun () ->
+                                    invalidOp
+                                        $"Environment variable '{EnvironmentVariables.AzureServiceBusNamespace}' must be set when {EnvironmentVariables.GracePubSubSystem} is {GracePubSubSystem.AzureServiceBus}.")
 
-                            let useManagedIdentity =
-                                if String.IsNullOrWhiteSpace(debugEnvironment) then
-                                    true // Default to true in production
-                                elif debugEnvironment.Equals("Azure", StringComparison.OrdinalIgnoreCase) then
-                                    true // Use managed identity in Azure
-                                else
-                                    false // In local dev, use connection string
+                            let useManagedIdentity = AzureEnvironment.useManagedIdentity
 
                             Some
-                                { ConnectionString = serviceBusConnectionString
-                                  FullyQualifiedNamespace = sb_namespace
+                                { ConnectionString =
+                                    if String.IsNullOrEmpty(serviceBusConnectionString) then
+                                        String.Empty
+                                    else
+                                        serviceBusConnectionString
+                                  FullyQualifiedNamespace = fullyQualifiedNamespace
                                   TopicName = topic
                                   SubscriptionName = subscription
                                   UseManagedIdentity = useManagedIdentity }
@@ -310,6 +254,6 @@ module ApplicationContext =
 
                 logToConsole "Grace Server is ready."
             with ex ->
-                log.LogError(ex, "Exception in ApplicationContext.Set.")
+                logToConsole ($"{ex.ToStringDemystified()}")
         }
         :> Task
