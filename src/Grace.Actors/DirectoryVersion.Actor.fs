@@ -118,6 +118,9 @@ module DirectoryVersion =
         /// Gets the name of the blob file that holds the cached recursive directory version list.
         let getRecursiveDirectoryVersionsCacheFileName (directoryVersionId: DirectoryVersionId) = $"{directoryVersionId}.msgpack"
 
+        /// Gets the name of the blob file that holds the .zip file for the directory version.
+        let getZipFileBlobName (directoryVersionId: DirectoryVersionId) = $"{GraceZipFilesFolderName}/{directoryVersionId}.zip"
+
         member val private correlationId: CorrelationId = String.Empty with get, set
 
         override this.OnActivateAsync(ct) =
@@ -163,11 +166,19 @@ module DirectoryVersion =
                     | ReminderTypes.DeleteCachedState, ReminderState.DirectoryVersionDeleteCachedState reminderState ->
                         this.correlationId <- reminderState.CorrelationId
 
+                        let directoryVersion = directoryVersionDto.DirectoryVersion
+
+                        let repositoryActorProxy =
+                            Repository.CreateActorProxy directoryVersion.OrganizationId directoryVersion.RepositoryId reminderState.CorrelationId
+
+                        let! repositoryDto = repositoryActorProxy.Get reminderState.CorrelationId
+
                         // Delete cached state for this actor.
-                        let directoryVersionBlobClient =
-                            directoryVersionContainerClient.GetBlobClient(
-                                getRecursiveDirectoryVersionsCacheFileName directoryVersionDto.DirectoryVersion.DirectoryVersionId
-                            )
+                        let! directoryVersionBlobClient =
+                            getAzureBlobClient
+                                repositoryDto
+                                (getRecursiveDirectoryVersionsCacheFileName directoryVersion.DirectoryVersionId)
+                                reminderState.CorrelationId
 
                         let! deleted = directoryVersionBlobClient.DeleteIfExistsAsync()
 
@@ -177,8 +188,8 @@ module DirectoryVersion =
                                 getCurrentInstantExtended (),
                                 getMachineName,
                                 reminderState.CorrelationId,
-                                directoryVersionDto.DirectoryVersion.RepositoryId,
-                                directoryVersionDto.DirectoryVersion.DirectoryVersionId,
+                                directoryVersion.RepositoryId,
+                                directoryVersion.DirectoryVersionId,
                                 reminderState.DeleteReason
                             )
                         else
@@ -187,8 +198,8 @@ module DirectoryVersion =
                                 getCurrentInstantExtended (),
                                 getMachineName,
                                 reminderState.CorrelationId,
-                                directoryVersionDto.DirectoryVersion.RepositoryId,
-                                directoryVersionDto.DirectoryVersion.DirectoryVersionId,
+                                directoryVersion.RepositoryId,
+                                directoryVersion.DirectoryVersionId,
                                 reminderState.DeleteReason
                             )
 
@@ -203,8 +214,9 @@ module DirectoryVersion =
 
                         let! repositoryDto = repositoryActorProxy.Get reminderState.CorrelationId
 
-                        // Delete cached directory version contents for this actor.
-                        let zipFileBlobClient = zipFileContainerClient.GetBlobClient $"{directoryVersion.DirectoryVersionId}.zip"
+                        // Delete zip file for this directory version.
+                        let blobName = getZipFileBlobName directoryVersion.DirectoryVersionId
+                        let! zipFileBlobClient = getAzureBlobClient repositoryDto blobName reminderState.CorrelationId
 
                         let! deleted = zipFileBlobClient.DeleteIfExistsAsync()
 
@@ -345,11 +357,16 @@ module DirectoryVersion =
 
                 task {
                     try
+                        let directoryVersion = directoryVersionDto.DirectoryVersion
+                        let repositoryActorProxy = Repository.CreateActorProxy directoryVersion.OrganizationId directoryVersion.RepositoryId correlationId
+                        let! repositoryDto = repositoryActorProxy.Get correlationId
+
                         // Get the blob client for the cached recursive directory versions file.
-                        let directoryVersionBlobClient =
-                            directoryVersionContainerClient.GetBlockBlobClient(
-                                getRecursiveDirectoryVersionsCacheFileName directoryVersionDto.DirectoryVersion.DirectoryVersionId
-                            )
+                        let! directoryVersionBlobClient =
+                            getAzureBlobClient
+                                repositoryDto
+                                (getRecursiveDirectoryVersionsCacheFileName directoryVersionDto.DirectoryVersion.DirectoryVersionId)
+                                correlationId
 
                         // Check if the subdirectory versions have already been generated and cached.
                         let cachedSubdirectoryVersions =
@@ -502,6 +519,7 @@ module DirectoryVersion =
 
                             // Write the JSON using MessagePack serialization for efficiency.
                             let blockBlobOpenWriteOptions = BlockBlobOpenWriteOptions(Tags = tags)
+                            blockBlobOpenWriteOptions.HttpHeaders.ContentType <- "application/msgpack"
                             use! blobStream = directoryVersionBlobClient.OpenWriteAsync(overwrite = true, options = blockBlobOpenWriteOptions)
                             do! MessagePackSerializer.SerializeAsync(blobStream, subdirectoryVersionsList, messagePackSerializerOptions)
                             do! blobStream.DisposeAsync()
@@ -869,7 +887,7 @@ module DirectoryVersion =
                             // Step 3: Process the subdirectories of the current directory one at a time, because we need to add entries to the .zip file one at a time.
                             for subdirectoryVersionId in subdirectoryVersionIds do
                                 // Get an Azure Blob Client for the .zip file.
-                                let subdirectoryZipFileName = $"{GraceDirectoryVersionStorageFolderName}/{subdirectoryVersionId}.zip"
+                                let subdirectoryZipFileName = getZipFileBlobName subdirectoryVersionId
                                 let! subdirectoryZipFileClient = getAzureBlobClient repositoryDto subdirectoryZipFileName correlationId
 
                                 // Copy the contents of the subdirectory's .zip file to the new .zip we're creating.
@@ -903,7 +921,7 @@ module DirectoryVersion =
                             archive.Dispose() // Dispose the archive before uploading to ensure it's properly flushed to the disk.
                             let! zipFileBlobClient = getAzureBlobClient repositoryDto zipFileBlobName correlationId
                             use tempZipFileStream = File.OpenRead(tempZipPath)
-                            let! response = zipFileBlobClient.UploadAsync(tempZipFileStream, overwrite = true)
+                            let! response = zipFileBlobClient.UploadAsync(tempZipFileStream)
                             ()
                         finally
                             // Step 5: Delete the local ZIP file
@@ -911,21 +929,27 @@ module DirectoryVersion =
                     }
 
                 task {
-                    //logToConsole $"In GetZipFileUri: directoryVersion: {serialize directoryVersion}."
+                    logToConsole $"In GetZipFileUri: DirectoryVersionId: {directoryVersion.DirectoryVersionId}; RelativePath: {directoryVersion.RelativePath}."
                     let repositoryActorProxy = Repository.CreateActorProxy directoryVersion.OrganizationId directoryVersion.RepositoryId correlationId
                     let! repositoryDto = repositoryActorProxy.Get correlationId
 
-                    let blobName = $"{GraceDirectoryVersionStorageFolderName}/{directoryVersion.DirectoryVersionId}.zip"
+                    let blobName = getZipFileBlobName directoryVersion.DirectoryVersionId
                     let! zipFileBlobClient = getAzureBlobClient repositoryDto blobName correlationId
 
                     let! zipFileExists = zipFileBlobClient.ExistsAsync()
 
                     if zipFileExists.Value = true then
                         // We already have this .zip file, so just return the URI with SAS.
+                        logToConsole
+                            $"In GetZipFileUri: .zip file already exists for DirectoryVersionId: {directoryVersion.DirectoryVersionId}; RelativePath: {directoryVersion.RelativePath}."
+
                         let! uriWithSas = getUriWithReadSharedAccessSignature repositoryDto blobName correlationId
                         return uriWithSas
                     else
                         // We don't have the .zip file saved, so let's create it.
+                        logToConsole
+                            $"In GetZipFileUri: Creating .zip file for DirectoryVersionId: {directoryVersion.DirectoryVersionId}; RelativePath: {directoryVersion.RelativePath}."
+
                         do!
                             createDirectoryVersionZipFile
                                 repositoryDto

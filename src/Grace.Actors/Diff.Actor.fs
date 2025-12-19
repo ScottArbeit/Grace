@@ -146,7 +146,7 @@ module Diff =
         override this.OnActivateAsync(ct) =
             let activateStartTime = getCurrentInstant ()
             logActorActivation log this.IdentityString activateStartTime (getActorActivationMessage state.RecordExists)
-
+            if state.RecordExists then diffDto <- state.State
             Task.CompletedTask
 
         interface IDiffActor with
@@ -225,7 +225,7 @@ module Diff =
                         else
                             let (directoryVersionId1, directoryVersionId2) = deconstructActorId ($"{this.GetGrainId().Key}")
 
-                            logToConsole $"In DiffActor.Populate(); DirectoryVersionId1: {directoryVersionId1}; DirectoryVersionId2: {directoryVersionId2}"
+                            //logToConsole $"In DiffActor.Populate(); DirectoryVersionId1: {directoryVersionId1}; DirectoryVersionId2: {directoryVersionId2}"
 
                             let orleansContext = memoryCache.GetOrleansContextEntry(this.GetGrainId())
                             let ownerId = orleansContext.Value[nameof OwnerId] :?> OwnerId
@@ -239,7 +239,7 @@ module Diff =
 
                             let! (graceIndex2, createdAt2) = this.buildGraceIndex directoryVersionId2 repositoryId correlationId
 
-                            logToConsole $"In DiffActor.Populate(); createdAt1: {createdAt1}; createdAt2: {createdAt2}."
+                            //logToConsole $"In DiffActor.Populate(); createdAt1: {createdAt1}; createdAt2: {createdAt2}."
 
                             // Compare the GraceIndices.
                             let! differences =

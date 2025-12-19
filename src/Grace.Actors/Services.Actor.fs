@@ -135,9 +135,6 @@ module Services =
     /// Publishes a GraceEvent to the configured pub-sub system.
     let publishGraceEvent (graceEvent: GraceEvent) (metadata: EventMetadata) =
         task {
-            logToConsole
-                $"In publishGraceEvent; graceEvent: {getDiscriminatedUnionCaseName graceEvent}; CorrelationId: {metadata.CorrelationId}; pubSubSettings:{Environment.NewLine}{serialize pubSubSettings}."
-
             match pubSubSettings.System with
             | GracePubSubSystem.AzureServiceBus ->
                 match pubSubSettings.AzureServiceBus with
@@ -268,7 +265,7 @@ module Services =
             //logToConsole $"* In getAzureBlobClient; repositoryId: {repositoryDto.RepositoryId}; fileVersion: {fileVersion.RelativePath}."
             let! containerClient = getContainerClient repositoryDto correlationId
 
-            return containerClient.GetBlobClient(blobName)
+            return containerClient.GetBlockBlobClient blobName
         }
 
     let getAzureBlobClientForFileVersion (repositoryDto: RepositoryDto) (fileVersion: FileVersion) (correlationId: CorrelationId) =

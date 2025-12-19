@@ -27,7 +27,7 @@ module Reminder =
     type ReminderActor([<PersistentState(StateName.Reminder, Constants.GraceActorStorage)>] reminderState: IPersistentState<ReminderWrapper>) =
         inherit Grain()
 
-        let log = loggerFactory.CreateLogger(ActorName.Reminder)
+        let log = loggerFactory.CreateLogger("Reminder.Actor")
 
         member val private correlationId: CorrelationId = String.Empty with get, set
 

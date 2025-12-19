@@ -161,7 +161,7 @@ module Constants =
 
     /// The folder name to use in object storage for directory version contents .zip files.
     [<Literal>]
-    let GraceDirectoryVersionStorageFolderName = "Grace-DirectoryVersionContents"
+    let GraceZipFilesFolderName = "Grace-ZipFiles"
 
     /// The name of the file that holds the file specifications to ignore.
     [<Literal>]
@@ -188,10 +188,6 @@ module Constants =
 
     /// Environment variables used by Grace.
     module EnvironmentVariables =
-        /// The environment variable that contains the debug environment flag.
-        [<Literal>]
-        let DebugEnvironment = "grace__debug_environment"
-
         /// The environment variable that contains the Application Insights connection string.
         [<Literal>]
         let ApplicationInsightsConnectionString = "grace__applicationinsightsconnectionstring"
@@ -293,6 +289,10 @@ module Constants =
         [<Literal>]
         let AwsRegion = "grace__aws_sqs__region"
 
+        /// The environment variable that contains the debug environment flag.
+        [<Literal>]
+        let DebugEnvironment = "grace__debug_environment"
+
         /// Google Cloud Pub/Sub project identifier (future use).
         [<Literal>]
         let GooglePubSubProjectId = "grace__gcp__projectid"
@@ -304,6 +304,10 @@ module Constants =
         /// Google Cloud Pub/Sub subscription name (future use).
         [<Literal>]
         let GooglePubSubSubscription = "grace__gcp__subscription"
+
+        /// The environment variable that contains the directory for Grace Server log files.
+        [<Literal>]
+        let GraceLogDirectory = "grace__log_directory"
 
     /// The default CacheControl header for object storage.
     [<Literal>]

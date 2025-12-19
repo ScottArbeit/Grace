@@ -492,10 +492,6 @@ module Application =
                 .AddTag("enduser.is_authenticated", user.Identity.IsAuthenticated)
             |> ignore
 
-        //| :? HttpResponse as response ->
-        //    activity.AddTag("http.response_content_length", response.ContentLength) |> ignore
-        //| _ -> activity.AddTag("eventName", eventName) |> ignore
-
         member _.ConfigureServices(services: IServiceCollection) =
             let mutable configurationObj: obj = null
 
@@ -602,7 +598,6 @@ module Application =
             |> ignore
 
             services.AddSingleton<CosmosClient>(fun serviceProvider ->
-                let configuration = serviceProvider.GetRequiredService<IConfiguration>()
                 let cosmosConnectionString = configuration.GetValue<string>(Constants.EnvironmentVariables.AzureCosmosDBConnectionString) //?? throw new InvalidOperationException("Missing ConnectionStrings:cosmosdb");
 
                 // Force SNI = "localhost" while we connect to 127.0.0.1.
@@ -680,28 +675,12 @@ module Application =
             let blobServiceClient = Context.blobServiceClient
             let containers = blobServiceClient.GetBlobContainers()
 
-            let directoryVersionContainerName = Environment.GetEnvironmentVariable Constants.EnvironmentVariables.DirectoryVersionContainerName
-
-            if not <| containers.Any(fun c -> c.Name = directoryVersionContainerName) then
-                logToConsole $"Creating blob container: {directoryVersionContainerName}."
-
-                blobServiceClient.CreateBlobContainer(directoryVersionContainerName, PublicAccessType.None)
-                |> ignore
-
             let diffContainerName = Environment.GetEnvironmentVariable Constants.EnvironmentVariables.DiffContainerName
 
             if not <| containers.Any(fun c -> c.Name = diffContainerName) then
                 logToConsole $"Creating blob container: {diffContainerName}."
 
                 blobServiceClient.CreateBlobContainer(diffContainerName, PublicAccessType.None)
-                |> ignore
-
-            let zipFileContainerName = Environment.GetEnvironmentVariable Constants.EnvironmentVariables.ZipFileContainerName
-
-            if not <| containers.Any(fun c -> c.Name = zipFileContainerName) then
-                logToConsole $"Creating blob container: {zipFileContainerName}."
-
-                blobServiceClient.CreateBlobContainer(zipFileContainerName, PublicAccessType.None)
                 |> ignore
 
             if env.IsDevelopment() then

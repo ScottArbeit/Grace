@@ -83,9 +83,9 @@ module ApplicationContext =
     //configuration.AsEnumerable() |> Seq.iter (fun kvp -> logToConsole $"{kvp.Key}: {kvp.Value}")
 
     /// Sets the Orleans client (IGrainFactory instance) for the application.
-    let setGrainFactory client =
+    let setOrleansClient client =
         grainFactory <- client
-        setGrainFactory grainFactory
+        setOrleansClient grainFactory
 
     /// Sets the ActorStateStorageProvider for the application.
     let setActorStateStorageProvider actorStateStorage =

@@ -72,14 +72,13 @@ internal class Program
                     .WithEnvironment("OTLP_ENDPOINT_URL", otlpEndpoint)
                     .WithEnvironment(EnvironmentVariables.ApplicationInsightsConnectionString, configuration["Grace:ApplicationInsightsConnectionString"] ?? string.Empty)
                     .WithEnvironment(EnvironmentVariables.GraceServerUri, "http://localhost:5000")
-                    .WithEnvironment(EnvironmentVariables.DirectoryVersionContainerName, "directoryversions")
                     .WithEnvironment(EnvironmentVariables.DiffContainerName, "diffs")
-                    .WithEnvironment(EnvironmentVariables.ZipFileContainerName, "zipfiles")
                     .WithEnvironment(EnvironmentVariables.RedisHost, "127.0.0.1")
                     .WithEnvironment(EnvironmentVariables.RedisPort, "6379")
                     .WithEnvironment(EnvironmentVariables.OrleansClusterId, configuration["Grace:Orleans:ClusterId"] ?? "local")
                     .WithEnvironment(EnvironmentVariables.OrleansServiceId, configuration["Grace:Orleans:ServiceId"] ?? "gracevcs-dev")
                     .WithEnvironment(EnvironmentVariables.GracePubSubSystem, "AzureServiceBus")
+                    .WithEnvironment(EnvironmentVariables.GraceLogDirectory, @"E:\Temp")
                     .AsHttp2Service()
                     .WithOtlpExporter();
 
@@ -197,31 +196,25 @@ internal class Program
                     // -------------------------
 
                     var azureStorageAccountName = GetRequired(configuration, "Grace:AzureStorage:AccountName");
+                    Console.WriteLine($"Using Azure Storage account: {azureStorageAccountName}.");
 
-                    var cosmosdbEndpoint = GetRequired(configuration, "Grace:Cosmos:AccountEndpoint");
+                    var cosmosdbEndpoint = GetRequired(configuration, "Grace:AzureCosmosDB:AccountEndpoint");
                     Console.WriteLine($"Using Cosmos DB endpoint: {cosmosdbEndpoint}.");
-
-                    var cosmosDbName = configuration["Grace:Cosmos:DatabaseName"];
-                    var azureCosmosDBContainerName = configuration["Grace:Cosmos:ContainerName"];
-
-                    var serviceBusTopic = configuration["Grace:ServiceBus:TopicName"];
-                    var serviceBusSub = configuration["Grace:ServiceBus:SubscriptionName"];
-                    var serviceBusNamespace = configuration["Grace:ServiceBus:Namespace"];
 
                     graceServer
                         .WithEnvironment(EnvironmentVariables.AzureStorageAccountName, azureStorageAccountName)
                         .WithEnvironment(EnvironmentVariables.AzureCosmosDBEndpoint, cosmosdbEndpoint)
-                        .WithEnvironment(EnvironmentVariables.AzureCosmosDBDatabaseName, cosmosDbName)
-                        .WithEnvironment(EnvironmentVariables.AzureCosmosDBContainerName, azureCosmosDBContainerName)
-                        .WithEnvironment(EnvironmentVariables.AzureServiceBusNamespace, serviceBusNamespace)
-                        .WithEnvironment(EnvironmentVariables.AzureServiceBusTopic, serviceBusTopic)
-                        .WithEnvironment(EnvironmentVariables.AzureServiceBusSubscription, serviceBusSub)
+                        .WithEnvironment(EnvironmentVariables.AzureCosmosDBDatabaseName, configuration["Grace:AzureCosmosDB:DatabaseName"])
+                        .WithEnvironment(EnvironmentVariables.AzureCosmosDBContainerName, configuration["Grace:AzureCosmosDB:ContainerName"])
+                        .WithEnvironment(EnvironmentVariables.AzureServiceBusNamespace, configuration["Grace:ServiceBus:Namespace"])
+                        .WithEnvironment(EnvironmentVariables.AzureServiceBusTopic, configuration["Grace:ServiceBus:TopicName"])
+                        .WithEnvironment(EnvironmentVariables.AzureServiceBusSubscription, configuration["Grace:ServiceBus:SubscriptionName"])
                         .WithEnvironment(EnvironmentVariables.DebugEnvironment, "Azure");
 
                     Console.WriteLine("Grace.Server DebugAzure environment configured (no emulators started):");
-                    Console.WriteLine("  - Azure Storage: from ConnectionStrings:AzureStorage (or Grace:AzureStorageConnectionString)");
-                    Console.WriteLine("  - Azure Cosmos: from ConnectionStrings:Cosmos (or Grace:AzureCosmosDBConnectionString)");
-                    Console.WriteLine("  - Azure Service Bus: from ConnectionStrings:ServiceBus (or Grace:AzureServiceBusConnectionString)");
+                    Console.WriteLine("  - Azure Storage: using DefaultAzureCredential.");
+                    Console.WriteLine("  - Azure Cosmos: using DefaultAzureCredential.");
+                    Console.WriteLine("  - Azure Service Bus: using DefaultAzureCredential.");
                     Console.WriteLine("  - Aspire dashboard at http://localhost:18888");
                     Console.WriteLine($"  - OTLP endpoint {otlpEndpoint}");
                 }

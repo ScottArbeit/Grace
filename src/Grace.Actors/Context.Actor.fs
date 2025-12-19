@@ -41,7 +41,7 @@ module Context =
     let mutable internal orleansClient: IGrainFactory = null
 
     /// Sets the Orleans client for the application.
-    let setGrainFactory (client: IGrainFactory) = orleansClient <- client
+    let setOrleansClient (client: IGrainFactory) = orleansClient <- client
 
     /// Cosmos client instance
     let mutable internal cosmosClient: CosmosClient = null
@@ -83,17 +83,4 @@ module Context =
         else
             match AzureEnvironment.storageEndpoints.ConnectionString with
             | Some connectionString -> BlobServiceClient(connectionString)
-            | None ->
-                invalidOp
-                    "Azure Storage connection string must be configured when running in local debug mode without a managed identity."
-
-    /// Diff cache container client
-    let diffCacheContainerClient = blobServiceClient.GetBlobContainerClient(Environment.GetEnvironmentVariable Constants.EnvironmentVariables.DiffContainerName)
-
-    /// Recursive DirectoryVersion cache container client
-    let directoryVersionContainerClient =
-        blobServiceClient.GetBlobContainerClient(Environment.GetEnvironmentVariable Constants.EnvironmentVariables.DirectoryVersionContainerName)
-
-    /// Diff cache container client
-    let zipFileContainerClient =
-        blobServiceClient.GetBlobContainerClient(Environment.GetEnvironmentVariable Constants.EnvironmentVariables.ZipFileContainerName)
+            | None -> invalidOp "Azure Storage connection string must be configured when running in local debug mode without a managed identity."
