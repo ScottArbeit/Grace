@@ -70,24 +70,7 @@ module ReminderService =
                             .WithParameter("@grainType", StateName.Reminder)
                             .WithParameter("@partitionKey", StateName.Reminder)
 
-                    //let queryText =
-                    //    """SELECT TOP @maxCount c.id as Id, c.partitionKey as PartitionKey, c["value"].ReminderId, c["value"].CorrelationId FROM c
-                    //        WHERE c["value"].Class = @class
-                    //        AND c["value"].ReminderTime < GetCurrentDateTime()
-                    //        ORDER BY c["value"].ReminderTime ASC"""
-
-                    //let queryDefinition =
-                    //    QueryDefinition(queryText)
-                    //        .WithParameter("@maxCount", reminderBatchSize)
-                    //        .WithParameter("@class", nameof ReminderDto)
-
                     use iterator = ApplicationContext.cosmosContainer.GetItemQueryIterator<ReminderValue>(queryDefinition)
-
-                    //log.LogInformation(
-                    //    "{CurrentInstant}: Node: {HostName}; In ReminderService.retrieveReminders. Created iterator.",
-                    //    getCurrentInstantExtended (),
-                    //    getMachineName
-                    //)
 
                     while iterator.HasMoreResults do
                         let! results = iterator.ReadNextAsync(cancellationToken)
@@ -95,12 +78,6 @@ module ReminderService =
 
                         for reminder in results do
                             reminders.Add(reminder)
-
-                //log.LogInformation(
-                //    "{CurrentInstant}: Node: {HostName}; In ReminderService.retrieveReminders. After calling Cosmos DB.",
-                //    getCurrentInstantExtended (),
-                //    getMachineName
-                //)
 
                 | MongoDB -> ()
 
@@ -140,6 +117,9 @@ module ReminderService =
                                     ValueTask(
                                         task {
                                             try
+                                                // Insert random delay to smooth out the processing load.
+                                                do! Task.Delay(Random.Shared.Next(0, timer.Milliseconds))
+
                                                 let reminderActorProxy = Reminder.CreateActorProxy reminder.ReminderId reminder.CorrelationId
 
                                                 match! reminderActorProxy.Remind reminder.CorrelationId with
@@ -152,17 +132,7 @@ module ReminderService =
                                                         )
 
                                                     // Delete the reminder from storage to avoid reprocessing.
-                                                    let! deleteReminderResponse =
-                                                        cosmosContainer.DeleteItemAsync(reminder.Id, PartitionKey(StateName.Reminder), itemRequestOptions)
-
-                                                    if deleteReminderResponse.StatusCode <> HttpStatusCode.NoContent then
-                                                        log.LogError(
-                                                            "{CurrentInstant}: Node: {HostName}; Error deleting reminder: {reminder.id}. Status code: {deleteResponse.StatusCode}.",
-                                                            getCurrentInstantExtended (),
-                                                            getMachineName,
-                                                            reminder.Id,
-                                                            deleteReminderResponse.StatusCode
-                                                        )
+                                                    do! reminderActorProxy.Delete reminder.CorrelationId
                                                 | Error error ->
                                                     log.LogError(
                                                         "{CurrentInstant}: Node: {HostName}; Error processing reminder: {reminder.id}. {error}.",

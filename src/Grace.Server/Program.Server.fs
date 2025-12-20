@@ -182,6 +182,9 @@ module Program =
             .UseContentRoot(Directory.GetCurrentDirectory())
             .UseOrleans(fun siloBuilder ->
                 siloBuilder
+                    .Configure<Orleans.Configuration.ClusterMembershipOptions>(fun (options: Orleans.Configuration.ClusterMembershipOptions) ->
+                        options.DefunctSiloExpiration <- TimeSpan.FromMinutes(5.0)
+                        options.DefunctSiloCleanupPeriod <- TimeSpan.FromMinutes(1.0))
                     .Configure<ClusterOptions>(fun (options: ClusterOptions) ->
                         options.ClusterId <- configuration[getConfigKey EnvironmentVariables.OrleansClusterId]
                         options.ServiceId <- configuration[getConfigKey EnvironmentVariables.OrleansServiceId])
